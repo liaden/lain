@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         ruby:
-          - '4.0.1'
+          - '4.0.5'
 
     steps:
       - uses: actions/checkout@v4
@@ -29,3 +29,22 @@ jobs:
           rubygems: '4.0.3'
       - name: Run the default task
         run: bundle exec rake
+
+  lint:
+    runs-on: ubuntu-latest
+    name: pre-commit
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Ruby & Rust
+        uses: oxidize-rb/actions/setup-ruby-and-rust@v1
+        with:
+          ruby-version: '4.0.5'
+          bundler-cache: true
+          cargo-cache: true
+          rubygems: '4.0.3'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - uses: pre-commit/action@v3.0.1
