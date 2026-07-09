@@ -1,8 +1,20 @@
 AllCops:
   TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 
 Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
+
+# RSpec describe/context blocks are legitimately long; the cop measures the DSL,
+# not complexity.
+Metrics/BlockLength:
+  Exclude:
+    - "spec/**/*_spec.rb"
+    - "*.gemspec"
+
+Layout/LineLength:
+  Max: 120
