@@ -43,6 +43,10 @@ Gem::Specification.new do |spec|
   spec.extensions = ["ext/lain/extconf.rb"]
 
   spec.add_dependency "anthropic", "~> 1.55"
+  # Chef's Mixlib::ShellOut. Handles stdout/stderr capture, environment, cwd, timeout,
+  # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
+  # isolation arrives later via the out-of-process Rust exec boundary.
+  spec.add_dependency "mixlib-shellout", "~> 3.4"
   spec.add_dependency "rb_sys", "~> 0.9.91"
   spec.add_dependency "thor", "~> 1.3"
 
