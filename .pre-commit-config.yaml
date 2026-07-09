@@ -1,0 +1,63 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+        exclude: '\.rs$'
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck
+        language: system
+        types: [shell]
+        exclude: '^\.envrc$'
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-deny
+        name: cargo deny
+        entry: cargo deny check
+        language: system
+        pass_filenames: false
+        files: ^(Cargo\.(toml|lock)|deny\.toml)$
+
+      - id: rubocop
+        name: rubocop
+        entry: bundle exec rubocop --force-exclusion
+        language: system
+        types: [ruby]
+
+      # `rspec` cannot load `lain` until the Rust extension is compiled, so the
+      # extension is rebuilt first. Touching either language re-runs the suite.
+      - id: rspec
+        name: rspec
+        entry: bundle exec rake compile spec
+        language: system
+        types_or: [ruby, rust]
+        pass_filenames: false
