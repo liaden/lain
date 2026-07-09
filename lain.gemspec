@@ -8,17 +8,25 @@ Gem::Specification.new do |spec|
   spec.authors = ["Joel Johnson"]
   spec.email = ["johnson.joel.b@gmail.com"]
 
-  spec.summary = "TODO: Write a short summary, because RubyGems requires one."
-  spec.description = "TODO: Write a longer description or delete this line."
-  spec.homepage = "TODO: Put your gem's website or public repo URL here."
+  spec.summary = "An agent harness built as a study bench for LLM orchestration and tool design."
+  spec.description = <<~DESC
+    Lain is a hand-rolled agentic loop for Claude, built so that context strategies, tool
+    designs, and orchestration tactics are swappable, observable, and comparable. Conversations
+    are a content-addressed Merkle DAG, so forking and time-travel are cheap and prompt-cache
+    breaks are localizable. Tool calls are effects interpreted by a composable Rack-style
+    middleware stack, so deterministic replay is just a recorded handler. It ships a bench that
+    replays recorded sessions under different strategies and reports distributions, not anecdotes.
+  DESC
+  spec.homepage = "https://github.com/joeljohnson/lain"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
   spec.required_rubygems_version = ">= 3.3.11"
 
-  spec.metadata["allowed_push_host"] = "TODO: Set to your gem server 'https://example.com'"
+  spec.metadata["allowed_push_host"] = "https://rubygems.org"
   spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "TODO: Put your gem's public repo URL here."
-  spec.metadata["changelog_uri"] = "TODO: Put your gem's CHANGELOG.md URL here."
+  spec.metadata["source_code_uri"] = spec.homepage
+  spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"
+  spec.metadata["rubygems_mfa_required"] = "true"
 
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
@@ -34,10 +42,17 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/lain/extconf.rb"]
 
-  # Uncomment to register a new dependency of your gem
-  # spec.add_dependency "example-gem", "~> 1.0"
+  spec.add_dependency "anthropic", "~> 1.55"
   spec.add_dependency "rb_sys", "~> 0.9.91"
+  spec.add_dependency "thor", "~> 1.3"
 
-  # For more information and examples about making a new gem, check out our
-  # guide at: https://bundler.io/guides/creating_gem.html
+  # `ruby_llm` is a SUPPORTED OPTIONAL dependency, deliberately not declared here.
+  #
+  # Lain::Provider::RubyLLM requires it lazily and raises a helpful LoadError when absent.
+  # Declaring it as a hard dependency would force it on every user of the Anthropic path,
+  # which is the reference implementation. To use the multi-provider path:
+  #
+  #     gem install ruby_llm
+  #
+  # See README.md, "Providers".
 end
