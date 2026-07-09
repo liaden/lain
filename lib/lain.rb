@@ -3,6 +3,9 @@
 require_relative "lain/version"
 require_relative "lain/error"
 require_relative "lain/canonical"
+require_relative "lain/turn"
+require_relative "lain/store"
+require_relative "lain/timeline"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"

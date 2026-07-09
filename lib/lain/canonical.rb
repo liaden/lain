@@ -31,9 +31,24 @@ module Lain
     class AmbiguousKey < Error; end
 
     class << self
+      # The wire form of +value+: JSON-native types only, String keys, objects
+      # sorted, everything deeply frozen. Callers that need to *store* content
+      # (see Lain::Turn) keep this rather than the original, so what is hashed
+      # and what is retained cannot drift apart.
+      def normalize(value)
+        case value
+        when nil, true, false, Integer then value
+        when Float then finite(value)
+        when String, Symbol then -utf8(value.to_s)
+        when Array then value.map { |element| normalize(element) }.freeze
+        when Hash then normalize_hash(value)
+        else raise UnsupportedType, "cannot canonicalize #{value.class}"
+        end
+      end
+
       # Compact JSON with recursively sorted object keys.
       def dump(value)
-        JSON.generate(canonicalize(value))
+        JSON.generate(normalize(value))
       end
 
       # Content address of +value+, e.g. "sha256:9f86d0...". The prefix keeps the
@@ -44,31 +59,19 @@ module Lain
 
       private
 
-      def canonicalize(value)
-        case value
-        when nil, true, false, Integer then value
-        when Float then finite(value)
-        when String, Symbol then utf8(value.to_s)
-        when Array then value.map { |element| canonicalize(element) }
-        when Hash then canonicalize_hash(value)
-        else raise UnsupportedType, "cannot canonicalize #{value.class}"
-        end
-      end
-
-      def canonicalize_hash(hash)
-        canonicalized = hash.each_with_object({}) do |(key, value), acc|
-          string_key = canonicalize_key(key)
+      def normalize_hash(hash)
+        normalized = hash.each_with_object({}) do |(key, value), acc|
+          string_key = normalize_key(key)
           raise AmbiguousKey, "#{string_key.inspect} is both a String and a Symbol key" if acc.key?(string_key)
 
-          acc[string_key] = canonicalize(value)
+          acc[string_key] = normalize(value)
         end
-        canonicalized.sort_by { |key, _| key }.to_h
+        normalized.sort_by { |key, _| key }.to_h.freeze
       end
 
-      def canonicalize_key(key)
+      def normalize_key(key)
         case key
-        when String then utf8(key)
-        when Symbol then utf8(key.to_s)
+        when String, Symbol then -utf8(key.to_s)
         else raise UnsupportedType, "hash keys must be String or Symbol, got #{key.class}"
         end
       end
