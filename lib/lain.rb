@@ -6,6 +6,9 @@ require_relative "lain/canonical"
 require_relative "lain/turn"
 require_relative "lain/store"
 require_relative "lain/timeline"
+require_relative "lain/event"
+require_relative "lain/channel"
+require_relative "lain/sink"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
