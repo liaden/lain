@@ -13,3 +13,7 @@ crate-type = ["cdylib"]
 magnus = { version = "0.8.2" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+# Used only for `dup(2)` so the tracing subscriber can own an independent copy
+# of a caller-supplied fd. Pinned (not `*`) to satisfy `cargo deny`'s wildcard
+# ban.
+libc = "0.2"
