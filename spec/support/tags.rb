@@ -17,13 +17,13 @@
 INTEGRATION_ENABLED = ENV["LAIN_INTEGRATION"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
 RSpec.configure do |config|
-  # Integration examples punch through WebMock for their duration only; the block is
-  # restored even if the example raises.
+  # Integration examples reach the real network for their duration only, then
+  # isolation is restored even if the example raises. NetworkAccess.permit moves
+  # BOTH the WebMock and the VCR switch -- flipping WebMock alone is not enough
+  # once VCR has taken the hook, and that is exactly the trap NetworkAccess
+  # exists to make un-re-breakable (see spec/support/network_access.rb).
   config.around(:each, :integration) do |example|
-    WebMock.allow_net_connect!
-    example.run
-  ensure
-    WebMock.disable_net_connect!
+    NetworkAccess.permit { example.run }
   end
 
   unless INTEGRATION_ENABLED
@@ -58,10 +58,7 @@ LIVE_ENABLED = ENV["LAIN_LIVE"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
-    WebMock.allow_net_connect!
-    example.run
-  ensure
-    WebMock.disable_net_connect!
+    NetworkAccess.permit { example.run }
   end
 
   unless LIVE_ENABLED

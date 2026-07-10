@@ -14,13 +14,14 @@ require "net/http"
 # Verified, not assumed: once `VCR.configure { |c| c.hook_into :webmock }` has
 # run (vcr_configuration.rb sorts before this file, so it always has by the
 # time an example executes), VCR becomes the layer that actually decides
-# whether an unstubbed request goes through -- for EVERY example in the
-# suite, not just ones tagged :vcr. `WebMock::Config.instance.allow_net_connect`
-# reads back nil once VCR has taken the hook, and an unmatched request raises
-# VCR::Errors::UnhandledHTTPRequestError rather than WebMock's own
-# NetConnectNotAllowedError. VCR's own gate is
+# whether an unstubbed request goes through -- for EVERY example in the suite,
+# not just ones tagged :vcr. The authoritative gate is therefore VCR's
 # `allow_http_connections_when_no_cassette?`, set false in
-# vcr_configuration.rb, and that is what is actually authoritative here.
+# vcr_configuration.rb, and an unmatched request raises
+# VCR::Errors::UnhandledHTTPRequestError -- not WebMock's own
+# NetConnectNotAllowedError. Both facts are pinned by the examples below. That
+# VCR now owns the switch is why opting back INTO the network takes
+# NetworkAccess.permit rather than a bare WebMock.allow_net_connect!.
 RSpec.describe "network isolation" do
   it "blocks HTTP connections when no cassette is inserted" do
     expect(VCR.configuration.allow_http_connections_when_no_cassette?).to be(false)
