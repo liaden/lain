@@ -33,6 +33,7 @@ require_relative "lain/frontend"
 require_relative "lain/journal"
 require_relative "lain/price_book"
 require_relative "lain/ledger"
+require_relative "lain/capability"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
