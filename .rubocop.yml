@@ -18,3 +18,9 @@ Metrics/BlockLength:
 
 Layout/LineLength:
   Max: 120
+
+# Keyword arguments are self-describing at the call site, so they do not carry
+# the legibility cost that motivates this cop for positional parameters. Value
+# objects with many named fields are exactly the intended shape here.
+Metrics/ParameterLists:
+  CountKeywordArgs: false
