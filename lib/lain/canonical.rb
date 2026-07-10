@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
-require "digest"
 require "json"
 
 require_relative "error"
+require_relative "lain" # the compiled Rust extension: Lain::Ext.blake3_hex
 
 module Lain
   # Deterministic serialization, serving two invariants with one function.
   #
-  # 1. Turn identity. A Turn's hash is the SHA-256 of its canonical form, so two
+  # 1. Turn identity. A Turn's hash is the BLAKE3 of its canonical form, so two
   #    turns that mean the same thing on the wire must serialize to the same bytes.
   # 2. Prompt-cache stability. Anthropic's cache is a prefix match over the encoded
   #    request; a Hash that iterates in insertion order across two Toolset
@@ -24,7 +24,7 @@ module Lain
   # the same message. A Hash containing *both* `:a` and `"a"` is genuinely
   # ambiguous and raises instead of silently dropping one.
   module Canonical
-    DIGEST_ALGORITHM = "sha256"
+    DIGEST_ALGORITHM = "blake3"
 
     class UnsupportedType < Error; end
     class NonFiniteFloat < Error; end
@@ -51,14 +51,16 @@ module Lain
         JSON.generate(normalize(value))
       end
 
-      # Content address of +value+, e.g. "sha256:9f86d0...". The prefix keeps the
+      # Content address of +value+, e.g. "blake3:af1349...". The prefix keeps the
       # algorithm explicit so a future migration is not a silent reinterpretation.
+      # The hash itself lives in ext/lain (Rust) rather than a second, separately
+      # vendored Ruby implementation -- one blake3, one place it can drift.
       #
       # Returned frozen and deduplicated. Digests are used as Hash keys all over
       # (the Store, cache-break walks), and an unfrozen ivar anywhere in a Turn is
       # enough to make the whole object non-Ractor-shareable.
       def digest(value)
-        -"#{DIGEST_ALGORITHM}:#{Digest::SHA256.hexdigest(dump(value))}"
+        -"#{DIGEST_ALGORITHM}:#{Lain::Ext.blake3_hex(dump(value))}"
       end
 
       private

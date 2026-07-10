@@ -94,7 +94,7 @@ RSpec.describe Lain::Canonical do
 
   describe ".digest" do
     it "prefixes the algorithm so a future migration is not a silent reinterpretation" do
-      expect(described_class.digest("x")).to start_with("sha256:")
+      expect(described_class.digest("x")).to start_with("blake3:")
     end
 
     # Digests are Hash keys throughout (the Store, cache-break walks). An unfrozen
@@ -104,9 +104,11 @@ RSpec.describe Lain::Canonical do
       expect(described_class.digest("x")).to equal(described_class.digest("x"))
     end
 
-    it "is the SHA-256 of the canonical dump" do
-      expected = Digest::SHA256.hexdigest(described_class.dump({ "a" => 1 }))
-      expect(described_class.digest({ "a" => 1 })).to eq("sha256:#{expected}")
+    it "is the BLAKE3 of the canonical dump" do
+      # Independently verified against `b3sum` over the dump's bytes
+      # (`{"a":1}`), not just re-derived from the same ext call under test.
+      expected = "d59b6562d7c9b121bc9760873d787890ef4d429aad33a70b405baa0fa08a1f53"
+      expect(described_class.digest({ "a" => 1 })).to eq("blake3:#{expected}")
     end
 
     it "agrees for structurally equal input regardless of key order" do

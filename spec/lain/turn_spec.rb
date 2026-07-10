@@ -59,7 +59,7 @@ RSpec.describe Lain::Turn do
 
   describe "#digest" do
     it "is a prefixed content address" do
-      expect(described_class.new(role: :user, content: text("hi")).digest).to start_with("sha256:")
+      expect(described_class.new(role: :user, content: text("hi")).digest).to start_with("blake3:")
     end
 
     it "is identical for identical content" do
@@ -82,7 +82,7 @@ RSpec.describe Lain::Turn do
 
     it "changes with parent, which is what chains the DAG" do
       a = described_class.new(role: :user, content: text("hi"))
-      b = described_class.new(role: :user, content: text("hi"), parent: "sha256:abc")
+      b = described_class.new(role: :user, content: text("hi"), parent: "blake3:abc")
       expect(a.digest).not_to eq(b.digest)
     end
 
@@ -90,7 +90,7 @@ RSpec.describe Lain::Turn do
     # digest or two causally distinct turns would share an address.
     it "changes with meta" do
       a = described_class.new(role: :user, content: text("hi"))
-      b = described_class.new(role: :user, content: text("hi"), meta: { "spawned_from" => "sha256:abc" })
+      b = described_class.new(role: :user, content: text("hi"), meta: { "spawned_from" => "blake3:abc" })
       expect(a.digest).not_to eq(b.digest)
     end
   end
