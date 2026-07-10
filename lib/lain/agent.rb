@@ -4,6 +4,7 @@ require "state_machines"
 
 require_relative "agent/budget"
 require_relative "agent/loop_machine"
+require_relative "agent/model_caller"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
 require_relative "context"
@@ -40,8 +41,12 @@ module Lain
     # Kept for callers that rescue the harness's own halt. See Agent::Budget.
     BudgetExceeded = Budget::Exceeded
 
-    attr_reader :timeline, :toolset, :context, :workspace, :provider,
+    attr_reader :timeline, :toolset, :context, :workspace,
                 :usage, :iterations, :failure_reason, :budget
+
+    # Delegated to {ModelCaller}, which now owns the provider alongside the
+    # model phase's own middleware -- see #call_model.
+    def provider = @model_caller.provider
 
     def initialize(provider:, toolset:, context:,
                    handler: nil,
@@ -50,15 +55,16 @@ module Lain
                    budget: Budget.new,
                    transition_listener: TransitionListener::Null,
                    model_middleware: Middleware::Stack.new,
-                   tool_middleware: Middleware::Stack.new)
+                   tool_middleware: Middleware::Stack.new,
+                   turn_middleware: Middleware::Stack.new)
       super() # state_machines sets the initial state through the super chain.
-      @provider = provider
+      @model_caller = ModelCaller.new(provider: provider, middleware: model_middleware)
       @toolset = toolset
       @context = context
       @timeline = timeline || Timeline.empty(store: Store.new)
       @workspace = workspace
       @budget = budget
-      @model_middleware = model_middleware
+      @turn_middleware = turn_middleware
       @tool_runner = build_tool_runner(handler, toolset, tool_middleware)
       reset_run_state(transition_listener)
     end
@@ -78,12 +84,23 @@ module Lain
 
     # Drive the machine from its current Timeline. Separated from {#ask} so a
     # rewound or forked Timeline can be resumed without inventing a user turn.
+    # The turn phase's env is deliberately minimal: `iteration` is the count of
+    # turns already committed (0 for the very first), and `timeline` is the
+    # Timeline as of the START of this turn -- the node a future speculative-
+    # fork middleware would fork from, before this turn's own commit lands. The
+    # block adds `:response`/`:settled` on the way back out, the same in/out
+    # shape #call_model uses for `:request`/`:response`. This is the seam for
+    # the future budget/iteration-ceiling/interrupt-hook/speculative-fork point
+    # -- placing it, not building those features yet.
     def run
       @failure_reason = nil
 
       loop do
-        response = step
-        return response if transition(response) == :settled
+        env = @turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
+          response = step
+          inner.merge(response: response, settled: transition(response) == :settled)
+        end
+        return env.fetch(:response) if env.fetch(:settled)
       end
     end
 
@@ -166,10 +183,7 @@ module Lain
     def call_model
       dispatch!
       request = @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace)
-      env = @model_middleware.call({ request: request }) do |inner|
-        inner.merge(response: @provider.complete(inner.fetch(:request)))
-      end
-      env.fetch(:response)
+      @model_caller.call(request)
     end
 
     # Correctness gate 2: every tool_result for one assistant turn goes back in
