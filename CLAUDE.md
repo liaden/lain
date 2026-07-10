@@ -58,6 +58,11 @@ separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`). Config that 
 - **No ActiveSupport core extensions in `lib/`** for their own sake. `activemodel` is a
   dependency for declarative validation of tool input *shape*; reach for it there, not to save
   three characters elsewhere.
+- **Tool input goes through `Tool::Input`** (ActiveModel). One declaration yields both the JSON
+  Schema the model sees and the local validation, so they cannot drift, and you get type
+  coercion for free. Those validations check **shape, not safety** — read the comment at the
+  top of `lib/lain/tool/input.rb` before adding a validator that sounds like a security
+  control. It is not one.
 - **Doc comments explain WHY, not what.** Match `lib/lain/timeline.rb` and
   `lib/lain/canonical.rb`.
 - **Value objects are deeply frozen.** `Ractor.shareable?(turn)` must stay `true` — it is the
