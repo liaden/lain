@@ -64,6 +64,11 @@ Gem::Specification.new do |spec|
   # appears in Usage -- on a bench whose headline metric is token cost, that gap
   # must be visible, not eliminated.
   spec.add_dependency "faraday-retry", "~> 2.4"
+  # Shopify's spec-compliant SSE parser (MIT), zero transitive dependencies. The
+  # forked transport's streaming path needs it, and hand-rolling one is exactly the
+  # bug class we most fear: a `data:` line split across two TCP reads. A VCR cassette
+  # stores the body as one blob and would replay green forever over that bug.
+  spec.add_dependency "event_stream_parser", "~> 1.0"
   # Chef's Mixlib::ShellOut. Handles stdout/stderr capture, environment, cwd, timeout,
   # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
   # isolation arrives later via the out-of-process Rust exec boundary.
