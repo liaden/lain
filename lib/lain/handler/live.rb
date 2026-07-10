@@ -2,6 +2,7 @@
 
 require_relative "../channel"
 require_relative "../effect"
+require_relative "../handler"
 require_relative "../tool"
 require_relative "../toolset"
 

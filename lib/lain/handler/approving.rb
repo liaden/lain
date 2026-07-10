@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../effect"
+require_relative "../handler"
 require_relative "../tool"
 
 module Lain
