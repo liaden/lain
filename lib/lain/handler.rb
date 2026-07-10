@@ -65,5 +65,6 @@ module Lain
   end
 end
 
+require_relative "handler/approving"
 require_relative "handler/live"
 require_relative "handler/mock"
