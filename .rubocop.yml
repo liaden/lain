@@ -10,10 +10,12 @@ Style/StringLiteralsInInterpolation:
   EnforcedStyle: double_quotes
 
 # RSpec describe/context blocks are legitimately long; the cop measures the DSL,
-# not complexity.
+# not complexity. `spec/support` holds shared example groups, which are the same
+# DSL wearing a different name.
 Metrics/BlockLength:
   Exclude:
     - "spec/**/*_spec.rb"
+    - "spec/support/**/*.rb"
     - "*.gemspec"
 
 Layout/LineLength:
