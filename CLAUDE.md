@@ -163,7 +163,7 @@ Structures that plausibly qualify, and what they buy:
 
 | Structure | Crate | Why here |
 |---|---|---|
-| Persistent map / vector (HAMT, RRB) | `im` / `rpds` | Structural sharing is what makes `Timeline#fork` O(1) *in fact* and not just in claim. |
+| Persistent map / vector (HAMT, RRB) | `im` / `rpds` | Structural sharing *between versions* is what will make speculative `fork` cheap without polluting the shared Store. **Latent today** — the current O(1) `fork` comes from the handle + content-addressing, not the HAMT; the binding earns rule #2 once speculative branching snapshots the map (see `ext/lain/Cargo.toml`). |
 | Content-addressed hashing | `blake3` | `Canonical` bytes → digest. One hash, two invariants. |
 | Insertion-ordered map | `indexmap` | Deterministic iteration is exactly `Canonical.dump`'s sorted-key stability. |
 | Interned digests | `lasso` | Digests are short, repeated, and compared constantly; interning turns comparison into an integer test. |
