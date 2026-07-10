@@ -46,6 +46,16 @@ fn dup_writer(fd: std::os::unix::io::RawFd) -> std::io::Result<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(duped) })
 }
 
+/// The lowercase-hex BLAKE3 digest of `bytes`.
+///
+/// Plain Rust, no `magnus` types, so `cargo test` covers the one hash Lain
+/// uses for content-addressing without needing an embedded Ruby VM. `Canonical`
+/// calls through the FFI wrapper below; this function is what is actually
+/// under test.
+fn blake3_hex(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 // ---------------------------------------------------------------------------
 // FFI surface.
 //
@@ -60,7 +70,7 @@ fn dup_writer(fd: std::os::unix::io::RawFd) -> std::io::Result<std::fs::File> {
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{build_env_filter, dup_writer};
+    use super::{blake3_hex, build_env_filter, dup_writer};
     use magnus::{function, prelude::*, Error, Ruby};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
@@ -154,6 +164,14 @@ mod ffi {
         format!("Hello from Rust, {subject}!")
     }
 
+    /// `Lain::Canonical`'s content-addressing hash. Thin FFI wrapper over
+    /// [`super::blake3_hex`]; the hashing itself is tested in `cargo test`
+    /// without libruby, so this wrapper has nothing left to get wrong beyond
+    /// the string marshaling magnus already handles.
+    fn ffi_blake3_hex(bytes: String) -> String {
+        blake3_hex(bytes.as_bytes())
+    }
+
     #[magnus::init]
     fn init(ruby: &Ruby) -> Result<(), Error> {
         let module = ruby.define_module("Lain")?;
@@ -161,6 +179,7 @@ mod ffi {
 
         let ext = module.define_module("Ext")?;
         ext.define_singleton_method("init_tracing", function!(init_tracing, 2))?;
+        ext.define_singleton_method("blake3_hex", function!(ffi_blake3_hex, 1))?;
 
         Ok(())
     }
@@ -199,6 +218,37 @@ mod tests {
             err.contains("invalid log level"),
             "unexpected message: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod blake3_tests {
+    use super::blake3_hex;
+
+    // Official BLAKE3 test vector for the empty input.
+    #[test]
+    fn hashes_the_empty_string() {
+        assert_eq!(
+            blake3_hex(b""),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+    }
+
+    #[test]
+    fn is_deterministic() {
+        assert_eq!(blake3_hex(b"lain"), blake3_hex(b"lain"));
+    }
+
+    #[test]
+    fn differs_for_different_input() {
+        assert_ne!(blake3_hex(b"lain"), blake3_hex(b"not lain"));
+    }
+
+    #[test]
+    fn returns_lowercase_hex() {
+        let hex = blake3_hex(b"lain");
+        assert_eq!(hex, hex.to_lowercase());
+        assert_eq!(hex.len(), 64);
     }
 }
 

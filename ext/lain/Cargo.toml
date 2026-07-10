@@ -17,3 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 # of a caller-supplied fd. Pinned (not `*`) to satisfy `cargo deny`'s wildcard
 # ban.
 libc = "0.2"
+# Canonical's content-addressing hash. The one and only blake3 implementation
+# in this project -- Ruby calls into this ext rather than carrying a second,
+# separately-vendored copy of the algorithm.
+blake3 = "1"
