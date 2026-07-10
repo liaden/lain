@@ -4,6 +4,11 @@ require_relative "canonical"
 require_relative "error"
 require_relative "request"
 require_relative "workspace"
+require_relative "context/base"
+require_relative "context/cache_breakpoints"
+require_relative "context/reminder"
+require_relative "context/prune"
+require_relative "context/compact"
 
 module Lain
   # The seam. A pure function from (Timeline, Toolset, Workspace) to a Request.
@@ -27,16 +32,28 @@ module Lain
   # Reminders) and their monoid land in M3; the seam is shaped for them now so
   # that arrival is a swap rather than a rewrite.
   class Context
-    # Anthropic looks back a bounded number of content blocks when matching a
-    # cache breakpoint. Agentic turns, which pile up tool_use/tool_result pairs,
-    # blow past it easily, so intermediate breakpoints are placed well inside the
-    # window rather than at its edge.
-    CACHE_LOOKBACK_BLOCKS = 20
-    BREAKPOINT_EVERY = 15
+    # Delegated to Context::CacheBreakpoints, the combinator that actually
+    # owns this policy (3c-2.4) -- kept as Context constants too since the
+    # lookback/spacing relationship is part of what #render promises a
+    # Provider, not just an implementation detail of one combinator.
+    CACHE_LOOKBACK_BLOCKS = CacheBreakpoints::LOOKBACK_BLOCKS
+    BREAKPOINT_EVERY = CacheBreakpoints::EVERY
 
-    # Capabilities this renderer needs. A Provider lacking one degrades (loudly,
-    # into the Journal) rather than silently producing a different prompt.
-    REQUIRES = %i[prompt_caching].freeze
+    # The message-list combinator pipeline #render composes: Reminder injects
+    # the Workspace tail, then CacheBreakpoints marks the result. Named once
+    # so both #render and REQUIRES read from a SINGLE source -- change the
+    # strategy here and the declared capabilities follow automatically.
+    def self.pipeline(workspace)
+      Reminder.new(workspace: workspace) >> CacheBreakpoints.new
+    end
+
+    # Capabilities this renderer needs, DERIVED from the pipeline above rather
+    # than hardcoded, so the declaration cannot drift from the behavior.
+    # Reminder#requires is workspace-independent, so an empty Workspace yields
+    # a representative pipeline. A Provider lacking a capability degrades
+    # (loudly, into the Journal) rather than silently producing a different
+    # prompt.
+    REQUIRES = pipeline(Workspace.empty).requires
 
     attr_reader :system, :model, :max_tokens, :stream
 
@@ -53,62 +70,28 @@ module Lain
     end
 
     # @return [Lain::Request] deterministic for identical inputs
+    #
+    # The message-list pipeline is itself a Context combinator composition
+    # (3c-2): Reminder injects the Workspace tail, then CacheBreakpoints
+    # marks the result. Composing via `>>` here is the same seam a caller
+    # reaches for directly when building a custom pipeline (Prune, Compact,
+    # or a Reminder/CacheBreakpoints reordering) -- #render's default
+    # strategy is one point in that same space, not a parallel
+    # implementation of it.
     def render(timeline:, toolset:, workspace: Workspace.empty)
       messages = timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
-      messages = inject_workspace(messages, workspace)
 
       Request.new(
         model: model,
         system: cache_marked_system,
         tools: toolset.to_schema,
-        messages: mark_cache_breakpoints(messages),
+        messages: self.class.pipeline(workspace).call(messages),
         max_tokens: max_tokens,
         stream: stream
       )
     end
 
     private
-
-    # Workspace state is SENT, never STORED: it rides at the tail of the last user
-    # message rather than being appended to the Timeline. Note the placement --
-    # after the last cache breakpoint would be ideal, and since the tail of the
-    # final message *is* where the last breakpoint goes, injecting here means the
-    # workspace sits inside the uncached suffix. Injecting it into `system`
-    # instead would rewrite the cached prefix on every turn.
-    def inject_workspace(messages, workspace)
-      return messages if workspace.empty? || messages.empty?
-
-      last = messages.last
-      return messages unless last["role"] == "user"
-
-      rest = messages[0..-2]
-      rest + [{ "role" => "user", "content" => last["content"] + workspace.to_blocks }]
-    end
-
-    # Mark the last block of the last message, plus intermediate blocks roughly
-    # every BREAKPOINT_EVERY, so a long agentic turn never drifts outside the
-    # lookback window. `"cache" => true` is Lain's neutral marker; rendering it as
-    # `cache_control` is the Provider's job.
-    def mark_cache_breakpoints(messages)
-      return messages if messages.empty?
-
-      last_index = messages.size - 1
-      blocks_since = 0
-      messages.each_with_index.map do |message, index|
-        blocks_since += message["content"].size
-        breakpoint = index == last_index || blocks_since >= BREAKPOINT_EVERY
-        blocks_since = 0 if breakpoint
-        breakpoint ? mark_last_block(message) : message
-      end
-    end
-
-    def mark_last_block(message)
-      content = message["content"]
-      return message if content.empty?
-
-      marked_tail = content.last.merge("cache" => true)
-      { "role" => message["role"], "content" => content[0..-2] + [marked_tail] }
-    end
 
     # Caching the system prompt caches the tools with it, since tools lead the
     # matched prefix.
