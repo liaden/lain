@@ -33,7 +33,11 @@ RSpec.describe Lain::Provider::HTTP::Connection do
         retry_backoff_factor: 2,
         http_proxy: nil,
         log_regexp_timeout: 1.0,
-        faraday_adapter: :net_http
+        faraday_adapter: :net_http,
+        retry_block: nil,
+        exhausted_retries_block: nil,
+        rate_limit_reset_header: nil,
+        header_parser_block: nil
       )
     end
 

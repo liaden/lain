@@ -63,14 +63,30 @@ module Lain
           end
 
           def setup_retry(faraday)
-            faraday.request :retry, {
+            faraday.request :retry, retry_options
+          end
+
+          def retry_options
+            {
               max: @config.max_retries,
               interval: @config.retry_interval,
               interval_randomness: @config.retry_interval_randomness,
               backoff_factor: @config.retry_backoff_factor,
               methods: Faraday::Retry::Middleware::IDEMPOTENT_METHODS + [:post],
               exceptions: retry_exceptions
-            }
+            }.merge(retry_callbacks)
+          end
+
+          # Only the callbacks a provider actually set; nils are dropped so
+          # faraday-retry falls back to its own defaults (a bare `proc {}` for the
+          # blocks, `RateLimit-Reset` for the header) rather than being disabled.
+          def retry_callbacks
+            {
+              retry_block: @config.retry_block,
+              exhausted_retries_block: @config.exhausted_retries_block,
+              rate_limit_reset_header: @config.rate_limit_reset_header,
+              header_parser_block: @config.header_parser_block
+            }.compact
           end
 
           def setup_middleware(faraday)

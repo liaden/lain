@@ -121,5 +121,31 @@ module Lain
         deep_freeze!
       end
     end
+
+    # A transport-level retry, made visible. A silent retry hides real spend --
+    # on a bench whose headline metric is token cost, a retried (or dropped)
+    # request can bill more than the reported Usage ever shows -- so every retry
+    # lands here, in the Journal, where `Compare` can report attempts alongside
+    # tokens. `will_retry_in` is nil once the attempts are exhausted.
+    class ProviderRetry < Base
+      # @return [Integer] 1 for the first retry, 2 for the second, ...
+      attr_reader :attempt
+      # @return [Float, nil] seconds the transport will back off before retrying,
+      #   or nil when retries are exhausted and it is giving up
+      attr_reader :will_retry_in
+      # @return [Integer, nil] the failed response's HTTP status, when known
+      attr_reader :status
+      # @return [String, nil] what triggered the retry (an exception class name)
+      attr_reader :reason
+
+      def initialize(attempt:, will_retry_in: nil, status: nil, reason: nil)
+        super()
+        @attempt = attempt
+        @will_retry_in = will_retry_in
+        @status = status
+        @reason = reason
+        deep_freeze!
+      end
+    end
   end
 end
