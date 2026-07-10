@@ -147,5 +147,34 @@ module Lain
         deep_freeze!
       end
     end
+
+    # A Context combinator declared it `requires` a capability the Provider does
+    # not have, and the run's policy chose to DEGRADE rather than raise: the
+    # tactic silently became a no-op. "Silently" is the whole danger -- a
+    # cross-provider A/B where half the context tactics no-oped on one arm is a
+    # lie -- so the degradation is made LOUD here, as a durable record, and
+    # `Compare` refuses to compare two runs whose degraded sets differ.
+    #
+    # `requirer` and `provider` are names (Strings), not the objects, so the
+    # record is a self-describing value that serializes to one NDJSON line.
+    class CapabilityDegraded < Base
+      # @return [Symbol] the capability that was required but unsupported
+      attr_reader :capability
+      # @return [String] the requirer (a Context combinator) that needed it
+      attr_reader :requirer
+      # @return [String] the provider that lacked it
+      attr_reader :provider
+
+      # @param capability [Symbol]
+      # @param requirer [String]
+      # @param provider [String]
+      def initialize(capability:, requirer:, provider:)
+        super()
+        @capability = capability
+        @requirer = requirer
+        @provider = provider
+        deep_freeze!
+      end
+    end
   end
 end
