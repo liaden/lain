@@ -32,10 +32,18 @@ module Lain
     # under a different context without the loop knowing which.
     ModelCall = Data.define(:request)
 
-    # A gate: "this inner effect must be approved before it is performed." Wrapping
-    # rather than flagging keeps the danger explicit in the data -- an approving
-    # handler pattern-matches on the wrapper, and an effect that is *not* wrapped
-    # is, by construction, one nobody decided needed gating.
+    # A gate: "this inner effect must be approved before it is performed."
+    #
+    # There are two routes into {Lain::Handler::Approving}, and this wrapper is
+    # only one of them. Most gating is tier-based and needs no wrapper: a tool
+    # answers {Lain::Tool#requires_approval?} for itself (a free-form `bash` is
+    # gated; a structured `read_file` is not), and Approving reads that answer
+    # off the very tool it will dispatch. This wrapper is the second route -- it
+    # marks ONE specific call for approval regardless of the tool's own tier,
+    # for when something upstream decides a particular invocation needs a human
+    # even though the tool would normally run unattended. Wrapping keeps that
+    # per-call decision in the data, where Approving pattern-matches it rather
+    # than infers it.
     Approval = Data.define(:effect)
   end
 end
