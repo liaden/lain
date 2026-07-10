@@ -134,32 +134,7 @@ RSpec.describe Lain::Timeline do
         timelines
       end
 
-      it "is idempotent" do
-        population.sample(10).each { |a| expect(a.meet(a)).to eq(a) }
-      end
-
-      it "is commutative" do
-        10.times do
-          a, b = population.sample(2)
-          expect(a.meet(b)).to eq(b.meet(a))
-        end
-      end
-
-      it "is associative" do
-        10.times do
-          a, b, c = population.sample(3)
-          expect(a.meet(b).meet(c)).to eq(a.meet(b.meet(c)))
-        end
-      end
-
-      it "orders a meet below both operands" do
-        10.times do
-          a, b = population.sample(2)
-          m = a.meet(b)
-          expect(m.ancestor_of?(a)).to be(true)
-          expect(m.ancestor_of?(b)).to be(true)
-        end
-      end
+      include_examples "a meet semilattice under ancestry", population: -> { population }
     end
   end
 
@@ -185,20 +160,17 @@ RSpec.describe Lain::Timeline do
   end
 
   describe "equality (Regular)" do
-    it "is by head digest" do
-      one = say(timeline, "a")
-      expect(one).to eq(one.fork)
-      expect(one).not_to eq(say(timeline, "b"))
-    end
-
-    it "returns an Integer from #hash" do
-      expect(say(timeline, "a").hash).to be_a(Integer)
-    end
-
-    it "deduplicates in a Set" do
-      one = say(timeline, "a")
-      expect(Set[one, one.fork].size).to eq(1)
-    end
+    include_examples "a Regular value",
+                     equal_pair: lambda {
+                       one = say(timeline, "a")
+                       [one, one.fork]
+                     },
+                     unequal: -> { say(timeline, "b") },
+                     dedup: lambda {
+                       one = say(timeline, "a")
+                       [one, one.fork]
+                     },
+                     dedup_size: 1
   end
 
   # Subagents get a fresh root over the shared store; the parent's head is

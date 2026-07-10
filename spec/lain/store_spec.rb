@@ -20,20 +20,7 @@ RSpec.describe Lain::Store do
     expect(store.fetch(t.digest)).to eq(t)
   end
 
-  # The digest already names the content, so writing twice cannot mean anything
-  # different. Idempotence is what makes a shared store safe across branches.
-  it "is idempotent" do
-    t = turn("hi")
-    store.put(t)
-    store.put(t)
-    expect(store.size).to eq(1)
-  end
-
-  it "treats equal content as one object" do
-    store.put(turn("hi"))
-    store.put(turn("hi"))
-    expect(store.size).to eq(1)
-  end
+  include_examples "a content-addressed store", store: -> { store }, member: -> { turn("hi") }
 
   it "raises on a missing object" do
     expect { store.fetch("blake3:nope") }

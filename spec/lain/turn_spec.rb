@@ -96,30 +96,12 @@ RSpec.describe Lain::Turn do
   end
 
   describe "equality (Regular)" do
-    let(:a) { described_class.new(role: :user, content: text("hi")) }
-    let(:b) { described_class.new(role: :user, content: text("hi")) }
-    let(:c) { described_class.new(role: :user, content: text("bye")) }
-
-    it "is structural" do
-      expect(a).to eq(b)
-      expect(a).not_to eq(c)
-    end
-
-    it "is not equal to a non-Turn" do
-      expect(a).not_to eq(a.digest)
-    end
-
-    # Object#hash must stay an Integer or Hash and Set bucketing silently breaks.
-    it "returns an Integer from #hash" do
-      expect(a.hash).to be_a(Integer)
-    end
-
-    it "works as a Hash key" do
-      expect({ a => :found }[b]).to eq(:found)
-    end
-
-    it "deduplicates in a Set" do
-      expect(Set[a, b, c].size).to eq(2)
-    end
+    include_examples "a Regular value",
+                     equal_pair: lambda {
+                       [described_class.new(role: :user, content: text("hi")),
+                        described_class.new(role: :user, content: text("hi"))]
+                     },
+                     unequal: -> { described_class.new(role: :user, content: text("bye")) },
+                     non_member: -> { described_class.new(role: :user, content: text("hi")).digest }
   end
 end
