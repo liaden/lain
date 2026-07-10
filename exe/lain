@@ -26,11 +26,22 @@ class LainCLI < Thor
     toolset = build_toolset
     agent = build_agent(toolset: toolset, channel: channel)
     tty = Lain::Frontend::TTY.new(channel: channel)
+    repl_middleware = build_repl_middleware
 
-    tty.run { converse(agent, tty) }
+    tty.run { converse(agent, tty, repl_middleware) }
   end
 
   private
+
+  # The repl phase: a Middleware::Stack wrapping EACH command typed at the
+  # prompt, wired the same way Agent's model_/tool_/turn_middleware already
+  # are (see lib/lain/agent.rb) -- reusing Middleware::Stack rather than
+  # inventing a parallel mechanism. An honest pass-through by default; this is
+  # the seam a future history/logging/confirmation phase lands on, not that
+  # feature yet.
+  def build_repl_middleware
+    Lain::Middleware::Stack.new
+  end
 
   def build_toolset
     Lain::Toolset.new([
@@ -60,11 +71,21 @@ class LainCLI < Thor
   # No next/break: the loop's exit condition is `text`'s own truthiness,
   # reassigned each pass, the same shape the project's style favors elsewhere
   # (`digest &&= step`).
-  def converse(agent, tty)
+  def converse(agent, tty, repl_middleware)
     text = tty.prompt("you> ")
     while text && !farewell?(text)
-      respond(agent, tty, text)
+      dispatch(agent, tty, repl_middleware, text)
       text = tty.prompt("you> ")
+    end
+  end
+
+  # Routes one typed command through the repl phase. `:text`/`:agent` go in;
+  # the phase's downstream runs the real dispatch and adds `:response` (nil on
+  # a rescued Lain::Error) on the way out -- the same in/out shape
+  # model_middleware uses for `:request`/`:response`.
+  def dispatch(agent, tty, repl_middleware, text)
+    repl_middleware.call({ text: text, agent: agent }) do |env|
+      env.merge(response: respond(agent, tty, env.fetch(:text)))
     end
   end
 
