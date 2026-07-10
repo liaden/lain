@@ -28,6 +28,7 @@ require_relative "lain/provider/mock"
 require_relative "lain/workspace"
 require_relative "lain/context"
 require_relative "lain/agent"
+require_relative "lain/frontend"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
