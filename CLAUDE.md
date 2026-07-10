@@ -55,9 +55,6 @@ separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`). Config that 
 - **No `next`, `break`, or `redo`** unless genuinely unavoidable. `raise ... unless cond` beats
   `next if cond`; `select` then `each` beats `next unless`; `digest &&= step` beats
   `break if digest.nil?`.
-- **No ActiveSupport core extensions in `lib/`** for their own sake. `activemodel` is a
-  dependency for declarative validation of tool input *shape*; reach for it there, not to save
-  three characters elsewhere.
 - **Tool input goes through `Tool::Input`** (ActiveModel). One declaration yields both the JSON
   Schema the model sees and the local validation, so they cannot drift, and you get type
   coercion for free. Those validations check **shape, not safety** — read the comment at the
