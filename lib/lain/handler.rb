@@ -83,3 +83,4 @@ end
 require_relative "handler/approving"
 require_relative "handler/live"
 require_relative "handler/mock"
+require_relative "handler/recorded"
