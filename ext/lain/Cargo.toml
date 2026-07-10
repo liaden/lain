@@ -21,3 +21,14 @@ libc = "0.2"
 # in this project -- Ruby calls into this ext rather than carrying a second,
 # separately-vendored copy of the algorithm.
 blake3 = "1"
+# Persistent map with structural sharing: the Store keeps every Turn in an
+# `rpds` HAMT, so a Timeline `fork` is O(1) *in fact* -- both branches read the
+# same immutable nodes and a shared prefix is stored once. Chosen over `im`,
+# which has a soundness-advisory history that `cargo deny`/`cargo audit` flag.
+rpds = "1"
+# Insertion-ordered map used while canonicalizing an object: keys are collected
+# in wire order, a second occurrence of a collapsed key is the ambiguous-key
+# error, and `sort_keys` then gives the deterministic ordering `Canonical.dump`
+# requires. Deterministic iteration is exactly the sorted-key stability the
+# prompt cache depends on.
+indexmap = "2"
