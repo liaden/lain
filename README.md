@@ -91,7 +91,7 @@ flowchart LR
     NVIM["nvim --listen"]
   end
   TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M4| NVIM
-  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust)<br/>pure · synchronous<br/>Timeline · Canonical · tracing"]
+  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust)<br/>pure · synchronous<br/>tracing → NDJSON (built)<br/>Timeline · Canonical: NOT BUILT, M4"]
   TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M6| CORE["crates/lain-core (Rust · tokio)<br/>exec sandbox · BM25 · parallel tools"]
   TTY -->|HTTPS| ANTH["api.anthropic.com"]
   TTY -->|HTTPS| OAI["OpenAI-compatible backends<br/>NOT BUILT"]
@@ -154,7 +154,7 @@ Tool dispatch, middleware, and journal replay are collapsed into a single idea. 
 
 There are four middleware phases, all sharing one protocol: a model stack wrapping each provider completion (retry, cost accounting, cache instrumentation, request logging), a tool stack wrapping each tool call (approval gate, timeout, contract checking, result truncation, journaling), a turn stack wrapping each agent turn (budget, iteration ceiling, interrupt, speculative fork), and a REPL stack wrapping each REPL command. Because middleware ordering is the classic Rack footgun, the stacks are inspectable and mutable in the Sidekiq style, with `to_a`, `insert_before`, and `insert_after`.
 
-The model middleware phase is load-bearing rather than decorative, for a transport reason. The official `anthropic` gem uses `net/http` and `connection_pool`, not Faraday, so Faraday middleware cannot wrap the Claude path. The model phase is therefore the single layer at which both transports look identical to the bench, which is why retries, cost accounting, and cache instrumentation live there rather than in any provider's own HTTP stack.
+The model middleware phase is load-bearing rather than decorative, for a transport reason. Lain runs two transports that do not share an HTTP stack: the official `anthropic` gem — kept as the correctness oracle (`Provider::Anthropic`) — uses `net/http` and `connection_pool`, while the forked transport that will become the default Claude path is Faraday-based. Faraday middleware can wrap the latter but not the former, so it cannot be the layer where cross-transport instrumentation lives. The model phase is therefore the single layer at which both transports look identical to the bench, which is why retries, cost accounting, and cache instrumentation live there rather than in any provider's own HTTP stack.
 
 ### Context is a monoid of message transformations
 
