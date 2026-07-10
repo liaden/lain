@@ -32,7 +32,7 @@ module Lain
       # @return [Policy]
       # @raise [ArgumentError] on an unknown policy name (unknown values fail loudly)
       def self.for(name, journal: Channel::Null.new)
-        strategy = { strict: Strict, degrade: Degrade }[name]
+        strategy = STRATEGIES[name]
         if strategy.nil?
           raise ArgumentError,
                 "unknown capability policy #{name.inspect}, expected one of #{NAMES.inspect}"
@@ -49,7 +49,12 @@ module Lain
       # @param provider [#supports?, #require!]
       # @return [DegradedSet] the capabilities that degraded on this run
       def resolve(requirer, provider)
-        missing = requirer.requires.reject { |capability| provider.supports?(capability) }
+        # Normalize and dedup FIRST: a combinator that concatenates its parts'
+        # `#requires` can yield the same capability twice, and the "exactly one
+        # degradation per missing capability" invariant must hold over the
+        # capability, not over how many times it was asked for.
+        required = requirer.requires.map(&:to_sym).uniq
+        missing = required.reject { |capability| provider.supports?(capability) }
         missing.each { |capability| handle_missing(capability, requirer, provider) }
         DegradedSet.new(missing)
       end
@@ -84,6 +89,12 @@ module Lain
           )
         end
       end
+
+      # Defined after the strategies it names: `.for` reads it at call time, so a
+      # forward reference from the top of the class body is avoided. Private: an
+      # internal lookup table, not part of the surface (`.for` is).
+      STRATEGIES = { strict: Strict, degrade: Degrade }.freeze
+      private_constant :STRATEGIES
     end
   end
 end

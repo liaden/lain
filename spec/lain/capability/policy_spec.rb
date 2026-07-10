@@ -93,6 +93,14 @@ RSpec.describe Lain::Capability::Policy do
       expect(journal.events.map(&:capability)).to contain_exactly(:thinking, :server_tools)
     end
 
+    it "journals exactly one record when #requires yields the capability twice" do
+      duplicated = FakeRequirer.new(%i[thinking thinking])
+      set = policy.resolve(duplicated, lacking)
+      expect(set.to_a).to eq(%i[thinking])
+      expect(journal.events.size).to eq(1)
+      expect(journal.events.first.capability).to eq(:thinking)
+    end
+
     it "journals nothing and degrades nothing when everything is supported" do
       set = policy.resolve(requirer, full)
       expect(set).to be_empty
