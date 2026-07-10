@@ -69,7 +69,7 @@ RSpec.describe Lain::Timeline do
     end
 
     it "refuses to check out a digest the store has never seen" do
-      expect { three.checkout("sha256:nope") }.to raise_error(Lain::Store::MissingObject)
+      expect { three.checkout("blake3:nope") }.to raise_error(Lain::Store::MissingObject)
     end
   end
 

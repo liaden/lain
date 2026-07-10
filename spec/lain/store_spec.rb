@@ -36,7 +36,7 @@ RSpec.describe Lain::Store do
   end
 
   it "raises on a missing object" do
-    expect { store.fetch("sha256:nope") }
+    expect { store.fetch("blake3:nope") }
       .to raise_error(Lain::Store::MissingObject, /no object/)
   end
 

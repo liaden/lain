@@ -21,10 +21,10 @@ RSpec.describe "Journal x Rust tracing seam" do
       # so the Journal still owns and will close the original.
       installed = Lain::Ext.init_tracing("info", journal.fileno)
 
-      journal.record("type" => "turn", "digest" => "sha256:aaa")
+      journal.record("type" => "turn", "digest" => "blake3:aaa")
       # A Rust span+event, emitted synchronously into the same fd.
       Lain.hello("seam")
-      journal.record("type" => "turn", "digest" => "sha256:bbb")
+      journal.record("type" => "turn", "digest" => "blake3:bbb")
       Lain.hello("again")
       journal.record("type" => "usage", "input_tokens" => 42)
 
@@ -40,7 +40,7 @@ RSpec.describe "Journal x Rust tracing seam" do
 
       # Ruby events are present and carry our fields.
       digests = records.filter_map { |r| r["digest"] }
-      expect(digests).to include("sha256:aaa", "sha256:bbb")
+      expect(digests).to include("blake3:aaa", "blake3:bbb")
 
       # When this process installed the subscriber, the Rust spans are here too,
       # interleaved as their own JSON lines. (A prior install in the same process
