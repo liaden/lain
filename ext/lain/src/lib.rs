@@ -7,6 +7,8 @@
 
 use tracing_subscriber::EnvFilter;
 
+mod canonical;
+
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
 /// directive string (e.g. `"info"`, `"debug"`, `"lain=trace,warn"`).
 ///
@@ -71,7 +73,11 @@ fn blake3_hex(bytes: &[u8]) -> String {
 #[cfg(not(test))]
 mod ffi {
     use super::{blake3_hex, build_env_filter, dup_writer};
-    use magnus::{function, method, prelude::*, DataTypeFunctions, Error, Ruby, TypedData};
+    use crate::canonical::{self, Canon};
+    use magnus::{
+        function, method, prelude::*, r_hash::ForEach, DataTypeFunctions, Error, Float, Integer,
+        RArray, RHash, RModule, RString, Ruby, Symbol, TypedData, Value,
+    };
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 
@@ -198,9 +204,140 @@ mod ffi {
     /// `Lain::Canonical`'s content-addressing hash. Thin FFI wrapper over
     /// [`super::blake3_hex`]; the hashing itself is tested in `cargo test`
     /// without libruby, so this wrapper has nothing left to get wrong beyond
-    /// the string marshaling magnus already handles.
-    fn ffi_blake3_hex(bytes: String) -> String {
-        blake3_hex(bytes.as_bytes())
+    /// reading the argument's bytes.
+    ///
+    /// Threads the argument's raw bytes rather than a UTF-8 `String`. blake3 is
+    /// a function over bytes; typing the boundary as `String` would silently
+    /// transcode (or reject) a future binary caller. `Canonical` passes a UTF-8
+    /// JSON dump, so its bytes are unchanged.
+    fn ffi_blake3_hex(bytes: RString) -> String {
+        // SAFETY: we do not call back into Ruby (which could move or free the
+        // string) between borrowing the slice and hashing it.
+        blake3_hex(unsafe { bytes.as_slice() })
+    }
+
+    /// Build the `Lain::Canonical::<name>` exception with `message`. Looked up at
+    /// raise-time (not ext-init) because `canonical.rb` defines these classes
+    /// after it requires this extension. A lookup failure surfaces as the
+    /// underlying `NameError` rather than being swallowed.
+    fn canonical_error(ruby: &Ruby, name: &str, message: String) -> Error {
+        let class = ruby
+            .class_object()
+            .const_get::<_, RModule>("Lain")
+            .and_then(|m| m.const_get::<_, RModule>("Canonical"))
+            .and_then(|m| m.const_get::<_, magnus::ExceptionClass>(name));
+        match class {
+            Ok(exception) => Error::new(exception, message),
+            Err(lookup_failure) => lookup_failure,
+        }
+    }
+
+    /// Read a Ruby value into a [`Canon`], applying `Canonical.normalize`'s rules
+    /// and raising the matching `Lain::Canonical` error on anything JSON cannot
+    /// represent. Numbers keep the text Ruby renders (see `canonical.rs`): an
+    /// Integer via `#to_s`, a Float via `JSON.generate`, so the bytes match
+    /// Ruby's exactly even where Rust's float formatting would diverge.
+    fn ruby_to_canon(ruby: &Ruby, value: Value) -> Result<Canon, Error> {
+        if value.is_nil() {
+            Ok(Canon::Null)
+        } else if value.equal(ruby.qtrue()).unwrap_or(false) {
+            Ok(Canon::Bool(true))
+        } else if value.equal(ruby.qfalse()).unwrap_or(false) {
+            Ok(Canon::Bool(false))
+        } else if let Some(integer) = Integer::from_value(value) {
+            Ok(Canon::Num(integer.funcall("to_s", ())?))
+        } else if let Some(float) = Float::from_value(value) {
+            canon_float(ruby, float, value)
+        } else if let Some(string) = RString::from_value(value) {
+            Ok(Canon::Str(utf8(ruby, string)?))
+        } else if let Some(symbol) = Symbol::from_value(value) {
+            Ok(Canon::Str(utf8(ruby, symbol.funcall("to_s", ())?)?))
+        } else if let Some(array) = RArray::from_value(value) {
+            let items = array
+                .into_iter()
+                .map(|element| ruby_to_canon(ruby, element))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Canon::Array(items))
+        } else if let Some(hash) = RHash::from_value(value) {
+            canon_hash(ruby, hash)
+        } else {
+            // SAFETY: classname reads the object's class name; no Ruby code runs
+            // meanwhile.
+            let class = unsafe { value.classname() }.into_owned();
+            Err(canonical_error(
+                ruby,
+                "UnsupportedType",
+                format!("cannot canonicalize {class}"),
+            ))
+        }
+    }
+
+    fn canon_float(ruby: &Ruby, float: Float, value: Value) -> Result<Canon, Error> {
+        // JSON has no NaN/Infinity; a hash over one would not round-trip. Checked
+        // before rendering so the error is `NonFiniteFloat`, not JSON's own.
+        if !float.to_f64().is_finite() {
+            return Err(canonical_error(
+                ruby,
+                "NonFiniteFloat",
+                "cannot canonicalize a non-finite Float".to_string(),
+            ));
+        }
+        let json = ruby.class_object().const_get::<_, RModule>("JSON")?;
+        Ok(Canon::Num(json.funcall("generate", (value,))?))
+    }
+
+    fn canon_hash(ruby: &Ruby, hash: RHash) -> Result<Canon, Error> {
+        let mut pairs: Vec<(String, Canon)> = Vec::new();
+        hash.foreach(|key: Value, val: Value| {
+            pairs.push((canon_key(ruby, key)?, ruby_to_canon(ruby, val)?));
+            Ok(ForEach::Continue)
+        })?;
+        let object = canonical::build_object(pairs)
+            .map_err(|ambiguous| canonical_error(ruby, "AmbiguousKey", ambiguous.message()))?;
+        Ok(Canon::Object(object))
+    }
+
+    fn canon_key(ruby: &Ruby, key: Value) -> Result<String, Error> {
+        if let Some(string) = RString::from_value(key) {
+            utf8(ruby, string)
+        } else if let Some(symbol) = Symbol::from_value(key) {
+            utf8(ruby, symbol.funcall("to_s", ())?)
+        } else {
+            // SAFETY: see `ruby_to_canon`.
+            let class = unsafe { key.classname() }.into_owned();
+            Err(canonical_error(
+                ruby,
+                "UnsupportedType",
+                format!("hash keys must be String or Symbol, got {class}"),
+            ))
+        }
+    }
+
+    /// A validated UTF-8 `String`, transcoding from the string's own encoding
+    /// exactly as `Canonical#utf8` does: `RString::to_string` takes the valid
+    /// UTF-8 fast path or `rb_str_conv_enc`, and errors on bytes that are not
+    /// convertible -- which is precisely when Ruby raises.
+    fn utf8(ruby: &Ruby, string: RString) -> Result<String, Error> {
+        string.to_string().map_err(|_| {
+            canonical_error(
+                ruby,
+                "UnsupportedType",
+                "string is not valid UTF-8".to_string(),
+            )
+        })
+    }
+
+    /// `Lain::Ext.canonical_dump` -- the byte-identical twin of `Canonical.dump`,
+    /// driving the shared `canonical determinism` group against this impl.
+    fn canonical_dump(ruby: &Ruby, value: Value) -> Result<String, Error> {
+        Ok(canonical::dump(&ruby_to_canon(ruby, value)?))
+    }
+
+    /// `Lain::Ext.canonical_digest` -- `"blake3:" + hex`, equal to
+    /// `Canonical.digest` byte-for-byte. This is the entry the Rust `Turn` will
+    /// hash through, and the one the digest-equality spec pins to Ruby.
+    fn canonical_digest(ruby: &Ruby, value: Value) -> Result<String, Error> {
+        Ok(canonical::digest(&ruby_to_canon(ruby, value)?))
     }
 
     #[magnus::init]
@@ -211,6 +348,8 @@ mod ffi {
         let ext = module.define_module("Ext")?;
         ext.define_singleton_method("init_tracing", function!(init_tracing, 2))?;
         ext.define_singleton_method("blake3_hex", function!(ffi_blake3_hex, 1))?;
+        ext.define_singleton_method("canonical_dump", function!(canonical_dump, 1))?;
+        ext.define_singleton_method("canonical_digest", function!(canonical_digest, 1))?;
 
         let share_probe = ext.define_class("ShareProbe", ruby.class_object())?;
         share_probe.define_singleton_method("new", function!(ShareProbe::new, 1))?;
@@ -266,6 +405,20 @@ mod blake3_tests {
         assert_eq!(
             blake3_hex(b""),
             "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+    }
+
+    // Official BLAKE3 test vector for a 1024-byte input -- the first size that
+    // spans more than one 1024-byte chunk boundary, so it exercises the tree
+    // hashing the empty-string vector never reaches. Real canonical dumps easily
+    // exceed one chunk. Input is byte `i % 251`; the expected digest was checked
+    // independently with `b3sum`.
+    #[test]
+    fn hashes_a_multi_chunk_input() {
+        let input: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
+        assert_eq!(
+            blake3_hex(&input),
+            "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7"
         );
     }
 
