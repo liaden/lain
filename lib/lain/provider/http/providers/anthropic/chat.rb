@@ -1,36 +1,34 @@
 # frozen_string_literal: true
 
+require_relative "chat/message_formatting"
+require_relative "chat/thinking_payload"
+require_relative "chat/response_parsing"
+
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/providers/anthropic/chat.rb.
-# Changed: RubyLLM:: -> Lain::Provider::HTTP::. `append_formatted_content` and
-# `build_system_content` called the module-level `Media.format_content` (not
-# vendored -- leak site 7); both now call `Tools.format_content` instead,
-# which `tools.rb` defines as the text-only remainder of the same method
-# (leak site 9: Content carries no attachments to branch on any more).
+# Changed: RubyLLM:: -> Lain::Provider::HTTP::. `build_system_content`'s
+# module-qualified `Media.format_content` (not vendored -- leak site 7) is
+# now `Tools.format_content`, the text-only remainder of the same method
+# (leak site 9: Content carries no attachments to branch on).
 #
-# `parse_completion_response` still flattens every text block into one String
-# and keeps only the first thinking block's signature. That is deliberate --
-# the porting brief is explicit that this branch must NOT change it. Making
-# it retain the full block list is the `transport` branch's first mutation.
-#
-# Upstream is one 197-line file/module, past this project's default
-# `Metrics/ModuleLength` (100) with no loosening allowed. `Chat` is still one
-# logical module (`include Anthropic::Chat` in anthropic.rb is unchanged),
-# but its four real responsibilities -- payload assembly (here), message-to-
-# wire-block formatting, extended-thinking payload construction, and
-# response parsing -- are split across four files, each reopening `module
-# Chat` and each independently under 100 lines. Ruby modules are reopenable
-# on purpose; this is the same pattern ActiveRecord::Base uses across dozens
-# of files, not a Metrics dodge.
+# Upstream is one 197-line module, past this project's default
+# `Metrics/ModuleLength` (100) with no loosening allowed. `Chat` is now a thin
+# facade -- payload assembly plus `#completion_url` -- that DELEGATES message
+# formatting, extended-thinking payload construction, and response parsing to
+# three genuinely separate modules (`Chat::MessageFormatting`,
+# `Chat::ThinkingPayload`, `Chat::ResponseParsing`), each owning its own
+# namespace and private helpers. `Chat` itself got smaller, which is the
+# point of the cop; this is the same composition-and-delegation move
+# `StreamAccumulator` makes with its two collaborators, not a per-file split
+# of one oversized module.
 
 module Lain
   class Provider
     module HTTP
       module Providers
         class Anthropic
-          # Chat/completion payload rendering and response parsing. Split
-          # across chat.rb (payload assembly), chat/message_formatting.rb,
-          # chat/thinking_payload.rb, and chat/response_parsing.rb -- see the
-          # header above.
+          # Chat/completion payload assembly. Mixed into {Anthropic} via
+          # `include`; delegates to {MessageFormatting}, {ThinkingPayload},
+          # and {ResponseParsing}.
           module Chat
             module_function
 
@@ -68,12 +66,12 @@ module Lain
             def build_base_payload(chat_messages, model, stream, thinking)
               payload = {
                 model: model.id,
-                messages: chat_messages.map { |msg| format_message(msg, thinking:) },
+                messages: chat_messages.map { |msg| MessageFormatting.format_message(msg, thinking:) },
                 stream: stream,
                 max_tokens: model.max_tokens || 4096
               }
 
-              add_thinking_fields(payload, thinking, model)
+              ThinkingPayload.add_thinking_fields(payload, thinking, model)
 
               payload
             end
@@ -100,13 +98,13 @@ module Lain
               normalized.delete("strict")
               { format: { type: "json_schema", schema: normalized } }
             end
+
+            def parse_completion_response(response)
+              ResponseParsing.parse_completion_response(response)
+            end
           end
         end
       end
     end
   end
 end
-
-require_relative "chat/message_formatting"
-require_relative "chat/thinking_payload"
-require_relative "chat/response_parsing"
