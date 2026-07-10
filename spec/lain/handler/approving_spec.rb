@@ -31,7 +31,7 @@ RSpec.describe Lain::Handler::Approving do
       # anything, this would raise "received unexpected message" and fail
       # the example -- which is the point.
       untouched_policy = double("never consulted")
-      approving = described_class.new(toolset: toolset, policy: untouched_policy, inner: live)
+      approving = described_class.new(policy: untouched_policy, inner: live)
 
       expect(approving.call(tool_call("safe"))).to eq(Lain::Tool::Result.ok("safe"))
     end
@@ -39,7 +39,7 @@ RSpec.describe Lain::Handler::Approving do
 
   describe "a gated tool, denied" do
     it "returns an is_error Result rather than raising, and never reaches inner" do
-      approving = described_class.new(toolset: toolset, policy: described_class::DenyAll.new, inner: live)
+      approving = described_class.new(policy: described_class::DenyAll.new, inner: live)
 
       result = approving.call(tool_call("dangerous"))
 
@@ -50,7 +50,7 @@ RSpec.describe Lain::Handler::Approving do
 
   describe "a gated tool, approved" do
     it "delegates to inner and returns its Result" do
-      approving = described_class.new(toolset: toolset, policy: described_class::ApproveAll.new, inner: live)
+      approving = described_class.new(policy: described_class::ApproveAll.new, inner: live)
 
       expect(approving.call(tool_call("dangerous", { text: "went through" })))
         .to eq(Lain::Tool::Result.ok("went through"))
@@ -59,7 +59,7 @@ RSpec.describe Lain::Handler::Approving do
 
   describe "DenyAll is the default policy" do
     it "denies a gated call when no policy is given" do
-      approving = described_class.new(toolset: toolset, inner: live)
+      approving = described_class.new(inner: live)
       expect(approving.call(tool_call("dangerous"))).to have_attributes(is_error: true)
     end
   end
@@ -67,14 +67,14 @@ RSpec.describe Lain::Handler::Approving do
   describe "an explicit Effect::Approval wrapper" do
     it "is gated regardless of the wrapped tool's own tier" do
       wrapped = Lain::Effect::Approval.new(effect: tool_call("safe"))
-      approving = described_class.new(toolset: toolset, policy: described_class::DenyAll.new, inner: live)
+      approving = described_class.new(policy: described_class::DenyAll.new, inner: live)
 
       expect(approving.call(wrapped)).to have_attributes(is_error: true, content: /denied/)
     end
 
     it "runs the inner effect once approved" do
       wrapped = Lain::Effect::Approval.new(effect: tool_call("safe", { text: "unwrapped" }))
-      approving = described_class.new(toolset: toolset, policy: described_class::ApproveAll.new, inner: live)
+      approving = described_class.new(policy: described_class::ApproveAll.new, inner: live)
 
       expect(approving.call(wrapped)).to eq(Lain::Tool::Result.ok("unwrapped"))
     end
@@ -82,7 +82,7 @@ RSpec.describe Lain::Handler::Approving do
 
   describe "an unknown tool named in a bare ToolCall" do
     it "is not gated, and falls through to inner to report the usual unknown-tool error" do
-      approving = described_class.new(toolset: toolset, policy: described_class::DenyAll.new, inner: live)
+      approving = described_class.new(policy: described_class::DenyAll.new, inner: live)
 
       result = approving.call(tool_call("ghost"))
       expect(result).to have_attributes(is_error: true, content: /no tool named/)
@@ -91,8 +91,29 @@ RSpec.describe Lain::Handler::Approving do
 
   describe "an approved effect with no inner handler" do
     it "raises UnhandledEffect rather than silently doing nothing" do
-      approving = described_class.new(toolset: toolset, policy: described_class::ApproveAll.new)
-      expect { approving.call(tool_call("dangerous")) }.to raise_error(Lain::Handler::UnhandledEffect)
+      # A wrapper is handled regardless of inner, so this reaches the approve
+      # branch and then finds nothing to run -- which must fail loudly.
+      approving = described_class.new(policy: described_class::ApproveAll.new)
+      wrapped = Lain::Effect::Approval.new(effect: tool_call("dangerous"))
+      expect { approving.call(wrapped) }.to raise_error(Lain::Handler::UnhandledEffect)
+    end
+  end
+
+  describe "one map, by construction" do
+    # The regression this guards: a gate holding its own Toolset could decide
+    # tier against a different map than the executor dispatches from, running a
+    # tier-3 call ungated. Approving holds no Toolset -- it reads the tier off
+    # the tool inner will actually run -- so the two cannot diverge.
+    it "reads tier from the inner handler's toolset, not a second reference" do
+      approving = described_class.new(policy: described_class::DenyAll.new, inner: live)
+
+      expect(approving.call(tool_call("dangerous"))).to have_attributes(is_error: true, content: /denied/)
+      expect(approving.call(tool_call("safe"))).to eq(Lain::Tool::Result.ok("safe"))
+    end
+
+    it "does not accept a toolset of its own to diverge from" do
+      expect { described_class.new(toolset: Lain::Toolset.new([safe]), inner: live) }
+        .to raise_error(ArgumentError)
     end
   end
 
@@ -104,7 +125,7 @@ RSpec.describe Lain::Handler::Approving do
         true
       end
       wrapped = Lain::Effect::Approval.new(effect: tool_call("safe"))
-      approving = described_class.new(toolset: toolset, policy: policy, inner: live)
+      approving = described_class.new(policy: policy, inner: live)
 
       approving.call(wrapped, "some context")
 

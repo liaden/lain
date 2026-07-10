@@ -2,7 +2,6 @@
 
 require_relative "../effect"
 require_relative "../tool"
-require_relative "../toolset"
 
 module Lain
   class Handler
@@ -21,6 +20,14 @@ module Lain
     # {Effect::Approval} wrapper is gated regardless of the tool's own tier:
     # wrapping is how something upstream says "this one, specifically" without
     # Approving needing to know why.
+    #
+    # Approving holds NO Toolset of its own. It asks its `inner` handler what a
+    # name resolves to ({Handler#tool_named}), so the tier it gates on is read
+    # from the exact tool the executor will dispatch. A second Toolset reference
+    # here could diverge from the executor's, and then the gate would consult
+    # one map while dispatch used another -- authorization decided against a
+    # different set than possession, the very failure "tools are capabilities,
+    # not permissions" exists to prevent. One map, by construction.
     #
     # The approval decision is an injected policy -- anything answering
     # `#call(effect, context) -> Boolean` -- never a hardcoded terminal prompt.
@@ -42,14 +49,12 @@ module Lain
         def call(_effect, _context) = false
       end
 
-      # @param toolset [Lain::Toolset] used to look up a bare ToolCall's tool
-      #   and ask whether it requires approval
       # @param policy [#call] `(effect, context) -> Boolean`, the approval
       #   decision; receives the inner ToolCall even when wrapped in an Approval
-      # @param inner [Lain::Handler, nil] performs the effect once approved
-      def initialize(toolset:, policy: DenyAll.new, inner: nil)
+      # @param inner [Lain::Handler, nil] performs the effect once approved, and
+      #   the single source of truth for what a tool name resolves to
+      def initialize(policy: DenyAll.new, inner: nil)
         super(inner: inner)
-        @toolset = toolset
         @policy = policy
       end
 
@@ -79,12 +84,12 @@ module Lain
       def gated_tool_call?(effect)
         return false unless effect.is_a?(Effect::ToolCall)
 
-        @toolset.fetch(effect.name).requires_approval?
-      rescue Toolset::UnknownTool
-        # Not this handler's problem to report; let it fall through to inner
-        # (or, if there is none, raise UnhandledEffect the way any effect this
-        # handler declines does).
-        false
+        # Ask inner what this name resolves to, so the tier is read off the tool
+        # the executor will dispatch. A name inner does not hold (nil) is not
+        # this handler's problem to report: it falls through to inner, which
+        # raises the usual unknown-tool error the way any declined effect does.
+        tool = tool_named(effect.name)
+        !tool.nil? && tool.requires_approval?
       end
     end
   end

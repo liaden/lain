@@ -42,6 +42,16 @@ module Lain
         effect.is_a?(Effect::ToolCall) || effect.is_a?(Effect::Approval)
       end
 
+      # The tool this handler would dispatch for `name`, or a delegation inward
+      # when its own Toolset does not hold it. Because dispatch and this lookup
+      # read the same `@toolset`, a decorator that gates via {Handler#tool_named}
+      # is guaranteed to consult the map this handler will actually run against.
+      def tool_named(name)
+        return @toolset.fetch(name) if @toolset.include?(name)
+
+        super
+      end
+
       protected
 
       def perform(effect, context)

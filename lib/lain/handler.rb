@@ -55,6 +55,21 @@ module Lain
       false
     end
 
+    # Resolve the {Lain::Tool} a ToolCall names, as seen from this point in the
+    # chain. Only the handler that actually holds a {Lain::Toolset} ({Live}) can
+    # answer; every other handler delegates inward. This is what lets a decorator
+    # like {Approving} decide *whether* a call is gated against the exact same map
+    # the executor will *dispatch* against -- one Toolset by construction, so the
+    # gate and the executor can never disagree about what a name means. The
+    # alternative, giving the decorator its own Toolset reference, lets the two
+    # diverge silently, which is precisely the "capabilities, not permissions"
+    # failure: authorization decided against a different set than possession.
+    #
+    # @return [Lain::Tool, nil] the tool, or nil if no handler in the chain holds it
+    def tool_named(name)
+      @inner&.tool_named(name)
+    end
+
     protected
 
     # The subclass's interpretation of an effect it {#handles?}. Never called for
