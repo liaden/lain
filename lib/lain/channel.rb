@@ -14,20 +14,37 @@ module Lain
   # == Overflow policy: BLOCK the producer (bounded backpressure)
   #
   # Backed by a `SizedQueue`, so when the queue is full {#push} blocks the
-  # calling (producer) thread until a consumer drains space. We block rather
-  # than drop-oldest because the channel feeds the Journal, and the Journal is
-  # the experiment's record: silently dropping a `bash` tool's output would
-  # corrupt provenance exactly the way a shared byte buffer would. Backpressure
-  # instead throttles a runaway producer (a `bash` command spewing megabytes)
-  # to the rate the frontend can drain -- correct-by-construction, no data loss.
+  # calling (producer) thread until a consumer drains space. Backpressure
+  # throttles a runaway producer (a `bash` command spewing megabytes) to the rate
+  # its consumer can drain -- bounded memory, no data loss, at the cost of a
+  # producer that can stall.
+  #
+  # == Which consumer wants this, and which does not
+  #
+  # An earlier design justified blocking by "the channel feeds the Journal, and
+  # the Journal is the record, so it must not drop." That conflated two consumers
+  # with opposite needs. The record's durability now lives in {Lain::Journal},
+  # which writes synchronously to its own fd under a mutex; the Journal does not
+  # ride this channel at all. What remains on the channel is the FRONTEND, a
+  # consumer that may freely drop, because it renders -- it is not the record.
+  #
+  # So the two policies are split (see the plan, "Two consumers, two policies"):
+  #
+  # - {Lain::Channel} (this class) keeps blocking backpressure, for a consumer
+  #   that genuinely must not miss an event and can afford to throttle its
+  #   producer. It is still the right default where a stall is acceptable.
+  # - {Lain::Channel::DropOldest} drops the oldest event on overflow and surfaces
+  #   a {Lain::Event::Dropped} count, for the frontend, where a blocked producer
+  #   would be a deadlock if the render thread ever raised.
+  #
+  # Both satisfy the same `push`/`pop`/`drain`/`close`/`Null` duck, so the wiring
+  # -- not the producer -- chooses the policy.
   #
   # The real risk of blocking is deadlock if *nobody* drains. Two things guard
-  # against it: (1) the frontend owns a thread whose sole job is to drain and
-  # render, so under normal operation a consumer always exists; and (2) {#close}
-  # wakes every blocked producer with a `ClosedQueueError`, so teardown can
-  # never wedge a producer forever. The dropping alternative trades a loud,
-  # debuggable stall for silent corruption of the record -- the wrong trade for
-  # a bench whose entire value is a trustworthy log.
+  # against it: (1) a consumer thread whose sole job is to drain and render, so
+  # under normal operation a consumer always exists; and (2) {#close} wakes every
+  # blocked producer with a `ClosedQueueError`, so teardown can never wedge a
+  # producer forever.
   class Channel
     # Default number of in-flight events before {#push} applies backpressure.
     # Large enough to absorb bursts, small enough that a runaway producer is
@@ -118,3 +135,5 @@ module Lain
     end
   end
 end
+
+require_relative "channel/drop_oldest"

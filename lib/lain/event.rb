@@ -32,6 +32,27 @@ module Lain
         instance_variables.sort.map { |ivar| instance_variable_get(ivar) }
       end
 
+      # A JSON-object representation for {Lain::Journal}. Every event is already a
+      # small attributed value, so its journal form is its attributes plus a
+      # `type` tag that lets a reader discriminate the record without inspecting
+      # its shape. The {Lain::Journal} adds durability and a timestamp; an event
+      # only has to describe itself.
+      # @return [Hash{String=>Object}]
+      def to_journal
+        attributes = instance_variables.to_h do |ivar|
+          [ivar.to_s.delete_prefix("@"), instance_variable_get(ivar)]
+        end
+        { "type" => journal_type }.merge(attributes)
+      end
+
+      # The record's discriminator: the class's short name in snake_case, so
+      # {ToolOutput} journals as `"tool_output"`. Overridable, but the default is
+      # what a reader expects.
+      # @return [String]
+      def journal_type
+        self.class.name.split("::").last.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
+      end
+
       private
 
       # Freeze the receiver and each of its attribute values, giving a value
@@ -74,6 +95,29 @@ module Lain
         @tool_use_id = tool_use_id
         @stream = stream
         @bytes = bytes
+        deep_freeze!
+      end
+    end
+
+    # A marker that N events were dropped to make room for newer ones. Emitted by
+    # a drop-oldest channel (see {Lain::Channel::DropOldest}) so a consumer that
+    # freely drops still learns *that* it dropped, and how many. The frontend can
+    # render "... (12 events dropped)"; the Journal, which never drops, never
+    # produces one. `count` is the number lost since the last marker was surfaced.
+    class Dropped < Base
+      # @return [Integer] events dropped since the previous marker (always > 0)
+      attr_reader :count
+
+      # @param count [Integer] number of dropped events (must be positive)
+      # @raise [ArgumentError] if `count` is not a positive Integer
+      def initialize(count:)
+        super()
+        unless count.is_a?(Integer) && count.positive?
+          raise ArgumentError,
+                "count must be a positive Integer, got #{count.inspect}"
+        end
+
+        @count = count
         deep_freeze!
       end
     end
