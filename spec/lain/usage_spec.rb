@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "lain/usage"
+
 RSpec.describe Lain::Usage do
   def usage(input: 0, output: 0, creation: 0, read: 0)
     described_class.new(input_tokens: input, output_tokens: output,
@@ -32,28 +34,18 @@ RSpec.describe Lain::Usage do
   # turns in no particular order; the laws are what make the total independent of
   # the walk order.
   describe "the commutative monoid laws" do
-    it "has zero as a left and right identity" do
-      population.each do |u|
-        expect(described_class.zero + u).to eq(u)
-        expect(u + described_class.zero).to eq(u)
-      end
+    random_usage = lambda do
+      usage(input: rand(0..5000), output: rand(0..2000), creation: rand(0..3000), read: rand(0..9000))
     end
 
-    it "is associative" do
-      population.each_slice(3) do |a, b, c|
-        next unless c
+    include_examples "a monoid",
+                     operation: ->(a, b) { a + b },
+                     identity: Lain::Usage.zero,
+                     generator: random_usage
 
-        expect((a + b) + c).to eq(a + (b + c))
-      end
-    end
-
-    it "is commutative" do
-      population.each_slice(2) do |a, b|
-        next unless b
-
-        expect(a + b).to eq(b + a)
-      end
-    end
+    include_examples "a commutative monoid",
+                     operation: ->(a, b) { a + b },
+                     generator: random_usage
 
     it "sums the same regardless of the order it is folded in" do
       shuffled = population.shuffle.reduce(described_class.zero, :+)

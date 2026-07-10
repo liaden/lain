@@ -1,12 +1,6 @@
 # frozen_string_literal: true
 
-# Quiet Rantly's per-example progress dots; VERBOSITY is read when the property
-# extension loads, so this must come first.
-ENV["RANTLY_VERBOSE"] ||= "0"
-
 require "lain/middleware"
-require "rantly"
-require "rantly/rspec_extensions"
 
 RSpec.describe Lain::Middleware do
   # A "tag" middleware records its entry and exit around the downstream in a
@@ -39,22 +33,15 @@ RSpec.describe Lain::Middleware do
     sequence.map { |symbol| pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
   end
 
+  # Not commutative BY DESIGN -- Stack's insert_before/insert_after exist
+  # precisely because middleware order is meaningful -- so only "a monoid" is
+  # included, never "a commutative monoid".
   describe "the monoid law (property-tested)" do
-    it "composition is associative: (a >> b) >> c is observationally a >> (b >> c)" do
-      property_of { Array.new(3) { Array.new(range(0, 3)) { choose(:a, :b, :c, :d) } } }.check do |sequences|
-        left, mid, right = sequences.map { |sequence| compose(sequence) }
-        expect(observe((left >> mid) >> right)).to eq(observe(left >> (mid >> right)))
-      end
-    end
-
-    it "Identity is a left and right unit: id >> a == a == a >> id" do
-      property_of { Array.new(range(0, 4)) { choose(:a, :b, :c, :d) } }.check do |sequence|
-        middleware = compose(sequence)
-        baseline = observe(middleware)
-        expect(observe(described_class::Identity >> middleware)).to eq(baseline)
-        expect(observe(middleware >> described_class::Identity)).to eq(baseline)
-      end
-    end
+    include_examples "a monoid",
+                     operation: ->(a, b) { a >> b },
+                     identity: Lain::Middleware::Identity,
+                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
+                     equal: ->(a, b) { observe(a) == observe(b) }
   end
 
   describe described_class::Stack do
