@@ -36,17 +36,19 @@ Taken: `provider.rb`, `connection.rb`, `configuration.rb`,
 
 Also taken, not in the original file list but required transitively for the
 above to load and behave correctly (see `docs/porting-providers.md` for why
-each was missing from the brief): `thinking.rb`, `tokens.rb`. `models.rb`'s
-five streaming-usage-extraction methods were folded into
+each was missing from the brief): `thinking.rb`, `tokens.rb`, and the base
+SSE engine `streaming.rb` (`RubyLLM::Streaming`, at the top of `lib/ruby_llm/`,
+NOT under `providers/`) — it defines `stream_response`, which
+`Provider#complete(&block)` calls, and needs the `event_stream_parser` gem
+(added to the gemspec for exactly this). `models.rb`'s five
+streaming-usage-extraction methods were folded into
 `providers/anthropic/streaming.rb` rather than resurrecting a `Models` file
 — see that file's header.
 
 **Not taken, and not planned for this branch:** `models.rb`, `models.json`
 (1.4MB of pricing tables — cost accounting is `Lain::Usage`), `capabilities.rb`,
-`anthropic/{capabilities,models,embeddings,media}.rb`, `attachment.rb`,
-`streaming.rb` (the base SSE engine — needs the `event_stream_parser` gem,
-which is not a Lain dependency; see `provider.rb`'s header), and every
-provider besides Anthropic (openai, gemini, bedrock, azure, deepseek,
+`anthropic/{capabilities,models,embeddings,media}.rb`, `attachment.rb`, and
+every provider besides Anthropic (openai, gemini, bedrock, azure, deepseek,
 gpustack, mistral, ollama, openrouter, perplexity, vertexai, xai).
 
 ## Structure
@@ -73,6 +75,10 @@ http/
   stream_accumulator/
     think_tag_scanner.rb             # split out: Metrics/ClassLength
     tool_call_accumulator.rb         # split out: Metrics/ClassLength
+  streaming.rb                       # base SSE engine; not in the original file list
+  streaming/
+    error_handling.rb                # split out: Metrics/ModuleLength (separate responsibility)
+    faraday_handlers.rb              # split out: Metrics/ModuleLength (Faraday 1/2 on_data)
   provider.rb
   provider/
     registry.rb                      # split out: Metrics/ClassLength
@@ -89,14 +95,19 @@ http/
       tools.rb
 ```
 
-Files under `connection/`, `provider/`, `stream_accumulator/`, and
-`providers/anthropic/chat/` are **new code, not ports** — each says so in
+Files under `connection/`, `provider/`, `stream_accumulator/`, `streaming/`,
+and `providers/anthropic/chat/` are **new code, not ports** — each says so in
 its own header. They exist solely so the ported classes/modules clear this
 project's default `Metrics/ClassLength`/`Metrics/ModuleLength` without
 loosening either cop (forbidden by `CLAUDE.md`). Each extraction is a real,
 separate responsibility (a think-tag scanner, a tool-call-fragment
-accumulator, a provider registry, ...), not a mechanical line-count dodge —
-see each file's header for the specific reasoning.
+accumulator, a provider registry, a streaming error handler, ...), not a
+mechanical line-count dodge — see each file's header for the specific
+reasoning. In particular, the `chat/` files are genuine `Chat::MessageFormatting`
+/ `Chat::ThinkingPayload` / `Chat::ResponseParsing` modules that `Chat`
+delegates to, NOT one `Chat` module reopened across four files (that would
+duck the per-file cop while the module stayed the same size — the opposite of
+what the cop is for).
 
 ## The eleven leak sites
 
@@ -105,13 +116,18 @@ file's provenance header, plus one further site the brief didn't enumerate
 (`Configuration#log_regexp_timeout=`'s `RubyLLM.logger.warn` call — see
 `configuration.rb`). Full trace: `docs/porting-providers.md`.
 
-## What still doesn't work
+## Streaming
 
-`Provider#complete`'s streaming path (block given) calls `stream_response`,
-which does not exist in this branch — the base `RubyLLM::Streaming` module
-that would supply it needs the `event_stream_parser` gem (MIT, already
-installed in this environment's gemset but **not** a declared Lain
-dependency). The synchronous path, and everything the vendored unit specs
-exercise, is unaffected. See `provider.rb`'s header and
-`docs/porting-providers.md` for the exact gap and what adding the gem would
-unblock.
+`Provider#complete(&block)` streams: the base SSE engine (`streaming.rb`,
+mixed into `Provider`) drives Faraday's `on_data`, parses the event stream
+through `event_stream_parser` (MIT, a declared dependency), accumulates the
+deltas via `StreamAccumulator`, yields each `Chunk`, and returns one
+`Message`. `spec/lain/provider/http/streaming_spec.rb` proves it end-to-end
+against a WebMock-delivered event stream, including the error-event path
+(an `overloaded_error` raises `OverloadedError` through
+`Streaming::ErrorHandling` and Anthropic's own `parse_streaming_error`).
+
+What this branch still deliberately does **not** do (all `transport`'s job,
+stacked on top): stop `parse_completion_response` from flattening text/thinking
+blocks, map the vendored `Message`/`Content` onto `Lain::Response`/`Lain::Request`,
+and build `Provider::AnthropicRaw`.

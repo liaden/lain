@@ -41,13 +41,22 @@ same weight as this branch); everything `< OpenAI` after that is closer to
 
 **Unlisted twelfth leak site, found while porting:** `Configuration#log_regexp_timeout=`'s custom setter called `RubyLLM.logger.warn` on Ruby versions predating `Regexp.timeout=`. Dead code on ruby-4.0.5 (which has had `Regexp.timeout=` since 3.2) and, more to the point, the one call in `configuration.rb` that would have reached a global logger. Dropped in favor of the plain generated setter. Check for this kind of "defensive warn" pattern in any `Configuration`-adjacent code the next provider brings — it is exactly the shape that hides a leak the brief's line-numbered table cannot catch, because it wasn't in the *reviewed* file's leak list, only in a *taken* file's implementation detail.
 
-## Two files not in the brief's take-list that you will need anyway
+## Three files not in the brief's take-list that you will need anyway
 
 `thinking.rb` and `tokens.rb` are not named in the porting brief's "Take"
 table, but `message.rb`'s `#initialize` and `stream_accumulator.rb`'s
 `#to_message` both construct one. Both are small, provider-generic, and
 leak-free (no `Models`, no `Attachment`) — vendor them alongside `message.rb`
 and `chunk.rb` without a second thought; every provider needs them.
+
+The base **`streaming.rb`** (`RubyLLM::Streaming`, top of `lib/ruby_llm/`)
+was also missing from the brief's list, which named only
+`providers/anthropic/streaming.rb`. But the per-provider file supplies
+*hooks*; the base file supplies `stream_response` itself — the method
+`Provider#complete(&block)` actually calls. Omitting it makes streaming raise
+`NoMethodError`. Vendor it once, `include` it into the base `Provider`, and
+add its one dependency `event_stream_parser`. See the "Streaming" section
+above.
 
 ## Kept generic, and why (cross-checked against all thirteen providers)
 
@@ -61,12 +70,22 @@ Verified directly against the source, not assumed:
 - **`#complete` itself is overridable, not just `render_payload`/`parse_completion_response`.** Bedrock overrides `#complete` to normalize `params` (AWS's Converse API wants `additionalModelRequestFields`, not the OpenAI/Anthropic-shaped params RubyLLM's caller sends) before delegating to `super`. It also overrides `#parse_error` (different error-body shape: `message`/`Message`/`error`/`__type`) and the private `#sync_response` (AWS SigV4-signs the request instead of just adding headers). **This means when bedrock is ported, `Connection`'s "just add a headers Hash" auth model will not fit** — bedrock signs the whole request, which the current `Connection#post`/`#get` seam (a header merge before handing off to Faraday) does not accommodate. That is a real redesign point, not a config tweak; flag it explicitly when bedrock's turn comes rather than trying to force SigV4 through `#headers`.
 - **Only `anthropic`, `gemini`, `openai` define a `tools.rb`; only seven define a `streaming.rb`.** Confirmed by directory listing. `Providers::Anthropic`'s `include Anthropic::{Chat,Streaming,Tools}` is written assuming all three exist for this provider; when porting a provider lacking one (e.g., no `tools.rb`), just omit that `include` rather than vendoring an empty module — `Provider#complete` and `Connection` do not require any of the three to exist as a hard dependency, only whatever payload-rendering method the provider's own `render_payload` needs to call.
 
+## Streaming: two layers, and which is generic
+
+Streaming is split exactly like the rest: a provider-generic base and a provider-specific hook set.
+
+- **The base SSE engine is `lib/ruby_llm/streaming.rb`** (`RubyLLM::Streaming`, at the *top* of `lib/ruby_llm/`, NOT under `providers/`). It is fully generic — it drives Faraday's `on_data`, feeds bytes through `event_stream_parser`, and calls the three universal hooks. Vendor it once into `lib/lain/provider/http/streaming.rb` and `include` it into the base `Provider` (done). It needs the `event_stream_parser` gem (MIT, Shopify, zero transitive deps — now a declared dependency). Its only leaks are `RubyLLM.config.log_stream_debug` and `RubyLLM.logger`, both shimmed the same way as everywhere else: an injected `@sink` + `@stream_debug` flag on the provider, `Sink::Null`/`false` default.
+- **The three universal hooks are `stream_url`, `build_chunk(data)`, `parse_streaming_error(data)`.** The base engine calls all three on `self` (the provider). A provider's `providers/<name>/streaming.rb` supplies them.
+- **`parse_streaming_error` lives in BOTH layers.** The base has a generic version (in `streaming/error_handling.rb`); Anthropic overrides it (529 vs 500 on `overloaded_error`). Because `Anthropic::Streaming` is included at the *subclass* level and the base `Streaming` at the *parent* level, the subclass override wins for Anthropic, and a provider with no `streaming.rb` falls back to the generic one. **When porting a provider, put its `parse_streaming_error` override in its own `streaming.rb`, not the base** — same as `build_chunk`.
+- **Anthropic's `extract_content_delta` / `extract_thinking_delta` / `extract_signature_delta` / `json_delta?` are Anthropic-specific and must NOT migrate into the base.** They read Anthropic's `delta.type` values. They stay in `providers/anthropic/streaming.rb`.
+- **A provider with no `streaming.rb` still streams.** The base engine + base `parse_streaming_error` + whatever `build_chunk`/`stream_url` the base supplies is enough. Do not vendor an empty per-provider streaming module; just omit the `include`.
+- **`extract_*` token helpers may be filed under the wrong upstream file.** Anthropic's `build_chunk` depends on five `extract_input_tokens`/etc. helpers that upstream filed under `providers/anthropic/models.rb`, not `streaming.rb` — pure Hash digging, no registry. They were moved to their only caller (`streaming.rb`). Check each provider's `build_chunk` for the same cross-file dependency before dropping its `models.rb`.
+
 ## What would force a redesign when the next provider lands
 
 - **Bedrock's request signing** (above) — the auth model is not "a headers Hash," and `Connection` currently assumes it is.
 - **Gemini's media/embeddings/images are still separate files** the way Anthropic's were; expect the same "module-qualified `Media.format_content` call from a kept module" trap (leak site 7) there too. Check `Gemini::Chat`/`Gemini::Tools` for calls into `Gemini::Media` specifically before dropping it.
 - **The OpenAI-compatible shims (`deepseek`, `gpustack`, `mistral`, `ollama`, `openrouter`) subclass `OpenAI`, not `Provider`.** Verified: `class DeepSeek < OpenAI`. This only works once `OpenAI` itself is ported; they cannot be ported before their base class. Plan the wave order accordingly — `openai` is a prerequisite for five "one new row" providers, not just itself.
-- **`event_stream_parser`.** This branch could not vendor the base `RubyLLM::Streaming` module (the actual SSE-over-HTTP engine, `lib/ruby_llm/streaming.rb`) because it `require`s the `event_stream_parser` gem, which is not a Lain dependency and this branch may not add one (see `lib/lain.rb`'s lead-owned status). Every provider's own `providers/<name>/streaming.rb` (the `build_chunk`/`stream_url`/`parse_streaming_error` hooks) can and should still be vendored — it has no such dependency — but `Provider#complete`'s streaming path will raise `NoMethodError` until `event_stream_parser` (MIT, `~> 1`) is added and the base module ported alongside it. **Report this to the lead once; it unblocks streaming for every provider at once, not per-port.**
 
 ## Specs
 
