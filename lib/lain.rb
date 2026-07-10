@@ -34,6 +34,13 @@ require_relative "lain/journal"
 require_relative "lain/price_book"
 require_relative "lain/ledger"
 require_relative "lain/capability"
+require_relative "lain/grader"
+require_relative "lain/grader/fixture"
+require_relative "lain/grader/rubric"
+require_relative "lain/compare"
+require_relative "lain/bench/dry_replay"
+require_relative "lain/bench/live_replay"
+require_relative "lain/bench/speculative"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
