@@ -71,9 +71,40 @@ fn blake3_hex(bytes: &[u8]) -> String {
 #[cfg(not(test))]
 mod ffi {
     use super::{blake3_hex, build_env_filter, dup_writer};
-    use magnus::{function, prelude::*, Error, Ruby};
+    use magnus::{function, method, prelude::*, DataTypeFunctions, Error, Ruby, TypedData};
     use std::io::Write;
     use std::sync::{Arc, Mutex};
+
+    /// Shareability canary for the M4 Timeline port.
+    ///
+    /// The whole port hinges on a magnus `TypedData` object being
+    /// `Ractor.shareable?` once frozen -- `Turn` must stay shareable (there is a
+    /// spec). `frozen_shareable` sets `RUBY_TYPED_FROZEN_SHAREABLE`, but that is
+    /// a *promise* to Ruby, honoured only if the wrapped state is genuinely
+    /// immutable and holds no reachable mutable Ruby object. This wraps a single
+    /// immutable `u64` and nothing else, so it is the minimal proof that the
+    /// mechanism works before the real port depends on it. If a magnus upgrade
+    /// ever breaks the flag, the tiny `share_probe_spec` fails here rather than
+    /// deep inside `Turn`.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::ShareProbe", free_immediately, frozen_shareable)]
+    struct ShareProbe {
+        value: u64,
+    }
+
+    impl DataTypeFunctions for ShareProbe {}
+
+    impl ShareProbe {
+        fn new(ruby: &Ruby, value: u64) -> magnus::typed_data::Obj<Self> {
+            let obj = ruby.obj_wrap(Self { value });
+            obj.freeze();
+            obj
+        }
+
+        fn value(&self) -> u64 {
+            self.value
+        }
+    }
 
     /// A cloneable `MakeWriter` handle over one shared, dup'd file. Cloning is
     /// an `Arc` bump (never another `dup`, so no fd leak per event), and the
@@ -180,6 +211,10 @@ mod ffi {
         let ext = module.define_module("Ext")?;
         ext.define_singleton_method("init_tracing", function!(init_tracing, 2))?;
         ext.define_singleton_method("blake3_hex", function!(ffi_blake3_hex, 1))?;
+
+        let share_probe = ext.define_class("ShareProbe", ruby.class_object())?;
+        share_probe.define_singleton_method("new", function!(ShareProbe::new, 1))?;
+        share_probe.define_method("value", method!(ShareProbe::value, 0))?;
 
         Ok(())
     }
