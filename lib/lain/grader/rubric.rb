@@ -54,6 +54,14 @@ module Lain
 
       # Score `subject` against the criteria.
       #
+      # NOTE on `Grade#pass?`: a Rubric scores on a CONTINUOUS 0..1 scale, so the
+      # returned Grade's `#pass?` carries {Grade}'s default meaning (score >=
+      # 1.0) and is rarely useful -- an LLM judge almost never returns a hard
+      # 1.0. Threshold `#score` yourself for a pass/fail decision (e.g.
+      # `grade.score >= 0.8`); do not read `#pass?` as the judge's verdict. It is
+      # deliberately not overridden here because a Rubric has no one true
+      # threshold -- that policy belongs to the caller, not the judge.
+      #
       # @param subject [#to_s] the answer/output under judgment
       # @return [Grade] score + mandatory explanation
       # @raise [Unparseable] when the judge's reply carries no JSON verdict

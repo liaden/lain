@@ -49,6 +49,15 @@ RSpec.describe Lain::Grader::Rubric do
       .to raise_error(ArgumentError, /explain/)
   end
 
+  it "does not treat a high-but-continuous score as a pass -- callers threshold #score" do
+    # Pinning the documented contract: #pass? carries Grade's default (>= 1.0),
+    # which a continuous judge almost never returns, so it is NOT the verdict.
+    grade = rubric(judge('{"score": 0.95, "why": "excellent but not perfect"}')).grade("Paris.")
+
+    expect(grade).not_to be_pass
+    expect(grade.score).to be >= 0.8 # the caller's own threshold is where a decision lives
+  end
+
   it "clamps an out-of-range score into 0.0..1.0" do
     grade = rubric(judge('{"score": 4, "why": "overzealous judge"}')).grade("Paris.")
     expect(grade.score).to eq(1.0)

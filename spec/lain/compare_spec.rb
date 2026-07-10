@@ -80,6 +80,39 @@ RSpec.describe Lain::Compare do
     end
   end
 
+  # An Integer-valued metric must not floor: Integer#/ truncates, so the mean of
+  # a sum not divisible by n has to come back a real fraction, not a lie the
+  # "%.1f" format would dress up as precise.
+  describe "Distribution does not floor Integer metrics" do
+    it "means an odd-count Integer metric as a true fraction" do
+      dist = described_class::Distribution.new([1000, 1000, 1001])
+      expect(dist.mean).to be_within(1e-9).of(3001 / 3.0)
+      expect(dist.median).to eq(1000)
+    end
+
+    it "means an even-count Integer metric across the two middle values" do
+      dist = described_class::Distribution.new([1000, 1001])
+      expect(dist.mean).to eq(1000.5)
+      expect(dist.median).to eq(1000.5)
+    end
+
+    it "keeps BigDecimal cost exact even when it does not divide evenly" do
+      dist = described_class::Distribution.new([BigDecimal("0.001"), BigDecimal("0.002")])
+      expect(dist.mean).to be_a(BigDecimal)
+      expect(dist.mean).to eq(BigDecimal("0.0015"))
+    end
+  end
+
+  describe "value objects clear the Ractor.shareable? bar" do
+    it "deeply freezes a Distribution" do
+      expect(Ractor.shareable?(described_class::Distribution.new([1, 2, 3]))).to be(true)
+    end
+
+    it "deeply freezes a Run" do
+      expect(Ractor.shareable?(runs.first)).to be(true)
+    end
+  end
+
   describe "#report" do
     let(:report) { described_class.new(runs).report }
 

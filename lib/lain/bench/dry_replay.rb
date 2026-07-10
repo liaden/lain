@@ -76,6 +76,14 @@ module Lain
       # Recover, from the recorded DAG, the Timeline prefix each model call
       # rendered over. Assistant turns in oldest-first order ARE the model
       # calls; each rendered the prefix ending at its parent.
+      #
+      # This couples to Agent#step's commit order: the model is called, THEN its
+      # assistant turn commits, so the k-th assistant turn's parent is exactly
+      # the head the k-th recorded Request saw. Two guards keep a future Agent
+      # reorder from turning that into a silent mystery: the size check below
+      # raises when the counts stop lining up, and the "matches the recorded
+      # bytes digest-for-digest" spec fails loudly if the ORDER ever drifts, since
+      # a mis-paired prefix re-renders to different bytes than the baseline.
       def reconstruct(timeline, baseline)
         assistant_turns = timeline.to_a.select { |turn| turn.role == "assistant" }
         unless assistant_turns.size == baseline.size
@@ -111,8 +119,15 @@ module Lain
     end
 
     # The whole replay's diff: one StepDiff per model call. `#identical?` is the
-    # byte-identity verdict the identity-Context acceptance test asserts.
+    # byte-identity verdict the identity-Context acceptance test asserts. The
+    # steps array is frozen (its StepDiff members already are, being Data with a
+    # frozen `changed_fields`) so a Diff clears the project's `Ractor.shareable?`
+    # bar like every other value object here.
     Diff = Data.define(:steps) do
+      def initialize(steps:)
+        super(steps: steps.freeze)
+      end
+
       def identical?
         steps.all?(&:identical?)
       end

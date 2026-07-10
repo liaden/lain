@@ -100,6 +100,10 @@ RSpec.describe Lain::Bench::DryReplay do
     it "is deterministic: same inputs, same diff every time" do
       expect(replay(over: louder)).to eq(replay(over: louder))
     end
+
+    it "produces a Ractor-shareable Diff (deeply frozen value object)" do
+      expect(Ractor.shareable?(replay(over: louder))).to be(true)
+    end
   end
 
   describe "under a different render strategy (a pruning pipeline)" do

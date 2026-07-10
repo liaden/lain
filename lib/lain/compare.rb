@@ -46,21 +46,40 @@ module Lain
       def graded? = !score.nil?
     end
 
-    # The shape of one metric across the runs. Kept numeric-type-preserving:
-    # cost stays BigDecimal through the fold so a dollar figure never drifts,
-    # while token and ratio metrics stay their own types.
+    # The shape of one metric across the runs. Numeric-type-preserving on
+    # purpose: cost stays BigDecimal through the fold so a dollar figure never
+    # drifts (BigDecimal `/` is true division), while an Integer-valued metric
+    # like total tokens must use `fdiv` -- plain `Integer#/` FLOORS, which would
+    # report `[1000, 1000, 1001].mean` as 1000 and then print it as a
+    # fake-precise "1000.0". `#divide` routes each type to the division that
+    # keeps it honest.
+    #
+    # Frozen deeply (the values array and its members) so a Distribution clears
+    # the project's `Ractor.shareable?` bar, like every other value object here.
     Distribution = Data.define(:values) do
+      def initialize(values:)
+        super(values: values.map(&:freeze).freeze)
+      end
+
       def n = values.size
-      def mean = values.sum / values.size
+      def mean = divide(values.sum, values.size)
 
       def median
         sorted = values.sort
         mid = sorted.size / 2
-        sorted.size.odd? ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+        sorted.size.odd? ? sorted[mid] : divide(sorted[mid - 1] + sorted[mid], 2)
       end
 
       def min = values.min
       def max = values.max
+
+      private
+
+      # fdiv for Integers (true division into a Float); ordinary `/` for
+      # BigDecimal and Float, both of which already divide truly.
+      def divide(numerator, denominator)
+        numerator.is_a?(Integer) ? numerator.fdiv(denominator) : numerator / denominator
+      end
     end
 
     # Each metric: the Run reader it comes from (a method name), its column
