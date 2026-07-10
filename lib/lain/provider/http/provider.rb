@@ -5,6 +5,7 @@ require_relative "connection"
 require_relative "error"
 require_relative "provider/error_body"
 require_relative "provider/registry"
+require_relative "streaming"
 require_relative "utils"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/provider.rb.
@@ -30,15 +31,14 @@ require_relative "utils"
 # calls it. `#complete` -- "the stateless #complete seam," per the porting
 # plan -- is the one API this slice exists to serve.
 #
-# `include Streaming` is also gone. Upstream's base `RubyLLM::Streaming`
-# module (lib/ruby_llm/streaming.rb, NOT under providers/) needs the
-# `event_stream_parser` gem, which is not a Lain dependency and this branch
-# may not add one. See docs/porting-providers.md. `Anthropic::Streaming`
-# (providers/anthropic/streaming.rb, IS vendored) has no such dependency --
-# it only computes chunk data from an already-parsed Hash -- so `#complete`
-# calling `stream_response` when given a block will raise NoMethodError
-# until the base Streaming module lands; the sync path is unaffected, and
-# nothing in this slice's specs exercises streaming over the wire.
+# `include Streaming` mixes in the base SSE engine (streaming.rb), whose
+# `stream_response` is what `#complete(&block)` calls. It needs the
+# `event_stream_parser` gem (added to the gemspec for exactly this).
+# `Anthropic::Streaming` (providers/anthropic/streaming.rb) is included at
+# the subclass level and supplies the Anthropic-specific `build_chunk` /
+# `stream_url` / `parse_streaming_error` hooks the base engine calls; when a
+# provider defines no streaming.rb of its own, the base engine still works
+# with whatever hooks the base supplies.
 #
 # The class-level registry (`providers`/`register`/`resolve`) and error-body
 # parsing moved to {Registry}/{ErrorBody} -- each a real, separate
@@ -52,17 +52,23 @@ module Lain
       # {#complete}; never a loop.
       class Provider
         extend Registry
+        include Streaming
 
         attr_reader :config, :connection
 
         # @param connection [Connection, nil] injected whole in specs
-        # @param sink [Lain::Sink] forwarded to a constructed Connection; ignored
-        #   when `connection:` is given directly
+        # @param sink [Lain::Sink] where streaming debug lines go, and forwarded
+        #   to a constructed Connection; ignored for logging when `connection:`
+        #   is given directly
         # @param instrumenter [#call] forwarded to a constructed Connection
         # @param log_level [Symbol] forwarded to a constructed Connection
         def initialize(config, connection: nil, sink: Sink::Null.new, instrumenter: Connection::NULL_INSTRUMENTER,
                        log_level: :info)
           @config = config
+          @sink = sink
+          # Reads OUR Configuration, not a global singleton (leak site 2's shape):
+          # the `Streaming`/`StreamAccumulator` debug trace is off unless asked for.
+          @stream_debug = config.respond_to?(:log_stream_debug) && config.log_stream_debug ? true : false
           ensure_configured!
           @connection = connection || Connection.new(self, @config, sink:, instrumenter:, log_level:)
         end
@@ -88,9 +94,8 @@ module Lain
         end
 
         # One round trip: encode `messages`/`tools` into the provider's wire
-        # payload and either stream (block given) or return a completed
-        # {Message}. See the file header for why the streaming path is not
-        # wired yet.
+        # payload and either stream (block given, via the mixed-in Streaming
+        # engine) or return a completed {Message}.
         def complete(messages, tools:, temperature:, model:, params: {}, headers: {}, schema: nil, thinking: nil,
                      tool_prefs: nil, &block)
           payload = Utils.deep_merge(render_payload_for(messages, tools:, temperature:, model:, stream: !block.nil?,
