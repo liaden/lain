@@ -55,12 +55,37 @@ separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`). Config that 
 - **No `next`, `break`, or `redo`** unless genuinely unavoidable. `raise ... unless cond` beats
   `next if cond`; `select` then `each` beats `next unless`; `digest &&= step` beats
   `break if digest.nil?`.
+- **`Enumerable` and `Enumerator` are the good abstractions.** A method that yields is a method
+  that composes. Prefer `include Enumerable` over reimplementing `map`/`select`; return an
+  `Enumerator` rather than materializing an Array a caller may not want; reach for
+  `each_with_object` / `inject` before an accumulator you mutate by hand. `Enumerator::Lazy` is
+  free streaming — it is how a Timeline walk stays O(1) in memory.
+- **SOLID, read through Sandi Metz.** Small objects, one responsibility each; depend on messages,
+  not on types; inject collaborators rather than construct them. `Agent::Budget` and
+  `Agent::ToolRunner` exist because `Agent` was carrying two responsibilities that were not its
+  own. When a `Metrics/*` cop trips, it is usually telling you an object is missing.
+- **Null Object over `nil` checks.** `Sink::Null` is the exemplar: it satisfies the same duck as
+  `Sink::IOAdapter` and sends the bytes nowhere, so no caller ever writes `if sink`. A `nil`
+  guard repeated at three call sites is an object waiting to be named.
+- **TDD is what finds the seam.** Writing the spec first is what makes a dependency visible and
+  forces it to be injected. `Provider::Mock` and `Handler::Mock` exist because the specs needed
+  them, not because the design anticipated them.
+- **ActiveSupport is welcome where it earns its place.** `ActiveSupport::Concern` is the right
+  way to extract orthogonal behavior into a named, separately-testable module. Judge each core
+  extension on whether it preserves **loud failure**: `StringInquirer` was rejected for
+  `.settled?` because `method_missing` makes a typo (`.setled?`) return `false` in silence, and
+  this state machine's premise is that unknown values fail loudly. (Trap: `require
+  "active_support/core_ext"` raises unless `require "active_support"` comes first.)
 - **Tool input goes through `Tool::Input`** (ActiveModel). One declaration yields both the JSON
   Schema the model sees and the local validation, so they cannot drift, and you get type
   coercion for free. Those validations check **shape, not safety** — read the comment at the
   top of `lib/lain/tool/input.rb` before adding a validator that sounds like a security
   control. It is not one.
-- **Doc comments explain WHY, not what.** Match `lib/lain/timeline.rb` and
+- **Comments are minimal, and explain WHY.** Idiomatic Ruby that the community would recognize
+  needs no gloss. If a reader cannot tell *what* the code does, that is a defect in the code:
+  extract a named method or a named variable until it reads. Only when the mess is *forced* — a
+  wire-format quirk, a cop's false positive, a performance shape — write a comment that says
+  both what it does and why it has to be ugly. Match `lib/lain/timeline.rb` and
   `lib/lain/canonical.rb`.
 - **Value objects are deeply frozen.** `Ractor.shareable?(turn)` must stay `true` — it is the
   mechanical statement of "no reachable mutable state", and it broke once because
