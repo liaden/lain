@@ -40,9 +40,15 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      # cargo-deny refreshes its advisory-db by shelling out to `git -C <db> reset
+      # --hard`. In a linked git worktree, `git commit` exports GIT_DIR/GIT_INDEX_FILE
+      # into the hook environment, and those OVERRIDE `-C`, so the reset silently
+      # discards *this* worktree's staged changes and the commit dies with "files were
+      # modified by this hook". Strip them for this hook so the reset lands on the
+      # advisory-db clone as intended. A no-op outside a worktree, where they are unset.
       - id: cargo-deny
         name: cargo deny
-        entry: cargo deny check
+        entry: env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE cargo deny check
         language: system
         pass_filenames: false
         files: ^(Cargo\.(toml|lock)|deny\.toml)$
