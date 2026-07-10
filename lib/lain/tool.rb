@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "error"
+require_relative "tool/contracts"
 
 module Lain
   # The abstract base every tool subclasses.
@@ -34,63 +35,18 @@ module Lain
     # is violated. Kept as data so contracts are inspectable, not just runnable.
     Contract = Data.define(:message, :predicate)
 
+    include Contracts
+
     class << self
-      # Declare a precondition: something that must hold *before* the tool runs,
-      # checked against `(input, context)`. This is where an invariant a tool
-      # depends on but does not itself establish -- "the file was read this
-      # session" -- is made enforceable. A false predicate raises
-      # {ContractViolation}; the handler turns that into an error result, so the
-      # model learns of the violation as a failed tool call rather than a crash.
-      #
-      #   requires("file was read this session") { |input, ctx| ctx.read?(input[:path]) }
-      def requires(message, &predicate)
-        own_preconditions << build_contract(message, predicate)
-      end
+      # Declare (or read) the {Tool::Input} subclass describing this tool's input.
+      # When present it supplies both the JSON Schema the model sees and the local
+      # validation, so the two cannot drift. Inherited, so a subclass of a tool
+      # keeps its parent's input unless it declares its own.
+      def input_model(klass = nil)
+        @input_model = klass unless klass.nil?
+        return @input_model if defined?(@input_model) && @input_model
 
-      # Declare a postcondition: something that must hold *after* the tool runs,
-      # checked against `(input, context, result)`. Use it to assert the tool
-      # delivered what it promised (e.g. the result is non-error when the inputs
-      # were valid), turning a silent wrong answer into a loud violation.
-      def ensures(message, &predicate)
-        own_postconditions << build_contract(message, predicate)
-      end
-
-      # Every precondition applying to this class, base-class contracts first, so
-      # an inherited invariant is checked before a subclass's own. Collected
-      # across the ancestry rather than stored once, so subclasses compose
-      # contracts instead of overwriting them.
-      def preconditions
-        contracts_along_ancestry(:own_preconditions)
-      end
-
-      # Every postcondition applying to this class, base-class contracts first.
-      def postconditions
-        contracts_along_ancestry(:own_postconditions)
-      end
-
-      # Contracts declared directly on this class (not its ancestors).
-      def own_preconditions
-        @own_preconditions ||= []
-      end
-
-      # Contracts declared directly on this class (not its ancestors).
-      def own_postconditions
-        @own_postconditions ||= []
-      end
-
-      private
-
-      def build_contract(message, predicate)
-        raise ArgumentError, "a contract needs a predicate block" unless predicate
-
-        Contract.new(message: message.to_s, predicate: predicate)
-      end
-
-      def contracts_along_ancestry(reader)
-        ancestors
-          .select { |ancestor| ancestor.is_a?(Class) && ancestor <= Tool }
-          .reverse
-          .flat_map { |ancestor| ancestor.public_send(reader) }
+        superclass.respond_to?(:input_model) ? superclass.input_model : nil
       end
     end
 
@@ -107,12 +63,20 @@ module Lain
       raise NotImplemented, "#{self.class} must define #description"
     end
 
-    # The raw JSON-schema Hash describing valid input, e.g.
-    # `{ type: :object, properties: { path: { type: :string } }, required: [:path] }`.
-    # Defaults to an object taking no arguments, so a nullary tool needs no
-    # boilerplate. Kept as a plain Hash (no json-schema gem) and validated by a
-    # small hand-rolled checker; see {#call}.
+    # The {Tool::Input} class for this tool, or nil when it declares a raw schema.
+    def input_model
+      self.class.input_model
+    end
+
+    # The JSON-schema Hash describing valid input. Derived from {#input_model}
+    # when one is declared -- the preferred path, since it keeps the wire schema
+    # and the local validation in one declaration. Otherwise a raw Hash, e.g.
+    # `{ type: :object, properties: { path: { type: :string } }, required: [:path] }`,
+    # checked by a small hand-rolled validator. Defaults to an object taking no
+    # arguments, so a nullary tool needs no boilerplate.
     def input_schema
+      return input_model.to_json_schema if input_model
+
       { type: :object, properties: {}, required: [] }
     end
 
@@ -135,15 +99,18 @@ module Lain
     # postconditions. Subclasses implement {#perform}, not this. Returning the
     # checked {Result} here (rather than letting `#perform` be called directly)
     # is what guarantees the contract and schema checks cannot be skipped.
+    # When an {#input_model} is declared, `checked` is a coerced Input instance
+    # (`input.timeout` is an Integer whether the model sent 30 or "30"); otherwise
+    # it is the raw Hash. Contracts and #perform both see the checked value.
     def call(input, context = nil)
-      validate_input!(input)
-      check_preconditions!(input, context)
-      result = perform(input, context)
+      checked = validate_input!(input)
+      check_preconditions!(checked, context)
+      result = perform(checked, context)
       unless result.is_a?(Result)
         raise InvalidResult, "#{self.class}#perform must return a Tool::Result, got #{result.class}"
       end
 
-      check_postconditions!(input, context, result)
+      check_postconditions!(checked, context, result)
       result
     end
 
@@ -172,25 +139,21 @@ module Lain
 
     private
 
+    # @return [Tool::Input, Hash] the checked, possibly coerced input
     def validate_input!(input)
+      return validate_with_model(input) if input_model
+
       errors = SchemaValidator.new(input_schema).errors_for(input)
-      return if errors.empty?
+      raise InvalidInput, "invalid input for #{name}: #{errors.join("; ")}" unless errors.empty?
 
-      raise InvalidInput, "invalid input for #{name}: #{errors.join("; ")}"
+      input
     end
 
-    def check_preconditions!(input, context)
-      self.class.preconditions.each do |contract|
-        satisfied = instance_exec(input, context, &contract.predicate)
-        raise ContractViolation, "precondition failed for #{name}: #{contract.message}" unless satisfied
-      end
-    end
+    def validate_with_model(input)
+      model = input_model.build(input)
+      return model if model.valid?
 
-    def check_postconditions!(input, context, result)
-      self.class.postconditions.each do |contract|
-        satisfied = instance_exec(input, context, result, &contract.predicate)
-        raise ContractViolation, "postcondition failed for #{name}: #{contract.message}" unless satisfied
-      end
+      raise InvalidInput, "invalid input for #{name}: #{model.errors.full_messages.join("; ")}"
     end
   end
 
@@ -350,3 +313,5 @@ module Lain
     end
   end
 end
+
+require_relative "tool/input"

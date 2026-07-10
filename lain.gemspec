@@ -42,12 +42,22 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
   spec.extensions = ["ext/lain/extconf.rb"]
 
+  # ActiveModel brings declarative validations (and ActiveSupport's core
+  # extensions with it). Used for tool-input *shape*. Note: validations are not a
+  # security boundary -- a regex over a shell string loses to $(), backticks, and
+  # ${IFS}. Safety comes from structured tools, the approval gate, and OS
+  # confinement, never from a format validator.
+  spec.add_dependency "activemodel", "~> 8.0"
   spec.add_dependency "anthropic", "~> 1.55"
   # Chef's Mixlib::ShellOut. Handles stdout/stderr capture, environment, cwd, timeout,
   # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
   # isolation arrives later via the out-of-process Rust exec boundary.
   spec.add_dependency "mixlib-shellout", "~> 3.4"
   spec.add_dependency "rb_sys", "~> 0.9.91"
+  # Declarative state machines. Chosen over `statesman`, which is built around a
+  # persisted transition store -- the Timeline already is one, content-addressed
+  # and replayable, and a second would only diverge from it.
+  spec.add_dependency "state_machines", "~> 0.201"
   spec.add_dependency "thor", "~> 1.3"
 
   # `ruby_llm` is a SUPPORTED OPTIONAL dependency, deliberately not declared here.
