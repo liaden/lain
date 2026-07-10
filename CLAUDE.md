@@ -136,6 +136,46 @@ is the object of study.
 Timeline. Subagents get a *fresh* Timeline root whose `meta["spawned_from"]` names the parent's
 head, so causal lineage survives while the child never inherits the parent's prompt.
 
+## Rust, and which data structures earn a binding
+
+**Rust is here for its data model, not for speed.** Ownership, cheap immutability, and richer
+structures than Ruby's `Hash`/`Array` are the reason; a benchmark is how we *check* the reason,
+never the reason itself. See `ext/lain/CLAUDE.md` before writing any Rust.
+
+The placement rule: **anything async, I/O-bound, or isolation-relevant lives out of process
+(`crates/lain-core`, msgpack-RPC over a Unix socket); data-structure work lives in-process
+(`ext/lain`, magnus, pure and synchronous).** Driving an async runtime from inside an FFI call
+while holding the GVL is a known footgun, and an "in-process sandbox" is not a sandbox.
+
+Before binding a structure, all five must hold. If any fails, keep it in Ruby.
+
+1. **It is a data-structure problem**, not IO, async, or confinement.
+2. **Ruby's object model makes it asymptotically worse.** A persistent map with structural
+   sharing forks in O(1); `Hash#dup` is O(n). That gap is the argument. "Rust is faster" is not.
+3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
+4. **The boundary is crossed in batches, not per element.** Conversion cost dominates almost
+   every naive binding; a per-node FFI call in a DAG walk loses to plain Ruby.
+5. **It survives the same tests.** `Timeline` ships as pure Ruby first, and the `Regular` /
+   `MeetSemilattice` property tests must pass unchanged against **both** implementations. That
+   is how we know a port is correct, and it is why the Ruby version is not deleted.
+
+Structures that plausibly qualify, and what they buy:
+
+| Structure | Crate | Why here |
+|---|---|---|
+| Persistent map / vector (HAMT, RRB) | `im` / `rpds` | Structural sharing is what makes `Timeline#fork` O(1) *in fact* and not just in claim. |
+| Content-addressed hashing | `blake3` | `Canonical` bytes → digest. One hash, two invariants. |
+| Insertion-ordered map | `indexmap` | Deterministic iteration is exactly `Canonical.dump`'s sorted-key stability. |
+| Interned digests | `lasso` | Digests are short, repeated, and compared constantly; interning turns comparison into an integer test. |
+| Roaring bitmap | `roaring` | Usage must aggregate over **unique reachable digests** — a set problem. Naive summing over a branched Timeline double-counts the shared prefix. |
+| Causal DAG | `petgraph` | `meet`, `diverge_at`, and `spawned_from` lineage are graph queries. |
+| BM25 / vector / graph index | `tantivy`, `usearch`, `petgraph` | Memory retrieval (M6) — and these are I/O-shaped, so they live **out** of process. |
+
+> ⚠️ **A magnus-wrapped object is not `Ractor.shareable?` for free.** Deep immutability is spec'd
+> mechanically, and `Ractor.shareable?(turn)` must stay `true`. Porting `Turn` or `Timeline` to a
+> Rust-backed `TypedData` object will break that spec unless shareability is established
+> deliberately. Treat the spec as the acceptance test for the port, not as an obstacle to it.
+
 ## Known traps (verified, not remembered)
 
 - Anthropic's stream accumulator is `accumulated_message`, **not** `get_final_message`. The
