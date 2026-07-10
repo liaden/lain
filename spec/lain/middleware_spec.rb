@@ -160,4 +160,40 @@ RSpec.describe Lain::Middleware do
       expect { described_class.new(seconds: 0) }.to raise_error(ArgumentError, /positive Numeric/)
     end
   end
+
+  # A bare `yield` inside a middleware raises LocalJumpError the moment anyone
+  # calls it outside a stack, and no RuboCop cop can catch that statically. So
+  # every middleware routes through Base#downstream, which is the identity when
+  # there is no downstream. These specs pin that totality down.
+  describe "a middleware called with no downstream" do
+    let(:env) { { a: 1 } }
+
+    it "passes env through for Base" do
+      expect(described_class::Base.new.call(env)).to eq(env)
+    end
+
+    it "passes env through for Identity" do
+      expect(described_class::Identity.call(env)).to eq(env)
+    end
+
+    it "passes env through for Logging, and still logs" do
+      sink = Lain::Sink::IOAdapter.new(Lain::Channel.new, tool_use_id: "tu_1", stream: :stdout)
+      expect(described_class::Logging.new(sink: sink).call(env)).to eq(env)
+    end
+
+    it "passes env through for Timeout, adding its deadline" do
+      result = described_class::Timeout.new(seconds: 1).call(env)
+      expect(result[:a]).to eq(1)
+      expect(result[described_class::Timeout::DEADLINE_KEY]).to be_a(Float)
+    end
+
+    it "passes env through for a Composed pair" do
+      composed = described_class::Identity >> described_class::Identity
+      expect(composed.call(env)).to eq(env)
+    end
+
+    it "passes env through for an empty Stack" do
+      expect(described_class::Stack.new.call(env)).to eq(env)
+    end
+  end
 end

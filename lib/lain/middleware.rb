@@ -47,13 +47,27 @@ module Lain
     end
 
     # The leaf base: a pass-through. Subclasses override {#call} and invoke the
-    # downstream with `yield`. On its own it is the monoid identity's behavior,
-    # which is why {Identity} is just an instance of it.
+    # downstream via {#downstream}. On its own it is the monoid identity's
+    # behavior, which is why {Identity} is just an instance of it.
     class Base
       include Composable
 
-      def call(env)
-        block_given? ? yield(env) : env
+      def call(env, &app)
+        downstream(env, &app)
+      end
+
+      protected
+
+      # Invoke the downstream, or act as the identity when there is none.
+      #
+      # Subclasses must call this rather than `yield`. A bare `yield` in a
+      # middleware raises LocalJumpError the moment anyone calls it outside a
+      # stack -- and no RuboCop cop can catch that statically, because it cannot
+      # prove whether a caller passes a block. Routing every subclass through one
+      # total helper makes the pass-through structural: impossible to forget
+      # rather than merely remembered.
+      def downstream(env, &app)
+        app ? app.call(env) : env
       end
     end
 
@@ -162,9 +176,9 @@ module Lain
         freeze
       end
 
-      def call(env)
+      def call(env, &app)
         @sink.puts("#{@label} > #{@formatter.call(env)}")
-        result = yield(env)
+        result = downstream(env, &app)
         @sink.puts("#{@label} < #{@formatter.call(result)}")
         result
       end
@@ -199,12 +213,12 @@ module Lain
         freeze
       end
 
-      def call(env)
+      def call(env, &app)
         started = @clock.call
         deadline = started + @seconds
         downstream_env = env.is_a?(Hash) ? env.merge(DEADLINE_KEY => deadline) : env
 
-        result = yield(downstream_env)
+        result = downstream(downstream_env, &app)
 
         elapsed = @clock.call - started
         raise Exceeded, "downstream exceeded #{@seconds}s budget (took #{elapsed.round(3)}s)" if elapsed > @seconds

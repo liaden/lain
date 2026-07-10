@@ -24,3 +24,9 @@ Layout/LineLength:
 # objects with many named fields are exactly the intended shape here.
 Metrics/ParameterLists:
   CountKeywordArgs: false
+
+# In the middleware idiom the block IS the downstream app, and `&app` says so.
+# Anonymous `&` forwarding would save six characters and cost the reader the one
+# name that explains the shape.
+Naming/BlockForwarding:
+  EnforcedStyle: explicit
