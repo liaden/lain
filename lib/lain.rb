@@ -12,6 +12,13 @@ require_relative "lain/sink"
 require_relative "lain/usage"
 require_relative "lain/request"
 require_relative "lain/response"
+require_relative "lain/tool"
+require_relative "lain/toolset"
+require_relative "lain/effect"
+require_relative "lain/middleware"
+require_relative "lain/handler"
+require_relative "lain/handler/live"
+require_relative "lain/handler/mock"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
