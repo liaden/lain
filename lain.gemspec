@@ -48,25 +48,45 @@ Gem::Specification.new do |spec|
   # ${IFS}. Safety comes from structured tools, the approval gate, and OS
   # confinement, never from a format validator.
   spec.add_dependency "activemodel", "~> 8.0"
+  # The official SDK is kept as a correctness ORACLE, not as the default path: the
+  # forked transport is byte-diffed against `Provider::Anthropic#encode`, and one
+  # live differential run must produce an identical Lain::Response. It is retired
+  # only once the forked path has held. Retiring it costs us the dry-diff.
   spec.add_dependency "anthropic", "~> 1.55"
+  # The transport. Lain forks RubyLLM's HTTP layer (see lib/lain/provider/http/),
+  # so Faraday is ours directly. The adapter is pinned rather than inferred, because
+  # a bench that silently changed its HTTP client would silently change its timings.
+  spec.add_dependency "faraday", "~> 2.14"
+  spec.add_dependency "faraday-net_http", "~> 3.4"
+  # Not merely a retry: pointed at Anthropic's `anthropic-ratelimit-*-reset` headers
+  # it IS the rate limiter, and its `retry_block` / `exhausted_retries_block` make
+  # retries visible to the Journal. A silent retry hides real spend that never
+  # appears in Usage -- on a bench whose headline metric is token cost, that gap
+  # must be visible, not eliminated.
+  spec.add_dependency "faraday-retry", "~> 2.4"
   # Chef's Mixlib::ShellOut. Handles stdout/stderr capture, environment, cwd, timeout,
   # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
   # isolation arrives later via the out-of-process Rust exec boundary.
   spec.add_dependency "mixlib-shellout", "~> 3.4"
+  # Terminal primitives for Frontend::TTY. `reline` (stdlib) does line editing and
+  # history. Only the frontend may touch the terminal; see spec/output_discipline_spec.rb.
+  spec.add_dependency "pastel", "~> 0.8"
   spec.add_dependency "rb_sys", "~> 0.9.91"
   # Declarative state machines. Chosen over `statesman`, which is built around a
   # persisted transition store -- the Timeline already is one, content-addressed
   # and replayable, and a second would only diverge from it.
   spec.add_dependency "state_machines", "~> 0.201"
   spec.add_dependency "thor", "~> 1.3"
+  spec.add_dependency "tty-cursor", "~> 0.7"
+  spec.add_dependency "tty-screen", "~> 0.8"
 
-  # `ruby_llm` is a SUPPORTED OPTIONAL dependency, deliberately not declared here.
+  # `ruby_llm` is deliberately NOT a dependency, optional or otherwise.
   #
-  # Lain::Provider::RubyLLM requires it lazily and raises a helpful LoadError when absent.
-  # Declaring it as a hard dependency would force it on every user of the Anthropic path,
-  # which is the reference implementation. To use the multi-provider path:
-  #
-  #     gem install ruby_llm
-  #
-  # See README.md, "Providers".
+  # We vendor a slice of its HTTP layer instead (lib/lain/provider/http/, MIT,
+  # (c) 2025 Carmine Paolino -- see VENDOR.md). Depending on it was tried and
+  # reversed: `parse_completion_response` joins all text blocks into one String,
+  # joins all thinking blocks, and keeps only the FIRST thinking block's signature.
+  # Correctness gate 1 requires committing every content block, and extended-thinking
+  # signatures must be echoed back verbatim. That cannot be satisfied through their
+  # Message. We emit Lain::Response instead.
 end
