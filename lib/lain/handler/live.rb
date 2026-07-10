@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "../channel"
 require_relative "../effect"
 require_relative "../tool"
 require_relative "../toolset"
@@ -21,12 +22,20 @@ module Lain
     # {Effect::Approval} reaches Live, Live treats it as already-approved and
     # runs the inner effect -- otherwise a stack with no approver would wedge on
     # every gated call.
+    #
+    # A tool's second argument is a {Tool::Invocation}, built here from the
+    # effect plus the injected `channel` -- never the bare context a caller
+    # threads through {#call}. That is what lets, e.g., Tools::Bash attribute
+    # its `live_stdout` bytes to the exact `tool_use_id` that asked for them.
     class Live < Handler
       # @param toolset [Lain::Toolset] the capabilities this handler can dispatch
+      # @param channel [Lain::Channel] where tool output is attributed; defaults
+      #   to a Null Object so a deployment with no live consumer needs no guard
       # @param inner [Lain::Handler, nil] fallback for other effect kinds
-      def initialize(toolset:, inner: nil)
+      def initialize(toolset:, channel: Channel::Null.new, inner: nil)
         super(inner: inner)
         @toolset = toolset
+        @channel = channel
       end
 
       def handles?(effect)
@@ -46,7 +55,8 @@ module Lain
       private
 
       def dispatch(effect, context)
-        @toolset.fetch(effect.name).call(effect.input, context)
+        invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context: context, channel: @channel)
+        @toolset.fetch(effect.name).call(effect.input, invocation)
       rescue Toolset::UnknownTool
         # The model asked for a tool this set does not hold. That is a failed
         # call, not a crash: report it back as an error result and let the loop

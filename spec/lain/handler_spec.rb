@@ -27,6 +27,46 @@ RSpec.describe Lain::Handler do
       expect(handler.call(tool_call("echo", { text: "hi" }))).to eq(Lain::Tool::Result.ok("hi"))
     end
 
+    describe "the tool receives a Tool::Invocation, not the bare context" do
+      # An accessor on the tool itself, not a closure over a `let`: define_method
+      # rebinds `self` to the tool instance when #perform runs, so a captured
+      # local from the surrounding example is not reliably reachable there.
+      let(:capturing_class) do
+        Class.new(Lain::Tool) do
+          attr_reader :captured
+
+          def name = "capturing"
+          def description = "captures its invocation"
+          def input_schema = { type: :object, properties: {}, required: [] }
+
+          def perform(_input, invocation)
+            @captured = invocation
+            Lain::Tool::Result.ok("captured")
+          end
+        end
+      end
+      let(:capturing) { capturing_class.new }
+      let(:toolset) { Lain::Toolset.new([capturing]) }
+
+      it "builds an Invocation carrying the effect's tool_use_id and the caller's context" do
+        described_class.new(toolset: toolset).call(tool_call("capturing", {}, id: "tu_42"), "raw context")
+
+        expect(capturing.captured).to be_a(Lain::Tool::Invocation)
+        expect(capturing.captured).to have_attributes(tool_use_id: "tu_42", context: "raw context")
+      end
+
+      it "defaults the channel to a Null Object when none is injected" do
+        described_class.new(toolset: toolset).call(tool_call("capturing"))
+        expect(capturing.captured.channel).to be_a(Lain::Channel::Null)
+      end
+
+      it "threads the handler's injected channel through" do
+        channel = RecordingChannel.new
+        described_class.new(toolset: toolset, channel: channel).call(tool_call("capturing"))
+        expect(capturing.captured.channel).to be(channel)
+      end
+    end
+
     describe "correctness gate 3 -- a failure never raises past the loop" do
       it "turns a raising tool into an error Result" do
         boom = tool(:boom) { |_input, _context| raise "kaboom" }

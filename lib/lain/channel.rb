@@ -103,5 +103,18 @@ module Lain
     def capacity
       @queue.max
     end
+
+    # A channel that discards everything pushed to it, satisfying the same
+    # `#push`-shaped duck as a real Channel. The default channel for a
+    # {Tool::Invocation} that carries no live output destination, so a tool
+    # never needs an `if channel` guard before pushing -- it mirrors
+    # {Sink::Null}'s role one layer up.
+    class Null
+      # @return [self]
+      def push(_event)
+        self
+      end
+      alias << push
+    end
   end
 end

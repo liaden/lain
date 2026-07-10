@@ -95,6 +95,18 @@ module Lain
       false
     end
 
+    # Whether a call to this tool must pass through an approval gate
+    # (Handler::Approving) before it runs. Defaults to false: tier 1 (direct
+    # Ruby, no subprocess) and tier 2 (an argv Array through Mixlib::ShellOut)
+    # tools have no model-controlled command string to approve. Tier 3 tools --
+    # a String command through `sh -c` -- override this to true. The axis that
+    # predicts danger is whether the model controls the command string, not
+    # read-versus-write, so this is a property each tool declares about itself
+    # rather than a list maintained by the gate (see the plan's "Tool tiers").
+    def requires_approval?
+      false
+    end
+
     # The public entry point: validate, check preconditions, dispatch, check
     # postconditions. Subclasses implement {#perform}, not this. Returning the
     # checked {Result} here (rather than letting `#perform` be called directly)
@@ -315,3 +327,4 @@ module Lain
 end
 
 require_relative "tool/input"
+require_relative "tool/invocation"
