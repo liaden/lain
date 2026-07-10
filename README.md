@@ -12,17 +12,122 @@ The motivating context is worth stating plainly, because it explains every desig
 
 ## Status
 
-This is early. Milestone M0 (housekeeping) is in progress, and **nothing works end to end yet**. The gemspec has been settled, this README has been written, and the build scaffolding is being brought into shape. The objects described below are the intended design, not shipped, working code. Where this README shows an API, for example `Lain.agent(tools: [...])`, treat it as the target design rather than behavior you can run today. Nothing in the "Core design" or "The bench" sections should be read as a description of code you can currently execute.
+**M0 and M1 are done.** 317 examples, RuboCop clean at default metrics, `cargo test` 6/6. The
+agent loop is complete and provably correct against `Provider::Mock` — all seven correctness
+gates ship as specs — but **it has no tools to call and no way to be typed at**. There is no
+`lib/lain/tools/`, no `Handler::Approving`, no `lib/lain/frontend/`, and no `exe/lain`.
+`mixlib-shellout`, `thor`, and `state_machines` are declared dependencies with no code using
+them yet. Those land in **M1b**, in progress now.
+
+Where this README shows an API, for example `Lain.agent(tools: [...])`, treat it as the target
+design rather than behavior you can run today. Nothing in "Core design" or "The bench" should
+be read as a description of code you can currently execute unless the Status table below says
+otherwise.
+
+| Built (M0 + M1) | Notes |
+|---|---|
+| `Canonical` | Deterministic bytes. Serves turn hashing **and** prompt-cache stability. |
+| `Turn` / `Store` / `Timeline` | Lossless content-addressed Merkle DAG. `commit`, `fork`, `checkout`, `rewind`, `meet`, `diverge_at`. Meet-semilattice laws property-tested over a random forest. |
+| `Request` / `Response` / `Usage` | Provider-neutral value objects. `Usage` is a property-tested commutative monoid. |
+| `Tool` / `Toolset` / `Tool::Input` / `Contracts` | Capabilities, not permissions. ActiveModel input: one declaration yields both JSON Schema and validation. |
+| `Effect` / `Handler` / `Middleware` | Rack idiom over a property-tested monoid. `Handler::Live` is where correctness gate 3 lives. |
+| `Provider` / `::Anthropic` / `::Mock` | One round trip, never a loop. |
+| `Workspace` / `Context` | Sent-not-stored. `#render` is pure. |
+| `Agent` / `Budget` / `ToolRunner` | Explicit state machine. All seven correctness gates as specs. |
+| `Channel` / `Sink` / `Event` | Attributed event bus. Only the frontend touches the terminal. |
+| `ext/lain` | `tracing` → NDJSON to a **dup'd** caller fd. Pure, synchronous, no tokio. |
 
 The milestone plan, in brief:
 
-- **M0 (in progress).** Settle the gemspec, rewrite this README, and get `bundle install` and `rake compile` passing. The Rust extension stays stubbed and compiling.
-- **M1.** The spine: canonical serialization, `Turn`, `Timeline` (pure Ruby first), the provider-neutral request/response value objects, the `Provider` interface with `Provider::Anthropic`, tools and toolsets, effects, the model and tool middleware phases, the live handler, the agent state machine, and a TTY frontend. Seven correctness gates ship as specs.
-- **M2.** Observability: the `Journal` as an NDJSON event bus, per-turn usage and dollar cost, and a recording handler. Measurement comes before the seams, because a seam you cannot measure is decoration.
-- **M3.** The algebra with property-tested laws, the composable `Context` combinators, all four middleware phases, the second provider (`Provider::RubyLLM`, after a timeboxed spike), machine-checked provider capabilities, and the bench (`DryReplay`, `LiveReplay`, `Grader`, `Compare`).
-- **M4.** The Timeline reimplemented in Rust behind the same interface with the same property tests, plus a Neovim frontend.
+- **M0 — done.** Gemspec, dependency posture, `ruby-4.0.5` pinned, pre-commit, CI, `CLAUDE.md`.
+- **M1 — done.** The spine: canonical serialization, `Turn`/`Store`/`Timeline`, the
+  provider-neutral request/response value objects, the `Provider` interface with
+  `Provider::Anthropic` and `Provider::Mock`, tools and toolsets, effects, the model and tool
+  middleware phases, the live handler, and the agent state machine.
+- **M1b — in progress.** The agent's hands: `Tools::ReadFile`, `Tools::ListFiles` (tier 1,
+  structured, no subprocess), `Tools::Bash` (tier 3, `Mixlib::ShellOut`), `Handler::Approving`
+  gating tier 3 by default, `Frontend::TTY`, and `exe/lain`. This is the first point at which
+  the thing can be used. Also this README rewrite and `docs/concurrency.md`.
+- **M2.** Observability: the `Journal` as an NDJSON event bus, per-turn usage and dollar cost,
+  and a recording handler. Measurement comes before the seams, because a seam you cannot
+  measure is decoration.
+- **M3a/b/c.** Test infrastructure (VCR, shared example groups); the transport fork described
+  below; the algebra with property-tested laws, composable `Context` combinators, all four
+  middleware phases, machine-checked provider capabilities, and the bench (`DryReplay`,
+  `LiveReplay`, `Grader`, `Compare`).
+- **M4.** The Timeline reimplemented in Rust behind the same interface with the same property
+  tests, plus a Neovim frontend.
 - **M5.** Orchestration (subagents, todos), cross-session memory, and code mode.
 - **M6.** A second round of Rust work and a sweep of retrieval strategies through the bench.
+
+## Architecture, in one breath
+
+`Canonical` gives deterministic bytes, which serve turn hashing *and* prompt-cache stability —
+one function, two invariants. `Turn`/`Store`/`Timeline` form a lossless content-addressed
+Merkle DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a
+**pure** function `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same
+constraint. Tool calls are `Effect`s interpreted by a `Handler`; `Middleware` is the Rack-idiom
+public API over that, and it is a property-tested monoid. Tools are capabilities, not
+permissions. `Provider` is one round trip, never a loop — Lain owns the loop, because the loop
+is the object of study.
+
+`Workspace` is **sent, not stored**: it renders into the Request and is never appended to the
+Timeline. Subagents get a fresh Timeline root whose `meta["spawned_from"]` names the parent's
+head, so causal lineage survives while the child never inherits the parent's prompt.
+
+## Topology
+
+`lain` is one Ruby process that owns the loop. It talks to Neovim and to `lain-core` over the
+*same* transport — msgpack-RPC on a Unix socket — which is why they appear symmetric below.
+**`crates/lain-core` and the Neovim frontend are not built yet** (M4/M6); `ext/lain` is the only
+Rust that exists today, and it is in-process.
+
+```mermaid
+flowchart LR
+  subgraph w1["xmonad window 1"]
+    TTY["lain (Ruby)<br/>TTY frontend · owns the loop"]
+  end
+  subgraph w2["xmonad window 2"]
+    NVIM["nvim --listen"]
+  end
+  TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M4| NVIM
+  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust)<br/>pure · synchronous<br/>Timeline · Canonical · tracing"]
+  TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M6| CORE["crates/lain-core (Rust · tokio)<br/>exec sandbox · BM25 · parallel tools"]
+  TTY -->|HTTPS| ANTH["api.anthropic.com"]
+  TTY -->|HTTPS| OAI["OpenAI-compatible backends<br/>NOT BUILT"]
+  TTY -->|own fd, append-only<br/>NOT BUILT, M2| J[(".lain/sessions/*.ndjson")]
+  EXT -->|dup'd fd| J
+```
+
+## Data flow
+
+What is *sent* to the model versus what is *stored* in the Timeline is the distinction the
+whole design turns on. `Workspace` renders into the `Request` and is never appended to the
+Timeline. A subagent gets a **fresh root** over the shared `Store` — `meta["spawned_from"]`
+names the parent's head for causal lineage, but the child's prompt chain never includes the
+parent's conversation. Only the child's final result re-enters the parent's Timeline, as an
+ordinary `tool_result`.
+
+```mermaid
+flowchart TB
+  U([user turn]) --> TL
+  TL["Timeline<br/>content-addressed Merkle DAG"] --> CTX
+  TS["Toolset<br/>capabilities, attenuated"] --> CTX
+  WS["Workspace<br/><b>sent, not stored</b>"] --> CTX
+  MEM["Memory index<br/>content-addressed<br/>NOT BUILT, M5"] -->|Context::Recall<br/>after the last cache breakpoint| CTX
+  CTX["Context#render<br/><b>pure</b>"] --> REQ["Request · provider-neutral"]
+  REQ --> ENC["Provider#encode"] --> RESP["Response<br/><b>full</b> content blocks"]
+  RESP -->|commit: text + thinking + tool_use| TL
+  RESP -->|tool_use| TR["ToolRunner"]
+  TR -->|ONE user turn, all tool_results| TL
+  TR -.->|spawn: fresh root<br/>meta.spawned_from<br/>NOT BUILT, M5| CH["child Timeline<br/>shared Store"]
+  CH -.->|final result only| TR
+  REQ -.->|digest| C{{"prompt cache prefix<br/>tools → system → messages"}}
+```
+
+See [`docs/concurrency.md`](docs/concurrency.md) for how threads, fibers, and Ractors would
+each sit on the topology diagram above, and why the concurrency model is deliberately deferred
+to M5.
 
 ## Requirements
 
@@ -70,25 +175,52 @@ A subagent holds the tools it was handed, attenuated at construction time (for e
 
 The agent is an explicit state machine, not a while-loop with a stack of conditionals. Its states (awaiting model, awaiting tools, awaiting approval, awaiting user, done, failed) make `stop_reason` handling total: refusals, token exhaustion, paused turns, and context-window-exceeded conditions are transitions rather than branches someone might forget to write, and each provider normalizes its own stop reasons into this shared set. Everything a frontend shows is a projection of the `Journal` event stream; the TTY, Neovim, and the bench all subscribe, and editor code never reaches into the agent.
 
-## Providers
+## Providers, and the transport
 
-Both provider paths are first-class targets, but they are deliberately **not** symmetric, and pretending otherwise would silently corrupt the bench.
+`anthropic` (the official SDK) is a hard dependency. It is declared in the gemspec, and it is
+kept as a **correctness oracle**, not the default path: the forked transport described below is
+byte-diffed against `Provider::Anthropic#encode`, and one live differential run must produce an
+identical `Lain::Response`. It is retired only once the forked path has held.
 
-`anthropic` is a hard dependency and the reference implementation. It is declared in the gemspec, and the Anthropic provider is the path against which every design decision is validated first.
+**`ruby_llm` is not a dependency of any kind — not required, not optional.** There is no
+`Lain::Provider::RubyLLM`, and there never will be. This reverses an earlier plan (own the loop
+on the official SDK, keep `ruby_llm` behind a provider seam) after three findings:
 
-`ruby_llm` is a **supported optional** dependency. It is deliberately *not* in the gemspec's dependency list, because declaring it there currently blocks dependency resolution and would force it on every user of the reference Anthropic path. To use the multi-provider path, install it separately:
+- Auth is neutral. The API supports exactly two auth methods — a Console `x-api-key` and
+  Workload Identity Federation — and Claude Code's subscription OAuth is, per Anthropic's
+  credential-use policy, exclusive to Claude Code and claude.ai. So the SDK buys nothing on the
+  auth axis; a Console key is required either way.
+- `RubyLLM::Provider#complete` is already a stateless single-shot with no loop — `Chat#complete`
+  owns the loop, not the provider beneath it. That is the correct seam, and Lain never touches
+  `Chat`.
+- But their message model is **lossy** for this project. `parse_completion_response` joins every
+  text block into one String, joins every thinking block, and keeps only the **first** thinking
+  block's signature — the original content array is destroyed. Correctness gate 1 requires
+  committing the full block list, and extended-thinking signatures must be echoed back verbatim.
+  That cannot be satisfied through their `Message`.
 
-```bash
-gem install ruby_llm
-```
+So instead of depending on `ruby_llm`, Lain **vendors a slice of its HTTP layer** — the Faraday
+connection stack, the SSE stream accumulator, error mapping — into `lib/lain/provider/http/`
+(MIT, © 2025 Carmine Paolino), namespace-rewritten and stripped of the lossy `Message`/`Content`
+model in favor of `Lain::Response`. **This is a transport plan, not shipped code**: `lib/lain/provider/http/`
+does not exist yet. It is being built in parallel on the `vendor` branch, following the plan's
+TDD sequence — vendor verbatim, port their non-VCR unit specs unchanged, bootstrap cassettes,
+then mutate red-green until the lossy parts are gone. The official `anthropic` SDK remains the
+oracle throughout, and the eventual second provider axis (OpenAI-compatible backends) rides the
+same forked transport rather than a `ruby_llm` dependency.
 
-`Lain::Provider::RubyLLM` requires the gem lazily and raises a helpful `LoadError` if it is absent, so the Anthropic path never pays for a dependency it does not use.
-
-The seam between Lain and any provider is a single HTTP round trip with no loop: a provider declares its `capabilities`, encodes a provider-neutral request into a wire payload (so the payload can be byte-diffed and reasoned about for caching), and completes a request into a provider-neutral response. `Lain::Request` and `Lain::Response` are provider-neutral value objects that each provider translates to and from. This anti-corruption layer is what makes both deterministic dry replay and honest cross-provider comparison possible. It also means RubyLLM is demoted from an agentic loop to a plain completion engine, because Lain must own the loop.
+The seam between Lain and any provider is a single HTTP round trip with no loop: a provider
+declares its `capabilities`, encodes a provider-neutral request into a wire payload (so the
+payload can be byte-diffed and reasoned about for caching), and completes a request into a
+provider-neutral response. `Lain::Request` and `Lain::Response` are provider-neutral value
+objects that each provider translates to and from. This anti-corruption layer is what makes
+both deterministic dry replay and honest cross-provider comparison possible.
 
 ### The honest asymmetry
 
-The two providers do not offer the same capabilities, and this matters more than it might first appear. RubyLLM 1.16 has no server-side tools, no MCP connector, no memory tool, no Agent Skills, and no Batches or Files support. If you were to A/B a medical prompt across the two providers and half of your context tactics silently became no-ops on one of them, the comparison would be a lie.
+Providers will not offer the same capabilities once a second one exists, and that matters more
+than it might first appear. If you were to A/B a medical prompt across two providers and half of
+your context tactics silently became no-ops on one of them, the comparison would be a lie.
 
 Lain therefore makes capabilities machine-checked rather than merely documented. A `Context` combinator declares what it requires, and a provider declares what it has:
 
