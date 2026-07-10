@@ -8,6 +8,8 @@
 use tracing_subscriber::EnvFilter;
 
 mod canonical;
+mod dag;
+mod turn;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
 /// directive string (e.g. `"info"`, `"debug"`, `"lain=trace,warn"`).
@@ -74,9 +76,17 @@ fn blake3_hex(bytes: &[u8]) -> String {
 mod ffi {
     use super::{blake3_hex, build_env_filter, dup_writer};
     use crate::canonical::{self, Canon};
+    use crate::dag;
+    use crate::turn::{self, TurnData};
     use magnus::{
-        function, method, prelude::*, r_hash::ForEach, DataTypeFunctions, Error, Float, Integer,
-        RArray, RHash, RModule, RString, Ruby, Symbol, TypedData, Value,
+        function, gc, method,
+        prelude::*,
+        r_hash::ForEach,
+        scan_args::get_kwargs,
+        typed_data::{self, Obj},
+        value::Opaque,
+        DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
+        RString, Ruby, Symbol, TryConvert, TypedData, Value,
     };
     use std::io::Write;
     use std::sync::{Arc, Mutex};
@@ -340,6 +350,591 @@ mod ffi {
         Ok(canonical::digest(&ruby_to_canon(ruby, value)?))
     }
 
+    // -----------------------------------------------------------------------
+    // Turn / Store / Timeline: the content-addressed DAG.
+    //
+    // FFI-boundary decision: a Turn, a Store, and a Timeline each cross as an
+    // OPAQUE HANDLE, never a serialized copy, and every DAG walk runs ENTIRELY
+    // in Rust against the Store's `rpds` map. A method returns either a scalar,
+    // one fresh handle, or a single Ruby Array built in one pass -- never one
+    // FFI call per node, which is where a naive binding loses to plain Ruby.
+    // `Turn` holds only immutable Rust state (an `Arc<TurnData>`: no reachable
+    // Ruby object), so `frozen_shareable` is honest once the handle is frozen.
+    // `Timeline` is the one handle that references a Ruby object (its `Store`),
+    // so it marks that reference and is deliberately NOT frozen_shareable --
+    // exactly as the Ruby `Timeline`, a frozen value over a mutable Store, is
+    // itself not `Ractor.shareable?`.
+    // -----------------------------------------------------------------------
+
+    /// Build a `Lain::Ext::<class>::<error>` exception with `message`. Looked up
+    /// at raise-time; a lookup failure surfaces as the underlying `NameError`.
+    fn ext_error(ruby: &Ruby, class_name: &str, error_name: &str, message: String) -> Error {
+        let looked = ruby
+            .class_object()
+            .const_get::<_, RModule>("Lain")
+            .and_then(|m| m.const_get::<_, RModule>("Ext"))
+            .and_then(|m| m.const_get::<_, RClass>(class_name))
+            .and_then(|c| c.const_get::<_, ExceptionClass>(error_name));
+        match looked {
+            Ok(exception) => Error::new(exception, message),
+            Err(lookup_failure) => lookup_failure,
+        }
+    }
+
+    /// A frozen Ruby String. Digests, roles, and reconstructed content strings
+    /// are all frozen so a reconstructed `content`/`meta` tree is deeply
+    /// immutable, matching the Ruby `Turn`.
+    fn frozen_str(ruby: &Ruby, text: &str) -> Value {
+        let string = ruby.str_new(text);
+        string.freeze();
+        string.as_value()
+    }
+
+    /// Rebuild a Ruby value from a [`Canon`], deeply frozen. Called on demand
+    /// (e.g. `turn.content`), so the `Turn` handle itself never has to hold a
+    /// Ruby reference -- which is what keeps it trivially `Ractor.shareable?`.
+    fn canon_to_ruby(ruby: &Ruby, canon: &Canon) -> Value {
+        match canon {
+            Canon::Null => ruby.qnil().as_value(),
+            Canon::Bool(true) => ruby.qtrue().as_value(),
+            Canon::Bool(false) => ruby.qfalse().as_value(),
+            Canon::Num(text) => num_to_ruby(ruby, text),
+            Canon::Str(text) => frozen_str(ruby, text),
+            Canon::Array(items) => {
+                let array = ruby.ary_new_capa(items.len());
+                for item in items {
+                    // Pushing to a fresh, un-shared array cannot fail.
+                    let _ = array.push(canon_to_ruby(ruby, item));
+                }
+                array.freeze();
+                array.as_value()
+            }
+            Canon::Object(pairs) => {
+                let hash = ruby.hash_new();
+                for (key, value) in pairs {
+                    let _ = hash.aset(frozen_str(ruby, key), canon_to_ruby(ruby, value));
+                }
+                hash.freeze();
+                hash.as_value()
+            }
+        }
+    }
+
+    /// Rebuild the Ruby number a [`Canon::Num`] text denotes. A JSON float always
+    /// carries `.`, `e`, or `E`; an integer never does -- so the text alone says
+    /// which. Bignums round-trip through Ruby's own parser to keep arbitrary
+    /// precision. The fallbacks are unreachable for text produced by the reader.
+    fn num_to_ruby(ruby: &Ruby, text: &str) -> Value {
+        if text.contains(['.', 'e', 'E']) {
+            ruby.float_from_f64(text.parse::<f64>().unwrap_or(f64::NAN))
+                .as_value()
+        } else if let Ok(small) = text.parse::<i64>() {
+            ruby.integer_from_i64(small).as_value()
+        } else {
+            ruby.str_new(text)
+                .funcall("to_i", ())
+                .unwrap_or_else(|_| ruby.qnil().as_value())
+        }
+    }
+
+    /// Read a role argument (String or Symbol) and validate it, raising
+    /// `Turn::InvalidRole` on anything that is not a wire role.
+    fn read_role(ruby: &Ruby, value: Value) -> Result<String, Error> {
+        let raw = if let Some(string) = RString::from_value(value) {
+            utf8(ruby, string)?
+        } else if let Some(symbol) = Symbol::from_value(value) {
+            utf8(ruby, symbol.funcall("to_s", ())?)?
+        } else {
+            // SAFETY: see ruby_to_canon.
+            let class = unsafe { value.classname() }.into_owned();
+            return Err(ext_error(
+                ruby,
+                "Turn",
+                "InvalidRole",
+                format!(
+                    "role must be one of {}, got a {class}",
+                    turn::ROLES.join(", ")
+                ),
+            ));
+        };
+        turn::validate_role(&raw).map_err(|invalid| {
+            ext_error(
+                ruby,
+                "Turn",
+                "InvalidRole",
+                format!(
+                    "role must be one of {}, got {:?}",
+                    turn::ROLES.join(", "),
+                    invalid.0
+                ),
+            )
+        })
+    }
+
+    /// A parent/head digest argument: `nil` (or absent) is a root/empty head, a
+    /// String is a digest, anything else is a type error.
+    fn read_optional_digest(ruby: &Ruby, value: Option<Value>) -> Result<Option<String>, Error> {
+        match value {
+            None => Ok(None),
+            Some(inner) if inner.is_nil() => Ok(None),
+            Some(inner) => {
+                let string = RString::from_value(inner).ok_or_else(|| {
+                    Error::new(
+                        ruby.exception_type_error(),
+                        "digest must be a String or nil",
+                    )
+                })?;
+                Ok(Some(utf8(ruby, string)?))
+            }
+        }
+    }
+
+    /// A meta argument, defaulting to `{}` when absent or nil.
+    fn read_meta(ruby: &Ruby, value: Option<Value>) -> Result<Canon, Error> {
+        match value {
+            Some(inner) if !inner.is_nil() => ruby_to_canon(ruby, inner),
+            _ => Ok(Canon::Object(Vec::new())),
+        }
+    }
+
+    /// A frozen node of the Timeline DAG. Holds only an `Arc<TurnData>` -- pure
+    /// immutable Rust, no Ruby reference -- so once frozen it is honestly
+    /// `Ractor.shareable?` with no `mark` and no reachable mutable state.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Turn", free_immediately, frozen_shareable)]
+    struct Turn {
+        inner: Arc<TurnData>,
+    }
+
+    impl DataTypeFunctions for Turn {}
+
+    impl PartialEq for Turn {
+        fn eq(&self, other: &Self) -> bool {
+            self.inner.digest == other.inner.digest
+        }
+    }
+
+    impl Eq for Turn {}
+
+    impl std::hash::Hash for Turn {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.inner.digest.hash(state);
+        }
+    }
+
+    impl Turn {
+        fn wrap(ruby: &Ruby, inner: Arc<TurnData>) -> Obj<Self> {
+            let obj = ruby.obj_wrap(Turn { inner });
+            obj.freeze();
+            obj
+        }
+
+        fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
+            let args = get_kwargs::<_, (Value, Value), (Option<Value>, Option<Value>), ()>(
+                kw,
+                &["role", "content"],
+                &["parent", "meta"],
+            )?;
+            let (role_value, content_value) = args.required;
+            let (parent_value, meta_value) = args.optional;
+            let role = read_role(ruby, role_value)?;
+            let content = ruby_to_canon(ruby, content_value)?;
+            let parent = read_optional_digest(ruby, parent_value)?;
+            let meta = read_meta(ruby, meta_value)?;
+            Ok(Turn::wrap(ruby, TurnData::new(role, content, parent, meta)))
+        }
+
+        fn role(ruby: &Ruby, rb_self: &Turn) -> Value {
+            frozen_str(ruby, &rb_self.inner.role)
+        }
+
+        fn content(ruby: &Ruby, rb_self: &Turn) -> Value {
+            canon_to_ruby(ruby, &rb_self.inner.content)
+        }
+
+        fn parent(ruby: &Ruby, rb_self: &Turn) -> Value {
+            match &rb_self.inner.parent {
+                Some(digest) => frozen_str(ruby, digest),
+                None => ruby.qnil().as_value(),
+            }
+        }
+
+        fn meta(ruby: &Ruby, rb_self: &Turn) -> Value {
+            canon_to_ruby(ruby, &rb_self.inner.meta)
+        }
+
+        fn digest(ruby: &Ruby, rb_self: &Turn) -> Value {
+            frozen_str(ruby, &rb_self.inner.digest)
+        }
+
+        fn payload(ruby: &Ruby, rb_self: &Turn) -> Value {
+            canon_to_ruby(ruby, &rb_self.inner.payload_canon())
+        }
+
+        fn root_p(&self) -> bool {
+            self.inner.root()
+        }
+
+        fn to_s(&self) -> String {
+            let digest = &self.inner.digest;
+            let prefix = digest.get(..19).unwrap_or(digest);
+            format!("#<Lain::Ext::Turn {} {prefix}...>", self.inner.role)
+        }
+    }
+
+    /// An append-only, content-addressed object database over an `rpds` map. The
+    /// map is persistent (structural sharing), and the `Mutex` makes concurrent
+    /// `put`s safe independently of the GVL. Holds no Ruby reference, so no
+    /// `mark`; not shareable, because it is mutable.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Store", free_immediately)]
+    struct Store {
+        objects: Mutex<dag::StoreMap>,
+    }
+
+    impl DataTypeFunctions for Store {}
+
+    impl Store {
+        fn new(ruby: &Ruby) -> Obj<Self> {
+            ruby.obj_wrap(Store {
+                objects: Mutex::new(dag::StoreMap::new_sync()),
+            })
+        }
+
+        fn locked(&self) -> std::sync::MutexGuard<'_, dag::StoreMap> {
+            self.objects
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
+        /// Insert a node if its digest is absent, returning the digest. The
+        /// address names the content, so a second write is a no-op.
+        fn insert_arc(&self, turn: Arc<TurnData>) -> String {
+            let digest = turn.digest.clone();
+            let mut map = self.locked();
+            if !map.contains_key(&digest) {
+                *map = map.insert(digest.clone(), turn);
+            }
+            digest
+        }
+
+        fn put(&self, turn: &Turn) -> String {
+            self.insert_arc(Arc::clone(&turn.inner))
+        }
+
+        fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Obj<Turn>, Error> {
+            let found = rb_self.locked().get(&digest).map(Arc::clone);
+            match found {
+                Some(inner) => Ok(Turn::wrap(ruby, inner)),
+                None => Err(ext_error(
+                    ruby,
+                    "Store",
+                    "MissingObject",
+                    format!("no object {digest:?} in store"),
+                )),
+            }
+        }
+
+        fn key_p(&self, digest: String) -> bool {
+            self.locked().contains_key(&digest)
+        }
+
+        fn size(&self) -> usize {
+            self.locked().size()
+        }
+    }
+
+    /// An immutable `(head, store)` handle over the DAG. References the Store
+    /// Ruby object (hence `mark`), so it is not shareable -- like Ruby's.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Timeline", free_immediately, mark)]
+    struct Timeline {
+        head: Option<String>,
+        store: Opaque<Value>,
+    }
+
+    impl DataTypeFunctions for Timeline {
+        fn mark(&self, marker: &gc::Marker) {
+            marker.mark(self.store);
+        }
+    }
+
+    impl PartialEq for Timeline {
+        fn eq(&self, other: &Self) -> bool {
+            self.head == other.head
+        }
+    }
+
+    impl Eq for Timeline {}
+
+    impl std::hash::Hash for Timeline {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.head.hash(state);
+        }
+    }
+
+    impl Timeline {
+        fn wrap(ruby: &Ruby, head: Option<String>, store: Value) -> Obj<Self> {
+            let obj = ruby.obj_wrap(Timeline {
+                head,
+                store: store.into(),
+            });
+            obj.freeze();
+            obj
+        }
+
+        fn store_value(&self, ruby: &Ruby) -> Value {
+            ruby.get_inner(self.store)
+        }
+
+        fn empty(ruby: &Ruby, args: &[Value]) -> Result<Obj<Self>, Error> {
+            let store_value = match args.first() {
+                None => Store::new(ruby).as_value(),
+                Some(first) => {
+                    let kw = RHash::from_value(*first).ok_or_else(|| {
+                        Error::new(ruby.exception_arg_error(), "expected keyword arguments")
+                    })?;
+                    let parsed = get_kwargs::<_, (), (Option<Value>,), ()>(kw, &[], &["store"])?;
+                    match parsed.optional.0 {
+                        Some(store) => store,
+                        None => Store::new(ruby).as_value(),
+                    }
+                }
+            };
+            // A non-Store store must fail loudly at construction, not on first walk.
+            let _: &Store = TryConvert::try_convert(store_value)?;
+            Ok(Timeline::wrap(ruby, None, store_value))
+        }
+
+        fn empty_p(&self) -> bool {
+            self.head.is_none()
+        }
+
+        fn head_digest(ruby: &Ruby, rb_self: &Timeline) -> Value {
+            match &rb_self.head {
+                Some(digest) => frozen_str(ruby, digest),
+                None => ruby.qnil().as_value(),
+            }
+        }
+
+        fn store(ruby: &Ruby, rb_self: &Timeline) -> Value {
+            rb_self.store_value(ruby)
+        }
+
+        fn head(ruby: &Ruby, rb_self: &Timeline) -> Result<Value, Error> {
+            match &rb_self.head {
+                None => Ok(ruby.qnil().as_value()),
+                Some(digest) => {
+                    let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+                    let found = store.locked().get(digest).map(Arc::clone);
+                    match found {
+                        Some(inner) => Ok(Turn::wrap(ruby, inner).as_value()),
+                        None => Err(ext_error(
+                            ruby,
+                            "Store",
+                            "MissingObject",
+                            format!("no object {digest:?} in store"),
+                        )),
+                    }
+                }
+            }
+        }
+
+        fn commit(ruby: &Ruby, rb_self: Obj<Timeline>, kw: RHash) -> Result<Obj<Timeline>, Error> {
+            let args = get_kwargs::<_, (Value, Value), (Option<Value>,), ()>(
+                kw,
+                &["role", "content"],
+                &["meta"],
+            )?;
+            let (role_value, content_value) = args.required;
+            let role = read_role(ruby, role_value)?;
+            let content = ruby_to_canon(ruby, content_value)?;
+            let meta = read_meta(ruby, args.optional.0)?;
+            let turn = TurnData::new(role, content, rb_self.head.clone(), meta);
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = TryConvert::try_convert(store_value)?;
+            let digest = store.insert_arc(turn);
+            Ok(Timeline::wrap(ruby, Some(digest), store_value))
+        }
+
+        fn fork(rb_self: Obj<Timeline>) -> Obj<Timeline> {
+            rb_self
+        }
+
+        fn checkout(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            digest: Value,
+        ) -> Result<Obj<Timeline>, Error> {
+            let head = read_optional_digest(ruby, Some(digest))?;
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = TryConvert::try_convert(store_value)?;
+            if let Some(target) = &head {
+                if !store.key_p(target.clone()) {
+                    return Err(ext_error(
+                        ruby,
+                        "Store",
+                        "MissingObject",
+                        format!("no object {target:?}"),
+                    ));
+                }
+            }
+            Ok(Timeline::wrap(ruby, head, store_value))
+        }
+
+        fn rewind(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            args: &[Value],
+        ) -> Result<Obj<Timeline>, Error> {
+            let count = match args.first() {
+                Some(value) => i64::try_convert(*value)?,
+                None => 1,
+            };
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = TryConvert::try_convert(store_value)?;
+            let mut digest = rb_self.head.clone();
+            let mut remaining = count;
+            while remaining > 0 {
+                digest = digest.and_then(|current| dag::parent_of(&store.locked(), &current));
+                remaining -= 1;
+            }
+            Ok(Timeline::wrap(ruby, digest, store_value))
+        }
+
+        fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            let arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref());
+            Ok(turns_to_array(ruby, arcs))
+        }
+
+        fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            let mut arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref());
+            arcs.reverse();
+            Ok(turns_to_array(ruby, arcs))
+        }
+
+        fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_deref());
+            let array = ruby.ary_new_capa(digests.len());
+            for digest in digests {
+                array.push(frozen_str(ruby, &digest))?;
+            }
+            Ok(array)
+        }
+
+        fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            Ok(dag::ancestor_digests(&store.locked(), rb_self.head.as_deref()).len())
+        }
+
+        fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            Ok(
+                dag::ancestor_digests(&store.locked(), rb_self.head.as_deref())
+                    .iter()
+                    .any(|candidate| candidate == &digest),
+            )
+        }
+
+        fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
+            same_store(ruby, rb_self, other)?;
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            Ok(dag::ancestor_of(
+                &store.locked(),
+                rb_self.head.as_deref(),
+                other.head.as_deref(),
+            ))
+        }
+
+        fn meet(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            other: &Timeline,
+        ) -> Result<Obj<Timeline>, Error> {
+            same_store(ruby, &rb_self, other)?;
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = TryConvert::try_convert(store_value)?;
+            let common = dag::meet(
+                &store.locked(),
+                rb_self.head.as_deref(),
+                other.head.as_deref(),
+            );
+            Ok(Timeline::wrap(ruby, common, store_value))
+        }
+
+        fn diverge_at(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            other: &Timeline,
+        ) -> Result<Value, Error> {
+            same_store(ruby, &rb_self, other)?;
+            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            let common = dag::meet(
+                &store.locked(),
+                rb_self.head.as_deref(),
+                other.head.as_deref(),
+            );
+            match common {
+                None => Ok(ruby.qnil().as_value()),
+                Some(digest) => {
+                    let found = store.locked().get(&digest).map(Arc::clone);
+                    Ok(found
+                        .map(|inner| Turn::wrap(ruby, inner).as_value())
+                        .unwrap_or_else(|| ruby.qnil().as_value()))
+                }
+            }
+        }
+
+        fn to_s(ruby: &Ruby, rb_self: &Timeline) -> String {
+            match &rb_self.head {
+                None => "#<Lain::Ext::Timeline empty>".to_string(),
+                Some(digest) => {
+                    let prefix = digest.get(..19).unwrap_or(digest);
+                    let length = TryConvert::try_convert(rb_self.store_value(ruby))
+                        .map(|store: &Store| {
+                            dag::ancestor_digests(&store.locked(), Some(digest)).len()
+                        })
+                        .unwrap_or(0);
+                    format!("#<Lain::Ext::Timeline {prefix}... ({length})>")
+                }
+            }
+        }
+    }
+
+    /// One FFI crossing for a whole chain: wrap each already-walked node into a
+    /// frozen `Turn` handle and hand back a single Ruby Array.
+    fn turns_to_array(ruby: &Ruby, arcs: Vec<Arc<TurnData>>) -> RArray {
+        let array = ruby.ary_new_capa(arcs.len());
+        for arc in arcs {
+            // Pushing to a fresh array cannot fail.
+            let _ = array.push(Turn::wrap(ruby, arc));
+        }
+        array
+    }
+
+    /// Raise `Timeline::CrossStore` unless both Timelines name the SAME Store
+    /// object. A `Store` defines no `==`, so Ruby `==` is `BasicObject`'s object
+    /// identity -- exactly Ruby's `store.equal?(other.store)`.
+    fn same_store(ruby: &Ruby, a: &Timeline, b: &Timeline) -> Result<(), Error> {
+        let same = a
+            .store_value(ruby)
+            .equal(b.store_value(ruby))
+            .unwrap_or(false);
+        if same {
+            Ok(())
+        } else {
+            Err(ext_error(
+                ruby,
+                "Timeline",
+                "CrossStore",
+                "cannot compare Timelines backed by different stores".to_string(),
+            ))
+        }
+    }
+
     #[magnus::init]
     fn init(ruby: &Ruby) -> Result<(), Error> {
         let module = ruby.define_module("Lain")?;
@@ -354,6 +949,64 @@ mod ffi {
         let share_probe = ext.define_class("ShareProbe", ruby.class_object())?;
         share_probe.define_singleton_method("new", function!(ShareProbe::new, 1))?;
         share_probe.define_method("value", method!(ShareProbe::value, 0))?;
+
+        // Subclass Lain::Error where it exists (it is required before this
+        // extension loads); fall back to StandardError so init never fails on it.
+        let lain_error = ruby
+            .class_object()
+            .const_get::<_, RModule>("Lain")
+            .and_then(|m| m.const_get::<_, ExceptionClass>("Error"))
+            .unwrap_or_else(|_| ruby.exception_standard_error());
+
+        let turn = ext.define_class("Turn", ruby.class_object())?;
+        turn.define_error("InvalidRole", lain_error)?;
+        turn.define_singleton_method("new", function!(Turn::new, 1))?;
+        turn.define_method("role", method!(Turn::role, 0))?;
+        turn.define_method("content", method!(Turn::content, 0))?;
+        turn.define_method("parent", method!(Turn::parent, 0))?;
+        turn.define_method("meta", method!(Turn::meta, 0))?;
+        turn.define_method("digest", method!(Turn::digest, 0))?;
+        turn.define_method("payload", method!(Turn::payload, 0))?;
+        turn.define_method("root?", method!(Turn::root_p, 0))?;
+        turn.define_method("==", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
+        turn.define_method("eql?", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
+        turn.define_method("hash", method!(<Turn as typed_data::Hash>::hash, 0))?;
+        turn.define_method("to_s", method!(Turn::to_s, 0))?;
+        turn.define_method("inspect", method!(Turn::to_s, 0))?;
+
+        let store = ext.define_class("Store", ruby.class_object())?;
+        store.define_error("MissingObject", lain_error)?;
+        store.define_singleton_method("new", function!(Store::new, 0))?;
+        store.define_method("put", method!(Store::put, 1))?;
+        store.define_method("fetch", method!(Store::fetch, 1))?;
+        store.define_method("key?", method!(Store::key_p, 1))?;
+        store.define_method("size", method!(Store::size, 0))?;
+
+        let timeline = ext.define_class("Timeline", ruby.class_object())?;
+        timeline.define_error("CrossStore", lain_error)?;
+        timeline.define_singleton_method("empty", function!(Timeline::empty, -1))?;
+        timeline.define_method("empty?", method!(Timeline::empty_p, 0))?;
+        timeline.define_method("head", method!(Timeline::head, 0))?;
+        timeline.define_method("head_digest", method!(Timeline::head_digest, 0))?;
+        timeline.define_method("store", method!(Timeline::store, 0))?;
+        timeline.define_method("commit", method!(Timeline::commit, 1))?;
+        timeline.define_method("fork", method!(Timeline::fork, 0))?;
+        timeline.define_method("checkout", method!(Timeline::checkout, 1))?;
+        timeline.define_method("rewind", method!(Timeline::rewind, -1))?;
+        timeline.define_method("ancestors", method!(Timeline::ancestors, 0))?;
+        timeline.define_method("ancestor_digests", method!(Timeline::ancestor_digests, 0))?;
+        timeline.define_method("to_a", method!(Timeline::to_a, 0))?;
+        timeline.define_method("length", method!(Timeline::length, 0))?;
+        timeline.define_method("include?", method!(Timeline::include_p, 1))?;
+        timeline.define_method("ancestor_of?", method!(Timeline::ancestor_of_p, 1))?;
+        timeline.define_method("meet", method!(Timeline::meet, 1))?;
+        timeline.define_method("&", method!(Timeline::meet, 1))?;
+        timeline.define_method("diverge_at", method!(Timeline::diverge_at, 1))?;
+        timeline.define_method("==", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
+        timeline.define_method("eql?", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
+        timeline.define_method("hash", method!(<Timeline as typed_data::Hash>::hash, 0))?;
+        timeline.define_method("to_s", method!(Timeline::to_s, 0))?;
+        timeline.define_method("inspect", method!(Timeline::to_s, 0))?;
 
         Ok(())
     }
