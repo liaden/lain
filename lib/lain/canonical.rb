@@ -53,8 +53,12 @@ module Lain
 
       # Content address of +value+, e.g. "sha256:9f86d0...". The prefix keeps the
       # algorithm explicit so a future migration is not a silent reinterpretation.
+      #
+      # Returned frozen and deduplicated. Digests are used as Hash keys all over
+      # (the Store, cache-break walks), and an unfrozen ivar anywhere in a Turn is
+      # enough to make the whole object non-Ractor-shareable.
       def digest(value)
-        "#{DIGEST_ALGORITHM}:#{Digest::SHA256.hexdigest(dump(value))}"
+        -"#{DIGEST_ALGORITHM}:#{Digest::SHA256.hexdigest(dump(value))}"
       end
 
       private

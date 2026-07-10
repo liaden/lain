@@ -56,8 +56,10 @@ module Lain
 
     private
 
+    # Frozen and deduplicated: `Symbol#to_s` hands back a fresh mutable String,
+    # and one unfrozen ivar is enough to make the whole Turn non-shareable.
     def normalize_role(role)
-      string = role.to_s
+      string = -role.to_s
       raise InvalidRole, "role must be one of #{ROLES.join(", ")}, got #{string.inspect}" unless ROLES.include?(string)
 
       string

@@ -40,6 +40,21 @@ RSpec.describe Lain::Turn do
     it "freezes the turn itself" do
       expect(described_class.new(role: :user, content: text("hi"))).to be_frozen
     end
+
+    # Deep shareability is a property worth keeping even though Ractors are not
+    # used yet: it is exactly the guarantee "no reachable mutable state" and it
+    # fails loudly the moment an ivar stops being frozen. `Symbol#to_s` and string
+    # interpolation both hand back mutable Strings, which is how it broke once.
+    it "is deeply immutable, hence Ractor-shareable without make_shareable" do
+      turn = described_class.new(role: :user, content: text("hi"), meta: { "a" => 1 })
+      expect(Ractor.shareable?(turn)).to be(true)
+    end
+
+    it "freezes every instance variable" do
+      turn = described_class.new(role: :user, content: text("hi"))
+      unfrozen = turn.instance_variables.reject { |ivar| turn.instance_variable_get(ivar).frozen? }
+      expect(unfrozen).to be_empty
+    end
   end
 
   describe "#digest" do

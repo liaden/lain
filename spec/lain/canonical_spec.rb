@@ -97,6 +97,13 @@ RSpec.describe Lain::Canonical do
       expect(described_class.digest("x")).to start_with("sha256:")
     end
 
+    # Digests are Hash keys throughout (the Store, cache-break walks). An unfrozen
+    # one leaves any Turn holding it non-Ractor-shareable.
+    it "returns a frozen, deduplicated String" do
+      expect(described_class.digest("x")).to be_frozen
+      expect(described_class.digest("x")).to equal(described_class.digest("x"))
+    end
+
     it "is the SHA-256 of the canonical dump" do
       expected = Digest::SHA256.hexdigest(described_class.dump({ "a" => 1 }))
       expect(described_class.digest({ "a" => 1 })).to eq("sha256:#{expected}")
