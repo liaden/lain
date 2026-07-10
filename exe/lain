@@ -1,0 +1,82 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "thor"
+
+require "lain"
+require "lain/frontend"
+
+# The executable. Deliberately thin: parse flags, wire the real collaborators
+# together, hand off to Frontend::TTY. Nothing here is unit-tested the way
+# lib/ is (see CLAUDE.md), so nothing here decides anything -- Handler::Approving,
+# Tool, and TTY already carry the logic and already carry the specs.
+class LainCLI < Thor
+  desc "chat", "Start an interactive Lain session"
+  method_option :yolo, type: :boolean, default: false,
+                       desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
+  method_option :model, type: :string, default: Lain::Provider::Anthropic::DEFAULT_MODEL,
+                        desc: "Anthropic model id"
+  method_option :max_tokens, type: :numeric, default: 4_096,
+                             desc: "max_tokens per model turn"
+  default_task :chat
+
+  def chat
+    channel = Lain::Channel.new
+    toolset = build_toolset
+    agent = build_agent(toolset: toolset, channel: channel)
+    tty = Lain::Frontend::TTY.new(channel: channel)
+
+    tty.run { converse(agent, tty) }
+  end
+
+  private
+
+  def build_toolset
+    Lain::Toolset.new([
+                        Lain::Tools::ReadFile.new,
+                        Lain::Tools::ListFiles.new,
+                        Lain::Tools::Bash.new
+                      ])
+  end
+
+  # Approving and Live share ONE Toolset (the single-map invariant the plan
+  # calls out): a second Toolset reference here could let the approval gate
+  # and the executor disagree about what a tool name means.
+  def build_agent(toolset:, channel:)
+    live = Lain::Handler::Live.new(toolset: toolset, channel: channel)
+    approving = Lain::Handler::Approving.new(policy: approval_policy, inner: live)
+    context = Lain::Context.new(model: options[:model], max_tokens: options[:max_tokens])
+
+    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset: toolset, context: context, handler: approving)
+  end
+
+  def approval_policy
+    return Lain::Handler::Approving::ApproveAll.new if options[:yolo]
+
+    Lain::Frontend::ApprovalPolicy.new
+  end
+
+  # No next/break: the loop's exit condition is `text`'s own truthiness,
+  # reassigned each pass, the same shape the project's style favors elsewhere
+  # (`digest &&= step`).
+  def converse(agent, tty)
+    text = tty.prompt("you> ")
+    while text && !farewell?(text)
+      respond(agent, tty, text)
+      text = tty.prompt("you> ")
+    end
+  end
+
+  def respond(agent, tty, text)
+    tty.render_response(agent.ask(text))
+  rescue Lain::Error => e
+    tty.render_error(e.message)
+  end
+
+  def farewell?(text)
+    %w[exit quit].include?(text.strip.downcase)
+  end
+end
+
+LainCLI.start(ARGV)
