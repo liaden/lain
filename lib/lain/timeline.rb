@@ -7,7 +7,7 @@ require_relative "turn"
 module Lain
   # An immutable (head digest, store) pair over a content-addressed DAG.
   #
-  # Because a Timeline holds only a head digest, forking is free and appending to
+  # Because a Timeline holds only a head digest, forking is free and committing to
   # two Timelines that share a head produces two branches whose common prefix is
   # stored exactly once. Time-travel (#rewind, #checkout) is pointer movement.
   #
@@ -44,7 +44,15 @@ module Lain
       head_digest && store.fetch(head_digest)
     end
 
-    def append(role:, content:, meta: {})
+    # Returns a NEW Timeline; the receiver is untouched.
+    #
+    # Named `commit` rather than `append` on purpose. In Ruby `append` means
+    # `Array#append` -- it mutates the receiver -- and `t = t.append(...)` would
+    # read to both a human and to RuboCop's Style/RedundantSelfAssignment as a
+    # redundant self-assignment worth deleting. Deleting it would silently drop
+    # every turn. The git verb says what actually happens: a new object, named by
+    # its content, with the old head as its parent.
+    def commit(role:, content:, meta: {})
       turn = Turn.new(role: role, content: content, parent: head_digest, meta: meta)
       store.put(turn)
       self.class.new(head_digest: turn.digest, store: store)
@@ -60,13 +68,11 @@ module Lain
       self.class.new(head_digest: digest, store: store)
     end
 
+    # Rewinding past the root lands on the empty Timeline rather than raising:
+    # `nil` absorbs, so the walk needs no early exit.
     def rewind(count = 1)
       digest = head_digest
-      count.times do
-        break if digest.nil?
-
-        digest = store.fetch(digest).parent
-      end
+      count.times { digest &&= store.fetch(digest).parent }
       checkout(digest)
     end
 

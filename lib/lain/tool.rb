@@ -181,17 +181,15 @@ module Lain
 
     def check_preconditions!(input, context)
       self.class.preconditions.each do |contract|
-        next if instance_exec(input, context, &contract.predicate)
-
-        raise ContractViolation, "precondition failed for #{name}: #{contract.message}"
+        satisfied = instance_exec(input, context, &contract.predicate)
+        raise ContractViolation, "precondition failed for #{name}: #{contract.message}" unless satisfied
       end
     end
 
     def check_postconditions!(input, context, result)
       self.class.postconditions.each do |contract|
-        next if instance_exec(input, context, result, &contract.predicate)
-
-        raise ContractViolation, "postcondition failed for #{name}: #{contract.message}"
+        satisfied = instance_exec(input, context, result, &contract.predicate)
+        raise ContractViolation, "postcondition failed for #{name}: #{contract.message}" unless satisfied
       end
     end
   end
@@ -302,11 +300,8 @@ module Lain
           errors << "#{path}.#{key} is required" unless key?(value, key)
         end
 
-        (lookup(schema, :properties) || {}).each do |name, subschema|
-          next unless key?(value, name)
-
-          validate(subschema, dig(value, name), "#{path}.#{name}", errors)
-        end
+        present = (lookup(schema, :properties) || {}).select { |name, _| key?(value, name) }
+        present.each { |name, subschema| validate(subschema, dig(value, name), "#{path}.#{name}", errors) }
       end
 
       def validate_array(schema, value, path, errors)

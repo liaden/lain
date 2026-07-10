@@ -7,7 +7,7 @@ RSpec.describe Lain::Timeline do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  def say(from, body, role: :user) = from.append(role: role, content: text(body))
+  def say(from, body, role: :user) = from.commit(role: role, content: text(body))
 
   describe "an empty timeline" do
     it "has no head" do
@@ -21,7 +21,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  describe "#append" do
+  describe "#commit" do
     it "advances the head" do
       one = say(timeline, "a")
       expect(one.head.content).to eq(text("a"))
@@ -208,7 +208,7 @@ RSpec.describe Lain::Timeline do
 
     let(:child) do
       described_class.empty(store: store)
-                     .append(role: :user, content: text("child task"),
+                     .commit(role: :user, content: text("child task"),
                              meta: { "spawned_from" => parent.head_digest })
     end
 
