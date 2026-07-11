@@ -6,16 +6,11 @@ require "tempfile"
 
 require "lain/bench/session"
 
-require "lain/agent"
 require "lain/context"
 require "lain/context/prune"
 require "lain/event"
 require "lain/journal"
 require "lain/ledger"
-require "lain/middleware"
-require "lain/provider/mock"
-require "lain/response"
-require "lain/tool"
 require "lain/toolset"
 require "lain/usage"
 require "lain/workspace"
@@ -29,15 +24,7 @@ require "lain/workspace"
 # CONTENT: the transport fields (stream, extra) sit outside Request#digest and
 # load unverified.
 RSpec.describe Lain::Bench::Session do
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes its input back."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
-  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:workspace) { Lain::Workspace.empty }
   let(:journal_io) { StringIO.new }
@@ -48,32 +35,12 @@ RSpec.describe Lain::Bench::Session do
   # carries the live-run records a Session extends: request_sent from an
   # INNERMOST JournalRequests (the bytes the provider actually received) and
   # turn_usage from the Agent's journal:.
-  def record_run
-    provider = Lain::Provider::Mock.new(responses: [tool_response("tu_1", "echo", { "text" => "hi" }),
-                                                    text_response("done")])
-    agent = Lain::Agent.new(provider: provider, toolset: toolset, context: context, workspace: workspace,
-                            journal: journal, model_middleware: journaling_stack)
-    agent.ask("please echo hi")
-    [agent, provider]
+  let(:run) do
+    responses = [tool_response(["tu_1", "echo", { "text" => "hi" }], usage: usage, model: "claude-opus-4-8"),
+                 text_response("done", usage: usage, model: "claude-opus-4-8")]
+    record_journaled_run(responses, journal: journal, toolset: toolset, context: context, workspace: workspace)
   end
 
-  def journaling_stack
-    Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal: journal)])
-  end
-
-  def tool_response(id, name, input)
-    Lain::Response.new(
-      content: [{ "type" => "tool_use", "id" => id, "name" => name, "input" => input }],
-      stop_reason: :tool_use, usage: usage, model: "claude-opus-4-8"
-    )
-  end
-
-  def text_response(text)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }],
-                       stop_reason: :end_turn, usage: usage, model: "claude-opus-4-8")
-  end
-
-  let(:run) { record_run }
   let(:agent) { run.first }
   let(:provider) { run.last }
 

@@ -10,23 +10,7 @@ require "lain/journal"
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes its input back."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
-  boom_tool = Class.new(Lain::Tool) do
-    def name = "boom"
-    def description = "Always explodes."
-    def input_schema = { type: :object, properties: {} }
-
-    def perform(_input, _context) = raise("kaboom")
-  end
-
-  let(:toolset) { Lain::Toolset.new([echo_tool.new, boom_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new, BoomTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
   def agent(responses, **overrides)
@@ -38,17 +22,9 @@ RSpec.describe Lain::Agent do
     )
   end
 
-  def text_response(text = "done", stop_reason: :end_turn)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: stop_reason)
-  end
-
-  def tool_response(*calls)
-    blocks = [{ "type" => "thinking", "thinking" => "considering" }]
-    blocks += calls.map do |(id, name, input)|
-      { "type" => "tool_use", "id" => id, "name" => name, "input" => input }
-    end
-    Lain::Response.new(content: blocks, stop_reason: :tool_use)
-  end
+  # A thinking block rides along on every tool_use here, so the loop is
+  # exercised with the mixed content real responses carry.
+  def tool_response(*calls) = super(*calls, thinking: "considering")
 
   # ---- the loop -------------------------------------------------------------
 

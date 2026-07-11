@@ -8,7 +8,6 @@ require "lain/bench/cli"
 require "lain/bench/session"
 require "lain/bench/variance_fixtures"
 require "lain/provider/mock"
-require "lain/response"
 require "lain/usage"
 
 # Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
@@ -110,11 +109,8 @@ RSpec.describe Lain::Bench::CLI do
     # The last mock response repeats once exhausted, so one script drives
     # every run of the sweep.
     let(:provider) do
-      Lain::Provider::Mock.new(responses: [
-                                 Lain::Response.new(content: [{ "type" => "text", "text" => "325-650 mg q4h" }],
-                                                    stop_reason: :end_turn, usage: usage,
-                                                    model: "claude-sonnet-4-6")
-                               ])
+      Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h", usage: usage,
+                                                                           model: "claude-sonnet-4-6")])
     end
 
     def write_taskfile(dir)

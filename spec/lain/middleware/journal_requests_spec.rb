@@ -6,7 +6,6 @@ require "lain/event"
 require "lain/middleware/journal_requests"
 require "lain/provider/mock"
 require "lain/request"
-require "lain/tool"
 require "lain/toolset"
 
 RSpec.describe Lain::Middleware::JournalRequests do
@@ -77,28 +76,15 @@ RSpec.describe Lain::Middleware::JournalRequests do
   end
 
   describe "in an Agent's model phase" do
-    echo_tool = Class.new(Lain::Tool) do
-      def name = "echo"
-      def description = "Echoes its input back."
-      def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-      def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-    end
-
     let(:provider) do
-      Lain::Provider::Mock.new(responses: [
-                                 Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1",
-                                                                "name" => "echo", "input" => { "text" => "x" } }],
-                                                    stop_reason: :tool_use),
-                                 Lain::Response.new(content: [{ "type" => "text", "text" => "done" }],
-                                                    stop_reason: :end_turn)
-                               ])
+      Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                           text_response("done")])
     end
 
     let(:agent) do
       Lain::Agent.new(
         provider: provider,
-        toolset: Lain::Toolset.new([echo_tool.new]),
+        toolset: Lain::Toolset.new([EchoTool.new]),
         context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024),
         model_middleware: Lain::Middleware::Stack.new([middleware])
       )

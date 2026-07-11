@@ -3,13 +3,10 @@
 require "bigdecimal"
 require "stringio"
 
-require "lain/agent"
 require "lain/compare"
 require "lain/context"
 require "lain/journal"
 require "lain/ledger"
-require "lain/provider/mock"
-require "lain/response"
 require "lain/toolset"
 require "lain/usage"
 
@@ -24,20 +21,12 @@ RSpec.describe "Agent x Journal x Ledger x Compare accounting seam" do
   # depends on an exact lookup, not on family matching surviving.
   def model = "sonnet"
 
-  def scripted_response(reply, usage)
-    Lain::Response.new(content: [{ "type" => "text", "text" => reply }],
-                       stop_reason: :end_turn, model: model, usage: usage)
-  end
-
   def run_arm(reply:, usage:)
     io = StringIO.new
-    agent = Lain::Agent.new(
-      provider: Lain::Provider::Mock.new(responses: [scripted_response(reply, usage)]),
-      toolset: Lain::Toolset.new,
-      context: Lain::Context.new(model: model, max_tokens: 1024),
-      journal: Lain::Journal.new(io: io)
-    )
-    agent.ask("measure me")
+    agent, = record_run([text_response(reply, model: model, usage: usage)],
+                        toolset: Lain::Toolset.new,
+                        context: Lain::Context.new(model: model, max_tokens: 1024),
+                        journal: Lain::Journal.new(io: io), prompt: "measure me")
     { agent: agent, io: io }
   end
 

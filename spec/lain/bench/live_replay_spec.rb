@@ -5,13 +5,10 @@ require "stringio"
 
 require "lain/bench/live_replay"
 
-require "lain/agent"
 require "lain/context"
 require "lain/journal"
 require "lain/provider/mock"
-require "lain/response"
 require "lain/toolset"
-require "lain/tool"
 require "lain/usage"
 
 # LiveReplay re-runs a recorded task against a real provider, SEQUENTIALLY (n:
@@ -20,15 +17,7 @@ require "lain/usage"
 # below drive it with Provider::Mock, which never touches the network, so they
 # are safe untagged.
 RSpec.describe Lain::Bench::LiveReplay do
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
-  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -39,13 +28,8 @@ RSpec.describe Lain::Bench::LiveReplay do
 
   describe ".prompts_from" do
     it "extracts only the human asks, skipping tool_result user turns" do
-      provider = Lain::Provider::Mock.new(responses: [
-                                            tool_use("t1"),
-                                            Lain::Response.new(content: [{ "type" => "text", "text" => "done" }],
-                                                               stop_reason: :end_turn)
-                                          ])
-      agent = Lain::Agent.new(provider: provider, toolset: toolset, context: context)
-      agent.ask("please echo hi")
+      agent, = record_run([tool_response(["t1", "echo", { "text" => "hi" }]), text_response("done")],
+                          toolset: toolset, context: context)
 
       expect(described_class.prompts_from(agent.timeline)).to eq(["please echo hi"])
     end
@@ -55,10 +39,7 @@ RSpec.describe Lain::Bench::LiveReplay do
     let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
 
     let(:live_provider) do
-      Lain::Provider::Mock.new(responses: [
-                                 Lain::Response.new(content: [{ "type" => "text", "text" => "pong" }],
-                                                    stop_reason: :end_turn, usage: usage, model: "claude-opus-4-8")
-                               ])
+      Lain::Provider::Mock.new(responses: [text_response("pong", usage: usage, model: "claude-opus-4-8")])
     end
 
     let(:replay) do
@@ -121,12 +102,5 @@ RSpec.describe Lain::Bench::LiveReplay do
       expect(result.usage.total_tokens).to be > 0
       expect(records.find { |r| r["type"] == "live_replay" }).not_to be_nil
     end
-  end
-
-  def tool_use(id)
-    Lain::Response.new(
-      content: [{ "type" => "tool_use", "id" => id, "name" => "echo", "input" => { "text" => "hi" } }],
-      stop_reason: :tool_use
-    )
   end
 end

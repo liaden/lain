@@ -10,10 +10,6 @@ RSpec.describe "Agent turn_middleware" do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
   let(:toolset) { Lain::Toolset.new([]) }
 
-  def text_response(text = "done", stop_reason: :end_turn)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: stop_reason)
-  end
-
   def agent(responses, **overrides)
     Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses: Array(responses)),

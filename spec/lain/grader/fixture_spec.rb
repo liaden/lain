@@ -3,12 +3,8 @@
 require "lain/grader/fixture"
 
 require "lain/bench/dry_replay"
-require "lain/agent"
 require "lain/context"
-require "lain/provider/mock"
-require "lain/response"
 require "lain/toolset"
-require "lain/tool"
 
 # A Grader::Fixture is a deterministic task: a named bundle of HARD assertions
 # over some subject, scored pass/fail with no model in the loop. Its verdict is
@@ -64,29 +60,12 @@ RSpec.describe Lain::Grader::Fixture do
   end
 
   describe "over a real DryReplay output" do
-    echo_tool = Class.new(Lain::Tool) do
-      def name = "echo"
-      def description = "Echoes."
-      def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-      def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-    end
-
-    let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+    let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
     let(:dry_replay) do
-      provider = Lain::Provider::Mock.new(responses: [
-                                            Lain::Response.new(
-                                              content: [{ "type" => "tool_use", "id" => "t1",
-                                                          "name" => "echo", "input" => { "text" => "hi" } }],
-                                              stop_reason: :tool_use
-                                            ),
-                                            Lain::Response.new(content: [{ "type" => "text", "text" => "ok" }],
-                                                               stop_reason: :end_turn)
-                                          ])
-      agent = Lain::Agent.new(provider: provider, toolset: toolset, context: context)
-      agent.ask("echo hi")
+      agent, provider = record_run([tool_response(["t1", "echo", { "text" => "hi" }]), text_response("ok")],
+                                   toolset: toolset, context: context, prompt: "echo hi")
       Lain::Bench::DryReplay.new(timeline: agent.timeline, baseline: provider.requests, toolset: toolset)
     end
 

@@ -11,8 +11,6 @@ require "lain/memory/index"
 require "lain/memory/item"
 require "lain/memory/manifest"
 require "lain/provider/mock"
-require "lain/response"
-require "lain/tool"
 require "lain/toolset"
 
 # The bench-side observer this seam is built on. The Agent journals TurnUsage at
@@ -60,14 +58,6 @@ end
 # possible later, so every checkout below is driven from PARSED values, never
 # from an in-memory root the spec happened to keep.
 RSpec.describe "Memory snapshot x Journal seam" do
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes its input back."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
   def item(id, description)
     Lain::Memory::Item.new(id: id, description: description, body: "body of #{id}")
   end
@@ -75,20 +65,11 @@ RSpec.describe "Memory snapshot x Journal seam" do
   let(:io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: io) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
-  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
 
   let(:provider) do
-    Lain::Provider::Mock.new(responses: [
-                               Lain::Response.new(
-                                 content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
-                                             "input" => { "text" => "aspirin" } }],
-                                 stop_reason: :tool_use
-                               ),
-                               Lain::Response.new(
-                                 content: [{ "type" => "text", "text" => "done" }],
-                                 stop_reason: :end_turn
-                               )
-                             ])
+    Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "aspirin" }]),
+                                         text_response("done")])
   end
 
   let(:first_gap_writes) do

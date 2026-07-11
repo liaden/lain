@@ -32,17 +32,10 @@ RSpec.describe "tools x Agent loop" do
     )
   end
 
-  def tool_use(id, name, input)
-    Lain::Response.new(
-      content: [{ "type" => "thinking", "thinking" => "considering" },
-                { "type" => "tool_use", "id" => id, "name" => name, "input" => input }],
-      stop_reason: :tool_use
-    )
-  end
-
-  def settled(text = "done")
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
-  end
+  # Spec-local vocabulary over the shared builders: a seam example reads as
+  # "the model used a tool, then settled".
+  def tool_use(id, name, input) = tool_response([id, name, input], thinking: "considering")
+  def settled(text = "done") = text_response(text)
 
   # The user turn holding tool_results is the one gate 2 is about. `Turn#role` is a
   # frozen String, not a Symbol -- see Turn's `-role.to_s`, which is what keeps

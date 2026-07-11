@@ -38,41 +38,20 @@ require "lain/toolset"
 RSpec.shared_examples "a Lain::Provider" do |config|
   provider_factory = config.fetch(:provider_factory)
 
-  # ---- fixtures, mirroring spec/lain/agent_spec.rb -------------------------
+  # ---- fixtures, over spec/support/mock_recording.rb ------------------------
+  #
+  # The parity_ prefix keeps this group's fixture names clear of anything an
+  # including spec defines for itself.
 
-  let(:parity_echo_tool_class) do
-    Class.new(Lain::Tool) do
-      def name = "echo"
-      def description = "Echoes its input back."
-      def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-      def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-    end
-  end
-
-  let(:parity_boom_tool_class) do
-    Class.new(Lain::Tool) do
-      def name = "boom"
-      def description = "Always explodes."
-      def input_schema = { type: :object, properties: {} }
-
-      def perform(_input, _context) = raise("kaboom")
-    end
-  end
-
-  let(:parity_toolset) { Lain::Toolset.new([parity_echo_tool_class.new, parity_boom_tool_class.new]) }
+  let(:parity_toolset) { Lain::Toolset.new([EchoTool.new, BoomTool.new]) }
   let(:parity_context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
   def parity_text_response(text = "done", stop_reason: :end_turn)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: stop_reason)
+    text_response(text, stop_reason: stop_reason)
   end
 
   def parity_tool_response(*calls)
-    blocks = [{ "type" => "thinking", "thinking" => "considering" }]
-    blocks += calls.map do |(id, name, input)|
-      { "type" => "tool_use", "id" => id, "name" => name, "input" => input }
-    end
-    Lain::Response.new(content: blocks, stop_reason: :tool_use)
+    tool_response(*calls, thinking: "considering")
   end
 
   define_method(:parity_agent) do |provider_factory, responses, toolset: nil, **overrides|

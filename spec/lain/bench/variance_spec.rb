@@ -4,7 +4,6 @@ require "stringio"
 
 require "lain/bench/variance"
 
-require "lain/agent"
 require "lain/bench/session"
 require "lain/capability/guard"
 require "lain/context"
@@ -12,10 +11,6 @@ require "lain/context/prune"
 require "lain/event"
 require "lain/journal"
 require "lain/ledger"
-require "lain/middleware"
-require "lain/provider/mock"
-require "lain/response"
-require "lain/tool"
 require "lain/toolset"
 require "lain/usage"
 require "lain/workspace"
@@ -28,31 +23,21 @@ require "lain/workspace"
 # cache_payload field. Distribution -- Compare's token/cost table, because a
 # single pair of runs is noise. The report is a returned String, never stdout.
 RSpec.describe Lain::Bench::Variance do
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes its input back."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
-  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   # The mock responses carry a priceable model ("sonnet" family) so the
   # default PriceBook prices the ledger without needing a fallback.
   let(:context) { Lain::Context.new(model: "claude-sonnet-4-6", max_tokens: 1024, system: "be terse") }
   let(:workspace) { Lain::Workspace.empty }
   let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
 
+  # Narrowed over the shared builders: every response here is an echo call
+  # carrying the priceable model and usage, so the call sites stay terse.
   def tool_response(id, text)
-    Lain::Response.new(
-      content: [{ "type" => "tool_use", "id" => id, "name" => "echo", "input" => { "text" => text } }],
-      stop_reason: :tool_use, usage: usage, model: "claude-sonnet-4-6"
-    )
+    super([id, "echo", { "text" => text }], usage: usage, model: "claude-sonnet-4-6")
   end
 
   def text_response(text)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }],
-                       stop_reason: :end_turn, usage: usage, model: "claude-sonnet-4-6")
+    super(text, usage: usage, model: "claude-sonnet-4-6")
   end
 
   # One mock-recorded run of the task, round-tripped through Session so the
@@ -70,16 +55,10 @@ RSpec.describe Lain::Bench::Variance do
   end
 
   def run_and_write(journal, responses)
-    agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: responses),
-                            toolset: toolset, context: context, workspace: workspace,
-                            journal: journal, model_middleware: journaling_stack(journal))
-    agent.ask("please echo hi")
+    agent, = record_journaled_run(responses, journal: journal, toolset: toolset,
+                                             context: context, workspace: workspace)
     Lain::Bench::Session.write(journal, timeline: agent.timeline, context: context,
                                         toolset: toolset, workspace: workspace)
-  end
-
-  def journaling_stack(journal)
-    Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal: journal)])
   end
 
   def degrade!(journal, capability)

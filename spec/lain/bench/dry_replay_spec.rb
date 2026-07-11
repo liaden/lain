@@ -2,14 +2,9 @@
 
 require "lain/bench/dry_replay"
 
-require "lain/agent"
 require "lain/context"
 require "lain/context/prune"
-require "lain/provider/mock"
-require "lain/response"
 require "lain/toolset"
-require "lain/tool"
-require "lain/workspace"
 
 # DryReplay re-renders a RECORDED Timeline under a (possibly different) Context
 # and byte-diffs against the recorded baseline. It obtains its inputs the honest
@@ -19,38 +14,15 @@ require "lain/workspace"
 # from the recorded DAG -- so the byte-identity claim is a real test of
 # `Context#render` purity, not a tautology of rendering twice with one object.
 RSpec.describe Lain::Bench::DryReplay do
-  echo_tool = Class.new(Lain::Tool) do
-    def name = "echo"
-    def description = "Echoes its input back."
-    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
-
-    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
-  end
-
-  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
 
   # A genuine two-model-call session: tool_use, then end_turn. The provider
   # records the exact Requests it was handed -- the recorded baseline.
   def record_session(ctx)
-    provider = Lain::Provider::Mock.new(responses: [
-                                          tool_response("tu_1", "echo", { "text" => "hi" }),
-                                          text_response("done")
-                                        ])
-    agent = Lain::Agent.new(provider: provider, toolset: toolset, context: ctx)
-    agent.ask("please echo hi")
+    agent, provider = record_run([tool_response(["tu_1", "echo", { "text" => "hi" }]), text_response("done")],
+                                 toolset: toolset, context: ctx)
     [agent.timeline, provider.requests]
-  end
-
-  def tool_response(id, name, input)
-    Lain::Response.new(
-      content: [{ "type" => "tool_use", "id" => id, "name" => name, "input" => input }],
-      stop_reason: :tool_use
-    )
-  end
-
-  def text_response(text)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
   end
 
   let(:recorded) { record_session(context) }
