@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-require "json"
-
 require_relative "../effect"
 require_relative "../handler"
+require_relative "../journal"
 require_relative "../tool"
 
 module Lain
@@ -27,32 +26,20 @@ module Lain
     # made-up success. Stack {Recorded} in front of {Live} to replay the calls you
     # recorded and run the rest for real.
     class Recorded < Handler
-      # Build from journaled records: each entry with `type == "tool_result"`
-      # becomes a replayable outcome keyed by its `tool_use_id`. Entries may be
-      # parsed Hashes or raw NDJSON line Strings (a whole Journal file's lines),
-      # so `Recorded.from_journal(File.foreach(path))` reconstitutes a handler
-      # straight from the record. Non-tool_result and unparseable lines are
-      # ignored -- a Journal interleaves many record types and Rust spans.
+      # Build from journaled records: each `tool_result` record becomes a
+      # replayable outcome keyed by its `tool_use_id`. Entries are the
+      # {Journal.records} duck -- parsed Hashes or raw NDJSON line Strings -- so
+      # `Recorded.from_journal(File.foreach(path))` reconstitutes a handler
+      # straight from the record.
       #
       # @param entries [Enumerable<Hash, String>]
       # @param inner [Lain::Handler, nil]
       # @return [Recorded]
       def self.from_journal(entries, inner: nil)
-        outcomes = entries.each_with_object({}) do |entry, acc|
-          hash = coerce_entry(entry)
-          store_outcome(acc, hash) if hash && hash["type"].to_s == "tool_result"
-        end
+        outcomes = Journal.records(entries, type: "tool_result")
+                          .each_with_object({}) { |record, acc| store_outcome(acc, record) }
         new(outcomes: outcomes, inner: inner)
       end
-
-      def self.coerce_entry(entry)
-        return entry if entry.is_a?(Hash)
-
-        JSON.parse(entry)
-      rescue JSON::ParserError
-        nil
-      end
-      private_class_method :coerce_entry
 
       def self.store_outcome(acc, hash)
         id = hash["tool_use_id"]
