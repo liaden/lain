@@ -6,12 +6,55 @@ require "thor"
 
 require "lain"
 require "lain/frontend"
+require "lain/bench/cli"
 
 # The executable. Deliberately thin: parse flags, wire the real collaborators
 # together, hand off to Frontend::TTY. Nothing here is unit-tested the way
 # lib/ is (see CLAUDE.md), so nothing here decides anything -- Handler::Approving,
 # Tool, and TTY already carry the logic and already carry the specs.
 class LainCLI < Thor
+  # Errors (a Thor::Error surfaced from a subcommand included) print their
+  # message and exit nonzero, instead of Thor's legacy exit-0 default.
+  def self.exit_on_failure? = true
+
+  # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
+  # assembles everything and returns Strings; this class parses flags, `say`s
+  # what comes back, and presents the lib's own errors -- all Lain::Error:
+  # Bench::CLI::Refusal, Session::Corrupt, the ANTHROPIC_API_KEY gate -- as
+  # Thor::Error, message to stderr, nonzero exit, no backtrace. Anything else
+  # (a bare ArgumentError included) is a bug and keeps its backtrace.
+  class Bench < Thor
+    def self.exit_on_failure? = true
+
+    desc "variance DIR_OR_FILES...", "Report determinism/divergence/distribution across recorded sessions"
+    def variance(*sources)
+      say Lain::Bench::CLI.new.variance_report(sources)
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
+
+    desc "record TASKFILE", "Record N live runs of a task file (one prompt per line) -- spends real API money"
+    method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),
+                      desc: "how many runs"
+    method_option :out, type: :string, required: true, desc: "directory the session files land in"
+    method_option :model, type: :string, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:model),
+                          desc: "Anthropic model id"
+    method_option :max_tokens, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens),
+                               desc: "max_tokens per model turn"
+    method_option :system, type: :string, desc: "system prompt"
+    def record(taskfile)
+      paths = Lain::Bench::CLI.new.record(taskfile: taskfile, runs: options[:n], out: options[:out],
+                                          model: options[:model], max_tokens: options[:max_tokens],
+                                          system: options[:system])
+      paths.each { |path| say path }
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
+  end
+
+  desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record)"
+  subcommand "bench", Bench
+
   desc "chat", "Start an interactive Lain session"
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"

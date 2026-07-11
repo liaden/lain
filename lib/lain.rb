@@ -44,6 +44,7 @@ require_relative "lain/bench/live_replay"
 require_relative "lain/bench/session"
 require_relative "lain/bench/speculative"
 require_relative "lain/bench/variance"
+require_relative "lain/bench/cli"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
