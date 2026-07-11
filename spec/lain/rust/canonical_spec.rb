@@ -55,10 +55,8 @@ RSpec.describe "Lain::Ext canonical (Rust)" do
       expected = "d59b6562d7c9b121bc9760873d787890ef4d429aad33a70b405baa0fa08a1f53"
       expect(Lain::Ext.canonical_digest({ "a" => 1 })).to eq("blake3:#{expected}")
     end
-
-    it "is order-independent, because the dump sorts keys" do
-      expect(Lain::Ext.canonical_digest({ "b" => 1, "a" => 2 }))
-        .to eq(Lain::Ext.canonical_digest({ "a" => 2, "b" => 1 }))
-    end
+    # Order-independence of the digest is not re-asserted here: the shared
+    # "canonical determinism" group already proves the dump is order-independent,
+    # and the digest is a deterministic blake3 of that dump.
   end
 end

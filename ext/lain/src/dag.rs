@@ -63,9 +63,9 @@ pub fn meet(map: &StoreMap, a_head: Option<&str>, b_head: Option<&str>) -> Optio
 pub fn ancestor_of(map: &StoreMap, ancestor: Option<&str>, descendant: Option<&str>) -> bool {
     match ancestor {
         None => true,
-        Some(head) => ancestor_digests(map, descendant)
+        Some(head) => ancestor_arcs(map, descendant)
             .iter()
-            .any(|digest| digest == head),
+            .any(|turn| turn.digest.as_str() == head),
     }
 }
 

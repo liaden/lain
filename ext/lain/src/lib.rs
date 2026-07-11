@@ -98,10 +98,14 @@ mod ffi {
     /// spec). `frozen_shareable` sets `RUBY_TYPED_FROZEN_SHAREABLE`, but that is
     /// a *promise* to Ruby, honoured only if the wrapped state is genuinely
     /// immutable and holds no reachable mutable Ruby object. This wraps a single
-    /// immutable `u64` and nothing else, so it is the minimal proof that the
-    /// mechanism works before the real port depends on it. If a magnus upgrade
-    /// ever breaks the flag, the tiny `share_probe_spec` fails here rather than
-    /// deep inside `Turn`.
+    /// immutable `u64` and nothing else, so it isolates the mechanism from any
+    /// one port's own state. The Timeline port has since landed and `turn_spec`
+    /// now asserts `Ractor.shareable?(turn)` on the real thing -- but this canary
+    /// is deliberately RETAINED (not stale) as the isolated control: if a magnus
+    /// upgrade breaks `frozen_shareable`, `share_probe_spec` fails here, telling
+    /// you it is the flag itself and not `Turn`'s state, and it stands the same
+    /// guard for the future `frozen_shareable` ports (Workspace Timeline,
+    /// structural memory) before they exist to test it.
     #[derive(TypedData)]
     #[magnus(class = "Lain::Ext::ShareProbe", free_immediately, frozen_shareable)]
     struct ShareProbe {
@@ -258,10 +262,8 @@ mod ffi {
             Ok(Canon::Num(integer.funcall("to_s", ())?))
         } else if let Some(float) = Float::from_value(value) {
             canon_float(ruby, float, value)
-        } else if let Some(string) = RString::from_value(value) {
-            Ok(Canon::Str(utf8(ruby, string)?))
-        } else if let Some(symbol) = Symbol::from_value(value) {
-            Ok(Canon::Str(utf8(ruby, symbol.funcall("to_s", ())?)?))
+        } else if let Some(text) = coerce_text(ruby, value)? {
+            Ok(Canon::Str(text))
         } else if let Some(array) = RArray::from_value(value) {
             let items = array
                 .into_iter()
@@ -308,10 +310,8 @@ mod ffi {
     }
 
     fn canon_key(ruby: &Ruby, key: Value) -> Result<String, Error> {
-        if let Some(string) = RString::from_value(key) {
-            utf8(ruby, string)
-        } else if let Some(symbol) = Symbol::from_value(key) {
-            utf8(ruby, symbol.funcall("to_s", ())?)
+        if let Some(text) = coerce_text(ruby, key)? {
+            Ok(text)
         } else {
             // SAFETY: see `ruby_to_canon`.
             let class = unsafe { key.classname() }.into_owned();
@@ -335,6 +335,20 @@ mod ffi {
                 "string is not valid UTF-8".to_string(),
             )
         })
+    }
+
+    /// A String or Symbol coerced to a validated UTF-8 `String`, or `None` when
+    /// the value is neither. Both branches -- a String's own bytes, a Symbol via
+    /// `#to_s` -- are identical across `ruby_to_canon`, `canon_key`, and
+    /// `read_role`; each caller supplies its own error for the `None` case.
+    fn coerce_text(ruby: &Ruby, value: Value) -> Result<Option<String>, Error> {
+        if let Some(string) = RString::from_value(value) {
+            Ok(Some(utf8(ruby, string)?))
+        } else if let Some(symbol) = Symbol::from_value(value) {
+            Ok(Some(utf8(ruby, symbol.funcall("to_s", ())?)?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// `Lain::Ext.canonical_dump` -- the byte-identical twin of `Canonical.dump`,
@@ -440,22 +454,21 @@ mod ffi {
     /// Read a role argument (String or Symbol) and validate it, raising
     /// `Turn::InvalidRole` on anything that is not a wire role.
     fn read_role(ruby: &Ruby, value: Value) -> Result<String, Error> {
-        let raw = if let Some(string) = RString::from_value(value) {
-            utf8(ruby, string)?
-        } else if let Some(symbol) = Symbol::from_value(value) {
-            utf8(ruby, symbol.funcall("to_s", ())?)?
-        } else {
-            // SAFETY: see ruby_to_canon.
-            let class = unsafe { value.classname() }.into_owned();
-            return Err(ext_error(
-                ruby,
-                "Turn",
-                "InvalidRole",
-                format!(
-                    "role must be one of {}, got a {class}",
-                    turn::ROLES.join(", ")
-                ),
-            ));
+        let raw = match coerce_text(ruby, value)? {
+            Some(text) => text,
+            None => {
+                // SAFETY: see ruby_to_canon.
+                let class = unsafe { value.classname() }.into_owned();
+                return Err(ext_error(
+                    ruby,
+                    "Turn",
+                    "InvalidRole",
+                    format!(
+                        "role must be one of {}, got a {class}",
+                        turn::ROLES.join(", ")
+                    ),
+                ));
+            }
         };
         turn::validate_role(&raw).map_err(|invalid| {
             ext_error(
@@ -827,16 +840,14 @@ mod ffi {
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_digests(&store.locked(), rb_self.head.as_deref()).len())
+            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref()).len())
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(
-                dag::ancestor_digests(&store.locked(), rb_self.head.as_deref())
-                    .iter()
-                    .any(|candidate| candidate == &digest),
-            )
+            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+                .iter()
+                .any(|turn| turn.digest == digest))
         }
 
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
@@ -895,7 +906,7 @@ mod ffi {
                     let prefix = digest.get(..19).unwrap_or(digest);
                     let length = TryConvert::try_convert(rb_self.store_value(ruby))
                         .map(|store: &Store| {
-                            dag::ancestor_digests(&store.locked(), Some(digest)).len()
+                            dag::ancestor_arcs(&store.locked(), Some(digest)).len()
                         })
                         .unwrap_or(0);
                     format!("#<Lain::Ext::Timeline {prefix}... ({length})>")

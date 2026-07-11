@@ -79,6 +79,16 @@ RSpec.describe Lain::Ext::Turn do
     end
   end
 
+  describe "#payload" do
+    # payload is on the duck (Lain::Turn#payload) and is the exact structure the
+    # digest is taken over -- pin it against the Ruby Turn, not just the digest.
+    it "equals the Ruby Turn payload byte-for-byte" do
+      args = { role: :user, content: text("hi"),
+               parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" } }
+      expect(described_class.new(**args).payload).to eq(Lain::Turn.new(**args).payload)
+    end
+  end
+
   describe "equality (Regular)" do
     include_examples "a Regular value",
                      equal_pair: lambda {
