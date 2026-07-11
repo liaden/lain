@@ -24,16 +24,22 @@ module Lain
       # Declared on the tool class, inherited and composed down the ancestry.
       module ClassMethods
         # Something that must hold *before* the tool runs, checked against
-        # `(input, context)`. A false predicate raises {Tool::ContractViolation}, so
-        # the model learns of the violation as a failed tool call, not a crash.
+        # `(input, invocation)` -- the SAME {Tool::Invocation} the tool's
+        # `#perform` receives (see {Handler::Live#dispatch}), so the
+        # caller-threaded context (e.g. a session read-set) is reached through
+        # `invocation.context`, not off the Invocation directly. A false predicate
+        # raises {Tool::ContractViolation}, so the model learns of the violation
+        # as a failed tool call, not a crash.
         #
-        #   requires("file was read this session") { |input, ctx| ctx.read?(input[:path]) }
+        #   requires("file was read this session") do |input, invocation|
+        #     invocation.context.read?(input["path"])
+        #   end
         def requires(message, &predicate)
           own_preconditions << build_contract(message, predicate)
         end
 
         # Something that must hold *after* the tool runs, checked against
-        # `(input, context, result)`. Turns a silent wrong answer into a loud one.
+        # `(input, invocation, result)`. Turns a silent wrong answer into a loud one.
         def ensures(message, &predicate)
           own_postconditions << build_contract(message, predicate)
         end
