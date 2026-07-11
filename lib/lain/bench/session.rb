@@ -18,7 +18,8 @@ module Lain
     # The header captures exactly {Lain::Context}'s constructor inputs, so a
     # loaded Recording rebuilds the DEFAULT-pipeline Context. A run recorded
     # under a Context subclass (a custom pipeline) still round-trips its data
-    # -- the header's `context_class` names what rendered it, as data -- but
+    # -- the header's `context_class` names what rendered it, as data,
+    # surfaced as {Recording#context_class} -- but
     # {Recording#dry_replay} against `recording.context` only claims byte
     # identity for default-pipeline sessions; that is the stated limit of
     # this format.
@@ -66,10 +67,18 @@ module Lain
       # Everything {Session.load} rebuilds, as one frozen value. Holds a Store
       # (via its Timeline), so like Timeline itself it cannot be
       # `Ractor.shareable?` whole; every other member is.
-      Recording = Data.define(:context, :toolset, :workspace, :timeline, :baseline, :ledger_index, :degraded) do
-        def initialize(context:, toolset:, workspace:, timeline:, baseline:, ledger_index:, degraded:)
-          super(context: context, toolset: toolset, workspace: workspace, timeline: timeline,
-                baseline: baseline.freeze, ledger_index: ledger_index, degraded: degraded)
+      #
+      # `context_class` is the header's recorded class name, pure data and
+      # never constantized: `context` is always the reloaded DEFAULT-pipeline
+      # Context, so a consumer comparing the two can tell a custom-pipeline
+      # recording (which legitimately will not replay to byte identity) from a
+      # genuine harness leak.
+      Recording = Data.define(:context, :context_class, :toolset, :workspace,
+                              :timeline, :baseline, :ledger_index, :degraded) do
+        def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
+                       degraded:)
+          super(context: context, context_class: -context_class.to_s, toolset: toolset, workspace: workspace,
+                timeline: timeline, baseline: baseline.freeze, ledger_index: ledger_index, degraded: degraded)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds

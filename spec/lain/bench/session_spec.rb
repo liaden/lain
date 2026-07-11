@@ -150,6 +150,12 @@ RSpec.describe Lain::Bench::Session do
       expect(load_session.toolset.to_schema).to eq(toolset.to_schema)
     end
 
+    # Pure data, never constantized: it lets a consumer (Bench::Variance) tell
+    # a harness leak from a custom-pipeline recording reloaded as the default.
+    it "surfaces the header's recorded context_class on the Recording" do
+      expect(load_session.context_class).to eq("Lain::Context")
+    end
+
     it "loads from a file path the same as from lines" do
       Tempfile.create("session") do |file|
         file.write(journal_io.string)
@@ -170,7 +176,7 @@ RSpec.describe Lain::Bench::Session do
       recording = load_session
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context toolset workspace baseline ledger_index degraded].each do |member|
+      %i[context context_class toolset workspace baseline ledger_index degraded].each do |member|
         expect(Ractor.shareable?(recording.public_send(member))).to be(true), "#{member} must be shareable"
       end
     end
@@ -261,6 +267,7 @@ RSpec.describe Lain::Bench::Session do
       expect(recording.timeline.head_digest).to eq(agent.timeline.head_digest)
       expect(recording.baseline.map(&:digest)).to eq(provider.requests.map(&:digest))
       expect(recording.context).to be_an_instance_of(Lain::Context)
+      expect(recording.context_class).to eq("PruningContext")
       expect(recording.dry_replay.diff(recording.context)).not_to be_identical
     end
   end

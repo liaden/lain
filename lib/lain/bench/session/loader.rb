@@ -35,7 +35,8 @@ module Lain
         # @return [Recording]
         def recording
           Recording.new(
-            context: context, toolset: toolset, workspace: workspace,
+            context: context, context_class: header.fetch("context_class"),
+            toolset: toolset, workspace: workspace,
             timeline: timeline, baseline: baseline,
             ledger_index: Ledger::Index.from_journal(@records),
             degraded: degraded
