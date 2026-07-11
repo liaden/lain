@@ -41,6 +41,7 @@ require_relative "lain/grader/rubric"
 require_relative "lain/compare"
 require_relative "lain/bench/dry_replay"
 require_relative "lain/bench/live_replay"
+require_relative "lain/bench/session"
 require_relative "lain/bench/speculative"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
