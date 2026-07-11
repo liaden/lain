@@ -70,6 +70,10 @@ RSpec.describe Lain::Context do
     end
   end
 
+  # Message-block breakpoint PLACEMENT (short-turn skipping, intermediate
+  # breakpoints) is owned by spec/lain/context/cache_breakpoints_spec.rb; here we
+  # only witness that #render composes the combinator, and cover the system-block
+  # marking, which is Context's own code (cache_marked_system), not a combinator.
   describe "cache breakpoints" do
     # Caching the system prompt caches the tools with it, since tools lead the
     # matched prefix.
@@ -78,24 +82,9 @@ RSpec.describe Lain::Context do
       expect(request.system.last["cache"]).to be(true)
     end
 
-    it "marks the last content block of the final message" do
+    it "composes CacheBreakpoints, marking the last content block of the final message" do
       request = context.render(timeline: timeline, toolset: toolset)
       expect(request.messages.last["content"].last["cache"]).to be(true)
-    end
-
-    it "leaves earlier short turns unmarked" do
-      request = context.render(timeline: timeline, toolset: toolset)
-      expect(request.messages.first["content"].last).not_to have_key("cache")
-    end
-
-    # Agentic turns pile up tool_use/tool_result pairs and drift outside the
-    # 20-block lookback window, so intermediate breakpoints are placed inside it.
-    it "adds an intermediate breakpoint on a long turn" do
-      fat = Lain::Timeline.empty(store: store)
-                          .commit(role: :user, content: Array.new(16) { { "type" => "text", "text" => "x" } })
-                          .commit(role: :assistant, content: text("ok"))
-      request = context.render(timeline: fat, toolset: toolset)
-      expect(request.messages.first["content"].last["cache"]).to be(true)
     end
 
     it "keeps the intermediate spacing inside the lookback window" do
@@ -105,10 +94,13 @@ RSpec.describe Lain::Context do
 
   # Sent, not stored. Injecting into `system` would rewrite the cached prefix on
   # every turn; appending to the Timeline would accrete a stale copy per turn.
+  # The Reminder combinator's own rules (e.g. declining a non-user tail) live in
+  # spec/lain/context/reminder_spec.rb; here we witness that #render composes it
+  # and cover the two whole-render invariants it must preserve.
   describe "workspace injection" do
     let(:workspace) { Lain::Workspace.new(reminders: ["todo: finish M1"]) }
 
-    it "appends workspace blocks to the last user message" do
+    it "composes Reminder, appending workspace blocks to the last user message" do
       request = context.render(timeline: timeline, toolset: toolset, workspace: workspace)
       expect(request.messages.last["content"].map { |b| b["text"] })
         .to eq(["more", "<workspace>todo: finish M1</workspace>"])
@@ -124,12 +116,6 @@ RSpec.describe Lain::Context do
       before = timeline.head_digest
       context.render(timeline: timeline, toolset: toolset, workspace: workspace)
       expect(timeline.head_digest).to eq(before)
-    end
-
-    it "declines to inject when the last turn is not a user turn" do
-      assistant_last = timeline.commit(role: :assistant, content: text("thinking"))
-      request = context.render(timeline: assistant_last, toolset: toolset, workspace: workspace)
-      expect(request.messages.last["content"].size).to eq(1)
     end
   end
 

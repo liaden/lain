@@ -67,16 +67,13 @@ RSpec.describe Lain::Agent do
   end
 
   # ---- correctness gates ----------------------------------------------------
-
-  describe "gate 1: the FULL response content is appended" do
-    it "retains thinking and tool_use blocks on the assistant turn" do
-      a = agent([tool_response(["tu_1", "echo", { "text" => "x" }]), text_response])
-      a.ask("hi")
-
-      assistant = a.timeline.to_a.find { |turn| turn.role == "assistant" }
-      expect(assistant.content.map { |b| b["type"] }).to eq(%w[thinking tool_use])
-    end
-  end
+  #
+  # Gates 1-7 are verified provider-agnostically by the shared "a Lain::Provider"
+  # group (spec/support/shared_examples/provider_parity.rb), driven against
+  # Provider::Mock in provider/mock_spec.rb and against AnthropicRaw. What stays
+  # here is only what is Agent-specific and NOT in that group: the parallel-call
+  # role sequence, the surfaced error/failure messages, usage accumulation, the
+  # token ceiling, #rewind, and the state machine.
 
   describe "gate 2: all tool_results return in ONE user message" do
     it "appends a single user turn holding every result" do
@@ -109,44 +106,6 @@ RSpec.describe Lain::Agent do
 
       expect(a.timeline.to_a[2].content.first["is_error"]).to be(true)
       expect(a).to be_done
-    end
-  end
-
-  describe "gate 4: every tool_result carries its matching tool_use_id" do
-    it "pairs ids one for one" do
-      a = agent([tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }]),
-                 text_response])
-      a.ask("hi")
-
-      ids = a.timeline.to_a[2].content.map { |b| b["tool_use_id"] }
-      expect(ids).to eq(%w[tu_1 tu_2])
-    end
-  end
-
-  describe "gate 5: tool input reaches the tool as a parsed object" do
-    it "hands the tool a Hash, never a JSON string" do
-      seen = nil
-      capturing = Class.new(Lain::Tool) do
-        define_method(:name) { "capture" }
-        define_method(:description) { "captures" }
-        define_method(:input_schema) { { type: :object, properties: {} } }
-        define_method(:perform) do |input, _context|
-          seen = input
-          Lain::Tool::Result.ok("ok")
-        end
-      end
-
-      a = described_class.new(
-        provider: Lain::Provider::Mock.new(
-          responses: [tool_response(["tu_1", "capture", { "path" => "a.rb" }]), text_response]
-        ),
-        toolset: Lain::Toolset.new([capturing.new]),
-        context: context
-      )
-      a.ask("hi")
-
-      expect(seen).to be_a(Hash)
-      expect(seen).to eq({ "path" => "a.rb" })
     end
   end
 
