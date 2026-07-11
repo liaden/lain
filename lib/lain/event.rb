@@ -117,6 +117,38 @@ module Lain
       end
     end
 
+    # One Request as it left for the model, recorded losslessly. `payload` is the
+    # request's cache_payload and `digest` its content address -- but the digest
+    # deliberately EXCLUDES `stream` and `extra` (transport concerns, not prompt
+    # identity), so digest equality alone cannot prove a recorded request can be
+    # replayed. The event therefore carries `stream` and `extra` alongside the
+    # payload: everything `Request.new` needs to rebuild the exact request, which
+    # is what makes dry replay from the Journal possible at all.
+    #
+    # `payload` and `extra` are held in canonical wire form (String keys, deeply
+    # frozen) so the event stays Ractor-shareable; `stream` must be a real
+    # boolean because a truthy stand-in would journal as something JSON cannot
+    # round-trip back into `Request.new` unchanged.
+    #
+    # Known trade-off: each record embeds the FULL message history, so an
+    # n-turn session journals O(n^2) payload bytes. Accepted while sessions are
+    # short; if it bites, the fix is content-addressed dedupe (journal digests,
+    # store the blocks once), not trimming the record.
+    RequestSent = Data.define(:digest, :payload, :stream, :extra) do
+      include Journalable
+
+      def initialize(digest:, payload:, stream:, extra:)
+        raise ArgumentError, "stream must be true or false, got #{stream.inspect}" unless [true, false].include?(stream)
+
+        super(
+          digest: digest.dup.freeze,
+          payload: Canonical.normalize(payload),
+          stream: stream,
+          extra: Canonical.normalize(extra)
+        )
+      end
+    end
+
     # A Context combinator declared it `requires` a capability the Provider does
     # not have, and the run's policy chose to DEGRADE rather than raise: the
     # tactic silently became a no-op. "Silently" is the whole danger -- a
