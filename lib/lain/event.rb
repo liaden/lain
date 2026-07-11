@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "canonical"
+
 module Lain
   # Structured events that flow through a {Lain::Channel}.
   #
@@ -79,6 +81,39 @@ module Lain
 
       def initialize(attempt:, will_retry_in: nil, status: nil, reason: nil)
         super(attempt: attempt, will_retry_in: will_retry_in, status: status, reason: reason&.freeze)
+      end
+    end
+
+    # Token accounting for ONE model call, pinned to the assistant turn the call
+    # was committed as. Every record is a payment: aggregating spend means
+    # summing over RECORDS, full stop.
+    #
+    # `digest` is a JOIN KEY onto content -- it names the committed Turn (the
+    # Timeline head at commit time) so cost can be joined onto what was said. It
+    # is NOT a dedupe key for spend and it is NOT unique across records: rewind
+    # the Timeline, regenerate an identical turn, and two records land here with
+    # the SAME digest, both genuinely paid for. Deduplicating by digest would
+    # undercount every regenerated turn. (Unique-digest aggregation is the rule
+    # for CONTENT reachable from a branched head; it does not apply to this
+    # per-payment stream, which is exactly why usage lives here in the Journal
+    # and not in `Turn#meta` -- the digest must stay content-only.)
+    #
+    # `usage` is held in canonical wire form (String keys, deeply frozen) so the
+    # event stays Ractor-shareable; `model` is nil when the provider reported
+    # none (a bare mock).
+    TurnUsage = Data.define(:digest, :model, :stop_reason, :usage) do
+      include Journalable
+
+      def initialize(digest:, model:, stop_reason:, usage:)
+        raise ArgumentError, "digest must name the committed turn, got nil" if digest.nil?
+        raise ArgumentError, "stop_reason must name why the model stopped, got nil" if stop_reason.nil?
+
+        super(
+          digest: digest.dup.freeze,
+          model: model&.to_s&.freeze,
+          stop_reason: stop_reason.to_sym,
+          usage: Canonical.normalize(usage)
+        )
       end
     end
 

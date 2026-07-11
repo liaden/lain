@@ -20,7 +20,7 @@ module Lain
       # @param context [Object, nil] whatever the caller threads through (the
       #   Agent, a read-set, nil in a bare spec)
       # @param channel [Lain::Channel] where attributed output goes
-      def initialize(tool_use_id: nil, context: nil, channel: Channel::Null.new)
+      def initialize(tool_use_id: nil, context: nil, channel: Channel::Null.instance)
         super
       end
     end

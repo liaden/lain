@@ -31,7 +31,7 @@ module Lain
       #   by default
       # @return [Policy]
       # @raise [ArgumentError] on an unknown policy name (unknown values fail loudly)
-      def self.for(name, journal: Channel::Null.new)
+      def self.for(name, journal: Channel::Null.instance)
         strategy = STRATEGIES[name]
         if strategy.nil?
           raise ArgumentError,
@@ -41,7 +41,7 @@ module Lain
         strategy.new(journal: journal)
       end
 
-      def initialize(journal: Channel::Null.new)
+      def initialize(journal: Channel::Null.instance)
         @journal = journal
       end
 

@@ -132,6 +132,16 @@ module Lain
         self
       end
       alias << push
+
+      # One shared frozen Null: it has no state, so every `journal:`/`channel:`
+      # default reuses this eager constant rather than allocating a fresh no-op
+      # per object (or racing a lazy memo across threads).
+      INSTANCE = new.freeze
+
+      # @return [Null] the shared instance
+      def self.instance
+        INSTANCE
+      end
     end
   end
 end

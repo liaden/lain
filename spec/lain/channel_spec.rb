@@ -117,4 +117,17 @@ RSpec.describe Lain::Channel do
       end
     end
   end
+
+  describe Lain::Channel::Null do
+    it "absorbs pushes and returns itself, chainable like a real channel" do
+      null = described_class.new
+      expect(null.push(:event) << :another).to equal(null)
+    end
+
+    it "exposes one shared frozen instance for defaults" do
+      expect(described_class.instance).to equal(described_class.instance)
+      expect(described_class.instance).to be_frozen
+      expect(described_class.instance << :event).to equal(described_class.instance)
+    end
+  end
 end

@@ -33,7 +33,7 @@ module Lain
       # @param channel [Lain::Channel] where tool output is attributed; defaults
       #   to a Null Object so a deployment with no live consumer needs no guard
       # @param inner [Lain::Handler, nil] fallback for other effect kinds
-      def initialize(toolset:, channel: Channel::Null.new, inner: nil)
+      def initialize(toolset:, channel: Channel::Null.instance, inner: nil)
         super(inner: inner)
         @toolset = toolset
         @channel = channel

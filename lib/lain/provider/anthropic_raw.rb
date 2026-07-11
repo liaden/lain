@@ -78,7 +78,7 @@ module Lain
       #   {Transport} over the vendored connection otherwise.
       # @param channel [Lain::Channel] where retry events are journaled
       # @param sink [Lain::Sink] where the transport's debug/log lines go
-      def initialize(transport: nil, config: nil, channel: Channel::Null.new, sink: Sink::Null.new,
+      def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      api_key: nil, api_base: nil)
         super()
         @channel = channel
