@@ -11,4 +11,5 @@ end
 
 require_relative "tools/read_file"
 require_relative "tools/list_files"
+require_relative "tools/memory_read"
 require_relative "tools/bash"
