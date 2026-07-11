@@ -234,3 +234,5 @@ module Lain
     end
   end
 end
+
+require_relative "middleware/journal_requests"
