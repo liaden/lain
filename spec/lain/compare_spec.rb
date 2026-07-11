@@ -6,6 +6,7 @@ require "lain/usage"
 require "lain/capability/degraded_set"
 require "lain/capability/guard"
 require "lain/grader"
+require "lain/ledger"
 require "lain/timeline"
 require "lain/store"
 
@@ -141,18 +142,32 @@ RSpec.describe Lain::Compare do
   end
 
   describe "Run.from_timeline" do
-    it "derives usage and cost from a recorded Timeline via the Ledger" do
-      store = Lain::Store.new
-      timeline = Lain::Timeline.empty(store: store)
+    # A recorded run's usage lives in the Journal, not in turn meta, so a Run is
+    # priced through a journal-sourced Ledger the caller must supply.
+    def recorded(text, input:, output:, model: "claude-sonnet-4")
+      timeline = Lain::Timeline.empty(store: Lain::Store.new)
                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
-                               .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }],
-                                       meta: { "model" => "claude-sonnet-4", "usage" => { "input_tokens" => 1000,
-                                                                                          "output_tokens" => 200 } })
-      run = described_class::Run.from_timeline(name: "recorded", timeline: timeline,
+                               .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+      ledger = Lain::Ledger.from_journal([
+                                           { "type" => "turn_usage", "digest" => timeline.head_digest,
+                                             "model" => model, "stop_reason" => "end_turn",
+                                             "usage" => { "input_tokens" => input, "output_tokens" => output } }
+                                         ])
+      [timeline, ledger]
+    end
+
+    it "derives usage and cost from a recorded Timeline via a journal-sourced Ledger" do
+      timeline, ledger = recorded("yo", input: 1000, output: 200)
+      run = described_class::Run.from_timeline(name: "recorded", timeline: timeline, ledger: ledger,
                                                grade: Lain::Grader::Grade.new(score: 1.0, why: "ok"))
       expect(run.total_tokens).to eq(1200)
       expect(run.cost).to be > 0
       expect(run.score).to eq(1.0)
+    end
+
+    it "has no default ledger: a Run must name its usage source" do
+      expect { described_class::Run.from_timeline(name: "x", timeline: nil) }
+        .to raise_error(ArgumentError, /ledger/)
     end
   end
 end

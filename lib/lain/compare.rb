@@ -28,10 +28,12 @@ module Lain
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
     Run = Data.define(:name, :usage, :cost, :score, :degraded) do
       # @param timeline [Lain::Timeline] the recorded run
-      # @param ledger [Lain::Ledger] usage + cost, deduped by content-address
+      # @param ledger [Lain::Ledger] usage + cost, deduped by content-address.
+      #   Required, no default: usage lives in the Journal, so only the caller
+      #   knows which journal priced this run.
       # @param grade [#score, nil] a grader's verdict, if the run was graded
       # @param degraded [Capability::DegradedSet] what this run silently lost
-      def self.from_timeline(name:, timeline:, ledger: Ledger.new, grade: nil,
+      def self.from_timeline(name:, timeline:, ledger:, grade: nil,
                              degraded: Capability::DegradedSet.new([]))
         new(name: name, usage: ledger.usage(timeline), cost: ledger.cost(timeline),
             score: grade&.score, degraded: degraded)
