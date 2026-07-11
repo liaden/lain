@@ -48,7 +48,7 @@ module Lain
       # @param journal [#<<] where fresh usage records are written; a Null
       #   channel by default, so no caller guards `if journal`
       # @param price_book [Lain::PriceBook] prices the fresh total usage
-      def initialize(provider:, toolset:, context:, journal: Channel::Null.new,
+      def initialize(provider:, toolset:, context:, journal: Channel::Null.instance,
                      workspace: Workspace.empty, price_book: PriceBook.default)
         @provider = provider
         @toolset = toolset
@@ -72,9 +72,13 @@ module Lain
 
       private
 
+      # The Agent shares this replay's journal, so its per-model-call turn_usage
+      # records interleave with the live_replay_turn records -- one stream, one
+      # session record (B2 depends on exactly this wiring).
       def build_agent
         Agent.new(provider: @provider, toolset: @toolset, context: @context,
-                  timeline: Timeline.empty(store: Store.new), workspace: @workspace)
+                  timeline: Timeline.empty(store: Store.new), workspace: @workspace,
+                  journal: @journal)
       end
 
       def ask_and_record(agent, prompt)

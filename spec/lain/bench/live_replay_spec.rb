@@ -91,6 +91,15 @@ RSpec.describe Lain::Bench::LiveReplay do
       replay.replay(["say pong"])
       expect(records.count { |r| r["type"] == "live_replay_turn" }).to eq(1)
     end
+
+    it "journals the Agent's per-model-call turn_usage records alongside its own turn records" do
+      replay.replay(["say pong"])
+
+      turn_usage = records.select { |r| r["type"] == "turn_usage" }
+      expect(turn_usage.size).to eq(1)
+      expect(turn_usage.first).to include("model" => "claude-opus-4-8")
+      expect(turn_usage.first.dig("usage", "output_tokens")).to eq(30)
+    end
   end
 
   # The one network-touching example: real money, opt-in (LAIN_LIVE=1 + a key),
