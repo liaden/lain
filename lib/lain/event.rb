@@ -47,7 +47,8 @@ module Lain
           raise ArgumentError, "stream must be one of #{streams.inspect}, got #{stream.inspect}"
         end
 
-        super(tool_use_id: tool_use_id.freeze, stream: stream, bytes: bytes.freeze)
+        # bytes is frozen in place, not dup'd: copying possibly-large subprocess output would double it.
+        super(tool_use_id: tool_use_id.dup.freeze, stream: stream, bytes: bytes.freeze)
       end
     end
 
@@ -80,7 +81,7 @@ module Lain
       include Journalable
 
       def initialize(attempt:, will_retry_in: nil, status: nil, reason: nil)
-        super(attempt: attempt, will_retry_in: will_retry_in, status: status, reason: reason&.freeze)
+        super(attempt: attempt, will_retry_in: will_retry_in, status: status, reason: reason&.dup&.freeze)
       end
     end
 
@@ -189,7 +190,7 @@ module Lain
       include Journalable
 
       def initialize(capability:, requirer:, provider:)
-        super(capability: capability, requirer: requirer.freeze, provider: provider.freeze)
+        super(capability: capability, requirer: requirer.dup.freeze, provider: provider.dup.freeze)
       end
     end
   end
