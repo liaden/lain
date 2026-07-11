@@ -2,11 +2,13 @@
 
 require "state_machines"
 
+require_relative "agent/accounting"
 require_relative "agent/budget"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
+require_relative "channel"
 require_relative "context"
 require_relative "effect"
 require_relative "error"
@@ -16,7 +18,6 @@ require_relative "response"
 require_relative "store"
 require_relative "timeline"
 require_relative "toolset"
-require_relative "usage"
 require_relative "workspace"
 
 module Lain
@@ -42,17 +43,24 @@ module Lain
     BudgetExceeded = Budget::Exceeded
 
     attr_reader :timeline, :toolset, :context, :workspace,
-                :usage, :iterations, :failure_reason, :budget
+                :iterations, :failure_reason, :budget
 
     # Delegated to {ModelCaller}, which now owns the provider alongside the
     # model phase's own middleware -- see #call_model.
     def provider = @model_caller.provider
 
+    # Delegated to {Accounting}, which owns the run's token roll-up.
+    def usage = @accounting.usage
+
+    # @param journal [#<<] where per-turn usage records land; the Null channel
+    #   by default. Today ONLY {Event::TurnUsage} is written here -- it is not
+    #   yet the full run record.
     def initialize(provider:, toolset:, context:,
                    handler: nil,
                    timeline: nil,
                    workspace: Workspace.empty,
                    budget: Budget.new,
+                   journal: Channel::Null.instance,
                    transition_listener: TransitionListener::Null,
                    model_middleware: Middleware::Stack.new,
                    tool_middleware: Middleware::Stack.new,
@@ -66,7 +74,7 @@ module Lain
       @budget = budget
       @turn_middleware = turn_middleware
       @tool_runner = build_tool_runner(handler, toolset, tool_middleware)
-      reset_run_state(transition_listener)
+      seed_run_state(transition_listener, journal)
     end
 
     # Append a user turn and run until the loop settles.
@@ -121,12 +129,13 @@ module Lain
       ToolRunner.new(handler: handler || Handler::Live.new(toolset: toolset), middleware: middleware)
     end
 
-    # Seeds the mutable run context: the accounting the loop rolls up, and the
-    # observer it announces transitions to. State itself is owned by the machine
-    # (initial: :awaiting_user). Called once, at construction.
-    def reset_run_state(transition_listener)
+    # Seeds the mutable run context: a fresh Accounting rolling up over the
+    # injected journal, and the observer the machine announces transitions to.
+    # State itself is owned by the machine (initial: :awaiting_user). Called
+    # once, at construction; the Accounting is what captures the journal.
+    def seed_run_state(transition_listener, journal)
       @transition_listener = transition_listener
-      @usage = Usage.zero
+      @accounting = Accounting.new(journal: journal)
       @iterations = 0
       @failure_reason = nil
     end
@@ -137,11 +146,13 @@ module Lain
       @budget.check_iterations!(@iterations)
       @iterations += 1
       response = call_model
-      @usage += response.usage
-      @budget.check_tokens!(@usage)
       # Correctness gate 1: commit the FULL content -- text, thinking, AND
       # tool_use blocks. Extracting only the text corrupts the very next turn.
       @timeline = @timeline.commit(role: :assistant, content: response.content)
+      # Commit BEFORE the token check: a turn that busts the ceiling was still
+      # paid for, so it stays in the record -- Timeline and Journal both --
+      # rather than vanishing with the raise.
+      @budget.check_tokens!(@accounting.observe(response, digest: @timeline.head_digest))
       response
     end
 

@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
+require "json"
+require "stringio"
+
 require "lain/agent"
+
+require "lain/journal"
 
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
@@ -55,14 +60,6 @@ RSpec.describe Lain::Agent do
       expect(response.text).to eq("hello")
       expect(a).to be_done
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
-    end
-
-    it "accumulates usage across turns" do
-      usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
-      a = agent([tool_response(%w[tu_1 echo], { "text" => "x" }),
-                 Lain::Response.new(content: [], stop_reason: :end_turn, usage: usage)])
-      a.ask("hi")
-      expect(a.usage.output_tokens).to eq(5)
     end
   end
 
@@ -178,6 +175,105 @@ RSpec.describe Lain::Agent do
       a = agent(text_response("", stop_reason: :refusal))
       expect { a.ask("hi") }.not_to raise_error
       expect(a).to be_failed
+    end
+  end
+
+  describe "turn usage accounting" do
+    let(:journal_io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io: journal_io) }
+
+    def turn_usage_records
+      journal_io.string.each_line
+                .map { |line| JSON.parse(line) }
+                .select { |record| record["type"] == "turn_usage" }
+    end
+
+    it "journals exactly one turn_usage record, attributed to the committed assistant turn" do
+      usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
+      a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "hello" }],
+                                   stop_reason: :end_turn, model: "claude-opus-4-8", usage: usage),
+                journal: journal)
+      a.ask("hi")
+
+      records = turn_usage_records
+      expect(records.size).to eq(1)
+      expect(records.first).to include(
+        "digest" => a.timeline.head_digest,
+        "model" => "claude-opus-4-8",
+        "stop_reason" => "end_turn",
+        "usage" => { "input_tokens" => 10, "output_tokens" => 5,
+                     "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 }
+      )
+    end
+
+    it "journals one record per MODEL call in a tool loop, none for the tool_result user turn" do
+      a = agent([tool_response(["tu_1", "echo", { "text" => "x" }]), text_response],
+                journal: journal)
+      a.ask("hi")
+
+      assistant_digests = a.timeline.to_a.select { |turn| turn.role == "assistant" }.map(&:digest)
+      records = turn_usage_records
+      expect(records.size).to eq(2)
+      expect(records.map { |record| record["digest"] }).to eq(assistant_digests)
+      expect(records.map { |record| record["digest"] }.uniq.size).to eq(2)
+    end
+
+    # Regenerating an identical turn after a rewind pays twice and must be
+    # counted twice (see Event::TurnUsage: the digest is a join key).
+    it "journals one record per PAYMENT: rewind plus identical regeneration duplicates the digest" do
+      usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
+      same_answer = lambda do
+        Lain::Response.new(content: [{ "type" => "text", "text" => "same answer" }],
+                           stop_reason: :end_turn, usage: usage)
+      end
+      a = agent([same_answer.call, same_answer.call], journal: journal)
+      a.ask("hi")
+      a.rewind(1)
+      a.run
+
+      records = turn_usage_records
+      expect(records.size).to eq(2)
+      expect(records.map { |record| record["digest"] }.uniq.size).to eq(1)
+      expect(a.usage).to eq(usage + usage)
+    end
+
+    it "keeps turn digests content-only: no usage or model in meta, identical content hashes identically" do
+      content = [{ "type" => "text", "text" => "same answer" }]
+      cheap = agent(Lain::Response.new(content: content, stop_reason: :end_turn,
+                                       usage: Lain::Usage.new(input_tokens: 1, output_tokens: 1)))
+      pricey = agent(Lain::Response.new(content: content, stop_reason: :end_turn,
+                                        model: "claude-opus-4-8",
+                                        usage: Lain::Usage.new(input_tokens: 900, output_tokens: 900)))
+      cheap.ask("hi")
+      pricey.ask("hi")
+
+      expect(cheap.timeline.head.meta).to eq({})
+      expect(cheap.timeline.head_digest).to eq(pricey.timeline.head_digest)
+    end
+
+    it "delegates accumulation to Accounting: usage is the monoid sum of every response's usage" do
+      first = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
+      second = Lain::Usage.new(input_tokens: 7, output_tokens: 3)
+      a = agent([Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                "input" => { "text" => "x" } }],
+                                    stop_reason: :tool_use, usage: first),
+                 Lain::Response.new(content: [], stop_reason: :end_turn, usage: second)])
+      a.ask("hi")
+
+      expect(a.usage).to eq(first + second)
+    end
+
+    it "retains an over-budget turn in the Timeline and journals its usage before raising" do
+      usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
+      a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "expensive" }],
+                                   stop_reason: :end_turn, usage: usage),
+                budget: Lain::Agent::Budget.new(max_total_tokens: 50),
+                journal: journal)
+
+      expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded)
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
+      expect(turn_usage_records.size).to eq(1)
+      expect(turn_usage_records.first["digest"]).to eq(a.timeline.head_digest)
     end
   end
 
