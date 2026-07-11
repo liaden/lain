@@ -66,6 +66,41 @@ module Lain
 
     DEFAULT_CLOCK = -> { Time.now.utc.iso8601(6) }
 
+    # The ONE duck every Journal reader speaks (see {.records}): an entry is
+    # either an already-parsed Hash (passed through with its TOP-LEVEL keys
+    # string-keyed -- nested hashes keep their keys, the record's reader owns
+    # its payload) or one raw NDJSON line (parsed). Answers the record Hash, or
+    # nil for anything that is not one of our records.
+    #
+    # @param entry [Hash, String]
+    # @return [Hash{String=>Object}, nil]
+    def self.parse(entry)
+      return entry.transform_keys(&:to_s) if entry.is_a?(Hash)
+
+      parsed = JSON.parse(entry.to_s)
+      parsed.is_a?(Hash) ? parsed : nil
+    rescue JSON::ParserError
+      nil
+    end
+
+    # The ONE walk every Journal reader shares (see {Handler::Recorded.from_journal},
+    # {Ledger::Index.from_journal}): each entry coerced through {.parse}, foreign
+    # lines skipped, optionally narrowed to a single record type.
+    #
+    # Skipping is the contract, not a convenience: the Journal's own lines always
+    # parse, but its fd can be shared with other writers (Rust tracing spans), so
+    # a reader skips what {.parse} answers nil for rather than raising over
+    # somebody else's bytes. Lazy, so `records(File.foreach(path))` streams the
+    # file without materializing it.
+    #
+    # @param entries [Enumerable<Hash, String>]
+    # @param type [String, Symbol, nil] keep only records of this type, when given
+    # @return [Enumerator::Lazy<Hash{String=>Object}>]
+    def self.records(entries, type: nil)
+      records = entries.lazy.filter_map { |entry| parse(entry) }
+      type.nil? ? records : records.select { |record| record["type"].to_s == type.to_s }
+    end
+
     # @param io [IO, StringIO] the destination the Journal writes to
     # @param clock [#call] returns the timestamp string stamped on each record
     # @param owns_io [Boolean] whether {#close} should close `io`

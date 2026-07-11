@@ -153,6 +153,65 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  # The ONE duck every Journal reader speaks (Handler::Recorded, Ledger::Index):
+  # a record is a Hash or one NDJSON line, and anything else answers nil so the
+  # reader can skip lines that belong to other writers on a shared fd.
+  describe ".parse" do
+    it "passes a Hash through with its TOP-LEVEL keys string-keyed" do
+      expect(described_class.parse({ type: "turn_usage", digest: "d" }))
+        .to eq("type" => "turn_usage", "digest" => "d")
+    end
+
+    it "leaves nested hashes' keys alone -- record readers own their payloads" do
+      parsed = described_class.parse({ type: "turn_usage", usage: { input_tokens: 1 } })
+      expect(parsed).to eq("type" => "turn_usage", "usage" => { input_tokens: 1 })
+    end
+
+    it "parses an NDJSON line String" do
+      expect(described_class.parse(%({"type":"tool_result","tool_use_id":"tu_1"})))
+        .to eq("type" => "tool_result", "tool_use_id" => "tu_1")
+    end
+
+    it "answers nil for a line that is not JSON" do
+      expect(described_class.parse("not json at all {")).to be_nil
+    end
+
+    it "answers nil for a JSON line that is not an object -- a record is a Hash" do
+      expect(described_class.parse("42")).to be_nil
+      expect(described_class.parse(%(["an","array"]))).to be_nil
+    end
+  end
+
+  # The one walk every reader shares: entries coerced through .parse, foreign
+  # lines skipped, optionally narrowed to a single record type.
+  describe ".records" do
+    let(:entries) do
+      [
+        { type: "turn_usage", digest: "d1" },
+        %({"type":"tool_result","tool_use_id":"tu_1"}),
+        "not json at all {",
+        %({"type":"turn_usage","digest":"d2"})
+      ]
+    end
+
+    it "coerces Hashes and NDJSON lines through .parse, skipping foreign lines" do
+      expect(described_class.records(entries).map { |record| record["type"] }.to_a)
+        .to eq(%w[turn_usage tool_result turn_usage])
+    end
+
+    it "narrows to one record type when given, String or Symbol" do
+      expect(described_class.records(entries, type: "turn_usage").map { |record| record["digest"] }.to_a)
+        .to eq(%w[d1 d2])
+      expect(described_class.records(entries, type: :tool_result).map { |record| record["tool_use_id"] }.to_a)
+        .to eq(%w[tu_1])
+    end
+
+    it "is lazy, so a stream can be read without materializing it" do
+      endless = Enumerator.new { |y| loop { y << %({"type":"turn_usage","digest":"d"}) } }
+      expect(described_class.records(endless, type: "turn_usage").first(2).size).to eq(2)
+    end
+  end
+
   describe "#fileno" do
     it "is nil for a StringIO with no descriptor" do
       expect(journal.fileno).to be_nil
