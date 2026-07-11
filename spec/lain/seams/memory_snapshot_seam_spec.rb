@@ -1,0 +1,203 @@
+# frozen_string_literal: true
+
+require "json"
+require "stringio"
+
+require "lain/agent"
+require "lain/context"
+require "lain/event"
+require "lain/journal"
+require "lain/memory/index"
+require "lain/memory/item"
+require "lain/memory/manifest"
+require "lain/provider/mock"
+require "lain/response"
+require "lain/tool"
+require "lain/toolset"
+
+# The bench-side observer this seam is built on. The Agent journals TurnUsage at
+# the instant an assistant turn is committed -- inside Agent#step, after the
+# commit and before any tool_results land -- so at that instant
+# agent.timeline.head_digest names exactly the committed assistant turn.
+# Watching the journal for TurnUsage is therefore a turn-commit observer that
+# needs no Agent change: forward every event to the real Journal, add the
+# MemoryRoot in force, then apply the bench's scripted writes for the gap before
+# the next turn. That the Agent stays memory-blind is the point of the design.
+class RootRecorder
+  attr_reader :index
+  # The Agent is constructed WITH this recorder as its journal, so the
+  # back-reference can only be wired after construction.
+  attr_accessor :agent
+
+  def initialize(journal:, index:, writes_between_turns:)
+    @journal = journal
+    @index = index
+    @writes_between_turns = writes_between_turns
+  end
+
+  def <<(event)
+    @journal << event
+    observe_commit if event.is_a?(Lain::Event::TurnUsage)
+    self
+  end
+
+  private
+
+  # Root FIRST, writes second: the record must carry the root the turn was
+  # committed under, not the one this gap's writes are about to create.
+  def observe_commit
+    @journal << Lain::Event::MemoryRoot.new(turn_digest: agent.timeline.head_digest, root: @index.root)
+    items = @writes_between_turns.shift || []
+    @index = items.inject(@index) { |index, item| index.write(item) }
+  end
+end
+
+# The 5-3.1 acceptance: pair each committed assistant turn with the
+# Memory::Index root in force at that moment, journal the pair as
+# Event::MemoryRoot, and the recorded journal ALONE -- parsed back out of its
+# NDJSON bytes -- suffices to reproduce recall exactly, however far the live
+# index has moved since. Snapshot purity is what makes dry-replay recall
+# possible later, so every checkout below is driven from PARSED values, never
+# from an in-memory root the spec happened to keep.
+RSpec.describe "Memory snapshot x Journal seam" do
+  echo_tool = Class.new(Lain::Tool) do
+    def name = "echo"
+    def description = "Echoes its input back."
+    def input_schema = { type: :object, properties: { text: { type: :string } }, required: [:text] }
+
+    def perform(input, _context) = Lain::Tool::Result.ok(input.fetch("text"))
+  end
+
+  def item(id, description)
+    Lain::Memory::Item.new(id: id, description: description, body: "body of #{id}")
+  end
+
+  let(:io) { StringIO.new }
+  let(:journal) { Lain::Journal.new(io: io) }
+  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+  let(:toolset) { Lain::Toolset.new([echo_tool.new]) }
+
+  let(:provider) do
+    Lain::Provider::Mock.new(responses: [
+                               Lain::Response.new(
+                                 content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                             "input" => { "text" => "aspirin" } }],
+                                 stop_reason: :tool_use
+                               ),
+                               Lain::Response.new(
+                                 content: [{ "type" => "text", "text" => "done" }],
+                                 stop_reason: :end_turn
+                               )
+                             ])
+  end
+
+  let(:first_gap_writes) do
+    [item("aspirin-dosing", "Aspirin dosing bounds for adults"),
+     item("warfarin-inr", "Warfarin target INR range")]
+  end
+
+  let(:recorder) do
+    RootRecorder.new(journal: journal, index: Lain::Memory::Index.empty,
+                     writes_between_turns: [first_gap_writes])
+  end
+
+  let(:agent) do
+    Lain::Agent.new(provider: provider, toolset: toolset, context: context, journal: recorder)
+               .tap { |a| recorder.agent = a }
+  end
+
+  before { agent.ask("what is the aspirin dosing?") }
+
+  # The real round trip: every value asserted or checked out below came back
+  # through Journal.parse over the journal's NDJSON bytes.
+  def parsed_records
+    io.string.each_line.map { |line| Lain::Journal.parse(line) }
+  end
+
+  def memory_roots
+    parsed_records.select { |record| record.fetch("type") == "memory_root" }
+  end
+
+  def assistant_digests
+    agent.timeline.to_a.select { |turn| turn.role == "assistant" }.map(&:digest)
+  end
+
+  describe "roots journal per turn" do
+    it "holds one memory_root record per committed assistant turn, in commit order" do
+      expect(memory_roots.map { |record| record.fetch("turn_digest") }).to eq(assistant_digests)
+    end
+
+    it "pairs each turn with the index root in force at that turn" do
+      # An independent oracle, decoupled from the recorder under test: content
+      # addressing means replaying the same writes into a fresh Index yields
+      # the identical root. Turn 1 committed before any write; turn 2 under
+      # the root the gap's writes produced.
+      replayed = first_gap_writes.inject(Lain::Memory::Index.empty) { |index, item| index.write(item) }
+
+      expect(memory_roots.map { |record| record.fetch("root") }).to eq([nil, replayed.root])
+    end
+
+    it "agrees with the Agent's own turn_usage records about which turns were committed" do
+      usage_digests = parsed_records.select { |record| record.fetch("type") == "turn_usage" }
+                                    .map { |record| record.fetch("digest") }
+      expect(memory_roots.map { |record| record.fetch("turn_digest") }).to eq(usage_digests)
+    end
+  end
+
+  describe "recall against a recorded root is pure (the 5-3.1 acceptance)" do
+    # The live index moves on after the run: one id rewritten, one brand new.
+    # Purity means neither is visible through the recorded root.
+    let(:moved_on) do
+      recorder.index
+              .write(item("aspirin-dosing", "REVISED dosing, superseding the original"))
+              .write(item("heparin-monitoring", "Heparin aPTT monitoring"))
+    end
+
+    let(:recorded_root) { memory_roots.last.fetch("root") }
+
+    it "reproduces exactly the snapshot as of turn k; later writes are invisible" do
+      snapshot = moved_on.checkout(recorded_root)
+
+      expect(snapshot.to_h.keys).to match_array(%w[aspirin-dosing warfarin-inr])
+      expect(snapshot.fetch("aspirin-dosing")).to eq(first_gap_writes.first)
+      expect(snapshot.key?("heparin-monitoring")).to be(false)
+    end
+
+    # Determinism alone (the example below) would pass even if a checkout
+    # deterministically leaked live writes; isolation must be proven through
+    # the recall surface itself, not only through #to_h.
+    it "keeps later writes invisible to search over the recalled snapshot" do
+      manifest = Lain::Memory::Manifest.new(moved_on.checkout(recorded_root))
+
+      expect(manifest.search("heparin aPTT monitoring")).to be_empty
+      expect(manifest.search("aspirin dosing").first.description).to eq(first_gap_writes.first.description)
+    end
+
+    it "yields equal recall from two checkouts of the same recorded root" do
+      one = moved_on.checkout(recorded_root)
+      two = moved_on.checkout(recorded_root)
+
+      expect(one.to_h).to eq(two.to_h)
+
+      hits_one = Lain::Memory::Manifest.new(one).search("aspirin dosing")
+      hits_two = Lain::Memory::Manifest.new(two).search("aspirin dosing")
+      expect(hits_one).not_to be_empty
+      expect(hits_one).to eq(hits_two)
+    end
+  end
+
+  describe "the empty root round-trips" do
+    it "records the pre-write turn's root as JSON null on the wire" do
+      line = io.string.each_line.find { |candidate| JSON.parse(candidate).fetch("type") == "memory_root" }
+      expect(line).to include('"root":null')
+    end
+
+    it "checks out the parsed null back to the empty Index" do
+      resumed = recorder.index.checkout(memory_roots.first.fetch("root"))
+
+      expect(resumed).to be_empty
+      expect(resumed.to_h).to eq({})
+      expect(resumed).to eq(Lain::Memory::Index.empty)
+    end
+  end
+end

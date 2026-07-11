@@ -149,6 +149,32 @@ module Lain
       end
     end
 
+    # The memory root in force at one committed turn: `turn_digest` names the
+    # assistant Turn just committed (the Timeline head at commit time) and
+    # `root` names the Memory::Index root live at that moment. Recorded by the
+    # BENCH observing the run, never by the Agent -- the Agent stays
+    # memory-blind. Pairing the two digests in the Journal is what makes recall
+    # replayable: `Index#checkout(root)` reproduces exactly the snapshot this
+    # turn could see, however far the live index has moved since. The name is
+    # QUALIFIED -- `turn_digest`, not `digest` -- because this record carries
+    # two digests, and `turn_digest` is the join key onto {TurnUsage}'s
+    # `digest`: one committed turn, its cost, and its memory snapshot line up
+    # in the Journal on that one value.
+    #
+    # `root` may be nil where `turn_digest` may not: a record only exists
+    # because a turn committed, so there is always a turn to name, but an EMPTY
+    # index has no root node to name -- nil IS the empty index's identity
+    # (`checkout(nil)` answers it), a value here rather than an absence.
+    MemoryRoot = Data.define(:turn_digest, :root) do
+      include Journalable
+
+      def initialize(turn_digest:, root:)
+        raise ArgumentError, "turn_digest must name the committed turn, got nil" if turn_digest.nil?
+
+        super(turn_digest: turn_digest.dup.freeze, root: root&.dup&.freeze)
+      end
+    end
+
     # A Context combinator declared it `requires` a capability the Provider does
     # not have, and the run's policy chose to DEGRADE rather than raise: the
     # tactic silently became a no-op. "Silently" is the whole danger -- a
