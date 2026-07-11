@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../canonical"
+require_relative "../content_addressed"
 require_relative "../error"
 require_relative "../store"
 require_relative "item"
@@ -23,6 +24,8 @@ module Lain
       # store entry; the Node holds only the item's digest, so rewriting an id
       # never copies a body.
       class Node
+        include ContentAddressed
+
         attr_reader :id, :item_digest, :parent, :digest
 
         def initialize(id:, item:, parent: nil)
@@ -39,15 +42,6 @@ module Lain
         # is inside the digest, and changing it would re-address every node.
         def payload
           { "id" => id, "item" => item_digest, "parent" => parent }
-        end
-
-        def ==(other)
-          other.is_a?(Node) && digest == other.digest
-        end
-        alias eql? ==
-
-        def hash
-          digest.hash
         end
 
         def to_s

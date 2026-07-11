@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../canonical"
+require_relative "../content_addressed"
 require_relative "../error"
 
 module Lain
@@ -13,6 +14,8 @@ module Lain
     # renders one line per item, and any vertical whitespace would let one item
     # read as two.
     class Item
+      include ContentAddressed
+
       # [[:space:]] is Unicode-aware where String#strip is ASCII-only: an
       # NBSP-only id must still count as blank.
       BLANK = /\A[[:space:]]*\z/
@@ -35,16 +38,6 @@ module Lain
       # The exact structure that was hashed. Also what a Journal writes.
       def payload
         { "id" => id, "description" => description, "body" => body }
-      end
-
-      # Regular: equality is structural, and structural equality is digest equality.
-      def ==(other)
-        other.is_a?(Item) && digest == other.digest
-      end
-      alias eql? ==
-
-      def hash
-        digest.hash
       end
 
       def to_s

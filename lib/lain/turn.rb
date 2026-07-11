@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "canonical"
+require_relative "content_addressed"
 require_relative "error"
 
 module Lain
@@ -10,11 +11,9 @@ module Lain
   # Hashing names the turn; it does not replace it. The full content is retained
   # here and in the Store, so nothing is lost. Comparison and deduplication are
   # cheap because they only ever look at +digest+.
-  #
-  # NOTE: the content address is +#digest+, deliberately not +#hash+. Ruby uses
-  # +Object#hash+ for Hash and Set bucketing and requires an Integer; returning a
-  # hex String there would silently break every Hash lookup involving a Turn.
   class Turn
+    include ContentAddressed
+
     ROLES = %w[user assistant].freeze
 
     class InvalidRole < Error; end
@@ -37,16 +36,6 @@ module Lain
     # The exact structure that was hashed. Also what a Journal writes.
     def payload
       { "role" => role, "content" => content, "parent" => parent, "meta" => meta }
-    end
-
-    # Regular: equality is structural, and structural equality is digest equality.
-    def ==(other)
-      other.is_a?(Turn) && digest == other.digest
-    end
-    alias eql? ==
-
-    def hash
-      digest.hash
     end
 
     def to_s
