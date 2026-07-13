@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "error"
+require_relative "session"
 require_relative "tool/contracts"
 
 module Lain
@@ -162,6 +163,15 @@ module Lain
       return hash[key.to_s] if hash.key?(key.to_s)
 
       hash[key.to_sym]
+    end
+
+    # The session a tool records reads and writes against rides
+    # {Tool::Invocation#context}, which is documented-nullable (a bare unit
+    # call threads no context). Coalesce that one legitimate nil to the Null
+    # session HERE, in one named place, so no subclass -- nor any contract
+    # predicate -- ever guards on nil at the point it wants the session.
+    def session_of(invocation)
+      invocation&.context || Session::Null.instance
     end
 
     private

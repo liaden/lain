@@ -103,14 +103,6 @@ module Lain
 
         Item.new(content: content, status: status)
       end
-
-      # The session rides {Tool::Invocation#context}, which is
-      # documented-nullable (a bare unit call threads no context). Coalesce
-      # that one legitimate nil to the Null session here, matching
-      # {Tools::ReadFile}'s own `session_of`.
-      def session_of(invocation)
-        invocation&.context || Session::Null.instance
-      end
     end
   end
 end

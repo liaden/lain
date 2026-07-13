@@ -74,14 +74,6 @@ module Lain
 
       private
 
-      # Mirrors ReadFile#session_of: the session rides the documented-nullable
-      # {Tool::Invocation#context}, coalesced to the Null session in this one
-      # named place so neither the contract predicate nor #perform ever guards
-      # on nil.
-      def session_of(invocation)
-        invocation&.context || Session::Null.instance
-      end
-
       # `String#scan` counts non-overlapping matches, which would call "aa" in
       # "aaa" unique and edit on a false premise; walking `index` forward by one
       # counts every window. `take_while` stops at the first nil, so the

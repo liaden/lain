@@ -48,14 +48,6 @@ module Lain
 
       private
 
-      # The session rides {Tool::Invocation#context}, which is documented-nullable
-      # (a bare unit call threads no context). Coalesce that one legitimate nil to
-      # the Null session here, so the recording above never guards -- and so the
-      # nil coalesces in exactly one named place, not at the call site.
-      def session_of(invocation)
-        invocation&.context || Session::Null.instance
-      end
-
       def problem_with(path)
         return "no such file: #{path}" unless File.exist?(path)
         return "is a directory, not a file: #{path}" if File.directory?(path)
