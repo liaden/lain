@@ -1,6 +1,6 @@
 # Chunk 2026-07 — cache economics, memory writes, retrieval, session hands
 
-status: in-progress
+status: done
 commit-mode: branch-queue
 language: ruby (+ rust for T8)
 panel: Ruby — Torvalds, Evans, Metz, Schneeman, Patterson · Rust (T8/T9) — Levien, Gallant, McSherry, Williams
@@ -883,3 +883,55 @@ After the last wave merges, the orchestrator runs on `main`:
 6. **Manual pass (Joel):** one live `exe/lain chat` smoke run exercising read → edit_file →
    todo_write → memory_write, eyeballing the rendered tail in the Journal; P.1–P.3 remain
    deferred to a Console-key session.
+
+
+---
+
+## Close-out (2026-07-13)
+
+All 14 cards landed on `main` via ff-only merges; every implementer ran TDD red-first in an
+isolated worktree and passed a persona review panel (depth by risk). Final integration:
+**1161 examples / 0 failures**, rubocop clean, `cargo test` 49 + clippy/fmt/deny clean,
+`pre-commit run --all-files` green.
+
+**What the panels caught (fixed before merge):**
+- T2/T4 (plan-time BLOCKER): the digest chain redesigned to (position, digest) pairs over
+  marker-stripped bytes — the original marker-sampled design would have read every append as
+  a rewrite.
+- T6 (plan-time BLOCKER): MemoryRoot journaling became a Journal decorator keyed off
+  TurnUsage — zero agent.rb changes, and the recorded root is provably the pre-write root the
+  render saw.
+- T7: the `sk-` secret pattern false-positived on hyphenated prose (live-demonstrated);
+  anchored with a lookbehind, probe cases became specs.
+- T12: `scan`-based occurrence counting missed overlapping matches ("aa" in "aaa" reported
+  unique); replaced with an overlap-aware walk that errors on ambiguity.
+- T3: the cross-process divergence failure message now names the first differing byte offset
+  with windowed excerpts (was an unreadable truncated diff).
+- T5: a dead rescue claiming to catch blank ids (ActiveModel presence intercepts first);
+  both rejection layers now spec-pinned where they actually live.
+- T8's panel proved cross-process determinism (3 processes, randomized hash seed,
+  byte-identical results) and audited the crate for interior mutability before honoring
+  `frozen_shareable`.
+
+**Orchestrator decisions during execution:**
+- RUSTSEC-2025-0057 (`fxhash` unmaintained, advisory-only) ignored in `deny.toml` with a WHY
+  comment — fxhash's determinism is load-bearing; revisit if bm25 upstream migrates hashers.
+- T13 used Tool's raw-schema path instead of `Tool::Input` (nested object arrays don't fit
+  the ActiveModel DSL; panel verified the raw path is first-class and validation is loud).
+- Wave 2 cards started as soon as their specific dependencies merged rather than at the wave
+  boundary; the plan's file-disjointness made this safe.
+
+**Follow-ups (not built, tracked):**
+1. `Memory::Bm25` rebuilds its index O(corpus) per snapshot — add a root-digest-keyed cache
+   when Recall drives a moving index.
+2. No structural ≤4-marker guard outside `Context.pipeline` — a hand-built Request with >4
+   markers still 400s at the API; consider a loud Request/Provider-level assertion.
+3. 5-0.3 must re-verify ShellOut cooperation under stdout-flood / CPU-heavy children before
+   adopting no-offload for all bash workloads.
+4. `Bench::Rewrites` reads a model switch as a rewrite at the earliest shared position
+   (per-model digests by design) — segment journals per arm before cross-model comparison
+   (documented + spec-pinned).
+5. `Invocation#context` is now semantically the Session; a future tool wanting a second
+   collaborator will contend for the one slot.
+6. Pre-existing oddity noticed during pre-work: a nested
+   `references/papers/rst/references/papers/rst/` path exists in the corpus — worth flattening.

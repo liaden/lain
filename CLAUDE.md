@@ -169,7 +169,8 @@ Structures that plausibly qualify, and what they buy:
 | Interned digests | `lasso` | Digests are short, repeated, and compared constantly; interning turns comparison into an integer test. |
 | Roaring bitmap | `roaring` | Usage must aggregate over **unique reachable digests** — a set problem. Naive summing over a branched Timeline double-counts the shared prefix. |
 | Causal DAG | `petgraph` | `meet`, `diverge_at`, and `spawned_from` lineage are graph queries. |
-| BM25 / vector / graph index | `tantivy`, `usearch`, `petgraph` | Memory retrieval (M6) — and these are I/O-shaped, so they live **out** of process. |
+| In-memory BM25 | `bm25` (crate) | **Shipped** (`Lain::Ext::Bm25`): pure in-memory data-structure work, so it lives in-process — unlike `tantivy`, which is disk-backed/I/O-shaped and stays out of process. Deterministic (fxhash, no parallelism feature); equal-score ties break by build-batch insertion order. |
+| Vector / graph index | `tantivy`, `usearch`, `petgraph` | Memory retrieval (M6) — these are I/O-shaped, so they live **out** of process. |
 
 > ⚠️ **A magnus-wrapped object is not `Ractor.shareable?` for free.** Deep immutability is spec'd
 > mechanically, and `Ractor.shareable?(turn)` must stay `true`. Porting `Turn` or `Timeline` to a
@@ -189,3 +190,6 @@ Structures that plausibly qualify, and what they buy:
 - Anthropic's minimum cacheable prefix is 4096 tokens. A short system prompt silently will not
   cache, with no error.
 - `require "active_support/core_ext"` fails unless `require "active_support"` comes first.
+- Constants and nested classes defined **inside a `Data.define(...) do ... end` block** are
+  lexically scoped to the enclosing module, not the Data class. Reopen the class after the
+  block instead (see `Request::SYSTEM_PREFIX`).

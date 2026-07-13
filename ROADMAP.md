@@ -111,7 +111,7 @@ deterministic diff under another, and `Compare` reports distributions over `n` r
 compare mismatched capability-degraded sets). The remaining committed work — the key-gated **P**
 cleanup and the **M4-2/M5/M6** bands — is inventoried with acceptance criteria in
 [`planning/remaining-work.md`](planning/remaining-work.md); this ROADMAP layers the research- and
-TODO-driven `[exp]` ideas on top and sequences them. Suite: **752 examples, 0 failures; `cargo test` 39.**
+TODO-driven `[exp]` ideas on top and sequences them. Suite: **1161 examples, 0 failures; `cargo test` 49** (post chunk-cache-memory-hands, 2026-07-13).
 
 ---
 
@@ -164,9 +164,9 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 ### M3c — the bench: algebra, seams, graders `[built]` — *the center of gravity*
 > **Committed core `[built]` (this session):** the combinators, all four phases, capability guarding,
 > and the full `Bench`/`Grader`/`Compare` + speculative-branching surface. The fold-ins below remain
-> `[exp]`/`[parked]`. **Known follow-up:** `Compare`'s token/cost columns are inert until per-turn usage
-> is journaled — decided to source usage from the **Journal**, not `turn.meta` (keeps the digest
-> content-only); a small `Agent::Accounting` unit, not yet built.
+> `[exp]`/`[parked]`. ~~Known follow-up: `Agent::Accounting`~~ — **built**; usage is journaled per
+> turn and `Ledger`/`Compare` price from the Journal, not `turn.meta`. CE-1/CE-2/CE-3 and
+> `Bench::Rewrites` landed in chunk-cache-memory-hands (2026-07-13).
 - `[built]` `Lain::Algebra` with property-tested laws. `Context` combinators composing under `>>`, each
   declaring `requires`. All four middleware phases (`model`/`tool`/`turn`/`repl`).
 - `[built]` `Bench::DryReplay`, `LiveReplay`, `Grader::Fixture`, `Grader::Rubric`, `Compare` with
@@ -589,19 +589,16 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
    impls green against the shared law groups.
 4. **P — provisional cleanup** (needs a Console key): re-record the transport cassette, run the `:live`
    differential once, confirm the real rate-limit reset header. See `remaining-work.md` § P.
-4b. **▶ Chunk in progress (2026-07-13)** — CE-1/CE-2/CE-3 + rewrite attribution, the memory
-   write path + secret guard, BM25 (`bm25` crate in `ext/lain`) + `Context::Recall`, the
-   session-state seam (`edit_file`, `todo_write`), and the 5-0.1 concurrency spike. Task cards,
-   waves, and status: `planning/specs/chunk-cache-memory-hands.md`. (Items 5–6 below and the
-   8-band openers land through it; note `Agent::Accounting` from item 6 is already built.)
-5. **CE-1 — breakpoint-cap bug fix** (small, before long sessions run): placement policy lives only
-   in `Context::CacheBreakpoints` (parameterized `cap: 4`, tail-clustered, system marker counted);
-   `AnthropicEncoding` loses `with_stride_breakpoint` and goes back to pure marker translation.
-   Uncapped today, and >4 `cache_control` blocks is an API 400. See
-   `planning/specs/cache-economics.md` CE-1.
-6. **`Agent::Accounting`** (small): journal per-turn usage so `Compare`'s cost/token columns go live
-   (source from the Journal, not `turn.meta`). Journal the **Request digest chain** (CE-2) in the
-   same unit — one schema change, and rewrite attribution becomes a free offline projection.
+4b. **✅ Chunk done (2026-07-13)** — CE-1 (cap bug), CE-2 (`Request#prefix_digests` + journaled
+   chain), CE-3 (two-process prelude invariant spec), `Bench::Rewrites` attribution, the memory
+   write path (`Memory::Recorder`, `memory_write`, `JournalMemoryRoot`, `RefuseSecretWrites`),
+   BM25 (`bm25` crate in `ext/lain` → `Memory::Bm25`) + `Context::Recall`, the session-state seam
+   (`Session`, `edit_file` with the read-before-write contract, `todo_write`), and the 5-0.1
+   concurrency spike (ShellOut **cooperates** with the fiber scheduler — idle-child measurement;
+   5-0.3 must re-verify under stdout-flood). Cards, panel findings, and follow-ups:
+   `planning/specs/chunk-cache-memory-hands.md`. (Subsumed the old items 5–6;
+   `Agent::Accounting` had already landed pre-chunk. 3c-3.2, the repl middleware phase, turned
+   out to be already built in `exe/lain`.)
 7. **Early headline experiment** — quantify harness-induced variance (all prerequisites now built): a
    `DryReplay`/`Compare` sweep over the harness's own recorded sessions. The cache-write columns
    (CE-2) make this the study HN 48883275 could not produce: grader × tokens × cache-write, no proxy.

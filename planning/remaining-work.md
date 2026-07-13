@@ -66,7 +66,7 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
   speculative-fork point). *Builds on:* `lib/lain/middleware.rb`, `lib/lain/agent.rb` (already wires
   `model_`/`tool_middleware`). **Acceptance:** `turn_middleware:` Stack threads each turn; monoid
   laws green; an existing gate-7 (bounded loop) spec still passes through it.
-- **3c-3.2 — `repl` phase.** Wrap each REPL command. **Acceptance:** `repl_middleware:` Stack green
+- ✅ **3c-3.2 — `repl` phase.** *(Found already built 2026-07-13: `exe/lain` wires `repl_middleware` through `dispatch`.)* Wrap each REPL command. **Acceptance:** `repl_middleware:` Stack green
   under the monoid group; `exe/lain` command path routes through it.
 
 ### Stream 3c-4 · Capability machine-checking
@@ -136,7 +136,7 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
 ## M5 — Orchestration, memory, code mode
 
 ### Stream 5-0 · Concurrency model (gates 5-1, 5-4)
-- **5-0.1 — Spike `Async` × `Mixlib::ShellOut`.** Does the fiber scheduler hook `io_select`, or does
+- ✅ **5-0.1 — Spike `Async` × `Mixlib::ShellOut`.** *(Done 2026-07-13: cooperates — idle-child measurement; see docs/concurrency.md; 5-0.3 re-verifies under stdout-flood.)* Does the fiber scheduler hook `io_select`, or does
   a `bash` tool stall the reactor (`unix.rb:282`/`:406`)? **Acceptance:** a spike proving either
   fibers work or shellouts must offload to a thread; decision recorded in `docs/concurrency.md`.
 - **5-0.2 — Prototype effects-via-`Fiber` vs handler objects.** Multi-shot resumption vs stack-trace
@@ -157,7 +157,7 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
   turn.
 
 ### Stream 5-2 · `Tool::Todo`
-- **5-2.1 — Todo tool riding the Workspace.** *Builds on:* `lib/lain/workspace.rb` (sent-not-stored).
+- ✅ **5-2.1 — Todo tool riding the Workspace.** *(Done 2026-07-13: `todo_write` on the Session reminders channel.)* *Builds on:* `lib/lain/workspace.rb` (sent-not-stored).
   **Acceptance:** todos render into the Request tail, never append to the Timeline, don't resurrect
   on rewind.
 
@@ -166,15 +166,15 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
   per turn). **Acceptance:** dry replay recalls against the exact recorded snapshot — recall is pure.
 - **5-3.2 — `Manifest` index** (one-line descriptions in context, `memory_read(id)` for body).
   **Acceptance:** deterministic, cache-stable, no embeddings; `Hit#why` populated.
-- **5-3.3 — `Bm25` index** (`tantivy`, via the exec boundary or in-process to start). **Acceptance:**
+- ✅ **5-3.3 — `Bm25` index** *(Done 2026-07-13: `bm25` crate in-process via `ext/lain`, not tantivy; `Memory::Bm25` + shared "a memory search index" law group.)* (`tantivy`, via the exec boundary or in-process to start). **Acceptance:**
   exact drug/gene-name queries return correct hits with `#why`.
-- **5-3.4 — `Context::Recall` combinator** ordered *after* `CacheBreakpoints` (3c-2.4). **Acceptance:**
+- ✅ **5-3.4 — `Context::Recall` combinator** *(Done 2026-07-13.)* ordered *after* `CacheBreakpoints` (3c-2.4). **Acceptance:**
   auto-injected recall lands at the message tail, never invalidates the cached prefix.
-- **5-3.5 — 🔒 PHI/secret write-refusal.** `Lain.middleware.tool` refuses `memory_write` of PHI/keys,
+- ✅ **5-3.5 — 🔒 secret write-refusal.** *(Done 2026-07-13: deterministic patterns + injectable oracle seam; PHI heuristics deferred to the oracle (OR-1).)* `Lain.middleware.tool` refuses `memory_write` of PHI/keys,
   journaled. **Acceptance:** a write attempt is refused and journaled, not silently stored.
 
 ### Stream 5-4 · `edit_file` + code mode
-- **5-4.1 — `edit_file` with `str_replace` + read-before-write contract.** *Builds on:* the contract
+- ✅ **5-4.1 — `edit_file` with `str_replace` + read-before-write contract.** *(Done 2026-07-13: first real consumer of Tool::Contracts, over the T11 Session read-set.)* *Builds on:* the contract
   mechanism in `lib/lain/tool.rb`. **Acceptance:** an edit without a prior same-session read of the
   file fails the precondition (Eiffel-strict raise → error result).
 - **5-4.2 — Server-side context-editing arm** (comparison against client-side `Prune`, 3c-2.2).
