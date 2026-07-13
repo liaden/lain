@@ -114,15 +114,20 @@ RSpec.describe Lain::Provider::Anthropic do
       expect(emitted).not_to have_key("cache_control")
     end
 
-    it "places an intermediate breakpoint roughly every 15 blocks so the lookback window is never starved" do
+    # CE-1: placement (including the budget and the tail-clustered dropping
+    # of old markers) is entirely Context::CacheBreakpoints's job now; the
+    # encoder used to also place its own intermediate breakpoint every 15
+    # blocks, uncapped, and the two layers together were how a long enough
+    # session exceeded Anthropic's 4-marker cap. See
+    # spec/lain/provider/anthropic_encoding_spec.rb for the encoder's own
+    # coverage of this contract.
+    it "places no breakpoint of its own -- only where a neutral marker already sits" do
       blocks = Array.new(32) { |i| { type: "text", text: "b#{i}" } }
       request = Lain::Request.new(model: "m", max_tokens: 1,
                                   messages: [{ role: "user", content: blocks }])
       emitted = provider.encode(request)[:messages].first["content"]
 
-      cached = emitted.each_index.select { |i| emitted[i].key?("cache_control") }
-      # 1-based positions 15 and 30.
-      expect(cached).to eq([14, 29])
+      expect(emitted.count { |block| block.key?("cache_control") }).to eq(0)
     end
 
     it "does not include a stream key (the SDK encodes streaming by method choice)" do

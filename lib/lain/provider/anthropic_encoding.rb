@@ -19,15 +19,6 @@ module Lain
     # the dry-diff compares against the SDK's kwargs. {AnthropicRaw} rewrites that
     # to the wire `system` key on the way out; see its `#complete`.
     module AnthropicEncoding
-      # Anthropic's cache lookback only reaches ~20 content blocks back from a
-      # breakpoint. A long agentic turn of tool_use/tool_result pairs sails past
-      # that window, and the cached prefix silently shrinks to whatever sits under
-      # the last breakpoint. Dropping an intermediate breakpoint every STRIDE
-      # blocks keeps the window populated. (Anthropic caps *total* breakpoints at
-      # four; keeping the count in bounds is a Context-layer concern -- here we
-      # only guarantee the window is never starved.)
-      CACHE_STRIDE = 15
-
       # `cache_control` in Anthropic's only currently offered flavor. Named once
       # so the emitted marker is a single shared, frozen object.
       EPHEMERAL = { "type" => "ephemeral" }.freeze
@@ -69,24 +60,20 @@ module Lain
         Canonical.normalize(tools).map { |tool| translate_block(tool) }
       end
 
-      # Walks every content block across all messages with one running counter, so
-      # intermediate cache breakpoints land on absolute block positions rather
-      # than resetting per message -- the lookback window does not care about
-      # message boundaries.
+      # Pure translation: every block's neutral marker, wherever
+      # Context::CacheBreakpoints placed it, becomes cache_control. This
+      # module adds no placement of its own -- the budget and the tail-
+      # clustering are entirely the Context layer's policy (CE-1).
       def encode_messages(messages)
-        position = [0]
         messages.map do |message|
-          { "role" => message["role"], "content" => encode_content(message["content"], position) }
+          { "role" => message["role"], "content" => encode_content(message["content"]) }
         end
       end
 
-      def encode_content(content, position)
+      def encode_content(content)
         return content unless content.is_a?(Array)
 
-        content.map do |block|
-          position[0] += 1
-          with_stride_breakpoint(translate_block(block), position[0])
-        end
+        content.map { |block| translate_block(block) }
       end
 
       # Translate Lain's neutral cache marker into Anthropic's wire field and
@@ -98,14 +85,6 @@ module Lain
         cached = block[CACHE_MARKER]
         stripped = block.reject { |key, _| key == CACHE_MARKER }
         cached ? stripped.merge("cache_control" => EPHEMERAL) : stripped
-      end
-
-      def with_stride_breakpoint(block, position)
-        return block unless block.is_a?(Hash)
-        return block unless (position % CACHE_STRIDE).zero?
-        return block if block.key?("cache_control")
-
-        block.merge("cache_control" => EPHEMERAL)
       end
     end
   end
