@@ -119,7 +119,9 @@ module Lain
 
         # The same wiring a real bench run uses (JournalRequests INNERMOST, the
         # Agent's own journal:), so the fixture bytes exercise exactly the
-        # records Session.load rebuilds a Recording from.
+        # records Session.load rebuilds a Recording from. It deliberately keeps
+        # its own copy of the spec suite's mock-recording idiom: committed
+        # fixture bytes must not couple to spec/support helpers.
         def record(journal, responses)
           toolset = Toolset.new([DosingLookup.new])
           context = Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
