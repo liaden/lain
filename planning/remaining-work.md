@@ -13,7 +13,9 @@ complete; the bench (the deliverable) is not.** Until M3c lands you can run the 
 compare strategies — the project's entire point — so M3c is the highest-leverage remaining band.
 
 **House rules every unit inherits** (from `CLAUDE.md`): no `next`/`break`/`redo`; never loosen a
-`Metrics/*` limit (extract a collaborator); every spec `require`s its own subject; nothing in `lib/`
+`Metrics/*` limit (extract a collaborator); internal requires live in `lain.rb`/unit indexes, never
+in leaf files (specs load via `require "lain"` in spec_helper — a new file, its index line, and its
+spec land in the same commit); nothing in `lib/`
 touches `$stdout`/`$stderr` outside `lib/lain/frontend/`; value objects deeply frozen
 (`Ractor.shareable?` stays true); comments explain WHY; ActiveSupport/`Enumerable`/Null-Object/SOLID
 welcome; commit leaf-first with terse messages, no trailers. Fan-out via git worktrees, `--ff-only`
@@ -33,6 +35,33 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
 - **P.3 — Confirm the real reset-header name.** Read `anthropic-ratelimit-*-reset` off a live 429.
   **Acceptance:** `AnthropicRaw`'s `rate_limit_reset_header` set to the confirmed header; retry spec
   still journals exactly one `ProviderRetry`.
+
+---
+
+## R — Deferred findings from the whole-chunk review (2026-07-13, daf5baf..f3a6480)
+
+Ten findings; seven fixed in the follow-up round (`28c6b80`..`f3a6480`). These three were
+deliberately deferred, not dropped:
+
+- **R.1 — Rolling-hash `prefix_digests` chain.** `Request#prefix_digests` recomputes a full
+  `Canonical.digest` per marker with no reuse across overlapping prefixes, so per-turn journaling
+  cost is O(turns²) per session. The real fix is redesigning the chain as a rolling hash
+  (`entry = H(prev_entry, canonical(message))`) — that **changes recorded digest values**, so it
+  needs a chain-version marker and `Bench::Rewrites` tolerance for both formats (it already
+  tolerates `nil` for pre-chain journals). The cheap intra-call strip-once reuse was considered
+  and deliberately skipped in favor of doing this properly. **Acceptance:** journaling cost per
+  turn is O(1) amortized in message count; `Rewrites` reads old and new journals; divergence
+  localization unchanged.
+- **R.2 — Structural workspace provenance.** `Context::Recall` decides workspace-block provenance
+  by string-prefix matching on `Workspace::OPENING_TAG`, so genuine user text starting with the
+  literal tag is silently excluded from recall queries. Replace with a structural
+  `"workspace" => true` block key, stripped before the wire exactly like `"cache"` (touches
+  Workspace render, the encoder's strip, and `Request#prefix_digests`' marker-stripping).
+  **Acceptance:** a user message that literally starts with `<workspace>` still feeds the recall
+  query; the wire payload carries no `"workspace"` key.
+- **R.3 — `RequestSent` double normalization.** `Middleware::JournalRequests` normalizes the
+  payload and `Event::RequestSent.new` normalizes it again. Minor; fold into R.1's touching of
+  that seam. **Acceptance:** one `Canonical.normalize` pass per journaled request.
 
 ---
 
