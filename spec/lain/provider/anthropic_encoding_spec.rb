@@ -36,4 +36,38 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
     expect(described_class.private_instance_methods).not_to include(:with_stride_breakpoint)
     expect(described_class.constants).not_to include(:CACHE_STRIDE)
   end
+
+  # Anthropic accepts at most four cache_control breakpoints; the encoder is
+  # the anti-corruption layer, so it refuses a fifth at encode time (a clear,
+  # named error) rather than letting the wire 400.
+  describe "the cache-breakpoint budget" do
+    def request_with_markers(count)
+      content = Array.new(count) { |i| { "type" => "text", "text" => "b#{i}", "cache" => true } }
+      request(messages: [{ role: "user", content: content }])
+    end
+
+    it "encodes four markers without complaint" do
+      expect { encoder.encode(request_with_markers(4)) }.not_to raise_error
+    end
+
+    it "refuses five markers with a named error" do
+      expect { encoder.encode(request_with_markers(5)) }
+        .to raise_error(Lain::Provider::AnthropicEncoding::TooManyCacheMarkers, /5 cache breakpoints/)
+    end
+
+    # The count spans all three prefix regions, not just messages: markers on
+    # tools and system count against the same budget.
+    it "counts markers across tools, system, and messages together" do
+      tool = { "name" => "t", "description" => "d", "input_schema" => { "type" => "object" }, "cache" => true }
+      system = [{ "type" => "text", "text" => "sys", "cache" => true }]
+      messages = [{ role: "user", content: [
+        { "type" => "text", "text" => "a", "cache" => true },
+        { "type" => "text", "text" => "b", "cache" => true },
+        { "type" => "text", "text" => "c", "cache" => true }
+      ] }]
+
+      expect { encoder.encode(request(tools: [tool], system: system, messages: messages)) }
+        .to raise_error(Lain::Provider::AnthropicEncoding::TooManyCacheMarkers, /5 cache breakpoints/)
+    end
+  end
 end

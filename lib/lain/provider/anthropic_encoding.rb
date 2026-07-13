@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../canonical"
+require_relative "../error"
 
 module Lain
   class Provider
@@ -19,6 +20,20 @@ module Lain
     # the dry-diff compares against the SDK's kwargs. {AnthropicRaw} rewrites that
     # to the wire `system` key on the way out; see its `#complete`.
     module AnthropicEncoding
+      # Anthropic accepts at most this many cache_control breakpoints per
+      # request; a fifth is a hard 400 at the wire. The default pipeline
+      # (Context::CacheBreakpoints) budgets itself under this cap, but a
+      # non-default pipeline could exceed it -- and this Anthropic-specific
+      # limit does not belong in the neutral Request. So the encoder, which is
+      # the anti-corruption layer that actually emits Anthropic bytes, is where
+      # the ceiling is enforced.
+      CACHE_LIMIT = 4
+
+      # More cache breakpoints than Anthropic will accept, caught at encode
+      # time with a named error instead of a cryptic wire 400. Defined here,
+      # beside the encoder, because the limit is the encoder's concern.
+      class TooManyCacheMarkers < Error; end
+
       # `cache_control` in Anthropic's only currently offered flavor. Named once
       # so the emitted marker is a single shared, frozen object.
       EPHEMERAL = { "type" => "ephemeral" }.freeze
@@ -33,17 +48,41 @@ module Lain
       # streaming by *which method* you call (`create` vs `stream`), and the wire
       # payload carries it as a top-level field the caller adds later.
       def encode(request)
-        params = { model: request.model, max_tokens: request.max_tokens,
-                   messages: encode_messages(request.messages),
-                   system_: request.system && encode_system(request.system),
-                   tools: (encode_tools(request.tools) unless request.tools.empty?),
-                   thinking: request.reasoning }
+        check_cache_budget!(request)
         # #extra is the provider-specific escape hatch (temperature, tool_choice,
         # ...); symbol keys so it lands on the SDK param model's named fields.
-        params.compact.merge(request.extra.transform_keys(&:to_sym))
+        base_params(request).compact.merge(request.extra.transform_keys(&:to_sym))
       end
 
       private
+
+      def base_params(request)
+        { model: request.model, max_tokens: request.max_tokens,
+          messages: encode_messages(request.messages),
+          system_: request.system && encode_system(request.system),
+          tools: (encode_tools(request.tools) unless request.tools.empty?),
+          thinking: request.reasoning }
+      end
+
+      # Anthropic caps cache_control breakpoints per request; count the neutral
+      # markers across tools, system, and messages -- the three prefix regions
+      # a breakpoint can land in -- and refuse before emitting a payload the
+      # wire would 400.
+      def check_cache_budget!(request)
+        count = [request.tools, request.system, request.messages].sum { |part| count_markers(part) }
+        return if count <= CACHE_LIMIT
+
+        raise TooManyCacheMarkers,
+              "request carries #{count} cache breakpoints; Anthropic accepts at most #{CACHE_LIMIT}"
+      end
+
+      def count_markers(value)
+        case value
+        when Hash then (value[CACHE_MARKER] == true ? 1 : 0) + value.values.sum { |v| count_markers(v) }
+        when Array then value.sum { |v| count_markers(v) }
+        else 0
+        end
+      end
 
       def encode_system(system)
         # A plain String system prompt carries no cache marker; only the block
