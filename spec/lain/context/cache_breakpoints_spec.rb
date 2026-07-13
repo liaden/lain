@@ -85,6 +85,17 @@ RSpec.describe Lain::Context::CacheBreakpoints do
       expect { described_class.new(cap: 0) }.to raise_error(ArgumentError, /cap/)
     end
 
+    # Pins the documented degrade: cap: 1 is legal, but the reserved system
+    # slot consumes the whole budget, so ZERO message markers land -- not
+    # even the last block. Silent by design (the combinator is pure; no
+    # Sink/Channel to signal through); this spec is the loud part.
+    it "yields zero message markers at cap: 1 -- the system slot eats the whole budget" do
+      messages = [message("user", text("hello")), message("assistant", text("hi"))]
+      marked = described_class.new(cap: 1).call(messages)
+
+      expect(marked.flat_map { |m| m["content"] }.count { |b| b["cache"] }).to eq(0)
+    end
+
     # Force far more candidate breakpoints (every ~15 blocks) than the
     # message budget could ever hold, so the cap has to actually drop some.
     def fat_messages(turns:, blocks_per_turn: 4)

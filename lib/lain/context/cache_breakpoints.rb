@@ -38,6 +38,13 @@ module Lain
       EVERY = 15
       CAP = 4
 
+      # `cap: 1` is legal and yields ZERO message markers -- the reserved
+      # system slot consumes the whole budget, so not even the last block is
+      # marked. The degrade is silent by design: this combinator is pure
+      # (#call must stay a function of the message list; no Sink, no
+      # Channel), so there is no runtime channel to signal through without
+      # breaking that contract. This comment and the spec pinning the
+      # behavior are the loud part.
       def initialize(every: EVERY, lookback: LOOKBACK_BLOCKS, cap: CAP)
         raise ArgumentError, "every (#{every}) must stay inside the lookback window (#{lookback})" if every >= lookback
         raise ArgumentError, "cap (#{cap}) must be positive" unless cap.positive?
