@@ -15,6 +15,9 @@ module Lain
     # never runs unless {Lain::Session#read?} already says `path` was read
     # this session, enforced by {Tool::Contracts} rather than an `if` inside
     # `#perform` -- the invariant is structural, not merely hoped for.
+    #
+    # Occurrences are counted with overlap ("aa" occurs twice in "aaa"), so
+    # "exactly once" means what the model reads it to mean.
     class EditFile < Tool
       # The wire shape: the path to edit, the exact text to find, and its
       # replacement.
@@ -52,7 +55,7 @@ module Lain
       def perform(input, invocation)
         path = input.path
         contents = File.read(path)
-        occurrences = contents.scan(input.old_string).size
+        occurrences = occurrences_of(input.old_string, contents)
         return Tool::Result.error(ambiguity_message(occurrences, path)) unless occurrences == 1
 
         # A block-form replacement, not `sub(pattern, new_string)`: the two-arg
@@ -77,6 +80,16 @@ module Lain
       # on nil.
       def session_of(invocation)
         invocation&.context || Session::Null.instance
+      end
+
+      # `String#scan` counts non-overlapping matches, which would call "aa" in
+      # "aaa" unique and edit on a false premise; walking `index` forward by one
+      # counts every window. `take_while` stops at the first nil, so the
+      # produce block never sees one.
+      def occurrences_of(needle, haystack)
+        Enumerator.produce(haystack.index(needle)) { |at| haystack.index(needle, at + 1) }
+                  .take_while(&:itself)
+                  .size
       end
 
       def ambiguity_message(occurrences, path)

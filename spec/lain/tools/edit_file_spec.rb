@@ -164,6 +164,18 @@ RSpec.describe Lain::Tools::EditFile do
       expect(File.read(path)).to eq("hello hello world")
     end
 
+    it "counts overlapping occurrences as ambiguous, not unique" do
+      path = write("hello.txt", "aaa")
+      session = Lain::Session.new
+      session.record_read(path)
+
+      result = tool.call({ path: path, old_string: "aa", new_string: "b" }, invocation_with(session))
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to match(/2/)
+      expect(File.read(path)).to eq("aaa")
+    end
+
     it "does not re-record the read on an ambiguous, refused edit" do
       path = write("hello.txt", "hello hello world")
       other = write("other.txt", "solo")
