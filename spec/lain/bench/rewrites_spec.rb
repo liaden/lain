@@ -3,6 +3,7 @@
 require "json"
 
 require "lain/bench/rewrites"
+require "lain/request"
 
 # Rewrites is an OFFLINE projection over a Journal's `request_sent` records
 # (CE-2): it recreates `diverge_at` at the request level, over the
@@ -104,6 +105,31 @@ RSpec.describe Lain::Bench::Rewrites do
 
       expect(rewrites.count).to eq(1)
       expect(rewrites.first.to_digest).to eq("blake3:a-EDITED")
+    end
+
+    # PINNED CONFLATION, not an aspiration: `Request#prefix_digests` folds
+    # `model` into every entry (CE-2's chains are per-model by design), so a
+    # model switch between consecutive calls disagrees at EVERY shared
+    # position and this projection reports it as one Rewrite at the earliest
+    # one -- indistinguishable, from the chains alone, from a real prefix
+    # edit. Chains are built through the real Request here so the pin breaks
+    # if T2 ever changes what the digests cover. Callers comparing across
+    # models must segment the journal per arm first (see the class comment).
+    it "reports a plain model switch as one Rewrite at the earliest shared position (per-model chains)" do
+      chains = %w[claude-opus-4-8 claude-haiku-4-8].map do |model|
+        Lain::Request.new(
+          model: model,
+          system: [{ "type" => "text", "text" => "be terse", "cache" => true }],
+          messages: [{ "role" => "user",
+                       "content" => [{ "type" => "text", "text" => "hi", "cache" => true }] }],
+          max_tokens: 64
+        ).prefix_digests
+      end
+
+      rewrites = described_class.from_journal(chains.map { |chain| record(chain) })
+
+      expect(rewrites.count).to eq(1)
+      expect(rewrites.first.depth).to eq(Lain::Request::SYSTEM_PREFIX)
     end
 
     it "compares only CONSECUTIVE calls: a rewrite that reverts on the third call is one rewrite, not zero" do

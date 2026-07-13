@@ -24,6 +24,16 @@ module Lain
     # rather than compared, so it never straddles two real chains as a false
     # gap; an `[]` chain participates normally -- it shares no positions with
     # any neighbor, so it can only rule a rewrite out, never be one.
+    #
+    # ONE CONFLATION, inherited from the chain itself: `Request#prefix_digests`
+    # folds `model` into every entry (the chains are per-model by design --
+    # a prompt cache never spans models), so a model switch between
+    # consecutive calls disagrees at every shared position and reads here as
+    # one rewrite at the earliest one, indistinguishable from a real prefix
+    # edit. Faithful to the cache (a model switch DOES forfeit the whole
+    # prefix), but misleading as edit-attribution -- callers comparing across
+    # models must segment the journal per arm before projecting. Pinned in
+    # the spec.
     class Rewrites
       include Enumerable
 
