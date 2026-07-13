@@ -81,7 +81,7 @@ module Lain
       protected
 
       def perform(input, invocation)
-        items = fetch(input, :todos).map { |raw| item_for(raw) }
+        items = dig(input, "todos").map { |raw| item_for(raw) }
         session_of(invocation).write_todos(items)
         Tool::Result.ok("todo list replaced with #{items.size} item(s)")
       rescue ArgumentError => e
@@ -90,24 +90,18 @@ module Lain
 
       private
 
+      # Keys are the String forms the schema declares, so {Tool#dig} resolves
+      # them with the SAME precedence {Tool::SchemaValidator} used to validate
+      # -- on a mixed-key item, the value stored is the value validated, never
+      # a different spelling's.
       def item_for(raw)
-        content = fetch(raw, :content)
-        status = fetch(raw, :status)
+        content = dig(raw, "content")
+        status = dig(raw, "status")
         unless STATUSES.include?(status)
           raise ArgumentError, "status #{status.inspect} must be one of #{STATUSES.join(", ")}"
         end
 
         Item.new(content: content, status: status)
-      end
-
-      # Schema keys and model-supplied input keys are each freely Symbol or
-      # String (Anthropic parses tool input with `symbolize_names: true`;
-      # specs write either), so every lookup tries both spellings -- matching
-      # {Tool::SchemaValidator}'s own `dig`.
-      def fetch(hash, key)
-        return hash[key] if hash.key?(key)
-
-        hash[key.to_s]
       end
 
       # The session rides {Tool::Invocation#context}, which is

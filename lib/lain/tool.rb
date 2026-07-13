@@ -149,6 +149,21 @@ module Lain
       raise NotImplemented, "#{self.class} must define #perform"
     end
 
+    # Look a key up in a model-supplied input Hash, tolerant of key spelling:
+    # tries the given key, then its String form, then its Symbol form.
+    # Anthropic parses tool input with `symbolize_names: true` and specs write
+    # either, so a subclass reading a raw-schema tool's input needs this. The
+    # precedence MATCHES {SchemaValidator#dig} on purpose: pass the SAME key
+    # the schema declares (a String, for a raw-Hash schema) and the value a
+    # subclass reads is the value the validator checked -- they cannot diverge
+    # on a mixed-key item.
+    def dig(hash, key)
+      return hash[key] if hash.key?(key)
+      return hash[key.to_s] if hash.key?(key.to_s)
+
+      hash[key.to_sym]
+    end
+
     private
 
     # @return [Tool::Input, Hash] the checked, possibly coerced input

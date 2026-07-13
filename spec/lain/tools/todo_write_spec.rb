@@ -76,6 +76,21 @@ RSpec.describe Lain::Tools::TodoWrite do
 
       expect(result.is_error).to be(false)
     end
+
+    # An item carrying BOTH a String and a Symbol spelling of a key must
+    # validate and store the SAME value: the validator resolves the schema's
+    # String key, so a lookup that resolved the Symbol first (the old bug)
+    # could store a value the validator never saw. Tool#dig fixes the
+    # precedence so store == validated.
+    it "stores the value the schema validated, not a different key spelling, on a mixed-key item" do
+      mixed = { "content" => "canonical", :content => "shadow",
+                "status" => "in_progress", :status => "completed" }
+
+      result = tool.call({ "todos" => [mixed] }, invocation_with(session))
+
+      expect(result.is_error).to be(false)
+      expect(session.reminders).to eq(["Current todo list:\n- [in_progress] canonical"])
+    end
   end
 
   describe "rejecting a malformed status" do
