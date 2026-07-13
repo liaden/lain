@@ -23,6 +23,14 @@ RSpec.describe Lain::Workspace do
     blocks = described_class.new(reminders: ["remember"]).to_blocks
     expect(blocks).to eq([{ "type" => "text", "text" => "<workspace>remember</workspace>" }])
   end
+
+  # The steady state (Agent renders `@workspace.with(*@session.reminders)`
+  # every turn, and reminders is usually empty) must not allocate a fresh
+  # Workspace and normalize pass each render.
+  it "returns self, allocation-free, when nothing is added" do
+    workspace = described_class.new(reminders: ["a"])
+    expect(workspace.with).to equal(workspace)
+  end
 end
 
 RSpec.describe Lain::Context do

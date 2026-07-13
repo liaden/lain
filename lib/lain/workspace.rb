@@ -46,6 +46,12 @@ module Lain
     end
 
     def with(*additional)
+      # The steady state -- no live reminders -- must not allocate a fresh
+      # Workspace (and a Canonical.normalize pass) every render. A frozen,
+      # value-like Workspace with nothing to add IS the result, so returning
+      # self is safe and keeps the common render path allocation-free.
+      return self if additional.empty?
+
       self.class.new(reminders: reminders + additional.flatten.map(&:to_s))
     end
 
