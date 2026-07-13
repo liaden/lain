@@ -34,7 +34,31 @@ RSpec.describe Lain::Session do
   end
 
   describe "#reminders" do
-    it "is empty for now (a later card fills it with todos)" do
+    it "is empty before any todo_write lands" do
+      expect(session.reminders).to eq([])
+    end
+  end
+
+  describe "#write_todos" do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    it "renders the whole list as ONE reminder string (Manifest#to_reminder's precedent)" do
+      session.write_todos([todo("write the spec", "in_progress"), todo("ship it", "pending")])
+
+      expect(session.reminders).to eq(["Current todo list:\n- [in_progress] write the spec\n- [pending] ship it"])
+    end
+
+    it "replaces the whole list on a later call rather than merging" do
+      session.write_todos([todo("a", "pending")])
+      session.write_todos([todo("b", "completed")])
+
+      expect(session.reminders).to eq(["Current todo list:\n- [completed] b"])
+    end
+
+    it "goes back to no reminder when the new list is empty" do
+      session.write_todos([todo("a", "pending")])
+      session.write_todos([])
+
       expect(session.reminders).to eq([])
     end
   end
@@ -45,6 +69,11 @@ RSpec.describe Lain::Session do
     it "satisfies the Session duck without raising: record_read is a no-op, read? is false" do
       expect { null.record_read("/tmp/app.rb") }.not_to raise_error
       expect(null.read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "keeps write_todos a no-op that never raises" do
+      expect { null.write_todos([Struct.new(:content, :status).new("a", "pending")]) }.not_to raise_error
+      expect(null.reminders).to eq([])
     end
 
     it "has no reminders" do
