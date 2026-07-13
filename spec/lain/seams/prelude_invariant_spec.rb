@@ -58,6 +58,35 @@ RSpec.describe "the byte-identical prelude invariant across processes (CE-3)" do
     JSON.parse(stdout)
   end
 
+  # RSpec's default `eq` diff truncates both sides of an ~800-char JSON string
+  # to near-identical middles, hiding exactly the divergence this spec exists
+  # to diagnose. Localize instead: name the first differing byte offset and
+  # excerpt a window of each side around it, so a leak's actual bytes (a
+  # timestamp, an unsorted key) are readable in the failure itself.
+  def divergence_report(expected, actual)
+    offset = first_divergence(expected, actual)
+    from = [offset - (divergence_window / 2), 0].max
+    "canonical bytes diverge across processes at byte #{offset} " \
+      "(in-process #{expected.bytesize} bytes, subprocess #{actual.bytesize} bytes)\n  " \
+      "in-process [#{from}, +#{divergence_window}]: #{excerpt(expected, from)}\n  " \
+      "subprocess [#{from}, +#{divergence_window}]: #{excerpt(actual, from)}"
+  end
+
+  def divergence_window
+    80
+  end
+
+  # The first byte offset where the two strings disagree; when one is a strict
+  # prefix of the other, that is the shorter one's length.
+  def first_divergence(expected, actual)
+    limit = [expected.bytesize, actual.bytesize].min
+    (0...limit).find { |offset| expected.getbyte(offset) != actual.getbyte(offset) } || limit
+  end
+
+  def excerpt(bytes, from)
+    (bytes.byteslice(from, divergence_window) || "<beyond end of string>").inspect
+  end
+
   it "renders byte-identical canonical bytes and equal prefix_digests in a fresh process" do
     recording = Lain::Bench::Session.load(fixture_path)
     request = recording.context.render(
@@ -65,9 +94,10 @@ RSpec.describe "the byte-identical prelude invariant across processes (CE-3)" do
     )
 
     subprocess = render_in_subprocess(fixture_path)
+    bytes = Lain::Canonical.dump(request.cache_payload)
 
+    expect(subprocess["bytes"]).to eq(bytes), -> { divergence_report(bytes, subprocess["bytes"]) }
     expect(subprocess["digest"]).to eq(request.digest)
-    expect(subprocess["bytes"]).to eq(Lain::Canonical.dump(request.cache_payload))
     expect(subprocess["prefix_digests"]).to eq(request.prefix_digests)
   end
 end
