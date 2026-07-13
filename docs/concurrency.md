@@ -179,7 +179,11 @@ spec/spikes`.
 .run_command`; a second task ticks a monotonic timestamp into an array every 50ms, 30 times.
 If the reactor's one OS thread is stalled inside `Mixlib::ShellOut`'s blocking calls, the
 ticker records no progress for the ~1s the shellout is in flight; if the scheduler is honoring
-those calls as yield points, the ticker keeps ticking at ~50ms throughout.
+those calls as yield points, the ticker keeps ticking at ~50ms throughout. **Scope of what was
+measured:** the child is idle (`sleep 1`) — this exercises exactly the `IO.select` /
+`Process.waitpid2` cooperation path that was the named risk, but *not* a stdout-flooding child
+(chunked `read_nonblock` under pipe-buffer pressure) or a CPU-heavy one. The mechanism argument
+below plausibly generalizes to those regimes; it was not measured here.
 
 **Result:** cooperative, not starved. Across 8 runs (5 in a standalone prototype, 3 more after
 the spec was finalized), the ticker recorded ~20 of its ~20 expected ticks *inside* the
@@ -201,7 +205,10 @@ concurrency model, `bash` tool calls can run as ordinary `Async` tasks alongside
 else on fibers — the single open risk that would have forced a split model (native fiber
 cooperation for everything *except* shellouts, offloaded to a thread pool) did not materialize.
 This is stated as a recommendation for 5-0.3, not an adoption: this card does not touch
-`Tools::Bash` or wire `async` into the agent loop.
+`Tools::Bash` or wire `async` into the agent loop. And it carries the scope caveat above:
+the idle-child measurement verifies the select/waitpid cooperation path, so 5-0.3 should
+re-verify under a stdout-flooding child before treating thread-offload as unnecessary in
+that regime too.
 
 **Stability note:** the result held identically across every run in both the standalone
 prototype and the committed spec, with no observed flakiness — the escalation trigger for a
