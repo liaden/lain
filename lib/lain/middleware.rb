@@ -236,3 +236,4 @@ module Lain
 end
 
 require_relative "middleware/journal_requests"
+require_relative "middleware/refuse_secret_writes"

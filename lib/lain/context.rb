@@ -9,6 +9,7 @@ require_relative "context/cache_breakpoints"
 require_relative "context/reminder"
 require_relative "context/prune"
 require_relative "context/compact"
+require_relative "context/recall"
 
 module Lain
   # The seam. A pure function from (Timeline, Toolset, Workspace) to a Request.
