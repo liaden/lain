@@ -206,5 +206,21 @@ module Lain
         super(capability: capability, requirer: requirer.dup.freeze, provider: provider.dup.freeze)
       end
     end
+
+    # A `memory_write` withheld by {Middleware::RefuseSecretWrites} before it
+    # ever reached the recorder. `pattern` NAMES what matched -- e.g. "aws
+    # access key id" -- and MUST NEVER be the matched bytes themselves: a
+    # refusal record that quoted the secret would write the secret to the very
+    # Journal the refusal exists to protect. `tool_use_id` ties the record back
+    # to the tool_result the model actually saw.
+    WriteRefused = Data.define(:tool_use_id, :pattern) do
+      include Journalable
+
+      def initialize(tool_use_id:, pattern:)
+        raise ArgumentError, "pattern must name what matched, got nil" if pattern.nil?
+
+        super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
+      end
+    end
   end
 end
