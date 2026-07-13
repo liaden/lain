@@ -116,6 +116,13 @@ RSpec.describe Lain::Context::Recall do
     expect(described_class.new(index: index, k: 3).requires).to eq([])
   end
 
+  # A non-positive k is a construction-time mistake, not a render-time one:
+  # refusing it here beats a late ArgumentError from `hits.first(-1)`.
+  it "refuses a non-positive k at construction" do
+    expect { described_class.new(index: index, k: -1) }.to raise_error(ArgumentError, /k must be positive/)
+    expect { described_class.new(index: index, k: 0) }.to raise_error(ArgumentError, /k must be positive/)
+  end
+
   it "composes with other combinators via >>" do
     base = [message("user", text("what is the aspirin dosing?"))]
     composed = described_class.new(index: index, k: 3) >> Lain::Context::Identity

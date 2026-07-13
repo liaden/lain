@@ -27,6 +27,11 @@ module Lain
         super()
         @index = index
         @k = Integer(k)
+        # A non-positive k means "recall nothing", but `hits.first(@k)` would
+        # only surface that at render time (first(0) is [], first(-1) raises).
+        # Refuse it at construction, where the mistake was actually made.
+        raise ArgumentError, "k must be positive, got #{@k}" unless @k.positive?
+
         freeze
       end
       # rubocop:enable Naming/MethodParameterName
