@@ -67,11 +67,14 @@ module Lain
   # where they read, and where every method below can find them by ordinary
   # lexical lookup.
   class Request
-    # A marker sat on a content block that is not its message's last block.
-    # The default pipeline (`Context::CacheBreakpoints`) only ever marks a
-    # message's final block, so this should never fire against Lain's own
-    # renderer -- it exists to fail loudly, rather than guess a position, the
-    # moment a foreign pipeline breaks that assumption.
+    # MORE THAN ONE cache marker inside a single message. A message names one
+    # position on the wire, so two marked blocks within it have no single
+    # place to hang a chain entry, and this fails loudly rather than guess
+    # which one the prefix runs through. A marker on a NON-final block is NOT
+    # ambiguous: `cache_control` covers bytes through its own block (per-block,
+    # not per-message), so a single marker followed only by unmarked trailing
+    # blocks -- exactly the Recall/workspace-tail pattern -- has an
+    # unambiguous cut point and is handled, not raised.
     class AmbiguousMarkerPosition < Error; end
 
     # The sentinel position for a marker that sits in `system`: system
@@ -98,44 +101,56 @@ module Lain
     # `system` (which precedes every message on the wire). `tools` carries no
     # position of its own -- it enters every entry unconditionally, alongside
     # `model`, as the fixed part of the prefix.
+    #
+    # The cut is BLOCK-granular, matching what `cache_control` actually covers
+    # on the wire: bytes through the marked block, not through the whole
+    # message. So a marker on a non-final block yields a digest over the
+    # content UP TO AND INCLUDING that block, invariant to any unmarked blocks
+    # appended after it -- which is what lets Recall append a `<recall>` block
+    # to the tail without the entry reading as a rewrite of the cached prefix.
     def prefix_digests
-      marker_positions.map { |position| [position, digest_through(position)] }
+      marked_cuts.map { |position, block_index| [position, digest_through(position, block_index)] }
     end
 
     private
 
-    # Ascending by construction: SYSTEM_PREFIX (-1) sorts before every
-    # message index, and messages are walked in order.
-    def marker_positions
-      positions = []
-      positions << SYSTEM_PREFIX if system_marked?
-      messages.each_index { |index| positions << index if message_marked?(messages[index]) }
-      positions
+    # `[position, block_index]` per marker, ascending by position:
+    # SYSTEM_PREFIX (-1, block_index nil) sorts before every message index,
+    # and messages are walked in order. `block_index` is the marked block
+    # within that message -- the point the cut slices at.
+    def marked_cuts
+      cuts = []
+      cuts << [SYSTEM_PREFIX, nil] if system_marked?
+      messages.each_index do |index|
+        block_index = marked_block(messages[index])
+        cuts << [index, block_index] unless block_index.nil?
+      end
+      cuts
     end
 
     def system_marked?
       system.is_a?(Array) && system.any? { |block| cache_marker?(block) }
     end
 
-    # A marker is only ever unambiguous on a message's LAST content block --
-    # that is the only position the message's own index can name. A marker
-    # anywhere else means some other pipeline placed it, and this method
-    # raises rather than invent a rule for that case (see
-    # AmbiguousMarkerPosition).
-    def message_marked?(message)
+    # The index of the single marked block in a message, or nil when none is
+    # marked. More than one marked block is genuinely ambiguous -- a message
+    # names one position on the wire -- so that raises (see
+    # AmbiguousMarkerPosition). A single marker anywhere (final or not) is a
+    # clean cut point.
+    def marked_block(message)
       content = message["content"]
-      return false unless content.is_a?(Array) && !content.empty?
+      return nil unless content.is_a?(Array) && !content.empty?
 
       marked = content.each_index.select { |index| cache_marker?(content[index]) }
-      return false if marked.empty?
+      return nil if marked.empty?
 
-      unless marked == [content.size - 1]
+      unless marked.size == 1
         raise AmbiguousMarkerPosition,
-              "cache marker at block(s) #{marked.inspect} of #{content.size}, " \
-              "expected only the last block to carry one"
+              "cache marker on #{marked.size} blocks (at #{marked.inspect}) of one message; " \
+              "at most one block per message may carry one"
       end
 
-      true
+      marked.first
     end
 
     def cache_marker?(block)
@@ -143,15 +158,29 @@ module Lain
     end
 
     # Tools lead system lead messages on the wire and enter every entry
-    # unconditionally; `messages.first(position + 1)` is what varies, and
-    # generalizes to the empty array at SYSTEM_PREFIX (see its comment).
-    def digest_through(position)
+    # unconditionally; the messages slice is what varies. At SYSTEM_PREFIX the
+    # slice is empty; at a message position it is every preceding message plus
+    # that message truncated through its marked block.
+    def digest_through(position, block_index)
       Canonical.digest(
         "model" => model,
         "tools" => strip_cache_markers(tools),
         "system" => strip_cache_markers(system),
-        "messages" => strip_cache_markers(messages.first(position + 1))
+        "messages" => strip_cache_markers(messages_through(position, block_index))
       )
+    end
+
+    def messages_through(position, block_index)
+      return [] if position == SYSTEM_PREFIX
+
+      messages.first(position) + [truncate_through(messages[position], block_index)]
+    end
+
+    # The marked message, keeping only its content up to and including the
+    # marked block -- the bytes `cache_control` covers, invariant to any
+    # unmarked blocks appended after it.
+    def truncate_through(message, block_index)
+      { "role" => message["role"], "content" => message["content"].first(block_index + 1) }
     end
 
     def strip_cache_markers(value)

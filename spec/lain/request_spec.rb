@@ -136,10 +136,34 @@ RSpec.describe Lain::Request do
       expect(a_chain[3]).not_to eq(b_chain[3])
     end
 
-    it "raises when a marker sits on a non-final content block, rather than guessing its position" do
+    # The Recall/workspace-tail pattern: CacheBreakpoints marks the last block,
+    # then a later stage appends an unmarked block after it. cache_control
+    # covers bytes through the marked BLOCK, so this is a clean cut, not an
+    # ambiguity -- and the digest must be blind to what was appended.
+    it "handles a marker on a non-final block, and the digest ignores the unmarked trailing block" do
+      marked_block = { "type" => "text", "text" => "a", "cache" => true }
+      trailing = { "type" => "text", "text" => "<recall>hit</recall>" }
+      with_trailing = described_class.new(
+        model: "claude-opus-4-8",
+        messages: [{ "role" => "user", "content" => [marked_block, trailing] }],
+        max_tokens: 1024
+      )
+      without_trailing = described_class.new(
+        model: "claude-opus-4-8",
+        messages: [{ "role" => "user", "content" => [marked_block] }],
+        max_tokens: 1024
+      )
+
+      chain = with_trailing.prefix_digests
+      expect(chain.size).to eq(1)
+      expect(chain.first.first).to eq(0)
+      expect(chain.first.last).to eq(without_trailing.prefix_digests.first.last)
+    end
+
+    it "raises when a single message carries more than one marker, rather than guessing which cuts the prefix" do
       ambiguous = { "role" => "user", "content" => [
         { "type" => "text", "text" => "a", "cache" => true },
-        { "type" => "text", "text" => "b" }
+        { "type" => "text", "text" => "b", "cache" => true }
       ] }
       req = described_class.new(model: "claude-opus-4-8", messages: [ambiguous], max_tokens: 1024)
 

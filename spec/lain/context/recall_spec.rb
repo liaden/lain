@@ -7,6 +7,7 @@ require "lain/context/base"
 require "lain/memory/manifest"
 require "lain/memory/index"
 require "lain/memory/item"
+require "lain/request"
 require "lain/store"
 require "lain/workspace"
 
@@ -119,5 +120,18 @@ RSpec.describe Lain::Context::Recall do
     base = [message("user", text("what is the aspirin dosing?"))]
     composed = described_class.new(index: index, k: 3) >> Lain::Context::Identity
     expect(composed.call(base).last["content"].last["text"]).to include("aspirin-dosage")
+  end
+
+  # Scenario: the whole point of block-granular prefix_digests -- a pipeline
+  # that marks the tail (CacheBreakpoints) then appends a recall block after
+  # it (Recall) must still render a Request whose prefix_digests computes,
+  # rather than raising AmbiguousMarkerPosition on the displaced marker.
+  it "renders a Request whose prefix_digests succeeds when composed after CacheBreakpoints" do
+    base = [message("user", text("what is the aspirin dosing?"))]
+    messages = (Lain::Context::CacheBreakpoints.new >> described_class.new(index: index, k: 3)).call(base)
+    request = Lain::Request.new(model: "claude-opus-4-8", messages: messages, max_tokens: 1024)
+
+    expect { request.prefix_digests }.not_to raise_error
+    expect(request.prefix_digests.map(&:first)).to eq([0])
   end
 end
