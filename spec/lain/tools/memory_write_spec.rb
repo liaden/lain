@@ -45,6 +45,27 @@ RSpec.describe Lain::Tools::MemoryWrite do
     end
   end
 
+  describe "input rejection" do
+    # `required: true` means ActiveModel presence validation, which rejects a
+    # blank-but-present id in #validate_input! -- BEFORE #perform runs, so
+    # Item's own blank check is never reached and the raise carries
+    # ActiveModel's generic message. Handler::Live is the layer that converts
+    # this raise into an error Result; a unit spec honestly sees the raise.
+    it "raises Tool::InvalidInput on a blank id, before #perform ever runs" do
+      expect { tool.call(id: "   ", description: "d", body: "b") }
+        .to raise_error(Lain::Tool::InvalidInput)
+      expect(recorder.root).to be_nil
+    end
+
+    # A multi-line id is present, so it passes the schema layer; only Item's
+    # #one_line rejection reaches the tool's rescue and becomes an error Result.
+    it "reports a multi-line id as an error Result via Item's one-line check" do
+      result = tool.call(id: "two\nlines", description: "d", body: "b")
+      expect(result).to have_attributes(is_error: true, content: /one line/)
+      expect(recorder.root).to be_nil
+    end
+  end
+
   describe "reads in the same session" do
     it "see a write made through a MemoryRead sharing the same recorder" do
       reader = Lain::Tools::MemoryRead.new(index: recorder)

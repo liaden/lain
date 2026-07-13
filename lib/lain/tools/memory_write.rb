@@ -43,10 +43,12 @@ module Lain
 
       protected
 
-      # Item's own constructor is the validity check (blank/multi-line id or
-      # description) -- rescuing here reports it the same way MemoryRead
-      # reports an unknown id: as an error Result the model can act on, not a
-      # raise that only Handler::Live would catch.
+      # Blank fields never get here: ActiveModel's presence validation
+      # (required: true) rejects them in #validate_input!, with its generic
+      # message. The one Item rejection that reaches this rescue is
+      # #one_line's, for a multi-line id or description -- reported the way
+      # MemoryRead reports an unknown id: as an error Result the model can
+      # act on, not a raise that only Handler::Live would catch.
       def perform(input, _invocation)
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body)
         root = recorder.write(item)
