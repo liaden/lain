@@ -23,6 +23,12 @@ module Lain
   class Workspace
     BLOCK_TYPE = "text"
 
+    # Shared with Context::Recall, whose query-exclusion rule must match
+    # exactly what #to_blocks injects: one constant, two call sites, so the
+    # tag cannot drift between the writer and the reader.
+    OPENING_TAG = "<workspace>"
+    CLOSING_TAG = "</workspace>"
+
     attr_reader :reminders
 
     def self.empty
@@ -48,7 +54,7 @@ module Lain
     # can strip them back out when re-rendering under a different strategy.
     def to_blocks
       reminders.map do |reminder|
-        { "type" => BLOCK_TYPE, "text" => "<workspace>#{reminder}</workspace>" }
+        { "type" => BLOCK_TYPE, "text" => "#{OPENING_TAG}#{reminder}#{CLOSING_TAG}" }
       end
     end
 

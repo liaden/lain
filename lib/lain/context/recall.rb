@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "base"
+require_relative "../workspace"
 
 module Lain
   class Context
@@ -18,8 +19,6 @@ module Lain
     # the search steps one user message further back at a time until it
     # finds real text -- or finds none, in which case nothing is injected.
     class Recall < Base
-      WORKSPACE_TAG = "<workspace>"
-
       # `k:` is the pinned constructor shape from the plan card (T10) --
       # top-k retrieval is exactly what it is elsewhere in the literature,
       # and a longer name would only paraphrase that.
@@ -75,8 +74,12 @@ module Lain
         message["content"].select { |block| block["type"] == "text" && !workspace_tagged?(block) }
       end
 
+      # Provenance is inferred from string content: genuine user text that
+      # literally starts with the tag is excluded too. Inherited from the
+      # card's pinned extraction rule -- an accepted tradeoff, since blocks
+      # carry no provenance field to ask instead.
       def workspace_tagged?(block)
-        block["text"].to_s.start_with?(WORKSPACE_TAG)
+        block["text"].to_s.start_with?(Workspace::OPENING_TAG)
       end
 
       def recall_block(hits)
