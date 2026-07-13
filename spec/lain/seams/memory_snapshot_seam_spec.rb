@@ -9,46 +9,12 @@ require "lain/event"
 require "lain/journal"
 require "lain/memory/index"
 require "lain/memory/item"
+require "lain/memory/journal_memory_root"
 require "lain/memory/manifest"
+require "lain/memory/recorder"
 require "lain/provider/mock"
+require "lain/tools/memory_write"
 require "lain/toolset"
-
-# The bench-side observer this seam is built on. The Agent journals TurnUsage at
-# the instant an assistant turn is committed -- inside Agent#step, after the
-# commit and before any tool_results land -- so at that instant
-# agent.timeline.head_digest names exactly the committed assistant turn.
-# Watching the journal for TurnUsage is therefore a turn-commit observer that
-# needs no Agent change: forward every event to the real Journal, add the
-# MemoryRoot in force, then apply the bench's scripted writes for the gap before
-# the next turn. That the Agent stays memory-blind is the point of the design.
-class RootRecorder
-  attr_reader :index
-  # The Agent is constructed WITH this recorder as its journal, so the
-  # back-reference can only be wired after construction.
-  attr_accessor :agent
-
-  def initialize(journal:, index:, writes_between_turns:)
-    @journal = journal
-    @index = index
-    @writes_between_turns = writes_between_turns
-  end
-
-  def <<(event)
-    @journal << event
-    observe_commit if event.is_a?(Lain::Event::TurnUsage)
-    self
-  end
-
-  private
-
-  # Root FIRST, writes second: the record must carry the root the turn was
-  # committed under, not the one this gap's writes are about to create.
-  def observe_commit
-    @journal << Lain::Event::MemoryRoot.new(turn_digest: agent.timeline.head_digest, root: @index.root)
-    items = @writes_between_turns.shift || []
-    @index = items.inject(@index) { |index, item| index.write(item) }
-  end
-end
 
 # The 5-3.1 acceptance: pair each committed assistant turn with the
 # Memory::Index root in force at that moment, journal the pair as
@@ -57,35 +23,45 @@ end
 # index has moved since. Snapshot purity is what makes dry-replay recall
 # possible later, so every checkout below is driven from PARSED values, never
 # from an in-memory root the spec happened to keep.
+#
+# Wired for real, not simulated: {Memory::JournalMemoryRoot} is the ONLY
+# journal-side machinery under test, handed to the Agent as its `journal:`
+# with ZERO Agent changes -- it stays memory-blind throughout. What advances
+# the recorder between the two committed turns is the Agent's own
+# `memory_write` tool, called by the scripted model turn and run through the
+# real ToolRunner -- there is no bench-side scripted write standing in for it.
 RSpec.describe "Memory snapshot x Journal seam" do
   def item(id, description)
     Lain::Memory::Item.new(id: id, description: description, body: "body of #{id}")
   end
 
-  let(:io) { StringIO.new }
-  let(:journal) { Lain::Journal.new(io: io) }
-  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
-  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  let(:provider) do
-    Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "aspirin" }]),
-                                         text_response("done")])
+  def write_call(tool_use_id, memory_item)
+    [tool_use_id, "memory_write",
+     { "id" => memory_item.id, "description" => memory_item.description, "body" => memory_item.body }]
   end
+
+  let(:io) { StringIO.new }
+  let(:real_journal) { Lain::Journal.new(io: io) }
+  let(:recorder) { Lain::Memory::Recorder.new }
+  let(:journal) { Lain::Memory::JournalMemoryRoot.new(journal: real_journal, recorder: recorder) }
+  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+  let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder: recorder)]) }
 
   let(:first_gap_writes) do
     [item("aspirin-dosing", "Aspirin dosing bounds for adults"),
      item("warfarin-inr", "Warfarin target INR range")]
   end
 
-  let(:recorder) do
-    RootRecorder.new(journal: journal, index: Lain::Memory::Index.empty,
-                     writes_between_turns: [first_gap_writes])
+  let(:provider) do
+    Lain::Provider::Mock.new(
+      responses: [
+        tool_response(write_call("tu_1", first_gap_writes[0]), write_call("tu_2", first_gap_writes[1])),
+        text_response("done")
+      ]
+    )
   end
 
-  let(:agent) do
-    Lain::Agent.new(provider: provider, toolset: toolset, context: context, journal: recorder)
-               .tap { |a| recorder.agent = a }
-  end
+  let(:agent) { Lain::Agent.new(provider: provider, toolset: toolset, context: context, journal: journal) }
 
   before { agent.ask("what is the aspirin dosing?") }
 
@@ -112,8 +88,8 @@ RSpec.describe "Memory snapshot x Journal seam" do
       # An independent oracle, decoupled from the recorder under test: content
       # addressing means replaying the same writes into a fresh Index yields
       # the identical root. Turn 1 committed before any write; turn 2 under
-      # the root the gap's writes produced.
-      replayed = first_gap_writes.inject(Lain::Memory::Index.empty) { |index, item| index.write(item) }
+      # the root the memory_write tool calls from turn 1 produced.
+      replayed = first_gap_writes.inject(Lain::Memory::Index.empty) { |index, gap_item| index.write(gap_item) }
 
       expect(memory_roots.map { |record| record.fetch("root") }).to eq([nil, replayed.root])
     end
