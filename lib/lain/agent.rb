@@ -15,6 +15,7 @@ require_relative "error"
 require_relative "handler"
 require_relative "middleware"
 require_relative "response"
+require_relative "session"
 require_relative "store"
 require_relative "timeline"
 require_relative "toolset"
@@ -42,12 +43,8 @@ module Lain
     # Kept for callers that rescue the harness's own halt. See Agent::Budget.
     BudgetExceeded = Budget::Exceeded
 
-    attr_reader :timeline, :toolset, :context, :workspace,
+    attr_reader :timeline, :toolset, :context, :workspace, :session,
                 :iterations, :failure_reason, :budget
-
-    # Delegated to {ModelCaller}, which now owns the provider alongside the
-    # model phase's own middleware -- see #call_model.
-    def provider = @model_caller.provider
 
     # Delegated to {Accounting}, which owns the run's token roll-up.
     def usage = @accounting.usage
@@ -59,6 +56,7 @@ module Lain
                    handler: nil,
                    timeline: nil,
                    workspace: Workspace.empty,
+                   session: Session.new,
                    budget: Budget.new,
                    journal: Channel::Null.instance,
                    transition_listener: TransitionListener::Null,
@@ -74,7 +72,7 @@ module Lain
       @budget = budget
       @turn_middleware = turn_middleware
       @tool_runner = build_tool_runner(handler, toolset, tool_middleware)
-      seed_run_state(transition_listener, journal)
+      seed_run_state(transition_listener, journal, session)
     end
 
     # Append a user turn and run until the loop settles.
@@ -130,14 +128,16 @@ module Lain
     end
 
     # Seeds the mutable run context: a fresh Accounting rolling up over the
-    # injected journal, and the observer the machine announces transitions to.
-    # State itself is owned by the machine (initial: :awaiting_user). Called
-    # once, at construction; the Accounting is what captures the journal.
-    def seed_run_state(transition_listener, journal)
+    # injected journal, the observer the machine announces transitions to, and
+    # the run's single mutable Session (read-set + reminders), which -- unlike
+    # everything the model sees -- never enters the Timeline. State itself is
+    # owned by the machine (initial: :awaiting_user). Called once, at
+    # construction; the Accounting is what captures the journal.
+    def seed_run_state(transition_listener, journal, session)
       @transition_listener = transition_listener
       @accounting = Accounting.new(journal: journal)
+      @session = session
       @iterations = 0
-      @failure_reason = nil
     end
 
     # One turn: bound, count, ask the model, account, record. Extracted from #run
@@ -193,7 +193,10 @@ module Lain
 
     def call_model
       dispatch!
-      request = @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace)
+      # Compose the sent-not-stored Workspace with the session's live reminders per
+      # render: same-args-same-bytes still holds, but the args now vary with session
+      # state. Session stays ignorant of Workspace; Workspace stays frozen.
+      request = @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
       @model_caller.call(request)
     end
 
@@ -202,7 +205,7 @@ module Lain
     # stop making parallel tool calls -- a regression with no error attached.
     def perform_tools(response)
       use_tools!
-      @timeline = @timeline.commit(role: :user, content: @tool_runner.run(response, context: self))
+      @timeline = @timeline.commit(role: :user, content: @tool_runner.run(response, context: @session))
       :continue
     end
   end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "lain/session"
 require "lain/tools/read_file"
 
 RSpec.describe Lain::Tools::ReadFile do
@@ -61,5 +62,46 @@ RSpec.describe Lain::Tools::ReadFile do
     path = write("a.txt", "a")
     invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1")
     expect(tool.call({ path: path }, invocation)).to eq(Lain::Tool::Result.ok("a"))
+  end
+
+  describe "recording reads on the session (invocation.context)" do
+    let(:session) { Lain::Session.new }
+
+    def invocation_with(session)
+      Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+    end
+
+    it "records a successful read on the threaded session" do
+      path = write("read.txt", "contents")
+
+      tool.call({ path: path }, invocation_with(session))
+
+      expect(session.read?(path)).to be(true)
+    end
+
+    it "does not record a path it never read" do
+      path = write("read.txt", "contents")
+      tool.call({ path: path }, invocation_with(session))
+
+      expect(session.read?(File.join(tmpdir, "never.txt"))).to be(false)
+    end
+
+    it "does not record a failed read" do
+      missing = File.join(tmpdir, "nope.txt")
+
+      tool.call({ path: missing }, invocation_with(session))
+
+      expect(session.read?(missing)).to be(false)
+    end
+
+    # AC3: a Session::Null context keeps the tool working with nothing recorded.
+    it "records into a Session::Null context without raising" do
+      path = write("read.txt", "contents")
+      invocation = invocation_with(Lain::Session::Null.instance)
+
+      result = tool.call({ path: path }, invocation)
+
+      expect(result).to eq(Lain::Tool::Result.ok("contents"))
+    end
   end
 end

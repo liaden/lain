@@ -2,10 +2,30 @@
 
 require "json"
 require "stringio"
+require "tmpdir"
 
 require "lain/agent"
 
 require "lain/journal"
+require "lain/session"
+require "lain/tools/read_file"
+
+# Captures the invocation context it is handed, so a spec can prove the Agent
+# threads ONE session all the way down to a tool that runs on a later turn.
+class ContextProbe < Lain::Tool
+  def initialize(sightings)
+    @sightings = sightings
+    super()
+  end
+
+  def name = "probe"
+  def description = "Records the invocation context it is handed."
+
+  def perform(_input, invocation)
+    @sightings << invocation.context
+    Lain::Tool::Result.ok("peeked")
+  end
+end
 
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
@@ -274,6 +294,58 @@ RSpec.describe Lain::Agent do
       a.rewind(2)
       expect(a.timeline.length).to eq(2)
       expect(a.state).to eq(:awaiting_user)
+    end
+  end
+
+  describe "session threading" do
+    around do |example|
+      Dir.mktmpdir { |dir| @tmpdir = dir and example.run }
+    end
+
+    attr_reader :tmpdir
+
+    # AC4: the Agent threads ONE session end to end. A read on the first turn is
+    # visible to a probe tool that runs on a later turn, through its invocation
+    # context -- and that context IS the Agent's own session, not a copy.
+    it "hands every tool the same session, with earlier reads already recorded" do
+      path = File.join(tmpdir, "read.txt")
+      File.write(path, "contents")
+      sightings = []
+      toolset = Lain::Toolset.new([Lain::Tools::ReadFile.new, ContextProbe.new(sightings)])
+
+      a = described_class.new(
+        provider: Lain::Provider::Mock.new(responses: [
+                                             tool_response(["tu_1", "read_file", { "path" => path }]),
+                                             tool_response(["tu_2", "probe", {}]),
+                                             text_response
+                                           ]),
+        toolset: toolset,
+        context: context
+      )
+      a.ask("please read then probe")
+
+      expect(sightings.last).to be(a.session)
+      expect(sightings.last.read?(path)).to be(true)
+      expect(a.session.read?(path)).to be(true)
+    end
+
+    # AC5: a reminder rides the Workspace tail into the Request, and NEVER lands
+    # in the Timeline (Workspace is sent, not stored). The Session stays ignorant
+    # of Workspace; the Agent composes them per render.
+    it "carries a session reminder into the request tail without appending it to the Timeline" do
+      reminding = instance_double(Lain::Session, reminders: ["ping the model"])
+      provider = Lain::Provider::Mock.new(responses: [text_response])
+      a = described_class.new(provider: provider, toolset: toolset, context: context, session: reminding)
+      a.ask("hi")
+
+      tail = provider.last_request.messages.last
+      expect(tail["role"]).to eq("user")
+      # a_hash_including because CacheBreakpoints stamps "cache" => true on the
+      # tail block -- the reminder still rides the last user message.
+      expect(tail["content"]).to include(a_hash_including("text" => "<workspace>ping the model</workspace>"))
+
+      timeline_blocks = a.timeline.to_a.flat_map(&:content)
+      expect(timeline_blocks.map { |block| block["text"] }).not_to include(/workspace/)
     end
   end
 end
