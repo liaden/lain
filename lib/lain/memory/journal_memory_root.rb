@@ -28,6 +28,13 @@ module Lain
     # and strictly BEFORE `perform_tools`, that instant's root is the
     # pre-write snapshot the render actually saw: no tool from THIS turn has
     # written yet.
+    #
+    # The match is deliberately a CLASS check, not a journal_type/shape check:
+    # a raw Hash with "type" => "turn_usage" -- which {Journal#record}
+    # accepts -- forwards untouched with NO paired memory_root. Today
+    # {Agent::Accounting} is the only turn_usage writer and it always sends
+    # the event object; broaden the match only when a real second writer
+    # exists, not speculatively.
     class JournalMemoryRoot
       # @param journal [#<<] the real Journal (or another Journal-duck) every
       #   entry is forwarded to
