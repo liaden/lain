@@ -24,3 +24,6 @@ module Lain
     end
   end
 end
+
+require_relative "grader/fixture"
+require_relative "grader/rubric"

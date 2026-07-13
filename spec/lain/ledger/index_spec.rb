@@ -2,9 +2,6 @@
 
 require "json"
 
-require "lain/ledger/index"
-require "lain/usage"
-
 # The Index folds a Journal's turn_usage records into digest => payments,
 # one Entry per RECORD (see Event::TurnUsage: the digest is a join key).
 RSpec.describe Lain::Ledger::Index do

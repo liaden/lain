@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider"
-require "lain/provider/mock"
-
 RSpec.describe Lain::Provider do
   describe "the abstract seam" do
     subject(:provider) { described_class.new }

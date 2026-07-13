@@ -4,7 +4,6 @@ require "json"
 require "tmpdir"
 
 require "lain/lain" # the compiled Rust extension: Lain.hello, Lain::Ext.init_tracing
-require "lain/journal"
 
 # The seam the lead tests: Ruby Journal events and Rust `tracing` spans land in
 # ONE ordered NDJSON file, and every line parses independently. The Journal owns

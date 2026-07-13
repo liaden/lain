@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../session"
-require_relative "../tool"
-
 module Lain
   module Tools
     # Structured, direct-Ruby `str_replace` edit: replaces `old_string` with

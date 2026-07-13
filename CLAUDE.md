@@ -102,15 +102,29 @@ outside `lib/lain/frontend/`. The Rust extension denies `clippy::print_stdout` a
 This is not fussiness: the Journal is NDJSON, it is the experiment record, and one stray
 warning interleaved into it makes `JSON.parse` fail on that line. We found this the hard way.
 
+## Requires
+
+Internal requires are centralized, never scattered. `lib/lain.rb` is the load-order manifest:
+it requires each unit (a top-level file, or a directory's index) in topological dependency
+order, and that one ordered list is where a circular dependency has to show itself — scattered
+`require` hides cycles behind idempotent early returns. A file `foo.rb` with a sibling `foo/`
+directory is that subtree's index and requires `foo/*` itself, WHERE load order dictates
+(`context.rb` needs its combinators before `Context::REQUIRES` evaluates, so they load at the
+top; `handler.rb`'s children subclass `Handler`, so they load after the class body). Leaf files
+carry **no** internal requires at all. External gem/stdlib requires (`json`, `faraday`) stay in
+the leaf files that use them — they document real dependencies.
+
+So: never add an internal `require_relative` to a leaf file. Add the new file to its unit's
+index, and a new unit to `lain.rb` where its dependencies place it (a load-time `NameError`
+means the entry is too early).
+
 ## Testing
 
 Write specs alongside the code — unit specs plus lightweight `:integration` specs that hit the
 live API.
 
-**Each spec must `require` its own subject** (`require "lain/agent"`), not rely on `lain.rb`
-wiring. `pre-commit` stashes tracked-but-unstaged changes before running hooks, so a spec that
-depends on `lain.rb` will fail during an unrelated commit when `lain.rb` is stashed back to
-`HEAD`. Specs that load themselves are immune.
+Specs require nothing internal: `spec/spec_helper.rb` does `require "lain"` and `.rspec` loads
+it everywhere. The corollary is a commit-grouping rule — see Committing.
 
 ## Committing
 
@@ -120,6 +134,11 @@ Commit directly on `main`, in logical chunks, with terse high-signal messages. N
 the full suite against the staged tree, a commit whose staged files reference not-yet-committed
 changes will fail. Commit the leaf first. If a hook fails, the files stay staged — `git reset`
 before the next `git add`, or they get swept into the wrong commit.
+
+**A new lib file, its index/manifest line, and its spec land in the SAME commit.** Specs load
+through `lain.rb` (see Requires), so an unstaged manifest or index edit gets stashed to `HEAD`
+while untracked specs still run — the spec's constant won't resolve and the unrelated commit
+fails its hook.
 
 ## Architecture, in one breath
 

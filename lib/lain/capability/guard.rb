@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../error"
-
 module Lain
   module Capability
     # The gate `Compare` stands behind: two runs may only be compared when they

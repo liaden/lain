@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/capability/policy"
-require "lain/provider"
 require_relative "../../support/recording_channel"
 
 # A provider that supports exactly the capabilities it is told to. Subclassing

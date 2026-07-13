@@ -2,8 +2,6 @@
 
 require "bigdecimal"
 
-require_relative "error"
-
 module Lain
   # The dollar price of one model's four token classes. Cost accounting is OURS,
   # deliberately not a vendored pricing table (the plan rejects dragging in

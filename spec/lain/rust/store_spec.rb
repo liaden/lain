@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The Rust Store must satisfy the SAME content-addressed-store contract as the
 # Ruby one: it drives the shared `store_laws` group, and mirrors the rest of
 # store_spec.rb (idempotence, MissingObject, key?, concurrent writers) against

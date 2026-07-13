@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/middleware"
-
 RSpec.describe Lain::Middleware do
   # A "tag" middleware records its entry and exit around the downstream in a
   # purely functional way -- it appends to `env[:trace]` on the way in and to the

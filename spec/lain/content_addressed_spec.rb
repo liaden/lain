@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/content_addressed"
-
 RSpec.describe Lain::ContentAddressed do
   # A minimal includer: the digest IS the content. Normalization and digest
   # derivation stay each real class's own job; the mixin only owns equality.

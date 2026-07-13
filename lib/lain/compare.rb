@@ -2,11 +2,6 @@
 
 require "bigdecimal"
 
-require_relative "capability/degraded_set"
-require_relative "capability/guard"
-require_relative "ledger"
-require_relative "usage"
-
 module Lain
   # Compares n>=2 runs by DISTRIBUTION, because a single A/B is noise: one run
   # each of two arms tells you nothing about whether the difference you see is

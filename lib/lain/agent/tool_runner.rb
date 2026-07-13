@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../effect"
-require_relative "../middleware"
-
 module Lain
   class Agent
     # Turns an assistant turn's tool_use blocks into the tool_result blocks that

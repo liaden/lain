@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../memory/item"
-require_relative "../memory/recorder"
-require_relative "../tool"
-
 module Lain
   module Tools
     # Tier 1 (structured): writes (or overwrites) one memory item by id, via a

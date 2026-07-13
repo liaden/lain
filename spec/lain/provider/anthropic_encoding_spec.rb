@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/anthropic_encoding"
-require "lain/request"
-
 # CE-1: two layers used to place cache_control independently -- this module's
 # own with_stride_breakpoint, and Context::CacheBreakpoints -- with no shared
 # budget, so a long enough session exceeded Anthropic's 4-cache_control cap

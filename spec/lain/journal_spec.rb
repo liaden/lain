@@ -4,9 +4,6 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-require "lain/journal"
-require "lain/event"
-
 RSpec.describe Lain::Journal do
   let(:io) { StringIO.new }
   subject(:journal) { described_class.new(io: io, clock: -> { "T" }) }

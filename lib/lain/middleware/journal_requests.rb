@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../channel"
-require_relative "../event"
-require_relative "../middleware"
-
 module Lain
   module Middleware
     # Records every outbound Request in the model phase as an

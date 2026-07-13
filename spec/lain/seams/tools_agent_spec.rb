@@ -1,10 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "lain/agent"
-require "lain/handler/approving"
-require "lain/handler/live"
-require "lain/tools"
 
 # Seam tests: each unit above was specced by itself, and nobody specced the joint.
 # These drive REAL tools through the REAL loop, because the correctness gates are

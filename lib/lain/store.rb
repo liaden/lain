@@ -2,8 +2,6 @@
 
 require "monitor"
 
-require_relative "error"
-
 module Lain
   # An append-only, content-addressed object database — git's, in miniature.
   #

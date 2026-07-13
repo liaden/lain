@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/effect"
-require "lain/handler"
-require "lain/handler/live"
-require "lain/toolset"
-
 RSpec.describe Lain::Handler::Approving do
   def tool(tool_name, gated: false, &body)
     Class.new(Lain::Tool) do

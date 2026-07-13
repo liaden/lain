@@ -1,16 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context/recall"
-require "lain/context/reminder"
-require "lain/context/cache_breakpoints"
-require "lain/context/base"
-require "lain/memory/manifest"
-require "lain/memory/index"
-require "lain/memory/item"
-require "lain/request"
-require "lain/store"
-require "lain/workspace"
-
 RSpec.describe Lain::Context::Recall do
   def text(body) = [{ "type" => "text", "text" => body }]
 

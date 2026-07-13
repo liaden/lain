@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/tool"
-require "lain/tool/input"
-
 RSpec.describe Lain::Tool::Input do
   let(:shell_input) do
     Class.new(described_class) do

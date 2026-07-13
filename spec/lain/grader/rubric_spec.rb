@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/grader/rubric"
-
-require "lain/provider/mock"
-require "lain/response"
-
 # Grader::Rubric is an LLM judge that scores a subject against explicit criteria
 # in a SEPARATE context window -- a fresh Request built only from the rubric and
 # the thing being judged, never the run-under-study's own timeline. Its `#why`

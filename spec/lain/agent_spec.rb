@@ -4,12 +4,6 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-require "lain/agent"
-
-require "lain/journal"
-require "lain/session"
-require "lain/tools/read_file"
-
 # Captures the invocation context it is handed, so a spec can prove the Agent
 # threads ONE session all the way down to a tool that runs on a later turn.
 class ContextProbe < Lain::Tool

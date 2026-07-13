@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "recorder"
-require_relative "../event"
-
 module Lain
   module Memory
     # A Journal-duck decorator: every entry is forwarded to the real Journal

@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../canonical"
-require_relative "../error"
-require_relative "../workspace"
-
 module Lain
   module Bench
     # Re-render a recorded Timeline under a (possibly different) Context and

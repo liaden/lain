@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../canonical"
-require_relative "../content_addressed"
-require_relative "../error"
-
 module Lain
   module Memory
     # A frozen unit of memory: a caller-chosen id, a one-line description, and

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # New spec, not a port -- upstream's streaming coverage is entirely VCR
 # cassettes (which this branch does not add) plus the accumulator spec (ported
 # separately). This proves the base SSE engine (streaming.rb) is wired into

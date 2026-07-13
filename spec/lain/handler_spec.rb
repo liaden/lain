@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/handler"
-require "lain/toolset"
-
 RSpec.describe Lain::Handler do
   def tool(tool_name, &body)
     Class.new(Lain::Tool) do

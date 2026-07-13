@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The Rust Timeline behind the same duck as `Lain::Timeline`, driving the SAME
 # `meet_semilattice` and `regular` shared groups the Ruby Timeline does -- the
 # port's acceptance oracle. Behaviour mirrors timeline_spec.rb against

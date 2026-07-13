@@ -3,19 +3,6 @@
 require "json"
 require "stringio"
 
-require "lain/agent"
-require "lain/context"
-require "lain/event"
-require "lain/journal"
-require "lain/memory/index"
-require "lain/memory/item"
-require "lain/memory/journal_memory_root"
-require "lain/memory/manifest"
-require "lain/memory/recorder"
-require "lain/provider/mock"
-require "lain/tools/memory_write"
-require "lain/toolset"
-
 # The 5-3.1 acceptance: pair each committed assistant turn with the
 # Memory::Index root in force at that moment, journal the pair as
 # Event::MemoryRoot, and the recorded journal ALONE -- parsed back out of its

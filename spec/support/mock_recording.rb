@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent"
-require "lain/middleware"
-require "lain/provider/mock"
-require "lain/response"
-require "lain/tool"
-
 # The scripted capability most mock-driven specs share: echoes its input back,
 # so a tool_result's bytes are a pure function of the scripted tool_use input.
 # (lib/lain/bench/variance_fixtures.rb keeps its own scripted tool on purpose:

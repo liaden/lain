@@ -2,9 +2,6 @@
 
 require "bigdecimal"
 
-require "lain/price_book"
-require "lain/usage"
-
 RSpec.describe Lain::PriceBook do
   def usage(input: 0, output: 0, creation: 0, read: 0)
     Lain::Usage.new(input_tokens: input, output_tokens: output,

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The Rust BM25 index (`bm25` crate, in-process under the ext's data-structure
 # placement rules): built once from a batch of [id, text] pairs, immutable after
 # build. Retrieval is deterministic and explainable -- each hit carries the

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # Adapted, not ported, from ruby_llm 1.16.0 (2cf34b9),
 # spec/ruby_llm/error_handling_spec.rb. Upstream's 17-line version drives the
 # whole thing through `RubyLLM.chat(model: "gpt-4.1-nano").ask("Hello")` --

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../journal"
-
 module Lain
   module Bench
     # An OFFLINE projection over a Journal's `request_sent` records (CE-2):

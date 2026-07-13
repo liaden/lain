@@ -1,15 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/compare"
-
-require "lain/usage"
-require "lain/capability/degraded_set"
-require "lain/capability/guard"
-require "lain/grader"
-require "lain/ledger"
-require "lain/timeline"
-require "lain/store"
-
 # Compare draws DISTRIBUTIONS over n>=2 runs -- a single A/B is noise -- and
 # refuses, loudly, to compare runs that degraded different capabilities (a
 # cross-arm comparison where half the tactics silently no-oped on one side is a

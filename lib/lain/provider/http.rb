@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../provider"
-require_relative "../sink"
-
 # Loads the vendored HTTP transport (forked from ruby_llm 1.16.0, commit
 # 2cf34b9 -- see VENDOR.md) in dependency order. Upstream relies on zeitwerk
 # autoloading, so its own files carry no `require`s for sibling classes; this

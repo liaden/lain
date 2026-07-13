@@ -2,7 +2,6 @@
 
 require "json"
 require "securerandom"
-require_relative "../tool_call"
 
 # New code, not a port. Upstream's `StreamAccumulator` folds streamed
 # tool-call-fragment tracking directly into itself

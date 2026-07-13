@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "base"
-
 module Lain
   class Context
     # Places prompt-cache breakpoints on the message list: the final block of

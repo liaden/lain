@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/anthropic_raw/stream_assembler"
-
 # The assembler is the "stop flattening" mutation, tested where the flattening
 # used to live. These assertions are exactly what the vendored StreamAccumulator
 # CANNOT satisfy: every block survives in order, and every thinking signature

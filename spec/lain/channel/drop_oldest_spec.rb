@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/channel"
-require "lain/event"
-
 RSpec.describe Lain::Channel::DropOldest do
   it "rejects a non-positive capacity" do
     expect { described_class.new(capacity: 0) }.to raise_error(ArgumentError)

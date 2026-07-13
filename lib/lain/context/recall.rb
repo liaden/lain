@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "base"
-require_relative "../workspace"
-
 module Lain
   class Context
     # Recalls memory hits into the message tail: a pure function of a frozen

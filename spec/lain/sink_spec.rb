@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/sink"
-require "lain/event"
-
 # A tiny in-memory stand-in for Lain::Channel: records everything pushed so we
 # can assert on emitted events without depending on Channel's threading.
 class RecordingChannel

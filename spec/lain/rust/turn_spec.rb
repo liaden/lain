@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The Rust Turn behind the same duck as `Lain::Turn`: it drives the shared
 # `regular` group, keeps `Ractor.shareable?` true (the real acceptance test for
 # the port), and -- the cross-check that makes the port meaningful -- produces a

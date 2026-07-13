@@ -3,13 +3,6 @@
 require "json"
 require "time"
 
-require_relative "../provider"
-require_relative "../response"
-require_relative "../usage"
-require_relative "../channel"
-require_relative "../sink"
-require_relative "../event"
-require_relative "anthropic_encoding"
 require_relative "anthropic_raw/stream_assembler"
 require_relative "anthropic_raw/transport"
 

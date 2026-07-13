@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../effect"
-require_relative "../handler"
-require_relative "../journal"
-require_relative "../tool"
-
 module Lain
   class Handler
     # Replays a recorded outcome for a tool call instead of performing it.

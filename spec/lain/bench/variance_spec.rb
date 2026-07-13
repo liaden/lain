@@ -2,19 +2,6 @@
 
 require "stringio"
 
-require "lain/bench/variance"
-
-require "lain/bench/session"
-require "lain/capability/guard"
-require "lain/context"
-require "lain/context/prune"
-require "lain/event"
-require "lain/journal"
-require "lain/ledger"
-require "lain/toolset"
-require "lain/usage"
-require "lain/workspace"
-
 # Variance is the experiment engine (design decision D3): n mock- or
 # live-recorded runs of ONE task, reported along three axes. Determinism --
 # each recording must dry-replay to byte identity under its own Context, the

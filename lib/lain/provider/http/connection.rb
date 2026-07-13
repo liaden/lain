@@ -3,8 +3,6 @@
 require "faraday"
 require "faraday/retry"
 require "timeout"
-require_relative "error_middleware"
-require_relative "logging/sink_logger"
 require_relative "connection/middleware_stack"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/connection.rb.

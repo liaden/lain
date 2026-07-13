@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../../../sink"
-
 # New code, not a port. RubyLLM's Connection hands Faraday's `:logger`
 # middleware a real ::Logger (`RubyLLM.logger`) writing to $stdout by default
 # (leak sites: connection.rb:17,89,90). Output discipline forbids that --

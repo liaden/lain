@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/anthropic"
 require "webmock/rspec"
 
 RSpec.describe Lain::Provider::Anthropic do

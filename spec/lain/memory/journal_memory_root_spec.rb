@@ -2,12 +2,6 @@
 
 require "stringio"
 
-require "lain/event"
-require "lain/journal"
-require "lain/memory/item"
-require "lain/memory/journal_memory_root"
-require "lain/memory/recorder"
-
 # The decorator's own contract, independent of any Agent: it is hand-fed
 # events directly, so these specs pin exactly what {Agent::Accounting} and
 # {Middleware::JournalRequests} rely on (`#<<` forwarding) plus the one

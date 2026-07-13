@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../error_middleware"
-
 # Split from streaming.rb -- see that file's header. Streaming error handling
 # is a real, separate responsibility from the SSE engine: a successful stream
 # never reaches any of these methods. They recognize an error chunk/payload,

@@ -3,7 +3,6 @@
 require "event_stream_parser"
 require "faraday"
 require "json"
-require_relative "stream_accumulator"
 require_relative "streaming/error_handling"
 require_relative "streaming/faraday_handlers"
 

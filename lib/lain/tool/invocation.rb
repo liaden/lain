@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../channel"
-
 module Lain
   class Tool
     # What a tool actually receives as its second argument, in place of the

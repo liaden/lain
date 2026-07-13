@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../provider"
-
 module Lain
   class Provider
     # A provider that never touches the network.

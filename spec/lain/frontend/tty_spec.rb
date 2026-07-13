@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "stringio"
-require "lain/frontend/tty"
-require "lain/response"
 
 RSpec.describe Lain::Frontend::TTY do
   let(:channel) { Lain::Channel.new }

@@ -3,10 +3,6 @@
 require "json"
 require "stringio"
 
-require "lain/event"
-require "lain/journal"
-require "lain/request"
-
 RSpec.describe Lain::Event do
   describe Lain::Event::ToolOutput do
     subject(:event) { described_class.new(tool_use_id: "t1", stream: :stdout, bytes: "hi") }

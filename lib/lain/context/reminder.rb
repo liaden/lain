@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "base"
-
 module Lain
   class Context
     # Injects Workspace state (todos, a file-staleness ledger, a remaining-

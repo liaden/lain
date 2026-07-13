@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-
 module Lain
   # The public API for wrapping work, in the Rack / Sidekiq / Faraday idiom: a
   # middleware is anything answering `#call(env) { |env| ... }`, transforming the

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/session"
-
 RSpec.describe Lain::Session do
   subject(:session) { described_class.new }
 

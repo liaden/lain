@@ -2,8 +2,6 @@
 
 require "bigdecimal"
 
-require_relative "usage"
-require_relative "price_book"
 require_relative "ledger/index"
 
 module Lain

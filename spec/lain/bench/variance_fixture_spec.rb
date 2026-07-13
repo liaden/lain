@@ -2,11 +2,6 @@
 
 require "tmpdir"
 
-require "lain/bench/variance_fixtures"
-
-require "lain/bench/session"
-require "lain/bench/variance"
-
 # The committed session fixtures under spec/fixtures/sessions/variance are the
 # bench's replayable exemplar: three scripted mock recordings of ONE task whose
 # response lengths differ, so Variance has real divergence and a real

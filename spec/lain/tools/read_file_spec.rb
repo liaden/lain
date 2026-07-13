@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "lain/session"
-require "lain/tools/read_file"
 
 RSpec.describe Lain::Tools::ReadFile do
   subject(:tool) { described_class.new }

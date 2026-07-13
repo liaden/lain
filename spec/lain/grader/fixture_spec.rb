@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/grader/fixture"
-
-require "lain/bench/dry_replay"
-require "lain/context"
-require "lain/toolset"
-
 # A Grader::Fixture is a deterministic task: a named bundle of HARD assertions
 # over some subject, scored pass/fail with no model in the loop. Its verdict is
 # a pure function of the subject, so scoring the same subject twice is the same

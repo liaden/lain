@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-require_relative "error"
-
 module Lain
   # State that is SENT to the model but never STORED in the Timeline.
   #

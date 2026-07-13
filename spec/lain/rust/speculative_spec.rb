@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The two capabilities M4-1.4/1.5 exist for, exercised end-to-end against the
 # Rust Timeline: localizing a cache break to the last shared turn, and N-way
 # speculative branching that forks in O(1) over a shared Store and selects the

@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../channel"
-require_relative "../event"
-require_relative "degraded_set"
-
 module Lain
   module Capability
     # Resolves what a requirer `#requires` against what a provider `#supports?`,

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../tool"
-
 module Lain
   module Tools
     # Tier 1 (structured): lists the entries of a directory by path. Direct

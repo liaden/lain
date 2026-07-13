@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "content"
-require_relative "error"
-require_relative "tokens"
-
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/message.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::.
 #

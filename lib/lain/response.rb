@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-require_relative "error"
-require_relative "usage"
-
 module Lain
   # Why a model stopped, normalized across providers.
   #

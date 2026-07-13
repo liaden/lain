@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../event"
-
 module Lain
   class Channel
     # A bounded event channel that DROPS THE OLDEST event when it overflows,

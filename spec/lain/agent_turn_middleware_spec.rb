@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent"
-
 # The turn phase: a Middleware::Stack wrapping EACH iteration of #run's loop
 # (budget check, iteration count, model call, commit, transition), wired the
 # same way model_middleware/tool_middleware already are. See Agent#turn_env

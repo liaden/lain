@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/tool"
-
 RSpec.describe Lain::Tool do
   # A minimal concrete tool. Its schema requires a string `text`; `#perform`
   # echoes it. Reused across examples that need a working tool.

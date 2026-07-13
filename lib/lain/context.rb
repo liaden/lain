@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-require_relative "error"
-require_relative "request"
-require_relative "workspace"
 require_relative "context/base"
 require_relative "context/cache_breakpoints"
 require_relative "context/reminder"

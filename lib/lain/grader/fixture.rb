@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../grader"
-
 module Lain
   module Grader
     # A deterministic task: a named bundle of HARD assertions over a subject,

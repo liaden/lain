@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context/reminder"
-require "lain/workspace"
-
 RSpec.describe Lain::Context::Reminder do
   def text(body) = [{ "type" => "text", "text" => body }]
 

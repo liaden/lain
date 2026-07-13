@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "mixlib/shellout"
-require_relative "../sink"
-require_relative "../tool"
 
 module Lain
   module Tools

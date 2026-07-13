@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/anthropic"
-
 # Hits the REAL Claude API. Skipped unless LAIN_INTEGRATION=1 and
 # ANTHROPIC_API_KEY are both set (see spec_helper). Deliberately two examples
 # and tiny max_tokens -- these cost money. Their job is to catch the things a

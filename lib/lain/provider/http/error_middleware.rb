@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "faraday"
-require_relative "error"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/error_middleware.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::. Faraday middleware registered

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent/transition_listener"
-
 RSpec.describe Lain::Agent::TransitionListener::Null do
   it "accepts a transition and returns nil, absorbing it" do
     expect(described_class.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch))

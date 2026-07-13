@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent"
-
 # The Agent's loop is a declared `state_machines` machine. These examples pin the
 # two things that adoption buys over a hand-rolled `@state`: illegal moves raise,
 # and every transition is announced to an injected listener. The gate-6 totality

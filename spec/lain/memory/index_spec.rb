@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/memory/index"
-
 RSpec.describe Lain::Memory::Index do
   subject(:index) { described_class.empty(store: store) }
 

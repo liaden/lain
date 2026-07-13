@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/tool/invocation"
-
 RSpec.describe Lain::Tool::Invocation do
   it "defaults tool_use_id and context to nil, and channel to a Null Object" do
     invocation = described_class.new

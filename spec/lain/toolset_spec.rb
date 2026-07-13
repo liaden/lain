@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/toolset"
-
 RSpec.describe Lain::Toolset do
   # Builds a throwaway tool class with a given name. Only the name matters for
   # capability-set behavior, so the body is trivial.

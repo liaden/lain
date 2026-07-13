@@ -5,9 +5,6 @@ require "reline"
 require "tty-cursor"
 require "tty-screen"
 
-require_relative "../channel"
-require_relative "../event"
-
 module Lain
   module Frontend
     # Owns the terminal. The only class in this codebase permitted to write to

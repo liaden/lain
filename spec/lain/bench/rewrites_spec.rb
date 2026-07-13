@@ -2,9 +2,6 @@
 
 require "json"
 
-require "lain/bench/rewrites"
-require "lain/request"
-
 # Rewrites is an OFFLINE projection over a Journal's `request_sent` records
 # (CE-2): it recreates `diverge_at` at the request level, over the
 # breakpoint-partitioned chain `Request#prefix_digests` already computes and

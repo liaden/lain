@@ -1,14 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent"
-require "lain/canonical"
-require "lain/context"
-require "lain/provider"
-require "lain/request"
-require "lain/response"
-require "lain/tool"
-require "lain/toolset"
-
 # The seven correctness gates from spec/lain/agent_spec.rb, plus the Provider
 # contract from lib/lain/provider.rb (see spec/lain/provider_spec.rb), reframed
 # as ONE shared example group every Lain::Provider must satisfy. Without this,

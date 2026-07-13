@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context/compact"
-
 RSpec.describe Lain::Context::Compact do
   def text(body) = [{ "type" => "text", "text" => body }]
 

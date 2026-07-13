@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../canonical"
-require_relative "../content_addressed"
-require_relative "../error"
-require_relative "../store"
-require_relative "item"
-
 module Lain
   module Memory
     # An immutable (root digest, store) pair over a Merkle chain of writes --

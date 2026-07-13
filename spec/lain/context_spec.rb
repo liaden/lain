@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context"
-require "lain/workspace"
-
 RSpec.describe Lain::Workspace do
   it "is empty by default" do
     expect(described_class.empty).to be_empty

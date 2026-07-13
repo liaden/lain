@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../compare"
-require_relative "../ledger"
-require_relative "../price_book"
-require_relative "dry_replay"
-
 module Lain
   module Bench
     # The experiment engine (design decision D3): n recordings of ONE task,

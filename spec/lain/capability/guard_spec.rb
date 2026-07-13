@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/capability/guard"
-require "lain/capability/degraded_set"
-
 RSpec.describe Lain::Capability::Guard do
   def set(*caps)
     Lain::Capability::DegradedSet.new(caps)

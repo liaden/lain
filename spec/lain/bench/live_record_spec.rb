@@ -2,10 +2,6 @@
 
 require "tmpdir"
 
-require "lain/bench/cli"
-
-require "lain/bench/session"
-
 # The end-to-end record path: `lain bench record` against the REAL API, twice,
 # into a tmpdir -- then the same variance path the fixtures exercise offline.
 # Real money on every run, so it is :live-gated (LAIN_LIVE=1 + a key) exactly

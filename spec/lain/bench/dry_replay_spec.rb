@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/bench/dry_replay"
-
-require "lain/context"
-require "lain/context/prune"
-require "lain/toolset"
-
 # DryReplay re-renders a RECORDED Timeline under a (possibly different) Context
 # and byte-diffs against the recorded baseline. It obtains its inputs the honest
 # way: the recorded final Timeline (the real content-addressed DAG a run

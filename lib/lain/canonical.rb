@@ -2,9 +2,6 @@
 
 require "json"
 
-require_relative "error"
-require_relative "lain" # the compiled Rust extension: Lain::Ext.blake3_hex
-
 module Lain
   # Deterministic serialization, serving two invariants with one function.
   #

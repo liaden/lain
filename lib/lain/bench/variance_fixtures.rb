@@ -2,18 +2,6 @@
 
 require "fileutils"
 
-require_relative "../agent"
-require_relative "../context"
-require_relative "../journal"
-require_relative "../middleware"
-require_relative "../provider/mock"
-require_relative "../response"
-require_relative "../tool"
-require_relative "../toolset"
-require_relative "../usage"
-require_relative "../workspace"
-require_relative "session"
-
 module Lain
   module Bench
     # The committed variance fixtures, as code: three scripted mock recordings

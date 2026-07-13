@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../error"
-require_relative "../usage"
-
 module Lain
   class Agent
     # The ceilings that bound an autonomous loop.

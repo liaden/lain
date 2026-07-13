@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "event"
-
 module Lain
   # Sinks are where output goes when it is NOT the frontend's to render.
   #

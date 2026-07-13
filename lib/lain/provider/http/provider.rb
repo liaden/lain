@@ -1,12 +1,7 @@
 # frozen_string_literal: true
 
-require_relative "configuration"
-require_relative "connection"
-require_relative "error"
 require_relative "provider/error_body"
 require_relative "provider/registry"
-require_relative "streaming"
-require_relative "utils"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/provider.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::.

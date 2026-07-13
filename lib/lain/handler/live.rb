@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../channel"
-require_relative "../effect"
-require_relative "../handler"
-require_relative "../tool"
-require_relative "../toolset"
-
 module Lain
   class Handler
     # Interprets effects by actually doing them: dispatches a {Effect::ToolCall}

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../middleware"
-
 module Lain
   class Agent
     # Turns a rendered Request into a Response.

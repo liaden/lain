@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../effect"
-require_relative "../tool"
-
 module Lain
   class Handler
     # Interprets tool-call effects with canned answers instead of running

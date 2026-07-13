@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../channel"
-require_relative "../event"
-require_relative "../middleware"
-require_relative "../tool"
-
 module Lain
   module Middleware
     # Refuses a `memory_write` whose input looks like a secret, before the

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "manifest"
-
 module Lain
   module Memory
     # A Manifest::Hit-duck search index backed by Lain::Ext::Bm25 (the `bm25`

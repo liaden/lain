@@ -1,11 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "lain/session"
-require "lain/tools/edit_file"
-require "lain/effect"
-require "lain/handler/live"
-require "lain/toolset"
 
 RSpec.describe Lain::Tools::EditFile do
   subject(:tool) { described_class.new }

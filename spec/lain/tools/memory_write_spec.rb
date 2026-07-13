@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/tools/memory_write"
-require "lain/tools/memory_read"
-require "lain/memory/recorder"
-require "lain/tool/invocation"
-
 RSpec.describe Lain::Tools::MemoryWrite do
   subject(:tool) { described_class.new(recorder: recorder) }
 

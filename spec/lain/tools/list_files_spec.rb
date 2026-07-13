@@ -2,7 +2,6 @@
 
 require "fileutils"
 require "tmpdir"
-require "lain/tools/list_files"
 
 RSpec.describe Lain::Tools::ListFiles do
   subject(:tool) { described_class.new }

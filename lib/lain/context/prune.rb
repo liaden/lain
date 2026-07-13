@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "base"
-
 module Lain
   class Context
     # Drop turns before they ever reach the Provider: either the last N

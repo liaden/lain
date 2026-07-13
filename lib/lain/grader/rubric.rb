@@ -2,10 +2,6 @@
 
 require "json"
 
-require_relative "../grader"
-require_relative "../error"
-require_relative "../request"
-
 module Lain
   module Grader
     # An LLM judge. Where {Fixture} is a deterministic bundle of hard assertions,

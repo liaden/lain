@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # Adapted from ruby_llm 1.16.0 (2cf34b9), spec/ruby_llm/connection_logging_spec.rb.
 # Upstream tests the Faraday `Response::Logger` built from a real `::Logger`
 # (`RubyLLM.logger`), whose level toggles body logging. Leak site 1 replaces

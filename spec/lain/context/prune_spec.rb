@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context/prune"
-require "lain/timeline"
-require "lain/store"
-
 RSpec.describe Lain::Context::Prune do
   def text(body) = [{ "type" => "text", "text" => body }]
 

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # Ported near-verbatim from ruby_llm 1.16.0 (2cf34b9),
 # spec/ruby_llm/error_middleware_spec.rb. Only the namespace changed
 # (RubyLLM:: -> Lain::Provider::HTTP::); `.parse_error`'s status-dispatch

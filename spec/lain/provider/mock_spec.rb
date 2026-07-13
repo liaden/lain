@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/mock"
-
 # Lain::Provider::Mock is the reference implementation the shared parity group
 # proves itself against: if a provider this trivial cannot pass all seven
 # gates plus the Provider contract, the shared group itself is broken. Every

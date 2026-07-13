@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../session"
-require_relative "../tool"
-
 module Lain
   module Tools
     # Tier 1 (structured): REPLACES the run's entire todo list in one call --

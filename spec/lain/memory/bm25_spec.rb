@@ -1,15 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/memory/bm25"
-require "lain/memory/manifest"
-require "lain/memory/index"
-require "lain/memory/item"
-require "lain/context/recall"
-require "lain/context/reminder"
-require "lain/context/cache_breakpoints"
-require "lain/store"
-require "lain/workspace"
-
 # Memory::Bm25 builds a Lain::Ext::Bm25 (T8, the `bm25` crate, in-process) once
 # from a snapshot's items and returns Manifest::Hit-duck hits, so it slots into
 # Context::Recall (T10) and any other Manifest consumer without a type check.

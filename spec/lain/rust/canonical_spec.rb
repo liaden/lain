@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain"
-
 # The Rust canonicalizer (`Lain::Ext.canonical_dump`/`canonical_digest`) must be
 # a byte-for-byte twin of `Lain::Canonical`. It drives the SAME shared
 # determinism group the Ruby impl does (proving both satisfy one contract), and

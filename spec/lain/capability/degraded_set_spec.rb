@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/capability/degraded_set"
-
 RSpec.describe Lain::Capability::DegradedSet do
   it "is sorted, deduplicated, and symbolized regardless of input order" do
     set = described_class.new(%i[thinking server_tools thinking])

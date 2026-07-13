@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../canonical"
-require_relative "../error"
-
 module Lain
   class Provider
     # The neutral-Request -> Anthropic-kwargs encoding, shared by both Anthropic

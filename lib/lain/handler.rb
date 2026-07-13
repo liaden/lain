@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-require_relative "effect"
-require_relative "tool"
-
 module Lain
   # Interprets an {Lain::Effect} -- the one object permitted to touch the world.
   #

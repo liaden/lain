@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/memory/recorder"
-require "lain/memory/index"
-require "lain/memory/item"
-require "lain/tools/memory_read"
-require "lain/tool"
-
 RSpec.describe Lain::Memory::Recorder do
   subject(:recorder) { described_class.new }
 

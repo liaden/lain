@@ -4,9 +4,6 @@ require "json"
 require "open3"
 require "rbconfig"
 
-require "lain/bench/session"
-require "lain/canonical"
-
 # CE-3: `Canonical`'s second invariant -- prompt-cache stability -- has never
 # had a test. This is that test: render the same committed fixture once IN
 # this process and once in a FRESH ruby process, and assert the canonical
@@ -50,7 +47,7 @@ RSpec.describe "the byte-identical prelude invariant across processes (CE-3)" do
   def render_in_subprocess(path)
     lib = File.expand_path("../../../lib", __dir__)
     stdout, stderr, status = Open3.capture3(
-      RbConfig.ruby, "-I", lib, "-r", "lain/bench/session", "-r", "lain/canonical",
+      RbConfig.ruby, "-I", lib, "-r", "lain",
       "-e", render_script, path
     )
     raise "subprocess failed (status #{status.exitstatus}): #{stderr}" unless status.success?

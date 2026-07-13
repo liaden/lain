@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../canonical"
-require_relative "../error"
-require_relative "../workspace"
-require_relative "dry_replay"
-
 module Lain
   module Bench
     # One run persisted as NDJSON in the Journal's OWN format (design decision

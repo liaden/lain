@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-
 module Lain
   # The vocabulary of what an agent loop *performs*, as frozen value objects.
   #

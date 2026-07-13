@@ -1,14 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../../capability"
-require_relative "../../context"
-require_relative "../../journal"
-require_relative "../../ledger/index"
-require_relative "../../request"
-require_relative "../../store"
-require_relative "../../timeline"
-require_relative "../../workspace"
-
 module Lain
   module Bench
     class Session

@@ -3,14 +3,6 @@
 require "json"
 require "stringio"
 
-require "lain/bench/live_replay"
-
-require "lain/context"
-require "lain/journal"
-require "lain/provider/mock"
-require "lain/toolset"
-require "lain/usage"
-
 # LiveReplay re-runs a recorded task against a real provider, SEQUENTIALLY (n:
 # sweeps are deferred to the M5 concurrency choice), and records fresh
 # Usage/Journal. The network path is exercised only under :live; the mechanics

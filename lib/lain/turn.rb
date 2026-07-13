@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-require_relative "content_addressed"
-require_relative "error"
-
 module Lain
   # A frozen node in the Timeline: a role, its content blocks, and the digest of
   # its parent. Its own digest is the content address of those three fields.

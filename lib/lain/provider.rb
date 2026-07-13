@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-require_relative "request"
-require_relative "response"
-
 module Lain
   # The seam between Lain and a model API: one round trip, no loop.
   #
@@ -77,3 +73,9 @@ module Lain
     alias inspect to_s
   end
 end
+
+require_relative "provider/anthropic_encoding"
+require_relative "provider/anthropic"
+require_relative "provider/http"
+require_relative "provider/anthropic_raw"
+require_relative "provider/mock"

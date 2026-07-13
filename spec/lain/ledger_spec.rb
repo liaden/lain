@@ -3,12 +3,6 @@
 require "bigdecimal"
 require "json"
 
-require "lain/ledger"
-require "lain/price_book"
-require "lain/timeline"
-require "lain/store"
-require "lain/usage"
-
 RSpec.describe Lain::Ledger do
   let(:store) { Lain::Store.new }
   let(:model) { "claude-sonnet-4" }

@@ -1,13 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/agent"
-require "lain/context"
-require "lain/event"
-require "lain/middleware/journal_requests"
-require "lain/provider/mock"
-require "lain/request"
-require "lain/toolset"
-
 RSpec.describe Lain::Middleware::JournalRequests do
   subject(:middleware) { described_class.new(journal: journal) }
 

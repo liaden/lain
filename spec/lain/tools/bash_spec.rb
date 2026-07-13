@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "tmpdir"
-require "lain/tools/bash"
 
 RSpec.describe Lain::Tools::Bash do
   subject(:tool) { described_class.new }

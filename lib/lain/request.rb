@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-require_relative "error"
-
 module Lain
   # Everything that goes to a model, expressed in Lain's own vocabulary.
   #

@@ -1,10 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/handler/recorded"
-require "lain/handler/mock"
-require "lain/effect"
-require "lain/tool"
-
 RSpec.describe Lain::Handler::Recorded do
   def tool_call(id, name = "read_file", input = {})
     Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)

@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/context/cache_breakpoints"
-require "lain/context"
-require "lain/store"
-require "lain/timeline"
-require "lain/toolset"
-
 RSpec.describe Lain::Context::CacheBreakpoints do
   def text(body) = [{ "type" => "text", "text" => body }]
 

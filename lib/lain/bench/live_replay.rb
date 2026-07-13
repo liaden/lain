@@ -1,15 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../agent"
-require_relative "../channel"
-require_relative "../memory"
-require_relative "../middleware"
-require_relative "../price_book"
-require_relative "../store"
-require_relative "../timeline"
-require_relative "../usage"
-require_relative "../workspace"
-
 module Lain
   module Bench
     # Re-run a recorded task against a real provider and record the fresh

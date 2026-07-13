@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "base"
-require_relative "../canonical"
-
 module Lain
   class Context
     # Summarizes the head of the message list once it crosses a token

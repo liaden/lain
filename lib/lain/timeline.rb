@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-require_relative "store"
-require_relative "turn"
-
 module Lain
   # An immutable (head digest, store) pair over a content-addressed DAG.
   #

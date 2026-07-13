@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/anthropic_raw"
-require "lain/provider/anthropic"
-
 # Two recorded layers, each proving something the unit specs cannot.
 #
 #   :vcr   replays a committed cassette through the REAL Faraday/SSE stack,

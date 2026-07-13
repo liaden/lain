@@ -3,13 +3,6 @@
 require "bigdecimal"
 require "stringio"
 
-require "lain/compare"
-require "lain/context"
-require "lain/journal"
-require "lain/ledger"
-require "lain/toolset"
-require "lain/usage"
-
 # The seam the bench stands on: Agent -> Journal -> Ledger -> Compare, over real
 # collaborators end to end. The Agent journals one Event::TurnUsage per model
 # call; the Journal reduces it to NDJSON bytes; the Ledger reconstructs priced

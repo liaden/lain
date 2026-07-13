@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-
 module Lain
   # Token accounting for one model call, provider-neutral.
   #

@@ -3,12 +3,6 @@
 require "json"
 require "stringio"
 
-require "lain/agent/accounting"
-
-require "lain/journal"
-require "lain/response"
-require "lain/usage"
-
 RSpec.describe Lain::Agent::Accounting do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }

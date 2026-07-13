@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../session"
-require_relative "../tool"
-
 module Lain
   module Tools
     # Tier 1 (structured): reads one file's full contents by path. Direct

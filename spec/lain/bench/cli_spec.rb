@@ -3,13 +3,6 @@
 require "fileutils"
 require "tmpdir"
 
-require "lain/bench/cli"
-
-require "lain/bench/session"
-require "lain/bench/variance_fixtures"
-require "lain/provider/mock"
-require "lain/usage"
-
 # Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
 # calls these methods, and `say`s the returned Strings. Every refused input is
 # a {Lain::Error} -- {CLI::Refusal} for the user's own mistakes, with the path

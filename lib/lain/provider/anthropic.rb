@@ -3,12 +3,6 @@
 require "json"
 require "anthropic"
 
-require_relative "../provider"
-require_relative "../response"
-require_relative "../usage"
-require_relative "../canonical"
-require_relative "anthropic_encoding"
-
 module Lain
   class Provider
     # The reference provider, on the official `anthropic` gem (net/http, no

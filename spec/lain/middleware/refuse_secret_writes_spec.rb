@@ -2,17 +2,6 @@
 
 require "json"
 
-require "lain/agent"
-require "lain/context"
-require "lain/effect"
-require "lain/event"
-require "lain/memory/recorder"
-require "lain/middleware/refuse_secret_writes"
-require "lain/provider/mock"
-require "lain/tool"
-require "lain/tools/memory_write"
-require "lain/toolset"
-
 RSpec.describe Lain::Middleware::RefuseSecretWrites do
   subject(:middleware) { described_class.new(journal: journal) }
 

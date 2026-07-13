@@ -1,14 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/memory/manifest"
-require "lain/memory/index"
-require "lain/memory/item"
-require "lain/context"
-require "lain/store"
-require "lain/timeline"
-require "lain/toolset"
-require "lain/workspace"
-
 RSpec.describe Lain::Memory::Manifest do
   let(:store) { Lain::Store.new }
   let(:index) { Lain::Memory::Index.empty(store: store) }

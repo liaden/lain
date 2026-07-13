@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../journal"
-require_relative "../usage"
-
 module Lain
   class Ledger
     # A Journal's `turn_usage` records, folded into `digest => payments` so the

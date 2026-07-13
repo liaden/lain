@@ -1,17 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../agent"
-require_relative "../context"
-require_relative "../error"
-require_relative "../journal"
-require_relative "../memory"
-require_relative "../middleware"
-require_relative "../price_book"
-require_relative "../provider/anthropic_raw"
-require_relative "../toolset"
-require_relative "session"
-require_relative "variance"
-
 module Lain
   module Bench
     # All of `exe/lain bench`'s assembly, behind returned values: the exe

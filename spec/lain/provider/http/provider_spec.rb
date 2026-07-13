@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # Trimmed from ruby_llm 1.16.0 (2cf34b9), spec/ruby_llm/provider_spec.rb.
 # Upstream is a lookup table over all thirteen providers' `api_base` and
 # config options; this branch vendors Anthropic only, so the table keeps its

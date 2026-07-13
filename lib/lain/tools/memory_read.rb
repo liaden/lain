@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../memory/index"
-require_relative "../tool"
-
 module Lain
   module Tools
     # Tier 1 (structured): reads one memory item's full body by id, over a

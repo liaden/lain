@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/request"
-
 RSpec.describe Lain::Request do
   def request(**overrides)
     described_class.new(

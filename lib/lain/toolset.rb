@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "error"
-require_relative "canonical"
-require_relative "tool"
-
 module Lain
   # A capability set: the exact tools some agent or subagent is allowed to use.
   #

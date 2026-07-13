@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/usage"
-
 RSpec.describe Lain::Usage do
   def usage(input: 0, output: 0, creation: 0, read: 0)
     described_class.new(input_tokens: input, output_tokens: output,

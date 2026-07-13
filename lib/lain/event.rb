@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "canonical"
-
 module Lain
   # Structured events that flow through a {Lain::Channel}.
   #

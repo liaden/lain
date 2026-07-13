@@ -2,7 +2,6 @@
 
 require "stringio"
 
-require "lain/agent"
 require "state_machines-mermaid" # DEV-only: the diagram never renders at runtime.
 
 # A checked-in diagram that silently diverges from the code is worse than none,

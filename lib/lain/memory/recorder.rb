@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "index"
-
 module Lain
   module Memory
     # The one mutable holder of a live {Memory::Index}, single-threaded like

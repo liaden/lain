@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "stringio"
-require "lain/frontend/approval_policy"
-require "lain/effect"
 
 RSpec.describe Lain::Frontend::ApprovalPolicy do
   let(:output) { StringIO.new }

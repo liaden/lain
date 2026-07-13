@@ -5,8 +5,6 @@ require "bundler/setup"
 require "thor"
 
 require "lain"
-require "lain/frontend"
-require "lain/bench/cli"
 
 # The executable. Deliberately thin: parse flags, wire the real collaborators
 # together, hand off to Frontend::TTY. Nothing here is unit-tested the way

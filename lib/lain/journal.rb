@@ -5,8 +5,6 @@ require "monitor"
 require "time"
 require "fileutils"
 
-require_relative "error"
-
 module Lain
   # An append-only NDJSON record of everything worth replaying: one event per
   # line, each line a complete JSON object. The Journal IS the experiment record,

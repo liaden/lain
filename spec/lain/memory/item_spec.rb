@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/memory/item"
-require "lain/store"
-
 RSpec.describe Lain::Memory::Item do
   def item(id: "dosage", description: "Adult amoxicillin dosing", body: "500mg every 8 hours")
     described_class.new(id: id, description: description, body: body)

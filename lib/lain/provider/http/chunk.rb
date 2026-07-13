@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "message"
-
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/chunk.rb, verbatim
 # apart from RubyLLM:: -> Lain::Provider::HTTP::.
 

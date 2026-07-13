@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/middleware"
-
 # The repl phase: exe/lain wraps each command typed at the prompt in a
 # Middleware::Stack, wired the same way Agent's model_/tool_/turn_middleware
 # already are (see lib/lain/agent.rb and exe/lain's `dispatch`). `exe/lain` is

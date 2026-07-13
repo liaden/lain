@@ -1,11 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/bench/speculative"
-
-require "lain/grader/fixture"
-require "lain/store"
-require "lain/timeline"
-
 # Speculative branching is beam search over agent behaviour: fork one node into
 # N trajectories (O(1), because Timeline#fork is identity over a shared Store),
 # run each, score each with a grader, and keep the best. This proves the shape

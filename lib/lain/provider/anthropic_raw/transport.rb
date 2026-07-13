@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../http"
-
 module Lain
   class Provider
     class AnthropicRaw < Provider

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/provider/http"
-
 # Ported near-verbatim from ruby_llm 1.16.0 (2cf34b9),
 # spec/ruby_llm/stream_accumulator_spec.rb. Only the namespace changed
 # (RubyLLM:: -> Lain::Provider::HTTP::). This is the one spec in the vendored

@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "lain/tools/memory_read"
-require "lain/memory/index"
-require "lain/memory/item"
-
 RSpec.describe Lain::Tools::MemoryRead do
   subject(:tool) { described_class.new(index: index) }
 
