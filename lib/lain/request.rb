@@ -58,4 +58,108 @@ module Lain
     end
     alias_method :inspect, :to_s
   end
+
+  # Reopened rather than folded into the `Data.define` block above: a `class`
+  # keyword or bare constant written INSIDE that block is scoped to its
+  # lexical position -- this file, i.e. `Lain` -- not to the Data-defined
+  # class, however natural `Request::AmbiguousMarkerPosition` looks from the
+  # call site. Reopening puts `AmbiguousMarkerPosition` and `SYSTEM_PREFIX`
+  # where they read, and where every method below can find them by ordinary
+  # lexical lookup.
+  class Request
+    # A marker sat on a content block that is not its message's last block.
+    # The default pipeline (`Context::CacheBreakpoints`) only ever marks a
+    # message's final block, so this should never fire against Lain's own
+    # renderer -- it exists to fail loudly, rather than guess a position, the
+    # moment a foreign pipeline breaks that assumption.
+    class AmbiguousMarkerPosition < Error; end
+
+    # The sentinel position for a marker that sits in `system`: system
+    # precedes every message on the wire, so its chain entry always reads as
+    # "nothing from messages yet". Chosen so `messages.first(position + 1)`
+    # (see #digest_through) generalizes to the empty array at position -1
+    # without the negative-range footgun `messages[0..-1]` would be (that
+    # slice means "the whole array", not "nothing").
+    SYSTEM_PREFIX = -1
+
+    # A digest CHAIN, one entry per neutral cache marker, in ascending
+    # position order: `[[position, digest], ...]`. This mirrors the
+    # Timeline's Merkle structure over the breakpoint-partitioned prompt
+    # (CE-2), so a bench projection can find where a rewrite happened the
+    # same way `diverge_at` finds it in the Timeline.
+    #
+    # The chain must survive MARKER MOVEMENT: `CacheBreakpoints` always marks
+    # a message's last block, and its cap slides which messages get marked
+    # as a session grows, so a chain sampled over marker-BEARING bytes would
+    # read every append as a rewrite. Each entry is instead the digest of the
+    # marker-STRIPPED prefix through that position -- the same content
+    # prefix hashes identically whether or not a marker sits on it today.
+    # `position` is a message index, or {SYSTEM_PREFIX} for a marker in
+    # `system` (which precedes every message on the wire). `tools` carries no
+    # position of its own -- it enters every entry unconditionally, alongside
+    # `model`, as the fixed part of the prefix.
+    def prefix_digests
+      marker_positions.map { |position| [position, digest_through(position)] }
+    end
+
+    private
+
+    # Ascending by construction: SYSTEM_PREFIX (-1) sorts before every
+    # message index, and messages are walked in order.
+    def marker_positions
+      positions = []
+      positions << SYSTEM_PREFIX if system_marked?
+      messages.each_index { |index| positions << index if message_marked?(messages[index]) }
+      positions
+    end
+
+    def system_marked?
+      system.is_a?(Array) && system.any? { |block| cache_marker?(block) }
+    end
+
+    # A marker is only ever unambiguous on a message's LAST content block --
+    # that is the only position the message's own index can name. A marker
+    # anywhere else means some other pipeline placed it, and this method
+    # raises rather than invent a rule for that case (see
+    # AmbiguousMarkerPosition).
+    def message_marked?(message)
+      content = message["content"]
+      return false unless content.is_a?(Array) && !content.empty?
+
+      marked = content.each_index.select { |index| cache_marker?(content[index]) }
+      return false if marked.empty?
+
+      unless marked == [content.size - 1]
+        raise AmbiguousMarkerPosition,
+              "cache marker at block(s) #{marked.inspect} of #{content.size}, " \
+              "expected only the last block to carry one"
+      end
+
+      true
+    end
+
+    def cache_marker?(block)
+      block.is_a?(Hash) && block["cache"] == true
+    end
+
+    # Tools lead system lead messages on the wire and enter every entry
+    # unconditionally; `messages.first(position + 1)` is what varies, and
+    # generalizes to the empty array at SYSTEM_PREFIX (see its comment).
+    def digest_through(position)
+      Canonical.digest(
+        "model" => model,
+        "tools" => strip_cache_markers(tools),
+        "system" => strip_cache_markers(system),
+        "messages" => strip_cache_markers(messages.first(position + 1))
+      )
+    end
+
+    def strip_cache_markers(value)
+      case value
+      when Hash then value.except("cache").transform_values { |v| strip_cache_markers(v) }
+      when Array then value.map { |v| strip_cache_markers(v) }
+      else value
+      end
+    end
+  end
 end

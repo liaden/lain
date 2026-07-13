@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "lain/request"
+
 RSpec.describe Lain::Request do
   def request(**overrides)
     described_class.new(
@@ -75,6 +77,73 @@ RSpec.describe Lain::Request do
     it "carries a neutral cache marker through normalization" do
       req = request(system: [{ "type" => "text", "text" => "sys", "cache" => true }])
       expect(req.system.first["cache"]).to be(true)
+    end
+  end
+
+  describe "#prefix_digests" do
+    def marked_message(text, cache:)
+      block = { "type" => "text", "text" => text }
+      block = block.merge("cache" => true) if cache
+      { "role" => "user", "content" => [block] }
+    end
+
+    def chained_request(texts:, caches:, system_cache: false)
+      system = system_cache ? [{ "type" => "text", "text" => "sys", "cache" => true }] : nil
+      messages = texts.zip(caches).map { |text, cache| marked_message(text, cache: cache) }
+      described_class.new(model: "claude-opus-4-8", system: system, messages: messages, max_tokens: 1024)
+    end
+
+    it "is empty when neither system nor messages carry a marker" do
+      req = chained_request(texts: %w[a b], caches: [false, false])
+      expect(req.prefix_digests).to eq([])
+    end
+
+    it "returns one (position, digest) pair per marker, in ascending position order" do
+      req = chained_request(system_cache: true, texts: %w[m0 m1 m2 m3], caches: [false, true, false, true])
+
+      chain = req.prefix_digests
+      expect(chain.size).to eq(3) # system + message 1 + message 3
+      expect(chain.map(&:first)).to eq([-1, 1, 3])
+    end
+
+    it "is deterministic: computing it twice yields the same pairs" do
+      req = chained_request(system_cache: true, texts: %w[m0 m1], caches: [false, true])
+      expect(req.prefix_digests).to eq(req.prefix_digests)
+    end
+
+    it "digests are marker-placement-independent: a shared position hashes the same regardless of marker placement" do
+      texts = %w[m0 m1 m2 m3]
+      a = chained_request(texts: texts, caches: [false, true, false, true])
+      b = chained_request(texts: texts, caches: [false, false, true, true])
+
+      a_chain = a.prefix_digests.to_h
+      b_chain = b.prefix_digests.to_h
+      expect(a_chain).to have_key(3)
+      expect(b_chain).to have_key(3)
+      expect(a_chain[3]).to eq(b_chain[3])
+    end
+
+    it "localizes divergence: chains agree at every shared position up to the split, and differ beyond it" do
+      shared = %w[a0 a1 a2]
+      a = chained_request(texts: shared + ["diverges-a"], caches: [true, true, true, true])
+      b = chained_request(texts: shared + ["diverges-b"], caches: [true, true, true, true])
+
+      a_chain = a.prefix_digests.to_h
+      b_chain = b.prefix_digests.to_h
+      expect(a_chain[0]).to eq(b_chain[0])
+      expect(a_chain[1]).to eq(b_chain[1])
+      expect(a_chain[2]).to eq(b_chain[2])
+      expect(a_chain[3]).not_to eq(b_chain[3])
+    end
+
+    it "raises when a marker sits on a non-final content block, rather than guessing its position" do
+      ambiguous = { "role" => "user", "content" => [
+        { "type" => "text", "text" => "a", "cache" => true },
+        { "type" => "text", "text" => "b" }
+      ] }
+      req = described_class.new(model: "claude-opus-4-8", messages: [ambiguous], max_tokens: 1024)
+
+      expect { req.prefix_digests }.to raise_error(Lain::Request::AmbiguousMarkerPosition)
     end
   end
 end
