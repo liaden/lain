@@ -37,6 +37,9 @@ group :test do
 end
 
 group :development, :test do
+  # The 5-0 concurrency spike measures Mixlib::ShellOut under the fiber scheduler.
+  # Spike-only for now; adoption (5-0.3) would promote this to the gemspec.
+  gem "async", "~> 2.34"
   # Loads ANTHROPIC_API_KEY from a gitignored .env, so the key never enters the shell
   # profile -- where Claude Code would silently prefer it over the subscription.
   gem "dotenv", "~> 3.2"

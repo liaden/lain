@@ -9,6 +9,8 @@
 #   :integration  hits the real API. Opt-in, requires BOTH env vars.
 #   :vcr          replays a recorded cassette. Free, offline. See vcr_configuration.rb.
 #   :live         end-to-end differential run against the API. Opt-in, costs real money.
+#   :spike        measurement experiments (spec/spikes/). Free and offline, but slow and
+#                 environment-shaped -- they pin scheduler behavior, not lain behavior.
 
 # Integration specs talk to the real Claude API. They cost money and are nondeterministic,
 # so they are skipped unless BOTH are set:
@@ -55,6 +57,17 @@ end
 #
 #     LAIN_LIVE=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 LIVE_ENABLED = ENV["LAIN_LIVE"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
+
+# :spike specs are one-off measurements (the 5-0 concurrency spike). They cost no
+# money and touch no network, but they take wall-clock seconds and assert facts about
+# the runtime environment rather than about lain -- so they run only on request:
+#
+#     LAIN_SPIKE=1 bundle exec rspec spec/spikes
+SPIKE_ENABLED = ENV["LAIN_SPIKE"] == "1"
+
+RSpec.configure do |config|
+  config.filter_run_excluding(:spike) unless SPIKE_ENABLED
+end
 
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
