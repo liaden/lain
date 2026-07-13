@@ -32,7 +32,7 @@ module Lain
         # as a failed tool call, not a crash.
         #
         #   requires("file was read this session") do |input, invocation|
-        #     invocation.context.read?(input["path"])
+        #     invocation.context.read?(input.path)
         #   end
         def requires(message, &predicate)
           own_preconditions << build_contract(message, predicate)
