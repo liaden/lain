@@ -42,6 +42,16 @@ RSpec.describe Lain::Memory::Bm25 do
                      search: ->(idx, query, k) { idx.search(query, k: k) }
   end
 
+  # A fresh memory index before the first write is empty; the crate refuses to
+  # build an empty corpus, but the Ruby wrapper treats it as a legitimate
+  # steady state -- constructs without raising, searches to [].
+  describe "over an empty index" do
+    it "constructs without raising and searches to []" do
+      empty = described_class.new(index: index_over)
+      expect(empty.search("aspirin")).to eq([])
+    end
+  end
+
   describe "#search" do
     subject(:index) { described_class.new(index: snapshot) }
 

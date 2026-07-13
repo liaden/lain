@@ -32,9 +32,14 @@ module Lain
       #   contract Manifest.new already has.
       def initialize(index:)
         items = index.to_a
-        pairs = items.map { |item| [item.id, "#{item.description}\n#{item.body}"] }
         @descriptions = items.to_h { |item| [item.id, item.description] }
-        @engine = Lain::Ext::Bm25.build(pairs)
+        # An empty corpus has nothing to score, and the crate refuses to build
+        # one (Lain::Ext::Bm25::EmptyCorpus, kept loud for direct ext users).
+        # Here it is a legitimate steady state -- a fresh memory index before
+        # the first write -- so skip the build and answer [] on search, the
+        # same graceful empty behavior Memory::Manifest has over the same duck.
+        pairs = items.map { |item| [item.id, "#{item.description}\n#{item.body}"] }
+        @engine = pairs.empty? ? nil : Lain::Ext::Bm25.build(pairs)
         @size = items.size
         freeze
       end
@@ -51,7 +56,7 @@ module Lain
       # from the plan card (T9/T10), matching Context::Recall's own `k:`.
       def search(query, k: nil)
         bound = k.nil? ? @size : Integer(k)
-        return [] if bound <= 0
+        return [] if @engine.nil? || bound <= 0
 
         @engine.search(query.to_s, bound).map { |id, score, matched| hit_for(id, score, matched) }
       end
