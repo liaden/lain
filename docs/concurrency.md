@@ -165,6 +165,44 @@ Referring to the [topology diagram in the README](../README.md#topology):
 ## Summary
 
 No model is committed. The loop stays sequential through M1 and M1b. The concurrency model is
-chosen at M5 — after parallel tools and async subagents are the actual feature being built, and
-after the `Mixlib::ShellOut`/fiber-scheduler spike has an answer — using the bench itself to
-compare candidates rather than picking one on paper.
+chosen at M5 — after parallel tools and async subagents are the actual feature being built —
+using the bench itself to compare candidates rather than picking one on paper. The one
+prerequisite fact-finding step, the `Mixlib::ShellOut`/fiber-scheduler spike, is answered below.
+
+## 2026-07-13 — spike result: `Mixlib::ShellOut` cooperates (5-0.1)
+
+**Pinned versions:** ruby 4.0.5 (`+PRISM`), `async` 2.42.0, `mixlib-shellout` 3.4.10. Spike
+spec: `spec/spikes/async_shellout_spike_spec.rb`, run via `LAIN_SPIKE=1 bundle exec rspec
+spec/spikes`.
+
+**Method:** inside one `Async` reactor, one task runs `Mixlib::ShellOut.new("sleep 1")
+.run_command`; a second task ticks a monotonic timestamp into an array every 50ms, 30 times.
+If the reactor's one OS thread is stalled inside `Mixlib::ShellOut`'s blocking calls, the
+ticker records no progress for the ~1s the shellout is in flight; if the scheduler is honoring
+those calls as yield points, the ticker keeps ticking at ~50ms throughout.
+
+**Result:** cooperative, not starved. Across 8 runs (5 in a standalone prototype, 3 more after
+the spec was finalized), the ticker recorded ~20 of its ~20 expected ticks *inside* the
+shellout's window every time, with inter-tick gaps holding at ~50ms (max observed 51.4ms — no
+gap resembling the full ~1s shellout duration). Sample from one run's raw inter-tick deltas, in
+ms: `[50.4, 50.1, 50.1, 51.3, 50.2, 50.1, 50.1, 50.2, ...]` — no stall.
+
+**Why:** `Async::Scheduler` (2.42.0) implements both `io_select` and `process_wait` hooks (`ruby
+-e 'require "async"; p Async::Scheduler.instance_methods.grep(/select|wait/)'` →
+`[:io_select, :io_wait, :process_wait, :wait]`). Ruby 4.0.5's core `IO.select` and
+`Process.waitpid2` call into those hooks when a Fiber scheduler is set for the current thread,
+so `Mixlib::ShellOut`'s `attempt_buffer_read` (`unix.rb:282`, a 10ms-timeout `IO.select` loop)
+and `reap` (`unix.rb:406`, a blocking `Process.waitpid2`) both yield the OS thread back to the
+reactor rather than holding it. This was the open risk named in the "Fibers" section above, and
+it resolved in fibers' favor without any code change to `Mixlib::ShellOut` or `Tools::Bash`.
+
+**Decision for stream 5-0:** no shellout-to-thread offload is needed. When 5-0.3 adopts a
+concurrency model, `bash` tool calls can run as ordinary `Async` tasks alongside everything
+else on fibers — the single open risk that would have forced a split model (native fiber
+cooperation for everything *except* shellouts, offloaded to a thread pool) did not materialize.
+This is stated as a recommendation for 5-0.3, not an adoption: this card does not touch
+`Tools::Bash` or wire `async` into the agent loop.
+
+**Stability note:** the result held identically across every run in both the standalone
+prototype and the committed spec, with no observed flakiness — the escalation trigger for a
+nondeterministic result (stop and report rather than commit) did not fire.
