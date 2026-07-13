@@ -113,6 +113,33 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
         expect(journal.events.first.pattern).to eq(pattern_name)
       end
     end
+
+    # The reviewer's false-positive probe (.probe-T7-patterns.rb): "sk-"
+    # embedded in a hyphenated word ("ask-someone...") satisfied the unanchored
+    # key regex, so benign prose was refused under a pattern name it never
+    # honestly matched. The key shape must stand alone -- nothing word-like or
+    # hyphenated may run into the "sk-".
+    ["the ski trip was great, we should do it again ask-someone-to-help-with-planning-next-year",
+     "this-is-just-a-long-hyphenated-slug-ask-for-directions-please-thanks-a-lot"].each do |prose|
+      it "does not mistake #{prose[0, 44].inspect}... for an api key" do
+        _env, called = run(tool_call(input: { "id" => "notes", "description" => "prose", "body" => prose }))
+
+        expect(called).to be(true)
+        expect(journal.events).to be_empty
+      end
+    end
+
+    it "still refuses a real-shaped sk- key at start-of-string, mid-sentence, and after punctuation" do
+      ["sk-#{"a" * 20}", "my key is sk-#{"a" * 20}", "KEY=sk-#{"a" * 20}"].each do |body|
+        refusals = RecordingChannel.new
+        guard = described_class.new(journal: refusals)
+        _env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => body }),
+                           middleware: guard)
+
+        expect(called).to be(false)
+        expect(refusals.events.first.pattern).to eq("openai-style api key")
+      end
+    end
   end
 
   describe "the injectable predicate seam" do

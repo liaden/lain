@@ -28,15 +28,22 @@ module Lain
     # input independently looks secret-ish passes through untouched -- this is
     # a write-refusal control, not a general secret scanner, and scanning
     # tools that were never going to persist anything is scope creep the card
-    # does not ask for.
+    # does not ask for. Guarding is exact string equality on "memory_write":
+    # a tool that writes memory under any other name is unguarded by design,
+    # accepted until a second memory writer actually exists.
     class RefuseSecretWrites < Base
       GUARDED_TOOL = "memory_write"
 
       # name => pattern. The NAME is what gets journaled and put in the
       # model-facing error; the bytes that matched never are -- see
       # {Event::WriteRefused}.
+      #
+      # The sk- shape is anchored with a lookbehind because unanchored it
+      # matched INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a
+      # benign write under a pattern name it never honestly matched: a real key
+      # stands alone, never run into by a preceding word char or hyphen.
       PATTERNS = {
-        "openai-style api key" => /sk-[A-Za-z0-9_-]{16,}/,
+        "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
         "aws access key id" => /AKIA[0-9A-Z]{16}/,
         "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----/,
         "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
