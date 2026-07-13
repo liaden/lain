@@ -6,11 +6,15 @@ require_relative "../workspace"
 module Lain
   class Context
     # Recalls memory hits into the message tail: a pure function of a frozen
-    # index snapshot and the message list. Ordered AFTER CacheBreakpoints in
-    # the pipeline (context.rb) so today's retrieval never rewrites
-    # yesterday's cached prefix -- the recall block rides the same UNCACHED
-    # SUFFIX Reminder's workspace tail does, landing strictly after the last
-    # neutral marker.
+    # index snapshot and the message list. It is NOT part of the default
+    # pipeline -- `Context.pipeline` is `Reminder >> CacheBreakpoints`, with no
+    # memory index to search -- but an opt-in stage a custom pipeline composes
+    # AFTER CacheBreakpoints (push-recall is a swept axis; the bench decides
+    # whether it earns its tokens). Composed there, today's retrieval never
+    # rewrites yesterday's cached prefix: the recall block rides the same
+    # UNCACHED SUFFIX Reminder's workspace tail does, landing strictly after
+    # the last neutral marker. `Request#prefix_digests` is block-granular
+    # precisely so that displaced marker still computes rather than raising.
     #
     # Query extraction is a pinned rule, not a heuristic: take the text
     # blocks of the last user message, excluding <workspace>-tagged blocks

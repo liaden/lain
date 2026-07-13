@@ -2,6 +2,8 @@
 
 require_relative "../agent"
 require_relative "../channel"
+require_relative "../memory"
+require_relative "../middleware"
 require_relative "../price_book"
 require_relative "../store"
 require_relative "../timeline"
@@ -74,11 +76,16 @@ module Lain
 
       # The Agent shares this replay's journal, so its per-model-call turn_usage
       # records interleave with the live_replay_turn records -- one stream, one
-      # session record (B2 depends on exactly this wiring).
+      # session record (B2 depends on exactly this wiring). The memory stack the
+      # chunk built rides along: JournalMemoryRoot pairs each turn's digest with
+      # the recorder's live root, and RefuseSecretWrites guards a memory_write
+      # in the replayed toolset before it reaches the recorder.
       def build_agent
+        recorder = Memory::Recorder.new
         Agent.new(provider: @provider, toolset: @toolset, context: @context,
                   timeline: Timeline.empty(store: Store.new), workspace: @workspace,
-                  journal: @journal)
+                  journal: Memory::JournalMemoryRoot.new(journal: @journal, recorder: recorder),
+                  tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)]))
       end
 
       def ask_and_record(agent, prompt)

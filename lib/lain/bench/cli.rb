@@ -4,6 +4,7 @@ require_relative "../agent"
 require_relative "../context"
 require_relative "../error"
 require_relative "../journal"
+require_relative "../memory"
 require_relative "../middleware"
 require_relative "../price_book"
 require_relative "../provider/anthropic_raw"
@@ -179,9 +180,20 @@ module Lain
         Session.write(journal, timeline: agent.timeline, context: context, toolset: agent.toolset)
       end
 
+      # The memory stack the chunk built, wired even though these synthetic
+      # tasks carry no memory_write tool yet: a Recorder holds the live root,
+      # JournalMemoryRoot pairs each turn's digest with the root in force when
+      # it rendered (so a later run's recall replays against the exact
+      # snapshot), and RefuseSecretWrites guards the write seam. The raw
+      # `journal` -- not the wrapped one -- backs JournalRequests and
+      # WriteRefused, so those land unpaired; JournalMemoryRoot only decorates
+      # the Agent's own turn_usage stream.
       def build_agent(provider, context, journal)
-        Agent.new(provider: provider, toolset: Toolset.new([]), context: context, journal: journal,
-                  model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal: journal)]))
+        recorder = Memory::Recorder.new
+        Agent.new(provider: provider, toolset: Toolset.new([]), context: context,
+                  journal: Memory::JournalMemoryRoot.new(journal: journal, recorder: recorder),
+                  model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal: journal)]),
+                  tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: journal)]))
       end
     end
   end

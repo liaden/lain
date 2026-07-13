@@ -66,7 +66,11 @@ class LainCLI < Thor
 
   def chat
     channel = Lain::Channel.new
-    toolset = build_toolset
+    # One Recorder backs the memory_write tool for the whole session -- the
+    # single mutable holder of the live Memory::Index, so each write supersedes
+    # the last (its prior root still resolves the old item).
+    recorder = Lain::Memory::Recorder.new
+    toolset = build_toolset(recorder)
     agent = build_agent(toolset: toolset, channel: channel)
     tty = Lain::Frontend::TTY.new(channel: channel)
     repl_middleware = build_repl_middleware
@@ -86,23 +90,30 @@ class LainCLI < Thor
     Lain::Middleware::Stack.new
   end
 
-  def build_toolset
+  def build_toolset(recorder)
     Lain::Toolset.new([
                         Lain::Tools::ReadFile.new,
                         Lain::Tools::ListFiles.new,
+                        Lain::Tools::EditFile.new,
+                        Lain::Tools::TodoWrite.new,
+                        Lain::Tools::MemoryWrite.new(recorder: recorder),
                         Lain::Tools::Bash.new
                       ])
   end
 
   # Approving and Live share ONE Toolset (the single-map invariant the plan
   # calls out): a second Toolset reference here could let the approval gate
-  # and the executor disagree about what a tool name means.
+  # and the executor disagree about what a tool name means. RefuseSecretWrites
+  # sits in the tool phase so a credential-shaped memory_write is withheld
+  # before it ever reaches the recorder (a memory, once indexed, replays into
+  # every future context -- there is no un-indexing it).
   def build_agent(toolset:, channel:)
     live = Lain::Handler::Live.new(toolset: toolset, channel: channel)
     approving = Lain::Handler::Approving.new(policy: approval_policy, inner: live)
     context = Lain::Context.new(model: options[:model], max_tokens: options[:max_tokens])
 
-    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset: toolset, context: context, handler: approving)
+    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset: toolset, context: context, handler: approving,
+                    tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]))
   end
 
   def approval_policy
