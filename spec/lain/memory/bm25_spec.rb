@@ -80,6 +80,15 @@ RSpec.describe Lain::Memory::Bm25 do
       expect(index.search("aspirin dosing")).to eq(index.search("aspirin dosing"))
     end
 
+    # Without k:, EVERY match comes back -- pinned at a scale past any
+    # plausible implicit library default (10 is common), which a four-item
+    # fixture would sail green right through.
+    it "returns the full match set without k:, past any plausible implicit cap" do
+      items = (1..30).map { |n| item(format("note-%02d", n), "Aspirin note #{n}", body: "aspirin fact #{n}") }
+      hits = described_class.new(index: index_over(*items)).search("aspirin")
+      expect(hits.size).to eq(30)
+    end
+
     # Gallant (T8 panel): a u32 token-hash collision inside the crate can
     # score a document above zero with an EMPTY surface intersection. Hit#why
     # raises on blank, so an empty matched-tokens hit must fall back to a
