@@ -32,6 +32,16 @@ blake3 = "1"
 # touch the shared store (see ROADMAP Rust-rule #2 / the M4 speculative work).
 # Chosen over `im`, which has a soundness-advisory history `cargo deny`/`audit` flag.
 rpds = "1"
+# In-memory BM25 retrieval for Memory::Bm25. Pure data-structure work (an
+# inverted index + sparse embeddings over owned `HashMap`s), so it lives
+# in-process here rather than in the out-of-process core. `default-features =
+# false` drops the crate's `default_tokenizer` (and with it `cached`,
+# `stop-words`, `rust-stemmers`, `deunicode`): we supply our own deterministic
+# `SurfaceTokenizer`, which keeps the dep tree to `bm25 -> fxhash -> byteorder`
+# (all MIT/Apache) and -- load-bearing -- keeps `cached`'s interior mutability
+# unreachable so the wrapped index is honestly `frozen_shareable`. Pinned exact
+# (not `*`) to satisfy `cargo deny`'s wildcard ban; v2.x is MIT.
+bm25 = { version = "=2.3.2", default-features = false }
 # Insertion-ordered map used while canonicalizing an object: keys are collected
 # in wire order, a second occurrence of a collapsed key is the ambiguous-key
 # error, and `sort_keys` then gives the deterministic ordering `Canonical.dump`

@@ -3,6 +3,11 @@ targets = []
 
 [advisories]
 version = 2
+# RUSTSEC-2025-0057: fxhash is unmaintained -- an informational advisory only,
+# no CVE. It is bm25's non-optional deterministic token hasher, and that
+# determinism is exactly what the bench's byte-identical retrieval requires.
+# Revisit if bm25 upstream migrates hashers or a real vulnerability lands.
+ignore = ["RUSTSEC-2025-0057"]
 
 [licenses]
 version = 2

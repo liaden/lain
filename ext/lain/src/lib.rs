@@ -7,6 +7,7 @@
 
 use tracing_subscriber::EnvFilter;
 
+mod bm25;
 mod canonical;
 mod dag;
 mod turn;
@@ -946,6 +947,107 @@ mod ffi {
         }
     }
 
+    /// A String or Symbol id/text field of a build pair, coerced to UTF-8. Ids
+    /// arrive as Ruby Strings (a memory item's id); Symbols are accepted for the
+    /// same reason `read_role` accepts them. Anything else is a loud type error.
+    fn read_pair_field(ruby: &Ruby, value: Value, what: &str) -> Result<String, Error> {
+        match coerce_text(ruby, value)? {
+            Some(text) => Ok(text),
+            None => {
+                // SAFETY: see ruby_to_canon; no Ruby code runs meanwhile.
+                let class = unsafe { value.classname() }.into_owned();
+                Err(Error::new(
+                    ruby.exception_type_error(),
+                    format!("{what} must be a String or Symbol, got a {class}"),
+                ))
+            }
+        }
+    }
+
+    /// A frozen, immutable BM25 index. Wraps only `Arc<crate::bm25::Bm25Index>`
+    /// -- no reachable Ruby object and, per the interior-mutability audit in
+    /// `bm25.rs`, no `Cell`/`RefCell`/`Mutex`/lazy cache in any crate type it
+    /// reaches (the one such source, the `cached`-memoized default tokenizer, is
+    /// feature-disabled) -- so `frozen_shareable` is honest once frozen, exactly
+    /// as it is for `Turn`.
+    #[derive(TypedData)]
+    #[magnus(class = "Lain::Ext::Bm25", free_immediately, frozen_shareable)]
+    struct Bm25 {
+        inner: Arc<crate::bm25::Bm25Index>,
+    }
+
+    impl DataTypeFunctions for Bm25 {}
+
+    impl Bm25 {
+        fn wrap(ruby: &Ruby, inner: Arc<crate::bm25::Bm25Index>) -> Obj<Self> {
+            let obj = ruby.obj_wrap(Bm25 { inner });
+            obj.freeze();
+            obj
+        }
+
+        /// `Lain::Ext::Bm25.build(pairs)` -- one batch crossing of the FFI
+        /// boundary. `pairs` is an Array of `[id, text]` two-element Arrays.
+        /// Degenerate batches raise the named `Bm25::EmptyCorpus` /
+        /// `Bm25::DuplicateId` errors from the pure builder.
+        fn build(ruby: &Ruby, pairs: RArray) -> Result<Obj<Self>, Error> {
+            let mut batch: Vec<(String, String)> = Vec::with_capacity(pairs.len());
+            for pair_value in pairs.into_iter() {
+                let pair = RArray::from_value(pair_value).ok_or_else(|| {
+                    Error::new(
+                        ruby.exception_type_error(),
+                        "each pair must be a [id, text] Array",
+                    )
+                })?;
+                if pair.len() != 2 {
+                    return Err(Error::new(
+                        ruby.exception_arg_error(),
+                        format!("each pair must be [id, text], got {} elements", pair.len()),
+                    ));
+                }
+                let id = read_pair_field(ruby, pair.entry(0)?, "id")?;
+                let text = read_pair_field(ruby, pair.entry(1)?, "text")?;
+                batch.push((id, text));
+            }
+            match crate::bm25::Bm25Index::build(batch) {
+                Ok(index) => Ok(Bm25::wrap(ruby, Arc::new(index))),
+                Err(crate::bm25::BuildError::EmptyCorpus) => Err(ext_error(
+                    ruby,
+                    "Bm25",
+                    "EmptyCorpus",
+                    "cannot build a BM25 index from an empty corpus".to_string(),
+                )),
+                Err(crate::bm25::BuildError::DuplicateId(id)) => Err(ext_error(
+                    ruby,
+                    "Bm25",
+                    "DuplicateId",
+                    format!("duplicate document id {id:?}"),
+                )),
+            }
+        }
+
+        /// `#search(query, k)` -> up to `k` `[id, score, matched_tokens]` triples,
+        /// ranked by descending score with insertion-order tie-breaking. One FFI
+        /// crossing: the whole ranked result is built into a single frozen Array.
+        fn search(ruby: &Ruby, rb_self: &Bm25, query: String, k: usize) -> Result<RArray, Error> {
+            let hits = rb_self.inner.search(&query, k);
+            let out = ruby.ary_new_capa(hits.len());
+            for (id, score, matched) in hits {
+                let triple = ruby.ary_new_capa(3);
+                triple.push(frozen_str(ruby, &id))?;
+                triple.push(ruby.float_from_f64(f64::from(score)))?;
+                let tokens = ruby.ary_new_capa(matched.len());
+                for token in matched {
+                    tokens.push(frozen_str(ruby, &token))?;
+                }
+                tokens.freeze();
+                triple.push(tokens.as_value())?;
+                triple.freeze();
+                out.push(triple)?;
+            }
+            Ok(out)
+        }
+    }
+
     #[magnus::init]
     fn init(ruby: &Ruby) -> Result<(), Error> {
         let module = ruby.define_module("Lain")?;
@@ -968,6 +1070,12 @@ mod ffi {
             .const_get::<_, RModule>("Lain")
             .and_then(|m| m.const_get::<_, ExceptionClass>("Error"))
             .unwrap_or_else(|_| ruby.exception_standard_error());
+
+        let bm25 = ext.define_class("Bm25", ruby.class_object())?;
+        bm25.define_error("EmptyCorpus", lain_error)?;
+        bm25.define_error("DuplicateId", lain_error)?;
+        bm25.define_singleton_method("build", function!(Bm25::build, 1))?;
+        bm25.define_method("search", method!(Bm25::search, 2))?;
 
         let turn = ext.define_class("Turn", ruby.class_object())?;
         turn.define_error("InvalidRole", lain_error)?;
