@@ -149,6 +149,19 @@ RSpec.describe Lain::Memory::Manifest do
     end
   end
 
+  # Manifest is the always-runs floor -- the cross-impl contract in
+  # memory_index_laws.rb also binds Memory::Bm25 (spec/lain/memory/bm25_spec.rb),
+  # so a richer index can never regress what this baseline guarantees.
+  describe "as a memory search index" do
+    include_examples "a memory search index",
+                     build: lambda { |corpus|
+                       manifest_over(*corpus.map { |id, description, _body|
+                         item(id, description)
+                       })
+                     },
+                     search: ->(idx, query, k) { idx.search(query).first(k) }
+  end
+
   describe "Hit" do
     def hit(id: "a", description: "alpha", score: 0.5, why: "matched alpha")
       described_class::Hit.new(id: id, description: description, score: score, why: why)
