@@ -37,7 +37,8 @@ module Lain
           digest: request.digest,
           payload: request.cache_payload,
           stream: request.stream,
-          extra: request.extra
+          extra: request.extra,
+          prefix_digests: request.prefix_digests
         )
         downstream(env, &app)
       end

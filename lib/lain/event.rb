@@ -135,17 +135,25 @@ module Lain
     # n-turn session journals O(n^2) payload bytes. Accepted while sessions are
     # short; if it bites, the fix is content-addressed dedupe (journal digests,
     # store the blocks once), not trimming the record.
-    RequestSent = Data.define(:digest, :payload, :stream, :extra) do
+    #
+    # `prefix_digests` is the request's own CE-2 digest chain --
+    # `Request#prefix_digests`, `[[position, digest], ...]` -- carried
+    # alongside rather than recomputed from `payload`, since recomputation
+    # would need the ORIGINAL Request object this record was built from, not
+    # the JSON-shaped payload Hash. Defaults to an empty chain so every caller
+    # built before this field existed still constructs unchanged.
+    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests) do
       include Journalable
 
-      def initialize(digest:, payload:, stream:, extra:)
+      def initialize(digest:, payload:, stream:, extra:, prefix_digests: [])
         raise ArgumentError, "stream must be true or false, got #{stream.inspect}" unless [true, false].include?(stream)
 
         super(
           digest: digest.dup.freeze,
           payload: Canonical.normalize(payload),
           stream: stream,
-          extra: Canonical.normalize(extra)
+          extra: Canonical.normalize(extra),
+          prefix_digests: Canonical.normalize(prefix_digests)
         )
       end
     end

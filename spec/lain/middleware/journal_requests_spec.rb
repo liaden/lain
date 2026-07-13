@@ -62,6 +62,15 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect(event.extra).to eq("service_tier" => "flex")
     end
 
+    it "carries the request's own digest chain as position/digest pairs" do
+      sent = request("hello", system: [{ "type" => "text", "text" => "sys", "cache" => true }])
+      middleware.call({ request: sent }) { |env| env }
+
+      event = journal.events.first
+      expect(event.prefix_digests).to eq(sent.prefix_digests)
+      expect(event.prefix_digests).not_to be_empty
+    end
+
     # Record-before-dispatch is a semantic, not an implementation accident: a
     # provider call that raises was still ATTEMPTED, and replay must see the
     # attempt. A request_sent with no following turn_usage is how a failed
@@ -100,6 +109,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
         expect(event.digest).to eq(sent.digest)
         expect(event.stream).to eq(sent.stream)
         expect(event.extra).to eq(sent.extra)
+        expect(event.prefix_digests).to eq(sent.prefix_digests)
       end
       # The two calls carry different messages, so matching digests in zip order
       # is what proves the records landed in CALL order, not merely both landed.

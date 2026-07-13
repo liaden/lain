@@ -174,6 +174,37 @@ RSpec.describe Lain::Event do
         .to raise_error(ArgumentError, /stream/)
     end
 
+    describe "#prefix_digests" do
+      it "defaults to an empty chain, so every existing caller needs no change" do
+        expect(event.prefix_digests).to eq([])
+      end
+
+      it "carries the digest chain the caller passed, normalized to canonical wire form" do
+        chained = described_class.new(digest: request.digest, payload: request.cache_payload,
+                                      stream: request.stream, extra: request.extra,
+                                      prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]])
+        expect(chained.prefix_digests).to eq([[-1, "blake3:sys"], [0, "blake3:m0"]])
+        expect(chained.prefix_digests).to be_frozen
+      end
+
+      it "is Ractor-shareable with a populated chain" do
+        chained = described_class.new(digest: request.digest, payload: request.cache_payload,
+                                      stream: request.stream, extra: request.extra,
+                                      prefix_digests: [[0, "blake3:m0"]])
+        expect(Ractor.shareable?(chained)).to be(true)
+      end
+
+      it "journals as position/digest pairs that round-trip through JSON" do
+        chained = described_class.new(digest: request.digest, payload: request.cache_payload,
+                                      stream: request.stream, extra: request.extra,
+                                      prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]])
+        expect(chained.to_journal).to include("prefix_digests" => [[-1, "blake3:sys"], [0, "blake3:m0"]])
+        expect(JSON.parse(JSON.generate(chained.to_journal))).to include(
+          "prefix_digests" => [[-1, "blake3:sys"], [0, "blake3:m0"]]
+        )
+      end
+    end
+
     # The one silent failure mode: Request grows a third digest-excluded
     # transport field (a sibling of stream/extra), the digest still matches,
     # every spec stays green, and the field vanishes from recorded sessions.
