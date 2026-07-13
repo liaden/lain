@@ -175,8 +175,19 @@ RSpec.describe Lain::Event do
     end
 
     describe "#prefix_digests" do
-      it "defaults to an empty chain, so every existing caller needs no change" do
-        expect(event.prefix_digests).to eq([])
+      # nil = not computed; [] = computed, zero markers. The offline rewrite
+      # projection (T4) needs that distinction on the wire, so absence is a
+      # value here, not a missing Null Object.
+      it "defaults to nil, meaning the chain was never computed" do
+        expect(event.prefix_digests).to be_nil
+      end
+
+      it "journals a nil default as null and an explicit empty chain as [], distinguishably" do
+        computed_empty = described_class.new(digest: request.digest, payload: request.cache_payload,
+                                             stream: request.stream, extra: request.extra,
+                                             prefix_digests: [])
+        expect(JSON.generate(event.to_journal)).to include('"prefix_digests":null')
+        expect(JSON.generate(computed_empty.to_journal)).to include('"prefix_digests":[]')
       end
 
       it "carries the digest chain the caller passed, normalized to canonical wire form" do

@@ -137,15 +137,20 @@ module Lain
     # store the blocks once), not trimming the record.
     #
     # `prefix_digests` is the request's own CE-2 digest chain --
-    # `Request#prefix_digests`, `[[position, digest], ...]` -- carried
-    # alongside rather than recomputed from `payload`, since recomputation
-    # would need the ORIGINAL Request object this record was built from, not
-    # the JSON-shaped payload Hash. Defaults to an empty chain so every caller
-    # built before this field existed still constructs unchanged.
+    # `Request#prefix_digests`, `[[position, digest], ...]`, where position -1
+    # (`Request::SYSTEM_PREFIX`) names a marker in the system blocks and
+    # message indices are always >= 0 -- carried alongside rather than
+    # recomputed from `payload`, since recomputation would need the ORIGINAL
+    # Request object this record was built from, not the JSON-shaped payload
+    # Hash. Defaults to nil, meaning NOT COMPUTED: a caller that never asked
+    # for the chain journals `null`, while a computed chain over a marker-free
+    # request journals `[]`. An offline rewrite projection must not read
+    # "nobody measured" as "zero markers", so absence IS the signal here --
+    # nil is a value, not a missing Null Object.
     RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests) do
       include Journalable
 
-      def initialize(digest:, payload:, stream:, extra:, prefix_digests: [])
+      def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil)
         raise ArgumentError, "stream must be true or false, got #{stream.inspect}" unless [true, false].include?(stream)
 
         super(
