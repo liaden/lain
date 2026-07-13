@@ -1,0 +1,502 @@
+.. rubric:: Abstract
+
+Existing works on long-term open-domain dialogues focus on evaluating model responses within contexts spanning no more than five chat sessions. Despite advancements in long-context large language models (LLMs) and retrieval augmented generation (RAG) techniques, their efficacy in *very* long-term dialogues remains unexplored.
+To address this research gap, we introduce a machine-human pipeline to generate high-quality, *very* long-term dialogues by leveraging LLM-based agent architectures and grounding their dialogues on personas and temporal event graphs. Moreover, we equip each agent with the capability of sharing and reacting to images. The generated conversations are verified and edited by human annotators for long-range consistency and grounding to the event graphs. Using this pipeline, we collect , a dataset of *very* long-term conversations, each encompassing 300 turns and 9K tokens on avg., over up to 35 sessions. Based on , we present a comprehensive evaluation benchmark to measure long-term memory in models, encompassing question answering, event summarization, and multi-modal dialogue generation tasks. Our experimental results indicate that LLMs exhibit challenges in understanding lengthy conversations and comprehending long-range temporal and causal dynamics within dialogues. Employing strategies like long-context LLMs or RAG can offer improvements but these models still substantially lag behind human performance. []
+
+^†Equal advising.
+
+Introduction
+------------
+
+-4pt
+
+	0.99!
+
+| **Dataset** | **Avg. turns per conv.** | **Avg. sessions per conv.** | **Avg. tokens per conv.** | **Time Interval** | **Multimodal** | **Collection** |
+| MPChat [ahn2023mpchat]_ | 2.8 | 1 | 53.3 | - | 51 | Reddit |
+| MMDialog [feng2023mmdialog]_ | 4.6 | 1 | 72.5 | - | 51 | Social media |
+| Daily Dialog [li2017dailydialog]_ | 7.9 | 1 | 114.7 | - | 55 | Crowdsourcing |
+| SODA [kim-etal-2023-soda]_ | 7.6 | 1 | 122.4 | - | 55 | LLM-generated |
+| MSC [xu2022beyond]_ (train; 1-4 sessions) | 53.3 | 4 | 1,225.9 | few days | 55 | Crowdsourcing |
+| Conversation Chronicles [jang2023conversation]_ | 58.5 | 5 | 1,054.7 | few hours - years | 55 | LLM-generated |
+| **(ours)** | 304.9 | 19.3 | 9,209.2 | few months | 51 | LLM-gen. + crowdsourc. |
+
+**Statistics of** compared to existing dialog datasets. The average length of a conversation in is 9x that of MSC [xu2022beyond]_, distributed over 6x more turns and 4x more sessions (on average).
+
+Despite recent advancements in dialogue models based on LLMs for extended contexts [bertsch2024unlimiformer]_ [xiao2023efficient]_, as well as the integration of retrieval augmented generation (RAG) techniques [shuster2021retrieval]_ [ram2023context]_ [shi2023replug]_, there is still a need for thorough evaluation of their efficacy in handling very long conversations. Indeed, studies in long-term open-domain dialogues have concentrated on assessing model responses within limited contexts e.g., ~1K tokens over five chat sessions [xu2022beyond]_ [jang2023conversation]_ [zhang2023mind]_. This long term evaluation is crucial for refining engaging chatbots capable of remembering key information from past interactions, to generate empathetic, consistent, and useful responses.
+
+To this end, we present the first study of very long-term open-domain multi-modal dialogues, closely mirroring real-world online interactions, collected via a human-machine pipeline where we first use LLM-based generative agents to generate conversations and then ask human annotators to fix any long-term inconsistencies in the conversations.
+Specifically, drawing on the understanding that real-world conversations are a complex blend of collective memories [assmann1995collective]_ [hirst2008towards]_, individual viewpoints [hirst2018collective]_, external influences [hirst2012remembering]_, and the unique persona of the speakers [pruitt2003personas]_ [cooper1999inmates]_ [zhou2020design]_ [shum2019sketch]_, we create *very long-term* dialogues based on LLM agent with the following features:
+(1) a unique persona (ssec:dataset-persona);
+(2) a timeline of causally interlinked events in their lives (ssec:temporal-event); and (3) *reflect & response* mechanism to respond based on dialogue history (like in  [park2023generative]_) and *image sharing & image reaction* behavior which sends or reacts to images (ssec:llm-agent). Finally, human annotators fix long-range inconsistencies in dialogues, remove irrelevant images, and verify the grounding of dialogs to events (ssec:manual-filter). With this pipeline, we create , a dataset of 50 *very long-term* dialogues, each consisting of 300 turns and 9K tokens on avg., over up to 35 sessions (see Figure intro and Table compare datasets).
+
+Conventional approaches for evaluating conversational agents in open-domain dialogues involves directly evaluating the agent response based on past dialogue history.
+It often employs lexical overlap [papineni-etal-2002-bleu]_ and semantic overlap [zhang2019bertscore]_ between ground truth and the agent response, or consistency [ghazarian2022deam]_, contradiction [nie2021like]_ [welleck2019dialogue]_, and empathy [zhang2021dynaeval]_ [zhang2022fined]_ of the agent response. However, these evaluation metrics are not well-suited for directly assessing the agent's comprehension of long-term contexts.
+
+In this study, we present a holistic evaluation framework to assess an agent's proficiency in managing and responding within long-term contexts (see Figure eval-framework). First, agents need to “recall” past context correctly to integrate relevant information into future responses. We present a direct examination of their *memory* via a *question answering* (QA) task (ssec:benchmark-qa). We classify questions into five distinct reasoning types to evaluate memory from multiple perspectives: single-hop, multi-hop, temporal, commonsense or world knowledge, and adversarial. Second, agents also need to recognize long-range causal and temporal connections in the dialogues to generate empathetic and relevant responses.
+We propose a measurement of their causal and temporal understanding with an *event graph summarization* task (ssec:benchmark-event). In this task, the event graphs linked to each LLM speaker serve as the correct answers, and models are tasked with extracting this information from the conversation history. Third, conversational agents need to utilize relevant context recalled from past conversations to generate responses that are consistent with the ongoing narrative. We assess this ability via the *multi-modal dialog generation* task (ssec:benchmark-mm).
+
+We present extensive experimental results on the benchmark using instruction-based LLMs, long-context LLMs, and RAG techniques (sec:baselines).
+Our findings include:
+
+(1) Long-context LLMs and RAG demonstrate effectiveness in QA tasks, improving `memory' capabilities of LLMs (with improvements ranging from 22-66%), but still significantly lag behind human levels (by 56%), especially in temporal reasoning, (by 73%);
+
+(2) long-context LLMs demonstrate significant difficulty with adversarial questions in the QA task, showing a performance that is 83% lower than the base model. They are especially prone to misassigning dialogs or events to the wrong speaker.
+Moreover, they show poor performance on *event graph summarization*, lagging behind the base model by 14%, indicating that they may grasp the factual elements within the entire conversation but do not accurately comprehend the context; and
+
+(3) RAG offers a balanced compromise, combining the accuracy of short-context LLMs with the extensive comprehension of wide-context LLMs, and does particularly well when dialogues are transformed into a database of assertions (*observations*) about each speaker's life and persona.
+
+Related Work
+------------
+
+""""
+
+Long-term Dialogue.
+Recent approaches involve retrieving historical context from a range of previous dialogues and reasoning over retrieved segments in a temporal order [lee2023prompted]_ [lu2023memochat]_ [zhong2023memorybank]_ [liang2023unleashing]_ and/or using events to scaffold the dialogues [jang2023conversation]_ [zhang2023mind]_ to enable consistency in long-term conversations. Some limitations of such frameworks are:
+(1) The accuracy of retrieval can be compromised, as the retrieval model is generally trained on tasks focusing on semantic similarity rather than specifically on such dialogues.
+Additionally, real-world dialogues often feature co-references and missing content (*i.e.,* anaphora) [anantha2021open]_, which further complicate the retrieval process [mallen-etal-2023-trust]_ [gao2023enabling]_ [liu2023evaluating]_;
+(2) Challenges arise in reasoning over retrieved documents, especially when the model struggles to identify the correct context among the retrieved data [liu2023lost]_;
+(3) Reasoning over time intervals presents challenges. For example, the way a system responds about past events can vary depending on the amount of time that has passed since the last conversation [zhang2023mind]_ [jang2023conversation]_.
+Therefore, it is essential to have conversations of considerable length, as well as a systematic evaluation framework, to accurately assess the effectiveness of approaches to long-term dialogue generation. We design a long-term conversation generation pipeline based on retrieval augmentation and events graphs and propose a framework for evaluating long-term dialog agents.
+
+""""
+
+Multi-modal Dialogue.
+Multi-modal dialogue primarily consists of two types of tasks: image-grounded dialogue and image-sharing dialogue.
+The image-grounded dialogue task is centered around responding to questions [antol2015vqa]_ [das2017visual]_ [kottur2019clevr]_ or creating natural conversations related to specific images [mostafazadeh2017image]_ [shuster2020image]_ [meng2020openvidial]_ [zheng2021mmchat]_.
+Conversely, the image-sharing dialogue task focuses on selecting images that semantically align with the provided dialogue context [zang2021photochat]_ [feng2023mmdialog]_ [lee2023dialogcc]_. We use a method from the image-sharing dialogue task to create multimodal dialogs which are then evaluated as an image-grounded dialogue task.
+
+""""
+
+Synthetic Evaluation Benchmark.
+Faced with a shortage of human-generated data and observing that LLMs are approaching the quality of human-level annotations [he2023annollm]_ [lee-etal-2023-making]_, there has been a surge in research drawing inspiration from this development.
+Consequently, numerous studies have started utilizing LLMs to augment or synthesize large-scale dialogue benchmarks for assessing responses in everyday social interactions [kim-etal-2023-soda]_, examining responses in multi-modal environment [feng2023mmdialog]_, and evaluating responses that align with specific persona [jandaghi2023faithful]_. We leverage LLMs to create data but ensure its high quality with human verification and editing.
+
+Generative Pipeline for
+-----------------------
+
+An overview of our generative pipeline for is shown in Figure main.
+We create two virtual agents,
+named \mathcalL_1 and \mathcalL_2, each initialized with a LLM \mathcalM (*i.e.,* ``gpt-3.5-turbo``).
+To start, unique persona statements p are assigned to each agent \mathcalL_i, ensuring the integration of distinct personalities into their dialogues (ssec:dataset-persona).
+To mirror real-life experiences, we create a temporal event graph \mathcalG for each agent, which illustrates a realistic sequence of life events (ssec:temporal-event).
+The LLM agent architecture [park2023generative]_ is utilized for each agent \mathcalL_i, enabling them to effectively memorize and reflect conversation history into ongoing dialogues (ssec:llm-agent).
+Further, each agent \mathcalL_i can share coherent images, thereby enhancing the multi-modal dialogue aspect.
+Finally, human annotators are tasked with manually filtering and refining the generated data (ssec:manual-filter).
+
+Persona
+~~~~~~~
+
+We select an initial persona statement p_c from the MSC dataset [xu2022beyond]_, encompassing 4 to 5 sentences,
+and employ ``gpt-3.5-turbo`` as \mathcalM to expand these into full persona statement p (See examples and prompt details in Appendix persona appendix). The generated statements typically include details about one or more of the following elements [gao2023peacok]_: objectives, past experiences, daily habits, and interpersonal relationships, as well as name, age, and gender of the individual.
+
+Temporal Event Graph
+~~~~~~~~~~~~~~~~~~~~
+
+To utilize the real-life experiences of each agent in the conversation, we construct a temporal event graph, labeled as \mathcalG, for each agent.
+This graph \mathcalG, consisting of events e_i, is produced by applying the condition of \mathcalM (i.e., ``text-davinci-003``) on a designated persona p. Each event e_i is associated with a date of occurrence t_i.
+\mathcalG includes causal connections l = (e_i, e_j) that illustrate the causal relationships among events e_i ∈ \mathcalG and reflect a natural succession of events in an individual's life. For each \mathcalG, we create up to 25 events, spread across a time frame of 6 to 12 months, in an iterative process that balances between inference time and the coherence of temporal and causal connections in the timeline. Initially, a small batch of k=3 events is generated, which is then used iteratively as input prompt to create the subsequent batch of k events. See details in Appendix event appendix.
+
+Virtual Agent Architecture
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every agent \mathcalL_i incorporates modules from generative agent architecture [park2023generative]_.
+The agent has two functions: (1) *reflect & respond*; and (2) *image sharing & image reaction*.
+The agent is asked to primarily use the *reflect & respond* function while employing *image sharing & image reaction* function judiciously and appropriately within the context of the conversation.
+
+""""
+
+Reflect & Respond.
+The fundamental process for each agent to *reflect and respond* involves the concept of short-term and long-term memory.
+During inference, agent \mathcalL_i conditions its responses on both short and long-term memories, paralleling how humans remember recent conversations while also recalling distilled important experiences from long-term memory. Following each session k, each agent is asked to produce a summary w_k that is then stored in the short-term \mathcalH_s. This summary w_k is generated by conditioning \mathcalM on both the most recent session conversation history h_k and the preceding summary w_k-1 ∈ \mathcalH_l. For each turn j within session k, a single turn of the conversation h_k_j is transformed into an observation o_k_j and then stored in the long-term memory \mathcalH_l. Then, agent \mathcalL_i generates a response in session k+1 on the date t_k+1^s by basing it on the latest summary w_k, reflections based on the retrieved relevant observations o ∈ \mathcalH_s, the ongoing conversation history in the current session h_k+1 and persona statement p. Long-term temporal narratives are induced in the conversation by additionally conditioning the agent's response on the subset of events in \mathcalG that occur between the last and current session i.e. e∈\mathcalG | t_k^s < t_i^e < t_k+1^s . See details in Appendix agent appendix.
+
+""""
+
+Image Sharing & Image Reaction.
+The *image sharing & image reaction* functions are integrated to add a multi-modal dimension to the long-term dialogues. []
+The *image sharing* function is called when the agent decides to send an image. This process includes:
+(1) Generate a caption c for the intended image using \mathcalM;
+(2) Convert the caption c into relevant keywords w using \mathcalM;
+(3) Use the keywords k to find an image through web search WEB(k) [];
+(4) Share the chosen image.
+Conversely, the *image reaction* function is triggered upon receiving an image from another agent and entails:
+(1) Generate caption c for the received image [];
+(2) Generate a reaction for the received image in response using \mathcalM (See Appendix agent appendix).
+
+Human Verification & Editing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In the concluding phase, human annotators are tasked with (1) editing the dialogue to eliminate long-term inconsistencies, (2) removing or substituting irrelevant images, and (3) verifying and editing for alignment between event graphs and the content of the conversations. Overall, we observed that annotators edited nearly 15% of the dialog turns and removed or substituted approx. 19% images present in the LLM-generated dataset. See examples of some edits in Appendix edits appendix.
+
+Evaluation Benchmark
+--------------------
+
+Based on the dialogues generated in section dataset, we introduce an evaluation benchmark (see Figure eval-framework) composed of three tasks to assess the accuracy of *long-term memory*. See statistics of the dataset and evaluation benchmark in Table dataset statistics in the Appendix.
+
+Question Answering Task
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A conversational agent is expected to possess a *memory* to remember previous dialogues, reflecting it to create more engaging responses in future conversations.
+For a comprehensive assessment of this *memory*, we introduce a question-answering task divided into five distinct reasoning categories:
+(1) **Single-hop** questions require answers based on a single session;
+(2) **Multi-hop** questions require synthesizing information from multiple different sessions;
+(3) **Temporal reasoning** questions can be answered through temporal reasoning and capturing time-related data cues within the conversation;
+(4) **Open-domain knowledge** questions can be answered by integrating a speaker's provided information with external knowledge such as commonsense or world facts;
+(5) **Adversarial** questions are designed to trick the agent into providing wrong answers, with the expectation that the agent will correctly identify them as unanswerable.
+
+For each category, we calculate the F1 score for exact matches, following the normalization of both the predicted and the actual ground truth answers.
+However, evaluating long-form answers with automated metrics often presents challenges [xu2023critical]_. LLMs tend to produce paraphrased responses in varied formats, complicating exact match evaluation. To simplify evaluation in our task, we ensure that answers in our QA annotations are directly taken from the conversations as much as possible. We instruct the LLMs to replicate the exact wording in the conversation when feasible and employ the F1 partial match metric for evaluating the predictions. Each QA sample is also annotated with the turn IDs in the conversation logs that contain the answer. We report the accuracy of retrieving the correct context for RAG models.
+
+Event Summarization Task
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The conversation is generated based on a temporal event graph \mathcalG which is constructed by conditioning an LLM on a persona statement p, reflecting the chronological sequence of events in an individual's life.
+A conversational agent is expected to not only comprehend the causal connections and the sequence of events in \mathcalG but also to recount these events as required.
+To evaluate the agent's grasp of event dynamics, we introduce the event summarization task which challenges the agent to summarize the events within a designated timeframe and compares the agent's summary with events in \mathcalG. The events in are densely annotated lists of life events that are hard to summarize due to temporal and causal coreferences present in the dialogues, in contrast to existing summarization benchmarks of research papers [li2023loogle]_, movie scripts [chen2022summscreen]_, books [kryscinski2022booksum]_, emails [zhang2021emailsum]_ etc.
+
+Traditional metrics like BLEU [papineni-etal-2002-bleu]_ and ROGUE [lin-2004-rouge]_ focus on lexical similarity between the reference and generated summaries, not meeting our needs as we emphasize factual accuracy in summarization.
+In this context, we employ FactScore [min2023factscore]_, a method that evaluates the factuality of generated text by decomposing both the reference and hypothesis into atomic facts.
+We adapt the metric to measure
+(1) *precision* of the summarized content by counting the number of atomic facts within the content that correspond with those in \mathcalG;
+(2) *recall* of the summarized content by determining how comprehensively the atomic facts of \mathcalG are represented within the content.
+We present the F1 score, derived from the calculated precision and recall.
+
+Multi-Modal Dialogue Generation Task
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The conversations in our dataset are anchored to specific personas p and corresponding events \mathcalG tailored to p.
+The topics in conversations evolve from events that were introduced in earlier dialogues, spanning weeks or months.
+This structure allows for an assessment of whether conversational agents can sustain a coherent persona and a continuous narrative over time.
+For example, if a speaker recently had an injury, the next conversations would likely focus on them recuperating, rather than engaging in adventurous activities.
+We assess such consistency by measuring how closely the predicted multi-modal dialogues align with the ground truth multi-modal dialogues in our dataset, quantifying this alignment through MMRelevance [feng2023mmdialog]_, in addition to other NLG metrics.
+
+Experimental Setup
+------------------
+
+For the question-answering and event summarization tasks, we replace images in with their captions [li2023blip]_, and use state-of-art LLMs to reason over text-only dialogues interleaved with image captions. We use images directly for the multimodal dialog generation task only. See additional details in Appendix experiments appendix.
+
+""""
+
+Question Answering.
+We evaluate three types of models:
+(1) **Base** LLMs operating with constrained context lengths where earlier dialogues are omitted i.e., Mistral-7B [jiang2023mistral]_, LLama-70B-chat [touvron2023llama]_, ``gpt-3.5-turbo``  [], and ``gpt-4-turbo``  [];
+(2) **Long-context** LLMs with an extended context window i.e., ``gpt-3.5-turbo-16k``;
+(3) **Retrieval-augmented Generation (RAG)** involves retrieving relevant context from a database of dialog history, observations (assertions about speakers; see ssec:llm-agent, Figure observation prompt), or session-level summaries (see ssec:llm-agent, Figure summary prompt). We employ DRAGON [lin-etal-2023-train]_ as retriever and ``gpt-3.5-turbo-16k`` as reader.
+
+""""
+
+Event Summarization.
+We present experiments using **Base** and **Long-context** setups from the question-answering task, but refrain from including RAG since summarization requires a comprehensive understanding of the entire dialogue, rather than just retrieving a specific portion. We implement incremental summarization i.e., iteratively create a summary of a preceding sessions and then use that summary as a basis to summarize the subsequent sessions [chang2023booookscore]_.
+
+""""
+
+Multi-modal Dialogue Generation.
+We generate 50 conversations using our automated pipeline (without human filtering; sec:dataset) for training data and train three versions of MiniGPT-5 [zheng2023minigpt]_:
+(1) **Base** trains on prior dialogue turns only;
+(2) **+ summary** trains on prior dialogue turns and a global summary of the ongoing conversation;
+(3) **+ observation** trains on prior dialogue turns and observations retrieved from conversation history.
+Each run is initialized with a MiniGPT-5 checkpoint finetuned on MMDialog [feng2023mmdialog]_.
+
+	0.99!
+
+| **Category** | **Model** | **Context Length** | **Answer Prediction (F1)** |
+| | | | Single Hop | Multi Hop | Temporal | Open Domain | Adversarial | **Overall** |
+| blue!20 Human | Human | - | 95.1 | 85.8 | 92.6 | 75.4 | 89.4 | 87.9 |
+| Base | ``Mistral-Instruct-7B`` | 8K | 10.2 | 12.8 | 16.1 | 19.5 | 17.0 | 13.9 |
+| | ``Llama-2-Chat-70B`` | 4,096 | 19.7 | 14.4 | 13.3 | 15.9 | 22.1 | 17.9 |
+| | ``GPT-3.5-turbo`` | 4,096 | **29.9** | 23.3 | **17.5** | **29.5** | 12.8 | 22.4 |
+| | ``GPT-4-turbo`` | 4,096 | 23.4 | **23.4** | 10.4 | 24.6 | **70.2** | **32.1** |
+| Long context | ``GPT-3.5-turbo-16K`` | gray!25 4K | 31.7 | 25.4 | 16.8 | 27.6 | **13.1** | 24.1 |
+| | | gray!40 8K | 38.8 | 31.2 | 21.0 | 35.0 | 8.4 | 25.2 |
+| | | gray!60 12K | 51.1 | 40.4 | **25.0** | 36.5 | 6.4 | 33.5 |
+| | | gray!75 16K | **56.4** | **42.0** | 20.3 | **37.2** | 2.1 | **37.8** |
+
+**Question answering performance** of ``Base`` and ``Long-context`` models. Optimal performance is in **bold**. Results are based on F1-score for answer prediction; higher is better.
+
+	0.99!
+
+| | | **Answer Prediction (F1 score)** | | **Recall Accuracy (R@k)** |
+| **Retrieval Unit** | **top-k** | Single Hop | Multi Hop | Temporal | Open Domain | Adver- -sarial | **Overall** | Single Hop | Multi Hop | Temporal | Open Domain | Adver- -sarial | **Overall** |
+| ``None`` | - | 29.9 | 23.3 | 17.5 | 29.5 | 12.8 | 22.4 | - | - | - | - | - | - |
+| ``Dialog`` | gray!30 5 | 42.9 | 19.4 | 21.3 | 35.8 | 31.9 | 31.7 | 66.2 | 34.4 | 89.2 | 38.5 | 45.7 | 58.8 |
+| | gray!45 10 | 46.3 | 26.8 | 24.8 | 37.5 | **29.8** | 34.6 | 72.8 | 247.4 | 97.3 | 53.8 | 54.3 | 67.5 |
+| | gray!60 25 | 48.1 | 36.1 | **26.2** | **43.4** | 23.4 | **35.8** | 87.5 | 64.1 | **97.3** | **67.9** | 69.1 | 79.9 |
+| | gray!75 50 | **50.9** | **37.2** | 24.6 | 38.3 | 17.0 | 34.8 | **90.4** | **75.5** | 97.3 | 67.9 | **77.7** | **84.8** |
+| ``Observation`` | gray!30 5 | 44.3 | 30.6 | 41.9 | 40.2 | **44.7** | **41.4** | 52.9 | 40.1 | 81.1 | 38.5 | 29.8 | 49.6 |
+| | gray!45 10 | 42.2 | 30.5 | **42.1** | 41.9 | 36.2 | 38.8 | 57.4 | 53.1 | **83.8** | 46.2 | 41.5 | 57.1 |
+| | gray!60 25 | **44.6** | 33.2 | 41.8 | 41.9 | 27.7 | 38.0 | **71.3** | 63.8 | 83.8 | 66.7 | 45.7 | 66.0 |
+| | gray!75 50 | 44.0 | **34.5** | 41.1 | **41.9** | 27.7 | 37.8 | 72.8 | **73.2** | 83.8 | **74.4** | **56.4** | **71.1** |
+| ``Summary`` | gray!30 2 | 34.6 | 15.7 | 26.9 | 26.5 | 36.2 | 29.9 | 68.4 | 39.6 | 56.8 | 50.0 | 73.4 | 61.5 |
+| | gray!50 5 | **36.6** | **16.6** | **31.0** | **34.7** | 38.3 | **32.5** | 81.6 | 57.0 | 70.3 | 60.3 | 86.2 | 75.1 |
+| | gray!70 10 | 34.5 | 14.7 | 29.3 | 31.6 | **40.4** | 31.5 | **93.4** | **82.3** | **91.9** | **80.8** | **94.7** | **90.7** |
+
+**Question answering performance** of RAG-based ``GPT-3.5-turbo-16k``. Optimal performance is in **bold**. Results are based on F1-score metric for answer prediction and recall@k for recall accuracy; higher is better.
+
+Experimental Results
+--------------------
+
+We evaluate and analyze the comprehensive performance of all baseline methods for question answering (ssec:qa-results), event graph summarization (ssec:event-results), and multi-modal dialogue generation (ssec:dialog-results).
+
+Question Answering Task
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Tables qa results and qa rag results present the performance results for the question answering task. We find that:
+**(1) LLMs with limited context length face challenges in understanding extremely long conversations** due to truncated context windows. Despite ``gpt-4-turbo`` emerging as the top-performing model with an overall score of 32.4, it notably lags behind the human benchmark of 87.9;
+**(2) long-context LLMs can comprehend longer narratives, yet they are prone to generating hallucinations**. ``gpt-3.5-turbo-16k`` outperforms other approaches, but its performance on adversarial questions drops to a mere 2.1%, as compared to 22.1% using ``Llama-2-Chat`` and 70.2% using ``GPT-4-turbo`` with 4K context windows. This indicates that LLMs can be easily misled into generating hallucinations when they are subjected to long contexts;
+**(3) RAG is effective when conversations are stored as observations**. There is a noticeable 5% improvement with ``gpt-3.5-turbo`` when the input is top 5 relevant observations instead of pure conversation logs. This improvement falters with an increase in the number of retrieved observations, suggesting that it is important to reduce the signal-to-noise (SNR) ratio in retrieved contexts for models to utilize the context accurately. Conversely, using session summaries as context does not significantly improve the performance despite high recall accuracies [], likely due to loss of information during the conversion of dialogs to summaries.
+
+The interesting finding is that **time reasoning and open-domain knowledge questions are the most challenging scenarios**.
+
+(1) LLMs face challenges in understanding time concepts within dialogues, which is consistent with findings from other single-turn-based benchmarks focused on temporal reasoning capabilities for LLMs [wang2023tram]_.
+
+(2) LLMs struggle with open-domain knowledge and degrade in the RAG setting. This suggests that while certain open-domain knowledge may be embedded within the model's parameters, introducing improper context from inaccurate retrieval can lead to a decline in performance [mallen-etal-2023-trust]_.
+
+	0.99!
+
+| **Category** | **Model** | **Context Length** | **ROGUE** | **FactScore** |
+| | | | **ROGUE-1** | **ROGUE-2** | **ROGUE-L** | **Precision** | **Recall** | **F1** |
+| Base | ``Mistral-Instruct-7B`` | 8K | 29.4 | 7.2 | 14.1 | 27.1 | 19.8 | 23.0 |
+| | ``Llama-2-Chat-70B`` | 4,096 | 28.1 | 9.3 | 14.8 | 36.3 | 22.7 | 28.3 |
+| | ``GPT-4-turbo`` | 4,096 | 38.8 | 11.4 | 20.6 | **51.6** | 41.8 | 45.1 |
+| | ``GPT-3.5-turbo`` | 4,096 | **41.1** | **13.5** | **20.9** | 45.3 | **46.5** | **45.9** |
+| Long context | ``GPT-3.5-turbo-16K`` | 16K | 36.2 | 8.5 | 16.4 | 42.3 | 37.8 | 39.9 |
+
+**Event summarization performance** of ``Base`` and ``Long-context`` models. The optimal performance is shown in **bold**. Results are based on ROUGE and FactScore [min2023factscore]_ metrics; higher is better.
+
+Event Summarization Task
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Table summ results presents results for the event summarization task. The use of incremental summarization with **``gpt-3.5-turbo`` leads to the highest performance** in both recall and F1 score. While ``gpt-4-turbo`` records a 5.3% improvement in precision over with ``gpt-3.5-turbo``, it does not fare as well in terms of recall. The event summarization task requires long-range dependency to understand the temporal and causal connections between the events discussed by the speaker in multiple sessions (see Figure temporal-event). Contrary to expectations, the **long-context model does not surpass the base model**, despite its capability for extended-range reasoning facilitated by a larger context window. ``gpt-3.5-turbo-16k`` exhibits a decline in both precision (by 3.0%) and recall (by 8.7%) compared to ``gpt-3.5-turbo`` which has a 4K context window. This suggests that **long-context models may not be proficient at utilizing their context appropriately**, which also aligns with similar findings in [li2023loogle]_ as well as the QA task in . In terms of both the ROUGE and FactScore metrics, commercial models (``gpt-4-turbo``, ``gpt-3.5-turbo``) significantly outshine their open-source counterparts. Nonetheless, there remains considerable scope for improving performance on this task.
+
+From a manual analysis of predicted summaries, we identify five broad categories of event summarization errors made by LLMs: (1) **missing information** in events because the model fails to make temporal and/or causal connections over a lengthy conversation; (2) **hallucinations** i.e., models pad extra details that are either not present in the conversation or are part of a different event in the same session; (3) errors from **misunderstanding of dialog cues** such as humor or sarcasm is a distinctive issue with comprehension of dialogs; (4) inaccurate **speaker attributions**; and (5) insignificant dialogs that are wrongly considered as **salient** events. See examples in Table summary errors in the Appendix.
+
+Multi-Modal Dialog Generation Task
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Figure minigpt5 illustrates the effectiveness of various MiniGPT-5 training variants in multi-modal dialogue generation. Incorporating context into training enhances performance, with the inclusion of observation as context yielding significantly improved results. For instance, in Figure minigpt5A, the retrieved observations contain information about the speaker's experience in video game tournaments, which leads to the prediction of dialog and images that are more faithful to the speaker's persona.
+This observation is consistent with earlier findings from the QA task as well (see Table qa rag results). Also, we observe that the MM-Relevance score drops with an increase in the length of dialog history (see Figure minigpt5B). Retrieval-augmented generation alleviates the drop in MM-Relevance to some extent.
+
+Conclusion
+----------
+
+ We develop a human-machine pipeline to collect , a datset of 50 high-quality very long conversations, each encompassing 300 turns and 9K tokens on avg., over up to 35 sessions, and propose an evaluation framework consisting of three tasks that evaluate models' proficiency in long conversations. Our experiments show that LLMs struggle to comprehend long-term narratives within the dialog and fail to draw temporal and causal connections between events discussed by speakers.
+
+Limitations
+-----------
+
+""""
+
+Hybrid human-machine generated data. Our dataset is sourced primarily from text generated by LLMs. We pursued this method, which has quickly emerged as a popular alternative to time-intensive manual data collection [kim-etal-2023-soda]_ [jang2023conversation]_, to avoid the logistical and legal complexities of collecting very long-term real-world conversations at scale. We ensure that the dataset mirrors real-world interactions as much as possible by having human annotators verify and edit the generated conversations. However, we acknowledge that this dataset may not fully reflect the nuances of real-world online conversations.
+
+""""
+
+Limited exploration of multimodal behavior. Since the images in our dataset are sourced from the web, they do not demonstrate the visual long-term consistencies that are usually exhibited in personal photos (e.g., appearance, home environment, people and pets, etc.). Consequently, we find that the images in our dataset can be replaced with their captions without much loss of information, except for cases where OCR is required. Nevertheless, our work is a first step toward research into the multimodal aspect of very long-term conversations.
+
+""""
+
+Language. Our LLM-based pipeline for generating long-term conversations has been developed for the English language only. However, our pipeline can be made to work with any other language using an LLM that is proficient at that language and appropriate translations of our prompts.
+
+""""
+
+Closed-source LLMs. We use state-of-the-art LLMs in our dialog generation pipeline to create a dialog dataset that is as realistic as possible. Unfortunately, this meant employing the strongest commercial LLMs available through a paid API, similar to many concurrent works that generate synthetic conversations [zhong2023memorybank]_ [lu2023memochat]_. We will make the code for our generative pipeline publicly available in the hope that it can be made to work effectively with state-of-the-art open-source LLMs in the future.
+
+""""
+
+Evaluation of long-form NLG. LLMs are prone to generating verbose answers even when prompted to answer in short phrases. This creates challenges in evaluating the correctness of answers provided by LLMs and has been widely documented in NLP literature [chang2023booookscore]_ [xu2023critical]_ [krishna2023longeval]_. Our evaluation framework suffers from the same challenges when used for experimenting with LLMs.
+
+Broader Impacts
+---------------
+
+We adopt and improve a framework of generative agents introduced in [park2023generative]_ for the generation of long-term conversations. Consequently, the ethical concerns of generative agents outlined by [park2023generative]_ apply to our work as well, especially since the goal of our framework is to make the conversations as realistic as possible.
+
+Specifically, conversational agents that can pose as human beings with a realistic life, as enabled by the temporal event graphs in our framework, pose the risk that users may form parasocial relationships with such agents that may affect their lives adversely. We recommend that any practical deployment of the generative frameworks mentioned in our work be always prefaced with a disclaimer about the source of the dialogs.
+
+Second, the use of multimodal LLMs [zheng2023minigpt]_ to generate images conditioned on dialog can lead to the propagation of misinformation and social biases, especially if the conversational agent can be coerced into parroting false information or dangerous opinions.
+
+Third, it is tempting to use generative agents to substitute real humans for a process, especially when there are significant challenges in working with humans for a particular goal e.g., collecting real-world interactions between humans over a year or more. Care must be taken to ensure that such substitutes are not made in studies whose outcomes may be used to make real-world decisions with tangible impacts on humans. Our work is merely a study of model comprehension in very long-term conversations. We do not make any recommendations for real-world policies based on this study and advise potential users of our framework to avoid making such recommendations as well.
+
+Appendix Overview
+-----------------
+
+The appendix is organized as follows:
+
+**Section A**: Details of generative pipeline for the dataset.
+
+**Section B**: Statistics of dataset, license for data release and annotator details.
+
+**Section C**: Experimental setup and implementation details.
+
+**Section D**: Additional results from evaluation on the benchmark.
+
+Generative Pipeline for
+-----------------------
+
+Persona
+~~~~~~~
+
+We assign unique persona statement p to each agent \mathcalL_i. For this, we select a range of initial persona statements p_c from the MSC dataset [xu2022beyond]_, each encompassing 4 to 5 sentences. We employ ``gpt-3.5-turbo`` as \mathcalM to expand these into full persona statement p, conditioning \mathcalM on the chosen statements p_c. The prompt used for converting a short list of speaker attributes from the MSC dataset [xu2022beyond]_ into a complete persona summary is presented in Fig. persona. We also use a single example of speaker attribute → persona summary as an in-context demonstration along with the prompt. A small selection of personas showcasing the diversity of speakers in the dataset is demonstrated in Fig. persona.
+
+Temporal Event Graph
+~~~~~~~~~~~~~~~~~~~~
+
+As outlined in Sec. temporal-event, we use an iterative process for generating event graphs consisting of causally connected events based on a given persona summary. The base prompt for describing the constitution of the event graph, the nature of events and causal connections between events is shown in Fig. event prompt. First, the base prompt is used along with the prompt for event graph initialization to generate three independent events relevant to a given personality. Then, the base prompt is combined with the prompt for the iterative generation of events to continue generating events that are caused by one or more of the events that are already present in the graph. See an example of a persona and the corresponding temporal event graph in Fig. temporal-event. In the example, Jack aspires to be a hotel manager. Consequently, he enrolls in a hotel management course in July, and after three months, he expresses his excitement about the course on social media. In a similar vein, his passion for gaming results in an invitation from a well-known gaming company.
+
+Virtual Agent Architecture
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+As outlined in Section llm-agent, the virtual agents in our generative pipelines are composed of two mechanisms, *Reflect & respond* [park2023generative]_ and *Image sharing & response*.
+
+""""
+
+Reflect & respond. This mechanism operates over a combination of short-term and long-term memory. The short-term memory is a summary of a session that is conditioned on the summary from a previous session. See the prompt given to LLMs in our pipeline for generating summaries, and an example of a generated summary, in Fig. summary prompt. The long-term memory is a database of *observations* about each speaker, that are essentially assertive statements about the speaker's persona and life. See the prompt given to LLMs in our pipeline for generating observations, and an example of observations extracted from a conversation, in Fig. observation prompt. In practice, the conversation is annotated with turn IDs for each turn, and the model is also instructed to indicate the turn IDs that directly contribute to each observation. This allows us to keep track of the evidence when using observations as the context for RAG-based models used in our experiments (see Section baselines).
+
+""""
+
+Image sharing & response. See prompts for implementing image-sharing and image-response behaviors in Figure image prompt.
+
+Human Filtering
+~~~~~~~~~~~~~~~
+
+Human annotators are instructed to edit the LLM-generated conversations in the following scenarios:
+
+- * Remove an image if it is not relevant to the current dialog or the conversation.
+
+    * Add context about an image to the current speaker's dialog if it is not discussed by them but the subsequent speaker has reacted to the image.
+
+    * Replace an image if it does not match the caption that was used to query for images.
+
+    * Edit the dialog when the information present in the dialog is inconsistent with something said (or shared through an image) in earlier or later turns.
+
+    * Edit the dialog to ensure that the details in the conversation are consistent with those given in the event for the session.
+
+    * Remove any events from the event graph if they do not appear in the conversation.
+
+See an example of some edits in Fig. conv edits.
+
+Dataset
+-------
+
+Dataset Statistics
+~~~~~~~~~~~~~~~~~~
+
+See a breakdown of the statistics of the conversations in the dataset in the top panel of Table dataset statistics. Also, see a breakdown of the statistics of the annotations in the evaluation benchmark in the bottom panel of Table dataset statistics.
+
+	!
+
+| gray!20 Conversation Statistics | # Counts |
+| Total. # conversations h. | 50 |
+| Avg. # sessions k. in conversation h | 19.3 |
+| Avg. # turns j. in session k | 15.8 |
+| Avg. # tokens. conversation h | 9,209.2 |
+| Avg. # tokens. dialogue h_k_j of turn j in session k | 30.2 |
+| Avg. # tokens. observation o_k_j of turn j in session k | 18.2 |
+| Avg. # tokens. summary w_k of session k | 127.4 |
+| gray!20 QA Benchmark Statistics | |
+| # questions. single-hop retrieval | 2,705 (36%) |
+| # questions. multi-hop retrieval | 1,104 (14.6%) |
+| # questions. temporal reasoning | 1,547 (20.6%) |
+| # questions. open domain knowledge | 285 (3.9%) |
+| # questions. adversarial | 1,871 (24.9%) |
+| **Total. # questions.** | **7,512** |
+| gray!20 Event Summarization Statistics | |
+| Avg. # ground truth events. in conversation h | 24.2 |
+| Avg. # tokens. event summary | 896.5 |
+| gray!20 Multi-modal Dialogue Generation Statistics | |
+| Avg. # images. in conversation h | 32.3 |
+
+**Dataset Statistics** of conversation and corresponding benchmark
+
+Dataset License
+~~~~~~~~~~~~~~~
+
+The dataset will be released under the CC BY-NC 4.0 DEED license. []
+
+Annotator Details
+~~~~~~~~~~~~~~~~~
+
+The annotators who worked on the dataset were in-house annotators and we were unable to obtain their demographics due to the confidential nature of such information.
+
+Experimental Setup
+------------------
+
+Baselines
+~~~~~~~~~
+
+The conversations in the dataset are composed of natural language dialogs and images that require higher-order reasoning and multimodal coreference resolution, respectively. From initial studies, we observed that multimodal coreference resolution can be performed effectively by replacing images in with their captions generated using BLIP-2 [li2023blip]_, and using state-of-art LLMs to reason over natural language text interleaved with image captions. Hence, our experiments for the question answering and event summarization tasks are conducted using LLMs. We use the images directly only for experiments on the multimodal dialog generation task.
+
+""""
+
+Question Answering.
+We carry out experiments using three distinct methodologies:
+(1) **Base** involves utilizing LLMs to directly conduct the task within a constrained context.
+The task description comes after the dialogue history.
+To accommodate the restricted context window size, earlier dialogues are omitted;
+(2) **Long-context** employs LLMs with an extended context window to expose the models to as much dialogue context as possible;
+(3) **Retrieval-augmented Generation (RAG)** involves retrieving relevant context from a database of dialog history, observations, or session-level summaries. *Observations* are assertions about each speaker extracted from the dialog history as described in ssec:llm-agent, see an example in Figure observation prompt. Session-level *summaries* are concise summaries of the conversation that takes place in each session, see an example in Figure summary prompt.
+
+For the retrieval model, we employ DRAGON [lin-etal-2023-train]_.
+In the *Base*, we utilize Mistral-7B [jiang2023mistral]_, LLama-70B-chat [touvron2023llama]_, ``gpt-3.5-turbo``  [], and ``gpt-4-turbo``  [].
+To assess the effectiveness in practical scenarios for *Long-context* and *RAG*, we draw comparisons using variants of ``gpt-3.5-turbo``.
+We do not report the performance of long-context fine-tuned open-source models [chen2023longlora]_ or those utilizing sliding window [bertsch2024unlimiformer]_ [dao2022flashattention]_ due to the variability inherent across different open-source models and the potential reduction in their capability on shorter context.
+
+""""
+
+Event Summarization.
+We present experiments conducted in two distinct configurations.
+We use both the **Base** and **Long-context** setups from the question answering task, but we refrained from including RAG since summarization requires a comprehensive understanding of the entire dialogue, rather than just retrieving a specific portion. A notable distinction in our approach, compared to the question-answering task, lies in our handling of the context.
+Specifically, we employ an iterative process of creating a summary of a preceding session and then use that summary as a basis to generate the summary for the subsequent session [chang2023booookscore]_. Further, we use a single in-context demonstration of input and output to guide the model toward selecting only significant life events for the summary.
+
+""""
+
+Multi-modal Dialogue Generation.
+For evaluating multi-modal dialogue generation, we train MiniGPT-5 [zheng2023minigpt]_ on 50 conversations generated using our automated pipeline (without human filtering) as detailed in sec:dataset.
+Three distinct versions of the model were developed, each with varying training data:
+(1) **Base** trains on preceding dialogue turns;
+(2) **+ summary** trains on both prior dialogue turns and a global summary of the ongoing conversation;
+(3) **+ observation** trains on both preceding dialogue turns and relevant observations retrieved from the conversation history.
+For each of these models, we started with a MiniGPT-5 checkpoint pretrained on the MMDialog dataset [feng2023mmdialog]_.
+
+Implementation Details
+~~~~~~~~~~~~~~~~~~~~~~
+
+We use OpenAI API and Huggingface [wolf-etal-2020-transformers]_, as of January 2024, with specific settings of temperature set to 0 and top_p set to 1 for evaluation of the benchmark. All experiments, including those for RAG-based models, MiniGPT-5 training, and inference, are conducted on an Nvidia A6000 server with FP32. We report results from a single inference run for each model in our experiments. For MiniGPT-5, we used the hyperparameters recommended in the original codebase and trained our models for 10 epochs, which took approximately 30 hours on a single A6000 GPU.
+
+We use the default implementations of BLEU [], ROUGE [], BertScore [], FactScore [] metrics in their respective Python packages in our evaluation protocol.
+
+Results
+-------
+
+	!
+
+| **Category** | **top-k** | **BLEU-1/2** | **Rouge-L** | **MM-R** |
+| ``Base`` | - | 57.1 / 34.2 | 12.4 | 56.1 |
+| ``+ summary`` | gray!30 1 | 58.2 / 34.1 | 12.8 | 56.9 |
+| ``+ summary`` | gray!45 2 | 56.5 / 32.8 | 12.1 | 55.1 |
+| ``+ summary`` | gray!60 5 | 56.1 / 32.5 | 12.0 | 55.2 |
+| ``+ observation`` | gray!30 5 | **59.7** / **35.1** | **13.6** | **57.8** |
+| ``+ observation`` | gray!45 10 | 59.1 / 34.9 | 12.8 | 57.1 |
+| ``+ observation`` | gray!60 25 | 58.5 / 34.2 | 12.0 | 56.5 |
+
+**Multi-modal dialogue generation performance** comparison between different training variants of MiniGPT-5.
+        The optimal performance is shown in **bold**.
+
+Event Summarization Task
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+See an example of the five broad categories of event summarization errors made by LLMs, outlined in Section event-results, in Table summary errors.
+
+	!
+
+| **Error Type** | **Explanation** | **Ground truth event *or* relevant dialogs** | **Predicted event** |
+| Missing information | Key details about event are omitted because the model fails to make causal and temporal connections over a long conversation. | Joanna submits her third screenplay on loss, identity, and connection to a film contest | Joanna submits her recent screenplay to a film contest. |
+| Hallucination | Non-existent details or details from a different event are padded onto an event | *N*: `The gaming party was a great success!' *N*: `... said they'd want to do it again next month!' *N*: `On another note, I made vegan ice cream ...' | Nate's vegan ice cream is a huge success and people want to do it again next month. |
+| Misunder- -standing of dialog cues | e.g., model confuses a light-hearted statement from a speaker as a serious statement | *J*: `.. these trails that made me feel like writing a drama.' *N*: `.. go together .. Maybe I'll start to think of a drama myself and write a screenplay ...' *J*: `Haha, now that would be something! ...' | Nate considers writing his own drama screenplay. |
+| Speaker attribution | Event is attributed to the wrong speaker | Nate invites Joanna to try his homemade lactose-free ice cream. | Joanna invites Nate to her home to try her dairy-free ice cream recipe. |
+| Saliency | Unimportant interactions in the conversation are considered significant by model | *N*: Hey Joanna, what's been up since we last chatted? How's it going? | Nate asks Joanna how she has been she they last talked. |
+
+**Taxonomy of errors in LLM-generated event summaries.** Five types of errors predominantly occur in the event summaries generated by LLMs. Examples are based on predictions from ``gpt-3.5-turbo``.
+
+Multimodal Dialog Generation Task
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Results from evaluation of various version of MiniGPT-5 model on the multimodal dialog generation task in the benchmark is in Table dialog results.

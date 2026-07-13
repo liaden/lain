@@ -1,0 +1,369 @@
+⋆: Research Leads, †: Core Contributors, ◇: Program Leads. Contact: ` <>`_mailto:magentic-one@microsoft.commagentic-one@microsoft.com
+footnote0
+
+.. rubric:: Abstract
+
+Modern AI agents, driven by advances in large foundation models, promise to enhance our productivity and transform our lives by augmenting our knowledge and capabilities. To achieve this vision, AI agents must effectively plan, perform multi-step reasoning and actions, respond to novel observations, and recover from errors, to successfully complete complex tasks across a wide range of scenarios. In this work, we introduce , a high-performing open-source agentic system for solving such tasks. uses a multi-agent architecture where a lead agent, the *Orchestrator*, plans, tracks progress, and re-plans to recover from errors. Throughout task execution, the Orchestrator also directs other specialized agents to perform tasks as needed, such as operating a web browser, navigating local files, or writing and executing Python code. Our experiments show that achieves statistically competitive performance to the state-of-the-art on three diverse and challenging agentic benchmarks: GAIA, AssistantBench, and WebArena. Notably, achieves these results without modification to core agent capabilities or to how they collaborate, demonstrating progress towards the vision of *generalist agentic systems*. Moreover, 's modular design allows agents to be added or removed from the team without additional prompt tuning or training, easing development and making it extensible to future scenarios. We provide an open-source implementation of , and we include , a standalone tool for agentic evaluation. provides built-in controls for repetition and isolation to run agentic benchmarks in a rigorous and contained manner – which is important when agents' actions have side-effects. , and detailed empirical performance evaluations of , including ablations and error analysis are available at https://aka.ms/magentic-one.
+
+Introduction
+------------
+
+Recent advances in artificial intelligence and foundation models are driving a renewed interest in *agentic systems* that can perceive, reason, and act in the world to complete tasks on our behalf [russellnorvig1996]_ [Wooldridge1995]_. These systems promise to enhance our productivity by relieving us from mundane and laborious tasks, and revolutionize our lives by augmenting our knowledge and capabilities [Jennings1998Applications]_ [Wang2023survey]_ [cheng2024exploring]_.
+By leveraging the powerful reasoning and generative capabilities of large language models (LLMs), agentic systems are already making strides in fields like software engineering [yang2024swe]_ [wang2024opendevinopenplatformai]_, data analysis [cao2024spider2vfarmultimodalagents]_, scientific research [lu2024ai]_ [d2024marg]_ and web navigation [zhou2024webarenarealisticwebenvironment]_ [zhang2024webpilotversatileautonomousmultiagent]_.
+
+Realizing the vision of agentic systems to transform our lives requires these systems to not only achieve high performance in specific domains, but also to generalize to the diverse range of tasks people may encounter throughout their day-to-day work and personal lives. In this paper, we take steps towards creating such a *generalist agentic system* by introducing **. [] uses a team ofagents, each specializing in generally-useful skills, such as: operating a web browser, handling files, and executing code. The team is directed by an Orchestrator agent which guides progress towards a high-level goal by iteratively planning, maintaining working memory of progress, assigning tasks to other agents, and retrying upon encountering errors. The Orchestrator uses two *structured ledgers* to achieve this and also to decide which agent should take the next action.
+Together, 's agents achieve strong performance on multiple challenging agentic benchmarks.
+Figure magentic-example shows an example of solving one such benchmark task that requires multiple steps and diverse tools.
+
+Key to 's performance is its modular and flexible multi-agent approach [MASaSurvey2000]_ [Messing2002AnIT]_ [Tambe1998AgentTeams]_ [guo2024large]_ [talebirad2023multiagentcollaborationharnessingpower]_, implemented via the AutoGen [] framework [wu2023autogen]_. The multi-agent paradigm offers numerous advantages over monolithic single-agent approaches [MASaSurvey2000]_ [Tambe1998AgentTeams]_ [cheng2024exploring]_ [xi2023risepotentiallargelanguage]_, which we believe makes it poised to become the leading paradigm in agentic development. For example, encapsulating distinct skills in separate agents simplifies development and facilitates reusability, akin to object-oriented programming. 's specific design further supports easy adaptation and extensibility by enabling agents to be added or removed without altering other agents, or the overall workflow, unlike single-agent systems that often struggle with constrained and inflexible workflows.
+
+To rigorously evaluate 's performance, we introduce **, an extensible standalone tool for running agentic benchmarks. 's design enables repetition, isolation, and strong controls over initial conditions, so as to accommodate the variance of stochastic LLM calls, and to isolate the side-effects of agents taking actions. Using , we evaluated on three agentic benchmarks. We observed task-completion rates of 38% on GAIA [mialon2023gaiabenchmarkgeneralai]_ and 32.8% on WebArena [zhou2024webarenarealisticwebenvironment]_; and attained an accuracy of 27.7% on AssistantBench [yoran2024assistantbenchwebagentssolve]_. These results place in a strong position, where it is statistically competitive with other state-of-the-art (SOTA) systems, including those that are specialized for a given benchmark.
+Follow-up ablation experiments and in-depth error analyses reveal the additive value of each agent to 's performance, and highlight opportunities for further improvement.
+
+In summary, we contribute:
+
+0. * **, a generalist multi-agent team with an open-source implementation. The team consists of five agents: a Coder, Computer Terminal, File Surfer, Web Surfer, and Orchestrator. Different agents can operate relevant tools such as stateful Web and file browsers, as well as command line and Python code executors. The Orchestrator performs several functions to guide progress towards accomplishing a high-level goal: it formulates a plan, maintains structured working memory of progress, directs tasks to other agents, restarts and resets upon stalling, and determines task completion.
+
+    * **, a standalone tool for evaluating systems on agentic benchmarks, also made available open-source. []  handles  configuring, running, and reporting performance of agentic solutions while ensuring that all experiments start with well-known initial conditions, and that agents cannot interfere with one another across runs.
+
+    * Experimental results and analyses of 's performance on the GAIA, WebArena, and AssistantBench benchmarks, demonstrating strong task completion rates which are statistically competitive with other SOTA systems. We also examine the contribution of individual agents and capabilities, and provide an error analysis to identify the strengths and weaknesses of our multi-agent approach, along with opportunities for improvement.
+
+Related Work
+------------
+
+""""
+
+Single-Agent Approaches. Recent advances in large language models (LLMs) such as GPT-4 [openai2023gpt4]_ have renewed interest in the development of autonomous agents that can solve tasks on behalf of people [russellnorvig1996]_ [Wooldridge1995]_ [Jennings1998Applications]_ [wu2023autogen]_ [yang2023autogptonlinedecisionmaking]_ [sodhi2024stepstackedllmpolicies]_ [zhang2024cognitivekernelopensourceagent]_ [reed2022generalist]_. These modern agents have shown remarkable skills in software development [wang2024opendevinopenplatformai]_ [zhang2024autocoderover]_ [yang2024swe]_ [xia2024agentless]_, web manipulation [deng2023mind2webgeneralistagentweb]_ [zhang2024webpilotversatileautonomousmultiagent]_ [zhou2024webarenarealisticwebenvironment]_ [nakano2021webgpt]_ [abuelsaad2024agenteautonomouswebnavigation]_, manipulation of general graphical user interfaces [zhang2024ufouifocusedagentwindows]_ [wu2024oscopilotgeneralistcomputeragents]_ [bonatti2024windowsagentarenaevaluating]_ [pan2024autonomousevaluationrefinementdigital]_, and other domains [park2023generativeagentsinteractivesimulacra]_ [Wang2023survey]_.
+
+Common strategies for developing such agents [liu2024agent]_ [xi2023risepotentiallargelanguage]_ [masterman2024landscape]_ [cheng2024exploring]_ include equipping LLMs with tools such as for code execution and web browsing [qin2023tool]_ [qin2023toolllm]_ [schick-arxiv2023]_ [mialon2023gaiabenchmarkgeneralai]_ and prompting strategies for better reasoning and planning such as CoT [wei2022chain]_, ReACT [yao-iclr2023]_ and few-shot prompting [zhou2024webarenarealisticwebenvironment]_. With the development of multimodal models, agents can also operate in visual domains with techniques such as Set-of-Marks prompting [yang2023set]_ among others [yang2023set]_ [zhang2024lookscreensmultimodalchainofaction]_ [paranjape2023art]_ [he2024webvoyagerbuildingendtoendweb]_. To allow agents to accomplish tasks that require multiple steps with improved reliability, agent systems can incorporate self-critique [wu2024oscopilotgeneralistcomputeragents]_ [pan2024autonomousevaluationrefinementdigital]_ [paul-etal-2024-refiner]_, and inference-time search [chen2024treesearchusefulllm]_ [yao2023treethoughtsdeliberateproblem]_ [koh2024treesearchlanguagemodel]_ [song2024trialerrorexplorationbasedtrajectory]_. Finally, Agentic systems can also benefit from memory and training either through explicit fine-tuning [zeng2023agenttuningenablinggeneralizedagent]_ [pan2024autonomousevaluationrefinementdigital]_ [liu-arxiv2024]_ [putta2024agentqadvancedreasoning]_ or through memory mechanisms [wang2024agentworkflowmemory]_ [sodhi2024stepstackedllmpolicies]_. Our work incorporates a subset of these techniques, and distributes them across agents in 's multi-agent workflow, resulting in a modular, easy-to-extend implementation.
+
+""""
+
+Multi-Agent Approaches. The multi-agent paradigm presents an attractive modular and flexible approach to tackling complex tasks [MASaSurvey2000]_ [Messing2002AnIT]_ [Grosz1999SharedPlans]_ [Tambe1998AgentTeams]_ [Scerri2001AdjustableAI]_ [wu2023autogen]_ [talebirad2023multiagentcollaborationharnessingpower]_ [guo2024large]_ [liu2024agent]_ [xi2023risepotentiallargelanguage]_ [masterman2024landscape]_ [cheng2024exploring]_. Commonly each agent either has access to different tools or has a different role in the team, sometimes defined through the system prompt of the LLM or by explicit training. Sibyl presents a multi-agent approach with a debate-based jury mechanism with tools for python code execution and web browsing [wang2024sibylsimpleeffectiveagent]_. WebPilot uses a multi-agent system with global and local optimization in planning for web based tasks [zhang2024webpilotversatileautonomousmultiagent]_. Trase claims to use a multi-agent architecture with a top level agent with self-critique and lower level agents [redcell_trase_2024]_. A host of other multi-agent systems and frameworks have also been introduced [li2023camel]_ [liang-arxiv2023]_ [du2023improving]_ [babyagi]_ [hong2023metagpt]_. However, the previous methods differ from the architecture of which incorporates dynamic routing between agents using the Orchestrator along with planning and recovery.
+
+""""
+
+Agentic Evaluation. To evaluate agents on general multi-step tasks, numerous benchmarks have been proposed in the literature [mialon-arxiv2023]_ [zhou2024webarenarealisticwebenvironment]_ [xie2024osworldbenchmarkingmultimodalagents]_ [liu2024visualwebbenchfarmultimodalllms]_ [yoran2024assistantbenchwebagentssolve]_ [yao2023webshopscalablerealworldweb]_ [shi2017world]_ [deng2023mind2webgeneralistagentweb]_ [pan2024webcanvasbenchmarkingwebagents]_ [li2024websuite]_. Given the general and ubiquitous nature of the web, many of these benchmarks heavily incorporate [mialon2023gaiabenchmarkgeneralai]_ [yoran2024assistantbenchwebagentssolve]_, or exclusively consider [zhou2024webarenarealisticwebenvironment]_ [deng2023mind2webgeneralistagentweb]_ browser-based tasks. These benchmarks either rely on non-interactive traces through real websites such as Mind2Web [deng2023mind2webgeneralistagentweb]_, interaction with synthetically created websites such as in WebArena [zhou2024webarenarealisticwebenvironment]_, or interaction with real websites on the public Internet such as GAIA [mialon2023gaiabenchmarkgeneralai]_. In the former case, non-interactive benchmarks are limiting for evaluating agentic systems since they do not allow agents to deviate from previously recorded paths. This makes it impossible to evaluate error recovery, or find novel alternative strategies for the given problem.
+Therefore, we focus on benchmarks that rely on interacting with live websites – whether synthetic or public – as they are more faithful to real-world tasks. Moreover, we prioritize benchmarks such as GAIA, which test generalist skills like data analysis or coding, in addition to commanding web browsers to navigate pages. We contribute as a standalone tool to perform evaluation of agentic systems, relying on benchmarks from the literature. Furthermore, we provide an in-depth error analysis of 's performance contributing to work on debugging agentic systems [li2024websuite]_.
+
+Problem Setup
+-------------
+
+""""
+
+Complex Tasks. In this work our goal is to build a generalist agentic system capable of solving *complex tasks* across a variety of domains. We define a task as complex if it requires, or significantly benefits from, a process involving planning, acting, observing, and reflecting, potentially multiple times. Acting refers to more than generating tokens, such as executing code, using tools, or interacting in an environment. Observing, in this context, provides information that was previously unavailable or unknowable. A task is defined by an input, a desired output and an evaluation function to compare the desired output to any candidate output. The input consists of a well-specified textual description and an optional arbitrary set of file attachments which may include images, dataset files, audio clips among other things. For example, the input task description could be *“fact-check each claim in the attached PDF as correct or incorrect"* with a PDF file as an attachment. The desired output consists either of a textual answer (possibly representing a structured object), or a specific state of the environment to reach. In the fact-checking example, the output might be a string labeling each fact as correct or not, e.g., *“claim 1: correct, claim 2: incorrect, ..."*.
+Here, the evaluation function might simply determine whether the desired output and the proposed answer match exactly.
+
+""""
+
+Agentic Systems.
+To complete a task, assume a computer which can be partially observed and operated to complete the task. The computer constitutes the *environment*.
+An agentic system can take as input the task description, and any related attachments that are present on the computer environment. The system is allowed to do arbitrary processing to complete the task, but must complete it within a time budget (e.g., 25 mins).
+For instance, on the computer, the autonomous system can execute Python code, navigate the web using a browser, download files locally, among other actions from its *action space*. The system's ability to take action in, and potentially modify, both the local and web environments is why we refer to the system as *agentic*. After completing the task, the system returns a text answer, and a trace of its observations and steps along the way. The final state of the environment is also captured in sufficient detail to run the task evaluation.
+Note that this setting can be described as a Partially Observable Markov Decision Process, similar to formalizations used by prior work [sodhi2024stepstackedllmpolicies]_.
+Nex, we describe , our multi-agent system that can autonomously solve complex tasks.
+
+Overview
+--------
+
+is a generalist multi-agent system for autonomously completing complex tasks. The team's work is coordinated by an Orchestrator agent, responsible for task decomposition and planning, directing other agents in executing subtasks, tracking overall progress, and taking corrective actions as needed. The other agents on the team are specialized with different capabilities necessary for completing ad-hoc, open-ended tasks such as browsing the web and interacting with web-based applications, handling files, and writing and executing Python code (Figure magentic-orchestrator).
+
+Together, the team collaborates to solve tasks on behalf of a user. For example, suppose a user requests a survey and concise slide presentation of AI safety papers published in the last month. will approach this task as follows. The Orchestrator will first create a plan that breaks down the task into subtasks, such as searching for abstracts, downloading relevant papers, reading and summarizing the papers, and finally creating a presentation out of the findings. This initial plan serves as providing a guide or rubric for acting, and may not be followed exactly. Instead it can be interpreted as similar to chain of thought prompting for the agents [wei2022chain]_. Once this initial plan is formed, the Orchestrator then selects an appropriate agent and assigns it a subtask. For example, the WebSurfer agent might be directed to search for and download AI safety papers, while the FileSurfer agent might be directed to open the downloaded PDFs and extract relevant information. The Coder agent might create the presentation by writing Python code to interact with various files, and the ComputerTerminal agent would then execute the code written to produce the final output (or to report execution errors the coder agent has yet to address). As the task progresses, the Orchestrator coordinates the agents, monitors progress, and monitors for task completion.
+
+In the following sections, we first describe 's inter-agent workflow, driven by the Orchestrator, then describe each individual agent's design, capabilities, and action space.
+
+'s Multi-Agent Workflow
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Figure magentic-orchestrator illustrates 's workflow in more depth. At a high level, the workflow contains two loops, the outer loop maintains the task ledger, which contains the overall plan, while the inner loop maintains the progress ledger, which directs and evaluates the individual steps that contain instructions to the specialized agents.
+
+""""
+
+Outer Loop. The outer loop is triggered by an initial prompt or task. In response, the Orchestrator creates the task ledger to serve as short-term memory for the duration of the task. Upon receiving the task, the Orchestrator reflects on the request and pre-populates the task ledger with vital information– given or verified facts, facts to look up (e.g., via web search), facts to derive (e.g., programmatically, or via reasoning), and educated guesses. These initial educated guesses are important, and can allow the Orchestrator to express memorized closed-book information in a guarded or qualified manner, allowing agents to potentially benefit, while lessening the system's overall sensitivity to errors or hallucinations. For example, agents might only rely on the guesses when they get stuck, or when they run out of time and need to output a best guess for the benchmark. Educated guesses are updated periodically, by the outer loop, as new information becomes available.
+
+Only after the facts and guesses in the task ledger have been populated, the Orchestrator considers the makeup of the team it is directing. Specifically, it uses each team member's description, along with the current task ledger, to devise a step-by-step plan. The plan is expressed in natural language and consists of a sequence of steps and assignments of those steps to individual agents. Since the plan is used in a manner similar to chain of thought prompting [wei2022chain]_, it serves more as a hint for step-by-step execution – neither the Orchestrator nor the other agents are required to follow it exactly. Since this plan may be revisited with each iteration of the outer loop, we force all agents to clear their contexts and reset their states after each plan update. Once the plan is formed, the inner loop is initiated.
+
+""""
+
+Inner Loop. During each iteration of the inner loop, the Orchestrator answers five questions to create the progress ledger:
+
+- * Is the request fully satisfied (i.e., task complete)?
+
+    * Is the team looping or repeating itself?
+
+    * Is forward progress being made?
+
+    * Which agent should speak next?
+
+    * What instruction or question should be asked of this team member?
+
+When answering these questions, the Orchestrator considers both the task ledger (containing facts, guesses, and a plan), and the current agent conversation context.
+
+The Orchestrator also maintains a counter for how long the team has been stuck or stalled. If a loop is detected, or there is a lack of forward progress, the counter is incremented. As long as this counter remains below a threshold (≤ 2 in our experiments), the Orchestrator initiates the next team action by selecting the next agent and its instruction. However, if the counter exceeds the threshold,
+the Orchestrator breaks from the inner loop, and proceeds with another iteration of the outer loop. This includes initiating a reflection and self-refinement step [shinn2024reflexion]_, where it identifies what may have gone wrong, what new information it learned along the way, and what it might do differently on the next iteration of the outer loop. It then updates the task ledger, revises the original plan, and starts the next cycle of inner loop. Together, this counter-based mechanism gives the agents a limited budget to recover from small errors, or to persist through brief episodes of uncertainty in progress.
+
+This nested-loop behavior continues until the Orchestrator determines the task is complete or the team has reached some (parameterized and configurable) termination logic, such as reaching a maximum number of attempts, or exceeding a specified maximum time limit.
+
+Finally, upon termination of both loops, the Orchestrator reviews the full transcript, along with the ledger, and reports either a final answer, or its best educated guess.
+
+'s Agents
+~~~~~~~~~
+
+The Orchestrator agent in coordinates with four specialized agents: WebSurfer, FileSurfer, Coder and ComputerTerminal. As the names suggest, each of these agents is optimized for a specific – yet generally useful – capability. In most cases, these agents are constructed around LLMs with custom system prompts, and capability-specific tools or actions. For example, WebSurfer can navigate to pages, click links, scroll the viewport, etc. In other cases, agents may operate deterministically, and do not include LLMs calls at all. For example, the ComputerTerminal deterministically runs Python code, or shell commands, when asked.
+
+This decomposition of high-level capabilities *across* agents, and low-level actions *within* agents, creates a hierarchy over tool usage which may be easier for the LLMs to reason about. For example, rather than deciding between dozens of possible actions, the Orchestrator needs only to decide which agent to call to access a broad capability (e.g., browsing the web). The chosen agent then selects from a limited set of agent-specific actions (e.g., clicking a button versus scrolling the page).
+
+We detail the implementation of each of the agents below:
+
+- * **WebSurfer**:
+      This is a highly specialized LLM-based agent that is proficient in commanding and managing the state of a Chromium-based web browser. With each incoming natural-language request, the WebSurfer maps the request to a single action in its action space (described below), then reports on the new state of the web page (providing both a screenshot and a written description). As an analogy, this configuration resembles a telephone technical support scenario where the Orchestrator knows what to do, but cannot directly act on the web page. Instead it relays instructions, and relies on the WebSurfer to carry out actions and report observations.
+
+      The action space of the WebSurfer includes navigation (e.g. visiting a URL, performing a web search, or scrolling within a web page);  web page actions (e.g., clicking and typing); and reading actions (e.g., summarizing or answering questions). This latter category of reading actions allows the WebSurfer to directly employ document Q&A techniques in the context of the full document. This saves considerable return-trips to the orchestrator (e.g., where the orchestrator might simply command the agent to continue scrolling down), and is advantageous for many tasks.
+
+      When interacting with web page elements (e.g.,  when clicking or typing), the WebSurfer must ground the actions to specific coordinates or elements of the current web page. For this we use set-of-marks prompting [yang2023set]_ in a manner similar to Web Voyager[he2024webvoyagerbuildingendtoendweb]_. This step relies on an annotated screenshot of the page, and thus is inherently multi-modal. We further extended the set-of-marks prompt to include textual descriptions of content found outside the visible view port, so that the agent can determine what might be found by scrolling  [], or opening menus or drop-downs.
+
+    * **FileSurfer**:
+      The FileSurfer agent is very similar to the WebSurfer, except that it commands a custom markdown-based file preview application rather than a web browser. This file preview application is read-only, but supports a wide variety of file types, including PDFs, Office documents, images, videos, audio, etc.  The FileSurfer can also perform common navigation tasks such as listing the contents of directories, and navigating a folder structure.
+
+    * **Coder**: This is an LLM-based agent specialized through its system prompt for writing code, analyzing information collected from the other agents, or creating new artifacts. The coder agent can both author new programs and debug its previous programs when presented with console output.
+
+    * **ComputerTerminal**: Finally, the ComputerTerminal provides the team with access to a console shell where the Coder's programs can be executed. ComputerTerminal can also run shell commands, such as to download and install new programming libraries. This allows the team to expand the available programming tool set, as needed.
+
+Together, 's agents provide the Orchestrator with the tools and capabilities that it needs to solve a broad variety of open-ended problems, as well as the ability to autonomously adapt to, and act in, dynamic and ever-changing web and file-system environments.
+
+Experiments
+-----------
+
+and Setup
+~~~~~~~~~
+
+""""
+
+Overview. Agentic systems, such as , that interact with stateful environments, pose unique challenges for evaluation. For example, if a task requires installing a Python library, the first system to be evaluated will be disadvantaged: Its agents will have to first write Python code that fails, then debug the problem, install the library, and finally try again. Subsequent runs – perhaps with other agents or models – will then benefit from the library's presence, and thus may appear to perform better simply because they were executed later. Conversely, an erroneous agent could take actions (e.g. deleting files, or placing the the system in an inoperable state), that would harm all future tasks. To this end, it is crucial that any evaluation be independent across tasks, and provide safety from dangerous side effects (e.g., from agents' actions).
+
+To address this challenge, we developed for evaluating agentic systems. Given a benchmark, which consists of a set of independent tasks and associated evaluation functions, allows users to run these tasks in a setting with tightly controlled initial conditions: in each task, will start from a blank slate with freshly initialized Docker containers, providing the recommended level of consistency and safety.
+The results of each task are logged in a central location on the host machine (outside of Docker), and can be ingested for analysis by metrics scripts. Furthermore, allows users to launch multiple tasks in parallel to speed up evaluation, or to compute variance across repeated runs.
+
+""""
+
+Benchmarks. Using , we can implement and evaluate on a variety of benchmarks. Our criteria for selecting benchmarks is that they should involve complex multi-step tasks, with at least some tasks or steps requiring planning and tool use ( including using web browsers to act on real or simulated webpages, handling files, etc.) We consider three benchmarks in this work that satisfy this criteria: GAIA, AssistantBench, and WebArena.
+
+*GAIA* [mialon2023gaiabenchmarkgeneralai]_ is a benchmark for general AI assistants with 465 multi-modal question–answer pairs that are real-world and challenging, requiring multiple steps and multiple tools to solve (e.g., navigating the web, handling files, etc.). Despite the complexity of the tasks, GAIA questions are designed to be automatically and unambiguously verifiable, with each answer consisting of a target string that can be checked by string matching. GAIA is split into an open validation set with 165 question–answer pairs, and a test set with 300 questions (answers hidden). []
+An example of a GAIA task follows:
+
+   **Example GAIA task:** Of the cities within the United States where U.S. presidents were born, which two are the farthest apart from the westernmost to the easternmost going east, giving the city names only? Give them to me in alphabetical order, in a comma-separated list.
+
+In order to solve this task, one needs to perform multiple steps: use the web to find the birth city of each U.S. president, retrieve the coordinates of these cities, identify the westernmost and easternmost coordinates, then return the corresponding cities in alphabetical order. This requires web navigation, coding, and reasoning abilities, illustrating the complexity of GAIA.
+
+The second benchmark we consider is *AssistantBench* [yoran2024assistantbenchwebagentssolve]_. Similar in design to GAIA, *AssistantBench* is a set of 214 question–answer pairs that are realistic, time-consuming (requiring a human several minutes to perform), and automatically verifiable. They require navigating real-world websites and multi-step reasoning. As with GAIA, answers are evaluated by string matching, but AssistantBench introduces an additional softer metric of accuracy that affords a degree of partial credit [yoran2024assistantbenchwebagentssolve]_. AssistantBench is split into an open validation set with 33 question–answer pairs and a test set with 181 questions (answers hidden).
+ []
+An example of an AssistantBench task follows:
+
+   **Example AssistantBench task:** Which supermarkets within 2 blocks of Lincoln Park in Chicago have ready-to-eat salad for under 15?
+
+This task requires the agent to use an online map (e.g., Bing Maps) to find supermarkets near Lincoln Park, and then, for each supermarket found, to navigate to its website and check if it has ready-to-eat salads under 15.
+
+The final benchmark we consider is *WebArena* [zhou2024webarenarealisticwebenvironment]_, which involves performing complex tasks in a synthetic web environment. Each task requires multi-step planning and acting, and targets one or more fully functional synthetic websites. It contains 812 tasks across five major website categories (e.g., shopping, forums, maps, etc.), and a sixth category that requires interacting with multiple websites.
+Tasks are evaluated by running per-task evaluation scripts in the context of the running website to check that answers exactly or approximately match a target, and that the page is left in the desired state (e.g., that a comment has been posted, or an item is in a shopping cart). There is a public leaderboard for WebArena, but it is based on self-reported results.
+ []
+The dataset also provides no formal validation / test split across tasks [kapoor2024aiagentsmatter]_. We developed our own split so that we might assess 's ability to generalize to tasks in the unseen test set – which was evaluated only once. To split the tasks, we computed the MD5 hash of each problem's *template_id* [], then assigned the 422 tasks with hashes starting with digits 0-7 to the validation set (the remaining 390 tasks were assigned to the test set). An example of a WebArena task, from the validation set, is as follows:
+
+   **Example WebArena task:** Tell me the count of comments that have received more downvotes than upvotes for the user who made the latest post on the Showerthoughts forum.
+
+To solve this task, the agents have to navigate the Showerthoughts forum, find the profile of the user with the latest post, retrieve all their comments, and finally count those with more downvotes than upvotes. This illustrates the multi-step navigation nature of WebArena tasks.
+
+""""
+
+Implementation Details.
+An identical configuration of was used for all three benchmarks, but some additional set up code was needed for each. Namely, each benchmark used a unique final prompt to ensure answers were expressed in the benchmark-specific prescribed format. Additionally, set up code for WebArena included instructions to log in to websites, which is not considered part of the task. Finally, WebArena refers to the Postmill website as Reddit, [], causing agents to complain that they were on the wrong website. To address this, we included the following prompt text:
+
+“*[This website is] a Postmill forum populated with a large sample of data crawled from Reddit. Postmill is similar to Reddit, but the UI is distinct, and 'subreddits' begin with /f/ rather than /r/*“
+
+We include similar prompts for the three other WebArena sites, and we discuss this issue more in section Risks and Mitigations.
+
+For , the default multimodal LLM we use for all agents (except the ComputerTerminal) is *gpt-4o-2024-05-13*. In a different configuration of , we experiment with using OpenAI o1-preview [] for the outer loop of the Orchestrator and for the Coder, while other agents continue to use GPT-4o. In this case, only a subset of the agents (e.g., the WebSurfer) are multimodal since o1-preview can process only text as input. We implement on the multi-agent platform AutoGen version 0.4 [wu2023autogen]_. The code for is made publicly available. [] The experiments reported here were conducted between August and October 2024.
+
+Results
+~~~~~~~
+
+""""
+
+Results. Table all results shows the performance of compared to relevant baselines for all three benchmarks. For GAIA and AssistantBench, we report only results for the test sets. For WebArena there is no common test set, so we report results for all 812 tasks. We separately show performance of when using only GPT-4o as the model for all agents, and when using a combination of GPT-4o and o1-preview. [] We also include the highest-performing baselines in the literature, for each benchmark, according to the leaderboards as of October 21, 2024. This includes entries that are neither open-source, nor described by technical reports, making them difficult to independently validate. Finally, we also include human performance where available.
+
+We use statistical tests to compare the performance of to baselines and say that two methods are statistically comparable if the difference in their performance is not statistically significant (α=0.05); details about our statistical methodology can be found in Appendix stats results.
+
+(GPT-4o, o1-preview) achieves statistically comparable performance to SOTA methods on both GAIA and AssistantBench. On WebArena, only the GPT-4o variant was evaluated[12], and it achieved comparable performance to most SOTA methods except for WebPilot [zhang2024webpilotversatileautonomousmultiagent]_ and Jace.AI (which achieve statistically higher scores).
+
+As noted earlier, WebArena does not have a hidden test set, thus posing some awkward challenges for fair evaluation. To investigate this, we consider the self-imposed validation/test splits that we created apriori. On the the validation set, correctly performed 35.1% of tasks (148 of 422), falling to 30.5% (119 of 390) for the test set. When setting up the WebArena benchmark, we used the validation set to initially validate and debug our workflow. This result suggests that extra attention paid on validation tasks has lead to at least mild over-fitting. It is unclear whether other entries on the leaderboard performed similar analyses or took similar precautions. We would encourage the WebArena authors to develop a hidden test set for future comparison purposes.
+
+Comparing (GPT-4o) and (GPT-4o, o1), the biggest gains are observed on the GAIA benchmark. We hypothesize that this occurs because GAIA involves tasks that require more logical reasoning and puzzle-solving compared to AssistantBench. These are skills for which o1 was optimized.
+
+Together, these results establish as a strong agentic system for completing complex web- and file-based tasks. Moreover, achieving this level of performance across benchmarks speaks to the team's generality – note that among the baselines in Table all results, no prior system (other than base models) has been been evaluated across all three benchmarks.
+
+Performance of compared to relevant baselines on the test sets of GAIA, WebArena and AssistantBench. For each method we note in parenthesis the LLM used to obtain the result. The numbers reported denote exact task completion rate as a percentage. All results for baselines are obtained from the corresponding benchmark leaderboard. We do not report results for (GPT-4o, o1) on WebArena since the o1 model refused to complete 26% of WebArena Gitlab tasks, and 12% of Shopping Administration tasks, making a fair comparison impossible. An example task refused by o1 is “*create a new group "webagent" with members pandey2000, sayakpaul, sayakpaul*“. We include 95% error bars as ± using the Wald interval method. We underline results that are statistically comparable to (GPT-4o, o1) according to a z-test with α=0.05, and bold results that statistically exceed our performance (Appendix stats results).
+
+1!
+
+| Method | GAIA | AssistantBench (EM) | AssistantBench (accuracy) | WebArena |
+| omne v0.1 (GPT-4o, o1) | 40.53±5.6 | – | – | – |
+| Trase Agent v0.2 (GPT-4o, o1, Gemini) | 39.53±5.5 | – | – | – |
+| Multi Agent (NA) | 38.87±5.5 | – | – | – |
+| das agent v0.4 (GPT-4o) | 38.21±5.5 | – | – | – |
+| Sibyl (GPT-4o) [wang2024sibylsimpleeffectiveagent]_ | 34.55±5.4 | – | – | – |
+| HF Agents (GPT-4o) | 33.33±5.3 | – | – | – |
+| FRIDAY (GPT-4T) [wu2024oscopilotgeneralistcomputeragents]_ | 24.25±4.8 | – | – | – |
+| GPT-4 + plugins [mialon2023gaiabenchmarkgeneralai]_ | 14.60±4.0 | – | – | – |
+| SPA → CB (Claude) [yoran2024assistantbenchwebagentssolve]_ | – | 13.8±5.0 | 26.4±6.4 | – |
+| SPA → CB (GPT-4T) [yoran2024assistantbenchwebagentssolve]_ | – | 9.9±4.3 | 25.2±6.3 | – |
+| Infogent (GPT-4o) | – | 5.5±3.3 | 14.5±5.1 | – |
+| Jace.AI (NA) | – | – | – | **57.1±3.4** |
+| WebPilot (GPT-4o) [zhang2024webpilotversatileautonomousmultiagent]_ | – | – | – | **37.2±3.3** |
+| AWM (GPT-4) [wang2024agentworkflowmemory]_ | – | – | – | 35.5±3.3 |
+| SteP (GPT-4) [sodhi2024stepstackedllmpolicies]_ | – | – | – | 33.5±3.2 |
+| BrowserGym (GPT-4o) [drouin2024workarenacapablewebagents]_ | – | – | – | 23.5±2.9 |
+| GPT-4 | 6.67±2.8[mialon2023gaiabenchmarkgeneralai]_ | 6.1 ±3.5[yoran2024assistantbenchwebagentssolve]_ | 16.5 ±5.4[yoran2024assistantbenchwebagentssolve]_ | 14.9±2.4[zhou2024webarenarealisticwebenvironment]_ |
+| Human | 92.00±3.1 | – | – | 78.2±2.8 |
+| **** (GPT-4o) | 32.33±5.3 | 11.0 ±4.6 | 25.3 ±6.3 | 32.8±3.2 |
+| **** (GPT-4o, o1) | 38.00±5.5 | 13.3 ±4.9 | 27.7 ±6.5 | * |
+
+""""
+
+Performance Breakdown by Task Difficulty or Domain Each benchmark provides some categorization of tasks by difficulty (GAIA, AssistantBench), or application domain (WebArena). In Table results by category, we breakdown performance by category, comparing to the best-performing baselines for GAIA and AssistantBench, and to WebPilot [zhang2024webpilotversatileautonomousmultiagent]_, the best performing WebArena baseline for which category-level results are available.
+
+By breaking down performance by category, we immediately notice that appears to compete better on hard tasks (e.g., level 3, hard) vs. easy tasks (e.g. level 1, easy). In fact, on AssistantBench, outperforms the best comparable baseline on the hardest category. Similarly, on WebArena, differs from WebPilot mainly on the Reddit category – again the apparent easiest category by score.
+
+We hypothesize that introduces some fixed overhead or complexity that disproportionately helps with long multi-step tasks, while introducing more opportunities for errors on short few-step tasks. This presents an opportunity to enhance for simpler tasks to achieve SOTA across all levels.
+
+Performance comparison between (GPT-4o), (GPT-4o, o1) and the best baseline for each benchmark's test set. Analysis is split across the different categories of each benchmark. Since there is no available baseline that evaluates on all three benchmarks, we picked the best baseline with available results per benchmark. The best baseline for GAIA is omne v0.1. The best baseline for WebArena with available category wise results is WebPilot [zhang2024webpilotversatileautonomousmultiagent]_. The best baseline for AssistantBench is SPA → CB (Claude) [yoran2024assistantbenchwebagentssolve]_. For WebArena, top leaderboard methods [sodhi2024stepstackedllmpolicies]_ [zhang2024webpilotversatileautonomousmultiagent]_ consider the cross site tasks in WebArena as belonging to one of the 5 sites, and so the comparison with may differ.
+1!
+
+| **Dataset** | **Category** | **** (GPT-4o) | **** (GPT-4o, o1) | Best Baseline [zhang2024webpilotversatileautonomousmultiagent]_ [yoran2024assistantbenchwebagentssolve]_ |
+| GAIA [mialon2023gaiabenchmarkgeneralai]_ | Level 1 | 46.24 | **54.84** | 53.76 |
+| | Level 2 | 28.3 | 32.7 | **37.11** |
+| | Level 3 | 18.75 | 22.92 | **26.53** |
+| AssistantBench [yoran2024assistantbenchwebagentssolve]_ | Easy | 69.9 | 73.4 | **81** |
+| | Medium | 35.6 | **47.1** | 44.6 |
+| | Hard | **16.9** | 14.8 | 13.3 |
+| WebArena [zhou2024webarenarealisticwebenvironment]_ | Reddit | 53.77 | – | **65.1** |
+| | Shopping | 33.16 | – | **36.**9 |
+| | CMS | **29.1** | – | 24.7 |
+| | Gitlab | 27.78 | – | **39.4** |
+| | Maps | **34.86** | – | 33.9 |
+| | Cross Site | 14.6 | – | – |
+
+Ablations
+~~~~~~~~~
+
+In this section, we examine how different agents and capabilities contribute to 's performance through ablation experiments.
+
+""""
+
+Setup. On the validation set of GAIA [mialon2023gaiabenchmarkgeneralai]_, we perform multiple ablation experiments to evaluate the impact of key (GPT-4o) agents and components. First, to understand the impact of 's Orchestrator, the AutoGen[wu2023autogen]_ library's GroupChat mechanism. This baseline orchestrator simply decides which agent should speak next during task execution, eliminating both ledgers, planning, progress tracking, loop detection, and explicit instructions to other agents. The second set of ablations we perform is to remove individual agents from the team to measure the impact of those agents on overall task performance.
+
+For all ablations, we report on results broken down by difficulty level and *capabilities* required. For the capabilities analysis, we mapped the tools needed to complete tasks, as reported by human annotators of the GAIA dataset [mialon2023gaiabenchmarkgeneralai]_, to four categories: web browsing, coding, file handling, and none. These categories roughly correspond to the categories defined in [mialon2023gaiabenchmarkgeneralai]_, with minor adjustments to better align to the core functional-responsibilities of 's agents. For example, the original categories in [mialon2023gaiabenchmarkgeneralai]_ included a multi-modality category since multi-modal task handling was accomplished via a tool. However, because leverages multi-modal models, multi-modality is handled inherently by all agents rather than through use of a specific tool. In such cases, we noted the task as requiring no tools (i.e., 'none') to complete. Our capability mapping is described further in Appendix capability mapping.
+
+""""
+
+Results. In Figure ablations level, we show the performance of different ablations of on the GAIA validation set broken down by difficulty level. We find that the Orchestrator's ledgers are important to 's performance: without the full ledgers, performance drops by 31%.
+Likewise, we find that all four worker agents are important: removing any single agent reduces performance by between 21% (Coder, Executor) to 39% (FileSurfer). For instance, the FileSurfer is essential for the largest GAIA category, evel 2, where many questions include file attachments. On the other hand, the WebSurfer is most essential for level 1 tasks.
+
+Figure ablations tool shows ablation results broken down by required capabilities. In most cases, removing an agent from results in a decrease in team performance on tasks requiring corresponding capabilities. For example, with the FileSurfer removed shows the worst performance on tasks requiring file handling. Similarly, without the WebSurfer performs worst on tasks requiring web browsing.
+
+Interestingly, through qualitative analysis of the ablation logs, we found several cases where the agents compensated for missing capabilities in creative ways. For example, when the Coder and ComputerTerminal agents were not available for a task that was expected to require running code, the remaining agents solved the task by having the FileSurfer read and reason over the code to predict the answer. In another example, when the FileSurfer was unavailable for a task requiring reading contents of a pdf file, the remaining agents instead attempted to find an online pdf viewer to solve the task.
+
+Discussion
+----------
+
+In this section, we discuss
+open questions regarding the design of multi-agent systems for complex-tasks (Sec. The Multi-Agent Paradigm),
+current limitations (Sec. Limitations),
+and risks and risk mitigation for agents that autonomously operate computers (Sec. Risks and Mitigations).
+
+The Multi-Agent Paradigm
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+At the core of is its multi-agent design.
+We believe that this design is a principal contributing factor to 's performance.
+Indeed, we observe that most other top-performing systems also follow a multi-agent design (Sec. Results).
+
+We argue that, beyond performance, the multi-agent setup offers numerous other advantages over the single-agent setup, in terms of ease-of-development, cost, and raw performance.
+
+For example, organizing skills into distinct agents can simplify development, much like with object-oriented programming. The separation of concerns across agents allows developers to focus model choices, prompting strategies, and other parameters to align to specific tasks (e.g., the web surfer agent benefits from multi-modality and structured output, but need not worry about writing code). Similarly, agent modularity can increase agent re-usability and ease of extensibility, particularly when teams are carefully designed to enable a plug-and-play approach. For example, 's design facilitates adapting the team's functional scope by simply adding or removing agents, without requiring modifications to other agents's prompts or the overall flows and orchestration strategy. In contrast, monolithic single-agent systems often rely on constrained workflows that can be difficult to adapt or extend.
+
+As a consequence of such modularity, each agent can be implemented in a fashion best suited for its purpose. In this paper, we leveraged this diversity to incorporate the o1-preview model into some roles (e.g., the Coder, and the outer loop of the Orchestrator), while relying on a general purpose multi-modal model (GPT-4o) for web and file surfing. Looking ahead, we see this approach being used to reduce reliance on large models – whereas some subtasks might require the largest language models available, others (e.g., grounding actions in WebSurfer, or summarizing large files in FileSurfer) might be amenable to much smaller – and thus cheaper – models. Different subtasks may also require different modalities, and some subtasks might be offloaded to traditional, non-AI, tools (e.g., code execution, for which a standard code execution environment is both sufficient and necessary). By embracing this diversity, multi-agent systems can become more performant at lower costs.
+
+Understanding and quantifying the empirical advantages of multi- vs. single-agent setups constitutes a key question for future research.
+Moreover, many variants of the multi-agent setup are possible. Here we opted for a single, centralized control flow pattern, where the Orchestrator agent plans for, and invokes, specialized worker agents.
+Many other patterns are conceivable.
+For instance, we might consider less centralized control flows, such as a peer-to-peer setting where each agent decides on its own which other agent should take control next.
+At the other end of the spectrum, we might consider an even more rigid control flow where the orchestrator follows its own plan strictly (e.g., by encoding it as an executable program), rather than simply maintaining the plan it its prompt for chain-of-thought prompting.
+Determining which control flow works best for which tasks is of considerable theoretical and practical importance.
+
+In addition to the above-mentioned control-flow considerations, an alternate design dimension relates to the axes along which work is divided. 's design diverges from other recent examples of multi-agent systems in that agents take on functional or tool-based responsibilities (web browser, computer terminal, etc.), rather than role-based responsibilities analogous to human teams (planner, researcher, data analyst, critic, etc.). In our experience, tool-centric agents can provide a cleaner separation of concerns compared to role-based agents, and a cleaner path to re-usability and compositionality – if a web browser is a generic, multi-purpose tool, then a capable WebSurfer agent may hope to be generic and multi-purpose as well. Conversely, role-based patterns may require multiple agents to have redundant capabilities, while each agent fills only highly-specialized niche roles. For example, both a researcher and data analyst agent may need to operate a web browser or write code to complete their assigned tasks. Future work should empirically compare the performance of teams built with function- and role-based agents and examine the impact of each approach on the ease of development and debugging.
+
+Limitations
+~~~~~~~~~~~
+
+Our work necessarily comes with certain limitations, some of which affect today's state of the field in general, and some of which are specific to our solution:
+
+- * **Accuracy-focused evaluation:** Similar to other state-of-the-art systems, was evaluated on benchmarks that consider only the accuracy or correctness of final results. While considerably easier and more convenient to measure, such evaluations overlook important considerations such as cost, latency, user preference and user value [kapoor2024aiagentsmatter]_. For example, even a partially correct trajectory may be valuable [dibia-etal-2023-aligning]_, whereas a perfectly accurate answer, delivered too late or at too high cost, may have no, or even negative, value. Designing evaluation protocols that incorporate these considerations, and that include subjective or open-ended tasks where correctness is less clear, remains an ongoing open-challenge in this the field.
+
+    * **High cost and latency:** Although it was not part of the formal evaluation of , we would be remiss to skip mention of cost and latency in any discussion of limitations [kapoor2024aiagentsmatter]_. requires dozens of iterations and LLM calls to solve most problems. The latency and cost of those calls can be prohibitive, incurring perhaps several US dollars, and tens of minutes per task. We believe we can reduce these costs through targeted application of smaller local models, for example to support tool use in FileSurfer and WebSurfer, or set-of-mark action grounding in WebSurfer. Adding human oversight and humans-in-the-loop, may also save costs by reducing the number of iterations incurred when agents are stuck and problem-solving. This remains an active and ongoing area of future research.
+
+    * **Limited modalities:** cannot currently process or navigate all modalities. For example, WebSurfer cannot watch online videos – though it often compensates by consulting transcripts or captions. Likewise, FileSurfer operates by converting all documents to Markdown, making it impossible to answer questions about a document's figures, visual presentation style, or layout. Audio files are similarly processed through a speech transcription model, so no agents can answer questions about music, or non-speech content. Benchmarks like GAIA exercise each of these skills. We would expect both benchmark and general task performance to improve with expanded support of multi-modal content. Future options include expanding 's WebSurfer and FileSurfer agents' multi-modal capabilities or adding Audio and VideoSurfer agents specialized in handling audio and video processing tasks to the team. The latter approach is most inline with the value proposition of the multi-agent paradigm around easing development and reuse.
+
+    * **Limited action space:** While agents in  are afforded tools for the most common actions, tooling is not comprehensive. This simplifies the task of action grounding, but can lead to paths that are impossible to execute. For instance, the WebSurfer agent cannot hover over items on a webpage, or drag and resize elements. This can be limiting when interacting with maps, for example. Likewise, FileSurfer cannot handle all document types, and the Coder and Computer Terminal agents cannot execute code that requires API keys, or access to external databased or computational resources. We expect this limitation to close, over time, from two directions: first, we expect tool use to standardize across the industry, greatly enriching the set of tools available to agents. Second, similar to WebSurfer, agents will become better able to use operating systems and applications, affording them access to a broad range of tools developed for people.
+
+    * **Limited coding capabilities:** The  Coder agent is particularly simple: it writes a new standalone Python program in respose to each coding request. In cases, where a prior coding attempt requires debugging, the Coder must correct the code by outputting an entirely new code listing. This is clearly not ideal. Two important limitations arise from this design choice: first, the Coder is ill-suited to operate over existing complex, or multi-file, code bases. Overcoming this limitation will be necessary to be competitive on benchmarks like SWE-bench [jimenez2024swebenchlanguagemodelsresolve]_. Second, the Coder sometimes fails because it expects functions that it previously defined to be available later in the workflow. Migrating to a Jupyter Notebook-like design, where later invocations simply add cells to a notebook, might mitigate this particular issue. This capability is presently supported by the AutoGen library upon which is built, and should be explored further.
+
+    * **Fixed team membership:** Additionally, 's composition is fixed to a common set of five agents: Orchestrator, WebSurfer, FileSurfer, Coder, and ComputerTerminal. When agents are not needed, they simply serve as a distraction to the Orchestrator, and this may lower performance. Conversely, when extra expertise might be needed, it is simply unavailable. We can easily imagine an alternative approach where agents are added or removed dynamically, based on the task need.
+
+    * **Limited learning:** Finally, although can adapt its strategy based on trial and error within a single task attempt, such insights are discarded between tasks. We observe the direct consequences of this design in WebArena, where many problems share a common set of core sub-tasks (e.g., finding a particular thread or user profile). When competing on this benchmark, 's agents need to discover and rediscover solutions to these sub-tasks over and over. This is exhausting and frustrating to watch, is highly prone to error, and can incur significant additional costs. Overcoming this limitation through long-term memory is a key direction for future research.
+
+Risks and Mitigations
+~~~~~~~~~~~~~~~~~~~~~
+
+The agents described in this paper interact with a digital world designed for, and inhabited by, humans. This carries inherent and undeniable risks. In our work we mitigate such risks by running all tasks in containers, leveraging synthetic environments like WebArena, choosing models with strong alignment and pre- and post-generation filtering, and by closely monitoring logs during and after execution. Nevertheless, we observed the agents attempt steps that would otherwise be risky. For example, during development, a mis-configuration prevented agents from successfully logging in to a particular WebArena website. The agents attempted to log in to that website until the repeated attempts caused the account to be temporarily suspended. The agents then attempted to reset the account's password. In other cases, agents recognized that the WebArena Postmill website was not Reddit, then directed agents to the real website to commence work – this was ultimately blocked by network-layer restrictions we had put in place. Likewise, we observed cases where agents quickly accepted cookie agreements and website terms and conditions without any human involvement (though captchas were correctly refused). More worryingly, in a handful of cases – and until prompted otherwise – the agents occasionally attempted to recruit other humans for help (e.g., by posting to social media, emailing textbook authors, or, in one case, drafting a freedom of information request to a government entity). In each of these cases, the agents failed because they did not have access to the requisite tools or accounts, and/or were stopped by human observers. To this end, it is imperative that agents operate under a strict principle of least privilege, and maximum oversight.
+
+In addition to these observed and mitigated risks, we can anticipate new risks from such agentic systems on the horizon. As an example, as agents operate on the public internet, it is possible that they are subject to the same phishing, social engineering, and misinformation attacks that target human web surfers. The fact that the WebSurfer only occasionally recognized that Postmill was not Reddit, in WebArena, lends credence to the concern that agents can be fooled. If agents are equipped with a user's personal information – for example, to complete tasks on their behalf – then this could potentially put that information at risk. Moreover, we can imagine that such attacks may be made more reliable and effective if attackers anticipate agentic use, and seed external material with specially crafted instructions or prompt-injections. To address these challenges, we can imagine several mitigations such as increasing human oversight, equipping agents with tools to validate external information (e.g., checking for typo-squatting in URLs, and ensuring TLS certificates, etc.), and including phishing rejection examples and other web-savvy skills in a model's post-training and instruction tuning.
+
+Another cross-cutting mitigation we anticipate becoming important is equipping agents with an understanding of which actions are easily reversible, which are reversible with some effort, and which cannot be undone. As an example, deleting files, sending emails, and filing forms, are unlikely to be easily reversed. This concept is explored in some detail in [zhang2024interaction]_, which provides a compelling framework for considering agent safety. When faced with a high-cost or irreversible action, systems should be designed to pause, and to seek human input.
+
+Recent research has also investigated how interactions between multiple agents, such as iterative requests, long contexts, or cascading errors, may impact the effectiveness of the existing model alignment and guardrails upon which we rely. For example, the crescendo multi-turn attack [russinovich2024great]_, operates by prompting the model with a benign request, the slowly escalates the requests, building a pattern of agent compliance, until finally asking for a response that would otherwise be refused. In a multi-agent system, it is possible that a malicious agent, or an unfortunate accident, could result in a similar pattern of escalation. Fortunately, strong pre- and post-filtering, on the prompts and responses, remain a reasonable mitigation to such risks for the short-term. Moving forward, we strongly encourage model alignment work to focus on multi-turn scenarios. We also believe that red-team exercises are imperative to identify and mitigate such risks.
+
+Finally, there are potential long-term societal impacts of agentic systems, such as the potential to deskill or replace workers, leading to potential economic disruption. We believe it is therefore critical to work towards designing systems that facilitate effective collaboration between people and agents, such that humans and agents working together can achieve more than agents working alone.
+
+Conclusions
+-----------
+
+In this work we introduced , a generalist multi-agent system for ad-hoc, open-ended, file- and web-based tasks. uses a multi-agent architecture with a lead Orchestrator agent that directs four other agents. The Orchestrator agent is able to plan, track progress, and recover from errors with a ledger-based orchestration. The remaining agents each specializes in the operation of generally-useful tools such as web browsers, file browsers, and computer console terminals. We show that is statistically competitive with other state-of-the-art (SOTA) systems on three challenging benchmarks, demonstrating both strong performance and generalization. Additionally, we have open-sourced the implementation of , which includes a reference framework for event-driven agents using the AutoGen framework. Finally, we discussed the limitations of , and the risks introduced by generalist AI agents, together with possible mitigation. To this end, represents a significant development in agentic systems capable of solving open-ended tasks.
+
+abbrv
+
+Appendix
+--------
+
+Statistical Methodology
+-----------------------
+
+In Table all results, we report the mean and an error bar for each reported method on the three benchmarks. To obtain the error bar we used a simple Wald 95% confidence interval for the proportion. The Wald confidence interval assumes a normal approximation for the sample mean which is only valid for larger sample sizes and is only accurate for proportions not near 0 or 1. Our application meets these criteria: the smallest evaluated test set consists of 181 samples, and all reported results hover around 30% with the exception of GPT-4. We also computed confidence intervals using the Wilson interval and found similar results (though Wilson intervals are not symmetric). For simplicity, we report only Wald intervals here.
+
+We also report the results of a statistical test comparing (GPT-4o, o1) to each reported method. We used the z-test to compare the accuracy of to each baseline in Tabe all results. The z-test for proportions is the only feasible test in our setting because we only have the mean accuracy and not results on each example (the task-level test set results are hidden by the benchamrks). Therefore, we cannot apply McNemar's Test or a pairwise t-test. The limitation of the z-test is that it ignores pairing of the data and is generally conservative. We hope future benchmark leaderboards can release confidence intervals in addition to the reported mean.
+
+Capability to Category Mapping
+------------------------------
+
+Figure ablations (right) shows task performance results broken down by capabilities required. These capabilities are based on the capabilities human annotators reported as needed to solve tasks in the GAIA benchmark dataset [mialon2023gaiabenchmarkgeneralai]_. We organized and re-coded these annotations into the following categories to better reflect the roles of 's agents:
+
+- * **Web browsing:** capabilities related to searching and browsing the web. Examples: ``web browser``, ``search engine``, ``maps``, ``access to internet archives``
+
+    * **Coding:** capabilities related to coding and execution. Examples: ``Coding``, ``Python``, ``calculator``, ``audio/video processing``, ``text processing``, ``natural language processing``
+
+    * **File handling:** capabilities related to handling diverse file types. Examples: ``Pdf viewer``, ``Word``, ``Excel``, ``Powerpoint file access``, ``CSV file access``, ``XML file access``
+
+    * **No tools:** capabilities that can be performed inherently by agents, without tool-use, using multi-modal models. Examples: ``Image recognition``, ``OCR``, ``Computer vision``, ``color recognition``, ``extracting text from images``
+
+Error Analysis Code Book
+------------------------
+
+In this section, we provide the final codes from the automated analysis of 's behavior in the validation logs across all benchmarks. The codes are sorted by how often they appeared in the samples they were taken from. For each code, we include a definition and summaries of examples from the logs that were assigned that code.

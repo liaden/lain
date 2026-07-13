@@ -1,0 +1,6 @@
+[submodule "references/repos/mempalace"]
+	path = references/repos/mempalace
+	url = https://github.com/MemPalace/mempalace
+[submodule "references/repos/smolagents"]
+	path = references/repos/smolagents
+	url = https://github.com/huggingface/smolagents

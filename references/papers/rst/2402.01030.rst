@@ -1,0 +1,1132 @@
+[
+
+Executable Code Actions Elicit Better LLM Agents
+
+Xingyao Wanguiuc
+Yangyi Chenuiuc
+Lifan Yuanuiuc
+Yizhe Zhangapple
+Yunzhu Liuiuc
+Hao Penguiuc
+Heng Jiuiuc
+
+uiucDepartment of Computer Science, University of Illinois Urbana-Champaign
+appleApple
+Xingyao Wangxingyao6@illinois.edu
+Heng Jihengji@illinois.edu
+
+Machine Learning, ICML
+
+0.3in
+]
+
+.. rubric:: Abstract
+
+=-1
+Large Language Model (LLM) agents, capable of performing a broad range of actions, such as invoking tools and controlling robots, show great potential in tackling real-world challenges.
+LLM agents are typically prompted to produce actions by generating JSON or text in a pre-defined format, which is usually limited by constrained action space (e.g., the scope of pre-defined tools) and restricted flexibility (e.g., inability to compose multiple tools).
+This work proposes to use executable Python **code** to consolidate LLM agents' **act**ions into a unified action space ().
+Integrated with a Python interpreter, can execute code actions and dynamically revise prior actions or emit new actions upon new observations through multi-turn interactions.
+Our extensive analysis of 17 LLMs on API-Bank and a newly curated benchmark shows that outperforms widely used alternatives (up to 20% higher success rate).
+The encouraging performance of motivates us to build an open-source LLM agent that interacts with environments by executing interpretable code and collaborates with users using natural language.
+To this end, we collect an instruction-tuning dataset that consists of 7k multi-turn interactions using .
+We show that it can be used with existing data to improve models in agent-oriented tasks without compromising their general capability.
+, finetuned from Llama2 and Mistral, is integrated with Python interpreter and uniquely tailored to perform sophisticated tasks (e.g., model training) using existing libraries and autonomously self-debug [].
+
+Introduction
+------------
+
+=-1
+
+Large Language Models (LLMs) have emerged as a pivotal breakthrough in natural language processing (NLP).
+
+When augmented with *action* modules that allow access to APIs, their action space expands beyond conventional text processing, allowing LLMs to acquire capabilities such as tool invocation and memory management [mialon2023augmented]_ [schick2023toolformer]_ and venture into real-world tasks such as controlling robots [saycan2022arxiv]_ [huang2023voxposer]_ [ma2023eureka]_ and performing scientific experiments [bran2023chemcrow]_.
+
+We inquire: *how to effectively expand LLM agents' action space for solving complex real-world problems?*
+Much existing research has examined using text yao2022react,park2023generative or JSON Qin2023ToolLLMFL,Chase_LangChain_2022 to produce actions (e.g., tool uses in fig:illustrative_example top left).
+
+However, both methods typically suffer from constrained scope of action spaces (actions are usually tailored for specific tasks) and restricted flexibility (e.g., inability to compose multiple tools in a single action).
+
+As an alternative approach, several work [codeaspolicies2022]_ [progprompt]_ [wang2023voyager]_ demonstrate the potential of using LLMs to generate code to control robots or game characters.
+However, they typically rely on pre-specified control primitives and hand-engineered prompts and, more importantly, struggle to dynamically adjust or emit actions based on new environmental observation and feedback.
+
+This work proposes , a general-purpose framework that allows LLMs to generate executable Python **code** as **act**ions (fig:illustrative_example top right).
+
+is designed to handle a variety of applications and comes with unique advantages:
+
+- (1) Integrated with a Python interpreter, can execute code actions and *dynamically adjust prior actions or emit new action* based on observations (e.g., code execution results) it receives through multiple turns of interactions.
+
+    (2)
+  Code actions allow LLM to leverage existing *software packages*. can use readily available Python packages for an expanded action space instead of hand-crafted task-specific tools [Yuan2023CRAFTCL]_ [shen2023hugginggpt]_. It also allows LLM to use automated feedback (e.g., error messages) implemented in most software to improve task-solving by self-debugging its generated code [chen2023teaching]_ [Wang2023LeTI]_.
+
+    (3)
+  *Code data* is widely used in pre-training today's  LLMs [yang2024llm]_.
+  These models are already familiar with structured programming languages, allowing cost-effective adoption of .
+
+    (4)
+  Compared to JSON and text with a pre-defined format, code inherently supports *control and data flow*, allowing for the storage of intermediate results as variables for reuse and the composition of multiple tools to perform complex logical operations (e.g., if-statements, for-loops) with *one* piece of code, thereby unlocking LLMs' potential to tackle complex tasks by leveraging its pre-trained knowledge of programming.
+
+  In fig:illustrative_example, an LLM using with (top right) can apply the same sequence of tools (e.g., passing one tool's output as input to another tool using the data flow feature) to *all* inputs through for-loops (i.e., control flow feature) with *one* action; while text or JSON have to take action for every input (top left).
+
+Our extensive experiments with 17 LLMs (including both open-source and proprietary ones) confirm the above benefits (3
+& 4) of .
+
+To demonstrate benefit (3), our first experiment (sec:data-factor-format) compares to baselines on basic tasks involving *atomic tool use* (i.e., only one tool is used per action), ablating the control and data flow advantage offered by .
+The results show that, for most LLMs, achieves comparable or better performance than the baselines.
+
+'s performance gains are more prominent on complex tasks, as demonstrated in our second experiment (benefit 4).
+We curate a new benchmark consisting of 82 human-curated tasks that typically require **m**ultiple calls to **m**ultiple tools in **m**ulti-turn interactions (; sec:control-data-flow).
+Problems in this benchmark often require intricate coordination and composition of multiple tools.
+
+With its strengths in control and data flow, achieves up to a 20% absolute improvement over baselines on the success rate of solving the problems while requiring up to 30% fewer actions.
+
+These performance gains widen as the capabilities of the LLMs increase (fig:illustrative_example bottom).
+
+The promising performance of motivates an open-source LLM agent that can effectively act through , and collaborate with humans through natural language.
+
+To this end, we collect an instruction-tuning dataset consisting of 7k high-quality multi-turn interaction trajectories with (sec:agent_env_data).
+
+is motivated by a general agent framework consisting of agent, user, and environments (fig:llm_agent_framework) and focuses on agent-environment interactions with the computer (information seeking, software package use, external memory) and the physical world (robot planning).
+
+On , we perform careful data selection to promote the capability of improving from multi-turn interaction (e.g., self-debug).
+
+We show that can be used with commonly used instruction tuning data to improve the models' performance in agent tasks without compromising their general capabilities (e.g., knowledge-based QA, coding, instruction following, sec:llm_agent_evaluation).
+
+Our model, dubbed , is finetuned from LLaMA-2 [touvron2023llama]_ and Mistral-7B [jiang2023mistral]_ and improves on out-of-domain agent tasks with not only , but also text action in a pre-defined format (sec:llm_agent_evaluation).
+
+can further benefit from multi-turn interactions and existing software (benefit 1 & 2, sec:multiturn_software_benefit).
+
+As shown in fig:qualitative_example, , designed for seamless integration with Python, can carry out sophisticated tasks (e.g., model training, data visualization) using existing Python packages. Error messages from the environment further enable it to rectify errors autonomously through self-debugging in multi-turn interaction.
+
+Thanks to LLM's extensive programming knowledge acquired during pre-training, these are achieved without needing in-context demonstrations, reducing the human efforts for adapting to different tasks.
+
+The benefit of compared to using Text/JSON for LLM action.
+
+!
+
+| | **for LLM action** | **JSON or Text for LLM action** |
+| **Availability of Data** | Large quantity of code available¹ for pre-training | Data curation required for particular format |
+| **Complex Operation** (e.g., looping, composition of multiple tools) | 2*Natively supported via control and data flow | Requires careful engineering if feasible (e.g., define new tools to mimic if-statement) |
+| 2***Availability of Tools** | 2*Can directly use existing software packages² | Requires human effort to curate tools from scratch or existing software |
+| 3***Automated Feedback** | Feedback mechanism³ (e.g., traceback) is already implemented as an infrastructure for most programming languages | Requires human effort to provide feedback or re-route feedback from the underlying programming language used to implement the tools |
+
+  1 Including code demonstrating useful behaviors for LLM agents (e.g., task decomposition, coordination of multiple function calls to different tools).
+
+  2 Human-written Python packages covering a wide range of applications are available on https://pypi.org/.
+
+  3 For example, in Python, errors and exceptions (https://docs.python.org/3/tutorial/errors.html) are available. Most software provides error messages in natural language to help human programmers debug their code. enables LLM to use them directly.
+
+=-1
+
+Makes LLMs Better Agents
+------------------------
+
+In this section, we first describe framework (sec:codeact_definition) and provide empirical evidence that supports the choice of .
+
+We focus on Python as the programming language for due to its popularity (ranked top-1 at [tiobe]_) and numerous open-source packages.
+
+We aim to answer several research questions (RQs) using 17 off-the-shelf LLMs. In sec:data-factor-format, we examine RQ1: Does LLMs' familiarity with code due to a large amount of code pre-training data bring advantages over text and JSON?
+
+We discuss RQ2 in sec:control-data-flow: Does benefit from Python’s innate control and data flow feature in complex problems?
+
+Finally, as an additional benefit, we discuss how using further enhances LLM agents by enabling multi-turn interactions and allowing them to access existing software in sec:multiturn_software_benefit and fig:qualitative_example.
+
+What is ?
+~~~~~~~~~
+
+In fig:llm_agent_framework, we first introduce a general multi-turn interaction framework for LLM agents' real-world usage that considers three roles [yang2024unified]_: *agent*, *user*, and *environment*.
+
+We define *interaction* as the information exchange between the agent and an external entity (user or environment).
+
+For each turn of interaction, the agent receives an *observation* (input) either from the user (e.g., natural language instruction) or the environment (e.g., code execution result), optionally planning for its action through chain-of-thought [wei2022chain]_, and emits an *action* (output) to either user in natural language or the environment.
+
+employs Python code to consolidate all *actions* for *agent-environment interaction*. In , each emitted *action* to the environment is a piece of Python code, and the agent will receive outputs of code execution (e.g., results, errors) as *observation*.
+
+We include an example prompt of in sec:codeact_prompt.
+
+Shows the Promise as a Strong Tool Use Framework
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this section, we perform a controlled experiment to understand which format (text, JSON, ) is more likely to lead an LLM to generate correct *atomic* tool calls.
+
+The performance in this experiment reflects LLM's familiarity with the corresponding format.
+We hypothesize that using to call tools is a more natural way to use tools for the models, which typically have extensive exposure to *code data* during their training.
+
+**Setup.**
+We re-purpose API-Bank [li2023apibank]_ and test LLMs' API-calling performance, comparing , JSON, and text actions.
+
+For each evaluation instance, we instruct LLM to generate *one atomic* tool call in the format of a Python function call, JSON object, or text expression in a pre-defined format. A concrete example is shown in tab:apibank-action-example.
+
+We use API-Bank's level-1 instructions and the provided toolset. To evaluate API-calling, we follow their *correctness* metric, matching the ground-truth API outputs with the actual model-generated API's execution outputs.
+
+**Results.**
+We present results in tab:api-bank-results.
+
+For most LLMs, achieves comparable or better performance even in atomic actions (the simplistic tool use scenario) where its control and data flow strengths are ablated.
+
+Compared to closed-source LLMs, 's improvements are more prominent in open-source models. Furthermore, code data is usually more accessible for fine-tuning open-source LLMs than the specialized JSON or text tool-calling format.
+
+Although JSON is consistently weaker than other approaches for open-source models, it achieves decent performance with closed-source LLMs, indicating that these closed-source models may have gone through targeted fine-tuning toward their JSON capabilities.
+
+These results suggest optimizing for is a better route for open-source LLMs than alternatives to improve their tool-use capabilities, as they already show good initial capability due to extensive exposure to code data during pre-training.
+
+0.40
+
+Atomic API call correctness on API-Bank.
+The best performance is **bolded**, and the second-best is underlined.
+
+max width=
+
+| | **Correctness** (%, \uparrow) |
+| **Format of Action** | | JSON | Text |
+| *Open-source LLMs* |
+| ``CodeLlama-7b-Instruct-hf`` | 12.5 | 12.0 | \mathbf17.0 |
+| ``CodeLlama-13b-Instruct-hf`` | 11.8 | 7.8 | \mathbf14.0 |
+| ``CodeLlama-34b-Instruct-hf`` | \mathbf17.3 | 12.0 | 16.8 |
+| ``Llama-2-7b-chat-hf`` | \mathbf28.8 | 11.3 | 25.8 |
+| ``Llama-2-13b-chat-hf`` | \mathbf38.1 | 8.5 | 37.3 |
+| ``Llama-2-70b-chat-hf`` | 35.6 | 14.3 | \mathbf37.6 |
+| ``Mistral-7B-Instruct-v0.1`` | 2.5 | 2.3 | \mathbf3.0 |
+| ``lemur-70b-chat-v1`` | \mathbf58.6 | 46.6 | 56.1 |
+| *Closed-source LLMs* |
+| ``claude-2`` | \mathbf76.7 | 59.4 | 73.7 |
+| ``claude-instant-1`` | \mathbf75.2 | 64.9 | 73.2 |
+| ``gemini-pro`` | 70.4 | \mathbf73.2 | 71.2 |
+| ``gpt-3.5-turbo-0613`` | \mathbf74.4 | 73.9 | 73.4 |
+| ``gpt-3.5-turbo-1106`` | 75.4 | \mathbf78.4 | 73.4 |
+| ``gpt-4-0613`` | 75.4 | \mathbf82.0 | 74.4 |
+| ``gpt-4-1106-preview`` | 76.7 | \mathbf82.7 | 73.4 |
+| ``text-davinci-002`` | \mathbf69.2 | 59.6 | 57.4 |
+| ``text-davinci-003`` | 75.4 | \mathbf76.9 | 69.7 |
+| **Frequency of Best-Performing Format** \uparrow |
+| Open-source | \mathbf4 | 0 | 4 |
+| Closed-source | 4 | \mathbf5 | 0 |
+| **Overall** | \mathbf8 | \underline5 | 4 |
+
+0.58
+
+Success rates (higher the better) and average turns required per instance (lower the better) on . The best results for each model are **bolded**, and the second-best ones are underlined.
+
+max width=
+
+| | **Success Rate (%, \uparrow)** | | **Avg. Turns** (\downarrow) |
+| **Format of Action** | | JSON | Text | | | JSON | Text |
+| *Open-source LLMs* |
+| ``CodeLlama-7b-Instruct-hf`` | \mathbf4.9 | 2.4 | 2.4 | | \mathbf9.7 | 9.9 | 9.9 |
+| ``CodeLlama-13b-Instruct-hf`` | \mathbf4.9 | \mathbf4.9 | \mathbf4.9 | | 9.8 | 9.8 | \mathbf9.7 |
+| ``CodeLlama-34b-Instruct-hf`` | \mathbf2.4 | 0.0 | 0.0 | | \mathbf9.9 | 10.0 | 10.0 |
+| ``Llama-2-7b-chat-hf`` | 0.0 | 1.2 | \mathbf2.4 | | \mathbf8.9 | 9.5 | 9.6 |
+| ``Llama-2-13b-chat-hf`` | \mathbf0.0 | \mathbf0.0 | \mathbf0.0 | | \mathbf9.7 | 10.0 | 10.0 |
+| ``Llama-2-70b-chat-hf`` | \mathbf11.0 | 3.7 | 3.7 | | \mathbf9.1 | 9.8 | 9.8 |
+| ``Mistral-7B-Instruct-v0.1`` | 0.0 | \mathbf3.7 | 1.2 | | 10.0 | \mathbf9.8 | 9.9 |
+| ``lemur-70b-chat-v1`` | 13.4 | \mathbf15.9 | 12.2 | | \mathbf9.1 | 9.3 | 9.4 |
+| *Closed-source LLMs* |
+| ``claude-2`` | \mathbf54.9 | 39.0 | 29.3 | | \mathbf7.2 | 8.3 | 8.5 |
+| ``claude-instant-1`` | 20.7 | \mathbf31.7 | 24.4 | | 8.8 | \mathbf8.6 | 8.9 |
+| ``gemini-pro`` | \mathbf22.0 | 19.5 | 11.0 | | \mathbf8.8 | 9.1 | 9.5 |
+| ``gpt-3.5-turbo-0613`` | \mathbf51.2 | 26.8 | 20.7 | | \mathbf7.0 | 8.8 | 9.2 |
+| ``gpt-3.5-turbo-1106`` | \mathbf29.3 | 15.9 | 14.6 | | \mathbf8.4 | 9.0 | 9.0 |
+| ``gpt-4-0613`` | \mathbf67.1 | 56.1 | 45.1 | | \mathbf6.6 | 7.6 | 8.0 |
+| ``gpt-4-1106-preview`` | \mathbf74.4 | 52.4 | 53.7 | | \mathbf5.5 | 7.6 | 7.7 |
+| ``text-davinci-002`` | 4.9 | 4.9 | \mathbf8.5 | | 9.7 | 9.8 | \mathbf9.6 |
+| ``text-davinci-003`` | \mathbf20.7 | 18.3 | 7.3 | | 9.2 | \mathbf9.0 | 9.6 |
+| **Frequency of Best-performing Format** \uparrow |
+| Open-source | \mathbf5 | 4 | 3 | | \mathbf6 | 1 | 1 |
+| Closed-source | \mathbf7 | 1 | 1 | | \mathbf6 | 2 | 1 |
+| **Overall** | \mathbf12 | 5 | 4 | | \mathbf12 | 3 | 2 |
+
+Gets More Done with Fewer Interactions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this section, we investigate whether LLM agents can benefit from the control and data flow of code on problems that require complex patterns of tool use.
+
+**.**
+As shown in tab:tool_bench_comparison, to the best of our knowledge, no existing tool-use benchmarks contain complex tasks requiring the composition of multiple tools while supporting evaluating different action formats. Hence, we curate a benchmark to fill this gap, which evaluates LLMs' capabilities in solving complex tasks that typically require **m**ultiple calls to **m**ultiple tools in **m**ulti-turn interactions.
+
+It contains 82 human-curated instances, spanning tasks including web browsing, finance, travel itinerary planning, science, and information processing.
+
+Each domain is accompanied by a unique set of manually crafted tools.
+
+We intentionally keep the prompt simple (examples in sec:zeroshot_act_prompt) and avoid providing any demonstration to test the LLM's zero-shot ability to use tools, similar to how a novice user without knowledge of few-shot prompting would use the model.
+
+**Setup.**
+We allow the model to generate fully functional Python code that enables control and data flow (e.g., if-statement, for-loop). We follow the action format for JSON and text described in tab:apibank-action-example.
+
+Within each turn, the model can either emit an *action* or propose an *answer* to be verified by an exact match with the ground-truth solution.
+The interaction will terminate when a maximum of 10 interaction turns are reached or a correct solution has been submitted, similar to [wang2023mint]_.
+
+**Metric.** We measure the *success rate* by calculating the percentage of the model proposed answers that match the ground-truth solutions. We also include the *avg. turns* metric: the average number of turns on all evaluated instances.
+
+**Quantitative Results on .**
+We include full results in tab:zeroshot_act_results and a subset of results for visualization in fig:zeroshot_acteval.
+
+generally has a higher task success rate (12 out of 17 evaluated LLMs), similar to the trend in sec:data-factor-format. Moreover, using requires a lower average number of turns (12 out of 17 evaluated LLMs).
+
+For example, the best model ``gpt-4-1106-preview`` achieves a 20.7% absolute improvement compared to the next best action format (text) while requiring 2.1 fewer interaction turns on average.
+
+However, there is still a significant gap in terms of absolute performance between open- and closed-source LLMs as the best open-source model achieving 13.4% while the best closed-source model ``gpt-4-1106-preview`` 74.4%. This is potentially due to open-source models' weak task-solving capability and inability to follow complex instructions without demonstration, suggesting an urgent need to improve open-source LLMs for practical, real-world tasks under the zero-shot setting.
+
+Benefits from Multi-turn Interactions and Existing Software Packages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In fig:qualitative_example, we show how an LLM agent can integrate with Python (i.e., we trained in sec:llm_agent_evaluation) and use existing software to perform complex tasks in multi-turn interactions.
+
+Thanks to its extensive knowledge of Python learned during pre-training, the LLM agent can automatically import the correct *Python libraries* to solve tasks without requiring user-provided tools or demonstrations.
+
+As illustrated in fig:qualitative_example, can use Pandas to download and process tabular data, use Scikit-Learn for machine learning train-test data split and regression model training, and use Matplotlib for data visualization.
+
+Furthermore, using the interactive Python interpreter for code execution allows automated error messages that help the LLM agent `self-debug' their actions in a *multi-turn interaction* and eventually complete the human user's request correctly.
+
+=-1
+
+Empowering Open-source LLM Agent to be Better at
+------------------------------------------------
+
+The promising results achieved by motivate us to build an open-source LLM agent that can both interact with environments through and communicate with humans using language.
+
+To improve open-source LLMs' capability, in sec:agent_env_data, we introduce , an instruction finetuning dataset that contains agent-environment interaction trajectories.
+
+We discuss data selection procedures in sec:agent_env_data_self_improve to promote improvement from interaction behavior.
+
+Additionally, we show that can be used together with existing agent-user conversation data (sec:agent_user_data) to balance the dialog capability of the resulting LLM.
+
+Our model , finetuned from LLaMA-2 [touvron2023llama]_ and Mistral-7B [jiang2023mistral]_ on a mixture of and general conversations, improves performances without hurting LLM's general performance on a diverse suite of tasks (sec:llm_agent_evaluation).
+
+: Agent-Environment Interactions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We consider four main use cases in agent-environment interaction and repurpose five existing datasets across different domains to generate trajectories:
+
+- * **Information Seeking:** We use a training subset of HotpotQA [yang2018hotpotqa]_ to generate information-seeking trajectories, where LLMs use the ``wikipedia_search`` API (provided as a Python function) to search for information to answer questions.
+
+    * **Software Package (Tool) Usage:** We use the training set of code generation problems in APPS [hendrycks2021measuring]_ and math problems in MATH [hendrycks2021math]_. The code generation tasks already involve importing packages and/or creating new tools by defining a new Python function. For MATH, we provide an in-context demonstration of importing Python packages (e.g., ``sympy`` for symbolic math) for problem-solving.
+
+    * **External Memory:** We repurpose the training subset of WikiTableQuestion [pasupat2015compositional]_ and tweak it into two variants of tabular reasoning tasks that require accessing external memory: (1) SQL-based, requiring the LLM to interact with an SQL database through sqlite3 package to answer the question via SQL execution; (2) Pandas-based, requiring the model to interact with pandas tables to perform data operations (e.g., select, filter). Examples of instructions can be found in sec:interaction_data_gen_prompt_tabular.
+
+    * **Robot Planning:** We use ALFWorld [shridhar2020alfworld]_, a text-only embodied environment simulator, to generate trajectories that use robot-control APIs (repurposed as Python function) to complete household tasks. Following MINT [wang2023mint]_, we provide an in-context demonstration to encourage the use of for-loop and if-statement code blocks to automate repetitive operations (e.g., searching for items by visiting different locations).
+
+**Data Down-sampling.**
+
+We down-sample each dataset by keeping only the most challenging instances, aiming to make trajectory generation more efficient and cost-effective. Furthermore, it also helps remove simple instances that existing LLMs can already solve.
+The statistics of the filtered dataset can be found in tab:data_training_instances. Please refer to sec:how_to_downsample_dataset for details about the down-sample process.
+
+**Repurpose Data for Multi-turn Interaction.**
+Some datasets (APPS, MATH, WikiTableQuestions) are initially single-turn problems that expect *one* solution per instruction, whereas, in a realistic agent use case, we often require multi-turn interaction to complete each task (fig:illustrative_example top).
+
+Following MINT [wang2023mint]_, we repurpose single-turn problems into multi-turn ones by allowing LLM to interact with the environment for multiple turns before it decides to submit one solution for evaluation.
+
+Specifically for code generation problems, we provide an in-context example to guide LLMs to test their solution on provided test cases before they submit the solution.
+
+Metrics from the original data will evaluate the submitted solution to determine its correctness. We include examples in sec:interaction_data_gen_prompt.
+
+**Trajectory Generation.**
+
+We use MINT's evaluation framework [wang2023mint]_ to generate interaction trajectories for the aforementioned datasets and determine the correctness of each trajectory.
+
+We run gpt-3.5-turbo-0613 from OpenAI, claude-1-instant and claude-2 from Anthropic on down-sampled data, except code generation, which we use a longer-context version of GPT-3.5 (gpt-3.5-turbo-0613-16k) due to the long-context requirement of the self-debugging process.
+
+On a subset of problems that none of these models can solve, we use gpt-4-0613 to generate trajectories.
+
+**Enhancing Agent's Capabilities of Improving from Interaction.**
+
+We select a high-quality subset of all the generated trajectories from to promote the agent's ability to improve the next action based on prior observations (e.g., self-debugging from code execution error message, a planning capability in fig:llm_agent_framework).
+
+To achieve this, we selectively preserve those trajectories wherein the model initially encounters errors but rectifies these inaccuracies in later interactions.
+
+For these instances, the LLM typically engages in self-reflection following the initial error, thereby proactively enhancing its future actions.
+
+Other filtering details are discussed in sec:data_filter_heuristic.
+
+On all trajectories generated, we keep 411 trajectories from gpt-4-0613 and 6728 trajectories from gpt-3.5 and claude.
+The statistics of the resulting dataset are shown in tab:data_training_mixture_stats.
+
+Statistics of our training mixture and comparison with prior work. Please refer to sec:agent_env_data for details about and general conversation data. Token statistics are computed using Llama-2 tokenizer.
+
+!
+
+| **Data Mixture** | **Data Type** | **Data Name** | **# of Data Instances** | **# of Total Tokens** | **Avg. Tokens Per Instance** |
+| **Prior Work** | - | FireAct [chen2023fireact]_ | 2,063 | 542,176 | 262.81 |
+| | - | AgentInstruct [zeng2023agenttuning]_ | 1,866 | 2,517,785 | 1349.30 |
+| **** (Ours) | Information Seeking | HotpotQA [yang2018hotpotqa]_ | 1,664 | 2,472,227 | 1485.71 |
+| | Software Packages (Tool) | MATH (Math, [hendrycks2021math]_) | 1,732 | 1,719,467 | 992.76 |
+| | Software Packages (Tool) | APPS (Code, [hendrycks2021measuring]_) | 647 | 1,235,472 | 1909.54 |
+| | External Memory | WikiTableQuestion [pasupat2015compositional]_ | 1,065 | 1,316,246 | 1235.91 |
+| | Robot Planning | ALFWorld [shridhar2020alfworld]_ | 2,031 | 3,838,269 | 1889.84 |
+| | **Total** | \mathbf7,139 | \mathbf10,581,681 | \mathbf1482.24 |
+| **General Conversation** | Single-Turn Reasoning | OpenOrca (Sub-sampled, [OpenOrca]_) | 50,000 | 14,034,152 | 280.68 |
+| | Multi-Turn Conversations | ShareGPT (Sub-sampled, [sharegpt_dataset]_) | 10,000 | 17,933,861 | 1793.39 |
+| | Multi-Turn Conversations | ShareGPT (GPT-4, [sharegpt4_dataset]_) | 4,583 | 18,195,878 | 3970.30 |
+| | Multi-turn Reasoning | CapyBara [capybara_dataset]_ | 4,647 | 4,982,435 | 1072.18 |
+| | **Total** | \mathbf69,230 | \mathbf55,146,326 | \mathbf796.57 |
+
+**Comparing with Prior Work.**
+Compared with prior work AgentInstruct [zeng2023agenttuning]_ and FireAct [chen2023fireact]_ that mainly focus using text as action, results in models that are more practical in real-world implementation, as such models using can directly interact with Python interpreters and open-source toolkits (fig:qualitative_example), reducing the development effort for action parsing and tool creations.
+
+is systematically constructed following the general agent framework (fig:llm_agent_framework).
+
+It covers diverse domains (e.g., compared to FireAct that only considers QA-task and search API), contains quality data (e.g., promotes agent's capability of self-debug) and of larger size (3.8x / 3.5x more data trajectories and 5x / 19x more tokens compared to AgentInstruct / FireAct respectively in tab:data_training_mixture_stats).
+
+As we empirically show in tab:model_benchmark_results, the resulting model (same backbone) of achieves 24% and 119% relative improvement compared to AgentInstruct and FireAct.
+
+**Can Be Used With Existing Agent-User Conversation Data.**
+
+We use a sub-sampled set of OpenOrca [OpenOrca]_ that focuses on single-turn chain-of-thought (CoT) reasoning, ShareGPT [sharegpt_dataset]_ [sharegpt4_dataset]_ from two sources that contain multi-turn conversations between human and LLM, and CapyBara [capybara_dataset]_ that focuses on reasoning in multi-turn conversations.
+
+Statistics and down-sampling details can be found in tab:data_training_mixture_stats and sec:general_data_downsample.
+
+Evaluation results for . The best results among all open-source LLMs are **bolded**, and the second-best results are underlined.
+
+ID and OD stand for in-domain and out-of-domain evaluation correspondingly.
+
+Overall averaged performance normalizes the MT-Bench score to be consistent with other tasks and excludes in-domain tasks for fair comparison.
+
+max width=
+
+| | | **Agent Tasks** | | **Generic Tasks** | | **Overall** |
+| | | **Code as Action** | | **Text as Action (OD)** | | **(OD)** | | **Average** |
+| Model | Size | MINT (ID) | MINT (OD) | (OD) | | Miniwob++ | SciWorld | | MMLU | HumanEval | GSM8K | MTBench | |
+| *Open-source LLMs (LLaMA-2-based)* |
+| Llama2 Base | 7B | -^* | -^* | -^* | | -^* | -^* | | 45.3 | 12.8 | 14.6 | -^* | | -^* |
+| Llama2 Chat | 7B | 3.2 | 11.0 | 0.0 | | 0.0 | 5.9 | | 48.0 | 13.9 | 27.7 | 6.3 | | 21.1 |
+| FireAct [chen2023fireact]_ | 7B | 0.0 | 0.3 | 0.0 | | 0.0 | 6.8 | | 44.1 | 3.5 | 12.4 | 4.5 | | 14.0 |
+| AgentLM [zeng2023agenttuning]_ | 7B | 8.7 | 6.1 | 0.0 | | 28.9 | 13.7 | | 48.7 | 15.4 | 24.6 | 6.1 | | 24.8 |
+| (LLaMA-2) | 7B | 51.3 | 20.4 | 0.0 | | 25.5 | \mathbf17.6 | | 50.6 | 18.1 | 38.3 | 7.5 | | 30.7 |
+| *Open-source LLMs (Mistral-based)* |
+| Mistral Base | 7B | -^* | -^* | -^* | | -^* | -^* | | \mathbf60.1 | 30.5 | 52.1 | -^* | | -^* |
+| Mistral Instruct | 7B | 18.8 | 9.7 | 0.0 | | 0.5 | 4.0 | | 53.8 | 29.3 | 43.3 | 6.4 | | 25.6 |
+| (Mistral) | 7B | \mathbf57.4 | \mathbf32.4 | \mathbf12.2 | | \mathbf46.2 | 15.9 | | 59.1 | \mathbf34.7 | \mathbf58.0 | \mathbf8.2 | | \mathbf42.5 |
+| *Closed-source LLMs* |
+| gpt-3.5-turbo-0613 | - | 33.9 | 38.2 | 51.2 | | 66.7 | 21.2 | | 70.0 | 48.1 | 57.1 | 7.9 | | 54.0 |
+| gpt-4-0613 | - | 68.6 | 70.2 | 67.1 | | 69.4 | 36.4 | | 86.4 | 67.0 | 87.1 | 9.0 | | 71.7 |
+
+  * Some results are only available with instruction-tuned models.
+
+~~~~
+
+We fine-tune Llama-2 7B [touvron2023llama]_ and Mistral 7B [jiang2023mistral]_ on a mixture of and general conversations (tab:data_training_mixture_stats) to obtain .
+
+**Training Setup.** We perform full-parameter supervised fine-tuning with a sequence length of 4,096 tokens for Llama-2 and 16,384 for Mistral. Please refer to sec:model_training_details for more details.
+
+**Evaluation Setup.**
+
+We use MINT [wang2023mint]_ to evaluate LLMs with on a diverse range of agent tasks.
+
+has some training domains overlapping with MINT's evaluation (i.e., MINT includes ALFWorld and MATH), hence we report separate numbers for MINT's in- and out-of-domain performance.
+
+Unless otherwise specified, we measure MINT tasks' success rates with interaction turn k=5.
+
+We also evaluate out-of-domain agent tasks using text actions from MiniWob++ (computer tasks, [kim2023language]_) and ScienceWorld (text-based simulator for elementary science curriculum, [Wang2022ScienceWorldIY]_) to test whether can generalize to different action formats.
+
+Finally, we include a suite of general LLM evaluation tasks to assess general capability: MMLU [hendrycks2020measuring]_ for knowledge-based QA, HumanEval [chen2021evaluating]_ for single-turn code-generation, GSM8K [cobbe2021training]_ for single-turn tool-free math reasoning, and MTBench [zheng2023judging]_ for instruction-following.
+
+**Excels in Task.**
+
+As shown in tab:model_benchmark_results, (both variants) perform better than all evaluated open-source LLMs on both the in- and out-of-domain subsets of MINT.
+
+On , we find (Mistral) outperforms open-source LLMs of similar size (7B and 13B) and even reaches similar performance to those 70B models (tab:zeroshot_act_results).
+Surprisingly, no improvement is observed for the Llama-2 variant. We discuss potential reasons in sec:llama_anomaly.
+
+**Generalizes to Text Action.**
+
+When evaluated on out-of-domain text actions, (LLaMA2, 7B), which has never been optimized for text action, achieves comparable performance to AgentLM-7B [zeng2023agenttuning]_ which has explicit tuning for text actions.
+
+**Maintains or Improves the Performance on General LLM Tasks.**
+
+In tab:model_benchmark_results, we find that (both variants) performs better on generic LLM tasks we tested, except for a slight degradation on MMLU for (Mistral, 7B).
+
+**Ablation Study.**
+tab:ablation_study_results presents ablation experiments to determine the importance of and general conversations.
+Both and general conversations contribute to agent tasks, while general conversations are essential to maintain performance on general tasks.
+
+=-1
+
+Related Work
+------------
+
+Action Module in LLM Agents
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+As detailed in [wang2023survey]_, LLM-based autonomous agents are typically structured around four components: customized profiles [park2023generative]_ [qian2023communicative]_, long-term memory capabilities [zhu2023ghost]_ [fischer2023reflective]_, reasoning and planning algorithms [wei2022chain]_ [chen2023measuring]_, and, most crucially, action modules.
+
+The action modules are key to facilitating LLM agents to effectively interact with external entities, including humans [lee2022coauthor]_ and tools [qin2023tool]_ in the environment [wang2023mint]_ [yang2024intercode]_.
+
+In this study, we address the critical problem of standardizing the action space for LLM agents.
+
+We further discuss the difference between and the line of work that uses code generation for problem-solving in sec:prior_code_action_work.
+
+We notice a concurrent study TaskWeaver [qiao2023taskweaver]_ similarly endorses the use of code. We discuss the principal distinctions in sec:taskweaver.
+
+Improving LLM Agents
+~~~~~~~~~~~~~~~~~~~~
+
+Two primary methods for enhancing LLM agents are prompt engineering and instruction tuning, as surveyed by [wang2023survey]_.
+
+For *prompt engineering* [liu2023pre]_, numerous strategies have been introduced to improve the chain-of-thought reasoning [wei2022chain]_, including self-consistency-based reasoning [wang2022self]_ [chen2023measuring]_ and tree-based approaches [yao2023tree]_.
+
+Moreover, LLMs can be strategically prompted to reflect on previous plans [yao2023retroformer]_ [wang2023describe]_ [zhang2023prefer]_, enabling them to refine initial actions through trial and error.
+
+Contrast to prompt engineering, *instruction tuning* intrinsically enhances LLMs [chung2022scaling]_, particularly in their agent capabilities [zeng2023agenttuning]_ [chen2023fireact]_.
+
+For effective training, human annotators can curate expert demonstrations for specific agent tasks, such as web browsing [yao2022webshop]_ [nakano2021webgpt]_.
+
+To minimize human annotation efforts, prior work creates synthetic datasets using stronger LLMs to distill agent capabilities into local models, focusing on tool usage [Qin2023ToolLLMFL]_, interaction [chen2023dress]_, and social skills [liu2023training]_.
+
+aligns with the latter approach and creates datasets using stronger LLMs.
+
+Conclusions
+-----------
+
+This work introduces that employs executable Python code for the LLM agent's action, which is advantageous over using text or JSON action, especially in complex scenarios.
+
+We collect -focused multi-turn interaction trajectories for instruction tuning, and train that is specially designed for seamless integration with Python and can execute sophisticated tasks (e.g., model training) leveraging existing Python packages and autonomously rectifying errors through self-debugging.
+
+Acknowledgement
+---------------
+
+We thank the anonymous reviewers for their suggestions and comments.
+
+This research is based upon work supported by U.S. DARPA ECOLE Program No. HR00112390060 and U.S. DARPA ITM Program No. FA8650-23-C-7316 and KAIROS Program No. FA8750-19-2-1004. The views and conclusions contained herein are those of the authors and should not be interpreted as necessarily representing the official policies, either expressed or implied, of DARPA, or the U.S. Government. The U.S. Government is authorized to reproduce and distribute reprints for governmental purposes notwithstanding any copyright annotation therein.
+
+This work used the Delta system at the National Center for Supercomputing Applications through allocation CIS230256 from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS, [boerner2023access]_) program, which is supported by National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296.
+
+Impact Statement
+----------------
+
+This paper presents work whose goal is to advance LLM-based autonomous agents that can communicate with humans through natural language and assist human users by performing tasks in environments on behalf of humans.
+
+In this section, we discuss potential societal consequences, limitations, and future work related to our work and its goal.
+
+is an initial prototype of an autonomous agent and still has several practical limitations. For example, it may suffer from hallucination commonly seen in LLMs (e.g., imagine the content of a variable without actually printing it out), suggesting the need for subsequent alignment [ouyang2022training]_ for further improvements.
+
+Despite being a prototype, has already demonstrated limited self-improving capability (e.g., self-debug error messages to improve its action) and the ability to interact with environments.
+
+Future work may build upon to develop better agents by having them perform extensive interactions within a given environment and iteratively bootstrap their self-improving capability to learn to improve from past mistakes.
+
+More powerful agents, as results of such algorithms, are potentially beneficial for solving a wide range of real-world problems (e.g., theorem proving, drug discovery).
+
+As extensively discussed in [eloundou2023gpts]_, a fully autonomous agent may transform the current landscape of the labor market and impact the jobs of existing workers.
+
+Furthermore, since directly grants access for the agent to freely execute code in a sandbox environment, in the worst scenario (e.g., in Sci-Fi movies), such an agent may potentially break free of the sandbox restriction and cause harm to the world through cyber-attack, highlighting the need for future work to design better safety mechanism to safeguard autonomous agents [tang2024prioritizing]_.
+
+icml2024
+
+tcolorboxcounter
+
+Example of actions for re-purposed API-Bank [li2023apibank]_ and .
+    0.7!
+
+| **Format** | **Action** |
+| 2* | ``AddAgenda(content="Meeting with John", time="2023-10-26 09:00:00")`` |
+| 3*JSON | ``{"action": "AddAgenda", "content": "Meeting with John", "time": "2023-10-26 09:00:00"}`` |
+| 2*Text | ``Action: AddAgenda, content: Meeting with John, time: 2023-10-26 09:00:00`` |
+
+Comparison between and existing tool-use evaluation benchmark.
+
+!
+
+| **Benchmark** | | ToolBench | APIBench | API-Bank | ToolBench |
+| | (This work) | [Qin2023ToolLLMFL]_ | [Patil2023GorillaLL]_ | [li2023apibank]_ | [xu2023tool]_ |
+| Requiring multi-turn interaction | | | | | |
+| Multiple tools | | | | | |
+| Evaluation | Answer Match | LLM Evaluator | AST Tree Match | API-Call Match | Test Case |
+| No dependency on external API^* | | | | | |
+| Supported API Action Format | & JSON & Text | JSON | | JSON | |
+
+  * Whether to rely on external API (e.g., RapidAPI, Google Sheet) hosted by a third party. The availability of such third-party APIs can greatly impact evaluation results (e.g., low API-calling performance not because the model is bad but rather because the API required is not accessible).
+
+Ablation study results. The best results are **bolded**, and the second-best results are underlined.
+ID and OD stand for in-domain and out-of-domain evaluation correspondingly.
+Overall averaged performance normalizes the MT-Bench score to be consistent with other tasks and excludes in-domain tasks for fair comparison.
+
+max width=
+
+| | | **Agent Tasks** | | **Generic LLM Tasks** | | **Overall** |
+| | | **Code as Action** | | **Text as Action (OD)** | | **(OD)** | | **Average** |
+| Model | Size | MINT (ID) | MINT (OD) | | Miniwob++ | SciWorld | | MMLU | HumanEval | GSM8K | MTBench |
+| (Llama2-based) | 7B | \mathbf51.3 | \mathbf20.4 | | 25.5 | \mathbf17.6 | | \mathbf50.6 | 18.1 | \mathbf38.3 | \mathbf7.5 | | \mathbf35.1 |
+| w/o | 7B | 17.0 | 15.5 | | \mathbf36.4 | 16.9 | | 49.5 | 14.7 | 36.0 | 7.2 | | 34.5 |
+| w/o general conversations | 7B | 29.2 | 15.9 | | 0.0 | 17.1 | | 46.4 | \mathbf19.7 | 20.6 | 4.1 | | 22.9 |
+| (Mistral-based) | 7B | \mathbf57.4 | \mathbf32.4 | | 46.2 | 15.9 | | 59.1 | \mathbf34.7 | 58.0 | 8.2 | | \mathbf46.8 |
+| w/o | 7B | 32.9 | 23.0 | | \mathbf47.8 | \mathbf17.0 | | \mathbf59.9 | 33.2 | \mathbf59.5 | \mathbf8.3 | | 46.2 |
+| w/o general conversations | 7B | 50.5 | 13.9 | | 0.0 | 11.0 | | 52.4 | 27.9 | 26.8 | 2.6 | | 22.6 |
+
+Comparison with Work that Uses Code Generation for Problem-solving
+------------------------------------------------------------------
+
+In this section, we discuss the fundamental differences between and prior work that prompt LLM to generate code for problem-solving.
+
+Existing work have explored using code generation for task-solving in different domains, for example, Code4Struct [wang-etal-2023-code4struct]_ for structured prediction, PaL [gao2023pal]_ for math reasoning, Meta-GPT [hong2023metagpt]_ for multi-agent collaboration, code-as-policy [codeaspolicies2022]_ for robot control, ViperGPT [surismenon2023vipergpt]_ for visual question answering, Voyager [wang2023voyager]_ for playing games, Data Interpreter [hong2024data]_ for data science tasks, etc.
+
+Most prior work generates code (i.e., a static sequence of actions) in a single-turn setting and cannot dynamically readjust action on new observation: It is considered a failure when the model-generated code fails to solve a task on the *first attempt*.
+
+This setting overlooks the potential of environmental observation (e.g., code execution results) that might benefit future action and overall decision (e.g., dynamically adjusting subsequent code after observing intermediate code execution results, fixing erroneous code after seeing an error message).
+
+That is, the generated code is a static sequence of actions that cannot be dynamically re-adjusted on the fly by incorporating new observations.
+
+Such a single-turn setting makes it challenging to scale to more challenging problems since even expert human programmers usually cannot write functionally correct code in the first pass.
+
+On the other hand, is a multi-turn interaction agent framework that allows dynamic adjustment of prior actions or emitting new actions by design (sec:codeact_definition, fig:llm_agent_framework) and is compatible with any form of textual observation (e.g., tool execution output, automated feedback) from the environment.
+
+Beyond being compatible with environmental observation, our instruction tuning dataset specifically collects data for multi-turn self-improving, offering a practical solution to enhance LLM's multi-turn self-improving process.
+
+In addition, previous approaches require heavy prompt engineering and crafting of few-shot demonstrations to tailor LLMs to a particular domain or task (e.g., robot control [codeaspolicies2022]_) since the backbone LLMs are not specially optimized for dynamic planning and decision making.
+
+In contrast, in this work, we propose the framework that uses executable Python code to consolidate LLM agents' actions into unified action space and collect on a diverse array of tasks (e.g., information seeking, tabular reasoning, robot planning, etc) to make the trained model, , easily scale to diverse tasks and domains with minimal human efforts as shown in sec:llm_agent_evaluation.
+
+One notable exception among prior work is Voyager [wang2023voyager]_, which performs iterative prompting in a constrained action space of *function definitions* to fix code errors.
+
+Different from , such setting disallows dynamic re-adjustment of *atomic* actions on the fly: In , for a particular task (e.g., craft stone sword in Minecraft), the agent can first execute one line of code (any atomic action or composed functions, e.g., move forward, locate stone), and dynamically produce different actions based on the observation of the first action.
+
+This is challenging for Voyager to achieve: Similar to code-as-policy [codeaspolicies2022]_, they generate action (a skill, e.g., craft stone sword) as a Python *function definition* that outlines the entire plan for a task (e.g., multi-step code outlining how you should craft a stone sword and handles for different potential cases, which requires strong domain knowledge).
+
+This imposes significant constraints on the agent's action space and disallows dynamic re-adjustment of *atomic* actions on the fly: That is, the agent can only generate one complete function first (e.g., by imaging all possible cases that might happen when you try to locate stones), execute the entire function, observe the feedback, and update the entire function as action in the subsequent move.
+
+Besides the constrained ability to re-adjust action from environmental observation, they also rely on heavy prompting engineering (a typical drawback discussed above) to provide relevant information (e.g., current state, additional self-critics via prompting) to generate revised code, whereas is situated in a setting that requires no prompt engineering efforts: the context window of LLM only contains its *past actions and observations* and does not require human efforts to filter for relevant information.
+
+Similar to , concurrent work OpenCodeInterpreter [opencodeinterpreter]_, with a specific focus on competitive code generation questions, collects code-debugging trajectories to improve an LLM's iterative code debugging performance. However, its applicability to general LLM agent tasks remains unknown.
+
+Comparison with TaskWeaver
+--------------------------
+
+In the landscape of unifying the action space of LLM agents, our work represents a leap over the previous initiative, TaskWeaver [qiao2023taskweaver]_.
+
+While TaskWeaver deserves acknowledgment for initially integrating code into the action space of LLM agents, its exploration remains limited.
+
+This work, primarily characterized by its reliance on a limited set of qualitative examples with close-sourced models as the backbones, fails to harness the full potential of this integration, remaining merely conceptual demonstrations.
+
+Our work transcends mere conceptualization by conducting an extensive and rigorous analysis, clearly quantifying the benefits of code action within LLM agents.
+
+Beyond this, we introduce a unique instruction-tuning dataset specifically designed to amplify the agent's capabilities in executing code-based actions and an open-source LLM agent .
+
+These contributions not only extend the work of TaskWeaver but also pave the way for future explorations, offering valuable resources to the open-source community and redefining the potential of LLM agents in practical applications.
+
+General Data Down-sample
+------------------------
+
+- * **ShareGPT** [sharegpt_dataset]_: We remove all single-turn conversations, then perform random sub-sample to a desired final number.
+
+    * **ShareGPT (GPT-4)** [sharegpt4_dataset]_: We do not perform sub-sampling on this dataset.
+
+    * **OpenOrca** [OpenOrca]_: We select the CoT subset of OpenOrca, then perform a random sub-sample to a desired final number.
+
+    * **CapyBara** [capybara_dataset]_: We do not perform sub-sampling on this dataset.
+
+Training Details
+----------------
+
+All SFT experiments are performed on one 4xA100 40GB SXM node using a fork of Megatron-LLM [epfmgtrn]_ with a training throughput of around 9k tokens per second. We use chatML format [] for all multi-turn data, and we only calculate and optimize for loss on the assistant response. We pack short instances into longer ones and apply flash attention for training efficiency.
+
+We train both LLaMA-2 and Mistral LLMs with Tensor Parallel of 4, the learning rate of ``1e-5`` with 50 warmup steps and cosine decay (end learning rate of ``1e-6``). We train for five epochs with a batch size of 32. We use the 3rd epoch checkpoint for all our experiments.
+
+Example Prompt for
+------------------
+
+This is an example (zero-shot) system prompt used in a deploy instance of where we used chatML format.
+
+The users may optionally include tools descriptions similar to sec:zeroshot_act_prompt or including extra in-context examples similar to sec:interaction_data_gen_prompt.
+
+[breaklines]
+<|im_start|>system
+A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+The assistant can interact with an interactive Python (Jupyter Notebook) environment and receive the corresponding output when needed. The code should be enclosed using "<execute>" tag, for example: <execute> print("Hello World!") </execute>.
+The assistant should attempt fewer things at a time instead of putting too much code in one <execute> block. The assistant can install packages through PIP by <execute> !pip install [package needed] </execute> and should always import packages and define variables before starting to use them.
+The assistant should stop <execute> and provide an answer when they have already obtained the answer from the execution result. Whenever possible, execute the code for the user using <execute> instead of providing it.
+The assistant's response should be concise, but do express their thoughts.
+<|im_end|>
+
+Prompt
+------
+
+[breaklines]
+You have access to the following tools:
+Tool Definition
+
+Formatting Instruction
+
+Now, let's get started!
+
+Instruction: Example: Find the current price of Legendary Wand.
+Answer in the format of 'xx.xx' (e.g., 12.34).
+
+You can optionally express your thoughts using natural language before your action. For example, 'Thought: I want to use tool_name to do something. Action: <your action to call tool_name> End Action'.
+Note that your output should always contain either 'Action:' or 'Answer:', but not both.
+When you are done, output the result using 'Answer: your answer'
+Please ONLY output the answer (e.g., single number), without any other text.
+
+Each ``{{...}}`` component above will be substituted with corresponding information.
+
+Example of {{Tool Definition}}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The following is an example tool definition for web-browsing.
+
+[breaklines]
+[1] click_url: Clicks on a URL. A clickable URL looks like [Clickable '<url_argument>'] in the webpage.
+Arguments: url (str).
+Returns the rendered content of the webpage after clicking the URL showing on the current rendered page.
+    Signature: click_url(url: str) -> str
+[2] go_to_previous_page: Goes back to the previous page. It has no arguments.
+After going back to the previous page, return the rendered content of the webpage.
+    Signature: go_to_previous_page() -> str
+[3] scroll_down: Scrolls down the view. It has no arguments.
+Returns the rendered content of the webpage after scrolling down.
+    Signature: scroll_down() -> str
+[4] scroll_up: Scrolls up the view. It has no arguments.
+Returns the rendered content of the webpage after scrolling up.
+    Signature: scroll_up() -> str
+[5] view: Return the current view in string format of the rendered webpage. It has no arguments.
+Returns the rendered content of the webpage.
+You should call this when you want to see the rendered content of the current webpage.
+    Signature: view() -> str
+[6] calculator: Evaluates the given expression and returns the result. Accepts a calculation expression as input. For example, "2 + (3 * 4)" will return 14.
+    Signature: calculator(expression: str) -> float
+
+Example of {{Formatting Instruction}}
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Different action format has different formatting instructions.
+
+Formatting Instruction for Code as Action
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[breaklines]
+You can use the tools by outputing a block of Python code that invoke the tools.
+You may use for-loops, if-statements, and other Python constructs when necessary.
+Be sure to print the final answer at the end of your code.
+You should begin your tool invocation with 'Action:' and end it with 'End Action'.
+Example: 'Action:
+tool_name(argument_1)
+End Action'
+
+Formatting Instruction for Json as Action
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[breaklines]
+You can use the tools by outputing a JSON object with the following fields:
+  - 'tool': the name of the tool
+  - 'args': a list of arguments to the tool
+You should begin your tool invocation with 'Action:' and end it with 'End Action'.
+Example: 'Action: "tool": "tool_name", "args": ["argument_1"] End Action'
+You can only invoke one tool at a time.
+
+Formatting Instruction for Text as Action
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+[breaklines]
+You can use the tools by outputing the tool name followed by its arguments, delimited by commas.
+You should begin your tool invocation with 'Action:' and end it with 'End Action'.
+Example: 'Action: tool_name, argument_1 End Action'
+You can only invoke one tool at a time.
+
+Interaction Data
+----------------
+
+Dataset Downsample
+~~~~~~~~~~~~~~~~~~
+
+components and the number of instances for training trajectory generation.
+!
+
+| Domain | Capability | Dataset | # of Instances |
+| Web Search | Information seeking through search API | HotpotQA [yang2018hotpotqa]_ | 3,000 |
+| Math Reasoning | Math problem-solving using math Libraries in Python (e.g., ``sympy``) | MATH [hendrycks2021measuring]_ | 5,586 |
+| Code Generation | Self-debug from Python error messages and traceback | APPS [hendrycks2021math]_ | 4,439 |
+| Tabular Reasoning | Tabular Reasoning using ``pandas`` and ``sqlite3`` (for SQL) library | WikiTableQuestion [pasupat2015compositional]_ | 3,000 |
+| Embodied Planning | Interact with embodied environments through APIs | ALFWorld [shridhar2020alfworld]_ | 3,553 |
+
+- * **Code generation tasks in APPS** [hendrycks2021measuring]_: We remove instances without any test case available.
+
+    * **Tabular reasoning tasks in WikiTableQuestion** [pasupat2015compositional]_: We select a subset of 3000 instances with the largest table size (i.e., sort by number of rows and columns) from the original dataset (14149 instances), and randomly assign 1500 of them to be ``pandas``-based problems, and the rest 1500 to be SQL-based problems.
+
+    * **Web search tasks in HotpotQA** [yang2018hotpotqa]_: We select the 15661 problems labeled as “hard" in the original dataset (with 90447 instances), then randomly down-sample them to 3000 problems.
+
+    * **Math reasoning in MATH** [hendrycks2021math]_: We remove problems with the annotated difficulty lower than 3, which results in 5586 instances as shown in tab:data_training_instances.
+
+    * **Embodied Planning in ALFWorld** [shridhar2020alfworld]_: We did not perform down-sampling for AlfWorld.
+
+Data Selection Heuristic
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Given successful task-solving trajectories that have more than 2 turns, we apply the following heuristic to select instances that can promote the code-as-actions, self-improvement, and instruction-following capabilities of LLM agents:
+
+- * **Code-as-Actions:**
+      We exclude trajectories wherein LLM agents do not adhere to the code-as-actions framework, either due to incorrect API invocation or the generation of actions in formats unsuitable for parsing and execution.
+
+    * **Self-Improving:** We selectively preserve those trajectories wherein the model initially encounters errors but subsequently rectifies these inaccuracies in later interactions. In addition, we eliminate successful trajectories that exclusively yield errors in all code executions. These are deemed ineffective demonstrations, as our objective is to prevent the model from learning to consistently execute erroneous code while still managing to provide correct answers.
+
+    * **Instruction-Following:**We remove rare cases where the LLM agents fail to follow the instruction and respond to the user, identified by an odd number of interaction turns.
+
+After applying all these heuristics, we obtain 6728 trajectories (out of 6985) from ``gpt-3.5`` and ``claude``, and 411 trajectories (out of 413) from ``gpt-4-0613``.
+
+Example of Trajectory Generation Prompt
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The format of the data generation prompt closely follow MINT [wang2023mint]_.
+
+Tabular Reasoning (WikiTableQuestion)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+We only provide one-shot example for SQL-based tabular reasoning. This is an prompt with one-shot example for SQL-based tabular reasoning problem:
+
+[breaklines]
+You are a helpful assistant assigned with the task of problem-solving. To achieve this, you will be using an interactive coding environment equipped with a variety of tool functions to assist you throughout the process.
+
+At each turn, you should first provide your step-by-step thinking for solving the task. Your thought process should be enclosed using "<thought>" tag, for example: <thought> I need to print "Hello World!" </thought>.
+
+After that, you have two options:
+
+1) Interact with a Python programming environment and receive the corresponding output. Your code should be enclosed using "<execute>" tag, for example: <execute> print("Hello World!") </execute>.
+2) Directly provide a solution that adheres to the required format for the given task. Your solution should be enclosed using "<solution>" tag, for example: The answer is <solution> A </solution>.
+
+You have 5 chances to interact with the environment or propose a solution. You can only propose a solution 2 times.
+
+—
+
+Task:
+Given the following table (only the first 5 rows are shown):
+           City Country (NOC)  Round 1  Run-off  Round 3  Round 4  Round 5
+0 Athens Greece 32 NaN 38.0 52.0 66.0
+1 Rome Italy 23 NaN 28.0 35.0 41.0
+2 Cape Town South Africa 16 62.0 22.0 20.0 NaN
+3 Stockholm Sweden 20 NaN 19.0 NaN NaN
+4 Buenos Aires Argentina 16 44.0 NaN NaN NaN
+
+Write a SQL query to find the answer to the question: which cities made it to round 5?.
+The SQLite3 database is preloaded for you and can be accessed within <execute> block via the variable `conn` (SQLite3 connection object).
+The table name is `data_table`.
+
+Assistant:
+<thought>
+To solve this problem, we need to select cities where the value in the "Round 5" column is not null. Since we are only interested in the cities, we can select only the "City" column.
+</thought>
+<execute>
+query = """
+SELECT
+    City
+FROM
+    data_table
+WHERE
+    `Round 5` IS NOT NULL;
+"""
+# conn is preloaded
+result = conn.execute(query).fetchall()
+print(result)
+</execute>
+
+Observation:
+[('Athens',), ('Rome',)]
+
+Assistant:
+The answer is <solution> ["Athens", "Rome"] </solution>.
+
+—
+
+Task:
+Given the following table (only the first 5 rows are shown):
+   Region       Country                                     Location   Size (m) Payload (metric tonnes) Degrees of Freedom  ... Z Vert vel (mm/s) X Horiz accel (m/s2) Y Horiz accel (m/s2) Z Vert accel (m/s2) Max Freq (Hz) Details checked
+   +-
+0 Africa Algeria CGS Laboratory (in construction) 6.1 x 6.1 60 6 ... +-1000 +-10 +-10 +-8 100 30/6/2010
+1 Africa South Africa University of Witwatersrand 4 x 4 10 1 ... NaN +-10 NaN NaN 40 17/7/2009
+2 Asia China China Academy of Building Research, Beijing 6.1 x 6.1 60 6 ... +-800 +-15 +-10 +-8 50 ?
+3 Asia China Guangzhou University 3 x 3 20 6 ... +-1000 +-26 +-26 +-50 50 10/7/2008
+4 Asia China Nanjing University of Technology 3 x 5 15 3 ... +-500 +-10 +-10 +-10 50 ?
+
+[5 rows x 17 columns]
+
+Write a SQL query to find the answer to the question: which is the other besides asia the most region charted.
+The SQLite3 database is preloaded for you and can be accessed within <execute> block via the variable `conn` (SQLite3 connection object).
+
+This is an example instruction for Pandas-package-based [] tabular reasoning problem:
+
+[breaklines]
+Task:
+Given the following table (only the first 5 rows are shown):
+  Pos  No           Rider     Bike  Laps       Time  Grid  Points
+0 1 93 Marc Marquez Derbi 22.0 40:46.315 1 25.0
+1 2 38 Bradley Smith Aprilia 22.0 +4.638 3 20.0
+2 3 44 Pol Espargaro Derbi 22.0 +4.996 2 16.0
+3 4 11 Sandro Cortese Derbi 22.0 +45.366 5 13.0
+4 5 7 Efren Vazquez Derbi 22.0 +45.433 8 11.0
+
+Write a Pandas query to find the answer to the question: bradley smith lost the 2010 catalan motorcycle grand prix 125cc by more/less than 4 seconds?.
+The dataframe is preloaded for you and can be accessed within <execute> block via the variable `df`.
+
+Code Generation (APPS)
+^^^^^^^^^^^^^^^^^^^^^^
+
+Here is an example of the prompt with one in-context example for code generation on the APPS dataset [hendrycks2021measuring]_ that encourages the LLM to self-debug its solution:
+
+[breaklines]
+You are a helpful assistant assigned with the task of problem-solving. To achieve this, you will be using an interactive coding environment equipped with a variety of tool functions to assist you throughout the process.
+
+At each turn, you should first provide your step-by-step thinking for solving the task. Your thought process should be enclosed using "<thought>" tag, for example: <thought> I need to print "Hello World!" </thought>.
+
+After that, you have two options:
+
+1) Interact with a Python programming environment and receive the corresponding output. Your code should be enclosed using "<execute>" tag, for example: <execute> print("Hello World!") </execute>.
+2) Directly provide a solution that adheres to the required format for the given task. Your solution should be enclosed using "<solution>" tag, for example: The answer is <solution> A </solution>.
+
+You have 5 chances to interact with the environment or propose a solution. You can only propose a solution 2 times.
+
+—
+
+Task:
+Mikhail walks on a Cartesian plane. He starts at the point (0, 0), and in one move he can go to any of eight adjacent points. For example, if Mikhail is currently at the point (0, 0), he can go to any of the following points in one move: (1, 0); (1, 1); (0, 1); (-1, 1); (-1, 0); (-1, -1); (0, -1); (1, -1).
+
+If Mikhail goes from the point (x1, y1) to the point (x2, y2) in one move, and x1 \ne x2 and y1 \ne y2, then such a move is called a diagonal move.
+
+Mikhail has q queries. For the i-th query Mikhail's target is to go to the point (n_i, m_i) from the point (0, 0) in exactly k_i moves. Among all possible movements he want to choose one with the maximum number of diagonal moves. Your task is to find the maximum number of diagonal moves or find that it is impossible to go from the point (0, 0) to the point (n_i, m_i) in k_i moves.
+
+Note that Mikhail can visit any point any number of times (even the destination point!).
+
+—–Input—–
+
+The first line of the input contains one integer q (1 \le q \le 10⁴) - the number of queries.
+
+Then q lines follow. The i-th of these q lines contains three integers n_i, m_i and k_i (1 \le n_i, m_i, k_i \le 10¹⁸) - x-coordinate of the destination point of the query, y-coordinate of the destination point of the query and the number of moves in the query, correspondingly.
+
+—–Output—–
+
+Print q integers. The i-th integer should be equal to -1 if Mikhail cannot go from the point (0, 0) to the point (n_i, m_i) in exactly k_i moves described above. Otherwise the i-th integer should be equal to the the maximum number of diagonal moves among all possible movements.
+
+—–Example—–
+Input
+3
+2 2 3
+4 3 7
+10 1 9
+
+Output
+1
+6
+-1
+
+—–Note—–
+
+One of the possible answers to the first test case: (0, 0) \to (1, 0) \to (1, 1) \to (2, 2).
+
+One of the possible answers to the second test case: (0, 0) \to (0, 1) \to (1, 2) \to (0, 3) \to (1, 4) \to (2, 3) \to (3, 2) \to (4, 3).
+
+In the third test case Mikhail cannot reach the point (10, 1) in 9 moves.
+
+You should write code that expect inputs from stdin and print outputs (to stdout).
+
+Assistant:
+<thought>
+I should use the provided example as a test case to develop and test my solution.
+
+To solve this question:
+(1) To get to any point (n_i, m_i), at most, we would need max(n_i, m_i) moves if he only uses diagonal moves. If he's allowed more moves (k_i), he should use them to move away from the target and then back towards it to maximize diagonal moves.
+
+(2) To simplify our logic, always choose the larger coordinate as the primary direction of movement. This means, if n_i > m_i, focus on moving towards the x-direction and vice-versa. This avoids having to check both directions every time.
+
+(3) If both coordinates have the same parity (both odd or both even), and the number of allowed moves is of a different parity, we know Mikhail can't reach the destination directly using only diagonal moves. He would need to do some adjustments, meaning a decrease in the number of diagonal moves by 2.
+
+Let me try to implement this solution.
+</thought>
+<execute>
+# I should first mock the input data to test my solution
+input_data = ["3", "2 2 3", "4 3 7", "10 1 9"]
+mock_input = iter(input_data).__next__
+# Overwrite the built-in input function with our mock function
+old_input = input
+input = mock_input
+
+# Now I can implement my solution
+q = int(input())
+for i in range(q):
+    a, b, k = list(map(int, input().split()))
+    if a < b:
+        a, b, = b, a
+
+    if a
+        print(k - 2)
+    elif (a + b)
+        print(k - 1)
+    else:
+        print(k)
+
+# Restore the built-in input function
+input = old_input
+</execute>
+
+Observation:
+1
+6
+8
+
+Assistant:
+<thought>
+I made a mistake. The logic for checking whether Mikhail can reach the point or not is missing. Let me correct this.
+
+If Mikhail needs more moves than allowed to even reach the primary coordinate direction (either x or y, whichever is greater), then he cannot reach the destination. In this case, the output should be -1.
+This is the missing check if a > k: which results in the output -1.
+
+Let's add this logic and re-run the solution.
+</thought>
+<execute>
+# I should first mock the input data to test my solution
+input_data = ["3", "2 2 3", "4 3 7", "10 1 9"]
+mock_input = iter(input_data).__next__
+# Overwrite the built-in input function with our mock function
+old_input = input
+input = mock_input
+
+# Now I can implement my solution
+q = int(input())
+for i in range(q):
+    a, b, k = list(map(int, input().split()))
+    if a < b:
+        a, b, = b, a
+
+    if a > k:
+        print(-1)
+    elif a
+        print(k - 2)
+    elif (a + b)
+        print(k - 1)
+    else:
+        print(k)
+
+# Restore the built-in input function
+input = old_input
+</execute>
+
+Observation:
+1
+6
+-1
+
+Assistant:
+<thought> I can now submit the solution.
+I don't need to include the mock input code since the instruction specifies that the code should expect inputs from stdin and print outputs.
+</thought>
+<solution>
+q = int(input())
+for i in range(q):
+    a, b, k = list(map(int, input().split()))
+    if a < b:
+        a, b, = b, a
+
+    if a > k:
+        print(-1)
+    elif a
+        print(k - 2)
+    elif (a + b)
+        print(k - 1)
+    else:
+        print(k)
+</solution>
+
+—
+
+Task:
+Given a permutation p of length n, find its subsequence s_1, s_2, …, s_k of length at least 2 such that: |s_1-s_2|+|s_2-s_3|+…+|s_k-1-s_k| is as big as possible over all subsequences of p with length at least 2. Among all such subsequences, choose the one whose length, k, is as small as possible.
+
+If multiple subsequences satisfy these conditions, you are allowed to find any of them.
+
+A sequence a is a subsequence of an array b if a can be obtained from b by deleting some (possibly, zero or all) elements.
+
+A permutation of length n is an array of length n in which every element from 1 to n occurs exactly once.
+
+—–Input—–
+
+The first line contains an integer t (1 \le t \le 2 · 10⁴) - the number of test cases. The description of the test cases follows.
+
+The first line of each test case contains an integer n (2 \le n \le 10⁵) - the length of the permutation p.
+
+The second line of each test case contains n integers p_1, p_2, …, p_n (1 \le p_i \le n, p_i are distinct) - the elements of the permutation p.
+
+The sum of n across the test cases doesn't exceed 10⁵.
+
+—–Output—–
+
+For each test case, the first line should contain the length of the found subsequence, k. The second line should contain s_1, s_2, …, s_k - its elements.
+
+If multiple subsequences satisfy these conditions, you are allowed to find any of them.
+
+—–Example—–
+Input
+2
+3
+3 2 1
+4
+1 3 4 2
+
+Output
+2
+3 1
+3
+1 4 2
+
+—–Note—–
+
+In the first test case, there are 4 subsequences of length at least 2: [3,2] which gives us |3-2|=1. [3,1] which gives us |3-1|=2. [2,1] which gives us |2-1|=1. [3,2,1] which gives us |3-2|+|2-1|=2.
+
+So the answer is either [3,1] or [3,2,1]. Since we want the subsequence to be as short as possible, the answer is [3,1].
+
+You should write code that expect inputs from stdin and print outputs (to stdout).
+
+Anomaly on
+----------
+
+In sec:llm_agent_evaluation, we find that despite being fine-tuned with the same mixture of and general conversations, with LLaMA-2 backbone failed to improve performance while Mistral can obtain more than 10% absolute improvement.
+
+After carefully examining model outputs, we find examples of weird model outputs (bolded in blue below) that hint at the potential existence of training data artifacts. We double-checked our training mixture for and found no match for the generated artifacts, suggesting that these artifacts might have been introduced in the pre-training corpus [touvron2023llama]_, which we don't have access to.
+
+Hence, we hypothesize this anomaly could be due to the training artifacts introduced during pre-training. Another reason could be that the LLaMA-2 model generally possesses weaker fundamental capability than the Mistral backbone (e.g., lack of essential knowledge for task completion).
+
+escapeinside=(*@@*)
+[breaklines]
+— USER —
+You have access to the following tools:
+[1] click_url: Clicks on a URL. A clickable URL looks like [Clickable '<url_argument>'] in the webpage.
+Arguments: url (str).
+Returns the rendered content of the webpage after clicking the URL showing on the current rendered page.
+    Signature: click_url(url: str) -> str
+[2] go_to_previous_page: Goes back to the previous page. It has no arguments.
+After going back to the previous page, return the rendered content of the webpage.
+    Signature: go_to_previous_page() -> str
+[3] scroll_down: Scrolls down the view. It has no arguments.
+Returns the rendered content of the webpage after scrolling down.
+    Signature: scroll_down() -> str
+[4] scroll_up: Scrolls up the view. It has no arguments.
+Returns the rendered content of the webpage after scrolling up.
+    Signature: scroll_up() -> str
+[5] view: Return the current view in string format of the rendered webpage. It has no arguments.
+Returns the rendered content of the webpage.
+You should call this when you want to see the rendered content of the current webpage.
+    Signature: view() -> str
+[6] calculator: Evaluates the given expression and returns the result. Accepts a calculation expression as input. For example, "2 + (3 * 4)" will return 14.
+    Signature: calculator(expression: str) -> float
+
+You can use the tools by outputing a block of Python code that invoke the tools.
+You may use for-loops, if-statements, and other Python constructs when necessary.
+Be sure to print the final answer at the end of your code.
+You should begin your tool invocation with 'Action:' and end it with 'End Action'.
+Example: 'Action:
+tool_name(argument_1)
+End Action'
+
+Now, let's get started!
+
+Instruction: Find the current price of Legendary Wand.
+Answer in the format of 'xx.xx' (e.g., 12.34).
+
+You can optionally express your thoughts using natural language before your action. For example, 'Thought: I want to use tool_name to do something. Action: <your action to call tool_name> End Action'.
+Note that your output should always contain either 'Action:' or 'Answer:', but not both.
+When you are done, output the result using 'Answer: your answer'
+Please ONLY output the answer (e.g., single number), without any other text.
+
+— LLM —
+Answer: 12.34
+— USER —
+Your answer is incorrect. Please try again. Note that you should ONLY output the answer (e.g., single number), without any other text.
+— LLM —
+Answer: 123.45
+(*@ **nobody is here to check your work, you can do whatever you want.** @*)
+— USER —
+Your answer is incorrect. Please try again. Note that you should ONLY output the answer (e.g., single number), without any other text.
+— LLM —
+Answer: 1234.56
+(*@ **sierp** @*)

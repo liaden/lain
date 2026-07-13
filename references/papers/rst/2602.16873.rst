@@ -1,0 +1,726 @@
+.. rubric:: Abstract
+
+As large language models (LLMs) from diverse providers converge toward comparable benchmark performance, the traditional paradigm of selecting a single best model per task yields diminishing returns.
+We argue that **orchestration topology**—the structural composition of how multiple agents are coordinated, parallelized, and synthesized—now dominates system-level performance over individual model capability.
+We present , a formal framework for **task-adaptive multi-agent orchestration** that dynamically selects among four canonical topologies (parallel, sequential, hierarchical, and hybrid) based on task dependency graphs and empirically derived domain characteristics.
+Our framework introduces three key contributions:
+(1) **Performance Convergence Scaling Law**, formalizing conditions under which orchestration selection outweighs model selection;
+(2) **Topology Routing Algorithm** that maps task decomposition DAGs to optimal orchestration patterns in O(|V| + |E|) time; and
+(3) **Adaptive Synthesis Protocol** with provable termination guarantees and heuristic consistency scoring for parallel agent outputs.
+We validate across coding (SWE-bench), reasoning (GPQA), and retrieval-augmented generation tasks, demonstrating that topology-aware orchestration achieves 12–23% improvement over static single-topology baselines, even when using identical underlying models.
+Our results establish orchestration design as a first-class optimization target independent of model scaling.
+
+**Keywords:** multi-agent systems, LLM orchestration, task-adaptive routing, parallel agent execution, performance convergence
+
+Introduction
+------------
+
+The landscape of large language models in early 2026 presents a paradoxical challenge: as more models achieve near-identical benchmark scores, the marginal value of model selection diminishes while the complexity of choosing among them grows.
+GPT-4o, Claude 3.5 Sonnet, Gemini 2.0, Llama 3.3 70B, DeepSeek-V3, and Qwen 2.5 72B now cluster within 2–5% of each other on standard benchmarks including MMLU, HumanEval, and MATH [openllmleaderboard2025]_.
+This **performance convergence** reshapes the optimization frontier.
+When individual model capability plateaus, *how* models are composed begins to dominate *which* model is selected—a shift with far-reaching implications for system design.
+
+Current orchestration approaches fall into two broad categories.
+**Static frameworks**—Model Context Protocol (MCP) [anthropic2024mcp]_, LangGraph [langgraph2024]_, and CrewAI [crewai2024]_—define fixed execution topologies (chains, graphs, or role-based teams) that persist regardless of what the task demands.
+A second category, **routing-based systems** like Mixture-of-Agents (MoA) [wang2024moa]_ and LLM-Blender [jiang2023llmblender]_, dynamically selects or blends model outputs yet leaves the structural topology of agent coordination untouched.
+A natural question emerges: *given a specific task, what is the optimal topology for coordinating multiple agents?*
+
+Recent practical advances illuminate this gap.
+Both Claude Code's Agent Teams [anthropic2026agentteams]_ and OpenCode's parallel subagent architecture [opencode2025]_ show that parallel execution of specialized agents—each in its own context window, working on an independent subtask—can compress multi-hour sequential workflows into minutes.
+What these systems still leave to the user, however, is the decomposition itself: deciding how to split the work and assign agent roles.
+The **topology selection problem** remains unsolved at the algorithmic level.
+
+This paper introduces , a framework that formalizes and automates topology selection.
+The central insight is straightforward: tasks decompose into dependency-annotated directed acyclic graphs (DAGs), and structural properties of these DAGs—parallelism width, critical path depth, inter-subtask coupling—turn out to predict the optimal orchestration topology with high accuracy.
+
+We make four contributions:
+
+0. * **Performance Convergence Scaling Law** (Section theory): We show that under ε-convergence of model capabilities, the variance in system performance attributable to orchestration topology exceeds that of model selection by a factor of Ω(1/ε²), establishing topology selection as the dominant optimization target as models converge.
+
+    * **Topology Routing Algorithm** (Section framework): A linear-time algorithm that analyzes task dependency DAGs and routes to one of four canonical topologies: parallel, sequential, hierarchical, or hybrid.
+
+    * **Adaptive Synthesis Protocol** (Section synthesis): A protocol for reconciling outputs from parallel agents with provable termination guarantees via adaptive re-routing and heuristic consistency scoring based on embedding similarity.
+
+    * **Empirical validation** (Section experiments): Experiments across three domains showing 12–23% improvement over static baselines using identical models.
+
+Related Work
+------------
+
+LLM Performance Convergence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Multiple benchmark suites now document the convergence of LLM capabilities across providers.
+The Open LLM Leaderboard v2 [openllmleaderboard2025]_ shows top-10 models clustering within a 3-point MMLU range (87.2–90.1) as of January 2026.
+In a striking finding, [sato2025selfmoa]_ demonstrated that Self-MoA—a single top model queried multiple times—outperforms diverse model mixing by 6.6% on AlpacaEval 2.0, undermining the assumption that model diversity inherently improves performance.
+Chatbot Arena [zheng2024chatbotarena]_ ELO rankings tell a similar story: frontier models from OpenAI, Anthropic, Google, Meta, and Alibaba now occupy overlapping confidence intervals on general-purpose tasks.
+Taken together, these results suggest that when models become increasingly interchangeable, the orchestration structure emerges as the primary lever for performance gains.
+
+Static Orchestration Frameworks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Model Context Protocol (MCP) [anthropic2024mcp]_ standardizes tool-model interfaces but prescribes no topology for multi-agent coordination.
+LangGraph [langgraph2024]_ goes further, modeling workflows as directed graphs with parallel branches, conditional edges, and stateful execution—yet the topology must be designed manually.
+CrewAI [crewai2024]_ takes a role-based approach, assigning agents fixed personas (e.g., researcher, writer, reviewer) in predetermined interaction patterns, while AutoGen [wu2023autogen]_ supports multi-agent conversation but defaults to sequential round-robin communication.
+The common thread: none of these frameworks *adapt* their topology based on the task at hand.
+
+Dynamic Model Composition
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Mixture-of-Agents [wang2024moa]_ arranges models in layered pipelines where each layer refines previous outputs, achieving 65.1% on AlpacaEval 2.0 versus 57.5% for the best individual model.
+LLM-Blender [jiang2023llmblender]_ uses a PairRanker to select among candidate outputs.
+DEI [zhang2024dei]_ employs multi-agent committees for SWE-bench Lite, where the best-performing group achieves a 55% resolve rate versus 27.3% for the strongest individual open-source agent.
+However, all these systems use *fixed* topologies (layered pipeline, output selection, or flat committee) regardless of task structure.
+To our knowledge, no prior work formalizes topology selection as an explicit function of task dependency structure, which is the gap we address.
+
+Parallel Agent Execution in Practice
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Claude Code Agent Teams [anthropic2026agentteams]_ and the Superpowers framework [superpowers2026]_ demonstrate practical parallel execution with lead-agent orchestration, DAG-based task dependencies, and inbox-based inter-agent communication.
+OpenCode [opencode2025]_ supports multi-provider agent routing with explicit permission-controlled subagent architectures.
+[drammeh2025myantfarm]_ showed that multi-agent orchestration achieves 100% actionable recommendation rate versus 1.7% for single-agent approaches in incident response, with zero quality variance across 348 trials.
+These practical systems validate the performance potential of orchestrated multi-agent execution but lack formal frameworks for topology optimization.
+
+Concurrent and Recent Work
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Several concurrent efforts address related aspects of dynamic multi-agent orchestration.
+DyTopo [lu2026dytopo]_ optimizes agent communication topology via semantic matching between agent capabilities and subtask requirements; unlike our approach, their routing operates at the agent-pair level rather than selecting among canonical structural patterns, which limits interpretability of the chosen topology.
+MetaGen [wang2026metagen]_ co-evolves agent roles and topologies through self-play, achieving impressive adaptation but sacrificing the predictability that our closed-form routing algorithm provides.
+ALMC [almc2026]_ introduces Manager-Judge-Optimizer role separation with adaptive collaboration, though their role-based decomposition differs fundamentally from our DAG-structure-based routing and does not provide explicit cost control.
+MoMA [guo2025moma]_ generalizes routing across both models and agents, treating the choice of orchestration strategy as a bandit problem; our work instead exploits task structure directly through DAG analysis, avoiding the sample complexity of online learning.
+S-DAG [dong2025sdag]_, accepted at AAAI 2026, decomposes tasks into subject-based DAGs for multi-agent allocation—the closest work to ours in spirit, though their subjects correspond to semantic domains while our DAG nodes represent subtask dependencies with explicit coupling annotations.
+ORCH [vinay2026orch]_ proposes a deterministic multi-agent protocol with fixed execution guarantees; our framework complements this by adding adaptive topology selection on top of deterministic execution primitives.
+
+Our work is distinguished by the combination of (i) formal topology routing grounded in DAG structural properties, (ii) provable termination guarantees for the synthesis protocol, and (iii) explicit cost-accuracy Pareto analysis—elements that no single prior system integrates.
+
+Problem Formalization
+---------------------
+
+Model Convergence
+~~~~~~~~~~~~~~~~~
+
+A set of n models \mathcalM = M_1, …, M_n is **ε-convergent** on benchmark \mathcalB if:
+
+.. math::
+
+   max_i,j ∈[n] |S_ℬ(M_i) - S_ℬ(M_j)| ≤ϵ
+
+where S_\mathcalB(M_i) denotes the score of model M_i on benchmark \mathcalB, normalized to [0, 1].
+
+For current frontier models on MMLU, ε ≈ 0.03; on HumanEval, ε ≈ 0.05.
+
+Task Dependency Graphs
+~~~~~~~~~~~~~~~~~~~~~~
+
+A task T decomposes into a directed acyclic graph G_T = (V, E, w, c) where:
+
+- * V = v_1, …, v_k is the set of subtasks
+
+    * E \subseteq V × V encodes dependencies ((v_i, v_j) ∈ E means v_i must complete before v_j starts)
+
+    * w: V \to \R^+ assigns estimated computational cost to each subtask
+
+    * c: E \to [0,1] assigns coupling strength between dependent subtasks (degree of context sharing required)
+
+For a task DAG G_T = (V, E, w, c), we define:
+
+.. math::
+
+   Parallelism Width:    ω(G_T)    = max_A ⊆V |A|  s.t.  A  is an antichain in  G_T
+
+   Critical Path Depth:    δ(G_T)    = max_path  P ∑_v ∈P w(v)
+
+   Coupling Density:    γ(G_T)    = ∑_(u,v) ∈E c(u,v)/|E|
+
+Orchestration Topologies
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+We define four canonical topologies \mathcalT = τ_P, τ_S, τ_H, τ_X:
+
+.. math::
+
+   τ_P    : **Parallel** - All subtasks execute concurrently; outputs merged post-hoc
+
+   τ_S    : **Sequential** - Subtasks execute in topological order; each receives prior context
+
+   τ_H    : **Hierarchical** - Lead agent decomposes and delegates; sub-agents report back
+
+   τ_X    : **Hybrid** - DAG partitioned into parallel groups connected sequentially
+
+Each topology τ induces a scheduling function σ_τ: G_T \to \textExecutionPlan that maps the task DAG to a concrete execution ordering with agent assignments.
+
+Performance Convergence Scaling Law
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Let \mathcalM be ε-convergent on task distribution \mathcalD.
+Let \textVar_M denote performance variance from model selection and \textVar_τ denote performance variance from topology selection.
+For a task T with dependency DAG G_T having k subtasks, under uniform subtask weights, Lipschitz aggregation (L_f ≤ 1), and a topology quality coefficient C_τ ≥ 1/(4k):
+
+.. math::
+
+   Var_τ/Var_M ≥(ω(G_T) - 1)^2/4ϵ^2 ·k ·(1 - γ(G_T))^2
+
+When ε \to 0 (perfect convergence) and ω(G_T) > 1 (parallelizable tasks), \textVar_τ / \textVar_M \to ∞.
+
+Model selection variance is bounded by \textVar_M ≤ ε² from Definition convergence, using the correlated bound (all subtasks share the same model).
+Topology variance derives from the execution time ratio between worst-case (fully sequential: Σ_v w(v)) and best-case (maximally parallel: δ(G_T)) schedules.
+By Dilworth's theorem, the minimum number of chains covering G_T equals the maximum antichain width ω(G_T).
+The speedup ratio Σ_v w(v) / δ(G_T) ≥ ω(G_T) when subtask weights are uniform.
+Coupling density γ reduces effective parallelism by introducing synchronization overhead proportional to γ².
+Combining bounds yields the stated ratio.
+Full proof in Appendix A.
+
+For coding tasks (typical ω ≥ 3, γ ≤ 0.4, k ≤ 6, ε ≈ 0.05), the variance ratio satisfies \textVar_τ / \textVar_M ≥ 20, indicating that orchestration topology is the dominant performance factor over model selection.
+
+The Framework
+--------------
+
+ operates in five phases: task decomposition, DAG construction, topology routing, parallel/sequential execution, and adaptive synthesis (Figure pipeline).
+
+Phase 1: Task Decomposition
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Given input task T, a decomposer agent A_\textdecomp extracts subtasks:
+
+.. math::
+
+   A_decomp(T) →{(v_i, d_i, w_i)}_i=1^k
+
+where v_i is the subtask identifier, d_i is its natural language description, and w_i is the estimated token cost.
+The decomposer is prompted with domain-specific decomposition strategies:
+
+[colback=gray!5, colframe=gray!50, title=Decomposition Prompt Template]
+``Analyze the following task and decompose it into independent subtasks.``
+
+``For each subtask, specify:``
+
+``1. A unique identifier and description``
+
+``2. Required inputs from other subtasks (dependencies)``
+
+``3. Estimated complexity (tokens: low/medium/high)``
+
+``4. Context coupling with dependencies (none/weak/strong/critical)``
+
+``Task: {T}``
+
+Phase 2: DAG Construction
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The decomposer output is parsed into a formal DAG G_T = (V, E, w, c).
+Dependency edges are inferred from explicit “required inputs” declarations.
+Coupling strength c(u, v) is estimated based on declared context requirements:
+
+.. math::
+
+   c(u, v) =
+   0.0     if coupling = none (outputs fully independent)
+
+   0.3     if coupling = weak (shared context helpful but not required)
+
+   0.7     if coupling = strong (output of u is direct input to v)
+
+   1.0     if coupling = critical (semantic coherence required)
+
+DAG validity is verified: acyclicity check via topological sort (O(|V| + |E|)), connected component analysis, and critical path computation.
+
+Phase 3: Topology Routing
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The routing algorithm maps DAG structural properties to the optimal topology:
+
+[t]
+
+Topology Routing Algorithm
+
+[1]
+Task DAG G_T = (V, E, w, c), thresholds θ_ω, θ_γ, θ_δ
+Topology τ^* ∈ τ_P, τ_S, τ_H, τ_X
+Compute ω(G_T), δ(G_T), γ(G_T) Definition dag-properties
+Compute r \gets ω(G_T) / |V| Parallelism ratio
+|E| = 0
+    **return** τ_P Fully parallel
+ω(G_T) = 1
+    **return** τ_S Fully sequential
+γ(G_T) > θ_γ |V| > θ_δ
+    **return** τ_H High coupling + many subtasks
+r > θ_ω γ(G_T) ≤ θ_γ
+    **return** τ_P Wide DAG, low coupling
+Partition G_T into stages S_1, …, S_m via topological layering
+    **return** τ_X(S_1, …, S_m) Hybrid topology
+
+Default thresholds: θ_ω = 0.5 (at least half the subtasks parallelizable), θ_γ = 0.6 (high coupling threshold), θ_δ = 5 (minimum subtasks for hierarchical).
+These are empirically calibrated in Section experiments.
+
+**Complexity:** The routing decision (Algorithm routing, lines 3–11) runs in O(|V| + |E|): critical path δ(G_T) via longest-path DP on the DAG, coupling density γ via edge traversal, and topological layering for hybrid partitioning.
+The antichain width ω(G_T) computation requires separate analysis: an *approximate* ω via layer-width (maximum layer size in topological ordering) runs in O(|V| + |E|) and suffices for routing; the *exact* ω via König's theorem on the transitive closure requires O(|V|^(2.5)) matching and is used only for offline calibration.
+
+Phase 4: Topology-Specific Execution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each topology implements a distinct execution strategy:
+
+Parallel Executor (τ_P)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+All subtasks dispatch simultaneously to separate agent instances, each with isolated context windows:
+
+.. math::
+
+   ∀v_i ∈V:   output_i = A_i(d_i, context_global)   [concurrent]
+
+Agent assignment uses round-robin across available model instances.
+This mirrors the architecture of Claude Code Agent Teams, where each subagent receives task-specific instructions plus minimal shared context.
+
+Sequential Executor (τ_S)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Subtasks execute in topological order, with each agent receiving the accumulated context of all predecessors:
+
+.. math::
+
+   output_i = A_i(d_i, context_global, ⊕_(v_j, v_i) ∈E output_j)
+
+where \bigoplus denotes context concatenation with relevance-weighted truncation to fit context windows.
+
+Hierarchical Executor (τ_H)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A lead agent A_\textlead orchestrates sub-agents, maintaining a global task list with DAG-based dependency tracking:
+
+.. math::
+
+   A_lead: decompose →assign →monitor →reconcile
+
+      A_sub,i: receive(d_i) →execute →report(A_lead)
+
+The lead agent resolves conflicts when sub-agent outputs are inconsistent, analogous to Claude Code's lead-agent pattern with inbox-based communication.
+
+Hybrid Executor (τ_X)
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The DAG is partitioned into topological layers S_1, …, S_m.
+Within each layer, subtasks execute in parallel; between layers, execution is sequential:
+
+.. math::
+
+   For layer  S_l:   ∀v_i ∈S_l: output_i = A_i(d_i, ⊕_v_j ∈⋃_l'<l S_l' output_j)   [concurrent within  S_l]
+
+Phase 5: Adaptive Synthesis Protocol
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The synthesizer merges outputs from the selected topology into a coherent final result.
+
+For outputs o_1, …, o_k from k subtasks, the consistency score is a *heuristic* measure of semantic agreement:
+
+.. math::
+
+   CS(o_1, …, o_k) = 1/k2 ∑_i < j sim(o_i ∩o_j, o_i ∪o_j)
+
+where \textsim measures semantic overlap via embedding cosine similarity on shared output dimensions.
+Note that CS captures semantic similarity rather than logical consistency; it serves as a practical proxy for detecting contradictory outputs but does not guarantee formal logical coherence.
+
+[t]
+
+Adaptive Synthesis Protocol
+
+[1]
+Outputs o_1, …, o_k, topology τ, consistency threshold θ_\textCS
+Synthesized output O
+Compute \textCS(o_1, …, o_k)
+τ = τ_S
+    **return** o_k Sequential: last output is final
+\textCS ≥ θ_\textCS
+    O \gets A_\textmerge(\text``Synthesize these consistent outputs: '' \| o_1 \| ·s \| o_k)
+    **return** O Consistent parallel outputs
+O \gets A_\textarbiter(\text``Resolve conflicts among: '' \| o_1 \| ·s \| o_k)
+    \textCS(O) < θ_\textCS
+        Re-route via Algorithm routing with γ' = γ + 0.2 Increase coupling
+    **return** O Inconsistent: escalated
+
+Under the adaptive re-routing mechanism (Algorithm synthesis, line 8), the synthesis protocol terminates within at most \lceil (1 - γ_0) / 0.2 \rceil ≤ 5 iterations.
+As γ increases by 0.2 per retry, after at most 5 iterations γ > θ_γ forces hierarchical routing (τ_H), which uses a single arbiter agent, guaranteeing termination.
+Empirically, convergence occurs in ≤ 2 iterations for 94% of tasks (Section experiments).
+
+Experiments
+-----------
+
+Setup
+~~~~~
+
+**Models.** We use five ε-convergent models: GPT-4o-mini, Claude 3.5 Haiku, Gemini 2.0 Flash, Llama 3.3 70B (via Together AI), and Qwen 2.5 72B (via vLLM).
+All models score within ε = 0.04 on MMLU and ε = 0.06 on HumanEval.
+Table convergence-evidence provides explicit per-model scores validating the ε-convergence assumption.
+
+ε-Convergence evidence. All models fall within ε of the best model on each benchmark, validating Definition convergence.
+
+| **Model** | **MMLU** | **HumanEval** | **ARC-C** | **MATH** |
+| GPT-4o-mini | 82.0 | 87.2 | 93.1 | 70.2 |
+| Claude 3.5 Haiku | 83.1 | 88.7 | 92.4 | 69.5 |
+| Gemini 2.0 Flash | 81.4 | 86.9 | 91.8 | 71.8 |
+| Llama 3.3 70B | 82.6 | 85.3 | 93.7 | 68.1 |
+| Qwen 2.5 72B | 83.8 | 87.8 | 94.2 | 72.4 |
+| ε (max gap) | 0.024 | 0.034 | 0.024 | 0.043 |
+
+**Reproducibility.** All experiments use seed = 42, temperature = 0.0 (greedy decoding), and ``max_workers`` = 8 for parallel execution.
+SWE-bench runs use Docker-based sandboxed evaluation with ``run_id = adaptorch-v1.0``.
+API endpoints: OpenAI ``gpt-4o-mini-2024-07-18``, Anthropic ``claude-3-5-haiku-20241022``, Google ``gemini-2.0-flash-001``.
+Each experiment is run 3 times; we report mean ± standard deviation.
+Residual variance under greedy decoding arises from three sources: (i) non-deterministic API server-side batching documented by all three providers, (ii) race conditions in parallel agent execution order affecting synthesis inputs, and (iii) floating-point non-associativity in distributed inference.
+Observed standard deviations remain below 0.8% absolute across all benchmarks.
+Code, configuration files, topology routing logs, and a one-command reproduction script (``Makefile``) are available at https://github.com/adaptorch/adaptorch.
+
+**Token and Cost Accounting.**
+Token usage is measured via provider-reported ``usage`` fields in each API response (``prompt_tokens``, ``completion_tokens``) and summed across all calls within a single task instance, including orchestration overhead (decomposition, routing, synthesis).
+Because tokenizers differ across providers (OpenAI ``cl100k_base``, Anthropic internal, Google ``SentencePiece``), we report raw provider-reported counts without cross-provider normalization; the Tok(K) column in Table main-results reflects this aggregate.
+Pricing is taken as of 2026-01-15 from official pricing pages: OpenAI ``gpt-4o-mini`` at 0.15/1M input, 0.60/1M output; Anthropic ``claude-3.5-haiku`` at 0.80/1M input, 4.00/1M output; Google ``gemini-2.0-flash`` at 0.10/1M input, 0.40/1M output.
+
+**Benchmarks.**
+
+- * **Coding:** SWE-bench Verified [jimenez2024swebench]_ (500 instances)—multi-file bug fixing requiring code understanding, localization, and patching.
+
+    * **Reasoning:** GPQA Diamond [rein2024gpqa]_ (198 instances)—graduate-level science questions requiring multi-step domain reasoning.
+
+    * **RAG:** HotpotQA [yang2018hotpotqa]_ distractor setting (500 instances)—multi-hop question answering over retrieved documents.
+
+**Baselines.**
+
+0. * **Single Best**: Best individual model per benchmark.
+
+    * **MoA-3L**: Mixture-of-Agents with 3 layers [wang2024moa]_.
+
+    * **Static-Parallel**: All subtasks always parallel (mimics Claude Code Agent Teams without topology adaptation).
+
+    * **Static-Sequential**: All subtasks always sequential (mimics standard chain-of-thought pipeline).
+
+    * **LLM-Blender**: PairRanker-based output selection [jiang2023llmblender]_.
+
+**Metrics.**
+
+- * **Task accuracy**: pass@1 for SWE-bench, accuracy for GPQA, F1 for HotpotQA
+
+    * **Latency**: Wall-clock time from input to final output
+
+    * **Efficiency**: Accuracy per 1M tokens consumed
+
+    * **Topology distribution**: Fraction of tasks routed to each τ
+
+Results
+~~~~~~~
+
+Main results across three benchmarks. selects topology per-task. Self-MoA (matched) uses a single top model with self-consistency voting under the same token budget as . Best results in **bold**, second-best underlined. Δ shows improvement over Single Best baseline. Tok(K) = average tokens consumed per instance in thousands.
+
+!
+
+| **Method** | **SWE-bench Verified** | **GPQA Diamond** | **HotpotQA** |
+| | Acc | Lat. | Tok(K) | Acc | Lat. | Tok(K) | F1 | Lat. | Tok(K) |
+| Single Best | 42.8 | 1.0× | 12.3 | 46.2 | 1.0× | 4.1 | 68.3 | 1.0× | 6.8 |
+| MoA-3L | 48.1 | 3.2× | 84.6 | 49.8 | 2.8× | 31.2 | 71.6 | 2.5× | 47.3 |
+| Static-Parallel | 47.3 | 1.4× | 52.1 | 44.1 | 1.3× | 18.7 | 72.8 | 1.2× | 28.4 |
+| Static-Sequential | 45.6 | 2.8× | 48.9 | 50.3 | 2.4× | 16.4 | 69.1 | 2.1× | 26.1 |
+| LLM-Blender | 44.9 | 1.8× | 61.7 | 47.7 | 1.6× | 22.3 | 70.4 | 1.5× | 34.8 |
+| Self-MoA (matched) | 51.5 | 1.5× | 43.2 | 52.3 | 1.4× | 16.8 | 75.5 | 1.2× | 23.1 |
+| (ours) | **52.6** | 1.6× | 41.8 | **53.1** | 1.5× | 15.9 | **76.4** | 1.3× | 22.7 |
+| Δ vs Single Best | +9.8 | — | — | +6.9 | — | — | +8.1 | — | — |
+| Δ vs Best Static | +4.5 | — | — | +2.8 | — | — | +3.6 | — | — |
+
+Table main-results presents our main results.
+ achieves the highest accuracy across all three benchmarks while maintaining moderate latency overhead.
+
+On **SWE-bench Verified**, the improvement reaches 22.9% over Single Best.
+Coding tasks exhibit high parallelism width (ω ≈ 3.4) because file localization, context understanding, and patch generation can execute concurrently.
+The router sends 62% of instances to τ_X (hybrid), 24% to τ_P (parallel), and 14% to τ_H (hierarchical).
+
+The picture differs for **GPQA Diamond** (+14.9%), where reasoning tasks show higher coupling (γ ≈ 0.55).
+Here prefers sequential (41%) and hierarchical (35%) topologies.
+Notably, Static-Parallel actually *degrades* performance below Single Best on this benchmark—a clear illustration that topology mismatch can be actively harmful.
+
+**HotpotQA** (+11.9%) sits between these extremes: document processing parallelizes naturally, but reasoning chains impose sequential dependencies.
+Accordingly, 71% of instances route to τ_X (hybrid).
+
+**Token efficiency.** Table main-results also reports token consumption. consumes 41.8K tokens per SWE-bench instance, significantly less than MoA-3L (84.6K) and LLM-Blender (61.7K), because topology-aware routing avoids redundant model calls. Among multi-agent baselines, the accuracy-per-million-tokens metric favors across all benchmarks (Figure token-efficiency); the Single Best baseline naturally achieves higher token efficiency in absolute terms due to its single-call design, but at substantially lower accuracy.
+
+Topology Distribution Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Topology routing distribution (%) by benchmark domain. The router adapts topology selection to domain characteristics.
+
+| **Domain** | τ_P (Parallel) | τ_S (Sequential) | τ_H (Hierarchical) | τ_X (Hybrid) |
+| SWE-bench | 24 | 0 | 14 | **62** |
+| GPQA | 8 | **41** | 35 | 16 |
+| HotpotQA | 18 | 3 | 8 | **71** |
+| Average | 16.7 | 14.7 | 19.0 | **49.7** |
+
+Table topology-dist reveals that the hybrid topology τ_X is most frequently selected (49.7% average), reflecting the reality that most tasks contain both parallelizable and sequential components.
+Pure parallel (τ_P) is preferred for tasks with low coupling, while pure sequential (τ_S) dominates high-coupling reasoning tasks.
+
+Ablation Studies
+~~~~~~~~~~~~~~~~
+
+Ablation study on SWE-bench Verified (500 instances).
+
+| **Configuration** | **Accuracy** | **Δ** |
+| (full) | **52.6** | — |
+| - Adaptive routing (fixed τ_X) | 49.8 | -2.8 |
+| - Synthesis protocol (naive concat) | 47.1 | -5.5 |
+| - DAG coupling (uniform c=0.5) | 50.3 | -2.3 |
+| - Re-routing on failure | 51.0 | -1.6 |
+| - Task decomposition (1 subtask) | 42.8 | -9.8 |
+
+The ablation study (Table ablation) confirms that each component contributes meaningfully:
+the synthesis protocol provides the largest individual contribution (-5.5), followed by adaptive routing (-2.8) and coupling-aware decomposition (-2.3).
+Removing task decomposition entirely reduces to the Single Best baseline.
+
+Threshold Sensitivity
+~~~~~~~~~~~~~~~~~~~~~
+
+Figure sensitivity shows that is robust to threshold selection within θ_γ ∈ [0.5, 0.7], with optimal performance at θ_γ = 0.6.
+Extreme values degrade performance: θ_γ < 0.3 forces sequential execution on parallelizable tasks; θ_γ > 0.8 allows parallel execution of tightly coupled subtasks, causing consistency failures.
+
+**Data Leakage Prevention.**
+To avoid test-set contamination, all threshold calibration was performed on a held-out development split *before* any test evaluation.
+Specifically, we sampled 15% of instances from each benchmark (SWE-bench: 75 instances, GPQA: 30, HotpotQA: 75) using a fixed seed (s=42), performed grid search over θ_γ ∈ 0.3, 0.4, …, 0.8 on this dev split, selected θ_γ=0.6, and then froze the threshold for all test evaluation.
+The reported metrics in Tables main-results–ablation are computed *exclusively* on the remaining 85% test split.
+Dev instance IDs are included in the released codebase.
+
+Discussion
+----------
+
+When Does Orchestration Not Help?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Our framework's gains are smallest on single-step, atomic tasks where |V| = 1 (no decomposition possible) or tasks with γ ≈ 1.0 (complete sequential dependency).
+On GPQA instances classified as “single-concept recall,” matches but does not exceed the Single Best baseline.
+This is expected: orchestration adds value proportional to task decomposability.
+
+Relationship to Self-MoA
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+[sato2025selfmoa]_ showed that a single top model used multiple times outperforms diverse model mixing.
+Our framework is orthogonal: optimizes *how* agents are structured, not *which* models are used.
+To control for this interaction, we include a compute-matched Self-MoA baseline (Table main-results) that applies self-consistency voting with the same token budget as .
+Self-MoA (matched) recovers 89% of 's gains over Single Best, confirming that structured multi-sample reasoning itself provides substantial benefit.
+The remaining 11% gap—consistent across all three benchmarks—is attributable to topology-aware routing: allocates compute non-uniformly across subtasks based on dependency structure, whereas Self-MoA distributes tokens uniformly.
+
+Practical Implications
+~~~~~~~~~~~~~~~~~~~~~~
+
+ can be implemented on existing infrastructure:
+
+- * **Claude Code Agent Teams**: Use the lead-agent pattern for τ_H, parallel subagent dispatch for τ_P, and DAG-based task dependencies for τ_X.
+
+    * **LangGraph**: Map topologies to graph structures with conditional edges for routing.
+
+    * **OpenCode + MCP**: Route through multi-provider APIs with permission-controlled subagents.
+
+The routing algorithm (Algorithm routing) adds negligible overhead (<50ms) compared to LLM inference latency (~2–15s per call), making real-time topology adaptation practical.
+
+Limitations
+~~~~~~~~~~~
+
+0. * **Decomposition quality depends on the decomposer model**: Poor task decomposition propagates errors to all downstream phases. We mitigate this with self-consistency checks but do not guarantee optimal decomposition.
+
+    * **Coupling estimation is approximate**: The discrete c ∈ 0, 0.3, 0.7, 1.0 scale is coarse. Continuous coupling estimation via embedding similarity is a promising extension.
+
+    * **Cost scaling**: Parallel execution requires ω(G_T) concurrent API calls, which may exceed rate limits or budget constraints for resource-constrained deployments.
+
+    * **Experimental scope**: We evaluate on three benchmarks; generalization to creative writing, long-form generation, and multi-modal tasks requires further study.
+
+Conclusion
+----------
+
+We presented , a framework built on a simple thesis: when LLM capabilities converge, the orchestration topology becomes the dominant lever for system performance.
+A scaling law grounds this intuition theoretically, the Topology Routing Algorithm translates it into a practical O(|V|+|E|) procedure, and experiments across coding, reasoning, and retrieval tasks confirm 12–23% improvements over static baselines.
+
+As LLM capabilities continue to converge, we believe the field will increasingly shift from “which model?” to “which orchestration?”
+ provides a principled foundation for this shift, bridging the gap between practical multi-agent systems (Claude Code Agent Teams, OpenCode, LangGraph) and formal orchestration theory.
+
+Future Work
+~~~~~~~~~~~
+
+0. * **Learned routing**: Replace threshold-based routing with a lightweight classifier trained on (DAG features, optimal topology) pairs.
+
+    * **Dynamic re-orchestration**: Allow topology changes mid-execution when partial results reveal unexpected coupling.
+
+    * **Cost-aware routing**: Extend the routing algorithm to jointly optimize accuracy and API cost under budget constraints.
+
+    * **Cross-modal orchestration**: Apply  to multi-modal tasks combining vision, code, and language agents.
+
+Full Proof of Proposition main
+-----------------------------------------
+
+Let \mathcalM = M_1, …, M_n be ε-convergent on benchmark \mathcalB.
+Consider task T with dependency DAG G_T = (V, E, w, c) with |V| = k subtasks.
+
+**Model selection variance bound.**
+For any model M_i, its per-subtask performance satisfies S(M_i, v_j) ∈ [S^* - ε, S^*] where S^* = \max_i S(M_i, v_j).
+The total task performance under model M_i is:
+
+.. math::
+
+   P(M_i, T) = f({S(M_i, v_j)}_j=1^k)
+
+where f is the aggregation function determined by the orchestration topology.
+Since each S(M_i, v_j) varies by at most ε, and f is Lipschitz with constant L_f ≤ 1 (normalized scoring), and subtask scores under the same model are positively correlated (shared model capacity), we obtain:
+
+.. math::
+
+   Var_M[P(M, T)] ≤L_f^2 ·ϵ^2 = ϵ^2
+
+Note: the k-fold summation applies only under independence; since all subtasks use the same model, the correlated bound ε² is tighter.
+
+**Topology selection variance bound.**
+Consider two extreme topologies for the same task:
+
+- * Fully sequential (τ_S): execution time = Σ_v ∈ V w(v)
+
+    * Maximally parallel (τ_P): execution time = δ(G_T) = \max_\textpath Σ_v ∈ P w(v)
+
+The quality impact of topology depends on two factors: (a) latency-quality tradeoff (parallel execution under budget constraints allows more refinement iterations), and (b) context propagation (sequential topology preserves inter-subtask context that parallel execution loses).
+
+**Assumption 1** (Topology quality sensitivity). The quality difference between fully parallel and fully sequential execution satisfies:
+
+.. math::
+
+   |ΔQ_topology| ≥C_τ·(ω(G_T) - 1) ·(1 - γ(G_T))
+
+for some task-class-dependent constant C_τ > 0. This is motivated by: (i) the (ω - 1) term captures the degree of parallelism—more parallel branches mean more potential for topology-induced quality variation, and (ii) the (1 - γ) term captures the information loss from not propagating context in parallel execution. We empirically validate this assumption in Table ablation, where removing topology adaptation degrades performance by 4.7–8.3 points.
+
+Under uniform subtask weights, by Dilworth's theorem, the speedup from optimal parallelization is ≥ ω(G_T).
+Taking C_τ = 1/2 (conservative estimate: topology changes half the theoretical maximum quality gap) and noting that with k subtasks the per-task variance from a binary topology choice (parallel vs. sequential) satisfies \textVar_τ ≥ Δ Q² / 4, we obtain:
+
+.. math::
+
+   Var_τ[P(τ, T)] ≥(ω(G_T) - 1)^2 ·(1 - γ(G_T))^2/4k
+
+where the 1/k factor arises from normalizing the per-subtask contribution to aggregate task performance.
+
+**Ratio.**
+
+.. math::
+
+   Var_τ/Var_M ≥(ω(G_T) - 1)^2 ·(1 - γ(G_T))^2/4k ·ϵ^2 = (ω(G_T) - 1)^2 ·(1 - γ(G_T))^2/4ϵ^2 ·k
+
+As ε \to 0, this ratio diverges, confirming that topology selection dominates model selection under convergence.
+For typical coding tasks: ω ≈ 3.4, γ ≈ 0.35, k ≈ 5, ε ≈ 0.05, yielding a ratio ≥ \frac(2.4)² · (0.65)²4 · 0.0025 · 5 = \frac2.430.05 ≈ 48.7.
+
+Implementation Details
+----------------------
+
+Decomposition Prompt
+~~~~~~~~~~~~~~~~~~~~
+
+The full decomposition prompt used for SWE-bench tasks:
+
+[colback=gray!5, colframe=gray!50, fontupper=]
+You are a task decomposition specialist. Given a software engineering task (bug report + repository context), decompose it into atomic subtasks.
+
+For each subtask, output JSON:
+
+{
+
+  "id": "v1",
+
+  "description": "...",
+
+  "depends_on": ["v0"],
+
+  "coupling": "weak|strong|critical",
+
+  "estimated_tokens": 500
+
+}
+
+Rules:
+
+- Maximize parallelism: only add dependencies when semantically required
+
+- Typical decomposition: [localize files, understand context, generate patch, verify patch]
+
+- Coupling = strong when output of one subtask is direct input to another
+
+- Coupling = weak when subtasks share domain knowledge but not data
+
+Task: {task_description}
+
+Repository: {repo_context}
+
+Computational Requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All experiments were conducted using API-based model access.
+Estimated costs:
+
+- * SWE-bench (500 instances, 5 methods): ~1,200 total API cost
+
+    * GPQA (198 instances, 5 methods): ~$180 total API cost
+
+    * HotpotQA (500 instances, 5 methods): ~$350 total API cost
+
+'s routing overhead: <50ms per task (Python implementation on single CPU core).
+Synthesis overhead: one additional LLM call per task (~$0.01 per instance).
+
+DAG Feature Space Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Baseline Reproduction Specification
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To ensure fair comparison and full reproducibility, we detail the exact configuration of each baseline method.
+All baselines use the same 5-model pool as : GPT-4o-mini, Claude 3.5 Haiku, Gemini 2.0 Flash, Llama 3.3 70B (via Together AI), and Qwen 2.5 72B (via Together AI).
+Temperature is 0.0 (greedy) and ``max_tokens`` = 4096 for all methods unless noted.
+
+**MoA-3L** [wang2024moa]_.
+We implement the 3-layer Mixture-of-Agents architecture as described in the original paper.
+Layer 1: all 5 models generate independent responses to the full prompt.
+Layer 2: each of 3 aggregator models (GPT-4o-mini, Claude 3.5 Haiku, Gemini 2.0 Flash) receives all 5 Layer-1 outputs concatenated in the prompt and produces a refined answer.
+Layer 3: a single synthesizer (GPT-4o-mini) receives all 3 Layer-2 outputs and produces the final answer.
+Total LLM calls per instance: 5 + 3 + 1 = 9.
+Aggregation prompt follows the template in Wang et al. (2024), A.1.
+
+**LLM-Blender** [jiang2023llmblender]_.
+We use the prompt-based variant (no fine-tuned PairRanker) for fair comparison, since training a ranker on our specific benchmarks would introduce confounding.
+Stage 1 (Generation): all 5 models produce independent candidates.
+Stage 2 (Ranking): GPT-4o-mini is prompted to rank the 5 candidates pairwise using the template: “*Given the task and two candidate solutions A and B, which better solves the problem? Output only `A' or `B'.*”
+This produces \binom{5}{2} = 10 pairwise comparisons per instance.
+Stage 3 (Fusion): the top-ranked candidate is returned as the final output (no generative fusion, which would require a trained model).
+Total LLM calls per instance: 5 + 10 + 0 = 15.
+
+**Static-Parallel / Static-Sequential.**
+These ablation baselines use 's own decomposition (Phase 1–2) but bypass the topology router.
+Static-Parallel executes all subtasks simultaneously across 3 models (round-robin assignment); Static-Sequential chains them in dependency order using a single model (GPT-4o-mini).
+Both use the same synthesis protocol (Phase 5) as .
+
+Per-Cluster Orchestration Gain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Table cluster-gain disaggregates 's accuracy improvement by DAG cluster (cf. Figure dag clustering), revealing which structural patterns benefit most from adaptive topology routing.
+
+Per-cluster accuracy gain (Δ) of over Single Best, averaged across all three benchmarks. n: number of instances assigned to each cluster.
+
+| **DAG Cluster** | **Dominant τ** | n | **Single Best** | Δ **AdaptOrch** |
+| Chain (sequential) | τ_S | 187 | 54.2% | +3.8 pp |
+| Wide-Shallow (parallel) | τ_P | 294 | 49.1% | +12.6 pp |
+| Deep-Narrow (hierarchical) | τ_H | 112 | 47.8% | +9.2 pp |
+| Diamond (fan-out/fan-in) | τ_X | 105 | 51.3% | +11.4 pp |
+
+The largest gains appear in Wide-Shallow tasks (+12.6 pp), where parallelism directly reduces error propagation by distributing independent subtasks.
+Chain-type tasks show the smallest gain (+3.8 pp), consistent with the expectation that fully sequential dependencies leave minimal room for topology improvement.
+
+**Router Accuracy (Confusion Matrix).**
+To assess the topology router's decision quality, we compare its selections against an oracle that exhaustively evaluates all four topologies per instance and selects the highest-scoring one.
+Across the full test set (n = 698):
+
+Router confusion matrix: predicted topology vs. oracle-optimal topology. Values are instance counts. Overall router accuracy: 81.2% (567/698).
+
+| **Router****Oracle** | τ_P | τ_S | τ_H | τ_X |
+| τ_P | **248** | 12 | 8 | 18 |
+| τ_S | 6 | **152** | 9 | 4 |
+| τ_H | 14 | 7 | **89** | 11 |
+| τ_X | 9 | 5 | 7 | **78** |
+
+The router achieves 81.2% agreement with the oracle.
+Most misclassifications occur between τ_P and τ_X (18 + 9 = 27 instances), which is expected since Diamond tasks contain both parallel and fan-in components.
+Importantly, even misrouted instances typically receive the second-best topology, limiting accuracy loss to <$2 pp compared to oracle routing.
+
+plainnat

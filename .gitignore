@@ -19,3 +19,6 @@ target/
 # ANTHROPIC_API_KEY lives here, never in the shell profile -- Claude Code silently
 # prefers an exported key over the subscription.
 .env
+
+# git submodules: external reference repos — not mined into memory palace (use git add -f to update)
+references/repos/

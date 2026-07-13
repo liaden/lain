@@ -1,0 +1,338 @@
+.. rubric:: Abstract
+
+Recent large language model (LLM)-driven chat assistant systems have integrated memory components to track user-assistant chat histories, enabling more accurate and personalized responses. However, their long-term memory capabilities in sustained interactions remain underexplored. We introduce , a comprehensive benchmark designed to evaluate five core long-term memory abilities of chat assistants: information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. With 500 meticulously curated questions embedded within freely scalable user-assistant chat histories, presents a significant challenge to existing long-term memory systems, with commercial chat assistants and long-context LLMs showing a 30% accuracy drop on memorizing information across sustained interactions. We then present a unified framework that breaks down the long-term memory design into three stages: indexing, retrieval, and reading. Built upon key experimental insights, we propose several memory design optimizations including session decomposition for value granularity, fact-augmented key expansion for indexing, and time-aware query expansion for refining the search scope. Extensive experiments show that these optimizations greatly improve both memory recall and downstream question answering on . Overall, our study provides valuable resources and guidance for advancing the long-term memory capabilities of LLM-based chat assistants, paving the way toward more personalized and reliable conversational AI. Our benchmark and code are publicly available at https://github.com/xiaowu0162/LongMemEval.
+
+Introduction
+------------
+
+Large language models (LLMs) have exhibited impressive capabilities in solving diverse tasks through natural language, leading to numerous successful chat assistant applications [openai2022chatgpt]_ [microsoft2023copilot]_. Nevertheless, LLMs face limitations on tasks relying heavily on personal knowledge accumulated through long-term user-AI interactions, such as psychological counseling or secretarial duties [zhong2024memorybank]_. Failing to incorporate user background and preferences into responses can diminish the response's accuracy as well as user satisfaction. To personalize LLM-based assistants, long-term memory, the ability to memorize, recall, and reason with a long interaction history, is indispensable. Recently, several commercial [openai_memory_2024]_ [coze_memory_2024]_ and open-source assistant systems with memory [zhong2024memorybank]_ [zhang2024cognitivekernelopensourceagent]_ have been introduced. These systems leverage techniques like compressing, indexing, and retrieving from chat histories to generate more accurate and personalized responses.
+
+Despite these advances, there has been limited progress in holistically evaluating the memory capability in long-term interactions. While several benchmarks evaluate LLMs on understanding long chat histories [xu-etal-2022-beyond]_ [xu-etal-2022-long]_ [zhong2024memorybank]_ [maharana-etal-2024-evaluating]_ [du-etal-2024-perltqa]_ [kim2024dialsimrealtimesimulatorevaluating]_, they have two major shortcomings. First, they do not accurately reflect user-AI interactions: many focus solely on human-human conversations [xu-etal-2022-beyond]_ [maharana-etal-2024-evaluating]_ [kim2024dialsimrealtimesimulatorevaluating]_, while others omit task-oriented dialogues, which represent a significant portion of chat assistant usage and challenge memorization with the long-context inputs and long-form responses. Their interactive histories also typically have a non-configurable length spanning only a few thousand tokens, limiting the difficulty as current systems continue to improve. Second, current benchmarks' questions only offer a limited coverage of the memory abilities required in dynamic long-term interactions. For instance, MemoryBank [zhong2024memorybank]_ and PerLTQA [du-etal-2024-perltqa]_ insufficiently evaluate the ability to synthesize information across numerous sessions or to reason with temporal metadata or time references. All long-term memory benchmarks including recent ones such as LoCoMo [maharana-etal-2024-evaluating]_ also fail to evaluate recall of information provided by the assistant or reasoning with updated user information.
+
+We introduce , a comprehensive benchmark for assessing the long-term memory capabilities of chat assistants. consists of 500 manually created questions to test five core memory abilities: information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. Each question requires recalling information hidden within one or more task-oriented dialogues between a user and an assistant. Inspired by the “needle-in-a-haystack" test [kamradt2023needle]_, we design a pipeline to compile a coherent and length-configurable chat history for each question. A chat system, then, is required to parse the dynamic interactions online for memorization, and answer the question after all the interaction sessions. While the length of the history is freely extensible, we provide two standard settings for consistent comparison: S with approximately 115k tokens per problem and M with 500 sessions (around 1.5 million tokens). Preliminary evaluations highlight the difficulty of , as long-context LLMs show a 30%~60% performance drop on S, and manual evaluations reveal that state-of-the-art commercial systems only achieved 30%~70% accuracy in a setting much simpler than S (<ref>).
+
+Finally, we present a unified view for memory-augmented chat assistants. Leveraging , we comprehensively analyze memory design choices across three key execution stages—indexing, retrieval, and reading—and four control points: value, key, query, and reading strategy. Experimental insights identify several effective memory designs:
+
+- * (<Ref>) Instead of sessions, *round* is the more optimal granularity for storing and utilizing the interactive history. While further compression into individual user facts harms overall performance due to information loss, it improves the multi-session reasoning accuracy.
+
+    * (<Ref>) While using a flat index with the memory values themselves as the keys is a strong baseline, further *expanding* the keys with extracted user facts improves both memory recall (9.4% higher recall@k) and downstream question answering (5.4% higher accuracy).
+
+    * (<Ref>) Naive time-agnostic memory designs perform poorly on temporal reasoning questions. We propose a simple indexing and query expansion strategy to explicitly associate timestamps with facts and narrow down the search range, improving the memory recall for temporal reasoning by 6.8%~11.3% when a strong LLM is employed for query expansion.
+
+    * (<Ref>) Even with perfect memory recall, accurately utilizing retrieved items is non-trivial. Applying Chain-of-Note [yu2023chain]_ and structured data format [yin-etal-2023-read]_ improves question answering accuracy by as much as 10 absolute points across three LLMs.
+
+Related Work
+------------
+
+""""
+
+Long-Term Dialogue Benchmarks As the ability of dialogue systems improve, research starts to focus on long-term dialogue understanding beyond traditional dialogue modeling benchmarks [budzianowski-etal-2018-multiwoz]_ [wei-etal-2018-airdialogue]_. Early works focused on language modeling evaluation on generating personalized responses from human-human [xu-etal-2022-beyond]_ or human-AI [xu-etal-2022-long]_ chat histories. To more precisely evaluate memory accuracy, subsequent benchmarks shifted toward question answering (QA, [reddy-etal-2019-coqa]_ [zhang-choi-2021-situatedqa]_). For example, MemoryBank [zhong2024memorybank]_ features multi-day chat histories from 15 users with 194 human-written probing questions. LoCoMo [maharana-etal-2024-evaluating]_ includes 50 long-term chat histories and questions testing single-hop, multi-hop, temporal, commonsense, world knowledge, and adversarial reasoning. PerLTQA [du-etal-2024-perltqa]_ scales the evaluation to 3,409 dialogues and 8,593 questions, covering world knowledge, personal profiles, social relationships, events, and dialogue history. DialSim [kim2024dialsimrealtimesimulatorevaluating]_ evaluates models' memory ability by roleplaying TV show characters and introduces a time constraint that penalizes slow system responses. Despite these advancements, existing QA-based benchmarks overlook several memory capabilities critical to long-term user-assistant interactions: synthesizing information across numerous sessions, recalling assistant side information, and reasoning about updated user details or complex temporal references. Additionally, the chat histories are often too brief and do not reflect the nature of task-oriented interactions. <Ref> compares between and previous works, highlighting its advantages in both (1) featuring a long and freely extensible iterative history and (2) holistically covering critical memory abilities in a uniquely challenging way (further examples in <Ref>).
+
+""""
+
+Long-Term Memory Methods To equip chat assistants with long-term memory capabilities, three major techniques are commonly explored. The first approach involves directly adapting LLMs to process extensive history information as long-context inputs [Beltagy2020Longformer]_ [kitaev2020reformer]_ [DBLP:conf/icml/FuPNYHK024]_ [DBLP:journals/corr/abs-2404-16811]_. While this method avoids the need for complex architectures, it is inefficient and susceptible to the “lost-in-the-middle" phenomenon, where the ability of LLMs to utilize contextual information weakens as the input length grows [DBLP:conf/icml/ShiCMSDCSZ23]_ [DBLP:journals/tacl/LiuLHPBPL24]_. A second line of research integrates differentiable memory modules into language models, proposing specialized architectural designs and training strategies to enhance memory capabilities [weston2014memory]_ [wu2022memorizing]_ [zhong-etal-2022-training]_ [DBLP:conf/nips/Wang0CLYGW23]_. Lastly, several studies approach long-term memory from the perspective of context compression, developing techniques to condense lengthy histories into compact representations, whether in the form of LLM internal representations [DBLP:conf/nips/Mu0G23]_ [DBLP:conf/emnlp/ChevalierWAC23]_, discrete tokens [DBLP:conf/emnlp/JiangWLYQ23]_ [DBLP:conf/iclr/XuSC24]_, or retrievable text segments via retrieval-augmented generation (RAG, [shi-etal-2024-replug]_ [DBLP:conf/nips/Wang0CLYGW23]_ [DBLP:conf/iclr/SarthiATKGM24]_ [DBLP:journals/corr/abs-2310-05029]_ [DBLP:journals/corr/abs-2405-14831]_). Although can evaluate any memory system, we will take an online context compression perspective, where each history interaction session is sequentially processed, stored, and accessed on-demand through indexing and retrieval mechanisms (<Ref>). This formulation aligns with current literature [zhong2024memorybank]_ [DBLP:journals/corr/abs-2405-14831]_ and commercial systems [openai_memory_2024]_ [coze_memory_2024]_. Its plug-and-play nature also facilitates the integration into existing chat assistant systems.
+
+----
+
+Problem Formulation
+~~~~~~~~~~~~~~~~~~~
+
+The evaluation of requires an instance of 4-tuple (\mathbfS, q, t_q, a). \mathbfS \equiv [(t_1, S_1), (t_2, S_2), ..., (t_N, S_N)] is a sequence of N history chat sessions ordered from the earliest to the latest, where S_i is a multi-turn interaction between the user and a chat assistant and t_i is the session's timestamp. Each session can be further decomposed into rounds: one user message followed by one assistant response. During test time, \mathbfS is provided to the system one by one. q and t_q > t_N represent the question from the user and its date. a is a short phrase indicating the answer, or a natural language rubric describing the preferred answer in the case where q is open-ended.
+
+: Benchmark Curation
+~~~~~~~~~~~~~~~~~~~~
+
+One major challenge in building a reliable personalized assistant is performing online recording, recalling, updating, and reasoning on the dynamically evolving user information. To comprehensively reflect the challenge, formulates five core long-term memory abilities:
+
+- * **Information Extraction (IE):** Ability to recall specific information from extensive interactive histories, including the details mentioned by either the user or the assistant.
+
+    * **Multi-Session Reasoning (MR):** Ability to synthesize the information across multiple history sessions to answer complex questions that involve aggregation and comparison.
+
+    * **Knowledge Updates (KU):** Ability to recognize the changes in the user's personal information and update the knowledge of the user dynamically over time.
+
+    * **Temporal Reasoning (TR):** Awareness of the temporal aspects of user information, including both explicit time mentions and timestamp metadata in the interactions.
+
+    * **Abstention (ABS):** Ability to identify questions seeking unknown information, i.e., information not mentioned by the user in the interaction history, and answer “I don't know”.
+
+As shown in <Ref>, this formulation represents a more comprehensive ability coverage compared to prior long-term memory benchmarks like MemoryBank and PerLTQA. To thoroughly assess these abilities, features seven question types. **Single-session-user** and **single-session-assistant** test memorizing the information mentioned by user or assistant within a single session. **Single-session-preference** tests whether the model can utilize the user information to generate a personalized response. **multi-session** (MR) tests aggregating user information across two or more sessions. **knowledge-update** (KU) focuses on the ability to recognize changes in the user's life states and update the memory accordingly. **temporal-reasoning** (TR) tests reasoning with both the timestamp in metadata and explicit time references. Finally, we draw 30 questions from the previous question types and modify them into “false premise” questions, testing whether the model can correctly **abstain** from answering (ABS). <Ref> presents an example for each question type.
+
+""""
+
+Question Curation <Ref> depicts the question curation pipeline. We define an ontology of 164 user attributes in five categories: lifestyle, belongings, life events, situations context, and demographic information. For each attribute, we leverage an LLM [] to generate attribute-focused user background paragraphs, each of which includes detailed discussion of the user's life experience. To create a question, we randomly sample a paragraph and use an LLM to propose several seed (question, answer) pairs. As these LLM-proposed questions often lack depth and diversity, human experts manually filter and rewrite all the questions to achieve the desired difficulty. Then, we manually decompose the answer into one or more *evidence statements* with optional timestamps.
+
+""""
+
+Evidence Session Construction Each evidence statement is then separately embedded into a task-oriented *evidence session* created by self-chatting [xu-etal-2023-baize]_. The user LLM is instructed to convey the evidence statement indirectly, e.g., instead of stating “I bought a new car last month,” it might instead ask for help about car insurance and reveal the information incidentally. This approach enhances the benchmark’s difficulty by requiring systems to recognize and memorize user details not explicitly emphasized in conversations. We present the full details in <Ref>.
+
+To ensure the data quality, all the evidence sessions are then manually screened and edited to (1) verify evidence inclusion, (2) distribute the evidence statement across different conversation positions, and (3) rephrase statements into more natural, colloquial language, especially for time mentions, which LLMs often express too formally. We also meticulously annotate the position of the evidence statement within each evidence session. For questions involving temporal information, we then manually add timestamps to both the evidence sessions and the questions. Most questions require evidence from multiple sessions (up to six) with evidence statements positioned diversely within sessions. <Ref> presents further statistics of the final constructed data.
+
+""""
+
+History Compilation
+
+For each question, compiles a coherent user-AI chat history (<Ref>c). Our approach is analogous to the needle-in-a-haystack test [kamradt2023needle]_, which asks a model to retrieve brief information (the “needle") embedded in a long document (the “haystack"). In comparison, is more challenging and realistic as it involves retrieving and synthesizing information from multiple extended evidence sessions. Specifically, we sample a number of unrelated user-AI chat sessions, randomly insert the evidence sessions in the middle, and assign a plausible timestamp to all sessions. We draw the irrelevant sessions from two sources: (1) self-chat sessions simulated based on other non-conflicting attributes and (2) publicly released user-AI style chat data including ShareGPT [zheng2023judging]_ and UltraChat [ding2023enhancing]_. This design creates extensible realistic chat histories with minimal conflicts. While the pipeline allows us to compile chat histories of arbitrary length, we provide two standard settings: S (~115k tokens/question) and M (500 sessions, ~1.5M tokens).
+
+Evaluation Metric
+~~~~~~~~~~~~~~~~~
+
+""""
+
+Question Answering As the correct answers can take flexible forms, an exact matching strategy as in previous works can result in inaccurate evaluations. To address this, employs a LLM to assess response quality [liu-etal-2023-g]_. Specifically, we prompt-engineer the ``gpt-4o-2024-08-06`` model via the OpenAI API. Our meta-evaluation study demonstrates that the evaluator achieves more than 97% agreement with human experts. The prompts for each problem type as well as the human meta-evaluation details are presented in <Ref>.
+
+""""
+
+Memory Recall As contains human-annotated answer location labels, intermediate retrieval metrics can be easily calculated if the chat system exposes its retrieval results. We report Recall@k and NDCG@k, where k is the number of top items retrieved by the system.
+
+represents a significant challenge
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Using , we conduct a pilot study on commercial systems and long-context LLMs.
+
+""""
+
+Commercial systems We evaluate two commercial systems that maintain a set of memorized user facts as the user chats with the assistant: ChatGPT [openai_memory_2024]_ and Coze [coze_memory_2024]_. Since these systems only support memory features via their web interfaces, we randomly selected 97 questions and created a short chat history of 3-6 sessions (approximately 10x shorter than S). Human annotators interacted with the chat assistants session-by-session and turn-by-turn, and finally ask the question in a new session []. In <Ref>, we compare this online memory evaluation with offline reading, where GPT-4o is prompted to answer with the complete history provided as context. Both ChatGPT and Coze exhibited significant performance drops compared to offline reading, underscoring the challenging nature of . We found ChatGPT tended to overwrite crucial information as the chat continues, while Coze often failed to record indirectly provided user information. We provide analyses in <Ref>. Overall, this result highlights the **gap between building a seemingly personalized chat assistant by recalling isolated facts and demonstrating a genuinely strong memory ability**.
+
+""""
+
+Long-Context LLMs While poses a significant challenge to online memory systems, is the benchmark easily tackled with offline reading over the entire history? In <Ref>, we evaluated four advanced long-context LLMs on S (with a history length of approximately 115k tokens): GPT-4o, Llama 3.1 Instruct [dubey2024llama]_, and Phi-3 [phi-3-technical-report]_. Compared to the oracle retrieval setting (answering with only the evidence sessions as the context), these LLMs showed a 30% to 60% performance decline when tasked with reading the entire S history, regardless of whether the chain-of-note technique [yu2023chain]_ was applied (discussed further in <Ref>). As the histories in S is still short (~50 sessions), the performance is likely to further degrade as the interaction history expands. Overall, these findings suggest that **even the most capable current long-context LLMs struggle to manage an ever-growing interaction history without an effective memory mechanism**.
+
+A Unified View of Long-Term Memory Assistants
+---------------------------------------------
+
+In this section, we formulate a three-stage long-term memory model for chat assistants. Despite its simplicity, this model provides a unified view of existing long-term memory assistant works. Along each of its stages, we then investigate crucial control points and propose our optimizations.
+
+Long-Term Memory System: Formulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We formulate long-term memory as a massive key-value datastore [(k_1, v_1), (k_2, v_2), ...]. The keys k_i can be heterogeneous, and could be discrete or continuous. In the discrete case, the key could be a sentence, a paragraph, a fact, or an entity, etc. In the continuous case, the key could be e.g., the model’s internal representation under some inputs. The values v_i might repeat. As shown in <Ref>, we formulate three stages for a memory-augmented assistant: (1) *indexing*, converting each history session (t_i, S_i) into one or more key-value items, (2) *retrieval*, formulating a retrieval query and collecting k most relevant items, and (3) *reading*, an LLM \mathcalM reads the retrieval result and generates a response. In <Ref>, we show how nine memory-augmented chat assistant systems can be viewed as instantiations of this framework. An alternative mathematical formulation is presented in <Ref>. For its conciseness, the rest of this paper follows this section's formulation.
+
+Long-Term Memory System: Design Choices
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We identify four crucial control points for long-term memory of chat assistants, as illustrated in <Ref>. We analyze design choices from existing works and their limitations, and propose our optimizations. Due to space constraints, we present these designs at a high level here, with detailed designs further described in <Ref> and <Ref>.
+
+""""
+
+CP 1: Value The value represents the format and granularity of each session stored in memory. Given that user-AI chat sessions are often lengthy and cover multiple topics, storing each session as a single item can hinder effective retrieval and reading. Conversely, compressing sessions into summaries or user-specific facts, as seen in prior work such as [zhong2024memorybank]_ and [du-etal-2024-perltqa]_, can lead to information loss, harming the performance of the system to answer detailed questions. In <Ref>, we compare three value representation strategies: storing entire sessions, decomposing sessions into individual rounds, and further applying summary/fact extraction.
+
+""""
+
+CP 2: Key Even when sessions are decomposed and compressed, each item still contains substantial information, with only a fraction relevant to the user's query. Therefore, using the value itself as the key, a common practice in prior works [zhong2024memorybank]_ [maharana-etal-2024-evaluating]_, may be suboptimal. We introduce a key expansion approach in <Ref>, where summaries, keyphrases, user facts, and timestamped events are extracted from the values to augment the index. This optimization highlights the key information and enables effective retrieval with multiple pathways.
+
+""""
+
+CP 3: Query For straightforward user queries, the aforementioned key-value optimizations may yield high retrieval accuracy. However, when queries involve temporal references (e.g., “Which restaurant did you recommend last weekend?"), naive similarity search proves insufficient. We address this with a time-aware indexing and query expansion strategy, where values are indexed with timestamped events, and retrieval is restricted to items within the relevant time range (<Ref>).
+
+""""
+
+CP 4: Reading Strategy Answering complex queries may require recalling numerous memory items. Although the retrieval accuracy can be enhanced through the preceding designs, it does not guarantee that the LLM can effectively reason over the extensive context [DBLP:conf/icml/ShiCMSDCSZ23]_ [DBLP:journals/tacl/LiuLHPBPL24]_. In <Ref>, we explore reading strategies and demonstrate that optimizations such as extracting key information before answering (Chain-of-Note, [yu2023chain]_) and using structured format prompting [yin-etal-2023-read]_ are crucial for achieving high reading performance.
+
+Experiment Results
+------------------
+
+Experimental Setup
+~~~~~~~~~~~~~~~~~~
+
+We mainly study three LLMs: GPT-4o, Llama 3.1 70B Instruct, and Llama 3.1 8B Instruct []. For the retriever, we choose dense retrieval with the 1.5B Stella V5 model [zhang_stella_en_1.5B_v5]_, given its high performance on MTEB [muennighoff-etal-2023-mteb]_. Extensive comparisons between Stella V5 and alternative retrievers are provided in <Ref>. For the indexing stage, we employ Llama 3.1 8B Instruct to extract summaries, keyphrases, user facts, and timestamped events. When sessions or rounds are used as the key, we only keep the user-side utterances. In the reading stage, the retrieved items are always sorted by their timestamp to help the reader model maintain temporal consistency. Throughout <Ref> to <Ref>, we apply Chain-of-Note and json format (discussed in <Ref>) by default.
+
+Value: Decomposition improves RAG performance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Using M, we compare different value choices in a budget-aware manner. As shown in <Ref>, decomposing sessions into rounds significantly enhances reading performance with GPT-4o as the reader, while performing similarly to non-decomposed sessions when using Llama 3.1 8B Instruct as the reader. However, despite their efficiency in token usage, replacing sessions or rounds with extracted summaries or facts negatively impacts QA performance due to information loss. The only exception is with multi-session reasoning questions, where fact decomposition consistently improves performance. We hypothesize this is because fact decomposition extracts the same type of information across all sessions in a more uniform and simplified format, aiding retrieval and reading [DBLP:journals/corr/abs-2312-06648]_. Finally, we observe that the optimal token budget varies by the reader's capability: while Llama 3.1 8B Instruct's performance drops sharply beyond 3k retrieved tokens, GPT-4o continues to improve even with over 20k retrieved tokens.
+
+Key: Multi-key indexing improves retrieval and RAG
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we explore whether summaries, keyphrases, or user facts condensed from the value can serve as better keys than the value itself. Interestingly, despite their more focused semantics, using these condensed forms alone does not enhance the memory recall performance. We hypothesize that this is due to the retriever's ability to already effectively handle long-text semantics.
+
+To leverage both the highlighted information from compression and the completeness of the original value, we applied a simple document expansion technique [tao-etal-2006-language]_ [DBLP:conf/sigir/EfronOF12]_, where the compressed information is concatenated with the original value to form the key during indexing []. This approach, particularly when using user facts, yielded an average improvement of 9.4% in recall@k and 5.4% in final accuracy across all models. In <Ref>, we further analyze different retrievers and find with alternative retrievers, key expansion with summary and keyphrases could improve Recall@5 when session is used as the value granularity. These results suggest that multi-pathway retrieval can significantly enhance memory recall performance. In the following section, we will investigate the time constraint as another pathway to leverage.
+
+Query: Time-aware query expansion improves temporal reasoning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A key challenge highlighted by in building real-world assistant systems is the need to utilize temporal information present in both metadata and user utterances to correctly answer time-sensitive queries. To address this need, we introduce a simple yet effective *time-aware indexing and query expansion* scheme. Specifically, values are additionally indexed by the dates of the events they contain. During retrieval, an LLM \mathcalM_T extracts a time range for time-sensitive queries, which is used to filter out a large number of irrelevant values.
+
+As shown in <Ref>, this simple design improves recall by an average of 11.3% when using rounds as the value and by 6.8% when using sessions as the value. This improvement remains consistent when key expansion is applied during indexing. We also find that the effectiveness of this method depends on using a strong LLM for \mathcalM_T to accurately infer time ranges from queries. Llama 8B, on the other hand, struggles to generate accurate time ranges, often hallucinating or missing temporal cues even with numerous in-context examples. Further analysis is provided in <Ref>.
+
+Improving reading with chain-of-note and structured format
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+As requires syntheses across multiple sessions, even an optimal memory retrieval mechanism needs to return a long context to capture all relevant information. To enhance the model's ability to handle long retrieved contexts, we apply two key optimizations. First, we present retrieved items in a structured JSON format [yin-etal-2023-read]_, which helps the model clearly recognize memory items as the data for reading. Additionally, we apply the Chain-of-Note (CoN) reading approach [yu2023chain]_, instructing the LLM to first extract information from each memory item and then reason based on these notes. This effectively decomposes long-context reading into two simpler subtasks: copying important details and reasoning with more concise notes.
+
+In <Ref>, we evaluate the reading designs under the oracle retrieval setting, where only evidence sessions are provided. Surprisingly, even with perfect retrieval, a suboptimal reading strategy results in up to a 10-point absolute performance drop compared to the best approach for GPT-4o. Notably, when CoN is not applied, JSON format does not consistently outperform the natural language format. However, with CoN, JSON format consistently benefits reader LLMs of various capabilities. <Ref> further analyzes error patterns of LLMs with the enhanced reading strategy.
+
+Conclusion
+----------
+
+In this paper, we introduced , a comprehensive and challenging benchmark designed to evaluate the long-term memory abilities of chat assistants across five core memory tasks: information extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. Through extensive experiments with both commercial systems and long-context LLMs, we demonstrated the significant challenges posed by , with current systems exhibiting substantial performance drops. By analyzing key design choices across indexing, retrieval, and reading stages, we proposed effective strategies such as session decomposition, fact-augmented key expansion, and time-aware query expansion, which collectively improved both memory recall and the question answering performance. Our findings highlight the need for more sophisticated memory mechanisms to achieve personalized and reliable conversational AI, and offers a valuable benchmark to drive future advancements in long-term memory capabilities for chat assistants.
+
+Reproducibility Statement
+-------------------------
+
+In the paper writing and the subsequent code release, we are committed to enabling other researchers to easily leverage our resources, replicate our results, and build upon our findings.
+We have documented the benchmark construction process in detail in <Ref> and <Ref>, including all the attributes and instructions used to prompt LLMs. We have created and will publicly release the two fixed evaluation datasets, S and M. In addition, we will also release the algorithm and source mixture used to create these two datasets, so that future studies could build upon them to create chat histories of any length. Finally, we have meticulously documented all the implementation details of our memory optimization in <Ref>, and our code will be released along with the benchmark as well. We believe that these efforts for transparency can help advance the field and foster future research endeavors.
+
+Ethics Statement
+----------------
+
+The major artifact released by this work is the evaluation dataset. To construct the chat history, we utilize ShareGPT [], which has an Apache 2.0 license, and UltraChat [], which has an MIT license. In the data release, we plan to use an MIT license. Since the questions and the evidence sessions are newly created, we conducted a rigorous human screen process to ensure that the new dataset does not contain personally identifiable information or offensive content. This paper involves human annotators in two places: (1) the dataset construction and filtering (<Ref>) and (2) the manual analysis of commercial systems (<Ref>). The process was mainly conducted by three expert annotators, who are in-house NLP researchers that have more than three years of NLP research experience. All the annotators are properly briefed with the annotation objective, and a discussion among them is conducted to resolve uncertain cases. In total, approximately 400 human hours are spent on the dataset construction and 150 hours on the study of commercial systems. The annotators are paid biweekly or monthly, and their salaries include the working hours dedicated to annotation. The data collection protocol has been determined exempt by the IRB of the author's institution. Finally, and the studied memory system could induce several societal impacts. Storing and recalling user information could cause personal information leakage, and the lack of a memory “deletion" operator could harm the system's trustworthiness. It is also possible that the memory mechanism could be leveraged by malicious parties to toxic contents into the datastore, which may cause a jailbreak behavior during inference. To mitigate such behaviors, it is essential to implement moderation mechanisms that monitor the read/write data flow of the memory. We encourage producers of memory-augmented assistant systems to be aware of these potential harmful effects and apply thorough testing and mitigation.
+
+iclr2025_conference
+
+Supplemental Details for
+------------------------
+
+Dataset Construction
+~~~~~~~~~~~~~~~~~~~~
+
+In this section, we discuss the details of our benchmark construction process.
+
+""""
+
+Attribute Ontology In <Ref>, we provide the full attribute ontology used in . This attribute ontology is constructed manually to reflect commonly mentioned topics in user-assistant chats. Five major categories are included: demographic information, lifestyle, situational context, life events, and belongings.
+
+""""
+
+Background Sampling Based on each of the attributes, we prompt Llama 3 70B Instruct to generate a background paragraph outlining the user memory and experience. In our preliminary studies, we find that the following zero-shot prompt in <Ref> can already guide the model to generate a long and focused user background with sufficient details, which suffices for the next step of question creation. We thus use the same prompt for the final version of .
+
+""""
+
+Question Construction As discussed in <Ref>, based on the generated user backgrounds, Llama 3 70B Instruct is used to propose question and answers for each question type. Additionally, for the question type **temporal-reasoning**, **multi-session reasoning**, and **single-session-preference**, we use GPT-4o to propose several questions. Nevertheless, we find most of the questions to be unsatisfactory and manually filter and edit most of the questions. In total, approximately 1000 questions were generated for each question type, and the final yield rate is about 5%. For each question, we then manually decompose the answer into the evidence statements. If the question or the evidence statements involve time mentions, we assign a timestamp to the question and the evidence statements at this stage. Note that if timestamps are specified for the evidence statements at this stage, these timestamps will always be used for corresponding evidence sessions. Otherwise, the timestamps will be randomly assigned at the history construction stage with all the other sessions.
+
+""""
+
+Evidence Session Construction Using the question and the decomposed evidence statements, we use Llama 3 70B Instruct to simulate one user-AI chat history per evidence statement via self-chat. In <Ref>, we present an example of the chat simulation prompt, where we ask the user LLM to indirectly mention the evidence statement while avoiding to talk about other evidence statements for the question, if there are any. We include two crucial instructions in the prompt to make sure (1) the evidence statement is provided in an indirect way and (2) the generated messages are concise and thus mimic the style of user messages. On the assistant side, we directly provide the input generated by the user LLM without any prompt engineering. We simulate the chat for 10 round at maximum and stopped prematurely when either side of the LLMs generates an empty sequence indicating the end of the conversation.
+
+Subsequently, expert annotators manually inspect and edit each of the generated sessions to ensure that (1) the required evidence statements are present in the conversation, (2) no other evidence statements are leaked into the conversation, (3) the evidence statements are provided in a colloquial style, especially for the data and time mentions, and (4) the conversation ends gracefully. In total, roughly 70% of the sessions are human edited. We note that in a few rare instances, the user LLM fails by assuming the assistant role instead. When these failures are identified, we discard the instance if the conversation cannot be fixed.
+
+History Construction
+~~~~~~~~~~~~~~~~~~~~
+
+In order to construct a coherent and freely extensible chat history, we design a three-staged pipeline that include *session pool construction*, *session sampling*, and *timestamp resolution*.
+
+""""
+
+Session pool construction For each question, we draw the history sessions from three sources: ShareGPT [zheng2023judging]_, UltraChat [ding2023enhancing]_, and the simulated sessions corresponding to other attributes using the same pipeline mentioned in the previous section. This pool ensures that the non-evidence history sessions have similar topic or format as the evidence sessions, while avoiding providing conflicting information that would invalidate the question.
+
+""""
+
+Session sampling To sample a history containing x sessions, we randomly sample from the aforementioned three sources and shuffle the sessions together with the question's evidence sessions. For , we always use the following mixture: 25% ShareGPT, 25% UltraChat, and 50% simulated sessions. If the evidence sessions need to follow a specific order, we swap their orders accordingly after shuffling.
+
+""""
+
+Timestamp resolution Finally, we randomly assign timestamps to the session following their order of the history. If the evidence sessions are associated with pre-defined timestamps, we use them as anchors to determine the range of timestamp of the non-evidence sessions preceding or following them. Other wise, we randomly assign tiemstamps in May 2023.
+
+Basic Statistics
+~~~~~~~~~~~~~~~~
+
+In <Ref>, we present the basic statistics of , revealing that most questions require evidence from multiple sessions (up to six) and that evidence statements are positioned diversely within sessions, increasing the challenge to the memory design.
+
+Evaluation Metric Building
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To accurately evaluate the diverse responses of LLMs, we use an expert-written prompt to instruct GPT-4o as the correctness judge. We present the full prompt in <Ref>. To enable the model to handle detailed edge cases as how expert evaluators would do, we design separate prompts for a number of tasks. To ensure the prompt has a high agreement with expert judge, we sample 30 questions per problem type, collect the long-context generation results from GPT-4o and Llama 3.1 8B Instruct, and report the judgment correctness by category.
+
+As shown in <Ref>, the prompt-engineered GPT-4o judge achieves reliable performance in evaluating both GPT-4o and Llama-3.1-8B-Instruct as the generation model. The evaluator's judgment slightly deviates from human experts for the single-session-preference and abstention problems due to the open-ended nature of the response. Nevertheless, our evaluation prompt still achieves 90% or higher accuracy under all settings. We will include this prompt in the benchmark package that we will release to enable consistent comparisons for future work.
+
+A Human Study on Commercial Memory Chatbots
+-------------------------------------------
+
+We evaluate two commercial memory-augmented chatbots: ChatGPT [openai_memory_2024]_ and Coze [coze_memory_2024]_. We randomly selected 97 questions and created a short chat history of 3-6 sessions by sampling according to a mixture of 50% ShareGPT and 50% simulated sessions. We skip two type of questions that the assistants cannot answer: (1) a subset of temporal-reasoning, since our manual analysis cannot afford interacting with the (potentially evolving) systems across multiple months, and (2) single-session-assistant, since the systems do not remember any information given by the assistant. We also did not evaluate the abstention ability of these two systems because an early version of the dataset without any abstention questions was used for this analysis.
+
+Since these systems only support memory features via their web interfaces, human annotators manually interacted with the chat assistants session-by-session, ending with a new session where the question was posed. After collecting the model's response, the annotator manually evaluates the answer's correctness. Finally, to start evaluating the next instance from a fresh state, the annotator manually clears the model's memory through the web interface. We distribute the questions across five annotators. A discussion is performed among the annotators whenever there is a concern with the model's response or with the evidence sessions. All evaluations were conducted in the first two weeks of August 2024.
+
+In <Ref>, we present the detailed human evaluation results by problem types. We observe that when the task is memorizing the information from a single session (column IE), both systems can answer a considerable number of problems correctly. However, for the other question types where aggregation across multiple sessions is generally required, both systems exhibit significant performance drops. Compared to ChatGPT, we find most of Coze's errors are due to failing to record information from some session. On the other hand, ChatGPT generally records the evidence statements immediately after it has been presented in the evidence session. However, as the interaction proceeds, ChatGPT often modify this information when it compresses the history, resulting in information loss. This highlights the potential trade-off between reliable personalization and efficiency.
+
+Human evaluation results of two systems categorized by evaluated ability types. We use the questions from single-session-user for the IE column. For the temporal reasoning column (TR), we use the questions that do not require reasoning with metadata.
+0.6!
+
+| **System** | **Model** | **Memory Ability** |
+| | | **IE** | **MR** | **KU** | **TR** |
+| ChatGPT | GPT-4o-mini | 1.000 | 0.647 | 0.667 | 0.652 |
+| | GPT-4o | 0.688 | 0.441 | 0.833 | 0.435 |
+| Coze | GPT-3.5-turbo | 0.625 | 0.118 | 0.375 | 0.043 |
+| | GPT-4o | 0.813 | 0.147 | 0.208 | 0.391 |
+
+Unified Memory View
+-------------------
+
+An Alternative Mathematical Formulation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this section, we provide a more rigorous mathematical formulation of the unified memory framework for interested readers. Since we find the corresponding natural language descriptions clear enough for presenting the main arguments while avoiding introducing excessive symbols.
+
+We formulate long-term memory as a massive key-value datastore D = [(k_1, v_1), (k_2, v_2), ...], where the keys k_i can be heterogeneous and the values v_i might repeat. More concretely, a key could be discrete or continuous. In the discrete case, the key could be a sentence, a paragraph, a fact, or an entity, etc. In the continuous case, the key could be e.g., the model’s internal representation under some inputs. For the three stages, we formulate them with four functions: \mathcalI, \mathcalQ, \mathcalS, \mathcalR. The offline index function \mathcalI(S, D) converts a session S into a series of key-value tuples. Alternatively, the online index function \mathcalI_online(S, D) updates D with the key-value tuples extracted from S, potentially removing or editing the existing items in D. The query formulation function \mathcalQ(q) converts a natural language user query q into a representation q’ that function \mathcalS could leverage. The salience scoring function \mathcalS(q’, D) orders D by their relevance to q’. Potential initializations of \mathcalS include ranking dense text embedding, graph-based ranking, and so on. Finally, the reading function \mathcalR(M, D’) combines the model M with D’, the most relevant part as ranked by the salience scoring function \mathcalS and generates a response. The methods outlined in the columns of <Ref> could be seen as different ways to instantiate the four functions \mathcalI, \mathcalQ, \mathcalS, \mathcalR.
+
+Existing Memory Systems from the Unified View
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we have presented a unified view of the memory systems with three stages and four control points. In this section, we provide a closer look at nine memory-augmented chat systems and view them as specific instances of the unified framework. Specifically, we consider in-context RAG [shi-etal-2024-replug]_, Memorybank [zhong2024memorybank]_, LD-Agent [DBLP:journals/corr/abs-2406-05925]_, CoN [yu2023chain]_, ChatGPT, Coze, RAPTOR [DBLP:conf/iclr/SarthiATKGM24]_, MemWalker [DBLP:journals/corr/abs-2310-05029]_, and HippoRAG [DBLP:journals/corr/abs-2405-14831]_. <Ref> provides an overall comparison between the systems, among which we also situate the recommended design identified through the paper's empirical study.
+
+""""
+
+Indexing For the value representation, most of the surveyed systems either directly use the sessions themselves or use a mixture of them with the extracted facts or summaries. Only three systems (LD-Agent, ChatGPT, and Coze) use only the compressed values to replace the original ones, which may incur an information loss. When it comes to the indexing key, we observe three major types of decisions. First, a number of systems (in-context RAG, Memorybank, LD-Agent, and CoN) simply use the values as the keys, which wins in terms of simplicity. By comparsion, HippoRAG builds an entity-centric index, and RAPTOR/Memwalker build a hierarchical index using recursive summarization. It is noteworthy that while a more complex memory indexing structure can potentially benefit certain types of queries, they also increase the cost of creating and maintaining the index in online interactions. Specifically, for HippoRAG, RAPTOR, and Memwalker, some level of re-indexing is required when a new session is added to the memory, increasing the computational overhead of these sytems.
+
+""""
+
+Retrieval For most of the systems, we find that the question is generally used as the query, which is intuitive since the questions are generally short. LD-Agent and HippoRAG extract additional information and leverage them to better pinpoint entity-centric knowledge within the index. In terms of the query-key matching process, most systems use a flat retrieval setup, where a similarity search is directly conducted between the query and the keys. HippoRAG uses Personalized PageRank (PPR) to leverage its entity graph structure to match passages that feature entities close to the seed entities extracted from the query. Different from these approaches, MemWalker bridges the retrieval and inference through an interactive reading mechanism where the reader LLM self-navigates the indexing structure to find the answer. This method brings the additional robustness in case the retriever fails, but also incurs additional latency costs due to more LLM inference.
+
+""""
+
+Generation Most of the systems apply a direct reading mechanism where the reader model is provided with the retrieved memory items and directly asked to generate the response. However, as we show in the main results, adapting an extract-before-read strategy is important to a high performance. On the other hand, the interactive reading mechanism such as that used in MemWalker allows the reader to backtrack and search again in case the recalled memory is inadequate.
+
+Memory Optimizations: Implementation Details
+--------------------------------------------
+
+In this section, we describe our implementations of the memory optimizations in detail.
+
+""""
+
+Value Decomposition We design an LLM-based method for compressing the value, which are either sessions or rounds, into three different formats: summaries, keyphrases, or user facts. In <Ref>, we present the corresponding zero-shot and few-shot prompts. Note that few-shot learning is only applied for user fact extraction, and we find it to be unnecessary for the rest two tasks. For in-context examples, we randomly sample ten examples, five from the simulated user sessions and five from ShareGPT. The expected responses are generated by GPT-4o and modified by human annotators. We manually tune the prompts by observing several examples. Llama 3.1 8B Instruct is used for all the extraction experiments. Note that for all the experiments, we only provide the user-side messages for the extraction, skipping the assistant's responses.
+
+""""
+
+Key Expansion To expand the value documents with summaries, keyphrases, or user facts, we follow the same pipeline in the previous section to first extract these pieces of information from each value. Then, we directly prepend the extracted information to the corresponding key.
+
+""""
+
+Time-Aware Indexing and Query Expansion At the indexing stage, we instruct Llama 3.1 8B Instruct to extract the event mentions in the text whose timestamp could be inferred. At the retrieval stage, we instruct an LLM (we explore GPT-4o and Llama 3.1 8B Instruct) to extract the a time range for retrieval for the problems that specifically focus on a range of time. We present the corresponding prompts in <Ref>. Ten human-written in-context examples are additionally provided.
+
+""""
+
+Reading Strategy We present the prompt for reading in <Ref>, which is a small variation of Chain-of-Note (CoN). Overall, the prompt shares the same idea with CoN, that the model is asked to traverse the documents and extract the evidence before generating the answer to the question. We use greedy search for all the experiments, and set the maximum generation length to 800 tokens.
+
+Extended Analyses
+-----------------
+
+We provide additional analyses on , including more LLMs, retriever selection, memory optimization, and error analyses of end-to-end retrieval-augmented generation.
+
+Results on More LLMs
+~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we evaluate five more models on : the 1B and 3B models of Llama-3.2 Instruct [dubey2024llama]_, Qwen-2.5-7B [qwen2.5]_, Phi-3.5-mini-instruct [DBLP:journals/corr/abs-2404-14219]_, and Mistral-Nemo-Instruct-2407 [mistral2024nemo]_. Overall, we observe that the performance is consistent with the results reported in the paper. For instance, long-context performance on S is significantly lower than the oracle retrieval performance. In addition, the fact-based key expansion and CoN consistently improves the performance.
+
+Ablations on Retriever Selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we compare the performance of Stella V5 with two alternative popular retrievers: BM25 [DBLP:journals/ftir/RobertsonZ09]_ and Contriever [DBLP:journals/tmlr/IzacardCHRBJG22]_. We do not report the results of retrievers that use larger embedding models, as their latency is generally unrealistic for real applications. The retrievers are compared under two settings: (1) vanilla key design where the values themselves are used as the key and (2) the key expansion strategies introduced in the main text. We list the key observations below:
+
+- * Both dense retrieval embeddings have significantly higher performance than the BM25 sparse retrieval method. The trend is the same across most settings.
+
+    * The recommended technique of performing key expansion with user fact consistently improves the performance over directly using the value as the key.
+
+    * Key expansion with summary and keyphrases could improve the performance in some settings. For example, both summary and keyphrase improve the Recall@5 of Contriever when session is used as the value granularity. However, expanding the key with facts still gives the greatest performance gain.
+
+Post-retrieval rank merging for index expansion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we have introduced and evaluated the key expansion strategy for multi-path retrieval, where important information is extracted from the value items and then used to augment the key. However, an alternative strategy is to directly create a separate key with the retrieved information and place it in parallel as the original keys. At the retrieval stage, the query could be used to retrieve from pools defined multiple types of keys and the values from different sequences could be merged subsequently according to their rank. Effectively, this implements the true “multi-path retrieval. We call this strategy “rank merging". In <Ref>, we thoroughly evaluate rank merging verse key merging, the strategy we recommended in the main text. We find that rank merging has much lower performance than key merging. One potential reason is that rank merging increases the index size by m+1 times, where m is the number of information pieces extracted from each (key, value) pair. By comparison, key merging highlights the important information while avoiding explording the size of the index.
+
+Strong and weak LLMs for extracting time ranges from queries
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In <Ref>, we concluded that a strong model is required to accurately extract the time ranges from the questions, even if in-context examples (with balanced labels) are provided. In this section, we further illustrate this finding with examples in <Ref>. We find that the Llama 3.1 8B Instruct model can generate a correct temporal range when the time references are clearly defined (example 2). However, in many of the cases where the question does not have any temporal reference (example 1, 2, 4), the model often mistakenly extracts a time range, which erroneously prunes out the search space, leading to a low memory recall. By contrast, GPT-4o is able to refuse to generate a time range when the question does not have a time reference.
+
+Error Analysis
+~~~~~~~~~~~~~~
+
+In this section, we analyze the source of error of various LLMs with our best memory design. Specifically, we use round as the value granularity, expand the key with extracted user facts, and apply CoN as the reading strategy. Stella v5 1.5B is used as the retriever, and top-10 items are provided to the model with a JSON structured prompt. In <Ref>, we analyze the distribution of the correct and error cases for three different reader LLMs. First, we observe that a substantial proportion of errors corresponds to correct retrieval yet wrong generation (15%~19% of all instances, and 40%~50% among the error instances). The proportion is higher when a weaker reader LLM is used. This indicates that the reading strategy still has a large room of improvement. In addition, we observe that for the reader LLM to generate a correct answer, performing correct retrieval is necessary in ~90% of the time. We observe that the rest 10% instances are mostly of the question type knowledge-update and the retriever was only able to identify the updated knowledge but failed to retrieved the previous information before update. For these cases, our strict retrieval evaluation criteria will deem that the retrieval has failed. Overall, this result also highlights the high quality of , as the reader LLM cannot take any shortcut to answer the question correctly without a correct memory recall.
