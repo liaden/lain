@@ -11,8 +11,12 @@ module Lain
   # to forget.
   #
   # The wire enums are non-exhaustive: an unrecognized value passes through
-  # rather than raising. Anything unknown becomes :unknown so the Agent's state
-  # machine can branch on it explicitly instead of falling through a `case`.
+  # rather than raising. `:unknown` is not a pre-state-machine holdover left to
+  # clean up -- it is what CLOSES the wire's open enum before the machine ever
+  # sees a reason. `normalize` running first is what lets {Agent::LoopMachine}
+  # declare one event per value in `ALL`, `:unknown` included, and fire it
+  # directly instead of falling through a `case`'s `else` (gate 6 totality; see
+  # the transition comment in `agent/loop_machine.rb`).
   module StopReason
     END_TURN = :end_turn
     TOOL_USE = :tool_use

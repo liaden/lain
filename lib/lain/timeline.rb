@@ -15,6 +15,10 @@ module Lain
   #
   # Named branch refs are deliberately absent for now; a branch here is just a
   # Timeline value that somebody is holding.
+  #
+  # Closer to a git ref than to a Range: a Range is bounded enumeration over a
+  # receiver that owns its elements, where a Timeline is a movable pointer into
+  # a Store it does not own and that other Timelines share.
   class Timeline
     class CrossStore < Error; end
 

@@ -26,6 +26,12 @@ module Lain
   # question the Ledger answers. Whole-run usage regardless of reachability is
   # the sum over every journal record, which is what {Agent::Accounting#usage}
   # already accumulates.
+  #
+  # Not nested under Journal: Ledger CONSUMES journals (it walks a Timeline and
+  # joins against journal-sourced payments), it does not produce or own them.
+  # Journal must not know its readers, so nesting a reader under the thing it
+  # reads would point the dependency the wrong way. This class lives with
+  # pricing/accounting instead.
   class Ledger
     # Convenience: fold journal entries (parsed Hashes or raw NDJSON lines)
     # straight into a priced Ledger.
@@ -85,7 +91,7 @@ module Lain
     # @return [BigDecimal]
     def cost_of(turn)
       @index.entries_for(turn.digest).reduce(BigDecimal(0)) do |sum, entry|
-        sum + priced(turn, entry)
+        sum + turn_cost(turn, entry)
       end
     end
 
@@ -93,7 +99,7 @@ module Lain
     # keep working for nil), so the nil-model case is rescued and re-raised
     # rather than pre-checked: PriceBook's own "no price for model \"\"" would
     # send the first mock-journal user grepping the wrong codebase.
-    def priced(turn, entry)
+    def turn_cost(turn, entry)
       @price_book.cost(entry.model, entry.usage)
     rescue PriceBook::UnknownModel
       raise unless entry.model.nil?
