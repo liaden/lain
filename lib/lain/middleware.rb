@@ -126,12 +126,18 @@ module Lain
       # Run `env` through every middleware, terminating in the given app (or a
       # pass-through if none). Built by folding from the inside out so the first
       # member is outermost -- the reading order matches the execution order.
+      #
+      # The input is wrapped into an {Env} ONCE, here at the boundary, so every
+      # caller keeps passing a plain hash while every middleware downstream sees
+      # the whole value. `wrap` is idempotent, so a Stack nested in a Stack does
+      # not double-wrap.
       def call(env, &app)
+        wrapped = Env.wrap(env)
         terminal = app || ->(inner_env) { inner_env }
         chain = @middlewares.reverse.reduce(terminal) do |downstream, middleware|
           ->(inner_env) { middleware.call(inner_env, &downstream) }
         end
-        chain.call(env)
+        chain.call(wrapped)
       end
 
       private
@@ -159,8 +165,12 @@ module Lain
     class Logging < Base
       # A compact, side-effect-free view of an env. Defaults to its sorted keys,
       # so logging a huge tool payload does not dump the payload.
+      # Duck on `to_h`, not `is_a?(Hash)`: since the Stack boundary wraps the env
+      # into an {Env}, a middleware in a real stack is handed the whole value, not
+      # a bare Hash -- but a hand-rolled non-hash env (a bare Symbol in a probe)
+      # still degrades to its class name rather than raising.
       DEFAULT_FORMATTER = lambda do |env|
-        env.is_a?(Hash) ? env.keys.map(&:to_s).sort.join(",") : env.class.name
+        env.respond_to?(:to_h) ? env.to_h.keys.map(&:to_s).sort.join(",") : env.class.name
       end
 
       # @param sink [#puts] where log lines go (a {Lain::Sink}, not the terminal)
@@ -214,7 +224,9 @@ module Lain
       def call(env, &app)
         started = @clock.call
         deadline = started + @seconds
-        downstream_env = env.is_a?(Hash) ? env.merge(DEADLINE_KEY => deadline) : env
+        # Duck on `merge` rather than `is_a?(Hash)`: the Stack boundary hands us an
+        # {Env}, which merges just like a Hash; a non-hash env passes through.
+        downstream_env = env.respond_to?(:merge) ? env.merge(DEADLINE_KEY => deadline) : env
 
         result = downstream(downstream_env, &app)
 
@@ -233,5 +245,6 @@ module Lain
   end
 end
 
+require_relative "middleware/env"
 require_relative "middleware/journal_requests"
 require_relative "middleware/refuse_secret_writes"

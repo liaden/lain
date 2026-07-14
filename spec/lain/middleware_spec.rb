@@ -17,9 +17,10 @@ RSpec.describe Lain::Middleware do
   end
 
   # The observation: run a middleware over an empty-trace env, terminating in the
-  # identity app, and read the trace it produced.
+  # identity app, and read the trace it produced. The env is wrapped so the trace
+  # threads through Env#merge -- the laws are asserted over the whole value.
   def observe(middleware)
-    middleware.call({ trace: [] }) { |env| env }.fetch(:trace)
+    middleware.call(Lain::Middleware::Env.wrap({ trace: [] })) { |env| env }.fetch(:trace)
   end
 
   let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }
@@ -178,7 +179,8 @@ RSpec.describe Lain::Middleware do
     end
 
     it "passes env through for an empty Stack" do
-      expect(described_class::Stack.new.call(env)).to eq(env)
+      # Stack wraps at its boundary, so its return is an Env; to_h recovers the hash.
+      expect(described_class::Stack.new.call(env).to_h).to eq(env)
     end
   end
 end

@@ -17,8 +17,9 @@ RSpec.describe "the repl phase's Middleware::Stack" do
   end
 
   it "passes the env through an empty stack unchanged, plus the app's :response" do
+    # Stack wraps at its boundary, so its return is an Env; to_h recovers the hash.
     result = run_command(Lain::Middleware::Stack.new, "hi")
-    expect(result).to eq(text: "hi", agent: :the_agent, response: "ran(hi)")
+    expect(result.to_h).to eq(text: "hi", agent: :the_agent, response: "ran(hi)")
   end
 
   it "threads each command through every middleware in the stack, outermost first" do
@@ -51,7 +52,8 @@ RSpec.describe "the repl phase's Middleware::Stack" do
     end
 
     def observe(middleware)
-      middleware.call({ text: "hi", agent: :the_agent, trace: [] }) { |env| env }.fetch(:trace)
+      env = Lain::Middleware::Env.wrap({ text: "hi", agent: :the_agent, trace: [] })
+      middleware.call(env) { |inner| inner }.fetch(:trace)
     end
 
     let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }

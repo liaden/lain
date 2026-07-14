@@ -75,7 +75,8 @@ RSpec.describe "Agent turn_middleware" do
     end
 
     def observe(middleware)
-      middleware.call({ iteration: 0, timeline: nil, trace: [] }) { |env| env }.fetch(:trace)
+      env = Lain::Middleware::Env.wrap({ iteration: 0, timeline: nil, trace: [] })
+      middleware.call(env) { |inner| inner }.fetch(:trace)
     end
 
     let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }

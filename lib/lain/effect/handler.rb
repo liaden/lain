@@ -44,6 +44,10 @@ module Lain
       # {Lain::Middleware::Stack}. The stack wraps the intention; this is the
       # bottom of the stack that finally performs it, writing the outcome back to
       # `env[:result]` so the surrounding middleware can observe it.
+      #
+      # `env` here is a {Lain::Middleware::Env} (the Stack wraps at its boundary),
+      # so `merge` returns an Env carrying `:result` -- which {Agent::ToolRunner}
+      # reads back as `.result`. It quacks like the Hash it replaced.
       def to_app
         lambda do |env|
           env.merge(result: call(env.fetch(:effect), env[:context]))

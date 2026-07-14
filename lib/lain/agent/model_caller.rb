@@ -21,10 +21,9 @@ module Lain
       # @param request [Lain::Request]
       # @return [Lain::Response]
       def call(request)
-        env = @middleware.call({ request: }) do |inner|
+        @middleware.call({ request: }) do |inner|
           inner.merge(response: @provider.complete(inner.fetch(:request)))
-        end
-        env.fetch(:response)
+        end.response
       end
     end
   end
