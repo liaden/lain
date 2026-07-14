@@ -15,7 +15,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       response = Struct.new(:status, :body).new(502, '{"error":{"message":"down"}}')
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ServiceUnavailableError)
     end
 
@@ -23,7 +23,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       response = Struct.new(:status, :body).new(503, '{"error":{"message":"down"}}')
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ServiceUnavailableError)
     end
 
@@ -31,7 +31,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       response = Struct.new(:status, :body).new(504, '{"error":{"message":"timeout"}}')
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ServiceUnavailableError)
     end
 
@@ -40,7 +40,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: "Request too large for model")
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ContextLengthExceededError)
     end
 
@@ -49,7 +49,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: "Rate limit exceeded")
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::RateLimitError)
     end
 
@@ -59,7 +59,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: msg)
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ContextLengthExceededError)
     end
 
@@ -69,7 +69,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: msg)
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::ContextLengthExceededError)
     end
 
@@ -78,7 +78,7 @@ RSpec.describe Lain::Provider::HTTP::ErrorMiddleware do
       provider = instance_double(Lain::Provider::HTTP::Provider, parse_error: "Invalid model specified")
 
       expect do
-        described_class.parse_error(provider: provider, response: response)
+        described_class.parse_error(provider:, response:)
       end.to raise_error(Lain::Provider::HTTP::BadRequestError)
     end
   end

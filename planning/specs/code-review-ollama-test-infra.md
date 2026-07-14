@@ -202,7 +202,7 @@ Scenario: the corpus answers the implementer's wire questions
 - The current Ollama API has materially diverged from RubyLLM 1.16.0's assumptions (renamed
   fields, removed endpoints) — flag which, so T15 doesn't copy a stale mapping.
 
-### T2 — Define custom matchers in spec/support/matchers/   [wave 1] [risk: low]
+### T2 — Define custom matchers in spec/support/matchers/   [wave 1] [risk: low] ✅ landed
 
 **Depends on:** none
 **Files:** create `spec/support/matchers/be_ractor_shareable.rb`,
@@ -249,7 +249,7 @@ Scenario: journal matcher reads both IO and String
 - `spec/support` load order breaks (matcher file sorting before rspec config) — the glob's
   sorted-order contract is documented in spec_helper; do not add an explicit require.
 
-### T3 — Configure super_diff and shoulda-matchers        [wave 1] [risk: low]
+### T3 — Configure super_diff and shoulda-matchers        [wave 1] [risk: low] ✅ landed
 
 **Depends on:** none (Wave 0 adds the gems)
 **Files:** create `spec/support/super_diff.rb`, `spec/support/shoulda_matchers.rb`; modify
@@ -326,7 +326,7 @@ Scenario: the report is mechanically applicable
 - rubocop-thread_safety flags more than ~10 sites — that's a design conversation, not a lint
   sweep; stop at the inventory and mark the report BLOCKED-ON-DISCUSSION.
 
-### T5 — Settle the equality convention (ContentAddressed, DegradedSet)  [wave 1] [risk: medium]
+### T5 — Settle the equality convention (ContentAddressed, DegradedSet)  [wave 1] [risk: medium] ✅ landed
 
 **Depends on:** none
 **Files:** modify `lib/lain/content_addressed.rb`, `lib/lain/capability/degraded_set.rb`;
@@ -379,7 +379,7 @@ Scenario: eql?/hash contract holds for every == pair
 - `Timeline#diverge_at`/`Store` lookups rely on digest-keyed Hash behavior — if any spec there
   goes red, the hash contract changed in a way the DAG feels; stop.
 
-### T6 — Settle the constructor-guard convention (validations vs guards vs Freezable) [wave 1] [risk: medium]
+### T6 — Settle the constructor-guard convention (validations vs guards vs Freezable) [wave 1] [risk: medium] ✅ landed
 
 **Depends on:** none
 **Files:** modify `lib/lain/event.rb`, `lib/lain/workspace.rb`, `lib/lain/capability/policy.rb`;
@@ -489,7 +489,7 @@ Scenario: ContextProbe is reusable across spec files
 - Moving the probe changes any `Ractor`/frozen assertion outcome in agent_spec — the probe was
   load-bearing in place; stop and report.
 
-### T8 — Move Handler under Effect:: and rename Approving to Gate  [wave 1] [risk: medium]
+### T8 — Move Handler under Effect:: and rename Approving to Gate  [wave 1] [risk: medium] ✅ landed
 
 **Depends on:** none
 **Files:** git-mv `lib/lain/handler.rb` → `lib/lain/effect/handler.rb`, `lib/lain/handler/{live,

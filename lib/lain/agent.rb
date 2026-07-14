@@ -52,7 +52,7 @@ module Lain
                    tool_middleware: Middleware::Stack.new,
                    turn_middleware: Middleware::Stack.new)
       super() # state_machines sets the initial state through the super chain.
-      @model_caller = ModelCaller.new(provider: provider, middleware: model_middleware)
+      @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
       @toolset = toolset
       @context = context
       @timeline = timeline || Timeline.empty(store: Store.new)
@@ -92,7 +92,7 @@ module Lain
       loop do
         env = @turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
           response = step
-          inner.merge(response: response, settled: transition(response) == :settled)
+          inner.merge(response:, settled: transition(response) == :settled)
         end
         return env.fetch(:response) if env.fetch(:settled)
       end
@@ -112,7 +112,7 @@ module Lain
     private
 
     def build_tool_runner(handler, toolset, middleware)
-      ToolRunner.new(handler: handler || Handler::Live.new(toolset: toolset), middleware: middleware)
+      ToolRunner.new(handler: handler || Handler::Live.new(toolset:), middleware:)
     end
 
     # Seeds the mutable run context: a fresh Accounting rolling up over the
@@ -123,7 +123,7 @@ module Lain
     # construction; the Accounting is what captures the journal.
     def seed_run_state(transition_listener, journal, session)
       @transition_listener = transition_listener
-      @accounting = Accounting.new(journal: journal)
+      @accounting = Accounting.new(journal:)
       @session = session
       @iterations = 0
     end

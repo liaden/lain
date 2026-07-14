@@ -55,7 +55,7 @@ module Lain
         chains = Journal.records(entries, type: "request_sent")
                         .reject { |record| record["prefix_digests"].nil? }
                         .map { |record| record["prefix_digests"] }
-        new(chains: chains)
+        new(chains:)
       end
 
       # @param chains [Enumerable<Array<Array(Integer, String)>>] one
@@ -92,7 +92,7 @@ module Lain
         return nil if diverging.empty?
 
         depth = diverging.min
-        Rewrite.new(depth: depth, from_digest: before_chain[depth], to_digest: after_chain[depth])
+        Rewrite.new(depth:, from_digest: before_chain[depth], to_digest: after_chain[depth])
       end
     end
   end

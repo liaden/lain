@@ -19,7 +19,7 @@ RSpec.describe "Agent state-machine diagram" do
   # here touches a terminal: the renderer writes into a StringIO we own.
   def render_source
     io = StringIO.new
-    StateMachines::Mermaid::Renderer.draw_machine(Lain::Agent.state_machine(:state), io: io)
+    StateMachines::Mermaid::Renderer.draw_machine(Lain::Agent.state_machine(:state), io:)
     io.string.chomp
   end
 

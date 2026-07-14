@@ -25,17 +25,17 @@ RSpec.describe Lain::Bench::Session do
   # INNERMOST JournalRequests (the bytes the provider actually received) and
   # turn_usage from the Agent's journal:.
   let(:run) do
-    responses = [tool_response(["tu_1", "echo", { "text" => "hi" }], usage: usage, model: "claude-opus-4-8"),
-                 text_response("done", usage: usage, model: "claude-opus-4-8")]
-    record_journaled_run(responses, journal: journal, toolset: toolset, context: context, workspace: workspace)
+    responses = [tool_response(["tu_1", "echo", { "text" => "hi" }], usage:, model: "claude-opus-4-8"),
+                 text_response("done", usage:, model: "claude-opus-4-8")]
+    record_journaled_run(responses, journal:, toolset:, context:, workspace:)
   end
 
   let(:agent) { run.first }
   let(:provider) { run.last }
 
   def write_session
-    described_class.write(journal, timeline: agent.timeline, context: context,
-                                   toolset: toolset, workspace: workspace)
+    described_class.write(journal, timeline: agent.timeline, context:,
+                                   toolset:, workspace:)
   end
 
   def load_session

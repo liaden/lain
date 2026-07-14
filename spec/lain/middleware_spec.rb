@@ -90,7 +90,7 @@ RSpec.describe Lain::Middleware do
     it "writes before/after lines to the injected sink, not stdout" do
       channel = Lain::Channel.new
       sink = Lain::Sink::IOAdapter.new(channel, tool_use_id: "log_1", stream: :stdout)
-      logging = described_class.new(sink: sink, label: "tool")
+      logging = described_class.new(sink:, label: "tool")
 
       logging.call({ effect: :x }) { |env| env }
 
@@ -101,7 +101,7 @@ RSpec.describe Lain::Middleware do
 
     it "passes the env through unchanged (it observes, it does not transform)" do
       sink = Lain::Sink::Null.new
-      logging = described_class.new(sink: sink, label: "x")
+      logging = described_class.new(sink:, label: "x")
       expect(logging.call({ n: 1 }) { |env| env.merge(seen: true) }).to eq({ n: 1, seen: true })
     end
   end
@@ -109,7 +109,7 @@ RSpec.describe Lain::Middleware do
   describe described_class::Timeout do
     it "publishes a monotonic deadline into the env for cooperative cancellation" do
       clock = -> { 100.0 }
-      timeout = described_class.new(seconds: 5, clock: clock)
+      timeout = described_class.new(seconds: 5, clock:)
       seen = nil
       timeout.call({}) do |env|
         seen = env[described_class::DEADLINE_KEY]
@@ -121,7 +121,7 @@ RSpec.describe Lain::Middleware do
     it "raises Exceeded when the downstream overruns the budget" do
       now = 0.0
       clock = -> { now }
-      timeout = described_class.new(seconds: 1, clock: clock)
+      timeout = described_class.new(seconds: 1, clock:)
       expect do
         timeout.call({}) do |env|
           now = 2.5
@@ -134,7 +134,7 @@ RSpec.describe Lain::Middleware do
     it "does not raise when the downstream stays within budget" do
       now = 0.0
       clock = -> { now }
-      timeout = described_class.new(seconds: 1, clock: clock)
+      timeout = described_class.new(seconds: 1, clock:)
       expect(timeout.call({}) do |env|
         now = 0.5
         env.merge(done: true)
@@ -163,7 +163,7 @@ RSpec.describe Lain::Middleware do
 
     it "passes env through for Logging, and still logs" do
       sink = Lain::Sink::IOAdapter.new(Lain::Channel.new, tool_use_id: "tu_1", stream: :stdout)
-      expect(described_class::Logging.new(sink: sink).call(env)).to eq(env)
+      expect(described_class::Logging.new(sink:).call(env)).to eq(env)
     end
 
     it "passes env through for Timeout, adding its deadline" do

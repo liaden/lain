@@ -41,7 +41,7 @@ class LainCLI < Thor
                                desc: "max_tokens per model turn"
     method_option :system, type: :string, desc: "system prompt"
     def record(taskfile)
-      paths = Lain::Bench::CLI.new.record(taskfile: taskfile, runs: options[:n], out: options[:out],
+      paths = Lain::Bench::CLI.new.record(taskfile:, runs: options[:n], out: options[:out],
                                           model: options[:model], max_tokens: options[:max_tokens],
                                           system: options[:system])
       paths.each { |path| say path }
@@ -69,8 +69,8 @@ class LainCLI < Thor
     # the last (its prior root still resolves the old item).
     recorder = Lain::Memory::Recorder.new
     toolset = build_toolset(recorder)
-    agent = build_agent(toolset: toolset, channel: channel)
-    tty = Lain::Frontend::TTY.new(channel: channel)
+    agent = build_agent(toolset:, channel:)
+    tty = Lain::Frontend::TTY.new(channel:)
     repl_middleware = build_repl_middleware
 
     tty.run { converse(agent, tty, repl_middleware) }
@@ -94,7 +94,7 @@ class LainCLI < Thor
                         Lain::Tools::ListFiles.new,
                         Lain::Tools::EditFile.new,
                         Lain::Tools::TodoWrite.new,
-                        Lain::Tools::MemoryWrite.new(recorder: recorder),
+                        Lain::Tools::MemoryWrite.new(recorder:),
                         Lain::Tools::Bash.new
                       ])
   end
@@ -106,11 +106,11 @@ class LainCLI < Thor
   # before it ever reaches the recorder (a memory, once indexed, replays into
   # every future context -- there is no un-indexing it).
   def build_agent(toolset:, channel:)
-    live = Lain::Handler::Live.new(toolset: toolset, channel: channel)
+    live = Lain::Handler::Live.new(toolset:, channel:)
     approving = Lain::Handler::Approving.new(policy: approval_policy, inner: live)
     context = Lain::Context.new(model: options[:model], max_tokens: options[:max_tokens])
 
-    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset: toolset, context: context, handler: approving,
+    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset:, context:, handler: approving,
                     tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]))
   end
 
@@ -136,7 +136,7 @@ class LainCLI < Thor
   # a rescued Lain::Error) on the way out -- the same in/out shape
   # model_middleware uses for `:request`/`:response`.
   def dispatch(agent, tty, repl_middleware, text)
-    repl_middleware.call({ text: text, agent: agent }) do |env|
+    repl_middleware.call({ text:, agent: }) do |env|
       env.merge(response: respond(agent, tty, env.fetch(:text)))
     end
   end

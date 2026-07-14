@@ -16,9 +16,9 @@ RSpec.describe Lain::Tool::Invocation do
 
   it "carries whatever tool_use_id, context, and channel it is given" do
     channel = Object.new
-    invocation = described_class.new(tool_use_id: "tu_1", context: :ctx, channel: channel)
+    invocation = described_class.new(tool_use_id: "tu_1", context: :ctx, channel:)
 
-    expect(invocation).to have_attributes(tool_use_id: "tu_1", context: :ctx, channel: channel)
+    expect(invocation).to have_attributes(tool_use_id: "tu_1", context: :ctx, channel:)
   end
 
   it "is a frozen value object" do

@@ -5,7 +5,7 @@ RSpec.describe Lain::Context::Prune do
 
   let(:store) { Lain::Store.new }
   let(:timeline) do
-    Lain::Timeline.empty(store: store)
+    Lain::Timeline.empty(store:)
                   .commit(role: :user, content: text("one"))
                   .commit(role: :assistant, content: text("two"))
                   .commit(role: :user, content: text("three"))

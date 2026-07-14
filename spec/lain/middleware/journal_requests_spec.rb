@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Middleware::JournalRequests do
-  subject(:middleware) { described_class.new(journal: journal) }
+  subject(:middleware) { described_class.new(journal:) }
 
   let(:journal) { RecordingChannel.new }
 
@@ -20,22 +20,22 @@ RSpec.describe Lain::Middleware::JournalRequests do
     end
 
     it "defaults its journal to the Null channel, so bare construction never needs a guard" do
-      expect { described_class.new.call({ request: request }) }.not_to raise_error
+      expect { described_class.new.call({ request: }) }.not_to raise_error
     end
 
     it "passes the env through unchanged: downstream sees the same request, caller sees downstream's env" do
-      env = { request: request }
+      env = { request: }
       seen = nil
       result = middleware.call(env) do |inner|
         seen = inner
         inner.merge(response: :from_downstream)
       end
       expect(seen).to equal(env)
-      expect(result).to eq(request: request, response: :from_downstream)
+      expect(result).to eq(request:, response: :from_downstream)
     end
 
     it "acts as the identity when there is no downstream" do
-      env = { request: request }
+      env = { request: }
       expect(middleware.call(env)).to eq(env)
     end
   end
@@ -84,7 +84,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
 
     let(:agent) do
       Lain::Agent.new(
-        provider: provider,
+        provider:,
         toolset: Lain::Toolset.new([EchoTool.new]),
         context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024),
         model_middleware: Lain::Middleware::Stack.new([middleware])

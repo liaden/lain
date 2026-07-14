@@ -54,7 +54,7 @@ module Lain
       # (not the block form) because the Journal OWNS this handle for its whole
       # life and closes it in #close -- there is no scope to hand it to.
       io = File.new(path, "ab")
-      new(io: io, clock: clock, owns_io: true)
+      new(io:, clock:, owns_io: true)
     end
 
     # @return [String] a timestamped path under {SESSIONS_DIR}

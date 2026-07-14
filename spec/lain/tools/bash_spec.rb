@@ -8,7 +8,7 @@ RSpec.describe Lain::Tools::Bash do
   let(:channel) { RecordingChannel.new }
 
   def invocation(tool_use_id: "tu_1")
-    Lain::Tool::Invocation.new(tool_use_id: tool_use_id, channel: channel)
+    Lain::Tool::Invocation.new(tool_use_id:, channel:)
   end
 
   it "has a model-facing name and description" do

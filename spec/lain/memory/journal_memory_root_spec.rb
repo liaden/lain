@@ -8,16 +8,16 @@ require "stringio"
 # behaviour layered on top of it (see spec/lain/seams/memory_snapshot_seam_spec.rb
 # for the same acceptance exercised through a real Agent run).
 RSpec.describe Lain::Memory::JournalMemoryRoot do
-  def item(id) = Lain::Memory::Item.new(id: id, description: "desc of #{id}", body: "body of #{id}")
+  def item(id) = Lain::Memory::Item.new(id:, description: "desc of #{id}", body: "body of #{id}")
 
   def turn_usage(digest)
-    Lain::Event::TurnUsage.new(digest: digest, model: "claude-opus-4-8", stop_reason: :end_turn, usage: {})
+    Lain::Event::TurnUsage.new(digest:, model: "claude-opus-4-8", stop_reason: :end_turn, usage: {})
   end
 
   let(:io) { StringIO.new }
-  let(:real_journal) { Lain::Journal.new(io: io) }
+  let(:real_journal) { Lain::Journal.new(io:) }
   let(:recorder) { Lain::Memory::Recorder.new }
-  let(:decorator) { described_class.new(journal: real_journal, recorder: recorder) }
+  let(:decorator) { described_class.new(journal: real_journal, recorder:) }
 
   def parsed_records
     io.string.each_line.map { |line| Lain::Journal.parse(line) }

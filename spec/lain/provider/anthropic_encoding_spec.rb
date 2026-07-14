@@ -22,7 +22,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
 
   it "still translates a neutral marker into cache_control wherever the Context layer placed it" do
     content = [{ "type" => "text", "text" => "a" }, { "type" => "text", "text" => "b", "cache" => true }]
-    encoded = encoder.encode(request(messages: [{ role: "user", content: content }]))
+    encoded = encoder.encode(request(messages: [{ role: "user", content: }]))
 
     emitted = encoded[:messages].first["content"]
     expect(emitted[0]).not_to have_key("cache_control")
@@ -40,7 +40,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
   describe "the cache-breakpoint budget" do
     def request_with_markers(count)
       content = Array.new(count) { |i| { "type" => "text", "text" => "b#{i}", "cache" => true } }
-      request(messages: [{ role: "user", content: content }])
+      request(messages: [{ role: "user", content: }])
     end
 
     it "encodes four markers without complaint" do
@@ -63,7 +63,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
         { "type" => "text", "text" => "c", "cache" => true }
       ] }]
 
-      expect { encoder.encode(request(tools: [tool], system: system, messages: messages)) }
+      expect { encoder.encode(request(tools: [tool], system:, messages:)) }
         .to raise_error(Lain::Provider::AnthropicEncoding::TooManyCacheMarkers, /5 cache breakpoints/)
     end
   end

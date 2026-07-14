@@ -43,7 +43,7 @@ module Lain
 
         candidates = beam.each_with_index.map { |branch, index| explore(timeline, branch, index) }
         best = candidates.max_by { |candidate| candidate.grade.score }
-        Selection.new(best: best.trajectory, grade: best.grade, candidates: candidates)
+        Selection.new(best: best.trajectory, grade: best.grade, candidates:)
       end
 
       private
@@ -53,7 +53,7 @@ module Lain
       # allocates.
       def explore(timeline, branch, index)
         trajectory = branch.call(timeline.fork)
-        Candidate.new(index: index, trajectory: trajectory, grade: @grader.grade(trajectory))
+        Candidate.new(index:, trajectory:, grade: @grader.grade(trajectory))
       end
     end
   end

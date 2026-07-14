@@ -47,7 +47,7 @@ module Lain
       attr_reader :root, :store
 
       def self.empty(store: Store.new)
-        new(root: nil, store: store)
+        new(root: nil, store:)
       end
 
       def initialize(root:, store:)
@@ -68,11 +68,11 @@ module Lain
         store.put(item)
         node = Node.new(id: item.id, item: item.digest, parent: root)
         store.put(node)
-        self.class.new(root: node.digest, store: store)
+        self.class.new(root: node.digest, store:)
       end
 
       def checkout(digest)
-        self.class.new(root: digest, store: store)
+        self.class.new(root: digest, store:)
       end
 
       # Head first: resolution below relies on this order -- the first node

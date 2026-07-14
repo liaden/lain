@@ -32,7 +32,7 @@ RSpec.describe Lain::Tools::ReadFile do
 
   it "reads a file's full contents" do
     path = write("hello.txt", "hello\nworld\n")
-    expect(tool.call(path: path)).to eq(Lain::Tool::Result.ok("hello\nworld\n"))
+    expect(tool.call(path:)).to eq(Lain::Tool::Result.ok("hello\nworld\n"))
   end
 
   it "reports a missing file as an error Result rather than raising" do
@@ -50,7 +50,7 @@ RSpec.describe Lain::Tools::ReadFile do
   it "reports an unreadable file as an error Result rather than raising" do
     path = write("secret.txt", "shh")
     File.chmod(0o000, path)
-    result = tool.call(path: path)
+    result = tool.call(path:)
     expect(result).to have_attributes(is_error: true, content: /not readable/)
   ensure
     File.chmod(0o600, path) if path && File.exist?(path)
@@ -59,7 +59,7 @@ RSpec.describe Lain::Tools::ReadFile do
   it "does not care about the invocation it is handed" do
     path = write("a.txt", "a")
     invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1")
-    expect(tool.call({ path: path }, invocation)).to eq(Lain::Tool::Result.ok("a"))
+    expect(tool.call({ path: }, invocation)).to eq(Lain::Tool::Result.ok("a"))
   end
 
   describe "recording reads on the session (invocation.context)" do
@@ -72,14 +72,14 @@ RSpec.describe Lain::Tools::ReadFile do
     it "records a successful read on the threaded session" do
       path = write("read.txt", "contents")
 
-      tool.call({ path: path }, invocation_with(session))
+      tool.call({ path: }, invocation_with(session))
 
       expect(session.read?(path)).to be(true)
     end
 
     it "does not record a path it never read" do
       path = write("read.txt", "contents")
-      tool.call({ path: path }, invocation_with(session))
+      tool.call({ path: }, invocation_with(session))
 
       expect(session.read?(File.join(tmpdir, "never.txt"))).to be(false)
     end
@@ -97,7 +97,7 @@ RSpec.describe Lain::Tools::ReadFile do
       path = write("read.txt", "contents")
       invocation = invocation_with(Lain::Session::Null.instance)
 
-      result = tool.call({ path: path }, invocation)
+      result = tool.call({ path: }, invocation)
 
       expect(result).to eq(Lain::Tool::Result.ok("contents"))
     end

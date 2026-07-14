@@ -65,7 +65,7 @@ RSpec.describe Lain::Tools::ListFiles do
 
   it "reports a file (not a directory) as an error Result rather than raising" do
     path = touch("a_file.txt")
-    result = tool.call(path: path)
+    result = tool.call(path:)
     expect(result).to have_attributes(is_error: true, content: /not a directory/)
   end
 

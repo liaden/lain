@@ -30,12 +30,12 @@ module Lain
       # @param degraded [Capability::DegradedSet] what this run silently lost
       def self.from_timeline(name:, timeline:, ledger:, grade: nil,
                              degraded: Capability::DegradedSet.new([]))
-        new(name: name, usage: ledger.usage(timeline), cost: ledger.cost(timeline),
-            score: grade&.score, degraded: degraded)
+        new(name:, usage: ledger.usage(timeline), cost: ledger.cost(timeline),
+            score: grade&.score, degraded:)
       end
 
       def initialize(name:, usage:, cost:, degraded:, score: nil)
-        super(name: -name.to_s, usage: usage, cost: cost, score: score, degraded: degraded)
+        super(name: -name.to_s, usage:, cost:, score:, degraded:)
       end
 
       def total_tokens = usage.total_tokens

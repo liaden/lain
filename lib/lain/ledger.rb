@@ -40,7 +40,7 @@ module Lain
     # @param price_book [Lain::PriceBook]
     # @return [Ledger]
     def self.from_journal(entries, price_book: PriceBook.default)
-      new(index: Index.from_journal(entries), price_book: price_book)
+      new(index: Index.from_journal(entries), price_book:)
     end
 
     # @param index [Ledger::Index] digest => payments, REQUIRED -- a Ledger with

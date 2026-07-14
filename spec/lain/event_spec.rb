@@ -336,7 +336,7 @@ RSpec.describe Lain::Event do
       # than the in-memory to_journal does.
       it "rebuilds from a line written by a real Journal, whose ts stamp joins the record without collision" do
         io = StringIO.new
-        Lain::Journal.new(io: io, clock: -> { "2026-07-11T00:00:00.000000Z" }).record(
+        Lain::Journal.new(io:, clock: -> { "2026-07-11T00:00:00.000000Z" }).record(
           described_class.new(digest: request.digest, payload: request.cache_payload,
                               stream: request.stream, extra: request.extra)
         )

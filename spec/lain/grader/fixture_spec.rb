@@ -59,8 +59,8 @@ RSpec.describe Lain::Grader::Fixture do
 
     let(:dry_replay) do
       agent, provider = record_run([tool_response(["t1", "echo", { "text" => "hi" }]), text_response("ok")],
-                                   toolset: toolset, context: context, prompt: "echo hi")
-      Lain::Bench::DryReplay.new(timeline: agent.timeline, baseline: provider.requests, toolset: toolset)
+                                   toolset:, context:, prompt: "echo hi")
+      Lain::Bench::DryReplay.new(timeline: agent.timeline, baseline: provider.requests, toolset:)
     end
 
     it "asserts byte-identity under the recording's own Context" do

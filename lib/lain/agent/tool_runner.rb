@@ -48,7 +48,7 @@ module Lain
           # `input` as a raw String.
           input: tool_use.fetch("input")
         )
-        env = @middleware.call({ effect: effect, context: context }, &@handler.to_app)
+        env = @middleware.call({ effect:, context: }, &@handler.to_app)
         env.fetch(:result)
       end
     end

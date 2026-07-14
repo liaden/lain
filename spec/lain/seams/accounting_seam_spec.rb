@@ -16,11 +16,11 @@ RSpec.describe "Agent x Journal x Ledger x Compare accounting seam" do
 
   def run_arm(reply:, usage:)
     io = StringIO.new
-    agent, = record_run([text_response(reply, model: model, usage: usage)],
+    agent, = record_run([text_response(reply, model:, usage:)],
                         toolset: Lain::Toolset.new,
-                        context: Lain::Context.new(model: model, max_tokens: 1024),
-                        journal: Lain::Journal.new(io: io), prompt: "measure me")
-    { agent: agent, io: io }
+                        context: Lain::Context.new(model:, max_tokens: 1024),
+                        journal: Lain::Journal.new(io:), prompt: "measure me")
+    { agent:, io: }
   end
 
   let(:brief) do
@@ -41,7 +41,7 @@ RSpec.describe "Agent x Journal x Ledger x Compare accounting seam" do
   end
 
   def run_from(name, arm)
-    Lain::Compare::Run.from_timeline(name: name, timeline: timeline_of(arm),
+    Lain::Compare::Run.from_timeline(name:, timeline: timeline_of(arm),
                                      ledger: ledger_from_bytes(arm))
   end
 

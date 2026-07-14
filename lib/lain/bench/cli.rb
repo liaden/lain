@@ -57,7 +57,7 @@ module Lain
         runs = check_runs(runs)
         prompts = prompts_from(taskfile)
         provider ||= build_provider
-        context = Context.new(model: model, max_tokens: max_tokens, system: system)
+        context = Context.new(model:, max_tokens:, system:)
         (1..runs).map { |index| record_run(provider, context, prompts, File.join(out, "#{index}.ndjson")) }
       end
 
@@ -109,7 +109,7 @@ module Lain
       # Variance's construction-time guards (n>=2) speak in recordings; the
       # experimenter typed paths, so restore them to the message.
       def build_variance(recordings, paths, price_book)
-        Variance.new(recordings: recordings, price_book: price_book)
+        Variance.new(recordings:, price_book:)
       rescue ArgumentError => e
         raise Refusal, "#{paths.join(", ")}: #{e.message}"
       end
@@ -165,7 +165,7 @@ module Lain
       def run_and_write(provider, context, prompts, journal)
         agent = build_agent(provider, context, journal)
         prompts.each { |prompt| agent.ask(prompt) }
-        Session.write(journal, timeline: agent.timeline, context: context, toolset: agent.toolset)
+        Session.write(journal, timeline: agent.timeline, context:, toolset: agent.toolset)
       end
 
       # The memory stack the chunk built, wired even though these synthetic
@@ -178,10 +178,10 @@ module Lain
       # the Agent's own turn_usage stream.
       def build_agent(provider, context, journal)
         recorder = Memory::Recorder.new
-        Agent.new(provider: provider, toolset: Toolset.new([]), context: context,
-                  journal: Memory::JournalMemoryRoot.new(journal: journal, recorder: recorder),
-                  model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal: journal)]),
-                  tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: journal)]))
+        Agent.new(provider:, toolset: Toolset.new([]), context:,
+                  journal: Memory::JournalMemoryRoot.new(journal:, recorder:),
+                  model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]),
+                  tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal:)]))
       end
     end
   end

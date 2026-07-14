@@ -27,13 +27,13 @@ group :test do
   gem "rspec", "~> 3.0"
   # ActiveModel validation matchers; integrated :rspec + :active_model only (no Rails).
   gem "shoulda-matchers", "~> 6.0"
-  # Structural diffs on failure output only -- never changes matching semantics.
-  gem "super_diff", "~> 0.16"
   # A REVIEW LENS, NEVER A GATE. Used while reviewing a branch to find untested
   # branches -- error paths, the `else` on a stop_reason case. No minimum-coverage
   # threshold is committed: in a codebase whose invariants are property-tested, a
   # coverage number is reassurance, not evidence.
   gem "simplecov", "~> 0.22", require: false
+  # Structural diffs on failure output only -- never changes matching semantics.
+  gem "super_diff", "~> 0.16"
   # Hooks into the webmock we already have. Configured in spec/support/ with safe
   # defaults: network blocked, `record: :none`, LAIN_RECORD=1 to record.
   gem "vcr", "~> 6.4"

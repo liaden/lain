@@ -29,7 +29,7 @@ module Lain
         #   to a Null Object so a deployment with no live consumer needs no guard
         # @param inner [Lain::Effect::Handler, nil] fallback for other effect kinds
         def initialize(toolset:, channel: Channel::Null.instance, inner: nil)
-          super(inner: inner)
+          super(inner:)
           @toolset = toolset
           @channel = channel
         end
@@ -65,7 +65,7 @@ module Lain
         private
 
         def dispatch(effect, context)
-          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context: context, channel: @channel)
+          invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context:, channel: @channel)
           @toolset.fetch(effect.name).call(effect.input, invocation)
         rescue Toolset::UnknownTool
           # The model asked for a tool this set does not hold. That is a failed

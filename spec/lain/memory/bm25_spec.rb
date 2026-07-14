@@ -5,12 +5,12 @@
 # Context::Recall (T10) and any other Manifest consumer without a type check.
 RSpec.describe Lain::Memory::Bm25 do
   def item(id, description, body: "body of #{id}")
-    Lain::Memory::Item.new(id: id, description: description, body: body)
+    Lain::Memory::Item.new(id:, description:, body:)
   end
 
   def index_over(*items)
     store = Lain::Store.new
-    items.inject(Lain::Memory::Index.empty(store: store)) { |acc, entry| acc.write(entry) }
+    items.inject(Lain::Memory::Index.empty(store:)) { |acc, entry| acc.write(entry) }
   end
 
   let(:snapshot) do
@@ -26,10 +26,10 @@ RSpec.describe Lain::Memory::Bm25 do
     include_examples "a memory search index",
                      build: lambda { |corpus|
                        described_class.new(index: index_over(*corpus.map do |id, description, body|
-                         item(id, description, body: body)
+                         item(id, description, body:)
                        end))
                      },
-                     search: ->(idx, query, k) { idx.search(query, k: k) }
+                     search: ->(idx, query, k) { idx.search(query, k:) }
   end
 
   # A fresh memory index before the first write is empty; the crate refuses to
@@ -114,10 +114,10 @@ RSpec.describe Lain::Memory::Bm25 do
       base = [{ "role" => "user", "content" => [{ "type" => "text", "text" => "what is the aspirin dosing?" }] }]
       bm25 = described_class.new(index: snapshot)
 
-      pipeline = Lain::Context::Reminder.new(workspace: workspace) >>
+      pipeline = Lain::Context::Reminder.new(workspace:) >>
                  Lain::Context::CacheBreakpoints.new >>
                  Lain::Context::Recall.new(index: bm25, k: 3)
-      without_recall = (Lain::Context::Reminder.new(workspace: workspace) >> Lain::Context::CacheBreakpoints.new)
+      without_recall = (Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new)
                        .call(base)
 
       rendered = pipeline.call(base)

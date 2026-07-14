@@ -113,15 +113,15 @@ module Lain
         def record(journal, responses)
           toolset = Toolset.new([DosingLookup.new])
           context = Context.new(model: MODEL, max_tokens: 1024, system: "be terse")
-          agent = Agent.new(provider: Provider::Mock.new(responses: responses),
-                            toolset: toolset, context: context, journal: journal,
+          agent = Agent.new(provider: Provider::Mock.new(responses:),
+                            toolset:, context:, journal:,
                             model_middleware: journaling_stack(journal))
           agent.ask(TASK)
-          Session.write(journal, timeline: agent.timeline, context: context, toolset: toolset)
+          Session.write(journal, timeline: agent.timeline, context:, toolset:)
         end
 
         def journaling_stack(journal)
-          Middleware::Stack.new([Middleware::JournalRequests.new(journal: journal)])
+          Middleware::Stack.new([Middleware::JournalRequests.new(journal:)])
         end
       end
     end

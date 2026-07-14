@@ -57,7 +57,7 @@ RSpec.describe Lain::PriceBook do
 
     it "uses an explicit fallback when one is configured" do
       fallback = Lain::Price.per_mtok(input: 1, output: 1, cache_creation: 0, cache_read: 0)
-      book = described_class.new(prices: {}, fallback: fallback)
+      book = described_class.new(prices: {}, fallback:)
       expect(book.cost("anything", usage(input: 1_000_000))).to eq(BigDecimal("1"))
     end
   end

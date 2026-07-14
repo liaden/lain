@@ -19,7 +19,7 @@ require "stringio"
 # real ToolRunner -- there is no bench-side scripted write standing in for it.
 RSpec.describe "Memory snapshot x Journal seam" do
   def item(id, description)
-    Lain::Memory::Item.new(id: id, description: description, body: "body of #{id}")
+    Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
   end
 
   def write_call(tool_use_id, memory_item)
@@ -28,11 +28,11 @@ RSpec.describe "Memory snapshot x Journal seam" do
   end
 
   let(:io) { StringIO.new }
-  let(:real_journal) { Lain::Journal.new(io: io) }
+  let(:real_journal) { Lain::Journal.new(io:) }
   let(:recorder) { Lain::Memory::Recorder.new }
-  let(:journal) { Lain::Memory::JournalMemoryRoot.new(journal: real_journal, recorder: recorder) }
+  let(:journal) { Lain::Memory::JournalMemoryRoot.new(journal: real_journal, recorder:) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
-  let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder: recorder)]) }
+  let(:toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)]) }
 
   let(:first_gap_writes) do
     [item("aspirin-dosing", "Aspirin dosing bounds for adults"),
@@ -48,7 +48,7 @@ RSpec.describe "Memory snapshot x Journal seam" do
     )
   end
 
-  let(:agent) { Lain::Agent.new(provider: provider, toolset: toolset, context: context, journal: journal) }
+  let(:agent) { Lain::Agent.new(provider:, toolset:, context:, journal:) }
 
   before { agent.ask("what is the aspirin dosing?") }
 

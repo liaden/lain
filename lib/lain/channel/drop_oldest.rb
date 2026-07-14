@@ -129,7 +129,7 @@ module Lain
       def dropped_marker
         count = @dropped
         @dropped = 0
-        Event::Dropped.new(count: count)
+        Event::Dropped.new(count:)
       end
     end
   end

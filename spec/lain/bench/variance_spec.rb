@@ -20,38 +20,38 @@ RSpec.describe Lain::Bench::Variance do
   # Narrowed over the shared builders: every response here is an echo call
   # carrying the priceable model and usage, so the call sites stay terse.
   def tool_response(id, text)
-    super([id, "echo", { "text" => text }], usage: usage, model: "claude-sonnet-4-6")
+    super([id, "echo", { "text" => text }], usage:, model: "claude-sonnet-4-6")
   end
 
   def text_response(text)
-    super(text, usage: usage, model: "claude-sonnet-4-6")
+    super(text, usage:, model: "claude-sonnet-4-6")
   end
 
   # One mock-recorded run of the task, round-tripped through Session so the
   # Recording under test is exactly what B4's driver will hold.
   def record(responses, degrade: nil)
-    Lain::Bench::Session.load(session_bytes(responses, degrade: degrade).each_line)
+    Lain::Bench::Session.load(session_bytes(responses, degrade:).each_line)
   end
 
   def session_bytes(responses, degrade: nil)
     io = StringIO.new
-    journal = Lain::Journal.new(io: io)
+    journal = Lain::Journal.new(io:)
     run_and_write(journal, responses)
     degrade!(journal, degrade)
     io.string
   end
 
   def run_and_write(journal, responses)
-    agent, = record_journaled_run(responses, journal: journal, toolset: toolset,
-                                             context: context, workspace: workspace)
-    Lain::Bench::Session.write(journal, timeline: agent.timeline, context: context,
-                                        toolset: toolset, workspace: workspace)
+    agent, = record_journaled_run(responses, journal:, toolset:,
+                                             context:, workspace:)
+    Lain::Bench::Session.write(journal, timeline: agent.timeline, context:,
+                                        toolset:, workspace:)
   end
 
   def degrade!(journal, capability)
     return if capability.nil?
 
-    journal << Lain::Event::CapabilityDegraded.new(capability: capability, requirer: "Spec",
+    journal << Lain::Event::CapabilityDegraded.new(capability:, requirer: "Spec",
                                                    provider: "Provider::Mock")
   end
 
@@ -143,7 +143,7 @@ RSpec.describe Lain::Bench::Variance do
                session_bytes([tool_response("tu_1", "hi there, longer"), text_response("done")])]
       reports = Array.new(2) do
         recordings = bytes.map { |ndjson| Lain::Bench::Session.load(ndjson.each_line) }
-        described_class.new(recordings: recordings).report
+        described_class.new(recordings:).report
       end
       expect(reports.first).to eq(reports.last)
     end

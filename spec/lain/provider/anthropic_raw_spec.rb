@@ -183,7 +183,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
     end
 
     it "journals one ProviderRetry that backs off by the reset header's value" do
-      provider = described_class.new(channel: channel, api_key: "test")
+      provider = described_class.new(channel:, api_key: "test")
 
       provider.complete(request(stream: false))
 

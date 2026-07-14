@@ -115,7 +115,7 @@ RSpec.describe Lain::Bench::Rewrites do
     it "reports a plain model switch as one Rewrite at the earliest shared position (per-model chains)" do
       chains = %w[claude-opus-4-8 claude-haiku-4-8].map do |model|
         Lain::Request.new(
-          model: model,
+          model:,
           system: [{ "type" => "text", "text" => "be terse", "cache" => true }],
           messages: [{ "role" => "user",
                        "content" => [{ "type" => "text", "text" => "hi", "cache" => true }] }],

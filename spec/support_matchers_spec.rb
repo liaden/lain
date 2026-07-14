@@ -79,7 +79,7 @@ RSpec.describe "custom matchers (spec/support/matchers/)" do
 
   describe "stop_with" do
     def response(stop_reason)
-      Lain::Response.new(content: [{ "type" => "text", "text" => "x" }], stop_reason: stop_reason)
+      Lain::Response.new(content: [{ "type" => "text", "text" => "x" }], stop_reason:)
     end
 
     it "passes when stop_reason matches" do

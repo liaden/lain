@@ -33,7 +33,7 @@ module Lain
       include Kind
 
       def initialize(tool_use_id:, name:, input:)
-        super(tool_use_id: -tool_use_id.to_s, name: -name.to_s, input: input)
+        super(tool_use_id: -tool_use_id.to_s, name: -name.to_s, input:)
       end
 
       def tool_call? = true

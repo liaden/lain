@@ -15,7 +15,7 @@ RSpec.describe Lain::Bench::DryReplay do
   # records the exact Requests it was handed -- the recorded baseline.
   def record_session(ctx)
     agent, provider = record_run([tool_response(["tu_1", "echo", { "text" => "hi" }]), text_response("done")],
-                                 toolset: toolset, context: ctx)
+                                 toolset:, context: ctx)
     [agent.timeline, provider.requests]
   end
 
@@ -24,7 +24,7 @@ RSpec.describe Lain::Bench::DryReplay do
   let(:baseline) { recorded.last }
 
   def replay(over:)
-    described_class.new(timeline: timeline, baseline: baseline, toolset: toolset).diff(over)
+    described_class.new(timeline:, baseline:, toolset:).diff(over)
   end
 
   it "records exactly one baseline Request per model call" do
@@ -32,12 +32,12 @@ RSpec.describe Lain::Bench::DryReplay do
   end
 
   it "reconstructs one step per recorded model call" do
-    dr = described_class.new(timeline: timeline, baseline: baseline, toolset: toolset)
+    dr = described_class.new(timeline:, baseline:, toolset:)
     expect(dr.steps).to eq(2)
   end
 
   it "raises loudly when the baseline does not line up with the recorded DAG" do
-    expect { described_class.new(timeline: timeline, baseline: baseline.take(1), toolset: toolset) }
+    expect { described_class.new(timeline:, baseline: baseline.take(1), toolset:) }
       .to raise_error(ArgumentError, /baseline/)
   end
 
@@ -49,7 +49,7 @@ RSpec.describe Lain::Bench::DryReplay do
     end
 
     it "matches the recorded bytes digest-for-digest" do
-      replayed = described_class.new(timeline: timeline, baseline: baseline, toolset: toolset).replay(context)
+      replayed = described_class.new(timeline:, baseline:, toolset:).replay(context)
       expect(replayed.map(&:digest)).to eq(baseline.map(&:digest))
     end
   end

@@ -11,13 +11,13 @@ RSpec.describe Lain::Context::Reminder do
 
   it "appends workspace blocks to the last user message" do
     messages = [message("user", text("hello")), message("assistant", text("hi")), message("user", text("more"))]
-    injected = described_class.new(workspace: workspace).call(messages)
+    injected = described_class.new(workspace:).call(messages)
     expect(injected.last["content"].map { |b| b["text"] }).to eq(%w[more] + ["<workspace>todo: finish M1</workspace>"])
   end
 
   it "declines to inject when the last turn is not a user turn" do
     messages = [message("user", text("hello")), message("assistant", text("thinking"))]
-    injected = described_class.new(workspace: workspace).call(messages)
+    injected = described_class.new(workspace:).call(messages)
     expect(injected.last["content"].size).to eq(1)
   end
 
@@ -28,7 +28,7 @@ RSpec.describe Lain::Context::Reminder do
   end
 
   it "is a no-op on an empty message list" do
-    expect(described_class.new(workspace: workspace).call([])).to eq([])
+    expect(described_class.new(workspace:).call([])).to eq([])
   end
 
   # The reminder rides the UNCACHED SUFFIX: it must never touch any message
@@ -36,24 +36,24 @@ RSpec.describe Lain::Context::Reminder do
   # workspace-bearing tail, not a rewritten prefix.
   it "leaves every message but the last untouched" do
     messages = [message("user", text("hello")), message("assistant", text("hi")), message("user", text("more"))]
-    injected = described_class.new(workspace: workspace).call(messages)
+    injected = described_class.new(workspace:).call(messages)
     expect(injected[0..-2]).to eq(messages[0..-2])
   end
 
   it "declares no required capabilities -- it is plain text injection" do
-    expect(described_class.new(workspace: workspace).requires).to eq([])
+    expect(described_class.new(workspace:).requires).to eq([])
   end
 
   it "is pure: identical input yields identical output" do
     messages = [message("user", text("hello"))]
-    combinator = described_class.new(workspace: workspace)
+    combinator = described_class.new(workspace:)
     expect(combinator.call(messages)).to eq(combinator.call(messages))
   end
 
   it "composes with other combinators via >>" do
     require "lain/context/base"
     messages = [message("user", text("hello"))]
-    composed = described_class.new(workspace: workspace) >> Lain::Context::Identity
+    composed = described_class.new(workspace:) >> Lain::Context::Identity
     expect(composed.call(messages).last["content"].map { |b| b["text"] })
       .to eq(%w[hello] + ["<workspace>todo: finish M1</workspace>"])
   end

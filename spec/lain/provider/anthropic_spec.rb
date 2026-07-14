@@ -9,14 +9,14 @@ RSpec.describe Lain::Provider::Anthropic do
     Struct.new(*attrs.keys, keyword_init: true).new(**attrs)
   end
 
-  def text_block(text) = block(type: :text, text: text)
+  def text_block(text) = block(type: :text, text:)
 
   def thinking_block(thinking: "step", signature: "sig")
-    block(type: :thinking, thinking: thinking, signature: signature)
+    block(type: :thinking, thinking:, signature:)
   end
 
   def tool_use_block(input:, id: "toolu_1", name: "read_file")
-    block(type: :tool_use, id: id, name: name, input: input)
+    block(type: :tool_use, id:, name:, input:)
   end
 
   def usage_double(input: 10, output: 5, cache_creation: nil, cache_read: nil)
@@ -25,7 +25,7 @@ RSpec.describe Lain::Provider::Anthropic do
   end
 
   def message_double(content:, stop_reason: :end_turn, id: "msg_1", model: "claude-opus-4-8", usage: usage_double)
-    block(id: id, model: model, content: content, stop_reason: stop_reason, usage: usage)
+    block(id:, model:, content:, stop_reason:, usage:)
   end
 
   # A doubled SDK client. `messages.create` returns the message directly;
@@ -39,10 +39,10 @@ RSpec.describe Lain::Provider::Anthropic do
     else
       allow(messages).to receive(:create).and_return(message)
     end
-    instance_double("Anthropic::Client", messages: messages)
+    instance_double("Anthropic::Client", messages:)
   end
 
-  subject(:provider) { described_class.new(client: client) }
+  subject(:provider) { described_class.new(client:) }
 
   let(:client) { client_returning(message_double(content: [text_block("hi")])) }
 
@@ -106,7 +106,7 @@ RSpec.describe Lain::Provider::Anthropic do
 
     it "drops a falsy cache marker without emitting cache_control" do
       content = [{ type: "text", text: "hi", "cache" => false }]
-      request = Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: content }])
+      request = Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: }])
       emitted = provider.encode(request)[:messages].first["content"].first
 
       expect(emitted).not_to have_key("cache")
@@ -231,7 +231,7 @@ RSpec.describe Lain::Provider::Anthropic do
       request = Lain::Request.new(model: "m", max_tokens: 1, stream: false,
                                   messages: [{ role: "user", content: "hi" }])
 
-      response = described_class.new(client: client).complete(request)
+      response = described_class.new(client:).complete(request)
 
       expect(response.text).to eq("hi")
       expect(client.messages).to have_received(:create)
@@ -244,7 +244,7 @@ RSpec.describe Lain::Provider::Anthropic do
     def client_raising(error)
       messages = instance_double("Anthropic::Resources::Messages")
       allow(messages).to receive(:stream).and_raise(error)
-      instance_double("Anthropic::Client", messages: messages)
+      instance_double("Anthropic::Client", messages:)
     end
 
     it "wraps an APIStatusError, preserving the Integer status and the SDK error as cause" do

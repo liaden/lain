@@ -19,7 +19,7 @@ RSpec.describe Lain::Grader::Rubric do
 
   def rubric(provider)
     described_class.new(criteria: "Answer must name the capital of France.",
-                        provider: provider, model: "claude-opus-4-8")
+                        provider:, model: "claude-opus-4-8")
   end
 
   it "parses a JSON verdict into a Grade with score and explanation" do

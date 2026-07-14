@@ -103,7 +103,7 @@ module Lain
       def build_compare
         Compare.new(named.map do |name, recording|
           Compare::Run.from_timeline(
-            name: name, timeline: recording.timeline,
+            name:, timeline: recording.timeline,
             ledger: Ledger.new(index: recording.ledger_index, price_book: @price_book),
             degraded: recording.degraded
           )

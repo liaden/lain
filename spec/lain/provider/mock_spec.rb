@@ -7,5 +7,5 @@
 # `transport` branch) is judged against the SAME group.
 RSpec.describe Lain::Provider::Mock do
   include_examples "a Lain::Provider",
-                   provider_factory: ->(responses) { described_class.new(responses: responses) }
+                   provider_factory: ->(responses) { described_class.new(responses:) }
 end

@@ -203,14 +203,14 @@ module Lain
     Result = Data.define(:content, :is_error) do
       # A successful result carrying `content`.
       def self.ok(content)
-        new(content: content, is_error: false)
+        new(content:, is_error: false)
       end
 
       # A failed result carrying an error message or blocks. This is what a
       # raising or contract-violating tool is turned into, and what a tool that
       # detects its own failure should return directly.
       def self.error(content)
-        new(content: content, is_error: true)
+        new(content:, is_error: true)
       end
 
       def initialize(content:, is_error: false)
@@ -220,7 +220,7 @@ module Lain
 
         # Coerce to a strict Boolean so `is_error` is never a truthy-but-not-true
         # value that a `== true` check downstream would miss.
-        super(content: content, is_error: is_error ? true : false)
+        super(content:, is_error: is_error ? true : false)
       end
 
       def error?

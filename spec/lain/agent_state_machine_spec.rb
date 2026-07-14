@@ -12,8 +12,8 @@ RSpec.describe Lain::Agent do
   def agent(responses, **overrides)
     described_class.new(
       provider: Lain::Provider::Mock.new(responses: Array(responses)),
-      toolset: toolset,
-      context: context,
+      toolset:,
+      context:,
       **overrides
     )
   end
@@ -24,7 +24,7 @@ RSpec.describe Lain::Agent do
     attr_reader :seen
 
     def initialize = @seen = []
-    def on_transition(from:, to:, event:) = @seen << { from: from, to: to, event: event }
+    def on_transition(from:, to:, event:) = @seen << { from:, to:, event: }
   end
 
   describe "declared moves" do
@@ -65,7 +65,7 @@ RSpec.describe Lain::Agent do
       refusal: :failed
     }.each do |stop_reason, final_state|
       it "settles #{final_state} on #{stop_reason}" do
-        a = agent(text_response("x", stop_reason: stop_reason))
+        a = agent(text_response("x", stop_reason:))
         a.ask("hi")
         expect(a.state).to eq(final_state)
       end

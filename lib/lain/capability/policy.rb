@@ -40,7 +40,7 @@ module Lain
                 "unknown capability policy #{name.inspect}, expected one of #{NAMES.inspect}"
         end
 
-        strategy.new(journal: journal)
+        strategy.new(journal:)
       end
 
       def initialize(journal: Channel::Null.instance)
@@ -85,7 +85,7 @@ module Lain
 
         def handle_missing(capability, requirer, provider)
           @journal << Event::CapabilityDegraded.new(
-            capability: capability,
+            capability:,
             requirer: requirer.class.name,
             provider: provider.class.name
           )

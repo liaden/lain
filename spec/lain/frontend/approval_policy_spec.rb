@@ -7,7 +7,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "rm -rf /tmp/x" }) }
 
   def policy_for(answer)
-    described_class.new(output: output, input: StringIO.new(answer))
+    described_class.new(output:, input: StringIO.new(answer))
   end
 
   it "asks the question, naming the tool and its input" do

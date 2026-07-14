@@ -28,7 +28,7 @@ module Lain
       def observe(response, digest:)
         @usage += response.usage
         @journal << Event::TurnUsage.new(
-          digest: digest,
+          digest:,
           model: response.model,
           stop_reason: response.stop_reason,
           usage: response.usage.to_h

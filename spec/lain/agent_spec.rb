@@ -9,8 +9,8 @@ RSpec.describe Lain::Agent do
   def agent(responses, **overrides)
     described_class.new(
       provider: Lain::Provider::Mock.new(responses: Array(responses)),
-      toolset: toolset,
-      context: context,
+      toolset:,
+      context:,
       **overrides
     )
   end
@@ -115,7 +115,7 @@ RSpec.describe Lain::Agent do
       provider = Lain::Provider::Mock.new(
         responses: [text_response("", stop_reason: :pause_turn), text_response("finished")]
       )
-      a = described_class.new(provider: provider, toolset: toolset, context: context)
+      a = described_class.new(provider:, toolset:, context:)
       response = a.ask("hi")
 
       expect(provider.call_count).to eq(2)
@@ -133,7 +133,7 @@ RSpec.describe Lain::Agent do
 
     it "raises once the token ceiling is passed" do
       usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
-      a = agent([Lain::Response.new(content: [], stop_reason: :end_turn, usage: usage)],
+      a = agent([Lain::Response.new(content: [], stop_reason: :end_turn, usage:)],
                 budget: Lain::Agent::Budget.new(max_total_tokens: 50))
       expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded, /ceiling is 50/)
     end
@@ -160,8 +160,8 @@ RSpec.describe Lain::Agent do
     it "journals exactly one turn_usage record, attributed to the committed assistant turn" do
       usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
       a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "hello" }],
-                                   stop_reason: :end_turn, model: "claude-opus-4-8", usage: usage),
-                journal: journal)
+                                   stop_reason: :end_turn, model: "claude-opus-4-8", usage:),
+                journal:)
       a.ask("hi")
 
       records = turn_usage_records
@@ -177,7 +177,7 @@ RSpec.describe Lain::Agent do
 
     it "journals one record per MODEL call in a tool loop, none for the tool_result user turn" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "x" }]), text_response],
-                journal: journal)
+                journal:)
       a.ask("hi")
 
       assistant_digests = a.timeline.to_a.select { |turn| turn.role == "assistant" }.map(&:digest)
@@ -193,9 +193,9 @@ RSpec.describe Lain::Agent do
       usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
       same_answer = lambda do
         Lain::Response.new(content: [{ "type" => "text", "text" => "same answer" }],
-                           stop_reason: :end_turn, usage: usage)
+                           stop_reason: :end_turn, usage:)
       end
-      a = agent([same_answer.call, same_answer.call], journal: journal)
+      a = agent([same_answer.call, same_answer.call], journal:)
       a.ask("hi")
       a.rewind(1)
       a.run
@@ -208,9 +208,9 @@ RSpec.describe Lain::Agent do
 
     it "keeps turn digests content-only: no usage or model in meta, identical content hashes identically" do
       content = [{ "type" => "text", "text" => "same answer" }]
-      cheap = agent(Lain::Response.new(content: content, stop_reason: :end_turn,
+      cheap = agent(Lain::Response.new(content:, stop_reason: :end_turn,
                                        usage: Lain::Usage.new(input_tokens: 1, output_tokens: 1)))
-      pricey = agent(Lain::Response.new(content: content, stop_reason: :end_turn,
+      pricey = agent(Lain::Response.new(content:, stop_reason: :end_turn,
                                         model: "claude-opus-4-8",
                                         usage: Lain::Usage.new(input_tokens: 900, output_tokens: 900)))
       cheap.ask("hi")
@@ -235,9 +235,9 @@ RSpec.describe Lain::Agent do
     it "retains an over-budget turn in the Timeline and journals its usage before raising" do
       usage = Lain::Usage.new(input_tokens: 100, output_tokens: 100)
       a = agent(Lain::Response.new(content: [{ "type" => "text", "text" => "expensive" }],
-                                   stop_reason: :end_turn, usage: usage),
+                                   stop_reason: :end_turn, usage:),
                 budget: Lain::Agent::Budget.new(max_total_tokens: 50),
-                journal: journal)
+                journal:)
 
       expect { a.ask("hi") }.to raise_error(described_class::BudgetExceeded)
       expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant])
@@ -295,8 +295,8 @@ RSpec.describe Lain::Agent do
                                              tool_response(["tu_2", "probe", {}]),
                                              text_response
                                            ]),
-        toolset: toolset,
-        context: context
+        toolset:,
+        context:
       )
       a.ask("please read then probe")
 
@@ -311,7 +311,7 @@ RSpec.describe Lain::Agent do
     it "carries a session reminder into the request tail without appending it to the Timeline" do
       reminding = instance_double(Lain::Session, reminders: ["ping the model"])
       provider = Lain::Provider::Mock.new(responses: [text_response])
-      a = described_class.new(provider: provider, toolset: toolset, context: context, session: reminding)
+      a = described_class.new(provider:, toolset:, context:, session: reminding)
       a.ask("hi")
 
       tail = provider.last_request.messages.last

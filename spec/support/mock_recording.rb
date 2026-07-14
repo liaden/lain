@@ -26,7 +26,7 @@ end
 # thinking blocks, journaling, workspace) is said at the call site.
 module MockRecording
   def text_response(text = "done", stop_reason: :end_turn, **attrs)
-    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: stop_reason, **attrs)
+    Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason:, **attrs)
   end
 
   # Each call is an [id, name, input] triple. `thinking:` prepends a thinking
@@ -42,8 +42,8 @@ module MockRecording
   # it was actually handed, the recorded baseline. Extra kwargs flow to
   # Agent.new.
   def record_run(responses, toolset:, context:, prompt: "please echo hi", **agent_options)
-    provider = Lain::Provider::Mock.new(responses: responses)
-    agent = Lain::Agent.new(provider: provider, toolset: toolset, context: context, **agent_options)
+    provider = Lain::Provider::Mock.new(responses:)
+    agent = Lain::Agent.new(provider:, toolset:, context:, **agent_options)
     agent.ask(prompt)
     [agent, provider]
   end
@@ -51,8 +51,8 @@ module MockRecording
   # The full record-a-session wiring: the Agent journals turn_usage, and an
   # INNERMOST JournalRequests records the bytes the provider actually received.
   def record_journaled_run(responses, journal:, **)
-    stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal: journal)])
-    record_run(responses, journal: journal, model_middleware: stack, **)
+    stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
+    record_run(responses, journal:, model_middleware: stack, **)
   end
 end
 

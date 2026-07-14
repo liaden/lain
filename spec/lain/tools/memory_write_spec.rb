@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Tools::MemoryWrite do
-  subject(:tool) { described_class.new(recorder: recorder) }
+  subject(:tool) { described_class.new(recorder:) }
 
   let(:recorder) { Lain::Memory::Recorder.new }
 

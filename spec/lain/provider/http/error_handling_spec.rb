@@ -28,7 +28,7 @@ RSpec.describe Lain::Provider::HTTP::Error do
     messages = [Lain::Provider::HTTP::Message.new(role: :user, content: "Hello")]
 
     expect do
-      provider.complete(messages, tools: {}, temperature: nil, model: model)
+      provider.complete(messages, tools: {}, temperature: nil, model:)
     end.to raise_error(Lain::Provider::HTTP::UnauthorizedError)
   end
 end

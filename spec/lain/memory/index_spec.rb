@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Memory::Index do
-  subject(:index) { described_class.empty(store: store) }
+  subject(:index) { described_class.empty(store:) }
 
   let(:store) { Lain::Store.new }
 
   def item(id, body = "v1")
-    Lain::Memory::Item.new(id: id, description: "about #{id}", body: body)
+    Lain::Memory::Item.new(id:, description: "about #{id}", body:)
   end
 
   describe "an empty index" do
@@ -158,7 +158,7 @@ RSpec.describe Lain::Memory::Index do
 
   describe "Node" do
     def node(id: "a", item: "blake3:abc", parent: nil)
-      described_class::Node.new(id: id, item: item, parent: parent)
+      described_class::Node.new(id:, item:, parent:)
     end
 
     it "exposes the item's digest, not its content" do

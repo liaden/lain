@@ -34,7 +34,7 @@ module Lain
         def self.from_journal(entries, inner: nil)
           outcomes = Journal.records(entries, type: "tool_result")
                             .each_with_object({}) { |record, acc| store_outcome(acc, record) }
-          new(outcomes: outcomes, inner: inner)
+          new(outcomes:, inner:)
         end
 
         def self.store_outcome(acc, hash)
@@ -49,7 +49,7 @@ module Lain
         # @param outcomes [Hash{String=>Tool::Result}] tool_use_id => recorded result
         # @param inner [Lain::Effect::Handler, nil] performs (or live-runs) unrecorded calls
         def initialize(outcomes:, inner: nil)
-          super(inner: inner)
+          super(inner:)
           @outcomes = normalize(outcomes)
         end
 

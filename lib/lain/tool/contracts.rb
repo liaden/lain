@@ -69,7 +69,7 @@ module Lain
         def build_contract(message, predicate)
           raise ArgumentError, "a contract needs a predicate block" unless predicate
 
-          Contract.new(message: message.to_s, predicate: predicate)
+          Contract.new(message: message.to_s, predicate:)
         end
 
         def contracts_along_ancestry(reader)

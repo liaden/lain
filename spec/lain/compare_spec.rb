@@ -11,7 +11,7 @@ RSpec.describe Lain::Compare do
   end
 
   def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]))
-    Lain::Compare::Run.new(name: name, usage: usage, cost: BigDecimal(cost.to_s), score: score, degraded: degraded)
+    Lain::Compare::Run.new(name:, usage:, cost: BigDecimal(cost.to_s), score:, degraded:)
   end
 
   let(:runs) do
@@ -148,7 +148,7 @@ RSpec.describe Lain::Compare do
 
     it "derives usage and cost from a recorded Timeline via a journal-sourced Ledger" do
       timeline, ledger = recorded("yo", input: 1000, output: 200)
-      run = described_class::Run.from_timeline(name: "recorded", timeline: timeline, ledger: ledger,
+      run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:,
                                                grade: Lain::Grader::Grade.new(score: 1.0, why: "ok"))
       expect(run.total_tokens).to eq(1200)
       expect(run.cost).to be > 0

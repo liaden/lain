@@ -81,7 +81,7 @@ module Lain
       # shared with whatever else happens to be running -- see Lain::Channel's
       # doc comment on why a shared byte buffer destroys provenance.
       def output_sink(invocation, stream)
-        Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream: stream)
+        Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
       end
 
       def format_output(shell_out)

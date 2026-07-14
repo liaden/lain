@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Timeline do
-  subject(:timeline) { described_class.empty(store: store) }
+  subject(:timeline) { described_class.empty(store:) }
 
   let(:store) { Lain::Store.new }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  def say(from, body, role: :user) = from.commit(role: role, content: text(body))
+  def say(from, body, role: :user) = from.commit(role:, content: text(body))
 
   describe "an empty timeline" do
     it "has no head" do
@@ -110,12 +110,12 @@ RSpec.describe Lain::Timeline do
     end
 
     it "meets to the empty timeline when two roots share no history" do
-      other_root = say(described_class.empty(store: store), "unrelated")
+      other_root = say(described_class.empty(store:), "unrelated")
       expect(left.meet(other_root)).to be_empty
     end
 
     it "returns nil from #diverge_at when there is no shared history" do
-      other_root = say(described_class.empty(store: store), "unrelated")
+      other_root = say(described_class.empty(store:), "unrelated")
       expect(left.diverge_at(other_root)).to be_nil
     end
 
@@ -179,7 +179,7 @@ RSpec.describe Lain::Timeline do
     let(:parent) { say(timeline, "parent work") }
 
     let(:child) do
-      described_class.empty(store: store)
+      described_class.empty(store:)
                      .commit(role: :user, content: text("child task"),
                              meta: { "spawned_from" => parent.head_digest })
     end

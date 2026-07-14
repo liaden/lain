@@ -21,7 +21,7 @@ RSpec.describe Lain::Bench::LiveReplay do
   describe ".prompts_from" do
     it "extracts only the human asks, skipping tool_result user turns" do
       agent, = record_run([tool_response(["t1", "echo", { "text" => "hi" }]), text_response("done")],
-                          toolset: toolset, context: context)
+                          toolset:, context:)
 
       expect(described_class.prompts_from(agent.timeline)).to eq(["please echo hi"])
     end
@@ -31,11 +31,11 @@ RSpec.describe Lain::Bench::LiveReplay do
     let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
 
     let(:live_provider) do
-      Lain::Provider::Mock.new(responses: [text_response("pong", usage: usage, model: "claude-opus-4-8")])
+      Lain::Provider::Mock.new(responses: [text_response("pong", usage:, model: "claude-opus-4-8")])
     end
 
     let(:replay) do
-      described_class.new(provider: live_provider, toolset: toolset, context: context, journal: journal)
+      described_class.new(provider: live_provider, toolset:, context:, journal:)
     end
 
     it "re-runs the task and returns a fresh Timeline and Usage" do
@@ -86,7 +86,7 @@ RSpec.describe Lain::Bench::LiveReplay do
         provider: Lain::Provider::Anthropic.new,
         toolset: Lain::Toolset.new([]),
         context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16, system: "Reply with one word."),
-        journal: journal
+        journal:
       )
 
       result = replay.replay(["Reply with the single word: pong"])

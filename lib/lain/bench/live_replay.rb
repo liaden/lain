@@ -59,7 +59,7 @@ module Lain
         agent = build_agent
         responses = Array(prompts).map { |prompt| ask_and_record(agent, prompt) }
         record_summary(agent.usage, Array(prompts).size)
-        Result.new(timeline: agent.timeline, usage: agent.usage, responses: responses)
+        Result.new(timeline: agent.timeline, usage: agent.usage, responses:)
       end
 
       private
@@ -74,7 +74,7 @@ module Lain
         recorder = Memory::Recorder.new
         Agent.new(provider: @provider, toolset: @toolset, context: @context,
                   timeline: Timeline.empty(store: Store.new), workspace: @workspace,
-                  journal: Memory::JournalMemoryRoot.new(journal: @journal, recorder: recorder),
+                  journal: Memory::JournalMemoryRoot.new(journal: @journal, recorder:),
                   tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)]))
       end
 

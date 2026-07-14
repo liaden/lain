@@ -13,7 +13,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
   # exe/lain's `dispatch` in miniature: `:text`/`:agent` go in, downstream
   # runs the real command and the result comes back as `:response`.
   def run_command(stack, text)
-    stack.call({ text: text, agent: :the_agent }) { |env| env.merge(response: "ran(#{env.fetch(:text)})") }
+    stack.call({ text:, agent: :the_agent }) { |env| env.merge(response: "ran(#{env.fetch(:text)})") }
   end
 
   it "passes the env through an empty stack unchanged, plus the app's :response" do

@@ -55,7 +55,7 @@ end
 RSpec::Matchers.define :include_journal_record do |type, **attrs|
   match do |journal|
     @lines = JournalMatcherSupport.lines_of(journal)
-    @typed = Lain::Journal.records(@lines, type: type).to_a
+    @typed = Lain::Journal.records(@lines, type:).to_a
     string_attrs = attrs.transform_keys(&:to_s)
     # find, not any?: the negated failure message must cite the record that
     # actually matched, which need not be the first record of this type.

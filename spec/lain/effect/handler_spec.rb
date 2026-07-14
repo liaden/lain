@@ -14,11 +14,11 @@ RSpec.describe Lain::Effect::Handler do
   let(:toolset) { Lain::Toolset.new([echo]) }
 
   def tool_call(name, input = {}, id: "tu_1")
-    Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
+    Lain::Effect::ToolCall.new(tool_use_id: id, name:, input:)
   end
 
   describe Lain::Effect::Handler::Live do
-    subject(:handler) { described_class.new(toolset: toolset) }
+    subject(:handler) { described_class.new(toolset:) }
 
     it "dispatches a ToolCall to the tool the Toolset holds" do
       expect(handler.call(tool_call("echo", { text: "hi" }))).to eq(Lain::Tool::Result.ok("hi"))
@@ -46,20 +46,20 @@ RSpec.describe Lain::Effect::Handler do
       let(:toolset) { Lain::Toolset.new([capturing]) }
 
       it "builds an Invocation carrying the effect's tool_use_id and the caller's context" do
-        described_class.new(toolset: toolset).call(tool_call("capturing", {}, id: "tu_42"), "raw context")
+        described_class.new(toolset:).call(tool_call("capturing", {}, id: "tu_42"), "raw context")
 
         expect(capturing.captured).to be_a(Lain::Tool::Invocation)
         expect(capturing.captured).to have_attributes(tool_use_id: "tu_42", context: "raw context")
       end
 
       it "defaults the channel to a Null Object when none is injected" do
-        described_class.new(toolset: toolset).call(tool_call("capturing"))
+        described_class.new(toolset:).call(tool_call("capturing"))
         expect(capturing.captured.channel).to be_a(Lain::Channel::Null)
       end
 
       it "threads the handler's injected channel through" do
         channel = RecordingChannel.new
-        described_class.new(toolset: toolset, channel: channel).call(tool_call("capturing"))
+        described_class.new(toolset:, channel:).call(tool_call("capturing"))
         expect(capturing.captured.channel).to be(channel)
       end
     end
@@ -111,7 +111,7 @@ RSpec.describe Lain::Effect::Handler do
         def handles?(_effect) = true
         def perform(_effect, _context) = Lain::Tool::Result.ok("from inner")
       end.new
-      composed = described_class.new(toolset: toolset, inner: catch_all)
+      composed = described_class.new(toolset:, inner: catch_all)
       declined = Lain::Effect::ModelCall.new(request: :req)
       expect(composed.call(declined)).to eq(Lain::Tool::Result.ok("from inner"))
     end
@@ -150,7 +150,7 @@ RSpec.describe Lain::Effect::Handler do
 
   describe "composition into a stack terminator" do
     it "adapts a handler into an env -> env app via #to_app" do
-      app = Lain::Effect::Handler::Live.new(toolset: toolset).to_app
+      app = Lain::Effect::Handler::Live.new(toolset:).to_app
       env = { effect: tool_call("echo", { text: "hi" }), context: nil }
       expect(app.call(env)[:result]).to eq(Lain::Tool::Result.ok("hi"))
     end

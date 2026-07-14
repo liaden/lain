@@ -79,7 +79,7 @@ module Lain
         def check(description, &predicate)
           raise ArgumentError, "check #{description.inspect} needs a predicate block" unless predicate
 
-          @criteria << Criterion.new(description: -description.to_s, predicate: predicate)
+          @criteria << Criterion.new(description: -description.to_s, predicate:)
         end
       end
     end

@@ -53,7 +53,7 @@ module Lain
         # @param inner [Lain::Effect::Handler, nil] performs the effect once
         #   approved, and the single source of truth for what a tool name resolves to
         def initialize(policy: DenyAll.new, inner: nil)
-          super(inner: inner)
+          super(inner:)
           @policy = policy
         end
 

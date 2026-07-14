@@ -6,7 +6,7 @@ require "tmpdir"
 
 RSpec.describe Lain::Journal do
   let(:io) { StringIO.new }
-  subject(:journal) { described_class.new(io: io, clock: -> { "T" }) }
+  subject(:journal) { described_class.new(io:, clock: -> { "T" }) }
 
   def lines
     io.string.each_line.map(&:chomp)

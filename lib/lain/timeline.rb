@@ -25,7 +25,7 @@ module Lain
     attr_reader :head_digest, :store
 
     def self.empty(store: Store.new)
-      new(head_digest: nil, store: store)
+      new(head_digest: nil, store:)
     end
 
     def initialize(head_digest:, store:)
@@ -53,9 +53,9 @@ module Lain
     # every turn. The git verb says what actually happens: a new object, named by
     # its content, with the old head as its parent.
     def commit(role:, content:, meta: {})
-      turn = Turn.new(role: role, content: content, parent: head_digest, meta: meta)
+      turn = Turn.new(role:, content:, parent: head_digest, meta:)
       store.put(turn)
-      self.class.new(head_digest: turn.digest, store: store)
+      self.class.new(head_digest: turn.digest, store:)
     end
 
     # Immutability makes this identity: appending to the value you are holding
@@ -65,7 +65,7 @@ module Lain
     end
 
     def checkout(digest)
-      self.class.new(head_digest: digest, store: store)
+      self.class.new(head_digest: digest, store:)
     end
 
     # Rewinding past the root lands on the empty Timeline rather than raising:

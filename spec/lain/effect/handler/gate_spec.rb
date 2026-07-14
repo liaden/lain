@@ -14,10 +14,10 @@ RSpec.describe Lain::Effect::Handler::Gate do
   let(:safe) { tool(:safe) { |input, _invocation| Lain::Tool::Result.ok(input.fetch(:text, "safe")) } }
   let(:dangerous) { tool(:dangerous, gated: true) { |input, _invocation| Lain::Tool::Result.ok(input.fetch(:text, "ran")) } }
   let(:toolset) { Lain::Toolset.new([safe, dangerous]) }
-  let(:live) { Lain::Effect::Handler::Live.new(toolset: toolset) }
+  let(:live) { Lain::Effect::Handler::Live.new(toolset:) }
 
   def tool_call(name, input = {}, id: "tu_1")
-    Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
+    Lain::Effect::ToolCall.new(tool_use_id: id, name:, input:)
   end
 
   describe "ungated tools" do
@@ -120,7 +120,7 @@ RSpec.describe Lain::Effect::Handler::Gate do
         true
       end
       wrapped = Lain::Effect::Approval.new(effect: tool_call("safe"))
-      approving = described_class.new(policy: policy, inner: live)
+      approving = described_class.new(policy:, inner: live)
 
       approving.call(wrapped, "some context")
 

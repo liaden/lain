@@ -16,12 +16,12 @@ RSpec.describe Lain::Context::Recall do
   end
 
   def item(id, description, body: "body of #{id}")
-    Lain::Memory::Item.new(id: id, description: description, body: body)
+    Lain::Memory::Item.new(id:, description:, body:)
   end
 
   def manifest_over(*items)
     store = Lain::Store.new
-    idx = items.inject(Lain::Memory::Index.empty(store: store)) { |acc, entry| acc.write(entry) }
+    idx = items.inject(Lain::Memory::Index.empty(store:)) { |acc, entry| acc.write(entry) }
     Lain::Memory::Manifest.new(idx)
   end
 
@@ -32,10 +32,10 @@ RSpec.describe Lain::Context::Recall do
     workspace = Lain::Workspace.new(reminders: ["remember to be terse"])
     base = [message("user", text("what is the aspirin dosing?"))]
 
-    without_recall = (Lain::Context::Reminder.new(workspace: workspace) >> Lain::Context::CacheBreakpoints.new)
+    without_recall = (Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new)
                      .call(base)
-    with_recall = (Lain::Context::Reminder.new(workspace: workspace) >> Lain::Context::CacheBreakpoints.new >>
-                   described_class.new(index: index, k: 3)).call(base)
+    with_recall = (Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new >>
+                   described_class.new(index:, k: 3)).call(base)
 
     marker_len = without_recall.last["content"].size
     expect(with_recall.last["content"].first(marker_len)).to eq(without_recall.last["content"])
@@ -47,7 +47,7 @@ RSpec.describe Lain::Context::Recall do
   # Scenario: recall is pure and explainable
   it "is pure: identical snapshot and messages render byte-identical output, and each line carries its hit's why" do
     base = [message("user", text("what is the aspirin dosing?"))]
-    combinator = described_class.new(index: index, k: 3)
+    combinator = described_class.new(index:, k: 3)
 
     first = combinator.call(base)
     second = combinator.call(base)
@@ -60,7 +60,7 @@ RSpec.describe Lain::Context::Recall do
   # Scenario: nothing to recall, nothing injected
   it "renders exactly the without-Recall messages when the index has no matches" do
     base = [message("user", text("what is the weather today?"))]
-    combinator = described_class.new(index: index, k: 3)
+    combinator = described_class.new(index:, k: 3)
     expect(combinator.call(base)).to eq(base)
   end
 
@@ -87,34 +87,34 @@ RSpec.describe Lain::Context::Recall do
       message("user", text("what is the aspirin dosing?") + [{ "type" => "text",
                                                                "text" => "<workspace>irrelevant</workspace>" }])
     ]
-    combinator = described_class.new(index: index, k: 3)
+    combinator = described_class.new(index:, k: 3)
     recalled = combinator.call(messages).last["content"].last["text"]
     expect(recalled).to include("aspirin-dosage")
   end
 
   it "is a no-op on an empty message list" do
-    expect(described_class.new(index: index, k: 3).call([])).to eq([])
+    expect(described_class.new(index:, k: 3).call([])).to eq([])
   end
 
   it "declines to inject when the last message is not a user turn" do
     messages = [message("user", text("what is the aspirin dosing?")), message("assistant", text("thinking"))]
-    expect(described_class.new(index: index, k: 3).call(messages)).to eq(messages)
+    expect(described_class.new(index:, k: 3).call(messages)).to eq(messages)
   end
 
   it "declares no required capabilities" do
-    expect(described_class.new(index: index, k: 3).requires).to eq([])
+    expect(described_class.new(index:, k: 3).requires).to eq([])
   end
 
   # A non-positive k is a construction-time mistake, not a render-time one:
   # refusing it here beats a late ArgumentError from `hits.first(-1)`.
   it "refuses a non-positive k at construction" do
-    expect { described_class.new(index: index, k: -1) }.to raise_error(ArgumentError, /k must be positive/)
-    expect { described_class.new(index: index, k: 0) }.to raise_error(ArgumentError, /k must be positive/)
+    expect { described_class.new(index:, k: -1) }.to raise_error(ArgumentError, /k must be positive/)
+    expect { described_class.new(index:, k: 0) }.to raise_error(ArgumentError, /k must be positive/)
   end
 
   it "composes with other combinators via >>" do
     base = [message("user", text("what is the aspirin dosing?"))]
-    composed = described_class.new(index: index, k: 3) >> Lain::Context::Identity
+    composed = described_class.new(index:, k: 3) >> Lain::Context::Identity
     expect(composed.call(base).last["content"].last["text"]).to include("aspirin-dosage")
   end
 
@@ -124,8 +124,8 @@ RSpec.describe Lain::Context::Recall do
   # rather than raising AmbiguousMarkerPosition on the displaced marker.
   it "renders a Request whose prefix_digests succeeds when composed after CacheBreakpoints" do
     base = [message("user", text("what is the aspirin dosing?"))]
-    messages = (Lain::Context::CacheBreakpoints.new >> described_class.new(index: index, k: 3)).call(base)
-    request = Lain::Request.new(model: "claude-opus-4-8", messages: messages, max_tokens: 1024)
+    messages = (Lain::Context::CacheBreakpoints.new >> described_class.new(index:, k: 3)).call(base)
+    request = Lain::Request.new(model: "claude-opus-4-8", messages:, max_tokens: 1024)
 
     expect { request.prefix_digests }.not_to raise_error
     expect(request.prefix_digests.map(&:first)).to eq([0])

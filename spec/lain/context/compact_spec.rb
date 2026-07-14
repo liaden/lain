@@ -19,12 +19,12 @@ RSpec.describe Lain::Context::Compact do
   let(:summarizer) { ->(dropped) { "summary of #{dropped.size} turns" } }
 
   it "is a no-op under threshold" do
-    compact = described_class.new(threshold: 1_000_000, keep_last: 1, summarizer: summarizer)
+    compact = described_class.new(threshold: 1_000_000, keep_last: 1, summarizer:)
     expect(compact.call(messages)).to eq(messages)
   end
 
   it "replaces the dropped head with one summary turn, keeping the tail intact" do
-    compact = described_class.new(threshold: 10, keep_last: 1, summarizer: summarizer)
+    compact = described_class.new(threshold: 10, keep_last: 1, summarizer:)
     result = compact.call(messages)
 
     expect(result.size).to eq(2)
@@ -43,7 +43,7 @@ RSpec.describe Lain::Context::Compact do
   end
 
   it "is pure: identical input yields identical output (the summarizer must be too)" do
-    compact = described_class.new(threshold: 10, keep_last: 1, summarizer: summarizer)
+    compact = described_class.new(threshold: 10, keep_last: 1, summarizer:)
     expect(compact.call(messages)).to eq(compact.call(messages))
   end
 
@@ -54,13 +54,13 @@ RSpec.describe Lain::Context::Compact do
   # (:degrade) on exactly the providers lacking native compaction, which is
   # when you reach for client-side Compact.
   it "requires nothing from the provider -- it is a client-side summarizer" do
-    compact = described_class.new(threshold: 10, keep_last: 1, summarizer: summarizer)
+    compact = described_class.new(threshold: 10, keep_last: 1, summarizer:)
     expect(compact.requires).to eq([])
   end
 
   it "composes with other combinators via >>" do
     require "lain/context/base"
-    composed = described_class.new(threshold: 10, keep_last: 1, summarizer: summarizer) >> Lain::Context::Identity
+    composed = described_class.new(threshold: 10, keep_last: 1, summarizer:) >> Lain::Context::Identity
     expect(composed.call(messages).size).to eq(2)
   end
 end

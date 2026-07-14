@@ -36,7 +36,7 @@ RSpec.describe "variance session fixtures" do
   end
 
   describe "Variance over the committed fixtures" do
-    let(:report) { Lain::Bench::Variance.new(recordings: recordings).report }
+    let(:report) { Lain::Bench::Variance.new(recordings:).report }
 
     # One smoke assertion: the report's CONTENT is pinned by the variance spec
     # over live-built objects; this file only proves the fixtures feed it.

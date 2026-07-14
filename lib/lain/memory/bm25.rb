@@ -68,7 +68,7 @@ module Lain
       private
 
       def hit_for(id, score, matched)
-        Manifest::Hit.new(id: id, description: @descriptions.fetch(id), score: score.to_f, why: why_for(matched))
+        Manifest::Hit.new(id:, description: @descriptions.fetch(id), score: score.to_f, why: why_for(matched))
       end
 
       def why_for(matched)

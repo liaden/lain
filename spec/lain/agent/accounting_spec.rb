@@ -14,7 +14,7 @@ RSpec.describe Lain::Agent::Accounting do
   def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn)
     Lain::Response.new(
       content: [{ "type" => "text", "text" => "hi" }],
-      stop_reason: stop_reason, model: model,
+      stop_reason:, model:,
       usage: Lain::Usage.new(input_tokens: input, output_tokens: output)
     )
   end
@@ -36,7 +36,7 @@ RSpec.describe Lain::Agent::Accounting do
     end
 
     it "journals one turn_usage record per observation, keyed by the committed turn's digest" do
-      accounting = described_class.new(journal: journal)
+      accounting = described_class.new(journal:)
       accounting.observe(response, digest: "blake3:one")
       accounting.observe(response(input: 3, output: 2), digest: "blake3:two")
 
@@ -50,7 +50,7 @@ RSpec.describe Lain::Agent::Accounting do
     end
 
     it "records each turn's OWN usage, not the running total" do
-      accounting = described_class.new(journal: journal)
+      accounting = described_class.new(journal:)
       accounting.observe(response(input: 10, output: 5), digest: "blake3:one")
       accounting.observe(response(input: 3, output: 2), digest: "blake3:two")
 
@@ -64,7 +64,7 @@ RSpec.describe Lain::Agent::Accounting do
     end
 
     it "tolerates a response with no model, as a bare mock produces" do
-      accounting = described_class.new(journal: journal)
+      accounting = described_class.new(journal:)
       accounting.observe(response(model: nil), digest: "blake3:one")
 
       expect(records.first).to include("type" => "turn_usage", "model" => nil)

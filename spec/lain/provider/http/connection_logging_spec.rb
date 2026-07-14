@@ -62,7 +62,7 @@ RSpec.describe Lain::Provider::HTTP::Connection do
 
     it "routes log lines to the injected Sink, never to a Logger or $stdout" do
       sink = Lain::Sink::Null.new
-      connection = described_class.new(provider, config, sink: sink, log_level: :debug).connection
+      connection = described_class.new(provider, config, sink:, log_level: :debug).connection
       formatter = logger_middleware(connection).instance_variable_get(:@formatter)
       logger = formatter.instance_variable_get(:@logger)
 
@@ -75,7 +75,7 @@ RSpec.describe Lain::Provider::HTTP::Connection do
       sink = Object.new
       sink.define_singleton_method(:puts) { |msg| sink_calls << msg }
 
-      connection = described_class.new(provider, config, sink: sink, log_level: :debug).connection
+      connection = described_class.new(provider, config, sink:, log_level: :debug).connection
       formatter = logger_middleware(connection).instance_variable_get(:@formatter)
 
       formatter.send(:log_body, "request", "A" * 120)

@@ -38,7 +38,7 @@ RSpec.shared_examples "a Lain::Provider" do |config|
   let(:parity_context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
   def parity_text_response(text = "done", stop_reason: :end_turn)
-    text_response(text, stop_reason: stop_reason)
+    text_response(text, stop_reason:)
   end
 
   def parity_tool_response(*calls)

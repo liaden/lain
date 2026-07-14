@@ -16,7 +16,7 @@ RSpec.describe "lain bench record, live", :live do
       # No model: override -- the run exercises RECORD_DEFAULTS' own model,
       # the same one the exe flag defaults to.
       cli = Lain::Bench::CLI.new
-      paths = cli.record(taskfile: taskfile, runs: 2, out: out,
+      paths = cli.record(taskfile:, runs: 2, out:,
                          max_tokens: 64, system: "Reply with one word.")
 
       expect(paths.size).to eq(2)

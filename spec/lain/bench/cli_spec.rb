@@ -102,7 +102,7 @@ RSpec.describe Lain::Bench::CLI do
     # The last mock response repeats once exhausted, so one script drives
     # every run of the sweep.
     let(:provider) do
-      Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h", usage: usage,
+      Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h", usage:,
                                                                            model: "claude-sonnet-4-6")])
     end
 
@@ -115,8 +115,8 @@ RSpec.describe Lain::Bench::CLI do
     it "records n loadable sessions through the injected provider, one numbered file per run" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
-        paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out: out,
-                           model: "claude-sonnet-4-6", provider: provider)
+        paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
+                           model: "claude-sonnet-4-6", provider:)
 
         expect(paths).to eq([File.join(out, "1.ndjson"), File.join(out, "2.ndjson")])
         recordings = paths.map { |path| Lain::Bench::Session.load(path) }
@@ -128,7 +128,7 @@ RSpec.describe Lain::Bench::CLI do
     it "asks one prompt per non-blank task file line, per run" do
       Dir.mktmpdir do |tmp|
         cli.record(taskfile: write_taskfile(tmp), runs: 2, out: File.join(tmp, "sessions"),
-                   model: "claude-sonnet-4-6", provider: provider)
+                   model: "claude-sonnet-4-6", provider:)
         expect(provider.call_count).to eq(2)
         expect(provider.requests.map { |request| request.messages.size }).to all(eq(1))
       end
@@ -137,8 +137,8 @@ RSpec.describe Lain::Bench::CLI do
     it "records sessions Variance can report over" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
-        cli.record(taskfile: write_taskfile(tmp), runs: 2, out: out,
-                   model: "claude-sonnet-4-6", provider: provider)
+        cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
+                   model: "claude-sonnet-4-6", provider:)
         expect(cli.variance_report([out])).to include("== Distribution ==")
       end
     end
@@ -150,7 +150,7 @@ RSpec.describe Lain::Bench::CLI do
     it "refuses to overwrite an existing session file, leaving the recorded bytes untouched" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
-        record = -> { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: out, provider: provider) }
+        record = -> { cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, provider:) }
         before = record.call.map { |path| File.binread(path) }
 
         expect { record.call }.to raise_error(described_class::Refusal, /already exists/)
@@ -161,7 +161,7 @@ RSpec.describe Lain::Bench::CLI do
     # A money-spending command must not read `-n 0` as instant success.
     it "refuses a run count below one" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 0, out: tmp, provider: provider) }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 0, out: tmp, provider:) }
           .to raise_error(described_class::Refusal, /at least one run/)
       end
     end
@@ -170,14 +170,14 @@ RSpec.describe Lain::Bench::CLI do
     # refuse rather than quietly record fewer runs than typed.
     it "refuses a fractional run count rather than truncating it" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2.5, out: tmp, provider: provider) }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2.5, out: tmp, provider:) }
           .to raise_error(described_class::Refusal, /whole number/)
       end
     end
 
     it "refuses a missing task file with a Refusal, not a raw ENOENT" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: File.join(tmp, "absent.txt"), runs: 2, out: tmp, provider: provider) }
+        expect { cli.record(taskfile: File.join(tmp, "absent.txt"), runs: 2, out: tmp, provider:) }
           .to raise_error(described_class::Refusal, /no task file/)
       end
     end
@@ -186,7 +186,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         blank = File.join(tmp, "task.txt")
         File.write(blank, "\n \n")
-        expect { cli.record(taskfile: blank, runs: 2, out: tmp, provider: provider) }
+        expect { cli.record(taskfile: blank, runs: 2, out: tmp, provider:) }
           .to raise_error(described_class::Refusal, /no prompts/)
       end
     end

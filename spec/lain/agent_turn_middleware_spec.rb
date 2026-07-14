@@ -11,8 +11,8 @@ RSpec.describe "Agent turn_middleware" do
   def agent(responses, **overrides)
     Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses: Array(responses)),
-      toolset: toolset,
-      context: context,
+      toolset:,
+      context:,
       **overrides
     )
   end
@@ -139,7 +139,7 @@ RSpec.describe "Agent turn_middleware" do
       end.new
       provider = Lain::Provider::Mock.new(responses: [text_response])
       a = Lain::Agent.new(
-        provider: provider, toolset: toolset, context: context,
+        provider:, toolset:, context:,
         budget: Lain::Agent::Budget.new(max_iterations: 0),
         turn_middleware: Lain::Middleware::Stack.new.use(short_circuit)
       )

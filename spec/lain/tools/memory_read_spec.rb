@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Lain::Tools::MemoryRead do
-  subject(:tool) { described_class.new(index: index) }
+  subject(:tool) { described_class.new(index:) }
 
   let(:item) do
     Lain::Memory::Item.new(

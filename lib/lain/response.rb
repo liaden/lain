@@ -52,8 +52,8 @@ module Lain
         model: model&.to_s&.freeze,
         content: Canonical.normalize(content),
         stop_reason: StopReason.normalize(stop_reason),
-        usage: usage,
-        raw: raw
+        usage:,
+        raw:
       )
     end
 

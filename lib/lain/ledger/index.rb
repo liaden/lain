@@ -25,7 +25,7 @@ module Lain
         end
 
         def initialize(usage:, model:)
-          super(usage: usage, model: model&.to_s&.freeze)
+          super(usage:, model: model&.to_s&.freeze)
         end
       end
 

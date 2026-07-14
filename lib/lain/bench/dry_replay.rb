@@ -66,7 +66,7 @@ module Lain
       private
 
       def render(context, timeline)
-        context.render(timeline: timeline, toolset: @toolset, workspace: @workspace)
+        context.render(timeline:, toolset: @toolset, workspace: @workspace)
       end
 
       # Recover, from the recorded DAG, the Timeline prefix each model call
@@ -89,7 +89,7 @@ module Lain
         end
 
         assistant_turns.each_with_index.map do |turn, index|
-          Step.new(index: index, timeline: timeline.checkout(turn.parent), recorded: baseline.fetch(index))
+          Step.new(index:, timeline: timeline.checkout(turn.parent), recorded: baseline.fetch(index))
         end
       end
     end
@@ -106,7 +106,7 @@ module Lain
         changed = (before.keys | after.keys).reject do |field|
           Canonical.dump(before[field]) == Canonical.dump(after[field])
         end
-        new(index: index, recorded: recorded, replayed: replayed, changed_fields: changed.freeze)
+        new(index:, recorded:, replayed:, changed_fields: changed.freeze)
       end
 
       def identical?

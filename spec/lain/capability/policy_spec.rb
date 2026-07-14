@@ -45,7 +45,7 @@ RSpec.describe Lain::Capability::Policy do
   end
 
   describe ":strict" do
-    subject(:policy) { described_class.for(:strict, journal: journal) }
+    subject(:policy) { described_class.for(:strict, journal:) }
 
     it "raises Provider::Unsupported on a missing capability" do
       expect { policy.resolve(requirer, lacking) }
@@ -63,7 +63,7 @@ RSpec.describe Lain::Capability::Policy do
   end
 
   describe ":degrade" do
-    subject(:policy) { described_class.for(:degrade, journal: journal) }
+    subject(:policy) { described_class.for(:degrade, journal:) }
 
     it "does not raise on a missing capability" do
       expect { policy.resolve(requirer, lacking) }.not_to raise_error

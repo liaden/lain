@@ -4,7 +4,7 @@ RSpec.describe Lain::Memory::Recorder do
   subject(:recorder) { described_class.new }
 
   def item(id, body = "v1")
-    Lain::Memory::Item.new(id: id, description: "about #{id}", body: body)
+    Lain::Memory::Item.new(id:, description: "about #{id}", body:)
   end
 
   describe "over an empty index" do

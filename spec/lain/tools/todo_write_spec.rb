@@ -104,9 +104,9 @@ RSpec.describe Lain::Tools::TodoWrite do
     it "reaches the rendered request tail via the session's reminders channel, and never the Timeline" do
       tool.call({ todos: [{ content: "ship T13", status: "in_progress" }] }, invocation_with(session))
 
-      timeline = Lain::Timeline.empty(store: store).commit(role: :user, content: text("hi"))
+      timeline = Lain::Timeline.empty(store:).commit(role: :user, content: text("hi"))
       workspace = Lain::Workspace.empty.with(*session.reminders)
-      request = context.render(timeline: timeline, toolset: Lain::Toolset.new, workspace: workspace)
+      request = context.render(timeline:, toolset: Lain::Toolset.new, workspace:)
 
       tail_text = request.messages.last["content"].map { |block| block["text"] }.join
       expect(tail_text).to include("ship T13")
@@ -122,7 +122,7 @@ RSpec.describe Lain::Tools::TodoWrite do
       # render sees, since the Agent only renders right after a user turn
       # lands (the initial ask, or a tool-result turn). So `base` must end in
       # a user turn for this render to be representative of the real seam.
-      base = Lain::Timeline.empty(store: store).commit(role: :user, content: text("turn 1"))
+      base = Lain::Timeline.empty(store:).commit(role: :user, content: text("turn 1"))
 
       tool.call({ todos: [{ content: "old todo", status: "completed" }] }, invocation_with(session))
 
@@ -135,7 +135,7 @@ RSpec.describe Lain::Tools::TodoWrite do
       expect(rewound).to eq(base)
 
       workspace = Lain::Workspace.empty.with(*session.reminders)
-      request = context.render(timeline: rewound, toolset: Lain::Toolset.new, workspace: workspace)
+      request = context.render(timeline: rewound, toolset: Lain::Toolset.new, workspace:)
 
       tail_text = request.messages.last["content"].map { |block| block["text"] }.join
       expect(tail_text).to include("current todo")

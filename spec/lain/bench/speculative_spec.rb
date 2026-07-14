@@ -7,7 +7,7 @@
 RSpec.describe Lain::Bench::Speculative do
   let(:store) { Lain::Store.new }
   let(:base) do
-    Lain::Timeline.empty(store: store)
+    Lain::Timeline.empty(store:)
                   .commit(role: :user, content: [{ "type" => "text", "text" => "What is the capital of France?" }])
   end
 
@@ -32,10 +32,10 @@ RSpec.describe Lain::Bench::Speculative do
 
   let(:branches) { [answering("It is Lyon."), answering("The capital is Paris."), answering("Marseille, I think.")] }
 
-  subject(:speculative) { described_class.new(grader: grader) }
+  subject(:speculative) { described_class.new(grader:) }
 
   it "forks N trajectories, scores each, and selects the max" do
-    selection = speculative.search(base, branches: branches)
+    selection = speculative.search(base, branches:)
 
     expect(selection.candidates.size).to eq(3)
     expect(selection.grade.score).to eq(1.0)
@@ -43,13 +43,13 @@ RSpec.describe Lain::Bench::Speculative do
   end
 
   it "ranks every candidate with a grade, not just the winner" do
-    selection = speculative.search(base, branches: branches)
+    selection = speculative.search(base, branches:)
 
     expect(selection.candidates.map { |c| c.grade.score }).to eq([0.5, 1.0, 0.5])
   end
 
   it "keeps the fork O(1): every trajectory shares the one Store and the common prefix" do
-    selection = speculative.search(base, branches: branches)
+    selection = speculative.search(base, branches:)
 
     selection.candidates.each do |candidate|
       expect(candidate.trajectory.store).to be(store)
@@ -58,8 +58,8 @@ RSpec.describe Lain::Bench::Speculative do
   end
 
   it "is deterministic: the same branches select the same trajectory twice" do
-    first = speculative.search(base, branches: branches)
-    second = speculative.search(base, branches: branches)
+    first = speculative.search(base, branches:)
+    second = speculative.search(base, branches:)
     expect(first.best).to eq(second.best)
   end
 

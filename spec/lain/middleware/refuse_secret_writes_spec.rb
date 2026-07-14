@@ -3,12 +3,12 @@
 require "json"
 
 RSpec.describe Lain::Middleware::RefuseSecretWrites do
-  subject(:middleware) { described_class.new(journal: journal) }
+  subject(:middleware) { described_class.new(journal:) }
 
   let(:journal) { RecordingChannel.new }
 
   def tool_call(name: "memory_write", input: {})
-    Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: name, input: input)
+    Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input:)
   end
 
   # Runs `effect` through the middleware. Returns [resulting_env,
@@ -17,7 +17,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
   # pass-through that merely produced the same-shaped env by coincidence.
   def run(effect, middleware: self.middleware)
     called = false
-    env = middleware.call({ effect: effect, context: nil }) do |inner|
+    env = middleware.call({ effect:, context: nil }) do |inner|
       called = true
       inner.merge(result: Lain::Tool::Result.ok("wrote"))
     end
@@ -142,7 +142,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       oracle = Class.new do
         def secret?(_input) = true
       end.new
-      guarded = described_class.new(journal: journal, oracle: oracle)
+      guarded = described_class.new(journal:, oracle:)
 
       benign_shaped = tool_call(input: { "id" => "a", "description" => "b", "body" => "looks fine to a regex" })
       env, called = run(benign_shaped, middleware: guarded)
@@ -157,13 +157,13 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
   describe "in an Agent's tool phase" do
     it "keeps the real recorder untouched: the refused write never lands in the Memory::Index" do
       recorder = Lain::Memory::Recorder.new
-      toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder: recorder)])
+      toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)])
       secret = "sk-#{"a" * 20}"
 
       creds_write = ["tu_1", "memory_write", { "id" => "creds", "description" => "oops", "body" => secret }]
       agent = Lain::Agent.new(
         provider: Lain::Provider::Mock.new(responses: [tool_response(creds_write), text_response("done")]),
-        toolset: toolset,
+        toolset:,
         context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024),
         tool_middleware: Lain::Middleware::Stack.new([middleware])
       )

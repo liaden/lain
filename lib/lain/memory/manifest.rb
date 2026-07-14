@@ -98,7 +98,7 @@ module Lain
 
       def entry_for(item)
         tokens = tokenize("#{item.id} #{item.description}".downcase).map(&:-@).freeze
-        Entry.new(id: item.id, description: item.description, tokens: tokens)
+        Entry.new(id: item.id, description: item.description, tokens:)
       end
 
       def tokenize(downcased)
@@ -112,7 +112,7 @@ module Lain
         score = [fraction, floor].max
         return nil if score.zero?
 
-        Hit.new(id: entry.id, description: entry.description, score: score,
+        Hit.new(id: entry.id, description: entry.description, score:,
                 why: why_for(matched, entry.id, floor > fraction))
       end
 

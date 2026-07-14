@@ -17,7 +17,7 @@ module Lain
     #
     # @return [Price] with per-token `BigDecimal` rates
     def self.per_mtok(input:, output:, cache_creation:, cache_read:)
-      new(**{ input: input, output: output, cache_creation: cache_creation, cache_read: cache_read }
+      new(**{ input:, output:, cache_creation:, cache_read: }
         .transform_values { |quoted| dollars(quoted) / 1_000_000 })
     end
 

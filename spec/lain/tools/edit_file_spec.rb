@@ -21,7 +21,7 @@ RSpec.describe Lain::Tools::EditFile do
   end
 
   def invocation_with(session, tool_use_id: "tu_1")
-    Lain::Tool::Invocation.new(tool_use_id: tool_use_id, context: session)
+    Lain::Tool::Invocation.new(tool_use_id:, context: session)
   end
 
   it "has a model-facing name and description" do
@@ -40,7 +40,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
 
       expect do
-        tool.call({ path: path, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+        tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
       end.to raise_error(Lain::Tool::ContractViolation, /never read/)
 
       expect(File.read(path)).to eq("hello world")
@@ -50,10 +50,10 @@ RSpec.describe Lain::Tools::EditFile do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
       toolset = Lain::Toolset.new([tool])
-      live = Lain::Handler::Live.new(toolset: toolset)
+      live = Lain::Handler::Live.new(toolset:)
       effect = Lain::Effect::ToolCall.new(
         tool_use_id: "tu_1", name: "edit_file",
-        input: { path: path, old_string: "hello", new_string: "goodbye" }
+        input: { path:, old_string: "hello", new_string: "goodbye" }
       )
 
       result = live.call(effect, session)
@@ -68,7 +68,7 @@ RSpec.describe Lain::Tools::EditFile do
       invocation = invocation_with(Lain::Session::Null.instance)
 
       expect do
-        tool.call({ path: path, old_string: "hello", new_string: "goodbye" }, invocation)
+        tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation)
       end.to raise_error(Lain::Tool::ContractViolation)
     end
 
@@ -76,7 +76,7 @@ RSpec.describe Lain::Tools::EditFile do
       path = write("hello.txt", "hello world")
 
       expect do
-        tool.call({ path: path, old_string: "hello", new_string: "goodbye" })
+        tool.call({ path:, old_string: "hello", new_string: "goodbye" })
       end.to raise_error(Lain::Tool::ContractViolation)
     end
   end
@@ -87,7 +87,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      result = tool.call({ path: path, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+      result = tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: false)
       expect(File.read(path)).to eq("goodbye world")
@@ -98,7 +98,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      tool.call({ path: path, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+      tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
 
       expect(session.read?(path)).to be(true)
     end
@@ -108,7 +108,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      tool.call({ path: path, old_string: "a.b", new_string: "MATCHED" }, invocation_with(session))
+      tool.call({ path:, old_string: "a.b", new_string: "MATCHED" }, invocation_with(session))
 
       expect(File.read(path)).to eq("MATCHED price")
     end
@@ -118,7 +118,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      tool.call({ path: path, old_string: "hello", new_string: '\1 literally' }, invocation_with(session))
+      tool.call({ path:, old_string: "hello", new_string: '\1 literally' }, invocation_with(session))
 
       expect(File.read(path)).to eq('\1 literally world')
     end
@@ -128,7 +128,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(File.join(tmpdir, ".", "hello.txt"))
 
-      result = tool.call({ path: path, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+      result = tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
 
       expect(result.is_error).to be(false)
     end
@@ -140,7 +140,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      result = tool.call({ path: path, old_string: "missing", new_string: "x" }, invocation_with(session))
+      result = tool.call({ path:, old_string: "missing", new_string: "x" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
       expect(result.content).to match(/0/)
@@ -152,7 +152,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      result = tool.call({ path: path, old_string: "hello", new_string: "x" }, invocation_with(session))
+      result = tool.call({ path:, old_string: "hello", new_string: "x" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
       expect(result.content).to match(/2/)
@@ -164,7 +164,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      result = tool.call({ path: path, old_string: "aa", new_string: "b" }, invocation_with(session))
+      result = tool.call({ path:, old_string: "aa", new_string: "b" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
       expect(result.content).to match(/2/)
@@ -177,7 +177,7 @@ RSpec.describe Lain::Tools::EditFile do
       session = Lain::Session.new
       session.record_read(path)
 
-      tool.call({ path: path, old_string: "hello", new_string: "x" }, invocation_with(session))
+      tool.call({ path:, old_string: "hello", new_string: "x" }, invocation_with(session))
 
       expect(session.read?(other)).to be(false)
     end

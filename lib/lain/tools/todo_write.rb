@@ -98,7 +98,7 @@ module Lain
           raise ArgumentError, "status #{status.inspect} must be one of #{STATUSES.join(", ")}"
         end
 
-        Item.new(content: content, status: status)
+        Item.new(content:, status:)
       end
     end
   end

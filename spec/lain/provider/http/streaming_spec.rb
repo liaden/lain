@@ -51,7 +51,7 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
     yielded = []
 
     message = provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                tools: {}, temperature: nil, model: model) { |chunk| yielded << chunk }
+                                tools: {}, temperature: nil, model:) { |chunk| yielded << chunk }
 
     expect(message).to be_a(Lain::Provider::HTTP::Message)
     expect(message.content).to eq("Hello world")
@@ -61,7 +61,7 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
 
   it "accumulates streamed usage onto the returned message" do
     message = anthropic_provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                          tools: {}, temperature: nil, model: model) { |_chunk| nil }
+                                          tools: {}, temperature: nil, model:) { |_chunk| nil }
 
     expect(message.input_tokens).to eq(10)
     expect(message.output_tokens).to eq(5)
@@ -78,7 +78,7 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
 
     expect do
       anthropic_provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                  tools: {}, temperature: nil, model: model) { |_chunk| nil }
+                                  tools: {}, temperature: nil, model:) { |_chunk| nil }
     end.to raise_error(Lain::Provider::HTTP::OverloadedError)
   end
 end

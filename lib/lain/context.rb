@@ -41,7 +41,7 @@ module Lain
     # so both #render and REQUIRES read from a SINGLE source -- change the
     # strategy here and the declared capabilities follow automatically.
     def self.pipeline(workspace)
-      Reminder.new(workspace: workspace) >> CacheBreakpoints.new
+      Reminder.new(workspace:) >> CacheBreakpoints.new
     end
 
     # Capabilities this renderer needs, DERIVED from the pipeline above rather
@@ -79,12 +79,12 @@ module Lain
       messages = timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
 
       Request.new(
-        model: model,
+        model:,
         system: cache_marked_system,
         tools: toolset.to_schema,
         messages: self.class.pipeline(workspace).call(messages),
-        max_tokens: max_tokens,
-        stream: stream
+        max_tokens:,
+        stream:
       )
     end
 

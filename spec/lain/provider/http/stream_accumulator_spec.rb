@@ -33,7 +33,7 @@ RSpec.describe Lain::Provider::HTTP::StreamAccumulator do
       ]
 
       chunks.each do |tool_calls|
-        accumulator.add(Lain::Provider::HTTP::Chunk.new(role: :assistant, content: nil, tool_calls: tool_calls))
+        accumulator.add(Lain::Provider::HTTP::Chunk.new(role: :assistant, content: nil, tool_calls:))
       end
 
       message = accumulator.to_message(nil)

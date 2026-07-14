@@ -20,7 +20,7 @@ module Lain
         # @param inner [Lain::Effect::Handler, nil] fallback for other effect kinds
         # @yield [effect, context] optional resolver taking precedence over `results`
         def initialize(results: {}, default: nil, inner: nil, &block)
-          super(inner: inner)
+          super(inner:)
           @results = stringify(results)
           @default = default
           @block = block

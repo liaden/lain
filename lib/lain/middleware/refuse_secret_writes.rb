@@ -104,7 +104,7 @@ module Lain
       # actually perform the write) is never invoked, so `env[:result]` is
       # produced without the tool ever running.
       def refuse(env, effect, pattern)
-        @journal << Event::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern: pattern)
+        @journal << Event::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern:)
         env.merge(result: Tool::Result.error(
           "memory_write refused: input matches a #{pattern} pattern; nothing was written."
         ))

@@ -87,8 +87,8 @@ RSpec.describe Lain::Request do
 
     def chained_request(texts:, caches:, system_cache: false)
       system = system_cache ? [{ "type" => "text", "text" => "sys", "cache" => true }] : nil
-      messages = texts.zip(caches).map { |text, cache| marked_message(text, cache: cache) }
-      described_class.new(model: "claude-opus-4-8", system: system, messages: messages, max_tokens: 1024)
+      messages = texts.zip(caches).map { |text, cache| marked_message(text, cache:) }
+      described_class.new(model: "claude-opus-4-8", system:, messages:, max_tokens: 1024)
     end
 
     it "is empty when neither system nor messages carry a marker" do
@@ -111,8 +111,8 @@ RSpec.describe Lain::Request do
 
     it "digests are marker-placement-independent: a shared position hashes the same regardless of marker placement" do
       texts = %w[m0 m1 m2 m3]
-      a = chained_request(texts: texts, caches: [false, true, false, true])
-      b = chained_request(texts: texts, caches: [false, false, true, true])
+      a = chained_request(texts:, caches: [false, true, false, true])
+      b = chained_request(texts:, caches: [false, false, true, true])
 
       a_chain = a.prefix_digests.to_h
       b_chain = b.prefix_digests.to_h

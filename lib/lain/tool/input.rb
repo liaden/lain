@@ -72,7 +72,7 @@ module Lain
         # inclusion in [true, false] instead.
         def field(name, type = :string, description:, required: false, **)
           attribute(name, type, **)
-          fields[name.to_s] = { type: type.to_s, description: description, required: required }
+          fields[name.to_s] = { type: type.to_s, description:, required: }
           require_field(name, type) if required
           name
         end

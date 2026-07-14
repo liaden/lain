@@ -2,7 +2,7 @@
 
 RSpec.describe Lain::Effect::Handler::Recorded do
   def tool_call(id, name = "read_file", input = {})
-    Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
+    Lain::Effect::ToolCall.new(tool_use_id: id, name:, input:)
   end
 
   let(:recorded_ok) { Lain::Tool::Result.ok("recorded output") }
@@ -24,7 +24,7 @@ RSpec.describe Lain::Effect::Handler::Recorded do
     it "falls through to inner when composed in front of another handler" do
       live_answer = Lain::Tool::Result.ok("live output")
       inner = Lain::Effect::Handler::Mock.new(default: live_answer)
-      handler = described_class.new(outcomes: { "call-1" => recorded_ok }, inner: inner)
+      handler = described_class.new(outcomes: { "call-1" => recorded_ok }, inner:)
 
       expect(handler.call(tool_call("call-1"))).to eq(recorded_ok)
       expect(handler.call(tool_call("unrecorded"))).to eq(live_answer)

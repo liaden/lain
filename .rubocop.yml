@@ -32,3 +32,12 @@ Metrics/ParameterLists:
 # name that explains the shape.
 Naming/BlockForwarding:
   EnforcedStyle: explicit
+
+# Joel's `{ effect:, context: }` in tool_runner.rb is the style we want everywhere a
+# hash value merely repeats its key -- `always` is the only shorthand setting that
+# actually enforces it (`either`/`either_consistent` tolerate the old form). Vendored
+# HTTP code keeps upstream shape, so it is excluded from this cop specifically.
+Style/HashSyntax:
+  EnforcedShorthandSyntax: always
+  Exclude:
+    - "lib/lain/provider/http/**/*"

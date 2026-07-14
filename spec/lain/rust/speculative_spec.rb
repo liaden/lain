@@ -9,9 +9,9 @@ RSpec.describe "Lain::Ext::Timeline speculation" do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  def say(from, body, role: :user) = from.commit(role: role, content: text(body))
+  def say(from, body, role: :user) = from.commit(role:, content: text(body))
 
-  def empty = Lain::Ext::Timeline.empty(store: store)
+  def empty = Lain::Ext::Timeline.empty(store:)
 
   describe "cache-break localization (4-1.4)" do
     it "localizes divergence to the last shared turn, so the prefix stays cache-valid" do

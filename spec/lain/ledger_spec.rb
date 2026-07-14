@@ -23,7 +23,7 @@ RSpec.describe Lain::Ledger do
   # Commit an assistant turn and journal its payment the way Agent::Accounting
   # does: usage rides in the Journal, never in the turn's meta.
   def commit(timeline, text, model: self.model, usage: turn_usage)
-    committed = timeline.commit(role: "assistant", content: [{ type: "text", text: text }])
+    committed = timeline.commit(role: "assistant", content: [{ type: "text", text: }])
     records << { "type" => "turn_usage", "digest" => committed.head_digest,
                  "model" => model, "stop_reason" => "end_turn", "usage" => usage }
     committed
@@ -35,7 +35,7 @@ RSpec.describe Lain::Ledger do
     end
 
     it "builds from raw NDJSON lines via .from_journal" do
-      timeline = commit(Lain::Timeline.empty(store: store), "a")
+      timeline = commit(Lain::Timeline.empty(store:), "a")
       lines = records.map { |record| JSON.generate(record) }
       expect(described_class.from_journal(lines).usage(timeline).total_tokens).to eq(15)
     end
@@ -43,12 +43,12 @@ RSpec.describe Lain::Ledger do
 
   describe "a single chain" do
     it "sums usage over its turns" do
-      timeline = commit(commit(Lain::Timeline.empty(store: store), "a"), "b")
+      timeline = commit(commit(Lain::Timeline.empty(store:), "a"), "b")
       expect(ledger.usage(timeline).total_tokens).to eq(30)
     end
 
     it "ignores turns absent from the index (user turns are free)" do
-      timeline = Lain::Timeline.empty(store: store)
+      timeline = Lain::Timeline.empty(store:)
                                .commit(role: "user", content: [{ type: "text", text: "hi" }])
       expect(ledger.usage(timeline)).to eq(Lain::Usage.zero)
       expect(ledger.cost(timeline)).to eq(BigDecimal(0))
@@ -58,7 +58,7 @@ RSpec.describe Lain::Ledger do
   # THE payoff of structural bet #1, and the trap it exists to avoid: two branches
   # share a prefix, and naive summing counts that prefix once per branch.
   describe "a FORKED timeline" do
-    let(:root) { commit(commit(Lain::Timeline.empty(store: store), "shared-1"), "shared-2") }
+    let(:root) { commit(commit(Lain::Timeline.empty(store:), "shared-1"), "shared-2") }
     let(:branch_a) { commit(root, "only-a") }
     let(:branch_b) { commit(root, "only-b") }
 
@@ -99,13 +99,13 @@ RSpec.describe Lain::Ledger do
   # operations, and the Ledger does both (see Event::TurnUsage).
   describe "duplicate digests are separate payments" do
     it "sums BOTH payments for a rewound-and-regenerated turn" do
-      timeline = commit(Lain::Timeline.empty(store: store), "same answer")
+      timeline = commit(Lain::Timeline.empty(store:), "same answer")
       records << records.last.dup
       expect(ledger.usage(timeline).total_tokens).to eq(30)
     end
 
     it "prices each payment against its own recorded model" do
-      timeline = commit(Lain::Timeline.empty(store: store), "same answer")
+      timeline = commit(Lain::Timeline.empty(store:), "same answer")
       records << records.last.merge("model" => "claude-haiku-3-5")
       # sonnet: $0.000105; haiku: 10 x $0.8/M + 5 x $4/M = $0.000028.
       expect(ledger.cost(timeline)).to eq(BigDecimal("0.000105") + BigDecimal("0.000028"))
@@ -115,8 +115,8 @@ RSpec.describe Lain::Ledger do
     # payment still counts. Two runs each regenerate the identical shared
     # prefix, then diverge -- 4 unique digests carrying 6 payments.
     it "sums a fork-shared prefix's content once but its regenerated payments all" do
-      branch_a = commit(commit(commit(Lain::Timeline.empty(store: store), "shared-1"), "shared-2"), "only-a")
-      branch_b = commit(commit(commit(Lain::Timeline.empty(store: store), "shared-1"), "shared-2"), "only-b")
+      branch_a = commit(commit(commit(Lain::Timeline.empty(store:), "shared-1"), "shared-2"), "only-a")
+      branch_b = commit(commit(commit(Lain::Timeline.empty(store:), "shared-1"), "shared-2"), "only-b")
 
       expect(ledger.usage(branch_a, branch_b).total_tokens).to eq(6 * 15)
       expect(ledger.cost(branch_a, branch_b)).to eq(BigDecimal("0.00063"))
@@ -125,7 +125,7 @@ RSpec.describe Lain::Ledger do
 
   describe "mixed models" do
     it "prices each turn against its own model" do
-      timeline = Lain::Timeline.empty(store: store)
+      timeline = Lain::Timeline.empty(store:)
       timeline = commit(timeline, "sonnet-turn")
       timeline = commit(timeline, "haiku-turn", model: "claude-haiku-3-5",
                                                 usage: turn_usage(input: 1_000_000, output: 0))
@@ -138,7 +138,7 @@ RSpec.describe Lain::Ledger do
     # The first error a mock-journal Compare user hits, so it must diagnose
     # itself: name the turn, say WHY the model is missing, name the way out.
     it "raises UnknownModel naming the digest, the provenance, and the fallback escape hatch" do
-      timeline = commit(Lain::Timeline.empty(store: store), "mock turn", model: nil)
+      timeline = commit(Lain::Timeline.empty(store:), "mock turn", model: nil)
       expect { ledger.cost(timeline) }.to raise_error(Lain::PriceBook::UnknownModel) do |error|
         expect(error.message).to include(timeline.head_digest)
         expect(error.message).to match(/recorded no model/i)
@@ -148,7 +148,7 @@ RSpec.describe Lain::Ledger do
     end
 
     it "prices through a PriceBook fallback, as the error advises" do
-      timeline = commit(Lain::Timeline.empty(store: store), "mock turn", model: nil)
+      timeline = commit(Lain::Timeline.empty(store:), "mock turn", model: nil)
       free = Lain::Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
       priced = described_class.new(index: Lain::Ledger::Index.from_journal(records),
                                    price_book: Lain::PriceBook.new(fallback: free))
@@ -156,7 +156,7 @@ RSpec.describe Lain::Ledger do
     end
 
     it "still reports a genuinely unknown NAMED model with PriceBook's own message" do
-      timeline = commit(Lain::Timeline.empty(store: store), "who", model: "gpt-42")
+      timeline = commit(Lain::Timeline.empty(store:), "who", model: "gpt-42")
       expect { ledger.cost(timeline) }
         .to raise_error(Lain::PriceBook::UnknownModel, /gpt-42/)
     end

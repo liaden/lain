@@ -27,7 +27,7 @@ module Lain
         @tool_use_id = tool_use_id
         @stream = stream
         # Fail fast on a bad stream rather than at first write, deep in a tool.
-        Event::ToolOutput.new(tool_use_id: tool_use_id, stream: stream, bytes: "")
+        Event::ToolOutput.new(tool_use_id:, stream:, bytes: "")
       end
 
       # Write the string form of each argument. Emits one event per call (never
@@ -102,7 +102,7 @@ module Lain
         return if bytes.empty?
 
         @channel.push(
-          Event::ToolOutput.new(tool_use_id: @tool_use_id, stream: @stream, bytes: bytes)
+          Event::ToolOutput.new(tool_use_id: @tool_use_id, stream: @stream, bytes:)
         )
       end
     end

@@ -2,10 +2,10 @@
 
 RSpec.describe Lain::Memory::Manifest do
   let(:store) { Lain::Store.new }
-  let(:index) { Lain::Memory::Index.empty(store: store) }
+  let(:index) { Lain::Memory::Index.empty(store:) }
 
   def item(id, description)
-    Lain::Memory::Item.new(id: id, description: description, body: "body of #{id}")
+    Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
   end
 
   def manifest_over(*items)
@@ -60,7 +60,7 @@ RSpec.describe Lain::Memory::Manifest do
     # silently; this is the spec that catches it.
     it "keeps Context#render digest-identical across write orders" do
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
-      timeline = Lain::Timeline.empty(store: store)
+      timeline = Lain::Timeline.empty(store:)
                                .commit(role: :user, content: [{ "type" => "text", "text" => "hello" }])
       toolset = Lain::Toolset.new
       forward = manifest_over(item("a", "alpha"), item("b", "beta"))
@@ -68,7 +68,7 @@ RSpec.describe Lain::Memory::Manifest do
 
       digests = [forward, backward].map do |manifest|
         workspace = Lain::Workspace.empty.with(manifest.to_reminder)
-        context.render(timeline: timeline, toolset: toolset, workspace: workspace).digest
+        context.render(timeline:, toolset:, workspace:).digest
       end
       expect(digests.uniq.size).to eq(1)
     end
@@ -155,7 +155,7 @@ RSpec.describe Lain::Memory::Manifest do
 
   describe "Hit" do
     def hit(id: "a", description: "alpha", score: 0.5, why: "matched alpha")
-      described_class::Hit.new(id: id, description: description, score: score, why: why)
+      described_class::Hit.new(id:, description:, score:, why:)
     end
 
     # A judgment you cannot read the reason for is unusable -- the same

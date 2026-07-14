@@ -39,7 +39,7 @@ RSpec.describe Lain::Context do
   def text(body) = [{ "type" => "text", "text" => body }]
 
   let(:timeline) do
-    Lain::Timeline.empty(store: store)
+    Lain::Timeline.empty(store:)
                   .commit(role: :user, content: text("hello"))
                   .commit(role: :assistant, content: text("hi"))
                   .commit(role: :user, content: text("more"))
@@ -50,27 +50,27 @@ RSpec.describe Lain::Context do
   # every turn, costing full input price forever while nothing errors.
   describe "purity" do
     it "renders identical bytes for identical inputs" do
-      a = context.render(timeline: timeline, toolset: toolset)
-      b = context.render(timeline: timeline, toolset: toolset)
+      a = context.render(timeline:, toolset:)
+      b = context.render(timeline:, toolset:)
       expect(a.digest).to eq(b.digest)
     end
 
     it "renders identical bytes across two Contexts built the same way" do
       other = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
-      expect(context.render(timeline: timeline, toolset: toolset).digest)
-        .to eq(other.render(timeline: timeline, toolset: toolset).digest)
+      expect(context.render(timeline:, toolset:).digest)
+        .to eq(other.render(timeline:, toolset:).digest)
     end
 
     it "changes bytes when the timeline changes" do
       longer = timeline.commit(role: :assistant, content: text("and more"))
-      expect(context.render(timeline: timeline, toolset: toolset).digest)
-        .not_to eq(context.render(timeline: longer, toolset: toolset).digest)
+      expect(context.render(timeline:, toolset:).digest)
+        .not_to eq(context.render(timeline: longer, toolset:).digest)
     end
   end
 
   describe "message rendering" do
     it "orders root first, the order a provider wants" do
-      request = context.render(timeline: timeline, toolset: toolset)
+      request = context.render(timeline:, toolset:)
       expect(request.messages.map { |m| m["role"] }).to eq(%w[user assistant user])
     end
   end
@@ -83,12 +83,12 @@ RSpec.describe Lain::Context do
     # Caching the system prompt caches the tools with it, since tools lead the
     # matched prefix.
     it "marks the last system block" do
-      request = context.render(timeline: timeline, toolset: toolset)
+      request = context.render(timeline:, toolset:)
       expect(request.system.last["cache"]).to be(true)
     end
 
     it "composes CacheBreakpoints, marking the last content block of the final message" do
-      request = context.render(timeline: timeline, toolset: toolset)
+      request = context.render(timeline:, toolset:)
       expect(request.messages.last["content"].last["cache"]).to be(true)
     end
 
@@ -106,20 +106,20 @@ RSpec.describe Lain::Context do
     let(:workspace) { Lain::Workspace.new(reminders: ["todo: finish M1"]) }
 
     it "composes Reminder, appending workspace blocks to the last user message" do
-      request = context.render(timeline: timeline, toolset: toolset, workspace: workspace)
+      request = context.render(timeline:, toolset:, workspace:)
       expect(request.messages.last["content"].map { |b| b["text"] })
         .to eq(["more", "<workspace>todo: finish M1</workspace>"])
     end
 
     it "never touches the system prompt" do
-      with = context.render(timeline: timeline, toolset: toolset, workspace: workspace)
-      without = context.render(timeline: timeline, toolset: toolset)
+      with = context.render(timeline:, toolset:, workspace:)
+      without = context.render(timeline:, toolset:)
       expect(with.system).to eq(without.system)
     end
 
     it "never appends to the Timeline" do
       before = timeline.head_digest
-      context.render(timeline: timeline, toolset: toolset, workspace: workspace)
+      context.render(timeline:, toolset:, workspace:)
       expect(timeline.head_digest).to eq(before)
     end
   end

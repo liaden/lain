@@ -72,15 +72,15 @@ module Lain
                               :timeline, :baseline, :ledger_index, :degraded) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
                        degraded:)
-          super(context: context, context_class: -context_class.to_s, toolset: toolset, workspace: workspace,
-                timeline: timeline, baseline: baseline.freeze, ledger_index: ledger_index, degraded: degraded)
+          super(context:, context_class: -context_class.to_s, toolset:, workspace:,
+                timeline:, baseline: baseline.freeze, ledger_index:, degraded:)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
         # a failed attempt (a request_sent with no following turn_usage), and
         # DryReplay's 1:1 guard raises on it -- loudly, by design.
         def dry_replay
-          DryReplay.new(timeline: timeline, baseline: baseline, toolset: toolset, workspace: workspace)
+          DryReplay.new(timeline:, baseline:, toolset:, workspace:)
         end
       end
 

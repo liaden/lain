@@ -95,7 +95,7 @@ module Lain
         end
 
         # bytes is frozen in place, not dup'd: copying possibly-large subprocess output would double it.
-        super(tool_use_id: tool_use_id.dup.freeze, stream: stream, bytes: bytes.freeze)
+        super(tool_use_id: tool_use_id.dup.freeze, stream:, bytes: bytes.freeze)
       end
     end
 
@@ -108,7 +108,7 @@ module Lain
       include Journalable
 
       def initialize(count:)
-        Guards::Dropped.check!(count: count)
+        Guards::Dropped.check!(count:)
         super
       end
     end
@@ -125,7 +125,7 @@ module Lain
       include Journalable
 
       def initialize(attempt:, will_retry_in: nil, status: nil, reason: nil)
-        super(attempt: attempt, will_retry_in: will_retry_in, status: status, reason: reason&.dup&.freeze)
+        super(attempt:, will_retry_in:, status:, reason: reason&.dup&.freeze)
       end
     end
 
@@ -150,7 +150,7 @@ module Lain
       include Journalable
 
       def initialize(digest:, model:, stop_reason:, usage:)
-        Guards::TurnUsage.check!(digest: digest, stop_reason: stop_reason)
+        Guards::TurnUsage.check!(digest:, stop_reason:)
 
         super(
           digest: digest.dup.freeze,
@@ -194,12 +194,12 @@ module Lain
       include Journalable
 
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil)
-        Guards::RequestSent.check!(stream: stream)
+        Guards::RequestSent.check!(stream:)
 
         super(
           digest: digest.dup.freeze,
           payload: Canonical.normalize(payload),
-          stream: stream,
+          stream:,
           extra: Canonical.normalize(extra),
           prefix_digests: Canonical.normalize(prefix_digests)
         )
@@ -226,7 +226,7 @@ module Lain
       include Journalable
 
       def initialize(turn_digest:, root:)
-        Guards::MemoryRoot.check!(turn_digest: turn_digest)
+        Guards::MemoryRoot.check!(turn_digest:)
 
         super(turn_digest: turn_digest.dup.freeze, root: root&.dup&.freeze)
       end
@@ -246,7 +246,7 @@ module Lain
       include Journalable
 
       def initialize(capability:, requirer:, provider:)
-        super(capability: capability, requirer: requirer.dup.freeze, provider: provider.dup.freeze)
+        super(capability:, requirer: requirer.dup.freeze, provider: provider.dup.freeze)
       end
     end
 
@@ -260,7 +260,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, pattern:)
-        Guards::WriteRefused.check!(pattern: pattern)
+        Guards::WriteRefused.check!(pattern:)
 
         super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
       end

@@ -6,10 +6,10 @@ RSpec.describe Lain::Frontend::TTY do
   let(:channel) { Lain::Channel.new }
   let(:output) { StringIO.new }
   let(:input) { StringIO.new }
-  let(:tty) { described_class.new(channel: channel, output: output, input: input) }
+  let(:tty) { described_class.new(channel:, output:, input:) }
 
   def tool_output(tool_use_id: "tu_1", stream: :stdout, bytes: "hello\n")
-    Lain::Event::ToolOutput.new(tool_use_id: tool_use_id, stream: stream, bytes: bytes)
+    Lain::Event::ToolOutput.new(tool_use_id:, stream:, bytes:)
   end
 
   describe "#drain_and_render" do

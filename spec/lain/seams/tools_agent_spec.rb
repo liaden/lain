@@ -22,9 +22,9 @@ RSpec.describe "tools x Agent loop" do
   def agent(toolset, responses, handler:)
     Lain::Agent.new(
       provider: Lain::Provider::Mock.new(responses: Array(responses)),
-      toolset: toolset,
-      context: context,
-      handler: handler
+      toolset:,
+      context:,
+      handler:
     )
   end
 
@@ -44,13 +44,13 @@ RSpec.describe "tools x Agent loop" do
 
   describe "Tools::ReadFile through the loop" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
-    let(:handler) { Lain::Handler::Live.new(toolset: toolset, channel: channel) }
+    let(:handler) { Lain::Handler::Live.new(toolset:, channel:) }
 
     it "reads a real file and returns its bytes to the model (gates 2, 4, 5)" do
       File.write(File.join(dir, "hello.txt"), "from disk\n")
       path = File.join(dir, "hello.txt")
 
-      run = agent(toolset, [tool_use("tu_1", "read_file", { "path" => path }), settled], handler: handler)
+      run = agent(toolset, [tool_use("tu_1", "read_file", { "path" => path }), settled], handler:)
       run.ask("read it")
 
       turn = results_turn(run)
@@ -63,7 +63,7 @@ RSpec.describe "tools x Agent loop" do
     it "reports a missing file as an error result and keeps going (gate 3)" do
       run = agent(toolset,
                   [tool_use("tu_1", "read_file", { "path" => File.join(dir, "nope.txt") }), settled],
-                  handler: handler)
+                  handler:)
 
       expect { run.ask("read it") }.not_to raise_error
       expect(results_turn(run).content.first["is_error"]).to be(true)
@@ -82,7 +82,7 @@ RSpec.describe "tools x Agent loop" do
       set = Lain::Toolset.new([spy.new])
 
       agent(set, [tool_use("tu_1", "read_file", { "path" => File.join(dir, "a.txt") }), settled],
-            handler: Lain::Handler::Live.new(toolset: set, channel: channel)).ask("go")
+            handler: Lain::Handler::Live.new(toolset: set, channel:)).ask("go")
 
       expect(seen).not_to be_a(String)
       expect(seen.path).to eq(File.join(dir, "a.txt"))
@@ -94,12 +94,12 @@ RSpec.describe "tools x Agent loop" do
     let(:handler) do
       Lain::Handler::Approving.new(
         policy: Lain::Handler::Approving::ApproveAll.new,
-        inner: Lain::Handler::Live.new(toolset: toolset, channel: channel)
+        inner: Lain::Handler::Live.new(toolset:, channel:)
       )
     end
 
     it "attributes live_stdout bytes to the tool_use_id that asked for them" do
-      run = agent(toolset, [tool_use("tu_bash", "bash", { "command" => "echo seam" }), settled], handler: handler)
+      run = agent(toolset, [tool_use("tu_bash", "bash", { "command" => "echo seam" }), settled], handler:)
       run.ask("run it")
 
       emitted = channel.events.grep(Lain::Event::ToolOutput)
@@ -110,7 +110,7 @@ RSpec.describe "tools x Agent loop" do
 
     it "separates stderr from stdout at the source" do
       run = agent(toolset, [tool_use("tu_e", "bash", { "command" => "echo out; echo err 1>&2" }), settled],
-                  handler: handler)
+                  handler:)
       run.ask("run it")
 
       by_stream = channel.events.grep(Lain::Event::ToolOutput).group_by(&:stream)
@@ -122,7 +122,7 @@ RSpec.describe "tools x Agent loop" do
   describe "Handler::Approving x ToolRunner" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
     let(:denying) do
-      Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset: toolset, channel: channel))
+      Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset:, channel:))
     end
 
     it "turns a denied tier-3 call into is_error and lets the loop settle (gate 3)" do
@@ -141,7 +141,7 @@ RSpec.describe "tools x Agent loop" do
       set = Lain::Toolset.new([Lain::Tools::ReadFile.new])
       # The SAME DenyAll default that refuses bash above. read_file still runs,
       # because the gate asks the tool its tier rather than gating every call.
-      gate = Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset: set, channel: channel))
+      gate = Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset: set, channel:))
 
       run = agent(set, [tool_use("tu_r", "read_file", { "path" => File.join(dir, "ok.txt") }), settled],
                   handler: gate)
