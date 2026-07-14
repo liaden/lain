@@ -164,7 +164,7 @@ but is *placed* last so it sweeps a settled suite)
 
 ## Tasks
 
-### T1 — Build the Ollama reference corpus          [wave 1] [risk: low]
+### T1 — Build the Ollama reference corpus          [wave 1] [risk: low] ✅ landed
 
 **Depends on:** none
 **Files:** create `references/ollama/INDEX.md`, `references/ollama/api-chat.md`,
@@ -215,8 +215,10 @@ parse-then-assert (`io.string.each_line.map { JSON.parse(_1) }`, ~79 lines)
 **Shared-file wiring:** none (`spec/support/**/*.rb` glob already loads new files)
 
 Note the spec path: `spec/support_matchers_spec.rb` sits deliberately OUTSIDE `spec/support/`
-— a `_spec.rb` file inside the support glob would be required as configuration and run zero
-examples; do not "tidy" it inward. Matchers, each with a `failure_message` that names *what* diverged (digest hex prefixes, the
+— a `_spec.rb` file inside the support glob gets **double-registered** (the glob `require`s it,
+then RSpec's own file discovery `load`s it again, with no `$LOADED_FEATURES` dedupe), silently
+running every example twice; do not "tidy" it inward. (Corrected 2026-07-14 by T2's panel
+review: the original "runs zero examples" claim here was empirically false.) Matchers, each with a `failure_message` that names *what* diverged (digest hex prefixes, the
 unparseable NDJSON line verbatim, the offending unfrozen object path): `be_ractor_shareable`;
 `have_same_digest_as(other)` (+ negated message); `stop_with(:tool_use)` for Response;
 `include_journal_record(type, **attrs)` / `be_valid_ndjson` over an IO/String journal;
@@ -287,7 +289,7 @@ Scenario: the suite still passes wholesale under super_diff
 - shoulda-matchers demands `activesupport` railtie behavior absent in plain ActiveModel — same:
   report before working around.
 
-### T4 — Evaluate rubocop config: hash shorthand + thread_safety   [wave 1] [risk: low]
+### T4 — Evaluate rubocop config: hash shorthand + thread_safety   [wave 1] [risk: low] ✅ landed (Part 2 BLOCKED-ON-DISCUSSION → Joel; PriceBook.default/Usage.zero siblings → T20 brief + R.*)
 
 **Depends on:** none
 **Files:** create `planning/reviews/rubocop-config-report.md` (report only — **no lib edits, no
@@ -451,7 +453,7 @@ Scenario: validation replaces the guard without losing loudness or shareability
 - The `Freezable` `prepend` breaks `Data.define` subclasses (Data's initialize is special) —
   don't force it; scope the concern to plain classes and say so in the convention report.
 
-### T7 — Spec hygiene: probes to spec/support, requires ruling   [wave 1] [risk: low]
+### T7 — Spec hygiene: probes to spec/support, requires ruling   [wave 1] [risk: low] ✅ landed
 
 **Depends on:** none
 **Files:** modify `spec/lain/agent_spec.rb`, `spec/lain/agent_turn_middleware_spec.rb`;
@@ -594,7 +596,7 @@ Scenario: Recorder keeps satisfying the bare-Index duck after delegation
 - Delegation changes `Recorder`'s method arity/visibility in a way `MemoryRead`'s contract spec
   notices — the duck was tighter than documented; stop.
 
-### T10 — Values comment redress: StopReason, Timeline, Ledger  [wave 1] [risk: low]
+### T10 — Values comment redress: StopReason, Timeline, Ledger  [wave 1] [risk: low] ✅ landed
 
 **Depends on:** none
 **Files:** modify `lib/lain/response.rb`, `lib/lain/timeline.rb`, `lib/lain/ledger.rb`;
