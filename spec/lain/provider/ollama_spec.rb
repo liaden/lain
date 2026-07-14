@@ -1,0 +1,190 @@
+# frozen_string_literal: true
+
+require "webmock/rspec"
+
+RSpec.describe Lain::Provider::Ollama do
+  def request(**overrides)
+    Lain::Request.new(model: "qwen3:4b", max_tokens: 64,
+                      messages: [{ role: "user", content: "hi" }], **overrides)
+  end
+
+  # A transport double returning a scripted body, for decode-focused examples.
+  def transport_sync(body)
+    Class.new do
+      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(body) }
+    end.new
+  end
+
+  def tool_call_body(*calls, done_reason: "stop", content: "")
+    tool_calls = calls.map { |name, arguments| { "function" => { "name" => name, "arguments" => arguments } } }
+    { "model" => "qwen3:4b",
+      "message" => { "role" => "assistant", "content" => content, "tool_calls" => tool_calls },
+      "done" => true, "done_reason" => done_reason,
+      "prompt_eval_count" => 11, "eval_count" => 7 }
+  end
+
+  describe "#capabilities" do
+    # Empty until T17 delivers streaming: declaring :streaming (or any other
+    # capability Ollama's native path cannot yet demonstrate) would be a lying
+    # capability in the one subsystem built to catch lying capabilities.
+    it "declares nothing until streaming lands (T17)" do
+      provider = described_class.new(transport: transport_sync({}))
+      expect(provider.capabilities).to eq([])
+      expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
+    end
+  end
+
+  # AC 1: a tool-call round trip normalizes to the Lain contract.
+  describe "#complete on a tool-call turn" do
+    it "yields a tool_use block with Hash input, a synthesized id, and :tool_use despite done_reason stop" do
+      provider = described_class.new(transport: transport_sync(tool_call_body(["echo", { "text" => "hi" }])))
+
+      response = provider.complete(request)
+
+      expect(response.stop_reason).to eq(:tool_use)
+      expect(response.tool_uses.size).to eq(1)
+      tool_use = response.tool_uses.first
+      expect(tool_use["input"]).to eq({ "text" => "hi" })
+      expect(tool_use["input"]).to be_a(Hash)
+      expect(tool_use["name"]).to eq("echo")
+      expect(tool_use["id"]).to be_a(String)
+      expect(tool_use["id"]).not_to be_empty
+    end
+
+    it "synthesizes a stable, per-response-unique id for each parallel call" do
+      provider = described_class.new(
+        transport: transport_sync(tool_call_body(["echo", { "text" => "a" }], ["echo", { "text" => "b" }]))
+      )
+
+      ids = provider.complete(request).tool_uses.map { |block| block["id"] }
+
+      expect(ids).to eq(ids.uniq)
+      expect(ids.size).to eq(2)
+    end
+
+    it "honors a wire-provided id when present rather than synthesizing over it" do
+      body = { "model" => "qwen3:4b",
+               "message" => { "role" => "assistant", "content" => "",
+                              "tool_calls" => [{ "id" => "call_7", "function" => { "name" => "echo",
+                                                                                   "arguments" => {} } }] },
+               "done" => true, "done_reason" => "stop" }
+
+      response = described_class.new(transport: transport_sync(body)).complete(request)
+
+      expect(response.tool_uses.first["id"]).to eq("call_7")
+    end
+  end
+
+  # AC 2: cache markers never reach the wire, and encode is pure.
+  describe "#encode" do
+    let(:cached_request) do
+      Lain::Request.new(
+        model: "qwen3:4b", max_tokens: 64,
+        system: [{ type: "text", text: "be terse", "cache" => true }],
+        tools: [{ name: "echo", description: "echoes", "cache" => true,
+                  input_schema: { type: "object", properties: {}, required: [] } }],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi", "cache" => true }] }]
+      )
+    end
+
+    it "never leaks a cache marker onto the wire" do
+      json = JSON.generate(described_class.new(transport: transport_sync({})).encode(cached_request))
+      expect(json).not_to include("cache")
+    end
+
+    it "is pure -- the same Request twice yields byte-identical bytes" do
+      provider = described_class.new(transport: transport_sync({}))
+      first = provider.encode(cached_request)
+      second = provider.encode(cached_request)
+      expect(Lain::Canonical.dump(first)).to eq(Lain::Canonical.dump(second))
+    end
+
+    it "translates the Anthropic-shaped tool schema into Ollama's function form" do
+      encoded = described_class.new(transport: transport_sync({})).encode(cached_request)
+
+      expect(encoded[:tools]).to eq(
+        [{ type: "function",
+           function: { name: "echo", description: "echoes",
+                       parameters: { "type" => "object", "properties" => {}, "required" => [] } } }]
+      )
+    end
+
+    it "maps system to a leading system message" do
+      encoded = described_class.new(transport: transport_sync({})).encode(cached_request)
+      expect(encoded[:messages].first).to eq({ role: "system", content: "be terse" })
+    end
+
+    it "reads temperature, seed, and num_ctx from Request#extra into options" do
+      req = request(extra: { temperature: 0, seed: 42, num_ctx: 8192 })
+      encoded = described_class.new(transport: transport_sync({})).encode(req)
+      expect(encoded[:options]).to eq({ temperature: 0, seed: 42, num_ctx: 8192 })
+    end
+
+    it "omits options entirely when no sampler knobs are given" do
+      encoded = described_class.new(transport: transport_sync({})).encode(request)
+      expect(encoded).not_to have_key(:options)
+    end
+  end
+
+  # AC 3: a stream-true Request still completes, non-streaming.
+  describe "#complete ignoring request.stream" do
+    it "always sends stream: false and returns a full Response" do
+      provider = described_class.new(transport: (recorder = capturing_transport))
+      provider.complete(request(stream: true))
+      expect(recorder.payload[:stream]).to be(false)
+    end
+
+    it "returns a text Response from a non-streaming body" do
+      body = { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "hello" },
+               "done" => true, "done_reason" => "stop", "prompt_eval_count" => 3, "eval_count" => 2 }
+      response = described_class.new(transport: transport_sync(body)).complete(request(stream: true))
+
+      expect(response.text).to eq("hello")
+      expect(response.stop_reason).to eq(:end_turn)
+      expect(response.usage.input_tokens).to eq(3)
+      expect(response.usage.output_tokens).to eq(2)
+    end
+  end
+
+  describe "done_reason -> stop_reason" do
+    it "maps length to :max_tokens" do
+      body = { "message" => { "role" => "assistant", "content" => "x" }, "done_reason" => "length" }
+      expect(described_class.new(transport: transport_sync(body)).complete(request).stop_reason).to eq(:max_tokens)
+    end
+
+    it "maps the empty-string (connection-closed) reason to :unknown" do
+      body = { "message" => { "role" => "assistant", "content" => "" }, "done_reason" => "" }
+      expect(described_class.new(transport: transport_sync(body)).complete(request).stop_reason).to eq(:unknown)
+    end
+  end
+
+  # The real Faraday transport, exercised once end-to-end over WebMock so the URL,
+  # path, and JSON (de)serialization are pinned, not just the injected double.
+  describe "over the real transport", :webmock do
+    it "posts stream:false to /api/chat at the default base and parses the body" do
+      stub = stub_request(:post, "http://localhost:11434/api/chat")
+             .with { |r| JSON.parse(r.body)["stream"] == false }
+             .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                        body: JSON.generate("model" => "qwen3:4b",
+                                            "message" => { "role" => "assistant", "content" => "pong" },
+                                            "done" => true, "done_reason" => "stop"))
+
+      response = described_class.new.complete(request(stream: true))
+
+      expect(response.text).to eq("pong")
+      expect(stub).to have_been_requested
+    end
+  end
+
+  # A transport double that captures the payload it was handed.
+  def capturing_transport
+    Class.new do
+      attr_reader :payload
+
+      def sync_post(payload, _headers = {})
+        @payload = payload
+        Struct.new(:body).new({ "message" => { "role" => "assistant", "content" => "ok" }, "done_reason" => "stop" })
+      end
+    end.new
+  end
+end
