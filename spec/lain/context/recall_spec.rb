@@ -49,9 +49,11 @@ RSpec.describe Lain::Context::Recall do
     base = [message("user", text("what is the aspirin dosing?"))]
     combinator = described_class.new(index:, k: 3)
 
+    before = Marshal.load(Marshal.dump(base))
     first = combinator.call(base)
     second = combinator.call(base)
     expect(first).to eq(second)
+    expect(base).to eq(before) # the input arrays/hashes are never mutated
 
     hit = index.search("what is the aspirin dosing?").first
     expect(first.last["content"].last["text"]).to include(hit.why)

@@ -2,6 +2,8 @@
 
 require_relative "context/base"
 require_relative "context/cache_breakpoints"
+require_relative "context/message_envelope"
+require_relative "context/tail_injection"
 require_relative "context/reminder"
 require_relative "context/prune"
 require_relative "context/compact"

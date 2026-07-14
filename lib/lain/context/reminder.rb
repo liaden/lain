@@ -12,7 +12,16 @@ module Lain
     # breakpoint goes. Injecting into `system` instead would rewrite the
     # cached prefix on every turn; appending to the Timeline would accrete a
     # stale copy per turn.
-    class Reminder < Base
+    class Reminder < Combinator
+      include TailInjection
+
+      # Reminder is constructed WITH the Workspace because it renders workspace
+      # *content* into the tail (`@workspace.to_blocks`) -- it needs the object.
+      # Recall, by contrast, takes only a memory index: it consults the
+      # `Workspace::OPENING_TAG` constant purely to *exclude* already-injected
+      # workspace blocks from its query, so it never needs the instance. The
+      # asymmetry the review asked about is real -- one produces workspace
+      # content, the other only has to recognize it.
       def initialize(workspace:)
         super()
         @workspace = workspace
@@ -21,17 +30,9 @@ module Lain
 
       def call(messages)
         return messages if @workspace.empty? || messages.empty?
+        return messages unless MessageEnvelope.wrap(messages.last).user?
 
-        last = messages.last
-        return messages unless last["role"] == "user"
-
-        rest = messages[0..-2]
-        rest + [{ "role" => "user", "content" => last["content"] + @workspace.to_blocks }]
-      end
-
-      # Plain text injection -- no Provider capability is needed.
-      def requires
-        [].freeze
+        append_to_last(messages, @workspace.to_blocks)
       end
     end
   end

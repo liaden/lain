@@ -61,11 +61,6 @@ module Lain
     # compose with, which is the whole reason {Combinator} is instantiable.
     Identity = Combinator.new
 
-    # Compatibility alias: recall.rb and reminder.rb still subclass `Base`.
-    # T16 sweeps those two files onto {Combinator} and drops this line; nothing
-    # else should lean on it.
-    Base = Combinator
-
     # Two combinators fused into one: `first` runs, then `second` runs on
     # its output. Associativity falls out of this being plain function
     # composition -- however you group the `>>`s, the resulting call order

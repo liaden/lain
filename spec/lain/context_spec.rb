@@ -129,15 +129,15 @@ RSpec.describe Lain::Context do
   end
 
   # The combinator algebra names itself: the base of the endomorphism monoid is
-  # Combinator, and Identity is its unit instance. Base survives as a
-  # compatibility alias only until T16 sweeps recall.rb/reminder.rb.
+  # Combinator, and Identity is its unit instance. The old `Base` alias is gone
+  # (T16 swept recall.rb/reminder.rb onto Combinator and dropped it).
   describe "the combinator algebra" do
     it "names the base class Combinator" do
       expect(described_class::Combinator).to be_a(Class)
     end
 
-    it "keeps Base as a compatibility alias of Combinator" do
-      expect(described_class::Base).to equal(described_class::Combinator)
+    it "no longer defines the retired Base alias" do
+      expect(described_class.const_defined?(:Base, false)).to be(false)
     end
 
     it "keeps Identity as an instance of Combinator, the monoid unit" do

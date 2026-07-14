@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Context::Base do
+RSpec.describe Lain::Context::Combinator do
   # A "tag" combinator appends a marker text block to the message list,
   # purely -- mirroring middleware_spec.rb's `tag` helper. Two composed
   # combinators are OBSERVATIONALLY EQUAL exactly when they produce the same

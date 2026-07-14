@@ -44,14 +44,15 @@ RSpec.describe Lain::Context::Reminder do
     expect(described_class.new(workspace:).requires).to eq([])
   end
 
-  it "is pure: identical input yields identical output" do
+  it "is pure: identical input yields identical output, leaving the input unmutated" do
     messages = [message("user", text("hello"))]
+    before = Marshal.load(Marshal.dump(messages))
     combinator = described_class.new(workspace:)
     expect(combinator.call(messages)).to eq(combinator.call(messages))
+    expect(messages).to eq(before)
   end
 
   it "composes with other combinators via >>" do
-    require "lain/context/base"
     messages = [message("user", text("hello"))]
     composed = described_class.new(workspace:) >> Lain::Context::Identity
     expect(composed.call(messages).last["content"].map { |b| b["text"] })
