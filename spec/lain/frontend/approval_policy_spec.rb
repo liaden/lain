@@ -35,4 +35,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   it "denies on EOF rather than raising" do
     expect(policy_for("").call(effect, nil)).to be(false)
   end
+
+  it "keeps the affirmative pattern a private implementation detail" do
+    expect { described_class::AFFIRMATIVE }.to raise_error(NameError, /private constant/)
+  end
 end

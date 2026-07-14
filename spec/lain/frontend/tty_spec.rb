@@ -57,6 +57,15 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("streamed live")
     end
 
+    it "renders its ToolOutput events, ignores unrelated events, and exits on close" do
+      channel.push(tool_output(bytes: "mine\n"))
+      channel.push(Lain::Event::Dropped.new(count: 3))
+
+      tty.run { channel.close }
+
+      expect(output.string).to include("mine")
+    end
+
     it "yields self, so a caller can drive #prompt / #render_response inside the block" do
       yielded = nil
       tty.run do |handle|

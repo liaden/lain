@@ -24,6 +24,16 @@ module Lain
     #    nothing but a second protocol for the same information. The Channel
     #    exists for things that arrive concurrently WHILE a call is still
     #    running (a bash tool's live stdout); a finished Response is not that.
+    #
+    # On scope -- why this is a small hand-rolled surface and not irb/debug or a
+    # richer TTY gem: the design plan settles it (see the "Interface" section,
+    # "TTY first, Neovim next (M4)"). The TTY is deliberately minimal -- an
+    # alternate-screen chat surface (M1b) over `tty-screen`/`tty-cursor`/`pastel`,
+    # with `reline` (stdlib) already doing line editing and history in {#prompt}.
+    # The richer interactive interface is not a bigger TTY or an embedded Ruby
+    # console; it is the Neovim frontend (M4), which subscribes to the same
+    # Journal over msgpack-RPC and gets the editable `lain://request` buffer. So
+    # this class stays small on purpose; growth goes to Neovim, not here.
     class TTY
       # Raw escapes for the DEC private mode `tput smcup`/`rmcup` uses. tty-cursor
       # has no alternate-screen verb of its own, and pulling in a full terminfo
@@ -103,30 +113,27 @@ module Lain
 
       private
 
-      # Blocks on #pop so live tool output (a running bash command's stdout)
-      # renders as it arrives rather than waiting for the next poll tick. #pop
-      # returns nil once the Channel is closed and drained, which is this
-      # thread's only exit.
+      # The background render loop: blocking drain of the Channel so live tool
+      # output (a running bash command's stdout) renders as it arrives rather
+      # than waiting for a poll tick. {Channel#drain}'s block form pops-until-
+      # closed and yields each event, returning once the Channel is closed AND
+      # drained -- this thread's only exit.
       def render_until_closed
-        event = @channel.pop
-        while event
-          render(event)
-          event = @channel.pop
-        end
+        @channel.drain { |event| render(event) }
       end
 
+      # Render one Channel event: find the decorator that presents it and print
+      # its output, or skip an event this frontend does not render (the Channel
+      # may also carry, e.g., {Event::Dropped}, which the TTY ignores). The
+      # color/format knowledge lives in the decorator, not here -- see
+      # {Frontend::Decorators} for why presentation is frontend-owned and never a
+      # `Renderable` mixed into the lib value object.
       def render(event)
-        render_tool_output(event) if event.is_a?(Event::ToolOutput)
-      end
+        rendered = Decorators.for(event)&.render(@pastel)
+        return if rendered.nil?
 
-      def render_tool_output(event)
-        label = @pastel.dim("[#{event.tool_use_id} #{event.stream}]")
-        @output.print("#{label} #{colorize_stream(event)}")
+        @output.print(rendered)
         @output.flush
-      end
-
-      def colorize_stream(event)
-        event.stream == :stderr ? @pastel.red(event.bytes) : event.bytes
       end
 
       # Leading `::` is load-bearing: unqualified `TTY::Screen` would resolve
