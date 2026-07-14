@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Handler::Recorded do
+RSpec.describe Lain::Effect::Handler::Recorded do
   def tool_call(id, name = "read_file", input = {})
     Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
   end
@@ -23,7 +23,7 @@ RSpec.describe Lain::Handler::Recorded do
   describe "a replay miss" do
     it "falls through to inner when composed in front of another handler" do
       live_answer = Lain::Tool::Result.ok("live output")
-      inner = Lain::Handler::Mock.new(default: live_answer)
+      inner = Lain::Effect::Handler::Mock.new(default: live_answer)
       handler = described_class.new(outcomes: { "call-1" => recorded_ok }, inner: inner)
 
       expect(handler.call(tool_call("call-1"))).to eq(recorded_ok)
@@ -33,7 +33,7 @@ RSpec.describe Lain::Handler::Recorded do
     it "never invents a success: with no inner, an unrecorded call raises" do
       handler = described_class.new(outcomes: { "call-1" => recorded_ok })
       expect { handler.call(tool_call("unrecorded")) }
-        .to raise_error(Lain::Handler::UnhandledEffect)
+        .to raise_error(Lain::Effect::Handler::UnhandledEffect)
     end
   end
 

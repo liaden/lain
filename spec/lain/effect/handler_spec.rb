@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Handler do
+RSpec.describe Lain::Effect::Handler do
   def tool(tool_name, &body)
     Class.new(Lain::Tool) do
       define_method(:name) { tool_name.to_s }
@@ -17,7 +17,7 @@ RSpec.describe Lain::Handler do
     Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
   end
 
-  describe Lain::Handler::Live do
+  describe Lain::Effect::Handler::Live do
     subject(:handler) { described_class.new(toolset: toolset) }
 
     it "dispatches a ToolCall to the tool the Toolset holds" do
@@ -105,23 +105,24 @@ RSpec.describe Lain::Handler do
 
     it "delegates an effect it does not handle to its inner handler" do
       # A catch-all inner handler that Live can fall back to for effect kinds Live
-      # itself declines (Live handles only ToolCall/Approval).
-      catch_all = Class.new(Lain::Handler) do
+      # itself declines (Live handles only ToolCall/Approval). A ModelCall is a
+      # real effect Live declines -- it answers tool_call?/approval? both false.
+      catch_all = Class.new(Lain::Effect::Handler) do
         def handles?(_effect) = true
         def perform(_effect, _context) = Lain::Tool::Result.ok("from inner")
       end.new
       composed = described_class.new(toolset: toolset, inner: catch_all)
-      unknown = Struct.new(:kind).new(:model)
-      expect(composed.call(unknown)).to eq(Lain::Tool::Result.ok("from inner"))
+      declined = Lain::Effect::ModelCall.new(request: :req)
+      expect(composed.call(declined)).to eq(Lain::Tool::Result.ok("from inner"))
     end
 
     it "raises UnhandledEffect when nothing in the chain can interpret the effect" do
-      unknown = Struct.new(:kind).new(:model)
-      expect { handler.call(unknown) }.to raise_error(Lain::Handler::UnhandledEffect)
+      declined = Lain::Effect::ModelCall.new(request: :req)
+      expect { handler.call(declined) }.to raise_error(Lain::Effect::Handler::UnhandledEffect)
     end
   end
 
-  describe Lain::Handler::Mock do
+  describe Lain::Effect::Handler::Mock do
     it "resolves by tool name" do
       mock = described_class.new(results: { "echo" => Lain::Tool::Result.ok("canned") })
       expect(mock.call(tool_call("echo"))).to eq(Lain::Tool::Result.ok("canned"))
@@ -149,7 +150,7 @@ RSpec.describe Lain::Handler do
 
   describe "composition into a stack terminator" do
     it "adapts a handler into an env -> env app via #to_app" do
-      app = Lain::Handler::Live.new(toolset: toolset).to_app
+      app = Lain::Effect::Handler::Live.new(toolset: toolset).to_app
       env = { effect: tool_call("echo", { text: "hi" }), context: nil }
       expect(app.call(env)[:result]).to eq(Lain::Tool::Result.ok("hi"))
     end

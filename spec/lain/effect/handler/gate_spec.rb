@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Handler::Approving do
+RSpec.describe Lain::Effect::Handler::Gate do
   def tool(tool_name, gated: false, &body)
     Class.new(Lain::Tool) do
       define_method(:name) { tool_name.to_s }
@@ -14,7 +14,7 @@ RSpec.describe Lain::Handler::Approving do
   let(:safe) { tool(:safe) { |input, _invocation| Lain::Tool::Result.ok(input.fetch(:text, "safe")) } }
   let(:dangerous) { tool(:dangerous, gated: true) { |input, _invocation| Lain::Tool::Result.ok(input.fetch(:text, "ran")) } }
   let(:toolset) { Lain::Toolset.new([safe, dangerous]) }
-  let(:live) { Lain::Handler::Live.new(toolset: toolset) }
+  let(:live) { Lain::Effect::Handler::Live.new(toolset: toolset) }
 
   def tool_call(name, input = {}, id: "tu_1")
     Lain::Effect::ToolCall.new(tool_use_id: id, name: name, input: input)
@@ -90,7 +90,7 @@ RSpec.describe Lain::Handler::Approving do
       # branch and then finds nothing to run -- which must fail loudly.
       approving = described_class.new(policy: described_class::ApproveAll.new)
       wrapped = Lain::Effect::Approval.new(effect: tool_call("dangerous"))
-      expect { approving.call(wrapped) }.to raise_error(Lain::Handler::UnhandledEffect)
+      expect { approving.call(wrapped) }.to raise_error(Lain::Effect::Handler::UnhandledEffect)
     end
   end
 
