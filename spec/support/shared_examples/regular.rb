@@ -57,6 +57,14 @@ RSpec.shared_examples "a Regular value" do |config|
     expect(x.hash).to be_a(Integer)
   end
 
+  # The eql?/hash contract: every == pair MUST hash equal, or the pair scatters
+  # across Hash/Set buckets and the "works as a Hash key" law below only passes
+  # by luck. This is the law that Joel's `==`-without-`hash`-agreement edit broke.
+  it "hashes equal to its == pair (eql?/hash agreement)" do
+    x, y = regular_call(equal_pair)
+    expect(x.hash).to eq(y.hash)
+  end
+
   if hash_key
     it "works as a Hash key" do
       x, y = regular_call(equal_pair)

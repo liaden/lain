@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Capability
     # The set of capabilities a run silently lost because its policy was
@@ -27,10 +30,19 @@ module Lain
 
       def each(&block) = capabilities.each(&block)
 
-      def empty? = capabilities.empty?
+      delegate :empty?, to: :capabilities
 
       def to_a = capabilities
 
+      # ==/eql?/hash agree, and must: a == pair that hashed differently breaks
+      # Hash/Set membership -- table stakes for a value object, whatever compares
+      # it. (`Compare` today checks equality pairwise via `Guard.guard!`, a plain
+      # ==; the hash contract is general Hash/Set semantics, not its mechanism.)
+      # `is_a?(self.class)` mirrors the ContentAddressed convention -- a duck with
+      # a matching `capabilities` is not this value. Caveat: both the guard and the
+      # class-embedding `hash` are receiver-class-directional under subclassing
+      # (parent == child but not the reverse, and their hashes differ); no
+      # production subclass exists today, so the asymmetry is latent.
       def ==(other)
         other.is_a?(self.class) && capabilities == other.capabilities
       end
@@ -38,8 +50,11 @@ module Lain
 
       def hash = [self.class, capabilities].hash
 
-      def to_s = "#<#{self.class} #{capabilities.join(", ")}>"
-      alias inspect to_s
+      # to_s is the human-facing capability list; inspect keeps the class-tagged,
+      # debug-oriented form.
+      def to_s = capabilities.join(", ")
+
+      def inspect = "#<#{self.class} #{capabilities.join(", ")}>"
     end
   end
 end
