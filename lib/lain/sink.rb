@@ -18,6 +18,15 @@ module Lain
     # Only the IO surface third-party writers actually reach for is implemented:
     # `#write`, `#puts`, `#print`, `#<<`, and `#flush`. Return values follow the
     # real `IO` contract (notably `#write` returns the number of bytes written).
+    #
+    # Not a painter's algorithm: each write-family method allocates exactly one
+    # fresh, mutable buffer local to that call (`+""`), appends each argument to
+    # it AT MOST ONCE, hands it to {#emit}, and lets it go -- there is no
+    # instance-level buffer that grows call over call, so N calls cost O(total
+    # bytes written), never O(n^2). The one thing that *could* look like
+    # re-appending -- `puts`'s recursive `append_line` over a nested Array -- is
+    # still a single pass per byte: each element is visited once and appended
+    # once to the SAME buffer, not copied into a growing chain of buffers.
     class IOAdapter
       # @param channel [Lain::Channel] destination for emitted events
       # @param tool_use_id [String] attribution stamped on every event
@@ -49,11 +58,12 @@ module Lain
       end
 
       # Write each argument's string form with no separators or terminator.
+      # Body is identical to {#write}'s -- concatenate, emit -- so it delegates
+      # there rather than duplicating the buffer-building loop; only the return
+      # value differs, per each method's own `IO` contract.
       # @return [nil] per the `IO#print` contract
-      def print(*args)
-        buffer = +""
-        args.each { |arg| buffer << arg.to_s }
-        emit(buffer)
+      def print(*)
+        write(*)
         nil
       end
 

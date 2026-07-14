@@ -2,8 +2,8 @@
 
 RSpec.describe Lain::Channel::DropOldest do
   it "rejects a non-positive capacity" do
-    expect { described_class.new(capacity: 0) }.to raise_error(ArgumentError)
-    expect { described_class.new(capacity: -1) }.to raise_error(ArgumentError)
+    expect { described_class.new(capacity: 0) }.to raise_error(ArgumentError, /capacity/)
+    expect { described_class.new(capacity: -1) }.to raise_error(ArgumentError, /capacity/)
   end
 
   it "satisfies the same duck as Channel" do
@@ -61,6 +61,24 @@ RSpec.describe Lain::Channel::DropOldest do
   describe "#drain" do
     it "is empty when nothing is queued and nothing was dropped" do
       expect(described_class.new(capacity: 2).drain).to eq([])
+    end
+
+    it "with a block, blocks and yields every event until closed-and-drained (same duck as Channel)" do
+      channel = described_class.new(capacity: 8)
+      channel.push(:a).push(:b)
+
+      collected = []
+      drainer = Thread.new { channel.drain { |event| collected << event } }
+
+      sleep(0.02) until collected.size == 2
+      expect(drainer.status).to eq("sleep")
+
+      channel.push(:c)
+      channel.close
+      drainer.join(1)
+
+      expect(collected).to eq(%i[a b c])
+      expect(drainer.status).to be(false)
     end
   end
 

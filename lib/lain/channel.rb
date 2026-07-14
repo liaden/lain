@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   # A thread-safe, bounded queue of structured events (see {Lain::Event}).
   #
@@ -46,16 +48,71 @@ module Lain
   # blocked producer with a `ClosedQueueError`, so teardown can never wedge a
   # producer forever.
   class Channel
+    # The two-mode destructive `drain`, shared by every channel policy: the
+    # dispatch loop is pure duck (`pop` + a private `drain_buffered`), so it is
+    # identical whatever the backing structure, while each includer keeps its
+    # own `drain_buffered` -- that is where the policies genuinely differ
+    # (SizedQueue's non-blocking pop here; DropOldest's marker-led surface).
+    # A plain module, not an `ActiveSupport::Concern`, per the {Lain::Freezable}
+    # precedent: no `ClassMethods`, no dependency ordering, just one method.
+    module Draining
+      # Destructive removal, in one of two modes depending on whether a block
+      # is given -- both are "drain" because both consume the channel, just on
+      # different schedules.
+      #
+      # Without a block: non-blocking. Remove and return every event currently
+      # buffered, in FIFO order, without waiting for more. Returns `[]` if
+      # nothing is queued. This is the frontend's per-render-tick drain: pull
+      # whatever has accumulated, render it, come back later.
+      #
+      # With a block: blocking. Repeatedly {#pop} and yield each event as it
+      # arrives, until the channel is closed AND drained (`pop` returning `nil`)
+      # -- the exit contract a render loop's `while (event = channel.pop) ...`
+      # already relied on, expressed as one call instead of a hand-rolled loop
+      # at every call site. Named `drain` rather than `each`/`Enumerable`
+      # deliberately: `each` promises a *repeatable* walk over a receiver that
+      # owns its elements, and this walk empties the channel as it goes and can
+      # only ever run once -- calling it `each` would be a lie about what it does.
+      #
+      # @yieldparam event [Object]
+      # @return [Array<Object>] every currently-buffered event, when called without a block
+      # @return [self] when called with a block
+      def drain
+        return drain_buffered unless block_given?
+
+        event = pop
+        while event
+          yield event
+          event = pop
+        end
+        self
+      end
+    end
+
+    include Draining
+
     # Default number of in-flight events before {#push} applies backpressure.
     # Large enough to absorb bursts, small enough that a runaway producer is
     # throttled long before it exhausts memory.
     DEFAULT_CAPACITY = 1024
 
+    # Throwaway carrier for validate-then-freeze construction (Ruling 2, T6).
+    # Channel is a lone guarded class in its own namespace, so it nests its own
+    # {Lain::Guard} subclass directly rather than joining a sibling `Guards`
+    # module (that form is for namespaces with several guarded classes, e.g.
+    # {Lain::Event::Guards}). Channel is stateful, not a frozen value object, so
+    # there is no {Lain::Freezable} companion here -- just the carrier check.
+    # {DropOldest} shares this Guard deliberately (same capacity contract); it
+    # splits into its own the day their validations diverge.
+    class Guard < Lain::Guard
+      attribute :capacity
+      validates :capacity, numericality: { only_integer: true, greater_than: 0,
+                                           message: "must be a positive Integer, got %<value>s" }
+    end
+
     # @param capacity [Integer] maximum number of buffered events (>= 1)
     def initialize(capacity: DEFAULT_CAPACITY)
-      unless capacity.is_a?(Integer) && capacity.positive?
-        raise ArgumentError, "capacity must be a positive Integer, got #{capacity.inspect}"
-      end
+      Guard.check!(capacity:)
 
       @queue = SizedQueue.new(capacity)
     end
@@ -79,23 +136,6 @@ module Lain
       @queue.pop
     end
 
-    # Non-blocking. Remove and return every event currently buffered, in FIFO
-    # order, without waiting for more. Returns `[]` if nothing is queued.
-    #
-    # This is the frontend's drain step: pull whatever has accumulated, render
-    # it, come back later. It never blocks, so it is safe to call on a render
-    # tick.
-    #
-    # @return [Array<Object>]
-    def drain
-      drained = []
-      loop { drained << @queue.pop(true) }
-    rescue ThreadError
-      # Raised by `pop(true)` when the queue is empty (whether or not it is
-      # closed): the queue is drained, so we are done.
-      drained
-    end
-
     # Close the channel. Blocked and future producers see a `ClosedQueueError`;
     # consumers drain the remaining events and then receive `nil`. Idempotent.
     #
@@ -105,20 +145,27 @@ module Lain
       self
     end
 
-    # @return [Boolean] whether {#close} has been called
-    def closed?
-      @queue.closed?
-    end
-
-    # @return [Integer] events currently buffered
-    def size
-      @queue.size
-    end
+    delegate :closed?, :size, to: :queue
     alias length size
 
     # @return [Integer] the configured capacity (backpressure threshold)
     def capacity
       @queue.max
+    end
+
+    private
+
+    # `delegate`'s target must be a message the receiver answers, not a bare
+    # ivar -- a private reader is the whole adapter.
+    attr_reader :queue
+
+    def drain_buffered
+      drained = []
+      loop { drained << @queue.pop(true) }
+    rescue ThreadError
+      # Raised by `pop(true)` when the queue is empty (whether or not it is
+      # closed): the queue is drained, so we are done.
+      drained
     end
 
     # A channel that discards everything pushed to it, satisfying the same
@@ -128,9 +175,7 @@ module Lain
     # {Sink::Null}'s role one layer up.
     class Null
       # @return [self]
-      def push(_event)
-        self
-      end
+      def push(_event) = self
       alias << push
 
       # One shared frozen Null: it has no state, so every `journal:`/`channel:`
@@ -139,9 +184,7 @@ module Lain
       INSTANCE = new.freeze
 
       # @return [Null] the shared instance
-      def self.instance
-        INSTANCE
-      end
+      def self.instance = INSTANCE
     end
   end
 end

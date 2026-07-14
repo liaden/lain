@@ -2,9 +2,9 @@
 
 RSpec.describe Lain::Channel do
   it "rejects a non-positive capacity" do
-    expect { described_class.new(capacity: 0) }.to raise_error(ArgumentError)
-    expect { described_class.new(capacity: -1) }.to raise_error(ArgumentError)
-    expect { described_class.new(capacity: 1.5) }.to raise_error(ArgumentError)
+    expect { described_class.new(capacity: 0) }.to raise_error(ArgumentError, /capacity/)
+    expect { described_class.new(capacity: -1) }.to raise_error(ArgumentError, /capacity/)
+    expect { described_class.new(capacity: 1.5) }.to raise_error(ArgumentError, /capacity/)
   end
 
   describe "#push / #pop" do
@@ -25,6 +25,33 @@ RSpec.describe Lain::Channel do
       expect(channel.drain).to eq([1, 2, 3])
       expect(channel.size).to eq(0)
       expect(channel.drain).to eq([]) # does not block on an empty channel
+    end
+
+    it "with a block, blocks and yields every event until closed-and-drained (T19's exit contract)" do
+      channel = described_class.new(capacity: 8)
+      channel.push(:a).push(:b)
+
+      collected = []
+      drainer = Thread.new { channel.drain { |event| collected << event } }
+
+      # Give the drainer a chance to consume the two buffered events and then
+      # block on #pop, same as render_until_closed's manual while/pop loop did.
+      sleep(0.02) until collected.size == 2
+      expect(drainer.status).to eq("sleep") # blocked waiting for more, or close
+
+      channel.push(:c)
+      channel.close
+      drainer.join(1)
+
+      expect(collected).to eq(%i[a b c])
+      expect(drainer.status).to be(false) # thread finished
+    end
+
+    it "returns self from the block form" do
+      channel = described_class.new(capacity: 4)
+      channel.close
+
+      expect(channel.drain { |_event| nil }).to equal(channel)
     end
   end
 

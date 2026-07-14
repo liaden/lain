@@ -31,13 +31,30 @@ module Lain
     # that a SizedQueue cannot express: its `push` blocks and its `pop(true)` only
     # removes. One lock covers the whole compound so two producers cannot race the
     # eviction.
+    #
+    # Why not a library instead of hand-rolling this? The design plan's
+    # Concurrency section already ruled `concurrent-ruby-edge` out entirely --
+    # its `Channel`/`Actor`/`Cancellation` sit behind an explicitly unstable API,
+    # and M1 has no chosen concurrency model to build a dependency against yet.
+    # Stable `concurrent-ruby` has no evict-oldest queue either; its bounded
+    # queues share `SizedQueue`'s blocking-push limitation. So there was no
+    # off-the-shelf structure that already expressed "evict, then enqueue,
+    # atomically" -- the Mutex/ConditionVariable is the smallest thing that
+    # does, not a shortcut around a library. Revisit once M5 picks fibers via
+    # `async` (the plan's likely answer): `Async::LimitedQueue` is a
+    # scheduler-aware bounded queue and could replace this Thread-based
+    # implementation outright, at the same point the rest of the concurrency
+    # model gets chosen with the bench in hand.
     class DropOldest
+      # The same two-mode `drain` as {Lain::Channel} -- see {Channel::Draining}
+      # for the contract and the drain-not-each WHY. The block form yields any
+      # pending {Lain::Event::Dropped} marker first, because it rides {#pop}.
+      include Draining
+
       # @param capacity [Integer] maximum buffered events before the oldest is
       #   evicted (>= 1)
       def initialize(capacity: Channel::DEFAULT_CAPACITY)
-        unless capacity.is_a?(Integer) && capacity.positive?
-          raise ArgumentError, "capacity must be a positive Integer, got #{capacity.inspect}"
-        end
+        Channel::Guard.check!(capacity:)
 
         @capacity = capacity
         @buffer = []
@@ -83,20 +100,6 @@ module Lain
         end
       end
 
-      # Non-blocking. Return every buffered event in FIFO order, led by a single
-      # {Lain::Event::Dropped} marker if any were dropped since the last surface.
-      # Returns `[]` when nothing is queued and nothing was dropped.
-      #
-      # @return [Array<Object>]
-      def drain
-        @mutex.synchronize do
-          drained = @dropped.positive? ? [dropped_marker] : []
-          drained.concat(@buffer)
-          @buffer = []
-          drained
-        end
-      end
-
       # Close the channel. Future producers raise `ClosedQueueError`; blocked
       # consumers wake and drain the remainder, then receive `nil`. Idempotent.
       #
@@ -124,6 +127,18 @@ module Lain
       attr_reader :capacity
 
       private
+
+      # The non-blocking mode's mechanics: every buffered event in FIFO order,
+      # led by a single {Lain::Event::Dropped} marker if any were dropped since
+      # the last surface; `[]` when nothing is queued and nothing was dropped.
+      def drain_buffered
+        @mutex.synchronize do
+          drained = @dropped.positive? ? [dropped_marker] : []
+          drained.concat(@buffer)
+          @buffer = []
+          drained
+        end
+      end
 
       # Consume and reset the drop counter into a marker. Caller holds the lock.
       def dropped_marker

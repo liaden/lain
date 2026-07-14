@@ -98,6 +98,14 @@ RSpec.describe Lain::Sink do
         expect(emitted_bytes).to eq(["ab"])
       end
 
+      it "emits exactly one event per #print call, N calls in a row -> N events (no hidden accumulation)" do
+        5.times { |i| adapter.print("chunk#{i}") }
+
+        expect(channel.events.size).to eq(5)
+        expect(emitted_bytes).to eq(%w[chunk0 chunk1 chunk2 chunk3 chunk4])
+        expect(channel.events).to all(have_attributes(tool_use_id: "toolu_123"))
+      end
+
       it "#<< writes and returns self" do
         expect(adapter << "chunk").to be(adapter)
         expect(emitted_bytes).to eq(["chunk"])
