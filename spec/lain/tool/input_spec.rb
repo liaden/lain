@@ -47,6 +47,50 @@ RSpec.describe Lain::Tool::Input do
     it "derives an enum from an inclusion validator" do
       expect(schema["properties"]["shell"]["enum"]).to eq(%w[bash sh zsh])
     end
+
+    # A single rich structural assertion, left deliberately un-split, to show
+    # what a failure here looks like now that spec/support/super_diff.rb is
+    # wired in. Pre-super_diff, RSpec's stock differ pretty-prints both sides
+    # as Hash#inspect STRINGS and diffs those strings char-by-char, so one
+    # wrong leaf (say, "maxLength" flipping from 8192 to 100) smears colour
+    # across the whole multi-line block. super_diff walks the actual Hash
+    # instead and shows only the divergent leaf, e.g.:
+    #
+    #   {
+    #     "type" => "object",
+    #     "properties" => {
+    #       "command" => {
+    #         "type" => "string",
+    #         "description" => "Command to run",
+    # -       "maxLength" => 8192
+    # +       "maxLength" => 100
+    #       },
+    #       "timeout" => { ... },
+    #       "shell" => { ... }
+    #     },
+    #     "required" => ["command"],
+    #     "additionalProperties" => false
+    #   }
+    #
+    # -- exactly the shape a Response content block (also a nested,
+    # String-keyed Hash) needs when a spec pins it whole rather than piecemeal.
+    it "matches the whole schema shape in one structural assertion" do
+      expect(schema).to eq(
+        "type" => "object",
+        "properties" => {
+          "command" => { "type" => "string", "description" => "Command to run", "maxLength" => 8192 },
+          "timeout" => {
+            "type" => "integer",
+            "description" => "Seconds before the child is killed",
+            "maximum" => 600,
+            "exclusiveMinimum" => 0
+          },
+          "shell" => { "type" => "string", "description" => "Which shell", "enum" => %w[bash sh zsh] }
+        },
+        "required" => ["command"],
+        "additionalProperties" => false
+      )
+    end
   end
 
   describe ".build" do
@@ -84,6 +128,30 @@ RSpec.describe Lain::Tool::Input do
       expect { shell_input.build({ "command" => "" }).tap(&:valid?).errors.full_messages }
         .not_to raise_error
     end
+  end
+
+  # shoulda-matchers (spec/support/shoulda_matchers.rb, :rspec + :active_model
+  # only) pins the SAME `validates` lines above against its own vocabulary
+  # instead of round-tripping through #valid?/#errors -- a handful, to show
+  # the payoff without duplicating every case in "validation" above. `type:
+  # :model` is what shoulda's RSpec integration keys its `config.include` on
+  # (no Rails auto-tagging here, so it has to be explicit); it is only
+  # metadata, not a Rails dependency. Delete a `validates` line above and the
+  # matching example here goes red with a shoulda-authored message naming
+  # exactly what could not be proved.
+  #
+  # `timeout`'s numericality validator is deliberately NOT converted:
+  # `validate_numericality_of` probes with a non-numeric String ("abcd") and
+  # expects an "is not a number" error, but ActiveModel::Attributes coerces
+  # that String to an Integer (0) before validation ever runs -- coercion the
+  # matcher doesn't know about. The manual "reports every failure at once"
+  # example above is the honest way to pin that one.
+  describe "validations, pinned via shoulda-matchers", type: :model do
+    subject { shell_input.new(command: "ls") }
+
+    it { is_expected.to validate_presence_of(:command) }
+    it { is_expected.to validate_length_of(:command).is_at_most(8192) }
+    it { is_expected.to validate_inclusion_of(:shell).in_array(%w[bash sh zsh]).allow_nil }
   end
 
   # `presence: true` rejects `false`, which is virtually never what "required"
