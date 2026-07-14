@@ -1,0 +1,796 @@
+diff --git a/lib/lain/agent.rb b/lib/lain/agent.rb
+index cbe87f8..7520183 100644
+--- a/lib/lain/agent.rb
++++ b/lib/lain/agent.rb
+@@ -33,13 +33,14 @@ module Lain
+ 
+     attr_reader :timeline, :toolset, :context, :workspace, :session,
+                 :iterations, :failure_reason, :budget
+-
+-    # Delegated to {Accounting}, which owns the run's token roll-up.
++# Delegated to {Accounting}, which owns the run's token roll-up.
++    # CODE REVIEW: we should make use of https://guides.rubyonrails.org/active_support_core_extensions.html#delegate
+     def usage = @accounting.usage
+ 
+     # @param journal [#<<] where per-turn usage records land; the Null channel
+     #   by default. Today ONLY {Event::TurnUsage} is written here -- it is not
+     #   yet the full run record.
++    # CODE REVIEW: we have A LOT of constructor arguments in here and I wonder if some of these should be encapsulated into other objects?
+     def initialize(provider:, toolset:, context:,
+                    handler: nil,
+                    timeline: nil,
+@@ -111,6 +112,7 @@ module Lain
+ 
+     private
+ 
++    # CODE REVIEW: we have `handler` in `initialize` and then pass thorugh here and then finally set it to something if it was `nil`...
+     def build_tool_runner(handler, toolset, middleware)
+       ToolRunner.new(handler: handler || Handler::Live.new(toolset: toolset), middleware: middleware)
+     end
+@@ -121,6 +123,7 @@ module Lain
+     # everything the model sees -- never enters the Timeline. State itself is
+     # owned by the machine (initial: :awaiting_user). Called once, at
+     # construction; the Accounting is what captures the journal.
++    # CODE REVIEW: can we avoid stateful assignment in here? It looks like this method only exists because `initialize` was getting too long...
+     def seed_run_state(transition_listener, journal, session)
+       @transition_listener = transition_listener
+       @accounting = Accounting.new(journal: journal)
+@@ -149,6 +152,7 @@ module Lain
+     #
+     # @return [Symbol] :settled when the loop is finished, :continue otherwise
+     def transition(response)
++      # CODE REVIEW: can we avoid the `case` and state based stuff here to do better method invocation instead?
+       case response.stop_reason
+       when StopReason::TOOL_USE then perform_tools(response)
+       when StopReason::END_TURN, StopReason::STOP_SEQUENCE then succeed
+diff --git a/lib/lain/agent/loop_machine.rb b/lib/lain/agent/loop_machine.rb
+index a377a47..6706b82 100644
+--- a/lib/lain/agent/loop_machine.rb
++++ b/lib/lain/agent/loop_machine.rb
+@@ -22,6 +22,9 @@ module Lain
+     #
+     # State values are Symbols (`value:`), not the gem's default Strings, because
+     # `Agent#state` is public surface and callers compare against `:done`.
++    # CODE REVIEW: I thought we were going to use ActiveModel with the state machines stuff given we get validations
++    # Also, it _seems_ like we only extracted this to make rubocop happy about line count in the `Agent` class instead of
++    # this being intended for reuse? Could we consider other options than this. Perhaps `AgenticState` (or a better name)?
+     module LoopMachine
+       # Held as a proc so the DSL block lives in a constant, not inside the
+       # `included` hook -- otherwise every event and state line would count toward
+diff --git a/lib/lain/agent/model_caller.rb b/lib/lain/agent/model_caller.rb
+index e1a4634..b589a94 100644
+--- a/lib/lain/agent/model_caller.rb
++++ b/lib/lain/agent/model_caller.rb
+@@ -21,6 +21,9 @@ module Lain
+       # @param request [Lain::Request]
+       # @return [Lain::Response]
+       def call(request)
++        # CODE REVIEW: I do not think `env =` is accurate here for the result of the call of the `@milddleware.call`.
++        # It should effectively be `response`. And, do we really need a wrapper type for the the response that has the method
++        # `response` on it?
+         env = @middleware.call({ request: request }) do |inner|
+           inner.merge(response: @provider.complete(inner.fetch(:request)))
+         end
+diff --git a/lib/lain/agent/tool_runner.rb b/lib/lain/agent/tool_runner.rb
+index 72571ce..c11cd80 100644
+--- a/lib/lain/agent/tool_runner.rb
++++ b/lib/lain/agent/tool_runner.rb
+@@ -48,8 +48,9 @@ module Lain
+           # `input` as a raw String.
+           input: tool_use.fetch("input")
+         )
+-        env = @middleware.call({ effect: effect, context: context }, &@handler.to_app)
+-        env.fetch(:result)
++        # CODE REVIEW: I'm editing the below line to use a more modern ruby style. Rubocop may need to be configured to set that rule
++        env = @middleware.call({ effect:, context: }, &@handler.to_app)
++        env.fetch(:result) # CODE REVIEW: Again, I dislike this `wrap and then unwrapp that we immediately end up doing...
+       end
+     end
+   end
+diff --git a/lib/lain/capability/degraded_set.rb b/lib/lain/capability/degraded_set.rb
+index 61ccf2b..b33b995 100644
+--- a/lib/lain/capability/degraded_set.rb
++++ b/lib/lain/capability/degraded_set.rb
+@@ -27,17 +27,23 @@ module Lain
+ 
+       def each(&block) = capabilities.each(&block)
+ 
++      # CODE REVIEW: we can delegate this
+       def empty? = capabilities.empty?
+ 
++      # this is safe due to the `freeze` from the `initialize`
+       def to_a = capabilities
+ 
++      # CODE REVIEW: edited this to work better with duck typing
+       def ==(other)
+-        other.is_a?(self.class) && capabilities == other.capabilities
++        capabilities == other.capabilities
++      rescue NoMethodError
++        false
+       end
+       alias eql? ==
+ 
+       def hash = [self.class, capabilities].hash
+ 
++      # CODE REVIEW: I would prefer `to_s` to be more of a human readable or useful string conversion and inspect is more debug oriented`
+       def to_s = "#<#{self.class} #{capabilities.join(", ")}>"
+       alias inspect to_s
+     end
+diff --git a/lib/lain/capability/policy.rb b/lib/lain/capability/policy.rb
+index 4ad95cc..d1a0f8d 100644
+--- a/lib/lain/capability/policy.rb
++++ b/lib/lain/capability/policy.rb
+@@ -29,6 +29,7 @@ module Lain
+       # @raise [ArgumentError] on an unknown policy name (unknown values fail loudly)
+       def self.for(name, journal: Channel::Null.instance)
+         strategy = STRATEGIES[name]
++        # CODE REVIEW: if we make this class `include ActiveModel::Validations` then we can `validates :strategy, presence: true` as one clean line
+         if strategy.nil?
+           raise ArgumentError,
+                 "unknown capability policy #{name.inspect}, expected one of #{NAMES.inspect}"
+diff --git a/lib/lain/channel.rb b/lib/lain/channel.rb
+index c820ad2..d04f877 100644
+--- a/lib/lain/channel.rb
++++ b/lib/lain/channel.rb
+@@ -53,6 +53,7 @@ module Lain
+ 
+     # @param capacity [Integer] maximum number of buffered events (>= 1)
+     def initialize(capacity: DEFAULT_CAPACITY)
++      # CODE REVIEW: active model validations could be done here instead
+       unless capacity.is_a?(Integer) && capacity.positive?
+         raise ArgumentError, "capacity must be a positive Integer, got #{capacity.inspect}"
+       end
+@@ -106,11 +107,13 @@ module Lain
+     end
+ 
+     # @return [Boolean] whether {#close} has been called
++    # CODE REVIEW: another case of delegate :closed?, to: :queue
+     def closed?
+       @queue.closed?
+     end
+ 
+     # @return [Integer] events currently buffered
++    # delegate...
+     def size
+       @queue.size
+     end
+@@ -128,9 +131,7 @@ module Lain
+     # {Sink::Null}'s role one layer up.
+     class Null
+       # @return [self]
+-      def push(_event)
+-        self
+-      end
++      def push(_event) = self
+       alias << push
+ 
+       # One shared frozen Null: it has no state, so every `journal:`/`channel:`
+@@ -139,9 +140,7 @@ module Lain
+       INSTANCE = new.freeze
+ 
+       # @return [Null] the shared instance
+-      def self.instance
+-        INSTANCE
+-      end
++      def self.instance = INSTANCE
+     end
+   end
+ end
+diff --git a/lib/lain/channel/drop_oldest.rb b/lib/lain/channel/drop_oldest.rb
+index 0a279de..1305da3 100644
+--- a/lib/lain/channel/drop_oldest.rb
++++ b/lib/lain/channel/drop_oldest.rb
+@@ -31,6 +31,7 @@ module Lain
+     # that a SizedQueue cannot express: its `push` blocks and its `pop(true)` only
+     # removes. One lock covers the whole compound so two producers cannot race the
+     # eviction.
++    # CODE REVIEW: I would prefer if we didn't need to use this or if we could use a library provided option instead...
+     class DropOldest
+       # @param capacity [Integer] maximum buffered events before the oldest is
+       #   evicted (>= 1)
+diff --git a/lib/lain/content_addressed.rb b/lib/lain/content_addressed.rb
+index d2733a4..49a6397 100644
+--- a/lib/lain/content_addressed.rb
++++ b/lib/lain/content_addressed.rb
+@@ -15,11 +15,15 @@ module Lain
+   # a hex String there would silently break every Hash lookup.
+   module ContentAddressed
+     # Regular: equality is structural, and structural equality is digest equality.
++    # CODE REVIEW: edited for duck typing
+     def ==(other)
+-      other.is_a?(self.class) && digest == other.digest
++      digest == other.digest
++    rescue NoMethodError
++      false
+     end
+     alias eql? ==
+ 
++    # delegate :hash, to: :digest
+     def hash
+       digest.hash
+     end
+diff --git a/lib/lain/context.rb b/lib/lain/context.rb
+index 22262a2..e1931dc 100644
+--- a/lib/lain/context.rb
++++ b/lib/lain/context.rb
+@@ -62,9 +62,8 @@ module Lain
+       freeze
+     end
+ 
+-    def requires
+-      REQUIRES
+-    end
++    # CODE REVIEW: endless ruby style
++    def requires = REQUIRES
+ 
+     # @return [Lain::Request] deterministic for identical inputs
+     #
+@@ -95,6 +94,7 @@ module Lain
+     def cache_marked_system
+       return nil if system.nil?
+ 
++      # CODE REVIEW: we are branching at a type level here? This seems like a smell
+       blocks = system.is_a?(String) ? [{ "type" => "text", "text" => system }] : system
+       return blocks if blocks.empty?
+ 
+diff --git a/lib/lain/context/base.rb b/lib/lain/context/base.rb
+index e9a755e..ba24106 100644
+--- a/lib/lain/context/base.rb
++++ b/lib/lain/context/base.rb
+@@ -18,6 +18,8 @@ module Lain
+     # produce nonsense -- keeping the types separate is a feature, not
+     # duplication, since the *laws* (both a monoid, both property-tested via
+     # the shared "a monoid" group) are still shared, only the shape differs.
++    # CODE REVIEW: for an algebra that is category-theory-esque, we should have a better name for this
++    # CODE REVIEW: should this be a module that gets included and/or a ActiveSupport::Concern?
+     class Base
+       # @param messages [Array<Hash>]
+       # @return [Array<Hash>] the identity: unchanged
+@@ -33,6 +35,8 @@ module Lain
+       end
+ 
+       # `a >> b` composes into a combinator that runs `a`, then `b`.
++      # CODE REVIEW: the fact that this is the `>>` cominbator yet it returns `Composed` makes
++      # this seem like it is in the wrong area?
+       def >>(other)
+         Composed.new(self, other)
+       end
+@@ -41,6 +45,7 @@ module Lain
+     # The monoid unit: composing it changes nothing, so a fold over an empty
+     # combinator list (or an optional combinator slot) stays total instead of
+     # special-casing nil -- the same role Middleware::Identity plays there.
++    # CODE REVIEW: I wonder if we could just replace `Base` with `Identity` instead maybe?
+     Identity = Base.new
+ 
+     # Two combinators fused into one: `first` runs, then `second` runs on
+diff --git a/lib/lain/context/cache_breakpoints.rb b/lib/lain/context/cache_breakpoints.rb
+index 0ce0a99..67c1f16 100644
+--- a/lib/lain/context/cache_breakpoints.rb
++++ b/lib/lain/context/cache_breakpoints.rb
+@@ -43,6 +43,7 @@ module Lain
+       # Channel), so there is no runtime channel to signal through without
+       # breaking that contract. This comment and the spec pinning the
+       # behavior are the loud part.
++      # CODE REVIEW: another case where ActiveModel and validations would be useful
+       def initialize(every: EVERY, lookback: LOOKBACK_BLOCKS, cap: CAP)
+         raise ArgumentError, "every (#{every}) must stay inside the lookback window (#{lookback})" if every >= lookback
+         raise ArgumentError, "cap (#{cap}) must be positive" unless cap.positive?
+diff --git a/lib/lain/context/prune.rb b/lib/lain/context/prune.rb
+index 493402d..c2aeb86 100644
+--- a/lib/lain/context/prune.rb
++++ b/lib/lain/context/prune.rb
+@@ -13,6 +13,7 @@ module Lain
+       # @param predicate [#call(Hash) -> bool, nil] keep messages it returns
+       #   true for, via a block
+       def initialize(keep_last: nil, &predicate)
++        # CODE REVIEW: ActiveModel validations
+         raise ArgumentError, "provide keep_last: or a predicate block, not both" if keep_last && predicate
+         raise ArgumentError, "provide keep_last: or a predicate block" if keep_last.nil? && predicate.nil?
+ 
+@@ -27,6 +28,7 @@ module Lain
+       end
+ 
+       # Pure client-side trimming needs nothing from the Provider.
++      # CODE REVIEW: a lot of these have the exact same definition of `requires` as `Base` does
+       def requires
+         [].freeze
+       end
+diff --git a/lib/lain/context/recall.rb b/lib/lain/context/recall.rb
+index 4c070dc..8b9bc20 100644
+--- a/lib/lain/context/recall.rb
++++ b/lib/lain/context/recall.rb
+@@ -31,6 +31,7 @@ module Lain
+         # A non-positive k means "recall nothing", but `hits.first(@k)` would
+         # only surface that at render time (first(0) is [], first(-1) raises).
+         # Refuse it at construction, where the mistake was actually made.
++        # More ActiveModel::Validations
+         raise ArgumentError, "k must be positive, got #{@k}" unless @k.positive?
+ 
+         freeze
+@@ -50,6 +51,7 @@ module Lain
+         return messages if hits.empty?
+ 
+         rest = messages[0..-2]
++        # CODE REVIEW: I think we have way too much primitive obsession in some of what we are passing around
+         rest + [{ "role" => last["role"], "content" => last["content"] + [recall_block(hits)] }]
+       end
+ 
+@@ -65,6 +67,8 @@ module Lain
+       # case, and falling further back only happens when it turns out to be
+       # entirely tool_results or a bare workspace tail.
+       def derive_query(messages)
++        # CODE REVIEW: if `Message` was a real class we could do `.select(&:user_role?)`
++        # and also the `query_text` could be a method on message as well...
+         messages.reverse_each.lazy
+                 .select { |message| message["role"] == "user" }
+                 .filter_map { |message| query_text(message) }
+@@ -77,6 +81,7 @@ module Lain
+       end
+ 
+       def real_text_blocks(message)
++        # CODE REVIEW: I feel like `real_text_blocks` should be a method on a `Message`.
+         message["content"].select { |block| block["type"] == "text" && !workspace_tagged?(block) }
+       end
+ 
+@@ -85,6 +90,7 @@ module Lain
+       # card's pinned extraction rule -- an accepted tradeoff, since blocks
+       # carry no provenance field to ask instead.
+       def workspace_tagged?(block)
++        # CODE REVIEW: can we either define this as a method on `Message` or on `Workspace` that we send it the message?
+         block["text"].to_s.start_with?(Workspace::OPENING_TAG)
+       end
+ 
+diff --git a/lib/lain/context/reminder.rb b/lib/lain/context/reminder.rb
+index 509f110..17a129b 100644
+--- a/lib/lain/context/reminder.rb
++++ b/lib/lain/context/reminder.rb
+@@ -15,6 +15,7 @@ module Lain
+     class Reminder < Base
+       def initialize(workspace:)
+         super()
++        # CODE REVIEW: why does this one get the workspace passed to it but `Recall` doesn't?
+         @workspace = workspace
+         freeze
+       end
+@@ -26,6 +27,7 @@ module Lain
+         return messages unless last["role"] == "user"
+ 
+         rest = messages[0..-2]
++        # CODE REVIEW: more primitive obsession
+         rest + [{ "role" => "user", "content" => last["content"] + @workspace.to_blocks }]
+       end
+ 
+diff --git a/lib/lain/event.rb b/lib/lain/event.rb
+index 24391cb..5ff2f1f 100644
+--- a/lib/lain/event.rb
++++ b/lib/lain/event.rb
+@@ -24,6 +24,7 @@ module Lain
+       # The record's discriminator: the class's short name in snake_case, so
+       # {ToolOutput} journals as `"tool_output"`.
+       # @return [String]
++      # CODE REVIEW: we could use one of the ActiveSupport methods instead of implementing this ourselves
+       def journal_type
+         self.class.name.split("::").last.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
+       end
+@@ -59,6 +60,7 @@ module Lain
+       include Journalable
+ 
+       def initialize(count:)
++        # CODE REVIEW: ActiveModel Validations?
+         unless count.is_a?(Integer) && count.positive?
+           raise ArgumentError, "count must be a positive Integer, got #{count.inspect}"
+         end
+@@ -104,6 +106,7 @@ module Lain
+       include Journalable
+ 
+       def initialize(digest:, model:, stop_reason:, usage:)
++        # CODE REVIEW: ActiveModel Validations?
+         raise ArgumentError, "digest must name the committed turn, got nil" if digest.nil?
+         raise ArgumentError, "stop_reason must name why the model stopped, got nil" if stop_reason.nil?
+ 
+@@ -149,6 +152,7 @@ module Lain
+       include Journalable
+ 
+       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil)
++        # CODE REVIEW: ActiveModel Validations?
+         raise ArgumentError, "stream must be true or false, got #{stream.inspect}" unless [true, false].include?(stream)
+ 
+         super(
+@@ -181,6 +185,7 @@ module Lain
+       include Journalable
+ 
+       def initialize(turn_digest:, root:)
++        # CODE REVIEW: ActiveModel Validations?
+         raise ArgumentError, "turn_digest must name the committed turn, got nil" if turn_digest.nil?
+ 
+         super(turn_digest: turn_digest.dup.freeze, root: root&.dup&.freeze)
+@@ -215,6 +220,7 @@ module Lain
+       include Journalable
+ 
+       def initialize(tool_use_id:, pattern:)
++        # CODE REVIEW: ActiveModel Validations?
+         raise ArgumentError, "pattern must name what matched, got nil" if pattern.nil?
+ 
+         super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
+diff --git a/lib/lain/frontend/approval_policy.rb b/lib/lain/frontend/approval_policy.rb
+index ad59c28..ad8774e 100644
+--- a/lib/lain/frontend/approval_policy.rb
++++ b/lib/lain/frontend/approval_policy.rb
+@@ -14,10 +14,14 @@ module Lain
+     # `DenyAll` stay there because they touch nothing but a Boolean; this is the
+     # third option, and it belongs here because asking the question IS the
+     # terminal write.
++    # CODE REVIEW: it's not just `ApprovalPolicy` but also `ApprovalPrompt` as a "UI" interaction
++    # I think we should probably name it correctly, or we can move this out of the frontend and let it be a policy object
++    # and then create a `UserPrompt` that handles the data that is the `question`, `options`, and has the `call` to get a `response`.
+     class ApprovalPolicy
+       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
+       # a tier-3 shell command is the one decision in this whole harness that must
+       # fail closed: an unrecognized keystroke is not consent.
++      # CODE REVIEW: private constant?
+       AFFIRMATIVE = /\Ay(es)?\z/i
+ 
+       def initialize(output: $stdout, input: $stdin, pastel: Pastel.new)
+@@ -41,6 +45,7 @@ module Lain
+         "approve #{effect.name}(#{effect.input.inspect})? [y/N] "
+       end
+ 
++      # CODE REVIEW: instead of `!answer.nil?` maybe use `answer.present?` to avoid double negative
+       def affirmative?(answer)
+         !answer.nil? && AFFIRMATIVE.match?(answer.strip)
+       end
+diff --git a/lib/lain/frontend/tty.rb b/lib/lain/frontend/tty.rb
+index 7840bd2..e486366 100644
+--- a/lib/lain/frontend/tty.rb
++++ b/lib/lain/frontend/tty.rb
+@@ -24,6 +24,10 @@ module Lain
+     #    nothing but a second protocol for the same information. The Channel
+     #    exists for things that arrive concurrently WHILE a call is still
+     #    running (a bash tool's live stdout); a finished Response is not that.
++    # CODE REVIEW: how much of `TTY` do we need when we were considering using `irb` or `debug` to have a ruby interactive console?
++    # I do think we should consider what the ruby ecosystem provides with respect to open source gems that we can use to help here
++    # I see that we are already using tty-screen and tty-cursor and pastel. If we pull in a dependency, we might have simpler work than constraining to just
++    # what ruby has built in
+     class TTY
+       # Raw escapes for the DEC private mode `tput smcup`/`rmcup` uses. tty-cursor
+       # has no alternate-screen verb of its own, and pulling in a full terminfo
+@@ -90,6 +94,10 @@ module Lain
+ 
+       # Render the model's finished turn. Not Channel-sourced -- see the class
+       # comment on why a synchronous Response bypasses the Channel entirely.
++      # CODE REVIEW: I _think_ we'd be happier having a `Renderable` concern that we define
++      # and then classes can `include Rnderable` and do a class method that is `text_color = Frontend.colors[:cyan]`
++      # and this is where if we did a better job of defining `to_s`, we could have `Renderable` define a `def render` that
++      # colorizes the `to_s`
+       def render_response(response)
+         @output.puts(@pastel.cyan(response.text))
+         @output.puts(rule)
+@@ -108,6 +116,7 @@ module Lain
+       # returns nil once the Channel is closed and drained, which is this
+       # thread's only exit.
+       def render_until_closed
++        # CODE REVIEW: can't we do a `@channel.each` if the channel is enumerable?
+         event = @channel.pop
+         while event
+           render(event)
+@@ -115,6 +124,8 @@ module Lain
+         end
+       end
+ 
++      # CODE REVIEW: we should be doing a better job of naming this method since this should be the
++      # `@output.puts(event.render); @output.flush` instead of anything else
+       def render(event)
+         render_tool_output(event) if event.is_a?(Event::ToolOutput)
+       end
+diff --git a/lib/lain/handler.rb b/lib/lain/handler.rb
+index db53f9f..31b5789 100644
+--- a/lib/lain/handler.rb
++++ b/lib/lain/handler.rb
+@@ -40,16 +40,16 @@ module Lain
+     # bottom of the stack that finally performs it, writing the outcome back to
+     # `env[:result]` so the surrounding middleware can observe it.
+     def to_app
+-      lambda do |env|
++      lambda do |env| # CODE REVIEW: I see where we are getting `env` is from the Rack middleware idea
++        # CODE REVIEW: Maybe we want to define a `MiddlewareEnvironment` class instead of passing around excessive `Hash`es.
+         env.merge(result: call(env.fetch(:effect), env[:context]))
+       end
+     end
+ 
+     # Whether this handler interprets `effect` itself (vs. delegating to inner).
+     # Subclasses override; the base handles nothing, existing only to compose.
+-    def handles?(_effect)
+-      false
+-    end
++    # CODE REVIEW: ruby endless
++    def handles?(_effect) = false
+ 
+     # Resolve the {Lain::Tool} a ToolCall names, as seen from this point in the
+     # chain. Only the handler that actually holds a {Lain::Toolset} ({Live}) can
+@@ -62,9 +62,8 @@ module Lain
+     # failure: authorization decided against a different set than possession.
+     #
+     # @return [Lain::Tool, nil] the tool, or nil if no handler in the chain holds it
+-    def tool_named(name)
+-      @inner&.tool_named(name)
+-    end
++    # CODE REVIEW: ruby endless
++    def tool_named(name) = @inner&.tool_named(name)
+ 
+     protected
+ 
+diff --git a/lib/lain/handler/approving.rb b/lib/lain/handler/approving.rb
+index 160c28c..7cfc2af 100644
+--- a/lib/lain/handler/approving.rb
++++ b/lib/lain/handler/approving.rb
+@@ -33,6 +33,8 @@ module Lain
+     # there. {ApproveAll} is the `--yolo` opt-out; {DenyAll} is its Null-Object
+     # opposite and the default -- safer to refuse an unattended gate than to
+     # silently run it.
++    # CODE REVIEW: I believe `Handler` is way to vague here? I think better naming would be beneficial.
++    # Some options: `Gate`, `Arbiter` or something that implies more intention
+     class Approving < Handler
+       # Approves every gated call without asking. The `--yolo` path: an
+       # explicit, named opt-out rather than a magic nil policy.
+diff --git a/lib/lain/handler/live.rb b/lib/lain/handler/live.rb
+index b928353..fe13d44 100644
+--- a/lib/lain/handler/live.rb
++++ b/lib/lain/handler/live.rb
+@@ -22,6 +22,8 @@ module Lain
+     # effect plus the injected `channel` -- never the bare context a caller
+     # threads through {#call}. That is what lets, e.g., Tools::Bash attribute
+     # its `live_stdout` bytes to the exact `tool_use_id` that asked for them.
++    # CODE REVIEW: hmm, based on this class, the `Handler` might be closer to Handlable
++    # or even just `EffectProcessor`. Mayble `Effectable`?
+     class Live < Handler
+       # @param toolset [Lain::Toolset] the capabilities this handler can dispatch
+       # @param channel [Lain::Channel] where tool output is attributed; defaults
+@@ -34,6 +36,7 @@ module Lain
+       end
+ 
+       def handles?(effect)
++        # CODE REVIEW: `effect.tool_call? || effect.approval?` would read better
+         effect.is_a?(Effect::ToolCall) || effect.is_a?(Effect::Approval)
+       end
+ 
+@@ -50,6 +53,8 @@ module Lain
+       protected
+ 
+       def perform(effect, context)
++        # CODE REVIEW: can we avoid the type switching here and instead handle things better via
++        # a method on the effect itself? The else then becomes a `rescue NoMethodError`
+         case effect
+         when Effect::Approval then call(effect.effect, context)
+         when Effect::ToolCall then dispatch(effect, context)
+diff --git a/lib/lain/handler/recorded.rb b/lib/lain/handler/recorded.rb
+index 32b1559..8c68094 100644
+--- a/lib/lain/handler/recorded.rb
++++ b/lib/lain/handler/recorded.rb
+@@ -20,6 +20,10 @@ module Lain
+     # {Handler::UnhandledEffect} -- a replay miss is never silently turned into a
+     # made-up success. Stack {Recorded} in front of {Live} to replay the calls you
+     # recorded and run the rest for real.
++    # CODE REVIEW: So, the `Handler` is maybe better named as `EffectManifester` or `Effect::Executor`?
++    # Given the tight association with the `Effect`s themselves, I think all of the `Handler` related stuff does
++    # need a better name for it and it should be moved underneath the effect namespace.
++    # Additionally, `Handler` makes me think of `EventHandler`'s so it is definitely an overloaded term.
+     class Recorded < Handler
+       # Build from journaled records: each `tool_result` record becomes a
+       # replayable outcome keyed by its `tool_use_id`. Entries are the
+@@ -55,6 +59,7 @@ module Lain
+       # True only for a call this handler has a recording for -- so a miss delegates
+       # to `inner` through {Handler#call} rather than being handled here.
+       def handles?(effect)
++        # CODE REVIEW: lets try to avoid the case statement that switches over types again
+         case effect
+         when Effect::Approval then handles?(effect.effect)
+         when Effect::ToolCall then @outcomes.key?(effect.tool_use_id)
+diff --git a/lib/lain/ledger.rb b/lib/lain/ledger.rb
+index c800b42..bf85a5d 100644
+--- a/lib/lain/ledger.rb
++++ b/lib/lain/ledger.rb
+@@ -26,6 +26,7 @@ module Lain
+   # question the Ledger answers. Whole-run usage regardless of reachability is
+   # the sum over every journal record, which is what {Agent::Accounting#usage}
+   # already accumulates.
++  # CODE REVIEW: should Ledger be under the namespace for the `Journal`?
+   class Ledger
+     # Convenience: fold journal entries (parsed Hashes or raw NDJSON lines)
+     # straight into a priced Ledger.
+@@ -93,6 +94,7 @@ module Lain
+     # keep working for nil), so the nil-model case is rescued and re-raised
+     # rather than pre-checked: PriceBook's own "no price for model \"\"" would
+     # send the first mock-journal user grepping the wrong codebase.
++    # CODE REVIEW: this method naming seems poor. I think `turn_cost` might be a better name?
+     def priced(turn, entry)
+       @price_book.cost(entry.model, entry.usage)
+     rescue PriceBook::UnknownModel
+diff --git a/lib/lain/memory/index.rb b/lib/lain/memory/index.rb
+index 19830e8..61a97ed 100644
+--- a/lib/lain/memory/index.rb
++++ b/lib/lain/memory/index.rb
+@@ -17,6 +17,7 @@ module Lain
+       # The Merkle link between writes. The item's content lives in its own
+       # store entry; the Node holds only the item's digest, so rewriting an id
+       # never copies a body.
++      # CODE REVIEW: should we be making use of a crate in rust to handle merkle?
+       class Node
+         include ContentAddressed
+ 
+diff --git a/lib/lain/memory/item.rb b/lib/lain/memory/item.rb
+index 410cd9d..54fc39f 100644
+--- a/lib/lain/memory/item.rb
++++ b/lib/lain/memory/item.rb
+@@ -14,6 +14,7 @@ module Lain
+ 
+       # [[:space:]] is Unicode-aware where String#strip is ASCII-only: an
+       # NBSP-only id must still count as blank.
++      # CODE REVIEW: lets make these constants private, and lets define a class method that uses them for matching and then we can have decent unit tests
+       BLANK = /\A[[:space:]]*\z/
+ 
+       # Ruby's \R already covers \n, \r, \r\n, \v, \f and NEL; \v and
+diff --git a/lib/lain/memory/manifest.rb b/lib/lain/memory/manifest.rb
+index 942d473..60d34af 100644
+--- a/lib/lain/memory/manifest.rb
++++ b/lib/lain/memory/manifest.rb
+@@ -62,6 +62,8 @@ module Lain
+       # enforces it rather than inheriting Index#each's walk order.
+       # Duplicate-id resolution (last write wins) stays the Index's job --
+       # Manifest trusts the source for LWW, never for ordering.
++      # CODE REVIEW: I am unsure how we are using the manifest so far/elsewhere but I'm wondering about `@entries` just being duplication of the index's items?
++      # Basically, could we consider consolidating teh two together more to avoid duplication? Dunno
+       def initialize(index)
+         @entries = index.map { |item| entry_for(item) }.sort_by(&:id).freeze
+         @lines = @entries.map { |entry| -"#{entry.id} | #{entry.description}" }.freeze
+diff --git a/lib/lain/memory/recorder.rb b/lib/lain/memory/recorder.rb
+index c609419..b43366e 100644
+--- a/lib/lain/memory/recorder.rb
++++ b/lib/lain/memory/recorder.rb
+@@ -11,6 +11,9 @@ module Lain
+     # satisfies the same duck a bare Index does: {Tools::MemoryRead.new(index:
+     # recorder)} works with no constructor contract change, and a read
+     # constructed against the Recorder always sees the most recent write.
++    # CODE REVIEW: do we have any way by which we are enforcing this is the only mutable holder for the
++    # index? And we do not have anything enforcing singleton-ness on this. I don't _think_ we need to enforce
++    # that constraint, but I do think we should consider it given our documentation above
+     class Recorder
+       def initialize(index: Index.empty)
+         @index = index
+@@ -20,6 +23,7 @@ module Lain
+       # #checkout an earlier root to inspect what a prior write superseded.
+       attr_reader :index
+ 
++      # CODE REVIEW: `delegate :root, to: :index`
+       def root
+         index.root
+       end
+@@ -31,6 +35,7 @@ module Lain
+         root
+       end
+ 
++      # CODE REVIEW: `delegate :fetch, to: :index`
+       def fetch(id)
+         index.fetch(id)
+       end
+diff --git a/lib/lain/response.rb b/lib/lain/response.rb
+index f8607d5..be44d61 100644
+--- a/lib/lain/response.rb
++++ b/lib/lain/response.rb
+@@ -13,6 +13,9 @@ module Lain
+   # The wire enums are non-exhaustive: an unrecognized value passes through
+   # rather than raising. Anything unknown becomes :unknown so the Agent's state
+   # machine can branch on it explicitly instead of falling through a `case`.
++  # CODE REVIEW:
++  # I think this is a hold over from before we adopted a state machine so we should consider
++  # addressing this
+   module StopReason
+     END_TURN = :end_turn
+     TOOL_USE = :tool_use
+diff --git a/lib/lain/sink.rb b/lib/lain/sink.rb
+index 132715e..18700b1 100644
+--- a/lib/lain/sink.rb
++++ b/lib/lain/sink.rb
+@@ -18,6 +18,9 @@ module Lain
+     # Only the IO surface third-party writers actually reach for is implemented:
+     # `#write`, `#puts`, `#print`, `#<<`, and `#flush`. Return values follow the
+     # real `IO` contract (notably `#write` returns the number of bytes written).
++    # CODE REVIEW: aren't there ruby string buffers that we could be using or something that would help us here?
++    # Lets definitely make sure we are not doing a "painter's algorithm" where we keep appending to a string and then append to teh string again
++    # and thus have performance issues here as well as excess object allocations that incur GC
+     class IOAdapter
+       # @param channel [Lain::Channel] destination for emitted events
+       # @param tool_use_id [String] attribution stamped on every event
+@@ -50,6 +53,7 @@ module Lain
+ 
+       # Write each argument's string form with no separators or terminator.
+       # @return [nil] per the `IO#print` contract
++      # CODE REVIEW: this is very similar to `write` in usage.
+       def print(*args)
+         buffer = +""
+         args.each { |arg| buffer << arg.to_s }
+diff --git a/lib/lain/timeline.rb b/lib/lain/timeline.rb
+index 176e6f1..284805f 100644
+--- a/lib/lain/timeline.rb
++++ b/lib/lain/timeline.rb
+@@ -15,6 +15,7 @@ module Lain
+   #
+   # Named branch refs are deliberately absent for now; a branch here is just a
+   # Timeline value that somebody is holding.
++  # CODE REVIEW: is the Timeline somewhat like a `Range` object? I dunno
+   class Timeline
+     class CrossStore < Error; end
+ 
+diff --git a/lib/lain/workspace.rb b/lib/lain/workspace.rb
+index 6f5eed5..388651e 100644
+--- a/lib/lain/workspace.rb
++++ b/lib/lain/workspace.rb
+@@ -23,21 +23,29 @@ module Lain
+     # Shared with Context::Recall, whose query-exclusion rule must match
+     # exactly what #to_blocks injects: one constant, two call sites, so the
+     # tag cannot drift between the writer and the reader.
++    # CODE REVIEW: this isn't react or html or similar so why do we have tags here?
+     OPENING_TAG = "<workspace>"
+     CLOSING_TAG = "</workspace>"
+ 
+     attr_reader :reminders
+ 
++    # CODE REVIEW: I don't think an instance variable in a class method is
++    # considered thread safe. On that note, we may want to add a dev dependency
++    # to make sure we use other rubocop plugins to catch issues like these
+     def self.empty
+       @empty ||= new
+     end
+ 
+     # @param reminders [Array<String>] injected verbatim, in order
++    # CODE REVIEW: given we so often want to do a `freeze` after we are done with `initialize`
++    # we should probably consider an ActiveSupport::Concern that is `Freezable` that gets `prepend Freezable`
++    # and it has a `def initialize(*); super(*); freeze; end` essentially.
+     def initialize(reminders: [])
+       @reminders = Canonical.normalize(Array(reminders))
+       freeze
+     end
+ 
++    # CODE REVIEW: `delegate :empty?, to: :reminders`
+     def empty?
+       reminders.empty?
+     end
+diff --git a/spec/lain/agent_spec.rb b/spec/lain/agent_spec.rb
+index 3d8f37a..0fa3c4f 100644
+--- a/spec/lain/agent_spec.rb
++++ b/spec/lain/agent_spec.rb
+@@ -1,11 +1,14 @@
+ # frozen_string_literal: true
+ 
++# CODE REVIEW: lets move these requires in to spec/spec_helper.rb
+ require "json"
+ require "stringio"
+ require "tmpdir"
+ 
+ # Captures the invocation context it is handed, so a spec can prove the Agent
+ # threads ONE session all the way down to a tool that runs on a later turn.
++# CODE REVIEW: this should be defined in `spec/support/` instead that way it can
++# be used across more tests
+ class ContextProbe < Lain::Tool
+   def initialize(sightings)
+     @sightings = sightings
+@@ -293,6 +296,7 @@ RSpec.describe Lain::Agent do
+ 
+   describe "session threading" do
+     around do |example|
++      # CODE REVIEW: lets not use `and` to sequence two things into one line like this
+       Dir.mktmpdir { |dir| @tmpdir = dir and example.run }
+     end
+ 
+diff --git a/spec/lain/agent_turn_middleware_spec.rb b/spec/lain/agent_turn_middleware_spec.rb
+index c2041bf..df1b858 100644
+--- a/spec/lain/agent_turn_middleware_spec.rb
++++ b/spec/lain/agent_turn_middleware_spec.rb
+@@ -44,6 +44,8 @@ RSpec.describe "Agent turn_middleware" do
+ 
+   it "gives a middleware :iteration and :timeline going in, :response and :settled coming out" do
+     seen = nil
++    # CODE REVIEW: would this probe middleware be better moved out and into spec/support
++    # or alternatively would a probe middleweare be worth defining inside our gem itself?
+     probe = Class.new(Lain::Middleware::Base) do
+       define_method(:call) do |env, &downstream|
+         seen = downstream.call(env)

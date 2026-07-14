@@ -159,7 +159,10 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 - **Fold-in:** add a **local-model provider arm** (ollama) to the provider axis `[exp]` — cheap,
   private meta-tasks (memory-save gating, query sanitization, prune-scoring, and local **autocomplete /
   interactive prompting**) that keep PHI off the wire (TODO 31–33). The **harness-variance experiment** can run as soon as this + M2 + M3a exist. These meta-tasks are now formalized as the
-  **oracle seam** — `planning/specs/oracles.md` (OR-1).
+  **oracle seam** — `planning/specs/oracles.md` (OR-1). **Planned:**
+  `planning/specs/code-review-ollama-test-infra.md` — native-API `Provider::Ollama` (qwen3
+  default, temp-0/seeded determinism arm), resolution of the 2026-07-14 code-review comments,
+  and the matcher/test-infrastructure upgrade.
 
 ### M3c — the bench: algebra, seams, graders `[built]` — *the center of gravity*
 > **Committed core `[built]` (this session):** the combinators, all four phases, capability guarding,

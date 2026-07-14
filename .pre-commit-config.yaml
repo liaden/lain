@@ -7,8 +7,12 @@ repos:
         exclude: '\.rs$'
       - id: check-merge-conflict
       - id: check-yaml
+      # A .patch file's whitespace is load-bearing: a blank context line in a diff is a
+      # single trailing space, and stripping it corrupts the patch's applicability.
       - id: end-of-file-fixer
+        exclude: '\.patch$'
       - id: trailing-whitespace
+        exclude: '\.patch$'
 
   - repo: local
     hooks:
