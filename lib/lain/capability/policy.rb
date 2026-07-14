@@ -29,6 +29,12 @@ module Lain
       # @raise [ArgumentError] on an unknown policy name (unknown values fail loudly)
       def self.for(name, journal: Channel::Null.instance)
         strategy = STRATEGIES[name]
+        # Not `validates :strategy, presence: true`: this is a FACTORY mapping a
+        # name to a strategy class, and Policy has no `strategy` attribute to
+        # validate. Validate-then-freeze (T6) governs a value object's OWN
+        # construction; a lookup that rejects an unknown key is a different shape.
+        # The explicit raise also NAMES the valid options (NAMES), which a bare
+        # presence error cannot -- so it is kept, more diagnostic, not less.
         if strategy.nil?
           raise ArgumentError,
                 "unknown capability policy #{name.inspect}, expected one of #{NAMES.inspect}"

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/string/inflections"
+
 module Lain
   # Structured events that flow through a {Lain::Channel}.
   #
@@ -22,10 +24,57 @@ module Lain
       end
 
       # The record's discriminator: the class's short name in snake_case, so
-      # {ToolOutput} journals as `"tool_output"`.
+      # {ToolOutput} journals as `"tool_output"`. `String#underscore` produces
+      # the byte-identical string the hand-rolled gsub did for every current
+      # event -- an equivalence the spec pins, because this string is the journal
+      # discriminator and recorded journals replay against it.
       # @return [String]
       def journal_type
-        self.class.name.split("::").last.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
+        self.class.name.split("::").last.underscore
+      end
+    end
+
+    # Construction contracts for the events whose hand-rolled guards moved to
+    # validate-then-freeze (Ruling 2). Each is a throwaway {Lain::Guard} carrier
+    # validated BEFORE the (auto-frozen) Data value exists -- see {Lain::Guard}
+    # for why validation must live off the frozen value. Named, so they stay
+    # reachable for introspection and shoulda-matchers.
+    module Guards
+      # A dropped-event count must be a positive Integer.
+      class Dropped < Guard
+        attribute :count
+        validates :count, numericality: { only_integer: true, greater_than: 0,
+                                          message: "must be a positive Integer, got %<value>s" }
+      end
+
+      # A usage record must name the turn it paid for and why the model stopped.
+      class TurnUsage < Guard
+        attribute :digest
+        attribute :stop_reason
+        validates :digest, presence: { message: "must name the committed turn, got nil" }
+        validates :stop_reason, presence: { message: "must name why the model stopped, got nil" }
+      end
+
+      # `stream` must be a real boolean so it round-trips through the journal. A
+      # required boolean is validated by inclusion in [true, false], because
+      # `presence: true` would reject `false` (the Tool::Input idiom).
+      class RequestSent < Guard
+        attribute :stream
+        # %<value>s echoes the offender un-inspected ("got yes", not 'got "yes"')
+        # -- the one diagnostic byte lost versus the hand-rolled guard.
+        validates :stream, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
+      end
+
+      # A memory-root record must name the committed turn it snapshots.
+      class MemoryRoot < Guard
+        attribute :turn_digest
+        validates :turn_digest, presence: { message: "must name the committed turn, got nil" }
+      end
+
+      # A refusal record must name what matched (never the matched bytes).
+      class WriteRefused < Guard
+        attribute :pattern
+        validates :pattern, presence: { message: "must name what matched, got nil" }
       end
     end
 
@@ -59,10 +108,7 @@ module Lain
       include Journalable
 
       def initialize(count:)
-        unless count.is_a?(Integer) && count.positive?
-          raise ArgumentError, "count must be a positive Integer, got #{count.inspect}"
-        end
-
+        Guards::Dropped.check!(count: count)
         super
       end
     end
@@ -104,8 +150,7 @@ module Lain
       include Journalable
 
       def initialize(digest:, model:, stop_reason:, usage:)
-        raise ArgumentError, "digest must name the committed turn, got nil" if digest.nil?
-        raise ArgumentError, "stop_reason must name why the model stopped, got nil" if stop_reason.nil?
+        Guards::TurnUsage.check!(digest: digest, stop_reason: stop_reason)
 
         super(
           digest: digest.dup.freeze,
@@ -149,7 +194,7 @@ module Lain
       include Journalable
 
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil)
-        raise ArgumentError, "stream must be true or false, got #{stream.inspect}" unless [true, false].include?(stream)
+        Guards::RequestSent.check!(stream: stream)
 
         super(
           digest: digest.dup.freeze,
@@ -181,7 +226,7 @@ module Lain
       include Journalable
 
       def initialize(turn_digest:, root:)
-        raise ArgumentError, "turn_digest must name the committed turn, got nil" if turn_digest.nil?
+        Guards::MemoryRoot.check!(turn_digest: turn_digest)
 
         super(turn_digest: turn_digest.dup.freeze, root: root&.dup&.freeze)
       end
@@ -215,7 +260,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, pattern:)
-        raise ArgumentError, "pattern must name what matched, got nil" if pattern.nil?
+        Guards::WriteRefused.check!(pattern: pattern)
 
         super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
       end

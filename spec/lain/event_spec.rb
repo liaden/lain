@@ -4,6 +4,70 @@ require "json"
 require "stringio"
 
 RSpec.describe Lain::Event do
+  # The five events whose hand-rolled guards moved to validate-then-freeze
+  # (Ruling 2). Construction validates a throwaway Lain::Guard carrier BEFORE
+  # the auto-frozen Data value exists, so the value never carries ActiveModel's
+  # @errors / @context_for_validation ivars and stays Ractor-shareable.
+  describe "validate-then-freeze construction (T6 convention)" do
+    it "exposes a reachable ActiveModel Guard carrier per converted event" do
+      expect(Lain::Event::Guards::Dropped.new(count: 0)).to be_invalid
+      expect(Lain::Event::Guards::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid
+      expect(Lain::Event::Guards::RequestSent.new(stream: "yes")).to be_invalid
+      expect(Lain::Event::Guards::MemoryRoot.new(turn_digest: nil)).to be_invalid
+      expect(Lain::Event::Guards::WriteRefused.new(pattern: nil)).to be_invalid
+    end
+
+    it "raises ArgumentError naming the attribute AND echoing the value, never ActiveModel::ValidationError" do
+      expect { Lain::Event::Dropped.new(count: 0) }
+        .to raise_error(ArgumentError, "count must be a positive Integer, got 0")
+      # %{value} echoes un-inspected: 'got yes', where the hand-rolled guard said 'got "yes"'.
+      expect { Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: "yes", extra: {}) }
+        .to raise_error(ArgumentError, "stream must be true or false, got yes")
+      expect { Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: nil, extra: {}) }
+        .to raise_error(ArgumentError, /stream must be true or false/)
+    end
+
+    it "leaves every valid converted event deeply frozen, Ractor-shareable, and @errors-free" do
+      valid = [
+        Lain::Event::Dropped.new(count: 1),
+        Lain::Event::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}),
+        Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: false, extra: {}),
+        Lain::Event::MemoryRoot.new(turn_digest: "d", root: nil),
+        Lain::Event::WriteRefused.new(tool_use_id: "t", pattern: "p")
+      ]
+
+      valid.each do |event|
+        expect(event).to be_frozen
+        expect(Ractor.shareable?(event)).to be(true)
+        expect(event.instance_variables).not_to include(:@errors)
+      end
+    end
+  end
+
+  describe "#journal_type" do
+    # The discriminator is pinned by recorded journals, so String#underscore
+    # (the ActiveSupport form) MUST produce the exact string the hand-rolled
+    # gsub did for every event -- a future name where they diverge fails here,
+    # not silently in a replayed journal.
+    it "derives each type via underscore, byte-identical to the old gsub" do
+      require "active_support/core_ext/string/inflections"
+      {
+        "ToolOutput" => "tool_output", "Dropped" => "dropped",
+        "ProviderRetry" => "provider_retry", "TurnUsage" => "turn_usage",
+        "RequestSent" => "request_sent", "MemoryRoot" => "memory_root",
+        "CapabilityDegraded" => "capability_degraded", "WriteRefused" => "write_refused"
+      }.each do |name, expected|
+        hand_rolled = name.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
+        expect(name.underscore).to eq(expected).and eq(hand_rolled)
+      end
+    end
+
+    it "is what a converted event actually reports" do
+      expect(Lain::Event::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}).journal_type)
+        .to eq("turn_usage")
+    end
+  end
+
   describe Lain::Event::ToolOutput do
     subject(:event) { described_class.new(tool_use_id: "t1", stream: :stdout, bytes: "hi") }
 

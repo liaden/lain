@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   # State that is SENT to the model but never STORED in the Timeline.
   #
@@ -18,28 +20,39 @@ module Lain
   # Toolset, and Workspace must always produce the same Request, or dry replay is
   # worthless and the prompt cache breaks silently.
   class Workspace
+    # Freeze happens once, after initialize sets @reminders (see Lain::Freezable).
+    prepend Freezable
+
     BLOCK_TYPE = "text"
 
-    # Shared with Context::Recall, whose query-exclusion rule must match
-    # exactly what #to_blocks injects: one constant, two call sites, so the
-    # tag cannot drift between the writer and the reader.
+    # The tags delimit injected workspace state so a reader -- human, model, or
+    # {Context::Recall}'s query-exclusion rule -- can tell it apart from genuine
+    # conversation. One constant, two call sites, so the writer and reader cannot
+    # drift. That Recall keys provenance off this literal prefix (rather than a
+    # structural block flag) is a known limitation tracked as R.2 in
+    # planning/remaining-work.md -- NOT resolved here.
     OPENING_TAG = "<workspace>"
     CLOSING_TAG = "</workspace>"
 
     attr_reader :reminders
 
-    def self.empty
-      @empty ||= new
-    end
+    delegate :empty?, to: :reminders
 
     # @param reminders [Array<String>] injected verbatim, in order
     def initialize(reminders: [])
       @reminders = Canonical.normalize(Array(reminders))
-      freeze
     end
 
-    def empty?
-      reminders.empty?
+    # A single shared, frozen instance instead of `@empty ||= new`: an instance
+    # variable memoized in a class method is not thread-safe, and every empty
+    # Workspace is value-equal anyway, so one deeply frozen constant is both
+    # cleaner and race-free. Defined after #initialize so `new` resolves to it.
+    # (Freezable already froze it; the trailing `.freeze` is a redundant,
+    # harmless statement of intent at the constant's definition.)
+    EMPTY = new.freeze
+
+    def self.empty
+      EMPTY
     end
 
     def with(*additional)
