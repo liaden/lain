@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "state_machines"
+require "active_support/core_ext/module/delegation"
 
 require_relative "agent/accounting"
 require_relative "agent/budget"
@@ -31,17 +32,41 @@ module Lain
     # Kept for callers that rescue the harness's own halt. See Agent::Budget.
     BudgetExceeded = Budget::Exceeded
 
+    # The diagnostic each failing stop_reason records. A lookup table, not control
+    # flow: every StopReason whose event transitions to :failed has an entry.
+    FAILURE_REASONS = {
+      StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
+      StopReason::REFUSAL => "model refused to continue",
+      StopReason::UNKNOWN => "unrecognized stop_reason from provider"
+    }.freeze
+    private_constant :FAILURE_REASONS
+
     attr_reader :timeline, :toolset, :context, :workspace, :session,
                 :iterations, :failure_reason, :budget
 
-    # Delegated to {Accounting}, which owns the run's token roll-up.
-    def usage = @accounting.usage
+    # {Accounting} owns the run's token roll-up; the Agent just exposes it.
+    delegate :usage, to: :@accounting
 
+    # The argument list is long because the Agent is the wiring point of the whole
+    # harness, and the honest split is three-way, not one big bag: values that are
+    # ALREADY their own collaborators ({Budget}, {Accounting} via `journal`); the
+    # injected *collaborators* it drives (provider, toolset, context, handler, the
+    # three middleware stacks); and the mutable *run state* it seeds ({#seed_run_state}).
+    # A `Wiring` value object grouping the collaborators was considered and
+    # rejected: it would not remove `seed_run_state` (run state is orthogonal to
+    # collaborators) and it would move the public keyword surface -- which the
+    # `provider_parity` shared group and the state-machine specs construct against
+    # by name -- for no reduction in moving parts. So the seam stays here, named.
+    #
+    # `handler:` defaults to a live {Effect::Handler::Live} rather than `nil`: a
+    # named default resolved once, at the signature, keeps the Null-Object posture
+    # (no `handler || ...` nil-tolerance downstream).
+    #
     # @param journal [#<<] where per-turn usage records land; the Null channel
     #   by default. Today ONLY {Event::TurnUsage} is written here -- it is not
     #   yet the full run record.
     def initialize(provider:, toolset:, context:,
-                   handler: nil,
+                   handler: Effect::Handler::Live.new(toolset:),
                    timeline: nil,
                    workspace: Workspace.empty,
                    session: Session.new,
@@ -59,7 +84,7 @@ module Lain
       @workspace = workspace
       @budget = budget
       @turn_middleware = turn_middleware
-      @tool_runner = build_tool_runner(handler, toolset, tool_middleware)
+      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware)
       seed_run_state(transition_listener, journal, session)
     end
 
@@ -111,16 +136,14 @@ module Lain
 
     private
 
-    def build_tool_runner(handler, toolset, middleware)
-      ToolRunner.new(handler: handler || Handler::Live.new(toolset:), middleware:)
-    end
-
-    # Seeds the mutable run context: a fresh Accounting rolling up over the
-    # injected journal, the observer the machine announces transitions to, and
-    # the run's single mutable Session (read-set + reminders), which -- unlike
-    # everything the model sees -- never enters the Timeline. State itself is
-    # owned by the machine (initial: :awaiting_user). Called once, at
-    # construction; the Accounting is what captures the journal.
+    # The mutable run context, kept apart from #initialize on purpose: the
+    # collaborators above are the immutable wiring, and these four are the state
+    # a run mutates as it goes -- a fresh Accounting rolling up over the injected
+    # journal, the observer the machine announces transitions to, the run's single
+    # mutable Session (read-set + reminders, which -- unlike everything the model
+    # sees -- never enters the Timeline), and the iteration count. Naming that
+    # seam is the point; the machine owns the state ITSELF (initial:
+    # :awaiting_user), so it is not seeded here.
     def seed_run_state(transition_listener, journal, session)
       @transition_listener = transition_listener
       @accounting = Accounting.new(journal:)
@@ -144,40 +167,33 @@ module Lain
       response
     end
 
-    # Every stop_reason the wire can carry gets a named destination here, and the
-    # `else` catches whatever the enum grows next.
+    # Fire the machine event named for the (already-normalized) stop_reason and
+    # let the machine, not a `case`, decide the resulting state. `StopReason.normalize`
+    # (see response.rb) has closed the wire's open enum to StopReason::ALL before
+    # we get here, and {LoopMachine} declares one event per member, so the send
+    # always names a real event -- a genuinely unrecognized wire value is already
+    # :unknown, which fails to :failed. The only loud arm left is structural:
+    # firing a reason's event from an illegal state raises
+    # StateMachines::InvalidTransition (gate 6). Coupling the event names to
+    # StopReason's vocabulary is deliberate; the totality spec pins it.
     #
     # @return [Symbol] :settled when the loop is finished, :continue otherwise
     def transition(response)
-      case response.stop_reason
-      when StopReason::TOOL_USE then perform_tools(response)
-      when StopReason::END_TURN, StopReason::STOP_SEQUENCE then succeed
-      when StopReason::PAUSE_TURN then resume_paused
-      when StopReason::MAX_TOKENS then fail_with("model hit max_tokens before finishing")
-      when StopReason::REFUSAL then fail_with("model refused to continue")
-      when StopReason::UNKNOWN then fail_with("unrecognized stop_reason from provider")
-      else fail_with("unhandled stop_reason #{response.stop_reason.inspect}")
-      end
+      __send__(:"#{response.stop_reason}!")
+      settle(response)
     end
 
-    def succeed
-      complete!
-      :settled
+    # Run-context side effects keyed off the state the machine just reached -- the
+    # machine owns the state, the Agent owns the mutable run context. A paused turn
+    # needs nothing: it stays in :awaiting_model and re-dispatches, counting against
+    # max_iterations so a provider that pauses forever still stops.
+    def settle(response)
+      perform_tools(response) if awaiting_tools?
+      @failure_reason = FAILURE_REASONS[response.stop_reason] if failed?
+      settled? ? :settled : :continue
     end
 
-    def fail_with(reason)
-      @failure_reason = reason
-      fail_run!
-      :settled
-    end
-
-    # A paused turn means a server-side tool is mid-flight; the correct response is
-    # to send the conversation back unchanged and let the server continue. It
-    # counts against max_iterations, so a provider that pauses forever still stops.
-    def resume_paused
-      pause!
-      :continue
-    end
+    def settled? = done? || failed?
 
     def call_model
       dispatch!
@@ -190,11 +206,10 @@ module Lain
 
     # Correctness gate 2: every tool_result for one assistant turn goes back in
     # ONE user message. Splitting them across messages silently teaches Claude to
-    # stop making parallel tool calls -- a regression with no error attached.
+    # stop making parallel tool calls -- a regression with no error attached. The
+    # `tool_use` event has already fired (in #transition); this only commits.
     def perform_tools(response)
-      use_tools!
       @timeline = @timeline.commit(role: :user, content: @tool_runner.run(response, context: @session))
-      :continue
     end
   end
 end

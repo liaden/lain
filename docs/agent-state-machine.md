@@ -18,14 +18,17 @@ stateDiagram-v2
   awaiting_user --> awaiting_model : dispatch
   awaiting_model --> awaiting_model : dispatch
   awaiting_tools --> awaiting_model : dispatch
-  awaiting_model --> awaiting_tools : use_tools
-  awaiting_model --> awaiting_model : pause
-  awaiting_model --> done : complete
-  awaiting_model --> failed : fail_run
   awaiting_user --> awaiting_user : reopen
   awaiting_model --> awaiting_user : reopen
   awaiting_tools --> awaiting_user : reopen
   done --> awaiting_user : reopen
   failed --> awaiting_user : reopen
   awaiting_approval --> awaiting_user : reopen
+  awaiting_model --> awaiting_tools : tool_use
+  awaiting_model --> awaiting_model : pause_turn
+  awaiting_model --> done : end_turn
+  awaiting_model --> done : stop_sequence
+  awaiting_model --> failed : max_tokens
+  awaiting_model --> failed : refusal
+  awaiting_model --> failed : unknown
 ```
