@@ -1,26 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-require "stringio"
-require "tmpdir"
-
-# Captures the invocation context it is handed, so a spec can prove the Agent
-# threads ONE session all the way down to a tool that runs on a later turn.
-class ContextProbe < Lain::Tool
-  def initialize(sightings)
-    @sightings = sightings
-    super()
-  end
-
-  def name = "probe"
-  def description = "Records the invocation context it is handed."
-
-  def perform(_input, invocation)
-    @sightings << invocation.context
-    Lain::Tool::Result.ok("peeked")
-  end
-end
-
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -293,7 +272,10 @@ RSpec.describe Lain::Agent do
 
   describe "session threading" do
     around do |example|
-      Dir.mktmpdir { |dir| @tmpdir = dir and example.run }
+      Dir.mktmpdir do |dir|
+        @tmpdir = dir
+        example.run
+      end
     end
 
     attr_reader :tmpdir

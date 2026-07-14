@@ -2,6 +2,13 @@
 
 require "lain"
 
+# The universal stdlib set: these appear across ten-plus spec files (Ruling 8 of the
+# 2026-07-14 review plan), so they load once here; rarer stdlib requires stay in their
+# leaf specs, mirroring the lib-side policy.
+require "json"
+require "stringio"
+require "tmpdir"
+
 # `webmock/rspec` is required HERE, not from spec/support, because the support glob loads
 # in `Dir[]`'s sorted order and `vcr_configuration.rb` sorts before `webmock_configuration.rb`.
 # VCR's `hook_into :webmock` needs WebMock already loaded, so the load order cannot be left

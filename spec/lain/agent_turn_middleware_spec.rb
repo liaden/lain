@@ -43,6 +43,11 @@ RSpec.describe "Agent turn_middleware" do
   end
 
   it "gives a middleware :iteration and :timeline going in, :response and :settled coming out" do
+    # Stays local rather than moving to spec/support: it closes over `seen`, an
+    # example-local variable it assigns as its side effect. A shared probe class
+    # can't capture per-example state without an injected accumulator (as
+    # ContextProbe in spec/support/probes.rb does with @sightings) -- for a
+    # single assertion like this, the closure is the simpler shape.
     seen = nil
     probe = Class.new(Lain::Middleware::Base) do
       define_method(:call) do |env, &downstream|
