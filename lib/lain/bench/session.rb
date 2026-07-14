@@ -127,7 +127,7 @@ module Lain
           {
             "type" => HEADER_TYPE, "context_class" => context.class.name,
             "model" => context.model, "max_tokens" => context.max_tokens,
-            "system" => context.system, "stream" => context.stream,
+            "system" => context.system, "stream" => context.stream, "extra" => context.extra,
             "head" => timeline.head_digest,
             "tools" => toolset.to_schema, "reminders" => workspace.reminders
           }

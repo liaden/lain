@@ -54,13 +54,20 @@ module Lain
     # prompt.
     REQUIRES = pipeline(Workspace.empty).requires
 
-    attr_reader :system, :model, :max_tokens, :stream
+    attr_reader :system, :model, :max_tokens, :stream, :extra
 
-    def initialize(model:, max_tokens:, system: nil, stream: true)
+    # `extra` carries provider-specific sampler params (temperature, seed,
+    # num_ctx). It rides through to Request#extra, which Request excludes from
+    # cache_payload/digest by design -- so threading it here keeps #render pure
+    # (identical inputs, identical bytes) WITHOUT letting a temperature change
+    # read as a different prompt. Normalized (and thus deeply frozen) at
+    # construction so the frozen Context holds no mutable reference.
+    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {})
       @model = -model.to_s
       @max_tokens = Integer(max_tokens)
       @system = system && Canonical.normalize(system)
       @stream = stream
+      @extra = Canonical.normalize(extra)
       freeze
     end
 
@@ -84,7 +91,8 @@ module Lain
         tools: toolset.to_schema,
         messages: self.class.pipeline(workspace).call(messages),
         max_tokens:,
-        stream:
+        stream:,
+        extra:
       )
     end
 

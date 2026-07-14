@@ -145,6 +145,35 @@ RSpec.describe Lain::Context do
     end
   end
 
+  # Provider-specific sampler params (temperature, seed, num_ctx) ride
+  # Request#extra, which Request excludes from cache_payload/digest by design.
+  # Context threads them through render WITHOUT letting them enter cache
+  # identity -- two runs at different temperatures are the same prompt.
+  describe "extra passthrough" do
+    let(:sampler) { { "temperature" => 0, "seed" => 7 } }
+
+    it "defaults extra to empty" do
+      expect(described_class.new(model: "qwen3:4b", max_tokens: 1024).extra).to eq({})
+    end
+
+    it "threads extra into the rendered Request" do
+      ctx = described_class.new(model: "qwen3:4b", max_tokens: 1024, extra: sampler)
+      expect(ctx.render(timeline:, toolset:).extra).to include("temperature" => 0, "seed" => 7)
+    end
+
+    it "keeps extra out of cache identity" do
+      plain = described_class.new(model: "qwen3:4b", max_tokens: 1024)
+      tuned = described_class.new(model: "qwen3:4b", max_tokens: 1024, extra: sampler)
+      expect(tuned.render(timeline:, toolset:).digest)
+        .to eq(plain.render(timeline:, toolset:).digest)
+    end
+
+    it "renders identical bytes for identical extra (purity preserved)" do
+      ctx = described_class.new(model: "qwen3:4b", max_tokens: 1024, extra: sampler)
+      expect(ctx.render(timeline:, toolset:).digest).to eq(ctx.render(timeline:, toolset:).digest)
+    end
+  end
+
   # Comment #6: cache-marking must not type-branch on the system prompt. A
   # String system and its already-blocked equivalent must render to the same
   # bytes -- one normalization, one code path downstream.

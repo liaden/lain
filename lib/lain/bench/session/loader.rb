@@ -59,9 +59,12 @@ module Lain
         end
 
         # The default-pipeline Context only -- see the note on {Session}.
+        # `extra` (sampler params) loads unverified like the other transport
+        # fields; `|| {}` tolerates recordings written before the key existed.
         def context
           Context.new(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
-                      system: header["system"], stream: header.fetch("stream"))
+                      system: header["system"], stream: header.fetch("stream"),
+                      extra: header["extra"] || {})
         end
 
         def toolset

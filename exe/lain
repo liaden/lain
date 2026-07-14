@@ -8,9 +8,72 @@ require "lain"
 
 # The executable. Deliberately thin: parse flags, wire the real collaborators
 # together, hand off to Frontend::TTY. Nothing here is unit-tested the way
-# lib/ is (see CLAUDE.md), so nothing here decides anything -- Handler::Approving,
+# lib/ is (see CLAUDE.md), so nothing here decides anything -- Effect::Handler::Gate,
 # Tool, and TTY already carry the logic and already carry the specs.
 class LainCLI < Thor
+  # Turns the chat flags into the two collaborators the Agent needs a CHOICE
+  # about -- which Provider backend, and the Context carrying the model and the
+  # sampler params (temperature/seed) that ride Request#extra. A plain object,
+  # not a bag of methods on LainCLI: the provider/model resolution is then
+  # unit-testable without a Thor instance, and the executable keeps one
+  # responsibility per object (CLAUDE.md's Metrics rule -- extract, don't loosen).
+  class Backend
+    # The providers `--provider` selects between. The unknown-name guard names
+    # this set, matching Capability::Policy.for's voice.
+    PROVIDERS = %w[anthropic ollama].freeze
+
+    def initialize(options)
+      @options = options
+    end
+
+    # Anthropic reads its key from the environment; Ollama is local and takes an
+    # optional `--api-base` override. An unknown name fails loudly, naming the
+    # valid set, surfaced as a Thor::Error (a bad flag is user error, cleanly
+    # presented, not a bug with a backtrace).
+    def provider
+      case provider_name
+      when "ollama" then Lain::Provider::Ollama.new(api_base: @options[:api_base])
+      else Lain::Provider::Anthropic.new
+      end
+    end
+
+    # `--model` defaults to the SELECTED provider's own default (resolved here,
+    # not in the Thor flag, whose default is fixed at load before `--provider`
+    # is known). Sampler params ride Request#extra via the Context.
+    def context
+      Lain::Context.new(model: @options[:model] || default_model,
+                        max_tokens: @options[:max_tokens], extra: sampler_extra)
+    end
+
+    private
+
+    # Validated once, so #provider and #default_model both key off a name
+    # already known to be in PROVIDERS.
+    def provider_name
+      name = @options[:provider]
+      return name if PROVIDERS.include?(name)
+
+      raise Thor::Error, "unknown provider #{name.inspect}, expected one of #{PROVIDERS.inspect}"
+    end
+
+    def default_model
+      case provider_name
+      when "ollama" then Lain::Provider::Ollama::DEFAULT_MODEL
+      else Lain::Provider::Anthropic::DEFAULT_MODEL
+      end
+    end
+
+    # Only the sampler flags the caller actually set, String-keyed to match
+    # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`
+    # (not `if value`) so `--temperature 0` -- the determinism recipe -- is kept.
+    def sampler_extra
+      %i[temperature seed].each_with_object({}) do |key, extra|
+        value = @options[key]
+        extra[key.to_s] = value unless value.nil?
+      end
+    end
+  end
+
   # Errors (a Thor::Error surfaced from a subcommand included) print their
   # message and exit nonzero, instead of Thor's legacy exit-0 default.
   def self.exit_on_failure? = true
@@ -56,10 +119,18 @@ class LainCLI < Thor
   desc "chat", "Start an interactive Lain session"
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
-  method_option :model, type: :string, default: Lain::Provider::Anthropic::DEFAULT_MODEL,
-                        desc: "Anthropic model id"
+  method_option :provider, type: :string, default: "anthropic",
+                           desc: "Model provider: anthropic or ollama"
+  method_option :api_base, type: :string,
+                           desc: "Override the Ollama API base (ollama provider only)"
+  method_option :model, type: :string,
+                        desc: "Model id; defaults to the selected provider's own default when unset"
   method_option :max_tokens, type: :numeric, default: 4_096,
                              desc: "max_tokens per model turn"
+  method_option :temperature, type: :numeric,
+                              desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
+  method_option :seed, type: :numeric,
+                       desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
   default_task :chat
 
   def chat
@@ -99,23 +170,23 @@ class LainCLI < Thor
                       ])
   end
 
-  # Approving and Live share ONE Toolset (the single-map invariant the plan
+  # Gate and Live share ONE Toolset (the single-map invariant the plan
   # calls out): a second Toolset reference here could let the approval gate
   # and the executor disagree about what a tool name means. RefuseSecretWrites
   # sits in the tool phase so a credential-shaped memory_write is withheld
   # before it ever reaches the recorder (a memory, once indexed, replays into
   # every future context -- there is no un-indexing it).
   def build_agent(toolset:, channel:)
-    live = Lain::Handler::Live.new(toolset:, channel:)
-    approving = Lain::Handler::Approving.new(policy: approval_policy, inner: live)
-    context = Lain::Context.new(model: options[:model], max_tokens: options[:max_tokens])
+    backend = Backend.new(options)
+    live = Lain::Effect::Handler::Live.new(toolset:, channel:)
+    gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
 
-    Lain::Agent.new(provider: Lain::Provider::Anthropic.new, toolset:, context:, handler: approving,
+    Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate,
                     tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]))
   end
 
   def approval_policy
-    return Lain::Handler::Approving::ApproveAll.new if options[:yolo]
+    return Lain::Effect::Handler::Gate::ApproveAll.new if options[:yolo]
 
     Lain::Frontend::ApprovalPolicy.new
   end
@@ -152,4 +223,7 @@ class LainCLI < Thor
   end
 end
 
-LainCLI.start(ARGV)
+# Guarded so a spec can `load` this file to reach the class seam (build_agent,
+# build_provider) without parsing ARGV or hitting the network. True when run as
+# the gem executable ($0 is this script); false when loaded from elsewhere.
+LainCLI.start(ARGV) if $PROGRAM_NAME == __FILE__
