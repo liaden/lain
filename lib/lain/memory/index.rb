@@ -17,6 +17,16 @@ module Lain
       # The Merkle link between writes. The item's content lives in its own
       # store entry; the Node holds only the item's digest, so rewriting an id
       # never copies a body.
+      #
+      # Not a candidate for a Rust merkle crate (CLAUDE.md's "which data
+      # structures earn a binding" table): a memory write happens once per
+      # tool call, not once per turn, so it fails rule 3 (hot per-turn, not
+      # per-session) outright. It also fails 2 (Ruby's object model does not
+      # make this asymptotically worse -- there is no O(n) operation here
+      # Rust would make O(1); #write is already O(1) besides the store puts)
+      # and 4 (the boundary would be crossed one Node at a time, not in
+      # batches). Rule 1 half-holds -- it is a data-structure problem -- but
+      # failing 2-4 is enough to keep it in Ruby.
       class Node
         include ContentAddressed
 

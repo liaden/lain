@@ -13,15 +13,26 @@ module Lain
       include ContentAddressed
 
       # [[:space:]] is Unicode-aware where String#strip is ASCII-only: an
-      # NBSP-only id must still count as blank.
+      # NBSP-only id must still count as blank. Private: the rule is exposed
+      # as the .blank_id? predicate below, not as a regex callers match
+      # against directly.
       BLANK = /\A[[:space:]]*\z/
+      private_constant :BLANK
 
       # Ruby's \R already covers \n, \r, \r\n, \v, \f and NEL; \v and
       # U+2028/U+2029 are spelled out so the invariant survives a regex-engine
       # subtlety rather than depending on one.
       LINE_BREAK = /\R|[\v  ]/
+      private_constant :LINE_BREAK
 
       attr_reader :id, :description, :body, :digest
+
+      # The blank-id rule as a class-level predicate: directly testable
+      # (including the NBSP-only Unicode edge) without constructing a whole
+      # Item just to provoke the ArgumentError.
+      def self.blank_id?(id)
+        id.to_s.match?(BLANK)
+      end
 
       def initialize(id:, description:, body:)
         @id = checked_id(Canonical.normalize(id))
@@ -46,7 +57,7 @@ module Lain
       # An item that cannot be addressed is a defect; an empty description is
       # merely a pointless manifest line, so only the id gets the blank check.
       def checked_id(id)
-        raise ArgumentError, "id must not be blank, got #{id.inspect}" if id.match?(BLANK)
+        raise ArgumentError, "id must not be blank, got #{id.inspect}" if self.class.blank_id?(id)
 
         one_line("id", id)
       end
