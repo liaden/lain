@@ -25,6 +25,10 @@ end
 group :test do
   gem "rantly", "~> 3.0" # property tests for the algebra: monoid/semilattice laws
   gem "rspec", "~> 3.0"
+  # ActiveModel validation matchers; integrated :rspec + :active_model only (no Rails).
+  gem "shoulda-matchers", "~> 6.0"
+  # Structural diffs on failure output only -- never changes matching semantics.
+  gem "super_diff", "~> 0.16"
   # A REVIEW LENS, NEVER A GATE. Used while reviewing a branch to find untested
   # branches -- error paths, the `else` on a stop_reason case. No minimum-coverage
   # threshold is committed: in a codebase whose invariants are property-tested, a
