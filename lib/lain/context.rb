@@ -62,9 +62,7 @@ module Lain
       freeze
     end
 
-    def requires
-      REQUIRES
-    end
+    def requires = REQUIRES
 
     # @return [Lain::Request] deterministic for identical inputs
     #
@@ -80,7 +78,7 @@ module Lain
 
       Request.new(
         model:,
-        system: cache_marked_system,
+        system: cache_marked(system_blocks),
         tools: toolset.to_schema,
         messages: self.class.pipeline(workspace).call(messages),
         max_tokens:,
@@ -90,13 +88,27 @@ module Lain
 
     private
 
-    # Caching the system prompt caches the tools with it, since tools lead the
-    # matched prefix.
-    def cache_marked_system
+    # The system prompt in Anthropic's block form, normalized ONCE. A String
+    # prompt becomes a single text block; a caller who already passed blocks is
+    # passed through. The `#render` pipeline never asks the system's type again
+    # after this line -- the marker logic below is a pure list transform. The
+    # one remaining type check is the honest price of a public input that
+    # accepts either shape, confined here rather than smeared through render.
+    #
+    # It lives in render, NOT the constructor, on purpose: `#system` keeps the
+    # shape it was given, which is what Bench::Session serializes verbatim into
+    # its header. Normalizing the stored value would silently rewrite that
+    # header (String -> blocks) and the session round trip with it.
+    def system_blocks
       return nil if system.nil?
 
-      blocks = system.is_a?(String) ? [{ "type" => "text", "text" => system }] : system
-      return blocks if blocks.empty?
+      system.is_a?(String) ? [{ "type" => "text", "text" => system }] : system
+    end
+
+    # Caching the system prompt caches the tools with it, since tools lead the
+    # matched prefix. Marks the final block; a no-op on nil or an empty list.
+    def cache_marked(blocks)
+      return blocks if blocks.nil? || blocks.empty?
 
       blocks[0..-2] + [blocks.last.merge("cache" => true)]
     end

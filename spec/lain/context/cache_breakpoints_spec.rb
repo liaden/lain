@@ -76,7 +76,7 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     end
 
     it "rejects a non-positive cap" do
-      expect { described_class.new(cap: 0) }.to raise_error(ArgumentError, /cap/)
+      expect { described_class.new(cap: 0) }.to raise_error(ArgumentError, /cap must be positive/)
     end
 
     # Pins the documented degrade: cap: 1 is legal, but the reserved system
@@ -142,7 +142,7 @@ RSpec.describe Lain::Context::CacheBreakpoints do
       expect(markers).to be <= 4
     end
 
-    # Cap is a parameter, and the system marker (Context#cache_marked_system)
+    # Cap is a parameter, and the system marker (Context#cache_marked)
     # always counts against it: this combinator has no visibility into
     # whether a render carries a system prompt, so it reserves that slot
     # unconditionally rather than guessing.

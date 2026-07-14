@@ -78,7 +78,7 @@ RSpec.describe Lain::Context do
   # Message-block breakpoint PLACEMENT (short-turn skipping, intermediate
   # breakpoints) is owned by spec/lain/context/cache_breakpoints_spec.rb; here we
   # only witness that #render composes the combinator, and cover the system-block
-  # marking, which is Context's own code (cache_marked_system), not a combinator.
+  # marking, which is Context's own code (cache_marked), not a combinator.
   describe "cache breakpoints" do
     # Caching the system prompt caches the tools with it, since tools lead the
     # matched prefix.
@@ -126,5 +126,46 @@ RSpec.describe Lain::Context do
 
   it "declares the capabilities it needs, so a provider lacking one degrades loudly" do
     expect(context.requires).to include(:prompt_caching)
+  end
+
+  # The combinator algebra names itself: the base of the endomorphism monoid is
+  # Combinator, and Identity is its unit instance. Base survives as a
+  # compatibility alias only until T16 sweeps recall.rb/reminder.rb.
+  describe "the combinator algebra" do
+    it "names the base class Combinator" do
+      expect(described_class::Combinator).to be_a(Class)
+    end
+
+    it "keeps Base as a compatibility alias of Combinator" do
+      expect(described_class::Base).to equal(described_class::Combinator)
+    end
+
+    it "keeps Identity as an instance of Combinator, the monoid unit" do
+      expect(described_class::Identity).to be_an_instance_of(described_class::Combinator)
+    end
+  end
+
+  # Comment #6: cache-marking must not type-branch on the system prompt. A
+  # String system and its already-blocked equivalent must render to the same
+  # bytes -- one normalization, one code path downstream.
+  describe "system normalization" do
+    it "renders a String system prompt as a single cache-marked text block" do
+      request = context.render(timeline:, toolset:)
+      expect(request.system).to eq([{ "type" => "text", "text" => "be terse", "cache" => true }])
+    end
+
+    it "renders a block-form system prompt to the same bytes as its String form" do
+      blocks = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                   system: [{ "type" => "text", "text" => "be terse" }])
+      expect(blocks.render(timeline:, toolset:).digest)
+        .to eq(context.render(timeline:, toolset:).digest)
+    end
+
+    # The normalization lives in render, NOT in the stored value: Bench::Session
+    # serializes Context#system into its header (spec/lain/bench/session_spec.rb
+    # pins "system" => "be terse"), so the reader must keep the caller's shape.
+    it "keeps Context#system in the shape it was given" do
+      expect(context.system).to eq("be terse")
+    end
   end
 end

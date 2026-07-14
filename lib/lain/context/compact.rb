@@ -18,7 +18,16 @@ module Lain
     # candidate-for-drop messages -- rather than a real tokenizer, which
     # would be one more dependency this pure combinator has no business
     # taking on. It is deterministic, which is the only property #call needs.
-    class Compact < Base
+    #
+    # `#requires` is the inherited {Combinator} default (nothing), NOT an
+    # oversight: `#requires` is an ENFORCEMENT contract, not a comparison
+    # label. Since this summarizes entirely client-side via the injected
+    # summarizer, declaring `:server_compaction` would be actively wrong -- on
+    # a provider that LACKS native compaction (exactly when you reach for
+    # client-side Compact) :strict would raise for a combinator that needs
+    # nothing, and :degrade would journal a FALSE degradation. Which comparison
+    # arm this is belongs on a separate label, never overloaded onto requires.
+    class Compact < Combinator
       # @param threshold [Integer] byte-length proxy above which the head
       #   gets summarized
       # @param keep_last [Integer] trailing messages that stay verbatim
@@ -41,21 +50,6 @@ module Lain
         summary_message = { "role" => "assistant",
                             "content" => [{ "type" => "text", "text" => @summarizer.call(dropped) }] }
         [summary_message] + tail
-      end
-
-      # Nothing. `#requires` is an ENFORCEMENT contract, not a comparison
-      # label: Capability::Policy checks each declared capability against
-      # `provider.supports?` and, under :strict, raises Provider::Unsupported;
-      # under :degrade, journals a degradation. This implementation summarizes
-      # entirely client-side via the injected summarizer, so it needs nothing
-      # from the provider -- and declaring `:server_compaction` would be
-      # actively wrong: on a provider that LACKS native compaction (exactly
-      # when you reach for client-side Compact) :strict would raise for a
-      # combinator that needs nothing, and :degrade would journal a FALSE
-      # degradation. Which comparison arm this is belongs on a separate label,
-      # never overloaded onto the enforcement contract.
-      def requires
-        [].freeze
       end
     end
   end
