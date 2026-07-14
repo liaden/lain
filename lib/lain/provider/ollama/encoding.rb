@@ -29,13 +29,12 @@ module Lain
         SAMPLER_KEYS = %w[temperature seed num_ctx].freeze
 
         # The exact `/api/chat` body. Pure and deterministic: no clock, no
-        # ordering that depends on how the Request's Hashes were built.
-        # `stream` is ALWAYS false regardless of `request.stream` -- the parity
-        # group's Context defaults it true, but this provider declares no
-        # `:streaming` capability yet (T17 delivers the NDJSON path and flips
-        # this), so a streaming Request completes over the non-streaming body.
+        # ordering that depends on how the Request's Hashes were built. `stream`
+        # carries `request.stream` (Request coerces it to a bool) -- Ollama's wire
+        # default is `true`, so the flag is always sent explicitly; {Ollama#complete}
+        # routes to the streaming or non-streaming transport on the same value.
         def encode(request)
-          payload = { model: request.model, messages: encode_messages(request), stream: false }
+          payload = { model: request.model, messages: encode_messages(request), stream: request.stream }
           tools = encode_tools(request.tools)
           options = encode_options(request.extra)
           payload[:tools] = tools unless tools.empty?

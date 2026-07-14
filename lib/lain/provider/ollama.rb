@@ -3,6 +3,7 @@
 require "json"
 
 require_relative "ollama/encoding"
+require_relative "ollama/stream_assembler"
 require_relative "ollama/transport"
 
 module Lain
@@ -33,12 +34,13 @@ module Lain
 
       DEFAULT_MODEL = "qwen3:4b"
 
-      # Empty until T17 delivers the NDJSON streaming path. Declaring
-      # :streaming, :prompt_caching, :thinking, or :strict_tools now would be a
-      # lying capability in the one subsystem built to catch them; the mismatch
-      # is surfaced by the capability policy (:degrade journals the gap), which
-      # is the bench working as designed.
-      CAPABILITIES = [].freeze
+      # The NDJSON streaming path (below) makes :streaming honest. The others
+      # stay off deliberately: declaring :prompt_caching, :thinking, or
+      # :strict_tools -- which the native path cannot demonstrate -- would be a
+      # lying capability in the one subsystem built to catch them, so the
+      # capability policy's `:degrade` journals those gaps, which is the bench
+      # working as designed.
+      CAPABILITIES = %i[streaming].freeze
 
       # Wraps a vendored transport error so nothing above the Provider rescues a
       # Provider::HTTP class. The original is preserved as `#cause`.
@@ -67,15 +69,34 @@ module Lain
 
       def capabilities = CAPABILITIES
 
-      # One round trip into a neutral Response, always non-streaming.
+      # One round trip into a neutral Response. Streaming and non-streaming
+      # converge on the same body Hash -- {StreamAssembler} reassembles the NDJSON
+      # lines into the shape the non-streaming endpoint returns -- so both decode
+      # through one #build_response (path parity).
       def complete(request)
-        body = @transport.sync_post(encode(request)).body || {}
-        build_response(body)
+        build_response(request.stream ? stream_body(request) : sync_body(request))
       rescue Provider::HTTP::Error => e
         raise wrap_error(e)
       end
 
       private
+
+      def sync_body(request)
+        @transport.sync_post(encode(request)).body || {}
+      end
+
+      # A corrupt NDJSON line is a wire-protocol violation, so it raises -- never
+      # a silent skip (one torn line means the frame boundaries can no longer be
+      # trusted). It is wrapped in APIError rather than escaping as a bare
+      # JSON::ParserError for the same reason transport errors are: callers
+      # rescue one provider-error family, and the original stays on `#cause`.
+      def stream_body(request)
+        assembler = StreamAssembler.new
+        @transport.stream(encode(request)) { |chunk| assembler.feed(chunk) }
+        assembler.result
+      rescue JSON::ParserError => e
+        raise APIError, "corrupt NDJSON line in stream: #{e.message}"
+      end
 
       def build_config(api_base:)
         config = Provider::HTTP::Configuration.new

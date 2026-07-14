@@ -69,8 +69,8 @@ RSpec.shared_examples "a Lain::Provider" do |config|
 
     it "declares capabilities that are a subset of Provider::CAPABILITIES" do
       # Subset by set difference, not `include(*caps)`: an empty capability list
-      # (Provider::Ollama until T17 lands streaming) splats to `include()`, which
-      # RSpec rejects -- yet the empty set is a valid subset.
+      # (as Provider::Ollama's briefly was) splats to `include()`, which RSpec
+      # rejects -- yet the empty set is a valid subset.
       expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
     end
 

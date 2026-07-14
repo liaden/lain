@@ -94,6 +94,16 @@ module OllamaWire
       Struct.new(:body).new(OllamaWire.body_hash(next_response))
     end
 
+    # The streaming counterpart: the Context the parity group builds defaults
+    # `stream: true`, so the seven gates now run through the NDJSON decode path.
+    # The whole body is serialized as one x-ndjson line (already carrying
+    # `done: true`); StreamAssembler reassembles it to the same shape sync_post
+    # returns, so both paths land on identical Responses.
+    def stream(payload, _headers = {})
+      @calls << payload
+      yield "#{JSON.generate(OllamaWire.body_hash(next_response))}\n"
+    end
+
     private
 
     def next_response

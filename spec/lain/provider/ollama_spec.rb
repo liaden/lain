@@ -3,8 +3,10 @@
 require "webmock/rspec"
 
 RSpec.describe Lain::Provider::Ollama do
+  # Non-streaming by default so these decode-focused examples exercise the sync
+  # body path; the streaming path has its own spec (ollama_streaming_spec).
   def request(**overrides)
-    Lain::Request.new(model: "qwen3:4b", max_tokens: 64,
+    Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
                       messages: [{ role: "user", content: "hi" }], **overrides)
   end
 
@@ -24,12 +26,12 @@ RSpec.describe Lain::Provider::Ollama do
   end
 
   describe "#capabilities" do
-    # Empty until T17 delivers streaming: declaring :streaming (or any other
-    # capability Ollama's native path cannot yet demonstrate) would be a lying
-    # capability in the one subsystem built to catch lying capabilities.
-    it "declares nothing until streaming lands (T17)" do
+    # :streaming is honest now that the NDJSON path exists (T17). The remaining
+    # capabilities stay off deliberately -- declaring one the native path cannot
+    # demonstrate would be a lying capability in the subsystem built to catch them.
+    it "declares :streaming and nothing it cannot demonstrate" do
       provider = described_class.new(transport: transport_sync({}))
-      expect(provider.capabilities).to eq([])
+      expect(provider.capabilities).to eq(%i[streaming])
       expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
     end
   end
@@ -126,18 +128,19 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # AC 3: a stream-true Request still completes, non-streaming.
-  describe "#complete ignoring request.stream" do
-    it "always sends stream: false and returns a full Response" do
+  # The sync path echoes request.stream onto the wire (Ollama's wire default is
+  # true, so the flag is always sent explicitly); complete routes to sync_post.
+  describe "#complete on the non-streaming path" do
+    it "sends stream: false and routes to the sync transport" do
       provider = described_class.new(transport: (recorder = capturing_transport))
-      provider.complete(request(stream: true))
+      provider.complete(request(stream: false))
       expect(recorder.payload[:stream]).to be(false)
     end
 
     it "returns a text Response from a non-streaming body" do
       body = { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "hello" },
                "done" => true, "done_reason" => "stop", "prompt_eval_count" => 3, "eval_count" => 2 }
-      response = described_class.new(transport: transport_sync(body)).complete(request(stream: true))
+      response = described_class.new(transport: transport_sync(body)).complete(request(stream: false))
 
       expect(response.text).to eq("hello")
       expect(response.stop_reason).to eq(:end_turn)
@@ -169,10 +172,23 @@ RSpec.describe Lain::Provider::Ollama do
                                             "message" => { "role" => "assistant", "content" => "pong" },
                                             "done" => true, "done_reason" => "stop"))
 
-      response = described_class.new.complete(request(stream: true))
+      response = described_class.new.complete(request(stream: false))
 
       expect(response.text).to eq("pong")
       expect(stub).to have_been_requested
+    end
+
+    # The sync error arm: a non-2xx body raises through the vendored
+    # ErrorMiddleware and is wrapped by wrap_error, so nothing above the
+    # Provider rescues a Provider::HTTP class -- status lifted onto the error.
+    it "wraps a 500 into APIStatusError with the status lifted out" do
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status: 500, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("error" => "model runner has unexpectedly stopped"))
+
+      expect { described_class.new.complete(request(stream: false)) }.to raise_error(
+        Lain::Provider::Ollama::APIStatusError
+      ) { |error| expect(error.status).to eq(500) }
     end
   end
 
