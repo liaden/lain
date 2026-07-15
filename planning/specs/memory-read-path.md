@@ -1,6 +1,6 @@
 # Memory read path — manifest in context, replay-side roots, Bm25 cache
 
-status: draft
+status: done (2026-07-15 — T1 21f3231, T2 9262b73, T3 322b42f; suite 1449→1470)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -89,7 +89,7 @@ Critical path: T2 (largest single card; no chains — all cards independent)
 
 ## Tasks
 
-### T1 — Wire the memory read path into the live session          [wave 1] [risk: medium]
+### T1 — Wire the memory read path into the live session          [wave 1] [risk: medium] ✅ landed 21f3231 (panel: APPROVE-WITH-FIXES, mechanical — `build_agent` requires `session:`)
 
 **Depends on:** none
 **Files:** `lib/lain/session.rb` (modify), `exe/lain` (modify),
@@ -183,7 +183,7 @@ Scenario: the chat toolset exposes memory_read backed by the session recorder
 - `Invocation#context` is semantically the Session (close-out follow-up #5): if `MemoryRead`
   turns out to need the Session slot too, stop rather than smuggling a second collaborator.
 
-### T2 — Rebuild per-turn memory roots in Session::Loader          [wave 1] [risk: medium]
+### T2 — Rebuild per-turn memory roots in Session::Loader          [wave 1] [risk: medium] ✅ landed 9262b73 (panel: APPROVE-WITH-FIXES, mechanical — comment envelope + MemoryReplay extraction + message reword)
 
 **Depends on:** none
 **Files:** `lib/lain/bench/session/loader.rb` (modify), `lib/lain/bench/session.rb` (modify —
@@ -293,7 +293,7 @@ Scenario: a partial memory_root chain fails loudly
   (e.g. a run whose only write was refused, so no root differs from any replayed root), stop
   and present the case rather than widening either branch.
 
-### T3 — Root-keyed cache for Memory::Bm25 builds          [wave 1] [risk: low]
+### T3 — Root-keyed cache for Memory::Bm25 builds          [wave 1] [risk: low] ✅ landed 322b42f (panel: APPROVE)
 
 **Depends on:** none
 **Files:** `lib/lain/memory/bm25_cache.rb` (create), `spec/lain/memory/bm25_cache_spec.rb`

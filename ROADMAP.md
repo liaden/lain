@@ -273,7 +273,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 
 ### M5 — orchestration, memory, code mode `[planned]`
 - `Tool::Subagent` (async, attenuated, supervised). `Tool::Todo`. `Memory` (content-addressed,
-  `Manifest` + `Bm25`), `Context::Recall` after the last cache breakpoint. **Planned:**
+  `Manifest` + `Bm25`), `Context::Recall` after the last cache breakpoint. **✅ Done (2026-07-15):**
   `planning/specs/memory-read-path.md` — the 5-3.1/5-3.2 close-out (manifest + `memory_read`
   wired into the live session, replay-side memory roots, Bm25 root-keyed cache). Server-side context editing
   as a comparison arm. Structured `edit_file` (`str_replace` + read-before-write). Choose the

@@ -242,10 +242,14 @@ deliberately deferred, not dropped:
   on rewind.
 
 ### Stream 5-3 · Memory + recall
-- **5-3.1 — Content-addressed memory index** (root hash bumps per write; Journal records live root
-  per turn). **Acceptance:** dry replay recalls against the exact recorded snapshot — recall is pure.
-- **5-3.2 — `Manifest` index** (one-line descriptions in context, `memory_read(id)` for body).
-  **Acceptance:** deterministic, cache-stable, no embeddings; `Hit#why` populated.
+- ✅ **5-3.1 — Content-addressed memory index** (root hash bumps per write; Journal records live root
+  per turn). *(Classes 2026-07-13; wiring 2026-07-15: `Session::Loader` replays per-turn roots and
+  verifies the journaled chain — `planning/specs/memory-read-path.md`.)* **Acceptance:** dry replay
+  recalls against the exact recorded snapshot — recall is pure.
+- ✅ **5-3.2 — `Manifest` index** (one-line descriptions in context, `memory_read(id)` for body).
+  *(Classes 2026-07-13; wiring 2026-07-15: manifest rides `Session#reminders`, `memory_read` in the
+  chat toolset — `planning/specs/memory-read-path.md`.)* **Acceptance:** deterministic, cache-stable,
+  no embeddings; `Hit#why` populated.
 - ✅ **5-3.3 — `Bm25` index** *(Done 2026-07-13: `bm25` crate in-process via `ext/lain`, not tantivy; `Memory::Bm25` + shared "a memory search index" law group.)* (`tantivy`, via the exec boundary or in-process to start). **Acceptance:**
   exact drug/gene-name queries return correct hits with `#why`.
 - ✅ **5-3.4 — `Context::Recall` combinator** *(Done 2026-07-13.)* ordered *after* `CacheBreakpoints` (3c-2.4). **Acceptance:**

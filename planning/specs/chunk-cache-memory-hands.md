@@ -922,8 +922,9 @@ isolated worktree and passed a persona review panel (depth by risk). Final integ
   boundary; the plan's file-disjointness made this safe.
 
 **Follow-ups (not built, tracked):**
-1. `Memory::Bm25` rebuilds its index O(corpus) per snapshot — add a root-digest-keyed cache
-   when Recall drives a moving index.
+1. ✅ `Memory::Bm25` rebuilds its index O(corpus) per snapshot — add a root-digest-keyed cache
+   when Recall drives a moving index. *(Done 2026-07-15: `Memory::Bm25Cache`,
+   `planning/specs/memory-read-path.md` T3.)*
 2. No structural ≤4-marker guard outside `Context.pipeline` — a hand-built Request with >4
    markers still 400s at the API; consider a loud Request/Provider-level assertion.
 3. 5-0.3 must re-verify ShellOut cooperation under stdout-flood / CPU-heavy children before
