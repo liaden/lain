@@ -10,13 +10,19 @@
 # apart from namespace, since they exercise the base `Provider`/
 # `Configuration` seam directly and never touch a specific provider.
 RSpec.describe Lain::Provider::HTTP::Provider do
-  def api_base_cases
+  let(:api_base_cases) do
     {
       anthropic: {
         provider: Lain::Provider::HTTP::Providers::Anthropic,
         key: :anthropic_api_base,
         custom: "https://anthropic-proxy.example.com",
         default: "https://api.anthropic.com"
+      },
+      bedrock: {
+        provider: Lain::Provider::HTTP::Providers::Bedrock,
+        key: :bedrock_api_base,
+        custom: "https://gateway.internal/anthropic",
+        default: nil # derived from bedrock_region; no constant endpoint
       }
     }
   end
@@ -24,6 +30,10 @@ RSpec.describe Lain::Provider::HTTP::Provider do
   def config_for(slug)
     Lain::Provider::HTTP::Configuration.new.tap do |config|
       config.anthropic_api_key = "anthropic-key" if slug == :anthropic
+      if slug == :bedrock
+        config.bedrock_api_key = "bedrock-key"
+        config.bedrock_region = "us-east-1"
+      end
     end
   end
 

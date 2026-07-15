@@ -89,7 +89,15 @@ module Lain
         # Redacted `#inspect`/`#pretty_print` support: never echo a key, secret,
         # or token back into a log line or a crashed spec's failure output.
         def instance_variables
-          super.reject { |ivar| ivar.to_s.match?(/_id|_key|_secret|_token$/) }
+          super.reject { |ivar| ivar.to_s.match?(/(?:_id|_key|_secret|_token)$/) }
+        end
+
+        # MRI's pretty_print honors the `instance_variables` override above, but
+        # `Object#inspect` walks the ivar table directly and ignores it -- so
+        # inspect must render its own view over the filtered list.
+        def inspect
+          fields = instance_variables.map { |ivar| "#{ivar}=#{instance_variable_get(ivar).inspect}" }
+          "#<#{self.class.name} #{fields.join(", ")}>"
         end
       end
     end
