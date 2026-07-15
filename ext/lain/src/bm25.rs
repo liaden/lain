@@ -60,11 +60,17 @@ impl Tokenizer for SurfaceTokenizer {
 
 /// Why a batch could not become an index. Mapped to named Ruby errors at the FFI
 /// boundary (`Bm25::EmptyCorpus`, `Bm25::DuplicateId`).
-#[derive(Debug, PartialEq, Eq)]
+///
+/// The `Display` text below IS the FFI-visible message: `lib.rs`'s
+/// `Bm25::build` match arms hand-build the identical strings today, which a
+/// later card can replace with `.to_string()`.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum BuildError {
     /// The batch had no pairs; there is nothing to search.
+    #[error("cannot build a BM25 index from an empty corpus")]
     EmptyCorpus,
     /// Two pairs shared this id; the id would not address one document.
+    #[error("duplicate document id {0:?}")]
     DuplicateId(String),
 }
 
@@ -77,6 +83,19 @@ pub struct Bm25Index {
     /// explains each hit. Stored at build so search never re-tokenizes documents.
     doc_tokens: HashMap<String, BTreeSet<String>>,
 }
+
+// Compile-time shareability canary, mirroring `turn.rs`'s `TurnData` assertion:
+// `Bm25`'s `frozen_shareable` promise (see `lib.rs` and this module's own
+// interior-mutability audit above) is honest only if `Bm25Index` -- and every
+// type it owns transitively -- holds no interior mutability. A `Cell`/
+// `RefCell` regression anywhere in that graph would make it `!Sync` with no
+// other signal; this catches that class of regression at compile time. It
+// canNOT catch a `Mutex`/atomic field -- those ARE `Sync` despite being
+// interior mutability -- so a `Mutex`/atomic addition stays prose-audited.
+const _: fn() = || {
+    fn assert_sync<T: Sync>() {}
+    assert_sync::<Bm25Index>();
+};
 
 impl Bm25Index {
     /// Build an index from a batch of `(id, text)` pairs, preserving insertion
@@ -252,6 +271,30 @@ mod tests {
             .map(|hit| hit.0)
             .collect();
         assert_eq!(ids, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    // Display IS the FFI-visible message: `lib.rs`'s `Bm25::build` match arms
+    // hand-build these exact texts today. Pin them so a later card can swap
+    // those arms for `.to_string()` with no byte drift.
+    #[test]
+    fn build_error_display_is_the_exact_ffi_message() {
+        assert_eq!(
+            BuildError::EmptyCorpus.to_string(),
+            "cannot build a BM25 index from an empty corpus"
+        );
+        assert_eq!(
+            BuildError::DuplicateId("x".to_string()).to_string(),
+            r#"duplicate document id "x""#
+        );
+    }
+
+    #[test]
+    fn build_error_is_a_std_error() {
+        let boxed: Box<dyn std::error::Error> = Box::new(BuildError::EmptyCorpus);
+        assert_eq!(
+            boxed.to_string(),
+            "cannot build a BM25 index from an empty corpus"
+        );
     }
 
     #[test]

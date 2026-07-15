@@ -24,6 +24,18 @@ pub struct TurnData {
     pub digest: String,
 }
 
+// Compile-time shareability canary: `Turn`'s `frozen_shareable` promise (see
+// `lib.rs`) is honest only if `TurnData` holds no interior mutability, and a
+// `Cell`/`RefCell` regression would make it `!Sync` without any runtime
+// signal. This catches that class of regression at compile time. It canNOT
+// catch a `Mutex`/atomic field -- those ARE `Sync` despite being interior
+// mutability -- so `Mutex`/atomic additions stay prose-audited, same as the
+// `bm25.rs` module doc.
+const _: fn() = || {
+    fn assert_sync<T: Sync>() {}
+    assert_sync::<TurnData>();
+};
+
 impl TurnData {
     /// Build a node, computing its content address from the four fields exactly
     /// as `Canonical.digest(payload)` does. Returned in an `Arc` because that is
@@ -66,9 +78,33 @@ fn payload_canon(role: &str, content: &Canon, parent: &Option<String>, meta: &Ca
     Canon::Object(build_object(pairs).expect("payload keys are distinct"))
 }
 
-/// A role that is not one of [`ROLES`].
+/// A role that is not one of [`ROLES`]. Keeps its tuple field (rather than a
+/// private field behind an accessor) because `lib.rs:482` reads `invalid.0`
+/// directly and is out of scope for this change; a later card switches that
+/// site to `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidRole(pub String);
+
+/// Hand-implemented rather than `#[derive(thiserror::Error)]`: the message
+/// interpolates `ROLES.join(", ")`, and a derive's `#[error(...)]` attribute
+/// can only hold a literal format string -- hardcoding "user, assistant" there
+/// would double-source the role list against the `ROLES` constant above. This
+/// Display text IS the FFI-visible message: `lib.rs`'s `read_role` raise site
+/// hand-builds the identical string today (`format!("role must be one of {}, got
+/// {:?}", turn::ROLES.join(", "), invalid.0)`), which a later card can replace
+/// with `invalid.to_string()`.
+impl std::fmt::Display for InvalidRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "role must be one of {}, got {:?}",
+            ROLES.join(", "),
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidRole {}
 
 /// Validate a role string against the two wire roles.
 pub fn validate_role(role: &str) -> Result<String, InvalidRole> {
@@ -178,6 +214,27 @@ mod tests {
         assert_eq!(
             validate_role("system"),
             Err(InvalidRole("system".to_string()))
+        );
+    }
+
+    // Display IS the FFI-visible message: `lib.rs`'s `read_role` raise site
+    // hand-builds `format!("role must be one of {}, got {:?}", ROLES.join(", "),
+    // invalid.0)` today. Pin the exact text so a later card can swap that
+    // call site for `.to_string()` with no byte drift.
+    #[test]
+    fn invalid_role_display_is_the_exact_ffi_message() {
+        assert_eq!(
+            InvalidRole("system".to_string()).to_string(),
+            r#"role must be one of user, assistant, got "system""#
+        );
+    }
+
+    #[test]
+    fn invalid_role_is_a_std_error() {
+        let boxed: Box<dyn std::error::Error> = Box::new(InvalidRole("system".to_string()));
+        assert_eq!(
+            boxed.to_string(),
+            r#"role must be one of user, assistant, got "system""#
         );
     }
 }

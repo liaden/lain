@@ -48,3 +48,8 @@ bm25 = { version = "=2.3.2", default-features = false }
 # requires. Deterministic iteration is exactly the sorted-key stability the
 # prompt cache depends on.
 indexmap = "2"
+# Idiomatic `std::error::Error` + `Display` derive for the pure error enums
+# (CanonError, BuildError). Their Display text is the FFI-visible message a
+# later card wires the raise sites to, so hand-rolling `impl Display` for two
+# enums is exactly what the derive replaces.
+thiserror = "2"

@@ -20,13 +20,22 @@
 //! unchanged. Structure, sorting, and string escaping ARE re-derived here,
 //! because those rules are simple enough to match Ruby exactly and are covered
 //! by unit tests.
+//!
+//! `serde_json` and RFC-8785/JCS ("JSON Canonicalization Scheme") were both
+//! evaluated and rejected as the serializer here, for the same byte-parity
+//! reason: `serde_json` renders floats via `ryu`, and JCS mandates ES6's
+//! `Number::toString` -- neither is Ruby's `JSON.generate` float text, so
+//! either would reintroduce exactly the divergence `Canon::Num`'s pre-rendered
+//! text exists to avoid.
 
 use indexmap::IndexMap;
 use std::fmt::Write as _;
 
 /// The canonical wire form of a value. `Num` holds pre-rendered JSON number text
 /// (see the module docs); `Object` pairs are sorted by key with keys unique.
-#[derive(Debug, Clone, PartialEq)]
+/// `Eq` (not just `PartialEq`) is sound here because `Num` holds Ruby's
+/// rendered text, not a `f64` -- there is no NaN to make equality partial.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Canon {
     Null,
     Bool(bool),
@@ -36,22 +45,35 @@ pub enum Canon {
     Object(Vec<(String, Canon)>),
 }
 
+/// `dump` stays the named domain entry point; this just gives `Canon` a free
+/// `to_string()` for anything (logging, error interpolation) that wants one.
+impl std::fmt::Display for Canon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&dump(self))
+    }
+}
+
 /// The only error the pure layer can raise: a Hash carrying the same key as both
 /// a Symbol and a String (e.g. `:a` and `"a"`), which is genuinely ambiguous
 /// once the wire form collapses them. Type, float-finiteness, and UTF-8 errors
 /// are detected while reading the Ruby value and raised in the FFI layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The `Display` text below IS the FFI-visible message: `lib.rs`'s `canon_hash`
+/// raise site passes `ambiguous.message()` (a thin delegation to this Display,
+/// kept so that call site compiles untouched) straight into the raised
+/// `Lain::Canonical::AmbiguousKey`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CanonError {
+    #[error("{0:?} is both a String and a Symbol key")]
     AmbiguousKey(String),
 }
 
 impl CanonError {
-    /// The message text, matching Ruby's `Canonical` so the shared-example regex
-    /// (`/both a String and a Symbol/`) passes against this implementation too.
+    /// Thin delegation to `Display` so `lib.rs:309` (`ambiguous.message()`)
+    /// compiles untouched; the message text itself lives on the `#[error(...)]`
+    /// attribute above, the single source of the FFI-visible string.
     pub fn message(&self) -> String {
-        match self {
-            CanonError::AmbiguousKey(key) => format!("{key:?} is both a String and a Symbol key"),
-        }
+        self.to_string()
     }
 }
 
@@ -221,6 +243,33 @@ mod tests {
         assert!(CanonError::AmbiguousKey("a".to_string())
             .message()
             .contains("both a String and a Symbol"));
+    }
+
+    // Display IS the FFI-visible message: `lib.rs`'s `canon_hash` raise site
+    // calls `ambiguous.message()`, which is now a thin delegation to Display.
+    // Pin the exact text so a later card can swap that call site for
+    // `.to_string()` with no byte drift.
+    #[test]
+    fn canon_error_display_is_the_exact_ffi_message() {
+        assert_eq!(
+            CanonError::AmbiguousKey("a".to_string()).to_string(),
+            r#""a" is both a String and a Symbol key"#
+        );
+    }
+
+    #[test]
+    fn canon_error_is_a_std_error() {
+        let boxed: Box<dyn std::error::Error> = Box::new(CanonError::AmbiguousKey("a".to_string()));
+        assert_eq!(
+            boxed.to_string(),
+            r#""a" is both a String and a Symbol key"#
+        );
+    }
+
+    #[test]
+    fn canon_display_equals_dump() {
+        let value = obj(vec![("b", num("1")), ("a", num("2"))]);
+        assert_eq!(value.to_string(), dump(&value));
     }
 
     #[test]
