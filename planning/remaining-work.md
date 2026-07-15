@@ -100,6 +100,24 @@ deliberately deferred, not dropped:
   arm recordable. **Acceptance:** `bench record --provider ollama --temperature 0 --seed N`
   records a session whose header carries the extra and replays dry.
 
+## R — Deferred findings from the rust-findings-resolution plan (2026-07-15)
+
+- **R.8 — Shape-validate `parent:`/digest arguments at both constructors.** `Digest` (T5) is
+  type-distinguishing, not shape-validating: per T5 Ruling 1 it accepts any string, matching
+  Ruby `Turn.new`, which also accepts arbitrary parent strings (`rust/turn_spec.rb` constructs
+  `parent: "blake3:abc"`, not a real 64-hex digest). Neither side rejects a malformed address
+  today; a typo'd or truncated parent digest surfaces only later as a `MissingObject` dangle
+  (or not at all, if it happens to collide). **Scope:** add a joint Ruby+Rust shape check
+  (`blake3:` prefix + fixed-width lowercase-hex body) at BOTH constructors — Ruby
+  `Turn#initialize`/`Timeline#checkout` and the Ext `read_optional_digest` boundary — raising a
+  shared, byte-identical error class on a non-conforming address, so the two implementations
+  stay parity-locked. **Prerequisite/caveat:** this is a behavior change that WILL break the
+  pinned `parent: "blake3:abc"` literals in `rust/turn_spec.rb` and any Ruby spec doing
+  likewise; those fixtures must move to real digests (or a sanctioned test-only bypass) in the
+  same card. Land it as a deliberate parity upgrade, not folded into an unrelated sweep.
+  **Non-goal:** this is still shape, not safety — it does not verify the digest names a real
+  object (that remains the `MissingObject` walk's job).
+
 ---
 
 ## M3c — Algebra, seams, and the grader (THE BENCH)

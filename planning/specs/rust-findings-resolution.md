@@ -390,7 +390,7 @@ Scenario: the dishonest names are gone
   changing its Ruby-observable arity/errors (currently `expected keyword arguments` on a
   non-Hash arg) — keep the hand-rolled parse for that one site with a WHY, and say so.
 
-### T5 — Replace TurnData's stringly-typed fields with domain types   [wave 4] [risk: high]
+### T5 — Replace TurnData's stringly-typed fields with domain types   [wave 4] [risk: high] ✅ landed (panel: APPROVE, no fixes; validation upgrade filed as R.8)
 
 **Depends on:** T3, T4
 **Files:** create `ext/lain/src/digest.rs`; modify `ext/lain/src/turn.rs`,
