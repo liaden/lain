@@ -81,7 +81,7 @@ module Lain
       nil
     end
 
-    # The ONE walk every Journal reader shares (see {Handler::Recorded.from_journal},
+    # The ONE walk every Journal reader shares (see {Effect::Handler::Recorded.from_journal},
     # {Ledger::Index.from_journal}): each entry coerced through {.parse}, foreign
     # lines skipped, optionally narrowed to a single record type.
     #

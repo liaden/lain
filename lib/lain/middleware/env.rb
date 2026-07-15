@@ -5,7 +5,7 @@ module Lain
     # The environment threaded through a {Stack}, as a read-only whole value
     # rather than a bare Hash passed hand to hand.
     #
-    # Same wrap/`to_h` philosophy as {Lain::MessageEnvelope}: {Stack#call} wraps
+    # Same wrap/`to_h` philosophy as {Lain::Context::MessageEnvelope}: {Stack#call} wraps
     # its input ONCE at the boundary, so every caller keeps passing plain hashes
     # and every hash-duck middleware (fetch/[]/merge) keeps working unchanged.
     # `merge` is functional -- it returns a NEW Env, never mutating in place --

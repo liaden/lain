@@ -15,7 +15,7 @@ The motivating context is worth stating plainly, because it explains every desig
 **M0 and M1 are done.** 317 examples, RuboCop clean at default metrics, `cargo test` 6/6. The
 agent loop is complete and provably correct against `Provider::Mock` — all seven correctness
 gates ship as specs — but **it has no tools to call and no way to be typed at**. There is no
-`lib/lain/tools/`, no `Handler::Approving`, no `lib/lain/frontend/`, and no `exe/lain`.
+`lib/lain/tools/`, no `Effect::Handler::Gate`, no `lib/lain/frontend/`, and no `exe/lain`.
 `mixlib-shellout`, `thor`, and `state_machines` are declared dependencies with no code using
 them yet. Those land in **M1b**, in progress now.
 
@@ -30,7 +30,7 @@ otherwise.
 | `Turn` / `Store` / `Timeline` | Lossless content-addressed Merkle DAG. `commit`, `fork`, `checkout`, `rewind`, `meet`, `diverge_at`. Meet-semilattice laws property-tested over a random forest. |
 | `Request` / `Response` / `Usage` | Provider-neutral value objects. `Usage` is a property-tested commutative monoid. |
 | `Tool` / `Toolset` / `Tool::Input` / `Contracts` | Capabilities, not permissions. ActiveModel input: one declaration yields both JSON Schema and validation. |
-| `Effect` / `Handler` / `Middleware` | Rack idiom over a property-tested monoid. `Handler::Live` is where correctness gate 3 lives. |
+| `Effect` / `Effect::Handler` / `Middleware` | Rack idiom over a property-tested monoid. `Effect::Handler::Live` is where correctness gate 3 lives. |
 | `Provider` / `::Anthropic` / `::Mock` | One round trip, never a loop. |
 | `Workspace` / `Context` | Sent-not-stored. `#render` is pure. |
 | `Agent` / `Budget` / `ToolRunner` | Explicit state machine. All seven correctness gates as specs. |
@@ -45,7 +45,7 @@ The milestone plan, in brief:
   `Provider::Anthropic` and `Provider::Mock`, tools and toolsets, effects, the model and tool
   middleware phases, the live handler, and the agent state machine.
 - **M1b — in progress.** The agent's hands: `Tools::ReadFile`, `Tools::ListFiles` (tier 1,
-  structured, no subprocess), `Tools::Bash` (tier 3, `Mixlib::ShellOut`), `Handler::Approving`
+  structured, no subprocess), `Tools::Bash` (tier 3, `Mixlib::ShellOut`), `Effect::Handler::Gate`
   gating tier 3 by default, `Frontend::TTY`, and `exe/lain`. This is the first point at which
   the thing can be used. Also this README rewrite and `docs/concurrency.md`.
 - **M2.** Observability: the `Journal` as an NDJSON event bus, per-turn usage and dollar cost,
@@ -66,7 +66,7 @@ The milestone plan, in brief:
 one function, two invariants. `Turn`/`Store`/`Timeline` form a lossless content-addressed
 Merkle DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a
 **pure** function `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same
-constraint. Tool calls are `Effect`s interpreted by a `Handler`; `Middleware` is the Rack-idiom
+constraint. Tool calls are `Effect`s interpreted by an `Effect::Handler`; `Middleware` is the Rack-idiom
 public API over that, and it is a property-tested monoid. Tools are capabilities, not
 permissions. `Provider` is one round trip, never a loop — Lain owns the loop, because the loop
 is the object of study.

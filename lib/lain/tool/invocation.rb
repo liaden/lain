@@ -3,7 +3,7 @@
 module Lain
   class Tool
     # What a tool actually receives as its second argument, in place of the
-    # bare context {Handler::Live} used to hand it straight through. Built once
+    # bare context {Effect::Handler::Live} used to hand it straight through. Built once
     # per dispatch from the {Effect::ToolCall} plus the handler's injected
     # channel, so a tool can attribute its own output (Tools::Bash's
     # live_stdout) to the exact `tool_use_id` that asked for it, without every

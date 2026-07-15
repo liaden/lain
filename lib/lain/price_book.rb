@@ -63,15 +63,18 @@ module Lain
     }.freeze
 
     # @return [PriceBook] the bench's default map
-    def self.default
-      @default ||= new(prices: DEFAULTS)
-    end
+    def self.default = DEFAULT
 
     # @param prices [Hash{String=>Price}] family/model token => Price
     # @param fallback [Price, nil] used for an unmatched model; nil means raise
     def initialize(prices: DEFAULTS, fallback: nil)
-      @prices = prices.transform_keys(&:to_s)
+      # Deep-frozen: `transform_keys(&:to_s)` builds a fresh MUTABLE Hash (and
+      # Symbol#to_s fresh mutable Strings) even over the frozen DEFAULTS, and
+      # the shared {DEFAULT} must not be corruptible through it. Price values
+      # are Data instances, frozen already.
+      @prices = prices.to_h { |key, price| [-key.to_s, price] }.freeze
       @fallback = fallback
+      freeze
     end
 
     # The Price for a model name.
@@ -90,6 +93,12 @@ module Lain
     def cost(model, usage)
       price(model).cost(usage)
     end
+
+    # The bench's default map as a shared value -- a constant, not a memoized
+    # class ivar (`@default ||=`), so there is no first-call race. Deep
+    # frozenness comes from the constructor, not from this line: every
+    # PriceBook freezes itself and its price map at construction.
+    DEFAULT = new(prices: DEFAULTS)
 
     private
 

@@ -68,7 +68,7 @@ separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`). Config that 
   `Sink::IOAdapter` and sends the bytes nowhere, so no caller ever writes `if sink`. A `nil`
   guard repeated at three call sites is an object waiting to be named.
 - **TDD is what finds the seam.** Writing the spec first is what makes a dependency visible and
-  forces it to be injected. `Provider::Mock` and `Handler::Mock` exist because the specs needed
+  forces it to be injected. `Provider::Mock` and `Effect::Handler::Mock` exist because the specs needed
   them, not because the design anticipated them.
 - **ActiveSupport is welcome where it earns its place.** `ActiveSupport::Concern` is the right
   way to extract orthogonal behavior into a named, separately-testable module. Judge each core
@@ -110,7 +110,8 @@ order, and that one ordered list is where a circular dependency has to show itse
 `require` hides cycles behind idempotent early returns. A file `foo.rb` with a sibling `foo/`
 directory is that subtree's index and requires `foo/*` itself, WHERE load order dictates
 (`context.rb` needs its combinators before `Context::REQUIRES` evaluates, so they load at the
-top; `handler.rb`'s children subclass `Handler`, so they load after the class body). Leaf files
+top; `effect/handler.rb`'s children subclass `Effect::Handler`, so they load after the class
+body). Leaf files
 carry **no** internal requires at all. External gem/stdlib requires (`json`, `faraday`) stay in
 the leaf files that use them — they document real dependencies.
 
@@ -146,8 +147,8 @@ fails its hook.
 one function, two invariants. `Turn`/`Store`/`Timeline` form a lossless content-addressed
 Merkle DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a
 **pure** function `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same
-constraint. Tool calls are `Effect`s interpreted by a `Handler`; `Middleware` is the Rack-idiom
-public API over that, and it is a property-tested monoid. Tools are capabilities, not
+constraint. Tool calls are `Effect`s interpreted by an `Effect::Handler`; `Middleware` is the
+Rack-idiom public API over that, and it is a property-tested monoid. Tools are capabilities, not
 permissions. `Provider` is one round trip, never a loop — Lain owns the loop, because the loop
 is the object of study.
 

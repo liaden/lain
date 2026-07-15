@@ -59,7 +59,9 @@ module Lain
     # special-casing nil -- the same role Middleware::Identity plays there. It
     # is an INSTANCE, not a class, because the unit of a monoid is a value you
     # compose with, which is the whole reason {Combinator} is instantiable.
-    Identity = Combinator.new
+    # Frozen like {Composed}, so the unit is a deeply-frozen, Ractor-shareable
+    # value too -- the base carries no mutable state, so there is nothing to lose.
+    Identity = Combinator.new.freeze
 
     # Two combinators fused into one: `first` runs, then `second` runs on
     # its output. Associativity falls out of this being plain function

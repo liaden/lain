@@ -13,7 +13,7 @@ module Lain
     #
     # A violated predicate RAISES. That is deliberate and is not in tension with
     # correctness gate 3 (a failing tool must never propagate past the loop): the
-    # contract mechanism stays honest, and {Lain::Handler::Live} converts the raise
+    # contract mechanism stays honest, and {Lain::Effect::Handler::Live} converts the raise
     # into an error Result at the one boundary the loop trusts. Contract violations
     # are our bugs; tool failures are the world's.
     module Contracts
@@ -25,7 +25,7 @@ module Lain
       module ClassMethods
         # Something that must hold *before* the tool runs, checked against
         # `(input, invocation)` -- the SAME {Tool::Invocation} the tool's
-        # `#perform` receives (see {Handler::Live#dispatch}), so the
+        # `#perform` receives (see {Effect::Handler::Live#dispatch}), so the
         # caller-threaded context (e.g. a session read-set) is reached through
         # `invocation.context`, not off the Invocation directly. A false predicate
         # raises {Tool::ContractViolation}, so the model learns of the violation

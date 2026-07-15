@@ -20,7 +20,7 @@ module Lain
   # to `#perform`, then checks postconditions. A tool that *fails* returns a
   # {Result} with `is_error: true` -- it does not raise as a matter of course.
   # When it does raise (a bug, a contract violation, a bad input), the executing
-  # {Lain::Handler} converts that into an error {Result} so nothing propagates
+  # {Lain::Effect::Handler} converts that into an error {Result} so nothing propagates
   # past the loop (correctness gate 3). The two concerns are kept apart on
   # purpose: the contract mechanism stays Eiffel-honest (a violation raises),
   # while loop totality is the handler's job.
@@ -95,7 +95,7 @@ module Lain
     end
 
     # Whether a call to this tool must pass through an approval gate
-    # (Handler::Approving) before it runs. Defaults to false: tier 1 (direct
+    # (Effect::Handler::Gate) before it runs. Defaults to false: tier 1 (direct
     # Ruby, no subprocess) and tier 2 (an argv Array through Mixlib::ShellOut)
     # tools have no model-controlled command string to approve. Tier 3 tools --
     # a String command through `sh -c` -- override this to true. The axis that

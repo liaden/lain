@@ -30,7 +30,7 @@ module Lain
     #      has no string to interpolate. Prefer it to shelling out. A pre-canned
     #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
     #      no shell at all -- only a String command goes through `sh -c`.
-    #   2. `Handler::Approving`, which gates the invocation before it happens.
+    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens.
     #   3. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
     #      out-of-process Rust exec boundary (M5/M6). A forked child is a process
     #      boundary, not a security boundary: it inherits our uid, filesystem, and

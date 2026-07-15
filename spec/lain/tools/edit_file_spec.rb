@@ -50,7 +50,7 @@ RSpec.describe Lain::Tools::EditFile do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
       toolset = Lain::Toolset.new([tool])
-      live = Lain::Handler::Live.new(toolset:)
+      live = Lain::Effect::Handler::Live.new(toolset:)
       effect = Lain::Effect::ToolCall.new(
         tool_use_id: "tu_1", name: "edit_file",
         input: { path:, old_string: "hello", new_string: "goodbye" }

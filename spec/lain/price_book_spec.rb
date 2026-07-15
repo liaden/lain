@@ -49,6 +49,21 @@ RSpec.describe Lain::PriceBook do
     end
   end
 
+  # The shared default is process-wide: one caller mutating its price map would
+  # corrupt every later cost figure with no error anywhere (the reviewer's repro:
+  # `default.instance_variable_get(:@prices).clear` made `price("sonnet")` return
+  # nil instead of raising). Deep frozenness is the mechanical proof it cannot.
+  describe ".default" do
+    it "is deeply frozen and Ractor-shareable, so mutation through the singleton is impossible" do
+      expect(described_class.default).to be_deeply_frozen
+    end
+
+    it "refuses a write into its price map" do
+      prices = described_class.default.instance_variable_get(:@prices)
+      expect { prices["opus"] = nil }.to raise_error(FrozenError)
+    end
+  end
+
   describe "an unknown model" do
     it "raises rather than silently pricing at zero" do
       expect { described_class.default.cost("gpt-4", usage(input: 10)) }

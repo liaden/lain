@@ -17,7 +17,7 @@ module Lain
     # correct: capture, attribution, timeout, and reaping (it calls `setsid`,
     # so a timeout kills the whole process group, not just the shell). Real
     # safety is {#requires_approval?} plus a human (or policy) on the other
-    # end of Handler::Approving, and eventually OS confinement in the
+    # end of Effect::Handler::Gate, and eventually OS confinement in the
     # out-of-process Rust exec boundary (M5/M6) -- never this tool's input
     # validation, which checks only that `timeout` is a sane number.
     class Bash < Tool
@@ -45,7 +45,7 @@ module Lain
           "if it runs past its timeout."
       end
 
-      # Tier 3: the model fully controls `command`. Gated by Handler::Approving
+      # Tier 3: the model fully controls `command`. Gated by Effect::Handler::Gate
       # by default -- see the class comment.
       def requires_approval? = true
 

@@ -44,7 +44,7 @@ RSpec.describe "tools x Agent loop" do
 
   describe "Tools::ReadFile through the loop" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::ReadFile.new]) }
-    let(:handler) { Lain::Handler::Live.new(toolset:, channel:) }
+    let(:handler) { Lain::Effect::Handler::Live.new(toolset:, channel:) }
 
     it "reads a real file and returns its bytes to the model (gates 2, 4, 5)" do
       File.write(File.join(dir, "hello.txt"), "from disk\n")
@@ -82,7 +82,7 @@ RSpec.describe "tools x Agent loop" do
       set = Lain::Toolset.new([spy.new])
 
       agent(set, [tool_use("tu_1", "read_file", { "path" => File.join(dir, "a.txt") }), settled],
-            handler: Lain::Handler::Live.new(toolset: set, channel:)).ask("go")
+            handler: Lain::Effect::Handler::Live.new(toolset: set, channel:)).ask("go")
 
       expect(seen).not_to be_a(String)
       expect(seen.path).to eq(File.join(dir, "a.txt"))
@@ -92,9 +92,9 @@ RSpec.describe "tools x Agent loop" do
   describe "Tools::Bash x Sink x Channel" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
     let(:handler) do
-      Lain::Handler::Approving.new(
-        policy: Lain::Handler::Approving::ApproveAll.new,
-        inner: Lain::Handler::Live.new(toolset:, channel:)
+      Lain::Effect::Handler::Gate.new(
+        policy: Lain::Effect::Handler::Gate::ApproveAll.new,
+        inner: Lain::Effect::Handler::Live.new(toolset:, channel:)
       )
     end
 
@@ -119,10 +119,10 @@ RSpec.describe "tools x Agent loop" do
     end
   end
 
-  describe "Handler::Approving x ToolRunner" do
+  describe "Effect::Handler::Gate x ToolRunner" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::Bash.new]) }
     let(:denying) do
-      Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset:, channel:))
+      Lain::Effect::Handler::Gate.new(inner: Lain::Effect::Handler::Live.new(toolset:, channel:))
     end
 
     it "turns a denied tier-3 call into is_error and lets the loop settle (gate 3)" do
@@ -141,7 +141,7 @@ RSpec.describe "tools x Agent loop" do
       set = Lain::Toolset.new([Lain::Tools::ReadFile.new])
       # The SAME DenyAll default that refuses bash above. read_file still runs,
       # because the gate asks the tool its tier rather than gating every call.
-      gate = Lain::Handler::Approving.new(inner: Lain::Handler::Live.new(toolset: set, channel:))
+      gate = Lain::Effect::Handler::Gate.new(inner: Lain::Effect::Handler::Live.new(toolset: set, channel:))
 
       run = agent(set, [tool_use("tu_r", "read_file", { "path" => File.join(dir, "ok.txt") }), settled],
                   handler: gate)

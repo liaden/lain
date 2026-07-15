@@ -89,10 +89,6 @@ module Lain
           !tool.nil? && tool.requires_approval?
         end
       end
-
-      # Deprecated compatibility alias (removed in T20). Gate was renamed from
-      # Approving; keep the old constant resolving until every reference migrates.
-      Approving = Gate
     end
   end
 end

@@ -44,7 +44,7 @@ module Lain
       # message. The one Item rejection that reaches this rescue is
       # #one_line's, for a multi-line id or description -- reported the way
       # MemoryRead reports an unknown id: as an error Result the model can
-      # act on, not a raise that only Handler::Live would catch.
+      # act on, not a raise that only Effect::Handler::Live would catch.
       def perform(input, _invocation)
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body)
         root = recorder.write(item)

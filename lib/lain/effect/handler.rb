@@ -80,10 +80,6 @@ module Lain
       end
     end
   end
-
-  # Deprecated compatibility alias (removed in T20). Keeps every not-yet-migrated
-  # file compiling while references move to the Effect namespace.
-  Handler = Effect::Handler
 end
 
 # Subclasses reopen Effect::Handler, so they load after the class body above.

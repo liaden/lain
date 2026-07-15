@@ -18,7 +18,7 @@ RSpec.describe Lain::Tools::Bash do
   end
 
   # Tier 3: a String command goes through `sh -c`, and the model fully
-  # controls it. Handler::Approving gates on exactly this flag.
+  # controls it. Effect::Handler::Gate gates on exactly this flag.
   it "is gated by approval, being tier 3" do
     expect(tool.requires_approval?).to be(true)
   end
