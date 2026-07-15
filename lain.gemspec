@@ -53,6 +53,11 @@ Gem::Specification.new do |spec|
   # live differential run must produce an identical Lain::Response. It is retired
   # only once the forked path has held. Retiring it costs us the dry-diff.
   spec.add_dependency "anthropic", "~> 1.55"
+  # The SDK's Bedrock Mantle client requires aws-sdk-core BEFORE branching on auth
+  # mode, so even bearer-token auth -- which never touches SigV4 at runtime -- cannot
+  # construct a client without it. This satisfies that eager require and nothing more;
+  # SigV4 signing stays out of scope (planning/specs/bedrock-provider.md).
+  spec.add_dependency "aws-sdk-core", "~> 3"
   # The transport. Lain forks RubyLLM's HTTP layer (see lib/lain/provider/http/),
   # so Faraday is ours directly. The adapter is pinned rather than inferred, because
   # a bench that silently changed its HTTP client would silently change its timings.
