@@ -364,3 +364,7 @@ After the last card merges, the orchestrator runs on `main`:
    a later turn ask the model what its memory manifest lists and have it memory_read the item
    back; the reply should quote the body. (Behavioral, not a Journal eyeball — the chat path
    wires no Journal: `build_agent` passes no `journal:`, so there is no NDJSON to inspect.)
+   *Ran 2026-07-15 over ollama (`gemma4:e4b`) through `LainCLI::Backend` + the T1
+   Session/Recorder wiring with a memory-only toolset: turn 1 memory_write landed, the
+   manifest reminder rendered, turn 2 memory_read quoted the body verbatim. Only the
+   interactive repl invocation itself remains un-smoked (construction pinned by cli_spec).*
