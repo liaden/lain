@@ -9,6 +9,7 @@
 require_relative "lain/version"
 require_relative "lain/error"
 require_relative "lain/canonical"
+require_relative "lain/prompt"
 require_relative "lain/freezable"
 require_relative "lain/guard"
 require_relative "lain/telemetry"

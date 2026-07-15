@@ -45,7 +45,8 @@ class LainCLI < Thor
     # is known). Sampler params ride Request#extra via the Context.
     def context
       Lain::Context.new(model: @options[:model] || default_model,
-                        max_tokens: @options[:max_tokens], extra: sampler_extra)
+                        max_tokens: @options[:max_tokens], extra: sampler_extra,
+                        system: Lain::Prompt::Slots.load.render)
     end
 
     private
