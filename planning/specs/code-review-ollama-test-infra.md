@@ -1,6 +1,6 @@
 # Review resolution, Ollama local provider, and test-infrastructure upgrade
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1306,7 +1306,7 @@ Scenario: a live tool-call turn round-trips through the Agent
 - Seeded runs differ across invocations — see (2): pin the true invariant and flag it
   prominently in docs/ollama.md and the completion note; do NOT mark the spec pending.
 
-### T22 — Matcher adoption sweep across the suite      [wave 5] [risk: low]
+### T22 — Matcher adoption sweep across the suite      [wave 5] [risk: low] ✅ landed
 
 **Depends on:** T2 (and sequenced last so every other card's specs are settled)
 **Files:** modify spec files suite-wide (the 31 `Ractor.shareable?` sites, 51 frozen checks,
