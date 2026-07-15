@@ -208,7 +208,7 @@ Scenario: the pure walk reports the missing digest
   class than `Lain::Store::MissingObject` from some walk) — the parity claim in the
   findings doc was wrong; stop and re-ground.
 
-### T2 — Remove the silent FFI fallbacks          [wave 2] [risk: medium]
+### T2 — Remove the silent FFI fallbacks          [wave 2] [risk: medium] ✅ landed 9bcf762 (panel: APPROVE; ancestry pin confirmed regression-only — init fallback was dead under normal load order)
 
 **Depends on:** T1
 **Files:** modify `ext/lain/src/lib.rs`; modify `spec/lain/rust/store_spec.rb` (or the most
@@ -326,7 +326,7 @@ Scenario: interior mutability cannot silently return
   reason, not a demo) — that invalidates the `frozen_shareable` promise on `Turn` itself;
   stop, this is a shipped-bug finding, not a chore.
 
-### T4 — Rename, dedup, and align the FFI layer          [wave 3] [risk: medium]
+### T4 — Rename, dedup, and align the FFI layer          [wave 3] [risk: medium] ✅ landed d306fbb (panel: APPROVE-WITH-FIXES, mechanical round only; orchestrator accepted rewind's scan_args arity as a deliberate Ruby-parity exception to the zero-change AC)
 
 **Depends on:** T1, T2, T3
 **Files:** modify `ext/lain/src/lib.rs`, `ext/lain/src/dag.rs`
@@ -358,6 +358,12 @@ handle-design sentence at the site); `SharedWriter::file()` hiding a lock acquis
 behind a noun (rename to `locked_file()` or comment). F.5: `rewind` binds `store.locked()`
 once before the loop, matching `dag.rs`'s single-locked-read doctrine (T1 will already
 have touched this loop — rebase the fix on its shape).
+
+*Orchestrator scope addition (from T2's hand-back, 2026-07-15):* `diverge_at`'s
+`unwrap_or_else(|| ruby.qnil()...)` after its second `store.locked().get(&digest)` is the
+same silent-nil shape T2 swept elsewhere — post-T1, `meet`'s result digest is guaranteed
+present, so the lookup "can't fail", which is exactly the loud-failure-inversion pattern:
+make it loud or write the one-line WHY.
 
 **Acceptance criteria:**
 
