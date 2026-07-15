@@ -28,6 +28,7 @@ produced in the precision pass. Each is linked from its ROADMAP bullet.
 | [`specs/cache-economics.md`](specs/cache-economics.md) | Cache-**write** attribution (Request digest chain, rewrite depth), the breakpoint-cap bug fix, the spawn-prefix-strategy axis (fresh / fork / sibling), stagger scheduling, prelude decomposition, price-model honesty. |
 | [`specs/grader-from-gherkin.md`](specs/grader-from-gherkin.md) | Gherkin as a transient IR → tests in the lain user's framework as the grader. |
 | [`specs/oracles.md`](specs/oracles.md) | Cheap one-shot deciders (heuristic/ollama/haiku/inline/human) behind the `ask_human` promise seam — typed answers, journaled for replay, tail-or-nothing placement; the decider-locus sweep; DCP's mechanical combinators. |
+| [`specs/bedrock-provider.md`](specs/bedrock-provider.md) | AWS Bedrock (Mantle) provider arm on the work bearer token: `Provider::Bedrock` SDK oracle + `Provider::BedrockRaw` on the forked transport, `:bedrock` tag gating, cassette hygiene. Panel-reviewed 2026-07-15. |
 | [`specs/plan-shaped-compaction.md`](specs/plan-shaped-compaction.md) | Compaction seams as explicit, author-editable plan content with size estimates; mostly-deterministic step-closure records; execution shape (linear+rewrite vs fork-per-step) as a swept policy; the seam EV decision, Journal-calibrated. |
 
 Cross-cutting themes:

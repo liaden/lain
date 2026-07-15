@@ -47,7 +47,7 @@ milestone exists to make an axis swappable and measured.
 | **Tool design (ACI)** | terse vs. verbose vs. guardrailed feedback; tier 1/2/3 | correct-call rate; recovery-from-error |
 | **Tool disclosure** | upfront-JSON vs. deferred/searchable vs. code-API | tokens; correct-call rate |
 | **Prompt slots** | base template vs. user-filled holes (persona · domain framing · output contract) | correct-call rate; grader; cache-hit |
-| **Provider / model** | Anthropic vs. OpenAI-compatible vs. local (ollama) | grader score; cost; latency |
+| **Provider / model** | Anthropic vs. OpenAI-compatible vs. local (ollama) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`) | grader score; cost; latency |
 | **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** | grader; tokens (~15× risk); cache-write; context-loss events |
 | **Memory / retrieval** | Manifest · BM25 · Hybrid · Vector · Graph · temporal-KG · content-addressed versioning · structural | recall@k; tokens on recall; abstention |
 | **Merge strategy** (concurrent edits) | git 3-way vs. CRDT auto-converge | final grader score; conflict/thrash |

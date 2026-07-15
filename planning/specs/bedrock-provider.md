@@ -135,7 +135,7 @@ Critical path: T1 → T3 → T4 (tied by T2 → T3 → T4; both length 3)
 
 ## Tasks
 
-### T1 — Add the vendored-transport Bedrock backend          [wave 1] [risk: medium]
+### T1 — Add the vendored-transport Bedrock backend          [wave 1] [risk: medium] ✅ landed (panel: APPROVE after fix round — redaction #inspect fix + regexp anchor + configuration_spec)
 
 **Depends on:** none
 **Files:** `lib/lain/provider/http/providers/bedrock.rb` (create),
@@ -194,7 +194,7 @@ Scenario: missing configuration fails loudly
   base URL — stop before working around it in the subclass.
 - Any impulse to reach for `aws-sdk-core`/SigV4 — out of scope by decision; escalate instead.
 
-### T2 — Add Provider::Bedrock, the SDK Mantle oracle          [wave 1] [risk: low]
+### T2 — Add Provider::Bedrock, the SDK Mantle oracle          [wave 1] [risk: low] ✅ landed (panel: APPROVE)
 
 **Depends on:** none
 **Files:** `lib/lain/provider/bedrock.rb` (create), `spec/lain/provider/bedrock_spec.rb` (create)
@@ -257,7 +257,7 @@ Scenario: errors and prices
   extract a shared collaborator — but if the extraction changes `Provider::Anthropic`'s public
   surface, stop first (it is the oracle other specs pin against).
 
-### T3 — Add Provider::BedrockRaw on the forked transport          [wave 2] [risk: medium]
+### T3 — Add Provider::BedrockRaw on the forked transport          [wave 2] [risk: medium] ✅ landed (panel: APPROVE — 4 NITs recorded, all optional test-symmetry: capabilities-literal assertion, will_retry_in backoff check, bedrock_region error naming [out of scope], APIError unit mirror)
 
 **Depends on:** T1, T2
 **Files:** `lib/lain/provider/bedrock_raw.rb` (create — also the index that requires its
@@ -397,7 +397,7 @@ Scenario: live round trips and the differential (runs only under LAIN_BEDROCK=1)
 - Any temptation to run `LAIN_RECORD=1` to debug — forbidden until the filter AC is green
   (Orchestrator contract, secrets discipline).
 
-### T5 — Wire --provider bedrock into the CLI          [wave 2] [risk: low]
+### T5 — Wire --provider bedrock into the CLI          [wave 2] [risk: low] ✅ landed (panel: APPROVE)
 
 **Depends on:** T2
 **Files:** `exe/lain` (modify), `spec/lain/cli_spec.rb` (modify)
