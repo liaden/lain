@@ -7,12 +7,12 @@ module Lain
   # everything else is handed a sink. {Sink::IOAdapter} exists for the awkward
   # reality that some third-party code (and `Mixlib::ShellOut`'s `live_stdout` /
   # `live_stderr`) insists on writing to an IO. It presents an IO-shaped duck,
-  # but every write becomes an attributed {Lain::Event::ToolOutput} on a
+  # but every write becomes an attributed {Lain::Telemetry::ToolOutput} on a
   # {Lain::Channel}, tagged at the source with its `tool_use_id` and stream.
   # {Sink::Null} is the `/dev/null` of sinks.
   module Sink
     # A minimal IO look-alike over a {Lain::Channel}. Each write turns into a
-    # {Lain::Event::ToolOutput} carrying a fixed `tool_use_id` and `stream`, so
+    # {Lain::Telemetry::ToolOutput} carrying a fixed `tool_use_id` and `stream`, so
     # bytes are attributed the moment they are produced.
     #
     # Only the IO surface third-party writers actually reach for is implemented:
@@ -36,7 +36,7 @@ module Lain
         @tool_use_id = tool_use_id
         @stream = stream
         # Fail fast on a bad stream rather than at first write, deep in a tool.
-        Event::ToolOutput.new(tool_use_id:, stream:, bytes: "")
+        Telemetry::ToolOutput.new(tool_use_id:, stream:, bytes: "")
       end
 
       # Write the string form of each argument. Emits one event per call (never
@@ -112,7 +112,7 @@ module Lain
         return if bytes.empty?
 
         @channel.push(
-          Event::ToolOutput.new(tool_use_id: @tool_use_id, stream: @stream, bytes:)
+          Telemetry::ToolOutput.new(tool_use_id: @tool_use_id, stream: @stream, bytes:)
         )
       end
     end

@@ -5,7 +5,7 @@ require "json"
 # Rewrites is an OFFLINE projection over a Journal's `request_sent` records
 # (CE-2): it recreates `diverge_at` at the request level, over the
 # breakpoint-partitioned chain `Request#prefix_digests` already computes and
-# `Event::RequestSent` already journals -- no Timeline access, journal bytes
+# `Telemetry::RequestSent` already journals -- no Timeline access, journal bytes
 # only.
 #
 # Rewrite semantics (binding, from the T4 card): a REWRITE is a position
@@ -14,7 +14,7 @@ require "json"
 # chain -- a marker slid, or a message got appended -- is NOT a rewrite.
 RSpec.describe Lain::Bench::Rewrites do
   # `chain` is an Array of [position, digest] pairs, exactly the shape
-  # `Request#prefix_digests` returns and `Event::RequestSent#prefix_digests`
+  # `Request#prefix_digests` returns and `Telemetry::RequestSent#prefix_digests`
   # journals; `nil` reproduces "not computed" (an older Journal, or a run that
   # never enabled the chain).
   def record(chain)

@@ -5,7 +5,7 @@ require "stringio"
 
 # The 5-3.1 acceptance: pair each committed assistant turn with the
 # Memory::Index root in force at that moment, journal the pair as
-# Event::MemoryRoot, and the recorded journal ALONE -- parsed back out of its
+# Telemetry::MemoryRoot, and the recorded journal ALONE -- parsed back out of its
 # NDJSON bytes -- suffices to reproduce recall exactly, however far the live
 # index has moved since. Snapshot purity is what makes dry-replay recall
 # possible later, so every checkout below is driven from PARSED values, never

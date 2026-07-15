@@ -11,7 +11,7 @@ module Lain
   # threads without copying. Equality, `#hash`, and immutability come from `Data`
   # itself; {Journalable} adds the one behaviour they share — serializing to a
   # tagged JSON object for the {Lain::Journal}.
-  module Event
+  module Telemetry
     # The NDJSON self-description every event owes the {Lain::Journal}. Mixed into
     # each `Data` event: its journal form is its attributes plus a `type` tag that
     # lets a reader discriminate the record without inspecting its shape. The

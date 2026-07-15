@@ -144,7 +144,7 @@ RSpec.describe Lain::Provider::BedrockRaw do
 
       provider.complete(request(stream: false))
 
-      retries = channel.events.grep(Lain::Event::ProviderRetry)
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
       expect(retries.size).to eq(1)
       expect(retries.first.status).to eq(429)
       expect(retries.first.attempt).to eq(1)

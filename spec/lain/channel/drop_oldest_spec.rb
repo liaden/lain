@@ -32,7 +32,7 @@ RSpec.describe Lain::Channel::DropOldest do
       channel.push(:a).push(:b).push(:c).push(:d).push(:e)
 
       drained = channel.drain
-      events = drained.grep_v(Lain::Event::Dropped)
+      events = drained.grep_v(Lain::Telemetry::Dropped)
       expect(events).to eq(%i[c d e])
     end
 
@@ -41,7 +41,7 @@ RSpec.describe Lain::Channel::DropOldest do
       channel.push(:a).push(:b).push(:c).push(:d) # drops :a and :b
 
       drained = channel.drain
-      expect(drained.first).to be_a(Lain::Event::Dropped)
+      expect(drained.first).to be_a(Lain::Telemetry::Dropped)
       expect(drained.first.count).to eq(2)
       expect(drained.drop(1)).to eq(%i[c d])
     end
@@ -50,7 +50,7 @@ RSpec.describe Lain::Channel::DropOldest do
       channel = described_class.new(capacity: 1)
       channel.push(:a).push(:b) # drops :a
       first = channel.drain
-      expect(first.first).to be_a(Lain::Event::Dropped)
+      expect(first.first).to be_a(Lain::Telemetry::Dropped)
 
       channel.push(:c)
       second = channel.drain
@@ -98,7 +98,7 @@ RSpec.describe Lain::Channel::DropOldest do
       channel.push(:a).push(:b) # drops :a
 
       marker = channel.pop
-      expect(marker).to be_a(Lain::Event::Dropped)
+      expect(marker).to be_a(Lain::Telemetry::Dropped)
       expect(marker.count).to eq(1)
       expect(channel.pop).to eq(:b)
     end
@@ -151,7 +151,7 @@ RSpec.describe Lain::Channel::DropOldest do
       delivered = 0
       dropped = 0
       channel.drain.each do |event|
-        if event.is_a?(Lain::Event::Dropped)
+        if event.is_a?(Lain::Telemetry::Dropped)
           dropped += event.count
         else
           delivered += 1

@@ -51,8 +51,8 @@ RSpec.describe Lain::Bench::Variance do
   def degrade!(journal, capability)
     return if capability.nil?
 
-    journal << Lain::Event::CapabilityDegraded.new(capability:, requirer: "Spec",
-                                                   provider: "Provider::Mock")
+    journal << Lain::Telemetry::CapabilityDegraded.new(capability:, requirer: "Spec",
+                                                       provider: "Provider::Mock")
   end
 
   let(:reference) { record([tool_response("tu_1", "hi"), text_response("done")]) }

@@ -50,7 +50,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
 
       expect(journal.events.size).to eq(1)
       refusal = journal.events.first
-      expect(refusal).to be_a(Lain::Event::WriteRefused)
+      expect(refusal).to be_a(Lain::Telemetry::WriteRefused)
       expect(refusal.tool_use_id).to eq("tu_1")
       expect(refusal.pattern).to eq("openai-style api key")
       expect(refusal.pattern).not_to include(secret)
@@ -172,7 +172,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
 
       expect(recorder.root).to be_nil
       expect(journal.events.size).to eq(1)
-      expect(journal.events.first).to be_a(Lain::Event::WriteRefused)
+      expect(journal.events.first).to be_a(Lain::Telemetry::WriteRefused)
     end
   end
 end

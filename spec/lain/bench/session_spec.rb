@@ -65,7 +65,7 @@ RSpec.describe Lain::Bench::Session do
     # constructor inputs": Context grows a kwarg, the header records nothing,
     # every spec stays green, and an old recording reloads to a Context that
     # renders different bytes -- booked as DIVERGED instead of failing here.
-    # The same members-pin idiom Event::RequestSent uses against Request.
+    # The same members-pin idiom Telemetry::RequestSent uses against Request.
     it "records every Context constructor input, so a new kwarg cannot be dropped in silence" do
       header = parsed_records.find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
@@ -232,7 +232,7 @@ RSpec.describe Lain::Bench::Session do
   describe "degraded capabilities" do
     it "folds capability_degraded records into the Recording's degraded set" do
       write_session
-      journal << Lain::Event::CapabilityDegraded.new(
+      journal << Lain::Telemetry::CapabilityDegraded.new(
         capability: :prompt_caching, requirer: "CacheBreakpoints", provider: "Provider::Mock"
       )
       expect(load_session.degraded).to include(:prompt_caching)
@@ -248,8 +248,8 @@ RSpec.describe Lain::Bench::Session do
     it "still loads, and the surplus attempt surfaces through DryReplay's guard" do
       write_session
       attempt = provider.requests.last
-      journal << Lain::Event::RequestSent.new(digest: attempt.digest, payload: attempt.cache_payload,
-                                              stream: attempt.stream, extra: attempt.extra)
+      journal << Lain::Telemetry::RequestSent.new(digest: attempt.digest, payload: attempt.cache_payload,
+                                                  stream: attempt.stream, extra: attempt.extra)
 
       recording = load_session
       expect(recording.baseline.size).to eq(3)

@@ -65,7 +65,7 @@ module Lain
       # write log) and the fully replayed index, whose store resolves every
       # one of those roots. A root is nil for a turn that committed before
       # any write -- nil IS the empty index's identity, a value here, exactly
-      # as {Event::MemoryRoot} records it on the wire.
+      # as {Telemetry::MemoryRoot} records it on the wire.
       RecordedMemory = Data.define(:roots, :index) do
         def initialize(roots:, index:)
           super(roots: roots.freeze, index:)

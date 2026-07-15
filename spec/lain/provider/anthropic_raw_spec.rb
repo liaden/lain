@@ -187,7 +187,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
 
       provider.complete(request(stream: false))
 
-      retries = channel.events.grep(Lain::Event::ProviderRetry)
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
       expect(retries.size).to eq(1)
       expect(retries.first.will_retry_in).to eq(2.0)
       expect(retries.first.status).to eq(429)

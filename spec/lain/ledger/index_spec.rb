@@ -3,7 +3,7 @@
 require "json"
 
 # The Index folds a Journal's turn_usage records into digest => payments,
-# one Entry per RECORD (see Event::TurnUsage: the digest is a join key).
+# one Entry per RECORD (see Telemetry::TurnUsage: the digest is a join key).
 RSpec.describe Lain::Ledger::Index do
   def record(digest:, model: "claude-sonnet-4", usage: { "input_tokens" => 10, "output_tokens" => 5 })
     { "type" => "turn_usage", "digest" => digest, "model" => model,

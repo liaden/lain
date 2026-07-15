@@ -37,7 +37,7 @@ RSpec.describe Lain::Sink do
         expect(result).to eq(5)
         expect(channel.events.size).to eq(1)
         event = channel.events.first
-        expect(event).to be_a(Lain::Event::ToolOutput)
+        expect(event).to be_a(Lain::Telemetry::ToolOutput)
         expect(event.tool_use_id).to eq("toolu_123")
         expect(event.stream).to eq(:stdout)
         expect(event.bytes).to eq("hello")

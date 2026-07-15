@@ -96,7 +96,7 @@ RSpec.describe Lain::Ledger do
   end
 
   # Content dedup (above) and payment aggregation (here) are different
-  # operations, and the Ledger does both (see Event::TurnUsage).
+  # operations, and the Ledger does both (see Telemetry::TurnUsage).
   describe "duplicate digests are separate payments" do
     it "sums BOTH payments for a rewound-and-regenerated turn" do
       timeline = commit(Lain::Timeline.empty(store:), "same answer")

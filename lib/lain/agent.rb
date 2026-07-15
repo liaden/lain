@@ -63,7 +63,7 @@ module Lain
     # (no `handler || ...` nil-tolerance downstream).
     #
     # @param journal [#<<] where per-turn usage records land; the Null channel
-    #   by default. Today ONLY {Event::TurnUsage} is written here -- it is not
+    #   by default. Today ONLY {Telemetry::TurnUsage} is written here -- it is not
     #   yet the full run record.
     def initialize(provider:, toolset:, context:,
                    handler: Effect::Handler::Live.new(toolset:),

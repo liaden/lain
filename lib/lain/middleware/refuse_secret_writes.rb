@@ -31,7 +31,7 @@ module Lain
 
       # name => pattern. The NAME is what gets journaled and put in the
       # model-facing error; the bytes that matched never are -- see
-      # {Event::WriteRefused}.
+      # {Telemetry::WriteRefused}.
       #
       # The sk- shape is anchored with a lookbehind because unanchored it
       # matched INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a
@@ -104,7 +104,7 @@ module Lain
       # actually perform the write) is never invoked, so `env[:result]` is
       # produced without the tool ever running.
       def refuse(env, effect, pattern)
-        @journal << Event::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern:)
+        @journal << Telemetry::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern:)
         env.merge(result: Tool::Result.error(
           "memory_write refused: input matches a #{pattern} pattern; nothing was written."
         ))

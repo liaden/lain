@@ -4,7 +4,7 @@ require "bigdecimal"
 require "stringio"
 
 # The seam the bench stands on: Agent -> Journal -> Ledger -> Compare, over real
-# collaborators end to end. The Agent journals one Event::TurnUsage per model
+# collaborators end to end. The Agent journals one Telemetry::TurnUsage per model
 # call; the Journal reduces it to NDJSON bytes; the Ledger reconstructs priced
 # totals from THOSE BYTES ALONE (io.string, never the in-memory events); Compare
 # reads the difference between two runs. The invariant under test is that the

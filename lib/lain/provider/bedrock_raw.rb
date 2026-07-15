@@ -169,16 +169,16 @@ module Lain
       def retry_journal
         channel = @channel
         lambda do |env:, retry_count:, exception:, will_retry_in:, **|
-          channel.push(Event::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
-                                                status: env[:status], reason: exception.class.name))
+          channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
+                                                    status: env[:status], reason: exception.class.name))
         end
       end
 
       def exhausted_journal
         channel = @channel
         lambda do |env:, exception:, options:|
-          channel.push(Event::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
-                                                status: env[:status], reason: exception.class.name))
+          channel.push(Telemetry::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
+                                                    status: env[:status], reason: exception.class.name))
         end
       end
     end

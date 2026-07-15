@@ -77,7 +77,7 @@ RSpec.describe Lain::Capability::Policy do
       policy.resolve(requirer, lacking)
       expect(journal.events.size).to eq(1)
       event = journal.events.first
-      expect(event).to be_a(Lain::Event::CapabilityDegraded)
+      expect(event).to be_a(Lain::Telemetry::CapabilityDegraded)
       expect(event.capability).to eq(:thinking)
       expect(event.requirer).to eq("FakeRequirer")
       expect(event.provider).to eq("FakeCapabilityProvider")

@@ -6,8 +6,8 @@ module Lain
     #
     # Split out of the Agent for the same reason Budget was: rolling up and
     # recording spend is bookkeeping, not the loop's job. Per-turn cost lives in
-    # the Journal, one {Event::TurnUsage} per model call, keyed by the committed
-    # turn's digest (see {Event::TurnUsage} for why content never carries its price).
+    # the Journal, one {Telemetry::TurnUsage} per model call, keyed by the committed
+    # turn's digest (see {Telemetry::TurnUsage} for why content never carries its price).
     class Accounting
       # The run's cumulative {Usage}; the monoid sum of every observed response.
       attr_reader :usage
@@ -27,7 +27,7 @@ module Lain
       # @return [Lain::Usage] the cumulative usage, ready for a budget check
       def observe(response, digest:)
         @usage += response.usage
-        @journal << Event::TurnUsage.new(
+        @journal << Telemetry::TurnUsage.new(
           digest:,
           model: response.model,
           stop_reason: response.stop_reason,

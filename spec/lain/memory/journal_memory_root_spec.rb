@@ -11,7 +11,7 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
   def item(id) = Lain::Memory::Item.new(id:, description: "desc of #{id}", body: "body of #{id}")
 
   def turn_usage(digest)
-    Lain::Event::TurnUsage.new(digest:, model: "claude-opus-4-8", stop_reason: :end_turn, usage: {})
+    Lain::Telemetry::TurnUsage.new(digest:, model: "claude-opus-4-8", stop_reason: :end_turn, usage: {})
   end
 
   let(:io) { StringIO.new }
@@ -25,7 +25,7 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
 
   describe "#<<" do
     it "forwards a non-TurnUsage event to the real journal untouched" do
-      decorator << Lain::Event::CapabilityDegraded.new(capability: :bash, requirer: "x", provider: "mock")
+      decorator << Lain::Telemetry::CapabilityDegraded.new(capability: :bash, requirer: "x", provider: "mock")
 
       expect(parsed_records.map { |record| record.fetch("type") }).to eq(["capability_degraded"])
     end

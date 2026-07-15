@@ -114,7 +114,7 @@ module Lain
     end
 
     # Append one event as a single NDJSON line. Accepts a Hash (written as-is) or
-    # anything answering `#to_journal` with a Hash (every {Lain::Event} does). The
+    # anything answering `#to_journal` with a Hash (every {Lain::Telemetry} does). The
     # line is built before the lock and written whole under it.
     #
     # @param entry [Hash, #to_journal]

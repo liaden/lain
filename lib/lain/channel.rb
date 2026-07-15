@@ -3,14 +3,14 @@
 require "active_support/core_ext/module/delegation"
 
 module Lain
-  # A thread-safe, bounded queue of structured events (see {Lain::Event}).
+  # A thread-safe, bounded queue of structured events (see {Lain::Telemetry}).
   #
   # This is deliberately NOT a byte buffer. `parallel_safe?` tools run
   # concurrently and subagents run async; a shared byte buffer would let two
   # writers interleave mid-line and destroy provenance -- you could no longer
   # tell which `tool_use_id` produced which line. A queue of whole, already
   # attributed events preserves that provenance by construction. Bytes only
-  # ever live *inside* an event (e.g. {Lain::Event::ToolOutput}), never smeared
+  # ever live *inside* an event (e.g. {Lain::Telemetry::ToolOutput}), never smeared
   # across the shared medium.
   #
   # == Overflow policy: BLOCK the producer (bounded backpressure)
@@ -36,7 +36,7 @@ module Lain
   #   that genuinely must not miss an event and can afford to throttle its
   #   producer. It is still the right default where a stall is acceptable.
   # - {Lain::Channel::DropOldest} drops the oldest event on overflow and surfaces
-  #   a {Lain::Event::Dropped} count, for the frontend, where a blocked producer
+  #   a {Lain::Telemetry::Dropped} count, for the frontend, where a blocked producer
   #   would be a deadlock if the render thread ever raised.
   #
   # Both satisfy the same `push`/`pop`/`drain`/`close`/`Null` duck, so the wiring
@@ -100,7 +100,7 @@ module Lain
     # Channel is a lone guarded class in its own namespace, so it nests its own
     # {Lain::Guard} subclass directly rather than joining a sibling `Guards`
     # module (that form is for namespaces with several guarded classes, e.g.
-    # {Lain::Event::Guards}). Channel is stateful, not a frozen value object, so
+    # {Lain::Telemetry::Guards}). Channel is stateful, not a frozen value object, so
     # there is no {Lain::Freezable} companion here -- just the carrier check.
     # {DropOldest} shares this Guard deliberately (same capacity contract); it
     # splits into its own the day their validations diverge.

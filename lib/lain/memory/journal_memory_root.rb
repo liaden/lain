@@ -3,8 +3,8 @@
 module Lain
   module Memory
     # A Journal-duck decorator: every entry is forwarded to the real Journal
-    # untouched, and a {Event::TurnUsage} is additionally followed by an
-    # {Event::MemoryRoot} pairing that SAME turn's digest with the recorder's
+    # untouched, and a {Telemetry::TurnUsage} is additionally followed by an
+    # {Telemetry::MemoryRoot} pairing that SAME turn's digest with the recorder's
     # current root. Constructed over the real Journal and a live {Recorder},
     # then handed to the Agent AS its `journal:` -- the Agent (via
     # {Agent::Accounting}) and {Middleware::JournalRequests} call nothing on
@@ -45,8 +45,8 @@ module Lain
       # @return [self]
       def record(entry)
         @journal << entry
-        if entry.is_a?(Event::TurnUsage)
-          @journal << Event::MemoryRoot.new(turn_digest: entry.digest, root: @recorder.root)
+        if entry.is_a?(Telemetry::TurnUsage)
+          @journal << Telemetry::MemoryRoot.new(turn_digest: entry.digest, root: @recorder.root)
         end
         self
       end

@@ -102,7 +102,7 @@ RSpec.describe "tools x Agent loop" do
       run = agent(toolset, [tool_use("tu_bash", "bash", { "command" => "echo seam" }), settled], handler:)
       run.ask("run it")
 
-      emitted = channel.events.grep(Lain::Event::ToolOutput)
+      emitted = channel.events.grep(Lain::Telemetry::ToolOutput)
       expect(emitted).not_to be_empty
       expect(emitted.map(&:tool_use_id).uniq).to eq(["tu_bash"])
       expect(emitted.select { |e| e.stream == :stdout }.map(&:bytes).join).to include("seam")
@@ -113,7 +113,7 @@ RSpec.describe "tools x Agent loop" do
                   handler:)
       run.ask("run it")
 
-      by_stream = channel.events.grep(Lain::Event::ToolOutput).group_by(&:stream)
+      by_stream = channel.events.grep(Lain::Telemetry::ToolOutput).group_by(&:stream)
       expect(by_stream[:stdout].map(&:bytes).join).to include("out")
       expect(by_stream[:stderr].map(&:bytes).join).to include("err")
     end

@@ -3,7 +3,7 @@
 module Lain
   module Middleware
     # Records every outbound Request in the model phase as an
-    # {Event::RequestSent}, then passes the env through untouched.
+    # {Telemetry::RequestSent}, then passes the env through untouched.
     #
     # This lives in middleware rather than in ModelCaller because WHETHER to
     # record requests is a per-experiment wiring decision, not the model round
@@ -29,7 +29,7 @@ module Lain
 
       def call(env, &app)
         request = env.fetch(:request)
-        @journal << Event::RequestSent.new(
+        @journal << Telemetry::RequestSent.new(
           digest: request.digest,
           payload: request.cache_payload,
           stream: request.stream,

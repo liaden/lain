@@ -4,7 +4,7 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
   let(:pastel) { Pastel.new(enabled: false) }
 
   def event(tool_use_id: "tu_1", stream: :stdout, bytes: "hello\n")
-    Lain::Event::ToolOutput.new(tool_use_id:, stream:, bytes:)
+    Lain::Telemetry::ToolOutput.new(tool_use_id:, stream:, bytes:)
   end
 
   it "renders the tool_use_id, stream, and bytes as one line" do
@@ -34,7 +34,7 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
     end
 
     it "returns nil for an event it does not present" do
-      expect(Lain::Frontend::Decorators.for(Lain::Event::Dropped.new(count: 1))).to be_nil
+      expect(Lain::Frontend::Decorators.for(Lain::Telemetry::Dropped.new(count: 1))).to be_nil
     end
   end
 end

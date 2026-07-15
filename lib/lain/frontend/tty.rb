@@ -14,7 +14,7 @@ module Lain
     #
     # 1. {#run} takes the alternate screen so chat state never smears into REPL
     #    scrollback, and drains an injected {Lain::Channel} on a background
-    #    thread -- rendering each attributed {Lain::Event} as it arrives. This
+    #    thread -- rendering each attributed {Lain::Telemetry} as it arrives. This
     #    is the consumer whose existence keeps the Channel's blocking backpressure
     #    (see Channel's doc) from ever deadlocking a producer.
     # 2. {#prompt} and {#render_response} are the synchronous half: reading the
@@ -124,7 +124,7 @@ module Lain
 
       # Render one Channel event: find the decorator that presents it and print
       # its output, or skip an event this frontend does not render (the Channel
-      # may also carry, e.g., {Event::Dropped}, which the TTY ignores). The
+      # may also carry, e.g., {Telemetry::Dropped}, which the TTY ignores). The
       # color/format knowledge lives in the decorator, not here -- see
       # {Frontend::Decorators} for why presentation is frontend-owned and never a
       # `Renderable` mixed into the lib value object.

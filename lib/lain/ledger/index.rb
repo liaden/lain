@@ -5,7 +5,7 @@ module Lain
     # A Journal's `turn_usage` records, folded into `digest => payments` so the
     # Ledger can join spend onto the turns a Timeline walk reaches. One {Entry}
     # per RECORD: the digest is a JOIN KEY onto content, NOT a key that
-    # identifies a payment (see {Event::TurnUsage}).
+    # identifies a payment (see {Telemetry::TurnUsage}).
     #
     # Deeply frozen at construction; an Index is a value derived from the
     # Journal, and `Ractor.shareable?` is the project's mechanical proof of that.

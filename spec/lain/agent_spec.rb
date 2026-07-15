@@ -188,7 +188,7 @@ RSpec.describe Lain::Agent do
     end
 
     # Regenerating an identical turn after a rewind pays twice and must be
-    # counted twice (see Event::TurnUsage: the digest is a join key).
+    # counted twice (see Telemetry::TurnUsage: the digest is a join key).
     it "journals one record per PAYMENT: rewind plus identical regeneration duplicates the digest" do
       usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
       same_answer = lambda do

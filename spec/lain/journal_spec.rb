@@ -23,7 +23,7 @@ RSpec.describe Lain::Journal do
     end
 
     it "serializes an event via its #to_journal" do
-      journal.record(Lain::Event::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
+      journal.record(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
 
       expect(JSON.parse(lines.first)).to include(
         "type" => "tool_output", "tool_use_id" => "t1", "stream" => "stdout", "bytes" => "hi"

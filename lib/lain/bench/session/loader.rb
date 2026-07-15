@@ -100,7 +100,7 @@ module Lain
                          "#{chain.head_digest.inspect}; the tail has been truncated or spliced"
         end
 
-        # The proven rebuild idiom (see Event::RequestSent and its spec): the
+        # The proven rebuild idiom (see Telemetry::RequestSent and its spec): the
         # payload's keys are exactly Request.new's content keywords, and the
         # record carries the digest-excluded transport fields alongside. Each
         # rebuild must land on the record's own digest -- RequestSent carries

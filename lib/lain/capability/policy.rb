@@ -7,7 +7,7 @@ module Lain
     # find the required capabilities the provider lacks -- and differ only in what
     # they do about a missing one, which is exactly a strategy split: {Strict}
     # raises (reusing {Provider#require!}, so the error and its message stay in one
-    # place); {Degrade} no-ops but LOUDLY, journaling one {Event::CapabilityDegraded}
+    # place); {Degrade} no-ops but LOUDLY, journaling one {Telemetry::CapabilityDegraded}
     # per missing capability so the no-op is a durable record rather than a silent
     # divergence.
     #
@@ -84,7 +84,7 @@ module Lain
         private
 
         def handle_missing(capability, requirer, provider)
-          @journal << Event::CapabilityDegraded.new(
+          @journal << Telemetry::CapabilityDegraded.new(
             capability:,
             requirer: requirer.class.name,
             provider: provider.class.name

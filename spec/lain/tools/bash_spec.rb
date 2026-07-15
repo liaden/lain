@@ -58,12 +58,12 @@ RSpec.describe Lain::Tools::Bash do
   end
 
   describe "attributed live streaming" do
-    it "emits stdout bytes as Event::ToolOutput carrying the invocation's tool_use_id and stream" do
+    it "emits stdout bytes as Telemetry::ToolOutput carrying the invocation's tool_use_id and stream" do
       tool.call({ command: "echo from_stdout" }, invocation(tool_use_id: "tu_abc"))
 
       stdout_events = channel.events.select { |e| e.stream == :stdout }
       expect(stdout_events).not_to be_empty
-      expect(stdout_events).to all(be_a(Lain::Event::ToolOutput))
+      expect(stdout_events).to all(be_a(Lain::Telemetry::ToolOutput))
       expect(stdout_events).to all(have_attributes(tool_use_id: "tu_abc"))
       expect(stdout_events.map(&:bytes).join).to include("from_stdout")
     end

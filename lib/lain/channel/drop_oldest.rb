@@ -20,7 +20,7 @@ module Lain
     # and the frontend may freely drop.
     #
     # Dropping is never silent. Each overflow bumps a counter; the next {#drain}
-    # or {#pop} surfaces a single {Lain::Event::Dropped} marker carrying the count
+    # or {#pop} surfaces a single {Lain::Telemetry::Dropped} marker carrying the count
     # lost since the last one, ahead of the surviving events (which are newer than
     # everything dropped). A consumer thus always knows the record it is rendering
     # is incomplete, and by how much -- the honest analog of backpressure for a
@@ -48,7 +48,7 @@ module Lain
     class DropOldest
       # The same two-mode `drain` as {Lain::Channel} -- see {Channel::Draining}
       # for the contract and the drain-not-each WHY. The block form yields any
-      # pending {Lain::Event::Dropped} marker first, because it rides {#pop}.
+      # pending {Lain::Telemetry::Dropped} marker first, because it rides {#pop}.
       include Draining
 
       # @param capacity [Integer] maximum buffered events before the oldest is
@@ -87,7 +87,7 @@ module Lain
       alias << push
 
       # Remove and return the next event, blocking until one is available. A
-      # pending drop surfaces first as a {Lain::Event::Dropped} marker; once the
+      # pending drop surfaces first as a {Lain::Telemetry::Dropped} marker; once the
       # channel is closed and drained, returns `nil`.
       #
       # @return [Object, nil]
@@ -129,7 +129,7 @@ module Lain
       private
 
       # The non-blocking mode's mechanics: every buffered event in FIFO order,
-      # led by a single {Lain::Event::Dropped} marker if any were dropped since
+      # led by a single {Lain::Telemetry::Dropped} marker if any were dropped since
       # the last surface; `[]` when nothing is queued and nothing was dropped.
       def drain_buffered
         @mutex.synchronize do
@@ -144,7 +144,7 @@ module Lain
       def dropped_marker
         count = @dropped
         @dropped = 0
-        Event::Dropped.new(count:)
+        Telemetry::Dropped.new(count:)
       end
     end
   end

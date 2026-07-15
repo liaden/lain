@@ -2,12 +2,12 @@
 
 module Lain
   module Frontend
-    # Render ergonomics for Channel {Lain::Event}s: a decorator bundles color and
+    # Render ergonomics for Channel {Lain::Telemetry}s: a decorator bundles color and
     # format WITH the event it presents, so {TTY#render} stays a plain dispatch
     # (event -> decorator -> bytes) instead of a growing pile of type-branched
     # private printers.
     #
-    # Why a decorator and not a `Renderable` module included on {Lain::Event}
+    # Why a decorator and not a `Renderable` module included on {Lain::Telemetry}
     # itself: presentation knowledge (Pastel, colors) is exactly what output
     # discipline keeps OUT of `lib/` non-frontend code (see
     # spec/output_discipline_spec.rb). A `render` method on the value object would
@@ -15,9 +15,9 @@ module Lain
     # stays a pure value; its presentation lives here, under frontend/, where
     # touching a terminal palette is legal.
     #
-    # One decorator today -- {Event::ToolOutput} is the only event the frontend
+    # One decorator today -- {Telemetry::ToolOutput} is the only event the frontend
     # Channel actually renders (a live tool's stdout/stderr). Other events do
-    # flow through channels ({Event::ProviderRetry}, {Event::Dropped}) and are
+    # flow through channels ({Telemetry::ProviderRetry}, {Telemetry::Dropped}) and are
     # deliberately unrendered here -- a decision, not a gap: they are Journal
     # material, not something the human needs painted mid-stream. So this is
     # deliberately NOT a decorator-per-type registry yet: a one-member family
@@ -29,7 +29,7 @@ module Lain
       # @return [#render, nil] the decorator that presents `event`, or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
-        ToolOutput.new(event) if event.is_a?(Event::ToolOutput)
+        ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
       end
 
       # Presents a live tool-output chunk: a dim attribution label

@@ -47,7 +47,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
 
       expect(journal.events.size).to eq(1)
       event = journal.events.first
-      expect(event).to be_a(Lain::Event::RequestSent)
+      expect(event).to be_a(Lain::Telemetry::RequestSent)
       expect(event).to have_same_digest_as(sent)
       expect(event.payload).to eq(sent.cache_payload)
       expect(event.stream).to be(false)

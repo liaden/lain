@@ -3,37 +3,44 @@
 require "json"
 require "stringio"
 
-RSpec.describe Lain::Event do
+RSpec.describe Lain::Telemetry do
+  # T1: the module moved from Lain::Event to Lain::Telemetry. The old constant
+  # must be gone -- not merely aliased -- so nothing new can be written against
+  # it, while the wire format (journal_type tags) stays byte-identical.
+  it "frees the old constant name" do
+    expect(defined?(Lain::Event)).to be_falsy
+  end
+
   # The five events whose hand-rolled guards moved to validate-then-freeze
   # (Ruling 2). Construction validates a throwaway Lain::Guard carrier BEFORE
   # the auto-frozen Data value exists, so the value never carries ActiveModel's
   # @errors / @context_for_validation ivars and stays Ractor-shareable.
   describe "validate-then-freeze construction (T6 convention)" do
     it "exposes a reachable ActiveModel Guard carrier per converted event" do
-      expect(Lain::Event::Guards::Dropped.new(count: 0)).to be_invalid
-      expect(Lain::Event::Guards::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid
-      expect(Lain::Event::Guards::RequestSent.new(stream: "yes")).to be_invalid
-      expect(Lain::Event::Guards::MemoryRoot.new(turn_digest: nil)).to be_invalid
-      expect(Lain::Event::Guards::WriteRefused.new(pattern: nil)).to be_invalid
+      expect(Lain::Telemetry::Guards::Dropped.new(count: 0)).to be_invalid
+      expect(Lain::Telemetry::Guards::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid
+      expect(Lain::Telemetry::Guards::RequestSent.new(stream: "yes")).to be_invalid
+      expect(Lain::Telemetry::Guards::MemoryRoot.new(turn_digest: nil)).to be_invalid
+      expect(Lain::Telemetry::Guards::WriteRefused.new(pattern: nil)).to be_invalid
     end
 
     it "raises ArgumentError naming the attribute AND echoing the value, never ActiveModel::ValidationError" do
-      expect { Lain::Event::Dropped.new(count: 0) }
+      expect { Lain::Telemetry::Dropped.new(count: 0) }
         .to raise_error(ArgumentError, "count must be a positive Integer, got 0")
       # %{value} echoes un-inspected: 'got yes', where the hand-rolled guard said 'got "yes"'.
-      expect { Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: "yes", extra: {}) }
+      expect { Lain::Telemetry::RequestSent.new(digest: "d", payload: {}, stream: "yes", extra: {}) }
         .to raise_error(ArgumentError, "stream must be true or false, got yes")
-      expect { Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: nil, extra: {}) }
+      expect { Lain::Telemetry::RequestSent.new(digest: "d", payload: {}, stream: nil, extra: {}) }
         .to raise_error(ArgumentError, /stream must be true or false/)
     end
 
     it "leaves every valid converted event deeply frozen, Ractor-shareable, and @errors-free" do
       valid = [
-        Lain::Event::Dropped.new(count: 1),
-        Lain::Event::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}),
-        Lain::Event::RequestSent.new(digest: "d", payload: {}, stream: false, extra: {}),
-        Lain::Event::MemoryRoot.new(turn_digest: "d", root: nil),
-        Lain::Event::WriteRefused.new(tool_use_id: "t", pattern: "p")
+        Lain::Telemetry::Dropped.new(count: 1),
+        Lain::Telemetry::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}),
+        Lain::Telemetry::RequestSent.new(digest: "d", payload: {}, stream: false, extra: {}),
+        Lain::Telemetry::MemoryRoot.new(turn_digest: "d", root: nil),
+        Lain::Telemetry::WriteRefused.new(tool_use_id: "t", pattern: "p")
       ]
 
       valid.each do |event|
@@ -62,12 +69,12 @@ RSpec.describe Lain::Event do
     end
 
     it "is what a converted event actually reports" do
-      expect(Lain::Event::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}).journal_type)
+      expect(Lain::Telemetry::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}).journal_type)
         .to eq("turn_usage")
     end
   end
 
-  describe Lain::Event::ToolOutput do
+  describe Lain::Telemetry::ToolOutput do
     subject(:event) { described_class.new(tool_use_id: "t1", stream: :stdout, bytes: "hi") }
 
     it "rejects an unknown stream" do
@@ -101,7 +108,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::Dropped do
+  describe Lain::Telemetry::Dropped do
     it "carries a positive count" do
       expect(described_class.new(count: 3).count).to eq(3)
     end
@@ -120,7 +127,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::TurnUsage do
+  describe Lain::Telemetry::TurnUsage do
     subject(:event) do
       described_class.new(digest: "blake3:abc123", model: "claude-opus-4-8",
                           stop_reason: :end_turn,
@@ -180,7 +187,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::RequestSent do
+  describe Lain::Telemetry::RequestSent do
     let(:request) do
       Lain::Request.new(
         model: "claude-opus-4-8",
@@ -344,7 +351,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::MemoryRoot do
+  describe Lain::Telemetry::MemoryRoot do
     subject(:event) { described_class.new(turn_digest: "blake3:turn", root: "blake3:root") }
 
     it "carries the committed turn's digest and the index root in force at it" do
@@ -387,7 +394,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::CapabilityDegraded do
+  describe Lain::Telemetry::CapabilityDegraded do
     subject(:event) do
       described_class.new(capability: :thinking, requirer: "Prune", provider: "Provider::Mock")
     end
@@ -420,7 +427,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  describe Lain::Event::WriteRefused do
+  describe Lain::Telemetry::WriteRefused do
     subject(:event) { described_class.new(tool_use_id: "tu_1", pattern: "aws access key id") }
 
     it "carries the tool_use_id and the NAME of the pattern that matched" do
@@ -452,6 +459,32 @@ RSpec.describe Lain::Event do
       expect(JSON.parse(JSON.generate(event.to_journal))).to eq(
         "type" => "write_refused", "tool_use_id" => "tu_1", "pattern" => "aws access key id"
       )
+    end
+  end
+
+  # T1 AC2: the committed variance fixtures were written before the rename,
+  # so they are the regression proof that the wire format (the `type` tags
+  # Journalable#to_journal derives from the class name) did not shift under
+  # Bench::Session::Loader -- the loader discriminates records by that string,
+  # never by resolving a Lain::Telemetry (nee Lain::Event) class reflectively.
+  describe "fixture-load regression: recorded journals still load" do
+    fixture_dir = File.expand_path("../fixtures/sessions/variance", __dir__)
+    fixture_paths = Dir.glob(File.join(fixture_dir, "*.ndjson"))
+
+    it "finds the committed variance fixtures" do
+      expect(fixture_paths).not_to be_empty
+    end
+
+    it "loads every fixture, and every parsed record keeps its pre-rename type tag" do
+      fixture_paths.each do |path|
+        lines = File.readlines(path)
+        recorded_types = lines.map { |line| JSON.parse(line).fetch("type") }
+
+        recording = Lain::Bench::Session::Loader.new(lines).recording
+
+        expect(recording.timeline).to be_a(Lain::Timeline)
+        expect(recorded_types).to include("request_sent", "turn_usage", "turn", "session")
+      end
     end
   end
 end
