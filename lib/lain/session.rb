@@ -15,16 +15,32 @@ module Lain
   # or forking the Timeline can never resurrect (or lose) a todo list: there was
   # never a copy of it there to begin with, only here.
   #
-  # Two responsibilities today:
+  # Three responsibilities today:
   #   * a read-set, so an edit-before-read contract can ask "was this file read
   #     this session?" (see {Tool::Contracts});
   #   * a reminders channel -- empty until {Tools::TodoWrite} lands the run's
   #     todo list, then one rendered string -- that the Agent composes into the
-  #     Workspace tail every render.
+  #     Workspace tail every render;
+  #   * the memory manifest, projected from an injected memory source (the
+  #     session's {Memory::Recorder}) onto that same channel whenever its
+  #     index holds items.
   class Session
-    def initialize
+    # The manifest block's first line, added HERE rather than inside
+    # {Memory::Manifest#to_reminder} (which stays bare): naming memory_read as
+    # the way to open an id is the session's presentation decision, the same
+    # way the todo block carries its own heading.
+    MANIFEST_HEADING = "Memory manifest, one \"id | description\" per item " \
+                       "(call memory_read with an id to open its body):"
+
+    # `memory:` defaults to a fresh, empty {Memory::Recorder} -- an empty
+    # holder satisfying the same duck as the real one (Null Object over nil
+    # checks), so {#reminders} never guards on a missing source.
+    def initialize(memory: Memory::Recorder.new)
       @reads = Set.new
       @todo_reminder = nil
+      @memory = memory
+      @manifest_root = nil
+      @manifest_reminders = [].freeze
     end
 
     # Record that `path` was read this session. Normalized so a later `read?`
@@ -59,18 +75,42 @@ module Lain
       self
     end
 
-    # State the Agent renders into the Workspace tail each turn: empty until a
-    # todo_write lands, then ONE string -- the whole list, the same
-    # render-to-one-string shape as {Memory::Manifest#to_reminder} -- never a
-    # Timeline entry, so the Timeline being rewound or forked has no bearing on
-    # it; it lives here, not there.
+    # State the Agent renders into the Workspace tail each turn: the todo
+    # block (one string, see {#write_todos}), then the memory manifest block
+    # whenever the index is non-empty -- never a Timeline entry, so the
+    # Timeline being rewound or forked has no bearing on either; they live
+    # here, not there.
     #
     # @return [Array<String>]
     def reminders
-      @todo_reminder ? [@todo_reminder].freeze : [].freeze
+      (todo_reminders + manifest_reminders).freeze
     end
 
     private
+
+    def todo_reminders
+      @todo_reminder ? [@todo_reminder] : []
+    end
+
+    # The same once-per-write rule as {#write_todos} (T11 review, Patterson),
+    # applied to a source THIS object does not write through: the manifest is
+    # re-rendered only when the index's root moves. The root is a content
+    # address, so it is the free invalidation key -- equal roots mean an
+    # identical corpus by construction.
+    def manifest_reminders
+      index = @memory.index
+      refresh_manifest(index) unless index.root == @manifest_root
+      @manifest_reminders
+    end
+
+    def refresh_manifest(index)
+      @manifest_root = index.root
+      @manifest_reminders = index.empty? ? [].freeze : [labeled_manifest(index)].freeze
+    end
+
+    def labeled_manifest(index)
+      -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index).to_reminder}"
+    end
 
     # Path identity is `File.expand_path`: "./app.rb" recorded and "app.rb"
     # queried (or the reverse) are the same file, so the read-set answers on the

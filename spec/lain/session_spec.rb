@@ -61,6 +61,62 @@ RSpec.describe Lain::Session do
     end
   end
 
+  describe "#reminders with a memory source" do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    def item(id, description)
+      Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
+    end
+
+    let(:recorder) { Lain::Memory::Recorder.new }
+
+    subject(:session) { described_class.new(memory: recorder) }
+
+    it "adds nothing while the index is empty" do
+      expect(session.reminders).to eq([])
+    end
+
+    # AC5: composition is deterministic -- two reads with no writes between
+    # them are byte-identical, each block appears exactly once, and the todo
+    # block precedes the manifest block.
+    it "composes todos then manifest deterministically, each block exactly once" do
+      recorder.write(item("aspirin-dosing", "Aspirin dosing bounds for adults"))
+      session.write_todos([todo("check interactions", "pending")])
+
+      first = session.reminders
+      second = session.reminders
+
+      expect(first).to eq(second)
+      expect(first.size).to eq(2)
+      expect(first.first).to start_with("Current todo list:")
+      expect(first.last).to include("aspirin-dosing | Aspirin dosing bounds for adults")
+      expect(first.count { |block| block.include?("Current todo list:") }).to eq(1)
+      expect(first.count { |block| block.include?("aspirin-dosing |") }).to eq(1)
+    end
+
+    # Ruling (a): #reminders runs on EVERY render, so the manifest block is
+    # memoized keyed by the recorder's index root -- the content address is
+    # the invalidation key. Same root, same String OBJECT.
+    it "memoizes the rendered manifest block until the index root moves" do
+      recorder.write(item("aspirin-dosing", "Aspirin dosing bounds for adults"))
+
+      expect(session.reminders.last).to be(session.reminders.last)
+
+      recorder.write(item("warfarin-interactions", "Warfarin interaction list"))
+      expect(session.reminders.last)
+        .to include("aspirin-dosing | Aspirin dosing bounds for adults")
+        .and include("warfarin-interactions | Warfarin interaction list")
+    end
+
+    # Ruling (b): the block is labeled at the SESSION layer, naming
+    # memory_read as the way to open an id; Manifest#to_reminder stays bare.
+    it "labels the manifest block, naming memory_read as the way to open an id" do
+      recorder.write(item("aspirin-dosing", "Aspirin dosing bounds for adults"))
+
+      expect(session.reminders.last.lines.first).to include("memory_read")
+    end
+  end
+
   describe Lain::Session::Null do
     subject(:null) { described_class.instance }
 

@@ -144,7 +144,11 @@ class LainCLI < Thor
     # the last (its prior root still resolves the old item).
     recorder = Lain::Memory::Recorder.new
     toolset = build_toolset(recorder)
-    agent = build_agent(toolset:, channel:)
+    # The SAME recorder backs the session's manifest and the read/write tools:
+    # what the model writes this session is what the manifest lists and what
+    # memory_read resolves -- one index, three views.
+    session = Lain::Session.new(memory: recorder)
+    agent = build_agent(toolset:, channel:, session:)
     tty = Lain::Frontend::TTY.new(channel:)
     repl_middleware = build_repl_middleware
 
@@ -170,6 +174,7 @@ class LainCLI < Thor
                         Lain::Tools::EditFile.new,
                         Lain::Tools::TodoWrite.new,
                         Lain::Tools::MemoryWrite.new(recorder:),
+                        Lain::Tools::MemoryRead.new(index: recorder),
                         Lain::Tools::Bash.new
                       ])
   end
@@ -180,12 +185,17 @@ class LainCLI < Thor
   # sits in the tool phase so a credential-shaped memory_write is withheld
   # before it ever reaches the recorder (a memory, once indexed, replays into
   # every future context -- there is no un-indexing it).
-  def build_agent(toolset:, channel:)
+  # `session:` is REQUIRED, not defaulted: a defaulted fresh Session would
+  # silently mis-wire memory -- a caller passing a recorder-bearing toolset
+  # but forgetting session: would get working memory tools with a permanently
+  # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
+  # degrade (T1 panel, Schneeman).
+  def build_agent(toolset:, channel:, session:)
     backend = Backend.new(options)
     live = Lain::Effect::Handler::Live.new(toolset:, channel:)
     gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
 
-    Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate,
+    Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate, session:,
                     tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]))
   end
 
