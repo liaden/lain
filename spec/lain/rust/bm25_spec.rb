@@ -19,8 +19,7 @@ RSpec.describe Lain::Ext::Bm25 do
   describe ".build" do
     it "returns a frozen, Ractor-shareable index" do
       index = described_class.build(corpus)
-      expect(index).to be_frozen
-      expect(Ractor.shareable?(index)).to be(true)
+      expect(index).to be_deeply_frozen
     end
 
     it "raises EmptyCorpus on an empty batch" do

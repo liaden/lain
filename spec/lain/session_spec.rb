@@ -79,7 +79,7 @@ RSpec.describe Lain::Session do
     end
 
     it "is a shared, frozen instance" do
-      expect(null).to be_frozen
+      expect(null).to be_deeply_frozen
       expect(described_class.instance).to be(null)
     end
   end

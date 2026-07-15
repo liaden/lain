@@ -40,7 +40,7 @@ RSpec.describe Lain::Response do
   subject(:response) { described_class.new(content: blocks, stop_reason: :tool_use) }
 
   it "is frozen" do
-    expect(response).to be_frozen
+    expect(response).to be_deeply_frozen
   end
 
   # Correctness gate 1: the FULL block list is what gets appended to the
@@ -90,12 +90,12 @@ RSpec.describe Lain::Response do
     it "ignores the provider's raw object" do
       a = described_class.new(content: blocks, stop_reason: :tool_use, raw: Object.new)
       b = described_class.new(content: blocks, stop_reason: :tool_use, raw: nil)
-      expect(a.digest).to eq(b.digest)
+      expect(a).to have_same_digest_as(b)
     end
 
     it "changes with stop_reason" do
       other = described_class.new(content: blocks, stop_reason: :end_turn)
-      expect(response.digest).not_to eq(other.digest)
+      expect(response).not_to have_same_digest_as(other)
     end
   end
 end

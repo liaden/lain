@@ -83,7 +83,7 @@ RSpec.describe LainCLI do
       tuned = render(provider: "ollama", model: nil, max_tokens: 4096, temperature: 0, seed: 7)
       plain = render(provider: "ollama", model: nil, max_tokens: 4096, temperature: nil, seed: nil)
       expect(tuned.cache_payload).to eq(plain.cache_payload)
-      expect(tuned.digest).to eq(plain.digest)
+      expect(tuned).to have_same_digest_as(plain)
     end
 
     it "omits absent sampler keys entirely (0 is present, nil is not)" do

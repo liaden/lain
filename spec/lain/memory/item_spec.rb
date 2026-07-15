@@ -77,7 +77,7 @@ RSpec.describe Lain::Memory::Item do
     end
 
     it "freezes the item itself" do
-      expect(item).to be_frozen
+      expect(item).to be_deeply_frozen
     end
 
     it "freezes every instance variable" do
@@ -86,7 +86,7 @@ RSpec.describe Lain::Memory::Item do
     end
 
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-      expect(Ractor.shareable?(item)).to be(true)
+      expect(item).to be_ractor_shareable
     end
   end
 
@@ -106,19 +106,19 @@ RSpec.describe Lain::Memory::Item do
     end
 
     it "is identical for identical content" do
-      expect(item.digest).to eq(item.digest)
+      expect(item).to have_same_digest_as(item)
     end
 
     it "changes with id" do
-      expect(item(id: "other").digest).not_to eq(item.digest)
+      expect(item(id: "other")).not_to have_same_digest_as(item)
     end
 
     it "changes with description" do
-      expect(item(description: "Pediatric dosing").digest).not_to eq(item.digest)
+      expect(item(description: "Pediatric dosing")).not_to have_same_digest_as(item)
     end
 
     it "changes with body" do
-      expect(item(body: "250mg every 8 hours").digest).not_to eq(item.digest)
+      expect(item(body: "250mg every 8 hours")).not_to have_same_digest_as(item)
     end
   end
 

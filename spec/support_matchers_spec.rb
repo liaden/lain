@@ -48,6 +48,19 @@ RSpec.describe "custom matchers (spec/support/matchers/)" do
       expect { expect(nested).to be_ractor_shareable }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /@blocks\[1\]\["text"\] \(String, unfrozen\)/)
     end
+
+    # T2 re-review rider: the depth-first walk is cut by an identity-keyed
+    # `seen` set, not by depth alone. A frozen structure that references
+    # ITSELF (a cycle, not just deep nesting) must still terminate and name
+    # the real offender rather than looping forever chasing the self-edge.
+    it "terminates on a frozen self-referential structure instead of looping forever" do
+      carrier = Struct.new(:self_ref, :payload).new(nil, +"mutable")
+      carrier.self_ref = carrier
+      carrier.freeze
+
+      expect { expect(carrier).to be_ractor_shareable }
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /payload \(String, unfrozen\)/)
+    end
   end
 
   describe "have_same_digest_as" do

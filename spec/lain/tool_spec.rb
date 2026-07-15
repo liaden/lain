@@ -18,7 +18,7 @@ RSpec.describe Lain::Tool do
     it "is a frozen value with equal-by-content semantics" do
       a = described_class.ok("hi")
       b = described_class.ok("hi")
-      expect(a).to be_frozen
+      expect(a).to be_deeply_frozen
       expect(a).to eq(b)
     end
 

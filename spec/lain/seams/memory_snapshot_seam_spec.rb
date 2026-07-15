@@ -132,8 +132,7 @@ RSpec.describe "Memory snapshot x Journal seam" do
 
   describe "the empty root round-trips" do
     it "records the pre-write turn's root as JSON null on the wire" do
-      line = io.string.each_line.find { |candidate| JSON.parse(candidate).fetch("type") == "memory_root" }
-      expect(line).to include('"root":null')
+      expect(io).to include_journal_record("memory_root", root: nil)
     end
 
     it "checks out the parsed null back to the empty Index" do

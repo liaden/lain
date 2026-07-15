@@ -6,7 +6,7 @@ RSpec.describe Lain::Workspace do
   end
 
   it "is frozen" do
-    expect(described_class.new(reminders: ["a"])).to be_frozen
+    expect(described_class.new(reminders: ["a"])).to be_deeply_frozen
   end
 
   it "grows into a new value rather than mutating" do
@@ -52,19 +52,17 @@ RSpec.describe Lain::Context do
     it "renders identical bytes for identical inputs" do
       a = context.render(timeline:, toolset:)
       b = context.render(timeline:, toolset:)
-      expect(a.digest).to eq(b.digest)
+      expect(a).to have_same_digest_as(b)
     end
 
     it "renders identical bytes across two Contexts built the same way" do
       other = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
-      expect(context.render(timeline:, toolset:).digest)
-        .to eq(other.render(timeline:, toolset:).digest)
+      expect(context.render(timeline:, toolset:)).to have_same_digest_as(other.render(timeline:, toolset:))
     end
 
     it "changes bytes when the timeline changes" do
       longer = timeline.commit(role: :assistant, content: text("and more"))
-      expect(context.render(timeline:, toolset:).digest)
-        .not_to eq(context.render(timeline: longer, toolset:).digest)
+      expect(context.render(timeline:, toolset:)).not_to have_same_digest_as(context.render(timeline: longer, toolset:))
     end
   end
 
@@ -164,13 +162,12 @@ RSpec.describe Lain::Context do
     it "keeps extra out of cache identity" do
       plain = described_class.new(model: "qwen3:4b", max_tokens: 1024)
       tuned = described_class.new(model: "qwen3:4b", max_tokens: 1024, extra: sampler)
-      expect(tuned.render(timeline:, toolset:).digest)
-        .to eq(plain.render(timeline:, toolset:).digest)
+      expect(tuned.render(timeline:, toolset:)).to have_same_digest_as(plain.render(timeline:, toolset:))
     end
 
     it "renders identical bytes for identical extra (purity preserved)" do
       ctx = described_class.new(model: "qwen3:4b", max_tokens: 1024, extra: sampler)
-      expect(ctx.render(timeline:, toolset:).digest).to eq(ctx.render(timeline:, toolset:).digest)
+      expect(ctx.render(timeline:, toolset:)).to have_same_digest_as(ctx.render(timeline:, toolset:))
     end
   end
 
@@ -186,8 +183,7 @@ RSpec.describe Lain::Context do
     it "renders a block-form system prompt to the same bytes as its String form" do
       blocks = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
                                    system: [{ "type" => "text", "text" => "be terse" }])
-      expect(blocks.render(timeline:, toolset:).digest)
-        .to eq(context.render(timeline:, toolset:).digest)
+      expect(blocks.render(timeline:, toolset:)).to have_same_digest_as(context.render(timeline:, toolset:))
     end
 
     # The normalization lives in render, NOT in the stored value: Bench::Session

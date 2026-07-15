@@ -42,7 +42,7 @@ RSpec.describe Lain::Provider::AnthropicRaw::StreamAssembler do
                   ])
 
     expect(result.content.map { |block| block["type"] }).to eq(%w[thinking text tool_use])
-    expect(result.stop_reason).to eq("tool_use")
+    expect(result).to stop_with("tool_use")
   end
 
   # The headline of Step A: the vendored accumulator keeps only the FIRST

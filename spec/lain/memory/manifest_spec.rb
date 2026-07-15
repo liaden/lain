@@ -185,13 +185,12 @@ RSpec.describe Lain::Memory::Manifest do
     end
 
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-      expect(hit).to be_frozen
-      expect(Ractor.shareable?(hit)).to be(true)
+      expect(hit).to be_deeply_frozen
     end
 
     it "is Ractor-shareable when built by #search" do
       hits = manifest_over(item("a", "alpha")).search("alpha")
-      expect(hits).to all(satisfy { |h| Ractor.shareable?(h) })
+      expect(hits).to all(be_ractor_shareable)
     end
 
     describe "equality (Regular)" do
@@ -205,8 +204,7 @@ RSpec.describe Lain::Memory::Manifest do
   describe "immutability" do
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
       manifest = manifest_over(item("a", "alpha"))
-      expect(manifest).to be_frozen
-      expect(Ractor.shareable?(manifest)).to be(true)
+      expect(manifest).to be_deeply_frozen
     end
   end
 end

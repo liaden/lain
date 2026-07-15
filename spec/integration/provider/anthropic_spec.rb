@@ -17,7 +17,7 @@ RSpec.describe Lain::Provider::Anthropic, :integration do
     response = provider.complete(request)
 
     expect(response).to be_a(Lain::Response)
-    expect(response.stop_reason).to eq(:end_turn)
+    expect(response).to stop_with(:end_turn)
     expect(response.text).to match(/pong/i)
     expect(response.usage.input_tokens).to be > 0
     expect(response.usage.output_tokens).to be > 0
@@ -36,7 +36,7 @@ RSpec.describe Lain::Provider::Anthropic, :integration do
 
     response = provider.complete(request)
 
-    expect(response.stop_reason).to eq(:tool_use)
+    expect(response).to stop_with(:tool_use)
     input = response.tool_uses.first["input"]
     expect(input).to be_a(Hash)
     expect(input["city"]).to match(/paris/i)

@@ -23,7 +23,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
       expect(response.content.map { |block| block["type"] }).to eq(%w[thinking text tool_use])
       expect(response.blocks_of_type("thinking").first["signature"]).to eq("sig-ZZZ")
       expect(response.tool_uses.first["input"]).to eq("path" => "README.md")
-      expect(response.stop_reason).to eq(:tool_use)
+      expect(response).to stop_with(:tool_use)
 
       expect(response.usage.input_tokens).to eq(12)
       expect(response.usage.output_tokens).to eq(30)

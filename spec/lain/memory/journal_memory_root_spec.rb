@@ -48,7 +48,7 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
       recorder.write(item("a"))
       decorator << turn_usage("blake3:bbb")
 
-      expect(parsed_records.last.fetch("root")).to eq(recorder.root)
+      expect(io).to include_journal_record("memory_root", root: recorder.root)
     end
 
     it "does not cache the root read at construction -- a later write is visible to the next record" do
@@ -64,8 +64,7 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
     it "journals a nil root as JSON null while the recorder is still empty" do
       decorator << turn_usage("blake3:eee")
 
-      line = io.string.each_line.to_a.last
-      expect(line).to include('"root":null')
+      expect(io).to include_journal_record("memory_root", root: nil)
     end
 
     it "returns itself, matching the real Journal's #<< contract" do

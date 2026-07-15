@@ -70,7 +70,7 @@ RSpec.describe Lain::Bench::LiveReplay do
 
       turn_usage = records.select { |r| r["type"] == "turn_usage" }
       expect(turn_usage.size).to eq(1)
-      expect(turn_usage.first).to include("model" => "claude-opus-4-8")
+      expect(journal_io).to include_journal_record("turn_usage", model: "claude-opus-4-8")
       expect(turn_usage.first.dig("usage", "output_tokens")).to eq(30)
     end
   end

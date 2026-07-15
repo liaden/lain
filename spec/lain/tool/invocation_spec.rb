@@ -22,6 +22,6 @@ RSpec.describe Lain::Tool::Invocation do
   end
 
   it "is a frozen value object" do
-    expect(described_class.new).to be_frozen
+    expect(described_class.new).to be_deeply_frozen
   end
 end

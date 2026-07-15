@@ -24,7 +24,7 @@ RSpec.describe Lain::Usage do
     end
 
     it "is frozen" do
-      expect(usage).to be_frozen
+      expect(usage).to be_deeply_frozen
     end
   end
 

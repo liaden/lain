@@ -149,7 +149,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     it "derives :tool_use from the streamed tool_call despite done_reason stop" do
       response = described_class.new(transport: stream_transport([ndjson(stream_lines)]))
                                 .complete(request(stream: true))
-      expect(response.stop_reason).to eq(:tool_use)
+      expect(response).to stop_with(:tool_use)
       expect(response.tool_uses.first["input"]).to eq({ "text" => "hi" })
     end
 

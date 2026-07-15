@@ -42,10 +42,10 @@ RSpec.describe Lain::Agent::Accounting do
 
       expect(records.map { |record| record["type"] }).to eq(%w[turn_usage turn_usage])
       expect(records.map { |record| record["digest"] }).to eq(%w[blake3:one blake3:two])
-      expect(records.first).to include(
-        "model" => "claude-opus-4-8", "stop_reason" => "end_turn",
-        "usage" => { "input_tokens" => 10, "output_tokens" => 5,
-                     "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 }
+      expect(journal_io).to include_journal_record(
+        "turn_usage", digest: "blake3:one", model: "claude-opus-4-8", stop_reason: "end_turn",
+                      usage: { "input_tokens" => 10, "output_tokens" => 5,
+                               "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 }
       )
     end
 
@@ -67,7 +67,7 @@ RSpec.describe Lain::Agent::Accounting do
       accounting = described_class.new(journal:)
       accounting.observe(response(model: nil), digest: "blake3:one")
 
-      expect(records.first).to include("type" => "turn_usage", "model" => nil)
+      expect(journal_io).to include_journal_record("turn_usage", model: nil)
     end
   end
 end

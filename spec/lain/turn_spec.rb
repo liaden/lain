@@ -32,13 +32,11 @@ RSpec.describe Lain::Turn do
 
     it "deeply freezes content" do
       turn = described_class.new(role: :user, content: text("hi"))
-      expect(turn.content).to be_frozen
-      expect(turn.content.first).to be_frozen
-      expect(turn.content.first["text"]).to be_frozen
+      expect(turn.content).to be_deeply_frozen
     end
 
     it "freezes the turn itself" do
-      expect(described_class.new(role: :user, content: text("hi"))).to be_frozen
+      expect(described_class.new(role: :user, content: text("hi"))).to be_deeply_frozen
     end
 
     # Deep shareability is a property worth keeping even though Ractors are not
@@ -47,7 +45,7 @@ RSpec.describe Lain::Turn do
     # interpolation both hand back mutable Strings, which is how it broke once.
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
       turn = described_class.new(role: :user, content: text("hi"), meta: { "a" => 1 })
-      expect(Ractor.shareable?(turn)).to be(true)
+      expect(turn).to be_ractor_shareable
     end
 
     it "freezes every instance variable" do
@@ -65,25 +63,25 @@ RSpec.describe Lain::Turn do
     it "is identical for identical content" do
       a = described_class.new(role: :user, content: text("hi"))
       b = described_class.new(role: :user, content: text("hi"))
-      expect(a.digest).to eq(b.digest)
+      expect(a).to have_same_digest_as(b)
     end
 
     it "changes with content" do
       a = described_class.new(role: :user, content: text("hi"))
       b = described_class.new(role: :user, content: text("bye"))
-      expect(a.digest).not_to eq(b.digest)
+      expect(a).not_to have_same_digest_as(b)
     end
 
     it "changes with role" do
       a = described_class.new(role: :user, content: text("hi"))
       b = described_class.new(role: :assistant, content: text("hi"))
-      expect(a.digest).not_to eq(b.digest)
+      expect(a).not_to have_same_digest_as(b)
     end
 
     it "changes with parent, which is what chains the DAG" do
       a = described_class.new(role: :user, content: text("hi"))
       b = described_class.new(role: :user, content: text("hi"), parent: "blake3:abc")
-      expect(a.digest).not_to eq(b.digest)
+      expect(a).not_to have_same_digest_as(b)
     end
 
     # meta carries causal lineage (e.g. "spawned_from"), so it must be inside the
@@ -91,7 +89,7 @@ RSpec.describe Lain::Turn do
     it "changes with meta" do
       a = described_class.new(role: :user, content: text("hi"))
       b = described_class.new(role: :user, content: text("hi"), meta: { "spawned_from" => "blake3:abc" })
-      expect(a.digest).not_to eq(b.digest)
+      expect(a).not_to have_same_digest_as(b)
     end
   end
 

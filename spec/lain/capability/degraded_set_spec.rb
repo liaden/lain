@@ -46,8 +46,7 @@ RSpec.describe Lain::Capability::DegradedSet do
 
   it "is a deeply frozen, Ractor-shareable value object" do
     set = described_class.new(%i[thinking server_tools])
-    expect(set).to be_frozen
-    expect(Ractor.shareable?(set)).to be(true)
+    expect(set).to be_deeply_frozen
   end
 
   # to_s is the human-facing capability list; inspect keeps the class-tagged,

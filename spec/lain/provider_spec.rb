@@ -65,9 +65,9 @@ RSpec.describe Lain::Provider::Mock do
     first = Lain::Response.new(content: [], stop_reason: :tool_use)
     provider = described_class.new(responses: [first, response])
 
-    expect(provider.complete(request).stop_reason).to eq(:tool_use)
-    expect(provider.complete(request).stop_reason).to eq(:end_turn)
-    expect(provider.complete(request).stop_reason).to eq(:end_turn)
+    expect(provider.complete(request)).to stop_with(:tool_use)
+    expect(provider.complete(request)).to stop_with(:end_turn)
+    expect(provider.complete(request)).to stop_with(:end_turn)
   end
 
   it "raises rather than returning nil when it has nothing to say" do

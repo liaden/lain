@@ -107,7 +107,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
                 { "type" => "message_delta", "delta" => { "stop_reason" => "some_2027_reason" }, "usage" => {} }]
       response = described_class.new(transport: transport_streaming(events)).complete(request)
 
-      expect(response.stop_reason).to eq(Lain::StopReason::UNKNOWN)
+      expect(response).to stop_with(Lain::StopReason::UNKNOWN)
     end
   end
 
@@ -123,7 +123,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
 
       expect(response.content.map { |block| block["type"] }).to eq(%w[text tool_use])
       expect(response.tool_uses.first["input"]).to eq("k" => "v")
-      expect(response.stop_reason).to eq(:tool_use)
+      expect(response).to stop_with(:tool_use)
     end
   end
 

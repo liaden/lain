@@ -30,20 +30,18 @@ RSpec.describe Lain::Ext::Turn do
 
     it "deeply freezes content" do
       turn = described_class.new(role: :user, content: text("hi"))
-      expect(turn.content).to be_frozen
-      expect(turn.content.first).to be_frozen
-      expect(turn.content.first["text"]).to be_frozen
+      expect(turn.content).to be_deeply_frozen
     end
 
     it "freezes the turn itself" do
-      expect(described_class.new(role: :user, content: text("hi"))).to be_frozen
+      expect(described_class.new(role: :user, content: text("hi"))).to be_deeply_frozen
     end
 
     # The whole reason the port is allowed: a magnus TypedData wrapping only
     # immutable Rust state stays Ractor-shareable once frozen.
     it "is Ractor-shareable" do
       turn = described_class.new(role: :user, content: text("hi"), meta: { "a" => 1 })
-      expect(Ractor.shareable?(turn)).to be(true)
+      expect(turn).to be_ractor_shareable
     end
 
     it "has no unfrozen instance variables" do
@@ -60,10 +58,14 @@ RSpec.describe Lain::Ext::Turn do
 
     it "changes with role, content, parent, and meta" do
       base = described_class.new(role: :user, content: text("hi"))
-      expect(base.digest).not_to eq(described_class.new(role: :assistant, content: text("hi")).digest)
-      expect(base.digest).not_to eq(described_class.new(role: :user, content: text("bye")).digest)
-      expect(base.digest).not_to eq(described_class.new(role: :user, content: text("hi"), parent: "blake3:abc").digest)
-      expect(base.digest).not_to eq(described_class.new(role: :user, content: text("hi"), meta: { "s" => "x" }).digest)
+      expect(base).not_to have_same_digest_as(described_class.new(role: :assistant, content: text("hi")))
+      expect(base).not_to have_same_digest_as(described_class.new(role: :user, content: text("bye")))
+      expect(base).not_to have_same_digest_as(
+        described_class.new(role: :user, content: text("hi"), parent: "blake3:abc")
+      )
+      expect(base).not_to have_same_digest_as(
+        described_class.new(role: :user, content: text("hi"), meta: { "s" => "x" })
+      )
     end
 
     # The port is only correct if its content address equals the Ruby Turn's to
@@ -73,7 +75,7 @@ RSpec.describe Lain::Ext::Turn do
                                 parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" })
       ruby = Lain::Turn.new(role: :user, content: text("hi"),
                             parent: "blake3:abc", meta: { "spawned_from" => "blake3:xyz" })
-      expect(ext.digest).to eq(ruby.digest)
+      expect(ext).to have_same_digest_as(ruby)
     end
   end
 

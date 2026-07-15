@@ -77,13 +77,13 @@ RSpec.describe Lain::Ledger::Index do
   describe "immutability" do
     it "is deeply frozen and Ractor-shareable" do
       index = described_class.from_journal([JSON.generate(record(digest: "blake3:aa"))])
-      expect(Ractor.shareable?(index)).to be(true)
+      expect(index).to be_ractor_shareable
     end
 
     it "hands out frozen entry lists, even the empty one" do
       index = described_class.from_journal([record(digest: "blake3:aa")])
-      expect(index.entries_for("blake3:aa")).to be_frozen
-      expect(index.entries_for("blake3:missing")).to be_frozen
+      expect(index.entries_for("blake3:aa")).to be_deeply_frozen
+      expect(index.entries_for("blake3:missing")).to be_deeply_frozen
     end
   end
 end

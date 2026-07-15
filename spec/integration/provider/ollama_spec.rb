@@ -39,7 +39,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
       expect(response).to be_a(Lain::Response)
       # stop_reason is normalized off done_reason ("stop" -> :end_turn), NOT left
       # as a raw wire string (corpus: done_reason has no enum entry for tool turns).
-      expect(response.stop_reason).to eq(:end_turn)
+      expect(response).to stop_with(:end_turn)
       expect(response.text).to be_a(String)
       expect(response.text).not_to be_empty
 

@@ -154,9 +154,7 @@ RSpec.describe Lain::Bench::Rewrites do
     it "is deeply frozen and Ractor-shareable" do
       rewrites = described_class.from_journal([record([[0, "blake3:a"]]), record([[0, "blake3:b"]])])
 
-      expect(rewrites).to be_frozen
-      expect(rewrites.first).to be_frozen
-      expect(Ractor.shareable?(rewrites)).to be(true)
+      expect(rewrites).to be_deeply_frozen
     end
   end
 end

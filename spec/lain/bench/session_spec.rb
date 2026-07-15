@@ -50,13 +50,14 @@ RSpec.describe Lain::Bench::Session do
     before { write_session }
 
     it "appends exactly one session header carrying the context, tools, reminders, and head anchor" do
-      headers = parsed_records.select { |record| record["type"] == "session" }
-      expect(headers.size).to eq(1)
-      expect(headers.first).to include(
-        "model" => "claude-opus-4-8", "max_tokens" => 1024,
-        "system" => "be terse", "stream" => true, "reminders" => [],
-        "head" => agent.timeline.head_digest, "context_class" => "Lain::Context"
+      expect(parsed_records.count { |record| record["type"] == "session" }).to eq(1)
+      expect(journal_io).to include_journal_record(
+        "session",
+        model: "claude-opus-4-8", max_tokens: 1024,
+        system: "be terse", stream: true, reminders: [],
+        head: agent.timeline.head_digest, context_class: "Lain::Context"
       )
+      headers = parsed_records.select { |record| record["type"] == "session" }
       expect(headers.first.fetch("tools")).to eq(JSON.parse(JSON.generate(toolset.to_schema)))
     end
 
@@ -133,7 +134,7 @@ RSpec.describe Lain::Bench::Session do
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
       %i[context context_class toolset workspace baseline ledger_index degraded].each do |member|
-        expect(Ractor.shareable?(recording.public_send(member))).to be(true), "#{member} must be shareable"
+        expect(recording.public_send(member)).to be_ractor_shareable
       end
     end
   end

@@ -37,8 +37,7 @@ RSpec.describe Lain::Event do
       ]
 
       valid.each do |event|
-        expect(event).to be_frozen
-        expect(Ractor.shareable?(event)).to be(true)
+        expect(event).to be_deeply_frozen
         expect(event.instance_variables).not_to include(:@errors)
       end
     end
@@ -79,12 +78,12 @@ RSpec.describe Lain::Event do
     it "is a frozen value object with structural equality" do
       twin = described_class.new(tool_use_id: "t1", stream: :stdout, bytes: "hi")
       expect(event).to eq(twin)
-      expect(event).to be_frozen
+      expect(event).to be_deeply_frozen
       expect(event.hash).to eq(twin.hash)
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(Ractor.shareable?(event)).to be(true)
+      expect(event).to be_ractor_shareable
     end
 
     describe "#to_journal" do
@@ -113,7 +112,7 @@ RSpec.describe Lain::Event do
     end
 
     it "is a frozen value object" do
-      expect(described_class.new(count: 1)).to be_frozen
+      expect(described_class.new(count: 1)).to be_deeply_frozen
     end
 
     it "journals as a dropped marker" do
@@ -131,7 +130,7 @@ RSpec.describe Lain::Event do
     it "carries the turn digest, model, stop_reason, and usage" do
       expect(event.digest).to eq("blake3:abc123")
       expect(event.model).to eq("claude-opus-4-8")
-      expect(event.stop_reason).to eq(:end_turn)
+      expect(event).to stop_with(:end_turn)
       expect(event.usage).to eq("input_tokens" => 10, "output_tokens" => 5)
     end
 
@@ -144,12 +143,11 @@ RSpec.describe Lain::Event do
     end
 
     it "is deeply frozen, usage hash included" do
-      expect(event).to be_frozen
-      expect(event.usage).to be_frozen
+      expect(event).to be_deeply_frozen
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(Ractor.shareable?(event)).to be(true)
+      expect(event).to be_ractor_shareable
     end
 
     it "rejects a nil stop_reason loudly" do
@@ -166,7 +164,7 @@ RSpec.describe Lain::Event do
       bare = described_class.new(digest: "blake3:abc123", model: nil,
                                  stop_reason: :end_turn, usage: {})
       expect(bare.model).to be_nil
-      expect(Ractor.shareable?(bare)).to be(true)
+      expect(bare).to be_ractor_shareable
     end
 
     it "journals as a turn_usage record that round-trips through JSON" do
@@ -202,7 +200,7 @@ RSpec.describe Lain::Event do
     end
 
     it "carries the request's cache identity plus the transport fields the digest excludes" do
-      expect(event.digest).to eq(request.digest)
+      expect(event).to have_same_digest_as(request)
       expect(event.payload).to eq(request.cache_payload)
       expect(event.stream).to be(false)
       expect(event.extra).to eq("service_tier" => "flex")
@@ -217,14 +215,11 @@ RSpec.describe Lain::Event do
     end
 
     it "is deeply frozen, payload and extra included" do
-      expect(event).to be_frozen
-      expect(event.payload).to be_frozen
-      expect(event.payload.fetch("messages")).to be_frozen
-      expect(event.extra).to be_frozen
+      expect(event).to be_deeply_frozen
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(Ractor.shareable?(event)).to be(true)
+      expect(event).to be_ractor_shareable
     end
 
     it "rejects a non-boolean stream loudly" do
@@ -255,14 +250,14 @@ RSpec.describe Lain::Event do
                                       stream: request.stream, extra: request.extra,
                                       prefix_digests: [[-1, "blake3:sys"], [0, "blake3:m0"]])
         expect(chained.prefix_digests).to eq([[-1, "blake3:sys"], [0, "blake3:m0"]])
-        expect(chained.prefix_digests).to be_frozen
+        expect(chained.prefix_digests).to be_deeply_frozen
       end
 
       it "is Ractor-shareable with a populated chain" do
         chained = described_class.new(digest: request.digest, payload: request.cache_payload,
                                       stream: request.stream, extra: request.extra,
                                       prefix_digests: [[0, "blake3:m0"]])
-        expect(Ractor.shareable?(chained)).to be(true)
+        expect(chained).to be_ractor_shareable
       end
 
       it "journals as position/digest pairs that round-trip through JSON" do
@@ -360,13 +355,13 @@ RSpec.describe Lain::Event do
     it "is a frozen value object with structural equality" do
       twin = described_class.new(turn_digest: "blake3:turn", root: "blake3:root")
       expect(event).to eq(twin)
-      expect(event).to be_frozen
+      expect(event).to be_deeply_frozen
       expect(event.hash).to eq(twin.hash)
     end
 
     it "is Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(turn_digest: +"blake3:turn", root: +"blake3:root")
-      expect(Ractor.shareable?(mutable)).to be(true)
+      expect(mutable).to be_ractor_shareable
     end
 
     it "rejects a nil turn_digest loudly" do
@@ -377,7 +372,7 @@ RSpec.describe Lain::Event do
     it "tolerates a nil root, because an empty index has no root node to name" do
       bare = described_class.new(turn_digest: "blake3:turn", root: nil)
       expect(bare.root).to be_nil
-      expect(Ractor.shareable?(bare)).to be(true)
+      expect(bare).to be_ractor_shareable
     end
 
     it "journals as a memory_root record whose nil root round-trips as JSON null" do
@@ -406,12 +401,12 @@ RSpec.describe Lain::Event do
     it "is a frozen value object with structural equality" do
       twin = described_class.new(capability: :thinking, requirer: "Prune", provider: "Provider::Mock")
       expect(event).to eq(twin)
-      expect(event).to be_frozen
+      expect(event).to be_deeply_frozen
       expect(event.hash).to eq(twin.hash)
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(Ractor.shareable?(event)).to be(true)
+      expect(event).to be_ractor_shareable
     end
 
     it "journals as a capability_degraded record that round-trips through JSON" do
@@ -436,13 +431,13 @@ RSpec.describe Lain::Event do
     it "is a frozen value object with structural equality" do
       twin = described_class.new(tool_use_id: "tu_1", pattern: "aws access key id")
       expect(event).to eq(twin)
-      expect(event).to be_frozen
+      expect(event).to be_deeply_frozen
       expect(event.hash).to eq(twin.hash)
     end
 
     it "is Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(tool_use_id: +"tu_1", pattern: +"aws access key id")
-      expect(Ractor.shareable?(mutable)).to be(true)
+      expect(mutable).to be_ractor_shareable
     end
 
     it "rejects a nil pattern loudly -- a refusal record must name what matched" do

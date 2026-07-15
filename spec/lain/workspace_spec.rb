@@ -8,8 +8,7 @@ RSpec.describe Lain::Workspace do
 
       expect(first).to be(second)
       expect(first).to be(described_class::EMPTY)
-      expect(first).to be_frozen
-      expect(Ractor.shareable?(first)).to be(true)
+      expect(first).to be_deeply_frozen
       expect(first.reminders).to be_empty
       expect(first).to be_empty
     end
@@ -19,9 +18,7 @@ RSpec.describe Lain::Workspace do
     it "freezes via the Freezable concern, deeply and Ractor-shareably" do
       workspace = described_class.new(reminders: %w[a b])
 
-      expect(workspace).to be_frozen
-      expect(workspace.reminders).to be_frozen
-      expect(Ractor.shareable?(workspace)).to be(true)
+      expect(workspace).to be_deeply_frozen
     end
 
     it "holds its reminders in order, deeply frozen" do
@@ -46,7 +43,7 @@ RSpec.describe Lain::Workspace do
       workspace = described_class.new(reminders: %w[a]).with("b", "c")
 
       expect(workspace.reminders).to eq(%w[a b c])
-      expect(workspace).to be_frozen
+      expect(workspace).to be_deeply_frozen
     end
   end
 

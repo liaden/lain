@@ -183,20 +183,20 @@ RSpec.describe Lain::Provider::Anthropic do
       it "normalizes the #{reason} stop reason" do
         message = message_double(content: [text_block("x")], stop_reason: reason)
         response = described_class.new(client: client_returning(message)).complete(request)
-        expect(response.stop_reason).to eq(reason)
+        expect(response).to stop_with(reason)
       end
     end
 
     it "maps an unknown stop reason to :unknown rather than raising" do
       message = message_double(content: [text_block("x")], stop_reason: :some_new_beta_reason)
       response = described_class.new(client: client_returning(message)).complete(request)
-      expect(response.stop_reason).to eq(Lain::StopReason::UNKNOWN)
+      expect(response).to stop_with(Lain::StopReason::UNKNOWN)
     end
 
     it "maps a nil stop reason to :unknown" do
       message = message_double(content: [text_block("x")], stop_reason: nil)
       response = described_class.new(client: client_returning(message)).complete(request)
-      expect(response.stop_reason).to eq(Lain::StopReason::UNKNOWN)
+      expect(response).to stop_with(Lain::StopReason::UNKNOWN)
     end
   end
 
@@ -323,7 +323,7 @@ RSpec.describe Lain::Provider::Anthropic do
         expect(captured.dig("system", 0, "cache_control")).to eq("type" => "ephemeral")
       end).to have_been_made
       expect(response.tool_uses.first["input"]).to eq("path" => "lib/x.rb")
-      expect(response.stop_reason).to eq(:tool_use)
+      expect(response).to stop_with(:tool_use)
     end
   end
 end

@@ -48,7 +48,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect(journal.events.size).to eq(1)
       event = journal.events.first
       expect(event).to be_a(Lain::Event::RequestSent)
-      expect(event.digest).to eq(sent.digest)
+      expect(event).to have_same_digest_as(sent)
       expect(event.payload).to eq(sent.cache_payload)
       expect(event.stream).to be(false)
       expect(event.extra).to eq("service_tier" => "flex")
@@ -72,7 +72,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect { middleware.call({ request: sent }) { raise "provider fell over" } }
         .to raise_error(RuntimeError, "provider fell over")
       expect(journal.events.size).to eq(1)
-      expect(journal.events.first.digest).to eq(sent.digest)
+      expect(journal.events.first).to have_same_digest_as(sent)
     end
   end
 
@@ -98,7 +98,7 @@ RSpec.describe Lain::Middleware::JournalRequests do
       expect(journal.events.size).to eq(2)
       journal.events.zip(provider.requests).each do |event, sent|
         expect(event.payload).to eq(sent.cache_payload)
-        expect(event.digest).to eq(sent.digest)
+        expect(event).to have_same_digest_as(sent)
         expect(event.stream).to eq(sent.stream)
         expect(event.extra).to eq(sent.extra)
         expect(event.prefix_digests).to eq(sent.prefix_digests)

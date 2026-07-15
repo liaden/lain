@@ -29,13 +29,12 @@ RSpec.describe "Journal x Rust tracing seam" do
 
       journal.close # flushes and closes the Ruby side only
 
-      lines = File.readlines(path, chomp: true).reject(&:empty?)
+      contents = File.read(path)
 
       # THE invariant: every single line is a complete JSON object.
-      records = lines.map do |line|
-        expect { JSON.parse(line) }.not_to raise_error, "unparseable line: #{line.inspect}"
-        JSON.parse(line)
-      end
+      expect(contents).to be_valid_ndjson
+
+      records = contents.each_line.reject { |line| line.chomp.empty? }.map { |line| JSON.parse(line) }
 
       # Ruby events are present and carry our fields.
       digests = records.filter_map { |r| r["digest"] }

@@ -55,6 +55,6 @@ RSpec.describe Lain::Agent::Budget do
   end
 
   it "is a frozen value once constructed" do
-    expect(described_class.new).to be_frozen
+    expect(described_class.new).to be_deeply_frozen
   end
 end

@@ -96,11 +96,11 @@ RSpec.describe Lain::Compare do
 
   describe "value objects clear the Ractor.shareable? bar" do
     it "deeply freezes a Distribution" do
-      expect(Ractor.shareable?(described_class::Distribution.new([1, 2, 3]))).to be(true)
+      expect(described_class::Distribution.new([1, 2, 3])).to be_ractor_shareable
     end
 
     it "deeply freezes a Run" do
-      expect(Ractor.shareable?(runs.first)).to be(true)
+      expect(runs.first).to be_ractor_shareable
     end
   end
 

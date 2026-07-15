@@ -145,7 +145,7 @@ RSpec.describe Lain::Memory::Index do
     # walk touches must have no reachable mutable state.
     it "stores Nodes that are deeply immutable, hence Ractor-shareable" do
       one = index.write(item("a"))
-      expect(Ractor.shareable?(store.fetch(one.root))).to be(true)
+      expect(store.fetch(one.root)).to be_ractor_shareable
     end
   end
 

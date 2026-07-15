@@ -151,7 +151,7 @@ RSpec.describe Lain::Channel do
 
     it "exposes one shared frozen instance for defaults" do
       expect(described_class.instance).to equal(described_class.instance)
-      expect(described_class.instance).to be_frozen
+      expect(described_class.instance).to be_deeply_frozen
       expect(described_class.instance << :event).to equal(described_class.instance)
     end
   end

@@ -43,7 +43,7 @@ RSpec.describe Lain::Provider::Ollama do
 
       response = provider.complete(request)
 
-      expect(response.stop_reason).to eq(:tool_use)
+      expect(response).to stop_with(:tool_use)
       expect(response.tool_uses.size).to eq(1)
       tool_use = response.tool_uses.first
       expect(tool_use["input"]).to eq({ "text" => "hi" })
@@ -143,7 +143,7 @@ RSpec.describe Lain::Provider::Ollama do
       response = described_class.new(transport: transport_sync(body)).complete(request(stream: false))
 
       expect(response.text).to eq("hello")
-      expect(response.stop_reason).to eq(:end_turn)
+      expect(response).to stop_with(:end_turn)
       expect(response.usage.input_tokens).to eq(3)
       expect(response.usage.output_tokens).to eq(2)
     end
@@ -152,12 +152,12 @@ RSpec.describe Lain::Provider::Ollama do
   describe "done_reason -> stop_reason" do
     it "maps length to :max_tokens" do
       body = { "message" => { "role" => "assistant", "content" => "x" }, "done_reason" => "length" }
-      expect(described_class.new(transport: transport_sync(body)).complete(request).stop_reason).to eq(:max_tokens)
+      expect(described_class.new(transport: transport_sync(body)).complete(request)).to stop_with(:max_tokens)
     end
 
     it "maps the empty-string (connection-closed) reason to :unknown" do
       body = { "message" => { "role" => "assistant", "content" => "" }, "done_reason" => "" }
-      expect(described_class.new(transport: transport_sync(body)).complete(request).stop_reason).to eq(:unknown)
+      expect(described_class.new(transport: transport_sync(body)).complete(request)).to stop_with(:unknown)
     end
   end
 

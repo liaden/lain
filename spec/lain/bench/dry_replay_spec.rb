@@ -68,7 +68,7 @@ RSpec.describe Lain::Bench::DryReplay do
     end
 
     it "produces a Ractor-shareable Diff (deeply frozen value object)" do
-      expect(Ractor.shareable?(replay(over: louder))).to be(true)
+      expect(replay(over: louder)).to be_ractor_shareable
     end
   end
 

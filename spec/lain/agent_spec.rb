@@ -164,14 +164,14 @@ RSpec.describe Lain::Agent do
                 journal:)
       a.ask("hi")
 
-      records = turn_usage_records
-      expect(records.size).to eq(1)
-      expect(records.first).to include(
-        "digest" => a.timeline.head_digest,
-        "model" => "claude-opus-4-8",
-        "stop_reason" => "end_turn",
-        "usage" => { "input_tokens" => 10, "output_tokens" => 5,
-                     "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 }
+      expect(turn_usage_records.size).to eq(1)
+      expect(journal_io).to include_journal_record(
+        "turn_usage",
+        digest: a.timeline.head_digest,
+        model: "claude-opus-4-8",
+        stop_reason: "end_turn",
+        usage: { "input_tokens" => 10, "output_tokens" => 5,
+                 "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => 0 }
       )
     end
 
