@@ -59,9 +59,34 @@ module Lain
         end
       end
 
-      # Everything {Session.load} rebuilds, as one frozen value. Holds a Store
-      # (via its Timeline), so like Timeline itself it cannot be
-      # `Ractor.shareable?` whole; every other member is.
+      # The per-turn memory surface a {Loader} rebuilds: the {Memory::Index}
+      # root in force when each recorded turn committed (replayed from the
+      # recording's own successful memory_write calls -- the turns ARE the
+      # write log) and the fully replayed index, whose store resolves every
+      # one of those roots. A root is nil for a turn that committed before
+      # any write -- nil IS the empty index's identity, a value here, exactly
+      # as {Event::MemoryRoot} records it on the wire.
+      RecordedMemory = Data.define(:roots, :index) do
+        def initialize(roots:, index:)
+          super(roots: roots.freeze, index:)
+        end
+
+        # @raise [KeyError] for a digest naming no recorded turn -- loud, the
+        #   same way Store#fetch answers an unknown digest
+        def root_at(turn_digest)
+          roots.fetch(turn_digest)
+        end
+
+        # The exact snapshot turn_digest's render saw, however far the index
+        # moved afterwards.
+        def at(turn_digest)
+          index.checkout(root_at(turn_digest))
+        end
+      end
+
+      # Everything {Session.load} rebuilds, as one frozen value. Holds Stores
+      # (via its Timeline and its memory surface), so like Timeline itself it
+      # cannot be `Ractor.shareable?` whole; every other member is.
       #
       # `context_class` is the header's recorded class name, pure data and
       # never constantized: `context` is always the reloaded DEFAULT-pipeline
@@ -69,11 +94,11 @@ module Lain
       # recording (which legitimately will not replay to byte identity) from a
       # genuine harness leak.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
-                              :timeline, :baseline, :ledger_index, :degraded) do
+                              :timeline, :baseline, :ledger_index, :degraded, :memory) do
         def initialize(context:, context_class:, toolset:, workspace:, timeline:, baseline:, ledger_index:,
-                       degraded:)
+                       degraded:, memory:)
           super(context:, context_class: -context_class.to_s, toolset:, workspace:,
-                timeline:, baseline: baseline.freeze, ledger_index:, degraded:)
+                timeline:, baseline: baseline.freeze, ledger_index:, degraded:, memory:)
         end
 
         # A recording whose baseline outnumbers the DAG's assistant turns holds
@@ -82,6 +107,10 @@ module Lain
         def dry_replay
           DryReplay.new(timeline:, baseline:, toolset:, workspace:)
         end
+
+        def memory_root_at(turn_digest) = memory.root_at(turn_digest)
+
+        def memory_at(turn_digest) = memory.at(turn_digest)
       end
 
       class << self
@@ -143,4 +172,7 @@ module Lain
   end
 end
 
+# MemoryReplay before Loader: the Loader is the class that sends it messages,
+# so it reads as the dependent unit even though both resolve at runtime.
+require_relative "session/memory_replay"
 require_relative "session/loader"

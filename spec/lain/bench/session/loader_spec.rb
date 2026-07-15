@@ -102,4 +102,126 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect { described_class.new([]).recording }.to raise_error(Lain::Bench::Session::Corrupt, /header/)
     end
   end
+
+  # The memory read path, event-sourced from the recording itself: successful
+  # memory_write tool_use inputs ARE the write log, and content addressing
+  # makes the journaled memory_root chain the proof -- replaying the same
+  # writes into a fresh Index must land on the same roots, byte for byte.
+  describe "memory replay" do
+    def memory_input(id)
+      { "id" => id, "description" => "notes on #{id}", "body" => "body of #{id}" }
+    end
+
+    let(:recorder) { Lain::Memory::Recorder.new }
+    let(:memory_toolset) { Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)]) }
+    let(:memory_journal) { Lain::Memory::JournalMemoryRoot.new(journal:, recorder:) }
+
+    let(:memory_responses) do
+      [tool_response(["tu_1", "memory_write", memory_input("aspirin-dosing")], usage:, model: "claude-opus-4-8"),
+       tool_response(["tu_2", "memory_write", memory_input("warfarin-inr")], usage:, model: "claude-opus-4-8"),
+       text_response("done", usage:, model: "claude-opus-4-8")]
+    end
+
+    # One recorded memory-bearing run: the live records (request_sent /
+    # turn_usage, plus memory_root when run_journal is the decorator) and the
+    # session header and turn records Session.write appends.
+    def record_memory_run(run_journal)
+      agent, = record_journaled_run(memory_responses, journal: run_journal,
+                                                      toolset: memory_toolset, context:, workspace:)
+      Lain::Bench::Session.write(journal, timeline: agent.timeline, context:, toolset: memory_toolset, workspace:)
+    end
+
+    def parsed_records
+      journal_io.string.each_line.map { |line| JSON.parse(line) }
+    end
+
+    def memory_records
+      record_memory_run(memory_journal)
+      parsed_records
+    end
+
+    def journaled_roots(records)
+      records.select { |record| record["type"] == "memory_root" }
+    end
+
+    it "replays roots equal to the journaled memory_root chain, answered by #memory_root_at" do
+      records = memory_records
+      loaded = described_class.new(records).recording
+
+      roots = journaled_roots(records)
+      expect(roots.size).to eq(3)
+      roots.each do |record|
+        expect(loaded.memory_root_at(record.fetch("turn_digest"))).to eq(record.fetch("root"))
+      end
+    end
+
+    it "checks out as-of-turn-N: turn 3 sees the turn-2 write and not the turn-4 write" do
+      loaded = described_class.new(memory_records).recording
+      between = loaded.timeline.to_a[2] # the tool_result turn between the two writes
+
+      snapshot = loaded.memory_at(between.digest)
+      expect(snapshot.fetch("aspirin-dosing").body).to eq("body of aspirin-dosing")
+      expect(snapshot.key?("warfarin-inr")).to be(false)
+    end
+
+    context "when one memory_write was refused (its tool_result is an error)" do
+      let(:memory_responses) do
+        # A multi-line description fails Memory::Item's one-line invariant, so
+        # the tool answers an error Result and the recorder never advances.
+        refused = { "id" => "leaky-item", "description" => "two\nlines", "body" => "b" }
+        [tool_response(["tu_1", "memory_write", memory_input("aspirin-dosing")],
+                       ["tu_2", "memory_write", refused], usage:, model: "claude-opus-4-8"),
+         text_response("done", usage:, model: "claude-opus-4-8")]
+      end
+
+      it "keeps the refused id out of every checkout while roots still verify" do
+        records = memory_records
+        loaded = described_class.new(records).recording
+
+        journaled_roots(records).each do |record|
+          expect(loaded.memory_root_at(record.fetch("turn_digest"))).to eq(record.fetch("root"))
+        end
+        loaded.timeline.to_a.each do |turn|
+          expect(loaded.memory_at(turn.digest).key?("leaky-item")).to be(false)
+        end
+      end
+    end
+
+    it "raises Corrupt naming the turn digest when a memory_root record was altered on disk" do
+      records = memory_records
+      target = journaled_roots(records).last
+      target["root"] = "blake3:#{"0" * 64}"
+
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /#{Regexp.escape(target.fetch("turn_digest"))}/)
+    end
+
+    it "loads a memory-free journal with an empty index at every turn" do
+      loaded = recording
+      loaded.timeline.to_a.each do |turn|
+        expect(loaded.memory_root_at(turn.digest)).to be_nil
+        expect(loaded.memory_at(turn.digest)).to be_empty
+      end
+    end
+
+    context "when the recording predates the memory_root decorator" do
+      it "replays writes unverified and checkouts reflect them" do
+        record_memory_run(journal)
+        records = parsed_records
+        expect(journaled_roots(records)).to be_empty
+
+        loaded = described_class.new(records).recording
+        head = loaded.timeline.to_a.last
+        expect(loaded.memory_at(head.digest).to_h.keys).to match_array(%w[aspirin-dosing warfarin-inr])
+      end
+    end
+
+    it "raises Corrupt when the memory_root chain covers only some write-bearing turns" do
+      records = memory_records
+      records.delete(journaled_roots(records).first)
+
+      expect { described_class.new(records).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /memory_root/)
+    end
+  end
 end

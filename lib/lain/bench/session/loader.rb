@@ -30,7 +30,7 @@ module Lain
             toolset:, workspace:,
             timeline:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
-            degraded:
+            degraded:, memory:
           )
         end
 
@@ -128,6 +128,10 @@ module Lain
           Capability::DegradedSet.new(
             of_type("capability_degraded").map { |record| record.fetch("capability") }
           )
+        end
+
+        def memory
+          MemoryReplay.new(turns: of_type(TURN_TYPE), roots: of_type("memory_root")).recorded_memory
         end
       end
     end

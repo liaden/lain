@@ -208,9 +208,11 @@ module Lain
 
     # The memory root in force at one committed turn: `turn_digest` names the
     # assistant Turn just committed (the Timeline head at commit time) and
-    # `root` names the Memory::Index root live at that moment. Recorded by the
-    # BENCH observing the run, never by the Agent -- the Agent stays
-    # memory-blind. Pairing the two digests in the Journal is what makes recall
+    # `root` names the Memory::Index root live at that moment. Emitted by
+    # {Memory::JournalMemoryRoot}, the journal decorator that pairs each
+    # {TurnUsage} it forwards with the recorder's current root -- never by the
+    # Agent, which stays memory-blind throughout.
+    # Pairing the two digests in the Journal is what makes recall
     # replayable: `Index#checkout(root)` reproduces exactly the snapshot this
     # turn could see, however far the live index has moved since. The name is
     # QUALIFIED -- `turn_digest`, not `digest` -- because this record carries
