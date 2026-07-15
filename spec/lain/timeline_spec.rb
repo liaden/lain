@@ -173,6 +173,42 @@ RSpec.describe Lain::Timeline do
                      dedup_size: 1
   end
 
+  # Pins the Ruby implementation to the SAME corrupt-chain contract the Rust
+  # twin enforces, so the two cannot re-diverge: a dangling parent must fail
+  # every walk loudly. The Ruby walks already raise (via Store#fetch); pinning
+  # them here is what locks the parity the Rust port must match.
+  describe "a dangling parent digest (corrupt chain)" do
+    let(:missing) { "blake3:absent" }
+    let(:head) { Lain::Turn.new(role: :user, content: text("head"), parent: missing) }
+    let(:corrupt) do
+      store.put(head)
+      timeline.checkout(head.digest)
+    end
+
+    it "raises MissingObject naming the missing digest from every walk" do
+      walks = {
+        ancestors: -> { corrupt.ancestors.to_a },
+        to_a: -> { corrupt.to_a },
+        ancestor_digests: -> { corrupt.ancestor_digests },
+        length: -> { corrupt.length },
+        include?: -> { corrupt.include?(missing) },
+        rewind: -> { corrupt.rewind(2) }
+      }
+      walks.each_value do |walk|
+        expect(&walk).to raise_error(Lain::Store::MissingObject, /no object .* in store/)
+      end
+    end
+
+    it "raises the tail-less checkout form when rewind lands exactly on the dangle" do
+      # rewind(1) lands ON the dangle without stepping through it, so the raise
+      # comes from #checkout -> #initialize validating the landed head, whose
+      # message omits Store#fetch's " in store" tail. The Rust twin pins the
+      # same bytes (probes/rewind_parity_probe.rb).
+      expect { corrupt.rewind }
+        .to raise_error(Lain::Store::MissingObject, 'no object "blake3:absent"')
+    end
+  end
+
   # Subagents get a fresh root over the shared store; the parent's head is
   # recorded in meta, not as a Turn parent, so it never renders into the prompt.
   describe "subagent lineage" do

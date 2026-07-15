@@ -396,6 +396,13 @@ mod ffi {
         }
     }
 
+    /// Map a pure-layer [`dag::DanglingDigest`] onto `Lain::Ext::Store::MissingObject`.
+    /// The struct's `Display` is byte-equal to Ruby `Store#fetch`, so a corrupt
+    /// chain raises the same class and the same message from every walk.
+    fn missing_object(ruby: &Ruby, dangling: dag::DanglingDigest) -> Error {
+        ext_error(ruby, "Store", "MissingObject", dangling.to_string())
+    }
+
     /// A frozen Ruby String. Digests, roles, and reconstructed content strings
     /// are all frozen so a reconstructed `content`/`meta` tree is deeply
     /// immutable, matching the Ruby `Turn`.
@@ -783,16 +790,7 @@ mod ffi {
             let head = read_optional_digest(ruby, Some(digest))?;
             let store_value = rb_self.store_value(ruby);
             let store: &Store = TryConvert::try_convert(store_value)?;
-            if let Some(target) = &head {
-                if !store.key_p(target.clone()) {
-                    return Err(ext_error(
-                        ruby,
-                        "Store",
-                        "MissingObject",
-                        format!("no object {target:?}"),
-                    ));
-                }
-            }
+            validate_head(ruby, store, &head)?;
             Ok(Timeline::wrap(ruby, head, store_value))
         }
 
@@ -810,28 +808,43 @@ mod ffi {
             let mut digest = rb_self.head.clone();
             let mut remaining = count;
             while remaining > 0 {
-                digest = digest.and_then(|current| dag::parent_of(&store.locked(), &current));
+                // `None` absorbs (rewinding past the root lands on empty, per
+                // Ruby `Timeline#rewind`); a digest that is present but absent
+                // from the store is corruption and raises, distinct from a root.
+                digest = match digest {
+                    None => None,
+                    Some(current) => dag::parent_of(&store.locked(), &current)
+                        .map_err(|e| missing_object(ruby, e))?,
+                };
                 remaining -= 1;
             }
+            // `parent_of` validates the node stepped FROM, never the digest
+            // landed ON: landing exactly on a dangle would hand back a poisoned
+            // Timeline whose head the store does not hold. Ruby's rewind lands
+            // via #checkout, which validates -- so must we, same message form.
+            validate_head(ruby, store, &digest)?;
             Ok(Timeline::wrap(ruby, digest, store_value))
         }
 
         fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            let arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref());
+            let arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+                .map_err(|e| missing_object(ruby, e))?;
             Ok(turns_to_array(ruby, arcs))
         }
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            let mut arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref());
+            let mut arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+                .map_err(|e| missing_object(ruby, e))?;
             arcs.reverse();
             Ok(turns_to_array(ruby, arcs))
         }
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_deref());
+            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_deref())
+                .map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(digests.len());
             for digest in digests {
                 array.push(frozen_str(ruby, &digest))?;
@@ -841,12 +854,15 @@ mod ffi {
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref()).len())
+            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+                .map_err(|e| missing_object(ruby, e))?
+                .len())
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
             Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+                .map_err(|e| missing_object(ruby, e))?
                 .iter()
                 .any(|turn| turn.digest == digest))
         }
@@ -854,11 +870,12 @@ mod ffi {
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
             same_store(ruby, rb_self, other)?;
             let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_of(
+            dag::ancestor_of(
                 &store.locked(),
                 rb_self.head.as_deref(),
                 other.head.as_deref(),
-            ))
+            )
+            .map_err(|e| missing_object(ruby, e))
         }
 
         fn meet(
@@ -873,7 +890,8 @@ mod ffi {
                 &store.locked(),
                 rb_self.head.as_deref(),
                 other.head.as_deref(),
-            );
+            )
+            .map_err(|e| missing_object(ruby, e))?;
             Ok(Timeline::wrap(ruby, common, store_value))
         }
 
@@ -888,7 +906,8 @@ mod ffi {
                 &store.locked(),
                 rb_self.head.as_deref(),
                 other.head.as_deref(),
-            );
+            )
+            .map_err(|e| missing_object(ruby, e))?;
             match common {
                 None => Ok(ruby.qnil().as_value()),
                 Some(digest) => {
@@ -905,11 +924,16 @@ mod ffi {
                 None => "#<Lain::Ext::Timeline empty>".to_string(),
                 Some(digest) => {
                     let prefix = digest.get(..19).unwrap_or(digest);
+                    // `to_s`/`inspect` is not a loud walk site: a debug string
+                    // must not raise. But a corrupt chain's length is unknowable,
+                    // not zero, so it renders as `(?)` rather than a false `(0)`.
                     let length = TryConvert::try_convert(rb_self.store_value(ruby))
-                        .map(|store: &Store| {
-                            dag::ancestor_arcs(&store.locked(), Some(digest)).len()
+                        .ok()
+                        .and_then(|store: &Store| {
+                            dag::ancestor_arcs(&store.locked(), Some(digest)).ok()
                         })
-                        .unwrap_or(0);
+                        .map(|arcs| arcs.len().to_string())
+                        .unwrap_or_else(|| "?".to_string());
                     format!("#<Lain::Ext::Timeline {prefix}... ({length})>")
                 }
             }
@@ -925,6 +949,28 @@ mod ffi {
             let _ = array.push(Turn::wrap(ruby, arc));
         }
         array
+    }
+
+    /// Raise `Store::MissingObject` unless `head` (when not a root/empty `None`)
+    /// names an object the store holds. This is the landed-head validation both
+    /// `checkout` and `rewind` perform before wrapping a Timeline, exactly as
+    /// every Ruby Timeline lands through `Timeline#initialize`'s check.
+    ///
+    /// Deliberately tail-less ("... in store" omitted): this mirrors Ruby
+    /// `Timeline#initialize` (lib/lain/timeline.rb), whose message is
+    /// `no object #{digest.inspect}`, NOT `Store#fetch`'s longer form. The two
+    /// Ruby sites differ, so the Ext sites match them per-site rather than
+    /// unifying.
+    fn validate_head(ruby: &Ruby, store: &Store, head: &Option<String>) -> Result<(), Error> {
+        match head {
+            Some(target) if !store.key_p(target.clone()) => Err(ext_error(
+                ruby,
+                "Store",
+                "MissingObject",
+                format!("no object {target:?}"),
+            )),
+            _ => Ok(()),
+        }
     }
 
     /// Raise `Timeline::CrossStore` unless both Timelines name the SAME Store
