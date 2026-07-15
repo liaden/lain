@@ -550,7 +550,7 @@ Scenario: an unknown effect still fails loudly
   they shouldn't — but if any spec distinguishes them, that spec was testing names, not
   behavior; note it rather than deleting silently).
 
-### T9 — Memory-area comment resolution          [wave 2] [risk: low]
+### T9 — Memory-area comment resolution          [wave 2] [risk: low] ✅ landed
 
 **Depends on:** T6
 **Files:** modify `lib/lain/memory/index.rb`, `lib/lain/memory/item.rb`,
@@ -633,7 +633,7 @@ Scenario: ledger behavior is unchanged by the rename
 - Any rewritten comment contradicts the design plan's stated reasoning — the plan doc wins;
   quote it rather than paraphrasing from memory.
 
-### T11 — Agent core: constructor shape, transition, LoopMachine   [wave 2] [risk: medium]
+### T11 — Agent core: constructor shape, transition, LoopMachine   [wave 2] [risk: medium] ✅ landed
 
 **Depends on:** T6, T7
 **Files:** modify `lib/lain/agent.rb`, `lib/lain/agent/loop_machine.rb`; modify
@@ -714,7 +714,7 @@ Scenario: the machine's event list is total over the normalized vocabulary
 - `state_machines` gem behavior (callbacks, `value:` symbols) breaks under any LoopMachine
   rename — the drift-guard/mermaid follow-up in the roadmap depends on this module's shape; stop.
 
-### T12 — Middleware Env whole-value + agent collaborators    [wave 2] [risk: high]
+### T12 — Middleware Env whole-value + agent collaborators    [wave 2] [risk: high] ✅ landed
 
 **Depends on:** T4, T6, T8
 **Files:** create `lib/lain/middleware/env.rb`; modify `lib/lain/middleware.rb`,
@@ -790,7 +790,7 @@ Scenario: tool results assemble into one user turn
   middlewares) — the pre-agreed split point is Env+laws+to_app first, collaborator adoption
   second; ask the orchestrator to split rather than rushing the laws.
 
-### T13 — Context combinator structure          [wave 2] [risk: medium]
+### T13 — Context combinator structure          [wave 2] [risk: medium] ✅ landed
 
 **Depends on:** T6
 **Files:** modify `lib/lain/context.rb`, `lib/lain/context/base.rb`, `lib/lain/context/prune.rb`,
@@ -852,7 +852,7 @@ its two files and drops the alias.
   goes red on its own) and report before committing; normalizing inside the render path
   instead of the stored value is the fallback.
 
-### T14 — Channel and Sink: delegation, Null style, buffer honesty  [wave 2] [risk: low]
+### T14 — Channel and Sink: delegation, Null style, buffer honesty  [wave 2] [risk: low] ✅ landed
 
 **Depends on:** T6
 **Files:** modify `lib/lain/channel.rb`, `lib/lain/channel/drop_oldest.rb`, `lib/lain/sink.rb`;
@@ -900,7 +900,7 @@ Scenario: sink emits one attributed event per write-family call
   (`render_until_closed`) — if the TTY spec (T19's dependency) can't express its exit condition
   over the new API, the API is wrong; coordinate with the orchestrator before T19 is briefed.
 
-### T15 — Provider::Ollama, native API, non-streaming    [wave 2] [risk: high]
+### T15 — Provider::Ollama, native API, non-streaming    [wave 2] [risk: high] ✅ landed
 
 **Depends on:** T1
 **Files:** create `lib/lain/provider/ollama.rb` (subtree index), `lib/lain/provider/ollama/encoding.rb`,
@@ -984,7 +984,7 @@ Scenario: provider parity gates hold
   tool_use_id) — the id scheme must be unique per response; if per-turn uniqueness is not
   enough, stop.
 
-### T16 — MessageEnvelope for Recall/Reminder        [wave 3] [risk: high]
+### T16 — MessageEnvelope for Recall/Reminder        [wave 3] [risk: high] ✅ landed
 
 **Depends on:** T13
 **Files:** modify `lib/lain/context/recall.rb`, `lib/lain/context/reminder.rb`; create
@@ -1054,7 +1054,7 @@ Scenario: the envelope's boundary contract
 - Any change to `derive_query`'s extraction rule breaks the pinned bench-card rule the comment
   at `workspace_tagged?` references — that rule is pinned deliberately; behavior must not move.
 
-### T17 — Ollama streaming: NDJSON accumulation        [wave 3] [risk: high]
+### T17 — Ollama streaming: NDJSON accumulation        [wave 3] [risk: high] ✅ landed
 
 **Depends on:** T15
 **Files:** create `lib/lain/provider/ollama/stream_assembler.rb`; modify
@@ -1103,7 +1103,7 @@ Scenario: streaming and non-streaming agree
   can't serve raw NDJSON chunks, the Transport needs its own adapter path; that's a design
   change, escalate.
 
-### T18 — exe/lain provider selection and temperature    [wave 3] [risk: medium]
+### T18 — exe/lain provider selection and temperature    [wave 3] [risk: medium] ✅ landed
 
 **Depends on:** T15
 **Files:** modify `exe/lain`, `lib/lain/context.rb`, `spec/lain/context_spec.rb` (the
@@ -1147,7 +1147,7 @@ Scenario: temperature reaches the wire payload but not the cache identity
 - `bench record` (`Lain::Bench::CLI`) constructs its own provider — if wiring selection there
   doubles this card, do only `exe/lain` and report the bench CLI as a follow-up line.
 
-### T19 — Frontend readability: TTY and ApprovalPolicy    [wave 3] [risk: medium]
+### T19 — Frontend readability: TTY and ApprovalPolicy    [wave 3] [risk: medium] ✅ landed
 
 **Depends on:** T14
 **Files:** modify `lib/lain/frontend/tty.rb`, `lib/lain/frontend/approval_policy.rb`; modify
@@ -1201,7 +1201,7 @@ Scenario: the frontend drains to close and renders only its events
 - The policy/prompt split changes `Handler::Approving`'s constructor contract — that file is
   T8's (wave 1, already merged) — coordinate through the orchestrator rather than editing it.
 
-### T20 — Themed review sweep of the uncommented files    [wave 4] [risk: medium]
+### T20 — Themed review sweep of the uncommented files    [wave 4] [risk: medium] ✅ landed
 
 **Depends on:** T11, T12, T13, T14
 **Files:** create `planning/reviews/2026-07-14-sweep-findings.md`; small mechanical fixes
@@ -1254,7 +1254,7 @@ Scenario: the last spec-less units gain direct specs
 - More than ~5 findings cluster in one file (likely `tool.rb` at 353 lines) — that file wants
   its own card next plan; cap the in-place fixes there and say so.
 
-### T21 — Ollama live-gated specs and determinism probe    [wave 4] [risk: medium]
+### T21 — Ollama live-gated specs and determinism probe    [wave 4] [risk: medium] ✅ landed
 
 **Depends on:** T17, T18
 **Files:** create `spec/integration/provider/ollama_spec.rb`, `spec/support/ollama_tag.rb`;

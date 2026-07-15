@@ -63,6 +63,40 @@ deliberately deferred, not dropped:
   payload and `Event::RequestSent.new` normalizes it again. Minor; fold into R.1's touching of
   that seam. **Acceptance:** one `Canonical.normalize` pass per journaled request.
 
+## R — Deferred findings from the code-review/Ollama/test-infra plan (2026-07-14)
+
+- **R.4 — `to_s`/`inspect` split across value objects (Ruling 9 sweep theme).** Five value
+  objects alias `inspect` to a debug-shaped `to_s` (`#<Lain::Foo …>`), conflating the two exactly
+  the way DegradedSet did before T5 split them: **`Request`** (`request.rb`), **`Turn`**
+  (`turn.rb`), **`Toolset`** (`toolset.rb`), **`Provider`** (`provider.rb`, inherited by every
+  backend), and **`Memory::Bm25`** (`bm25.rb`). The convention T5 set is `to_s` → the
+  human-readable projection (DegradedSet's joined capability list), `inspect` → the class-tagged
+  `#<…>` debug form. Deferred rather than fixed in place because (a) `Request` and `Turn` are the
+  identity spine — a `to_s` that flows into an interpolated journal/error string is a byte-risk
+  the sweep must not take unilaterally — and (b) applying the split to only the non-spine three
+  would reintroduce the very inconsistency the theme exists to remove; one card should do all five
+  uniformly with the interpolation audit. **Acceptance:** each of the five defines `to_s` as a
+  human projection and `inspect` as the `#<…>` debug form (no `alias inspect to_s`); no journaled
+  or digested byte changes (the spine two verified against a recorded journal/cassette).
+- **R.5 — Ollama `:thinking` capability.** qwen3 emits `message.thinking` fragments under
+  `think: true`; `Provider::Ollama` neither sends `think` nor declares `:thinking`, though T17's
+  StreamAssembler already accumulates thinking fragments (forward-compatible). Wire the option
+  through `Request#extra`, declare the capability, and map fragments to the thinking content
+  block the Anthropic path produces. **Acceptance:** a `think: true` round trip yields a thinking
+  block in `Response#content`; the capability gate sees `:thinking`; non-think runs unchanged.
+- **R.6 — Ollama tool-result correlation is `tool_name`-only.** Native `/api/chat` has no
+  `tool_call_id`; Lain's synthesized ids exist only on our side, and results encode to
+  `role:"tool"` + `tool_name`. Two parallel calls to the SAME tool in one turn are therefore
+  wire-ambiguous to the model (Lain's own loop stays unambiguous via synthesized ids). Documented
+  in `Ollama::Encoding`'s WHY. Revisit if a bench task shows models misattributing results.
+  **Acceptance:** either upstream grows ids (track ollama/ollama) or the encoder documents a
+  measured mitigation (e.g. result ordering guarantee) pinned by a spec.
+- **R.7 — `bench record` lacks provider/sampler selection.** `Lain::Bench::CLI` constructs its
+  own `Provider::Anthropic` and takes no `--provider`/`--temperature`/`--seed`; exe/lain's
+  `LainCLI::Backend` resolution (T18) is the reusable piece. Wiring it in makes an Ollama temp-0
+  arm recordable. **Acceptance:** `bench record --provider ollama --temperature 0 --seed N`
+  records a session whose header carries the extra and replays dry.
+
 ---
 
 ## M3c — Algebra, seams, and the grader (THE BENCH)
