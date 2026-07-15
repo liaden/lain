@@ -121,7 +121,7 @@ pub fn ancestor_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::canonical::{build_object, Canon};
+    use crate::canonical::{Canon, build_object};
     use crate::turn::Role;
 
     fn text(body: &str) -> Canon {

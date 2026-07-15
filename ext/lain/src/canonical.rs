@@ -240,9 +240,11 @@ mod tests {
 
     #[test]
     fn ambiguous_key_message_matches_ruby() {
-        assert!(CanonError::AmbiguousKey("a".to_string())
-            .message()
-            .contains("both a String and a Symbol"));
+        assert!(
+            CanonError::AmbiguousKey("a".to_string())
+                .message()
+                .contains("both a String and a Symbol")
+        );
     }
 
     // Display IS the FFI-visible message: `lib.rs`'s `canon_hash` raise site

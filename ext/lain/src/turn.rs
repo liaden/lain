@@ -7,7 +7,7 @@
 //! embedded Ruby VM; the FFI wrapper in `lib.rs` reads Ruby values into a
 //! `TurnData` and hands the frozen, `Ractor.shareable?` handle back.
 
-use crate::canonical::{self, build_object, Canon};
+use crate::canonical::{self, Canon, build_object};
 use crate::digest::Digest;
 use std::sync::Arc;
 

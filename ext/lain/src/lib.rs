@@ -119,20 +119,19 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{blake3_hex, build_env_filter, classify_num, dup_writer, NumClass};
+    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer};
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::digest::Digest;
     use crate::turn::{Role, TurnData};
     use magnus::{
-        function, gc, method,
+        DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
+        RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
         prelude::*,
         r_hash::ForEach,
         scan_args::{get_kwargs, scan_args},
         typed_data::{self, Obj},
         value::Opaque,
-        DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
-        RString, Ruby, Symbol, TryConvert, TypedData, Value,
     };
     use std::io::Write;
     use std::sync::{Arc, Mutex};
@@ -1337,7 +1336,7 @@ mod ffi {
 
 #[cfg(test)]
 mod num_class_tests {
-    use super::{classify_num, NumClass};
+    use super::{NumClass, classify_num};
 
     #[test]
     fn classifies_a_small_integer() {
