@@ -7,14 +7,16 @@
 //! layer performs each walk ENTIRELY in Rust, crossing the boundary once with a
 //! batched result rather than once per node.
 
+use crate::digest::Digest;
 use crate::turn::TurnData;
 use rpds::HashTrieMapSync;
 use std::collections::HashSet;
 use std::sync::Arc;
 
 /// The content-addressed object map. A persistent HAMT, so a `fork` shares the
-/// whole prefix and a shared prefix is stored once.
-pub type StoreMap = HashTrieMapSync<String, Arc<TurnData>>;
+/// whole prefix and a shared prefix is stored once. Keyed by [`Digest`], not a
+/// bare `String`, so a walk cannot be handed an arbitrary string as an address.
+pub type StoreMap = HashTrieMapSync<Digest, Arc<TurnData>>;
 
 /// A walk referenced a digest that is not in the map. A well-formed Timeline
 /// never dangles, so this is corruption, NOT the ordinary end of a chain --
@@ -29,10 +31,13 @@ pub type StoreMap = HashTrieMapSync<String, Arc<TurnData>>;
 /// `{:?}` leaves bare) -- the escape styles genuinely differ there; both
 /// implementations still raise.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DanglingDigest(pub String);
+pub struct DanglingDigest(pub Digest);
 
 impl std::fmt::Display for DanglingDigest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `{:?}` on a `Digest` renders exactly as it did on the former `String`
+        // field -- `Digest`'s hand-written `Debug` delegates to the inner
+        // `String`'s -- so this message stays byte-equal to Ruby `Store#fetch`.
         write!(f, "no object {:?} in store", self.0)
     }
 }
@@ -45,10 +50,10 @@ impl std::error::Error for DanglingDigest {}
 /// whole chain in a single locked read.
 pub fn ancestor_turns(
     map: &StoreMap,
-    head: Option<&str>,
+    head: Option<&Digest>,
 ) -> Result<Vec<Arc<TurnData>>, DanglingDigest> {
     let mut out = Vec::new();
-    let mut cursor = head.map(str::to_string);
+    let mut cursor = head.cloned();
     while let Some(digest) = cursor.take() {
         let turn = map
             .get(&digest)
@@ -60,7 +65,10 @@ pub fn ancestor_turns(
 }
 
 /// The digests from `head` to the root, head first.
-pub fn ancestor_digests(map: &StoreMap, head: Option<&str>) -> Result<Vec<String>, DanglingDigest> {
+pub fn ancestor_digests(
+    map: &StoreMap,
+    head: Option<&Digest>,
+) -> Result<Vec<Digest>, DanglingDigest> {
     Ok(ancestor_turns(map, head)?
         .iter()
         .map(|turn| turn.digest.clone())
@@ -71,10 +79,10 @@ pub fn ancestor_digests(map: &StoreMap, head: Option<&str>) -> Result<Vec<String
 /// digest is `Err(DanglingDigest)` -- corruption, kept distinct from the root so
 /// `rewind` can absorb past `None` yet still raise on a dangle. Used by `rewind`
 /// to step back without materializing the whole chain.
-pub fn parent_of(map: &StoreMap, digest: &str) -> Result<Option<String>, DanglingDigest> {
+pub fn parent_of(map: &StoreMap, digest: &Digest) -> Result<Option<Digest>, DanglingDigest> {
     map.get(digest)
         .map(|turn| turn.parent.clone())
-        .ok_or_else(|| DanglingDigest(digest.to_string()))
+        .ok_or_else(|| DanglingDigest(digest.clone()))
 }
 
 /// The greatest common ancestor digest of two heads, or `None` when they share
@@ -84,10 +92,10 @@ pub fn parent_of(map: &StoreMap, digest: &str) -> Result<Option<String>, Danglin
 /// returns the first digest also on `a`, matching `Timeline#meet` exactly.
 pub fn meet(
     map: &StoreMap,
-    a_head: Option<&str>,
-    b_head: Option<&str>,
-) -> Result<Option<String>, DanglingDigest> {
-    let mine: HashSet<String> = ancestor_digests(map, a_head)?.into_iter().collect();
+    a_head: Option<&Digest>,
+    b_head: Option<&Digest>,
+) -> Result<Option<Digest>, DanglingDigest> {
+    let mine: HashSet<Digest> = ancestor_digests(map, a_head)?.into_iter().collect();
     Ok(ancestor_digests(map, b_head)?
         .into_iter()
         .find(|digest| mine.contains(digest)))
@@ -99,14 +107,14 @@ pub fn meet(
 /// chain raises rather than answering `false` over a truncated walk.
 pub fn ancestor_of(
     map: &StoreMap,
-    ancestor: Option<&str>,
-    descendant: Option<&str>,
+    ancestor: Option<&Digest>,
+    descendant: Option<&Digest>,
 ) -> Result<bool, DanglingDigest> {
     match ancestor {
         None => Ok(true),
         Some(head) => Ok(ancestor_turns(map, descendant)?
             .iter()
-            .any(|turn| turn.digest.as_str() == head)),
+            .any(|turn| &turn.digest == head)),
     }
 }
 
@@ -114,6 +122,7 @@ pub fn ancestor_of(
 mod tests {
     use super::*;
     use crate::canonical::{build_object, Canon};
+    use crate::turn::Role;
 
     fn text(body: &str) -> Canon {
         Canon::Array(vec![Canon::Object(
@@ -121,12 +130,19 @@ mod tests {
         )])
     }
 
+    // A `Digest` from a literal -- the deliberate `Digest::from` the type change
+    // forces where a corrupt/synthetic address is wanted (a bare `&str` no longer
+    // stands in for a digest).
+    fn digest(text: &str) -> Digest {
+        Digest::from(text.to_string())
+    }
+
     // Commit `body` onto `parent`, returning (new map, new head digest).
-    fn commit(map: &StoreMap, parent: Option<&str>, body: &str) -> (StoreMap, String) {
+    fn commit(map: &StoreMap, parent: Option<&Digest>, body: &str) -> (StoreMap, Digest) {
         let turn = TurnData::new(
-            "user".to_string(),
+            Role::User,
             text(body),
-            parent.map(str::to_string),
+            parent.cloned(),
             Canon::Object(vec![]),
         );
         let digest = turn.digest.clone();
@@ -134,7 +150,7 @@ mod tests {
     }
 
     // base(a -> b); left branches (l1 -> l2); right branches (r1).
-    fn forest() -> (StoreMap, String, String, String) {
+    fn forest() -> (StoreMap, Digest, Digest, Digest) {
         let map = StoreMap::new_sync();
         let (map, a) = commit(&map, None, "a");
         let (map, b) = commit(&map, Some(&a), "b");
@@ -147,8 +163,12 @@ mod tests {
     // A corrupt chain built the way a corrupt Store would be: a head node whose
     // parent digest was never inserted. Returns (map, head digest); the head is
     // present, its parent `blake3:absent` is not.
-    fn corrupt() -> (StoreMap, String) {
-        commit(&StoreMap::new_sync(), Some("blake3:absent"), "head")
+    fn corrupt() -> (StoreMap, Digest) {
+        commit(
+            &StoreMap::new_sync(),
+            Some(&digest("blake3:absent")),
+            "head",
+        )
     }
 
     #[test]
@@ -212,37 +232,37 @@ mod tests {
         // The bug this card fixes: an absent digest was conflated with a root.
         // It is now corruption, distinct from `Ok(None)`.
         assert_eq!(
-            parent_of(&map, "blake3:absent"),
-            Err(DanglingDigest("blake3:absent".to_string()))
+            parent_of(&map, &digest("blake3:absent")),
+            Err(DanglingDigest(digest("blake3:absent")))
         );
     }
 
     #[test]
     fn every_walk_reports_a_dangling_parent() {
         let (map, head) = corrupt();
-        let dangling = DanglingDigest("blake3:absent".to_string());
+        let dangling = DanglingDigest(digest("blake3:absent"));
         assert_eq!(ancestor_turns(&map, Some(&head)).unwrap_err(), dangling);
         assert_eq!(ancestor_digests(&map, Some(&head)), Err(dangling.clone()));
         assert_eq!(meet(&map, Some(&head), Some(&head)), Err(dangling.clone()));
         // A non-None ancestor forces the descendant chain to be walked; a `None`
         // ancestor short-circuits to `Ok(true)` and never touches the dangle.
         assert_eq!(
-            ancestor_of(&map, Some("blake3:x"), Some(&head)),
+            ancestor_of(&map, Some(&digest("blake3:x")), Some(&head)),
             Err(dangling.clone())
         );
-        assert_eq!(parent_of(&map, "blake3:absent"), Err(dangling));
+        assert_eq!(parent_of(&map, &digest("blake3:absent")), Err(dangling));
     }
 
     #[test]
     fn dangling_message_matches_ruby_string_inspect() {
         // Ruby `Store#fetch`: `"no object #{digest.inspect} in store"`.
         assert_eq!(
-            DanglingDigest("blake3:absent".to_string()).to_string(),
+            DanglingDigest(digest("blake3:absent")).to_string(),
             r#"no object "blake3:absent" in store"#
         );
         // A double-quote escapes the same in Rust `{:?}` and Ruby `String#inspect`.
         assert_eq!(
-            DanglingDigest(r#"blake3:a"b"#.to_string()).to_string(),
+            DanglingDigest(digest(r#"blake3:a"b"#)).to_string(),
             r#"no object "blake3:a\"b" in store"#
         );
     }

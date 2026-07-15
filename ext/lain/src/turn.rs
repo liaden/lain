@@ -8,20 +8,67 @@
 //! `TurnData` and hands the frozen, `Ractor.shareable?` handle back.
 
 use crate::canonical::{self, build_object, Canon};
+use crate::digest::Digest;
 use std::sync::Arc;
 
-/// The two wire roles. A `Turn` is a message, and only these two are messages.
-pub const ROLES: [&str; 2] = ["user", "assistant"];
+/// A wire role. A `Turn` is a message, and only these two are messages. Replaces
+/// the former `ROLES: [&str; 2]` + `validate_role` pair: the type now IS the
+/// closed set, so an unknown role cannot be represented, and the role list any
+/// message derives (see [`Role::names`]) is single-sourced from these variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+impl Role {
+    /// Every role, in wire order. The one source the error message and the
+    /// `TryFrom` below both read, so they cannot drift.
+    pub const ALL: [Role; 2] = [Role::User, Role::Assistant];
+
+    /// The wire string. This IS the serialized role byte-for-byte -- the digest
+    /// is taken over it -- so it must never change for an existing variant.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+        }
+    }
+
+    /// The comma-joined role list an error message names (`user, assistant`),
+    /// derived from [`Role::ALL`] rather than hardcoded, so a third role added to
+    /// the enum shows up in the message with no second edit.
+    pub fn names() -> String {
+        Self::ALL
+            .iter()
+            .map(|role| role.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Validate a role string against the wire roles, mapping an unknown one onto the
+/// same [`InvalidRole`] whose `Display` is the FFI-visible message.
+impl TryFrom<&str> for Role {
+    type Error = InvalidRole;
+
+    fn try_from(role: &str) -> Result<Self, InvalidRole> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == role)
+            .ok_or_else(|| InvalidRole(role.to_string()))
+    }
+}
 
 /// An immutable Timeline node. Shared through an `Arc` so a `Store` and any
 /// number of `Timeline` handles name the same node without copying its subtree.
 #[derive(Debug, Clone)]
 pub struct TurnData {
-    pub role: String,
+    pub role: Role,
     pub content: Canon,
-    pub parent: Option<String>,
+    pub parent: Option<Digest>,
     pub meta: Canon,
-    pub digest: String,
+    pub digest: Digest,
 }
 
 // Compile-time shareability canary: `Turn`'s `frozen_shareable` promise (see
@@ -40,8 +87,13 @@ impl TurnData {
     /// Build a node, computing its content address from the four fields exactly
     /// as `Canonical.digest(payload)` does. Returned in an `Arc` because that is
     /// how every holder references it.
-    pub fn new(role: String, content: Canon, parent: Option<String>, meta: Canon) -> Arc<Self> {
-        let digest = canonical::digest(&payload_canon(&role, &content, &parent, &meta));
+    pub fn new(role: Role, content: Canon, parent: Option<Digest>, meta: Canon) -> Arc<Self> {
+        // `canonical::digest` returns the raw `String`; wrapping it here is the
+        // one place a computed digest enters the type. canonical.rs stays
+        // `String`-returning so its byte-parity tests need no change.
+        let digest = Digest::from(canonical::digest(&payload_canon(
+            &role, &content, &parent, &meta,
+        )));
         Arc::new(Self {
             role,
             content,
@@ -62,13 +114,15 @@ impl TurnData {
     }
 }
 
-fn payload_canon(role: &str, content: &Canon, parent: &Option<String>, meta: &Canon) -> Canon {
+fn payload_canon(role: &Role, content: &Canon, parent: &Option<Digest>, meta: &Canon) -> Canon {
     let parent_canon = match parent {
-        Some(digest) => Canon::Str(digest.clone()),
+        // `Display` writes the raw digest text, so the serialized parent bytes
+        // are unchanged from when this field was a bare `String`.
+        Some(digest) => Canon::Str(digest.to_string()),
         None => Canon::Null,
     };
     let pairs = vec![
-        ("role".to_string(), Canon::Str(role.to_string())),
+        ("role".to_string(), Canon::Str(role.as_str().to_string())),
         ("content".to_string(), content.clone()),
         ("parent".to_string(), parent_canon),
         ("meta".to_string(), meta.clone()),
@@ -78,37 +132,23 @@ fn payload_canon(role: &str, content: &Canon, parent: &Option<String>, meta: &Ca
     Canon::Object(build_object(pairs).expect("payload keys are distinct"))
 }
 
-/// A role that is not one of [`ROLES`].
+/// A role string that is not one of the [`Role`] variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidRole(pub String);
 
 /// Hand-implemented rather than `#[derive(thiserror::Error)]`: the message
-/// interpolates `ROLES.join(", ")`, and a derive's `#[error(...)]` attribute
-/// can only hold a literal format string -- hardcoding "user, assistant" there
-/// would double-source the role list against the `ROLES` constant above. This
-/// Display text IS the FFI-visible message: `lib.rs`'s `read_role` raise site
-/// passes `invalid.to_string()` straight into the raised `Turn::InvalidRole`.
+/// interpolates [`Role::names`], and a derive's `#[error(...)]` attribute can
+/// only hold a literal format string -- hardcoding "user, assistant" there would
+/// double-source the role list against the enum. This Display text IS the
+/// FFI-visible message: `lib.rs`'s `read_role` raise site passes
+/// `invalid.to_string()` straight into the raised `Turn::InvalidRole`.
 impl std::fmt::Display for InvalidRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "role must be one of {}, got {:?}",
-            ROLES.join(", "),
-            self.0
-        )
+        write!(f, "role must be one of {}, got {:?}", Role::names(), self.0)
     }
 }
 
 impl std::error::Error for InvalidRole {}
-
-/// Validate a role string against the two wire roles.
-pub fn validate_role(role: &str) -> Result<String, InvalidRole> {
-    if ROLES.contains(&role) {
-        Ok(role.to_string())
-    } else {
-        Err(InvalidRole(role.to_string()))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -128,37 +168,43 @@ mod tests {
         Canon::Object(vec![])
     }
 
-    fn turn(role: &str, body: &str) -> Arc<TurnData> {
-        TurnData::new(role.to_string(), text(body), None, empty_meta())
+    fn turn(role: Role, body: &str) -> Arc<TurnData> {
+        TurnData::new(role, text(body), None, empty_meta())
     }
 
     #[test]
     fn digest_is_a_prefixed_content_address() {
-        assert!(turn("user", "hi").digest.starts_with("blake3:"));
+        assert!(turn(Role::User, "hi").digest.starts_with("blake3:"));
     }
 
     #[test]
     fn digest_is_identical_for_identical_content() {
-        assert_eq!(turn("user", "hi").digest, turn("user", "hi").digest);
+        assert_eq!(turn(Role::User, "hi").digest, turn(Role::User, "hi").digest);
     }
 
     #[test]
     fn digest_changes_with_content() {
-        assert_ne!(turn("user", "hi").digest, turn("user", "bye").digest);
+        assert_ne!(
+            turn(Role::User, "hi").digest,
+            turn(Role::User, "bye").digest
+        );
     }
 
     #[test]
     fn digest_changes_with_role() {
-        assert_ne!(turn("user", "hi").digest, turn("assistant", "hi").digest);
+        assert_ne!(
+            turn(Role::User, "hi").digest,
+            turn(Role::Assistant, "hi").digest
+        );
     }
 
     #[test]
     fn digest_changes_with_parent() {
-        let root = TurnData::new("user".to_string(), text("hi"), None, empty_meta());
+        let root = TurnData::new(Role::User, text("hi"), None, empty_meta());
         let child = TurnData::new(
-            "user".to_string(),
+            Role::User,
             text("hi"),
-            Some("blake3:abc".to_string()),
+            Some(Digest::from("blake3:abc".to_string())),
             empty_meta(),
         );
         assert_ne!(root.digest, child.digest);
@@ -166,9 +212,9 @@ mod tests {
 
     #[test]
     fn digest_changes_with_meta() {
-        let bare = TurnData::new("user".to_string(), text("hi"), None, empty_meta());
+        let bare = TurnData::new(Role::User, text("hi"), None, empty_meta());
         let tagged = TurnData::new(
-            "user".to_string(),
+            Role::User,
             text("hi"),
             None,
             Canon::Object(
@@ -184,15 +230,15 @@ mod tests {
 
     #[test]
     fn root_has_no_parent() {
-        assert!(turn("user", "hi").root());
+        assert!(turn(Role::User, "hi").root());
     }
 
     #[test]
     fn payload_canon_is_the_four_sorted_fields() {
         let node = TurnData::new(
-            "user".to_string(),
+            Role::User,
             text("hi"),
-            Some("blake3:abc".to_string()),
+            Some(Digest::from("blake3:abc".to_string())),
             Canon::Object(vec![]),
         );
         // Keys sorted: content, meta, parent, role -- what Canonical.digest hashes.
@@ -203,13 +249,24 @@ mod tests {
     }
 
     #[test]
-    fn validates_roles() {
-        assert_eq!(validate_role("user"), Ok("user".to_string()));
-        assert_eq!(validate_role("assistant"), Ok("assistant".to_string()));
+    fn parses_wire_roles_and_rejects_the_rest() {
+        assert_eq!(Role::try_from("user"), Ok(Role::User));
+        assert_eq!(Role::try_from("assistant"), Ok(Role::Assistant));
         assert_eq!(
-            validate_role("system"),
+            Role::try_from("system"),
             Err(InvalidRole("system".to_string()))
         );
+    }
+
+    #[test]
+    fn role_as_str_is_the_wire_string() {
+        assert_eq!(Role::User.as_str(), "user");
+        assert_eq!(Role::Assistant.as_str(), "assistant");
+    }
+
+    #[test]
+    fn role_names_is_the_comma_joined_list() {
+        assert_eq!(Role::names(), "user, assistant");
     }
 
     // Display IS the FFI-visible message: `lib.rs`'s `read_role` raise site

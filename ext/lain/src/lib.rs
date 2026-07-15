@@ -10,6 +10,7 @@ use tracing_subscriber::EnvFilter;
 mod bm25;
 mod canonical;
 mod dag;
+mod digest;
 mod turn;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
@@ -121,7 +122,8 @@ mod ffi {
     use super::{blake3_hex, build_env_filter, classify_num, dup_writer, NumClass};
     use crate::canonical::{self, Canon};
     use crate::dag;
-    use crate::turn::{self, TurnData};
+    use crate::digest::Digest;
+    use crate::turn::{Role, TurnData};
     use magnus::{
         function, gc, method,
         prelude::*,
@@ -561,9 +563,9 @@ mod ffi {
         }
     }
 
-    /// Read a role argument (String or Symbol) and validate it, raising
-    /// `Turn::InvalidRole` on anything that is not a wire role.
-    fn read_role(ruby: &Ruby, value: Value) -> Result<String, Error> {
+    /// Read a role argument (String or Symbol) and validate it into a [`Role`],
+    /// raising `Turn::InvalidRole` on anything that is not a wire role.
+    fn read_role(ruby: &Ruby, value: Value) -> Result<Role, Error> {
         let raw = match coerce_text(ruby, value)? {
             Some(text) => text,
             None => {
@@ -572,16 +574,13 @@ mod ffi {
                 return Err(lookup_error(
                     ruby,
                     &["Lain", "Ext", "Turn", "InvalidRole"],
-                    format!(
-                        "role must be one of {}, got a {class}",
-                        turn::ROLES.join(", ")
-                    ),
+                    format!("role must be one of {}, got a {class}", Role::names()),
                 ));
             }
         };
         // `InvalidRole`'s `Display` (see `turn.rs`) IS this message; no
         // hand-built duplicate to keep in sync with the pure error type.
-        turn::validate_role(&raw).map_err(|invalid| {
+        Role::try_from(raw.as_str()).map_err(|invalid| {
             lookup_error(
                 ruby,
                 &["Lain", "Ext", "Turn", "InvalidRole"],
@@ -591,8 +590,9 @@ mod ffi {
     }
 
     /// A parent/head digest argument: `nil` (or absent) is a root/empty head, a
-    /// String is a digest, anything else is a type error.
-    fn read_optional_digest(ruby: &Ruby, value: Option<Value>) -> Result<Option<String>, Error> {
+    /// String is a digest, anything else is a type error. This is the FFI-in
+    /// boundary where a Ruby String becomes a [`Digest`].
+    fn read_optional_digest(ruby: &Ruby, value: Option<Value>) -> Result<Option<Digest>, Error> {
         match value {
             None => Ok(None),
             Some(inner) if inner.is_nil() => Ok(None),
@@ -603,7 +603,7 @@ mod ffi {
                         "digest must be a String or nil",
                     )
                 })?;
-                Ok(Some(validated_utf8(ruby, string)?))
+                Ok(Some(validated_utf8(ruby, string)?.into()))
             }
         }
     }
@@ -664,7 +664,7 @@ mod ffi {
         }
 
         fn role(ruby: &Ruby, rb_self: &Turn) -> Value {
-            frozen_str(ruby, &rb_self.inner.role)
+            frozen_str(ruby, rb_self.inner.role.as_str())
         }
 
         fn content(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
@@ -673,7 +673,7 @@ mod ffi {
 
         fn parent(ruby: &Ruby, rb_self: &Turn) -> Value {
             match &rb_self.inner.parent {
-                Some(digest) => frozen_str(ruby, digest),
+                Some(digest) => frozen_str(ruby, digest.as_str()),
                 None => ruby.qnil().as_value(),
             }
         }
@@ -683,7 +683,7 @@ mod ffi {
         }
 
         fn digest(ruby: &Ruby, rb_self: &Turn) -> Value {
-            frozen_str(ruby, &rb_self.inner.digest)
+            frozen_str(ruby, rb_self.inner.digest.as_str())
         }
 
         fn payload(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
@@ -695,9 +695,12 @@ mod ffi {
         }
 
         fn to_s(&self) -> String {
-            let digest = &self.inner.digest;
+            let digest = self.inner.digest.as_str();
             let prefix = digest.get(..19).unwrap_or(digest);
-            format!("#<Lain::Ext::Turn {} {prefix}...>", self.inner.role)
+            format!(
+                "#<Lain::Ext::Turn {} {prefix}...>",
+                self.inner.role.as_str()
+            )
         }
     }
 
@@ -728,7 +731,7 @@ mod ffi {
 
         /// Insert a node if its digest is absent, returning the digest. The
         /// address names the content, so a second write is a no-op.
-        fn insert_arc(&self, turn: Arc<TurnData>) -> String {
+        fn insert_arc(&self, turn: Arc<TurnData>) -> Digest {
             let digest = turn.digest.clone();
             let mut map = self.locked();
             if !map.contains_key(&digest) {
@@ -737,11 +740,20 @@ mod ffi {
             digest
         }
 
+        /// Whether the store holds `digest`. Takes a `&Digest` so the internal
+        /// callers (`validate_head`) pass one directly; the Ruby-facing `key?`
+        /// converts its String argument through this.
+        fn contains(&self, digest: &Digest) -> bool {
+            self.locked().contains_key(digest)
+        }
+
         fn put(&self, turn: &Turn) -> String {
-            self.insert_arc(Arc::clone(&turn.inner))
+            // FFI-out boundary: the digest returns to Ruby as a String.
+            self.insert_arc(Arc::clone(&turn.inner)).into()
         }
 
         fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Obj<Turn>, Error> {
+            let digest: Digest = digest.into();
             let found = rb_self.locked().get(&digest).map(Arc::clone);
             match found {
                 Some(inner) => Ok(Turn::wrap(ruby, inner)),
@@ -754,7 +766,7 @@ mod ffi {
         }
 
         fn key_p(&self, digest: String) -> bool {
-            self.locked().contains_key(&digest)
+            self.contains(&digest.into())
         }
 
         fn size(&self) -> usize {
@@ -767,7 +779,7 @@ mod ffi {
     #[derive(TypedData)]
     #[magnus(class = "Lain::Ext::Timeline", free_immediately, mark)]
     struct Timeline {
-        head: Option<String>,
+        head: Option<Digest>,
         store: Opaque<Value>,
     }
 
@@ -792,7 +804,7 @@ mod ffi {
     }
 
     impl Timeline {
-        fn wrap(ruby: &Ruby, head: Option<String>, store: Value) -> Obj<Self> {
+        fn wrap(ruby: &Ruby, head: Option<Digest>, store: Value) -> Obj<Self> {
             let obj = ruby.obj_wrap(Timeline {
                 head,
                 store: store.into(),
@@ -841,7 +853,7 @@ mod ffi {
 
         fn head_digest(ruby: &Ruby, rb_self: &Timeline) -> Value {
             match &rb_self.head {
-                Some(digest) => frozen_str(ruby, digest),
+                Some(digest) => frozen_str(ruby, digest.as_str()),
                 None => ruby.qnil().as_value(),
             }
         }
@@ -861,6 +873,7 @@ mod ffi {
                         None => Err(lookup_error(
                             ruby,
                             &["Lain", "Ext", "Store", "MissingObject"],
+                            // `digest: &Digest`, transparent `Debug` -> same bytes.
                             format!("no object {digest:?} in store"),
                         )),
                     }
@@ -959,14 +972,14 @@ mod ffi {
 
         fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
+            let arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
                 .map_err(|e| missing_object(ruby, e))?;
             turns_to_array(ruby, arcs)
         }
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let mut arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
+            let mut arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
                 .map_err(|e| missing_object(ruby, e))?;
             arcs.reverse();
             turns_to_array(ruby, arcs)
@@ -974,43 +987,36 @@ mod ffi {
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_deref())
+            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_ref())
                 .map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(digests.len());
             for digest in digests {
-                array.push(frozen_str(ruby, &digest))?;
+                array.push(frozen_str(ruby, digest.as_str()))?;
             }
             Ok(array)
         }
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            Ok(
-                dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
-                    .map_err(|e| missing_object(ruby, e))?
-                    .len(),
-            )
+            Ok(dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
+                .map_err(|e| missing_object(ruby, e))?
+                .len())
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
+            let needle: Digest = digest.into();
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            Ok(
-                dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
-                    .map_err(|e| missing_object(ruby, e))?
-                    .iter()
-                    .any(|turn| turn.digest == digest),
-            )
+            Ok(dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
+                .map_err(|e| missing_object(ruby, e))?
+                .iter()
+                .any(|turn| turn.digest == needle))
         }
 
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
             ensure_same_store(ruby, rb_self, other)?;
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            dag::ancestor_of(
-                &store.locked(),
-                rb_self.head.as_deref(),
-                other.head.as_deref(),
-            )
-            .map_err(|e| missing_object(ruby, e))
+            dag::ancestor_of(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
+                .map_err(|e| missing_object(ruby, e))
         }
 
         fn meet(
@@ -1021,12 +1027,8 @@ mod ffi {
             ensure_same_store(ruby, &rb_self, other)?;
             let store_value = rb_self.store_value(ruby);
             let store: &Store = store_ref(store_value)?;
-            let common = dag::meet(
-                &store.locked(),
-                rb_self.head.as_deref(),
-                other.head.as_deref(),
-            )
-            .map_err(|e| missing_object(ruby, e))?;
+            let common = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
+                .map_err(|e| missing_object(ruby, e))?;
             Ok(Timeline::wrap(ruby, common, store_value))
         }
 
@@ -1037,12 +1039,8 @@ mod ffi {
         ) -> Result<Value, Error> {
             ensure_same_store(ruby, &rb_self, other)?;
             let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let common = dag::meet(
-                &store.locked(),
-                rb_self.head.as_deref(),
-                other.head.as_deref(),
-            )
-            .map_err(|e| missing_object(ruby, e))?;
+            let common = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
+                .map_err(|e| missing_object(ruby, e))?;
             match common {
                 None => Ok(ruby.qnil().as_value()),
                 // `dag::meet` only ever returns a digest it found walking the
@@ -1068,7 +1066,8 @@ mod ffi {
             match &rb_self.head {
                 None => "#<Lain::Ext::Timeline empty>".to_string(),
                 Some(digest) => {
-                    let prefix = digest.get(..19).unwrap_or(digest);
+                    let text = digest.as_str();
+                    let prefix = text.get(..19).unwrap_or(text);
                     // `to_s`/`inspect` is not a loud walk site: a debug string
                     // must not raise. But a corrupt chain's length is unknowable,
                     // not zero, so it renders as `(?)` rather than a false `(0)`.
@@ -1105,9 +1104,12 @@ mod ffi {
     /// `no object #{digest.inspect}`, NOT `Store#fetch`'s longer form. The two
     /// Ruby sites differ, so the Ext sites match them per-site rather than
     /// unifying.
-    fn validate_head(ruby: &Ruby, store: &Store, head: &Option<String>) -> Result<(), Error> {
+    fn validate_head(ruby: &Ruby, store: &Store, head: &Option<Digest>) -> Result<(), Error> {
         match head {
-            Some(target) if !store.key_p(target.clone()) => Err(lookup_error(
+            // `store.contains` takes a `&Digest` directly -- no round-trip
+            // through a String. `{target:?}` is transparent, so the message is
+            // byte-identical to Ruby `Timeline#initialize`'s.
+            Some(target) if !store.contains(target) => Err(lookup_error(
                 ruby,
                 &["Lain", "Ext", "Store", "MissingObject"],
                 format!("no object {target:?}"),
