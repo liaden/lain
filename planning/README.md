@@ -29,6 +29,7 @@ produced in the precision pass. Each is linked from its ROADMAP bullet.
 | [`specs/grader-from-gherkin.md`](specs/grader-from-gherkin.md) | Gherkin as a transient IR → tests in the lain user's framework as the grader. |
 | [`specs/oracles.md`](specs/oracles.md) | Cheap one-shot deciders (heuristic/ollama/haiku/inline/human) behind the `ask_human` promise seam — typed answers, journaled for replay, tail-or-nothing placement; the decider-locus sweep; DCP's mechanical combinators. |
 | [`specs/bedrock-provider.md`](specs/bedrock-provider.md) | AWS Bedrock (Mantle) provider arm on the work bearer token: `Provider::Bedrock` SDK oracle + `Provider::BedrockRaw` on the forked transport, `:bedrock` tag gating, cassette hygiene. Panel-reviewed 2026-07-15. |
+| [`specs/memory-read-path.md`](specs/memory-read-path.md) | The 5-3.1/5-3.2 close-out: manifest reminders + `memory_read` wired into the live session, `Session::Loader` replaying per-turn memory roots (recall-as-of-turn-N at the bench), root-keyed Bm25 build cache. Panel-reviewed 2026-07-15. |
 | [`specs/plan-shaped-compaction.md`](specs/plan-shaped-compaction.md) | Compaction seams as explicit, author-editable plan content with size estimates; mostly-deterministic step-closure records; execution shape (linear+rewrite vs fork-per-step) as a swept policy; the seam EV decision, Journal-calibrated. |
 
 Cross-cutting themes:
