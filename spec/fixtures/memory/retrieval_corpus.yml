@@ -1,0 +1,179 @@
+# Synthetic-only gold retrieval corpus for Grader::Recall and the M6 retrieval-arm
+# sweep (bm25, vector, hybrid, graph). No PHI, no real patient data -- item bodies are
+# public formulary-style dosing facts, the same synthetic-drug-name style as the law
+# corpus (spec/support/shared_examples/memory_index_laws.rb:58).
+#
+# Items form five drug-class families (NSAIDs, anticoagulants, tyrosine kinase
+# inhibitors, statins, antibiotics), each with a "class overview" hub item that
+# [[wikilinks]] out to its four leaf items, plus a few cross-class interaction notes
+# and a standalone antidiabetic family with no hub. Queries are labeled by which
+# retrieval ability they probe:
+#
+#   exact-lexical       -- query shares tokens directly with the gold item's own
+#                           id/description/body. Any lexical arm (Manifest, BM25)
+#                           should find it unaided.
+#   semantic-paraphrase  -- query shares ZERO \w+ tokens with the gold item's own
+#                           text (verified in recall_spec.rb). Only an embedding/
+#                           vector arm can bridge the paraphrase; a pure lexical arm
+#                           scores zero.
+#   wikilink-reachable   -- query shares tokens with a HUB item (a class-overview),
+#                           never with the gold leaf item itself, and the gold item is
+#                           reachable only by following a [[wikilink]] out of that hub.
+#                           Only a graph arm that expands from a lexical hit wins here;
+#                           gold_ids is the hub's full set of linked leaves.
+items:
+  # NSAIDs -- linked from nsaid-class-overview
+  - id: aspirin-dosage
+    description: Adult aspirin dosing guidance
+    body: Aspirin 325-650mg every 4 hours as needed for pain or fever.
+  - id: ibuprofen-dosage
+    description: Adult ibuprofen dosing
+    body: Ibuprofen 200-400mg every 6 hours with food to reduce GI upset.
+  - id: naproxen-dosage
+    description: Adult naproxen dosing
+    body: Naproxen 250-500mg twice daily, maximum 1250mg per day.
+  - id: diclofenac-dosage
+    description: Adult diclofenac dosing
+    body: Diclofenac 50mg three times daily with meals.
+
+  # Anticoagulants -- linked from anticoagulant-class-overview
+  - id: warfarin-dosage
+    description: Warfarin anticoagulation dosing
+    body: Warfarin dosed to target INR 2-3, adjusted weekly by lab draw.
+  - id: apixaban-dosage
+    description: Apixaban anticoagulation dosing
+    body: Apixaban 5mg twice daily, no routine coagulation monitoring required.
+  - id: rivaroxaban-dosage
+    description: Rivaroxaban anticoagulation dosing
+    body: Rivaroxaban 20mg once daily taken with the evening meal.
+  - id: heparin-dosage
+    description: Heparin anticoagulation dosing
+    body: Heparin infusion titrated to activated partial thromboplastin time.
+
+  # Tyrosine kinase inhibitors -- linked from tki-class-overview
+  - id: imatinib-therapy
+    description: Imatinib chronic myeloid leukemia regimen
+    body: Imatinib 400mg once daily with food, monitor for fluid retention.
+  - id: dasatinib-therapy
+    description: Dasatinib chronic myeloid leukemia regimen
+    body: Dasatinib 100mg once daily, watch for pleural effusion.
+  - id: nilotinib-therapy
+    description: Nilotinib chronic myeloid leukemia regimen
+    body: Nilotinib 300mg twice daily on an empty stomach, QT prolongation risk.
+  - id: sorafenib-therapy
+    description: Sorafenib renal cell carcinoma regimen
+    body: Sorafenib 400mg twice daily, monitor for hand-foot skin reaction.
+
+  # Statins -- linked from statin-class-overview
+  - id: atorvastatin-dosage
+    description: Atorvastatin lipid-lowering dosing
+    body: Atorvastatin 10-80mg once daily at bedtime.
+  - id: simvastatin-dosage
+    description: Simvastatin lipid-lowering dosing
+    body: Simvastatin 20-40mg once daily in the evening.
+  - id: rosuvastatin-dosage
+    description: Rosuvastatin lipid-lowering dosing
+    body: Rosuvastatin 5-20mg once daily, any time of day.
+  - id: pravastatin-dosage
+    description: Pravastatin lipid-lowering dosing
+    body: Pravastatin 10-40mg once daily, safe with most interacting drugs.
+
+  # Antibiotics -- linked from antibiotic-class-overview
+  - id: amoxicillin-dosage
+    description: Amoxicillin dosing guidance
+    body: Amoxicillin 500mg three times daily for 7 to 10 days.
+  - id: ciprofloxacin-dosage
+    description: Ciprofloxacin dosing guidance
+    body: Ciprofloxacin 500mg twice daily, avoid dairy near dosing.
+  - id: doxycycline-dosage
+    description: Doxycycline dosing guidance
+    body: Doxycycline 100mg twice daily, take with a full glass of water.
+  - id: azithromycin-dosage
+    description: Azithromycin dosing guidance
+    body: Azithromycin 500mg on day one, then 250mg daily for four more days.
+
+  # Antidiabetics -- standalone family, no hub
+  - id: metformin-dosage
+    description: Metformin antidiabetic dosing
+    body: Metformin 500-1000mg twice daily with meals.
+  - id: glipizide-dosage
+    description: Glipizide antidiabetic dosing
+    body: Glipizide 5-10mg once daily before breakfast.
+  - id: insulin-glargine-dosage
+    description: Insulin glargine antidiabetic dosing
+    body: Insulin glargine dosed once daily at the same time each day.
+  - id: sitagliptin-dosage
+    description: Sitagliptin antidiabetic dosing
+    body: Sitagliptin 100mg once daily, no titration required.
+
+  # Class-overview hubs -- the wikilink-reachable graph structure
+  - id: nsaid-class-overview
+    description: NSAID drug class overview
+    body: Overview note for the NSAID class. See [[aspirin-dosage]], [[ibuprofen-dosage]], [[naproxen-dosage]], and [[diclofenac-dosage]].
+  - id: anticoagulant-class-overview
+    description: Anticoagulant drug class overview
+    body: Overview note for the anticoagulant class. See [[warfarin-dosage]], [[apixaban-dosage]], [[rivaroxaban-dosage]], and [[heparin-dosage]].
+  - id: tki-class-overview
+    description: Tyrosine kinase inhibitor class overview
+    body: Overview note for the tyrosine kinase inhibitor class. See [[imatinib-therapy]], [[dasatinib-therapy]], [[nilotinib-therapy]], and [[sorafenib-therapy]].
+  - id: statin-class-overview
+    description: Statin drug class overview
+    body: Overview note for the statin class. See [[atorvastatin-dosage]], [[simvastatin-dosage]], [[rosuvastatin-dosage]], and [[pravastatin-dosage]].
+  - id: antibiotic-class-overview
+    description: Antibiotic drug class overview
+    body: Overview note for the antibiotic class. See [[amoxicillin-dosage]], [[ciprofloxacin-dosage]], [[doxycycline-dosage]], and [[azithromycin-dosage]].
+
+  # Cross-class interaction notes -- extra graph texture, not query targets
+  - id: warfarin-interactions
+    description: Warfarin interaction list
+    body: Warfarin interacts with NSAIDs and aspirin, increasing bleeding risk. See [[nsaid-class-overview]] and [[aspirin-dosage]].
+  - id: statin-interactions
+    description: Statin interaction list
+    body: Statins combined with certain antibiotics raise myopathy risk. See [[antibiotic-class-overview]] and [[ciprofloxacin-dosage]].
+  - id: tki-interactions
+    description: Tyrosine kinase inhibitor interaction list
+    body: Acid-reducing therapy can lower absorption of tyrosine kinase inhibitors. See [[tki-class-overview]].
+
+queries:
+  # exact-lexical: query tokens overlap the gold item's own text directly
+  - query: aspirin dosing guidance
+    class: exact-lexical
+    gold_ids: [aspirin-dosage]
+  - query: imatinib chronic myeloid leukemia regimen
+    class: exact-lexical
+    gold_ids: [imatinib-therapy]
+  - query: amoxicillin dosing guidance
+    class: exact-lexical
+    gold_ids: [amoxicillin-dosage]
+  - query: warfarin interaction list
+    class: exact-lexical
+    gold_ids: [warfarin-interactions]
+
+  # semantic-paraphrase: zero token overlap with the gold item; only meaning bridges it
+  - query: long-acting basal hormone injection given every night to steady blood sugar levels
+    class: semantic-paraphrase
+    gold_ids: [insulin-glargine-dosage]
+  - query: a blood-thinning tablet taken two times each day that does not need regular lab test checks
+    class: semantic-paraphrase
+    gold_ids: [apixaban-dosage]
+  - query: a kidney cancer treatment given two times per day that can cause painful palm and sole rash
+    class: semantic-paraphrase
+    gold_ids: [sorafenib-therapy]
+  - query: a cholesterol-reducing pill that can be taken whenever suits the morning or evening routine
+    class: semantic-paraphrase
+    gold_ids: [rosuvastatin-dosage]
+
+  # wikilink-reachable: query matches the hub only; gold leaves share no query tokens
+  # and are reachable solely by following the hub's [[wikilinks]]
+  - query: which medicines are grouped in the NSAID drug class overview
+    class: wikilink-reachable
+    gold_ids: [aspirin-dosage, ibuprofen-dosage, naproxen-dosage, diclofenac-dosage]
+  - query: list every medication catalogued in the tyrosine kinase inhibitor overview
+    class: wikilink-reachable
+    gold_ids: [imatinib-therapy, dasatinib-therapy, nilotinib-therapy, sorafenib-therapy]
+  - query: name each drug summarized under anticoagulant class overview
+    class: wikilink-reachable
+    gold_ids: [warfarin-dosage, apixaban-dosage, rivaroxaban-dosage, heparin-dosage]
+  - query: enumerate the medicines documented in the antibiotic class overview
+    class: wikilink-reachable
+    gold_ids: [amoxicillin-dosage, ciprofloxacin-dosage, doxycycline-dosage, azithromycin-dosage]

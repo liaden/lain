@@ -26,4 +26,5 @@ module Lain
 end
 
 require_relative "grader/fixture"
+require_relative "grader/recall"
 require_relative "grader/rubric"
