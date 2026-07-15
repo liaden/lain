@@ -71,7 +71,10 @@ deliberately deferred, not dropped:
   (`turn.rb`), **`Toolset`** (`toolset.rb`), **`Provider`** (`provider.rb`, inherited by every
   backend), and **`Memory::Bm25`** (`bm25.rb`). The convention T5 set is `to_s` → the
   human-readable projection (DegradedSet's joined capability list), `inspect` → the class-tagged
-  `#<…>` debug form. Deferred rather than fixed in place because (a) `Request` and `Turn` are the
+  `#<…>` debug form. The sweep also covers **`Lain::Ext::Turn`** and **`Lain::Ext::Timeline`**
+  (`ext/lain/src/lib.rs`), whose `to_s`/`inspect` are likewise debug-shaped aliases — nothing
+  pins their rendering (verified 2026-07-15), so the split is safe there too. Deferred rather
+  than fixed in place because (a) `Request` and `Turn` are the
   identity spine — a `to_s` that flows into an interpolated journal/error string is a byte-risk
   the sweep must not take unilaterally — and (b) applying the split to only the non-spine three
   would reintroduce the very inconsistency the theme exists to remove; one card should do all five

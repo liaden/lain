@@ -1,6 +1,6 @@
 # Rust findings resolution: loud walks, idiomatic errors, domain types
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: rust
 panel: Raph Levien, Andrew Gallant (burntsushi), Frank McSherry, Ashley Williams, Aaron Patterson
