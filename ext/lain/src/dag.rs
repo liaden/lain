@@ -43,7 +43,7 @@ impl std::error::Error for DanglingDigest {}
 /// is not in the map is a corrupt chain and returns `Err(DanglingDigest)` naming
 /// it, rather than silently truncating the walk. One pass, so callers get the
 /// whole chain in a single locked read.
-pub fn ancestor_arcs(
+pub fn ancestor_turns(
     map: &StoreMap,
     head: Option<&str>,
 ) -> Result<Vec<Arc<TurnData>>, DanglingDigest> {
@@ -61,7 +61,7 @@ pub fn ancestor_arcs(
 
 /// The digests from `head` to the root, head first.
 pub fn ancestor_digests(map: &StoreMap, head: Option<&str>) -> Result<Vec<String>, DanglingDigest> {
-    Ok(ancestor_arcs(map, head)?
+    Ok(ancestor_turns(map, head)?
         .iter()
         .map(|turn| turn.digest.clone())
         .collect())
@@ -104,7 +104,7 @@ pub fn ancestor_of(
 ) -> Result<bool, DanglingDigest> {
     match ancestor {
         None => Ok(true),
-        Some(head) => Ok(ancestor_arcs(map, descendant)?
+        Some(head) => Ok(ancestor_turns(map, descendant)?
             .iter()
             .any(|turn| turn.digest.as_str() == head)),
     }
@@ -221,7 +221,7 @@ mod tests {
     fn every_walk_reports_a_dangling_parent() {
         let (map, head) = corrupt();
         let dangling = DanglingDigest("blake3:absent".to_string());
-        assert_eq!(ancestor_arcs(&map, Some(&head)).unwrap_err(), dangling);
+        assert_eq!(ancestor_turns(&map, Some(&head)).unwrap_err(), dangling);
         assert_eq!(ancestor_digests(&map, Some(&head)), Err(dangling.clone()));
         assert_eq!(meet(&map, Some(&head), Some(&head)), Err(dangling.clone()));
         // A non-None ancestor forces the descendant chain to be walked; a `None`

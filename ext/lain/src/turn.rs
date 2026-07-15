@@ -78,10 +78,7 @@ fn payload_canon(role: &str, content: &Canon, parent: &Option<String>, meta: &Ca
     Canon::Object(build_object(pairs).expect("payload keys are distinct"))
 }
 
-/// A role that is not one of [`ROLES`]. Keeps its tuple field (rather than a
-/// private field behind an accessor) because `lib.rs:482` reads `invalid.0`
-/// directly and is out of scope for this change; a later card switches that
-/// site to `Display`.
+/// A role that is not one of [`ROLES`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidRole(pub String);
 
@@ -90,9 +87,7 @@ pub struct InvalidRole(pub String);
 /// can only hold a literal format string -- hardcoding "user, assistant" there
 /// would double-source the role list against the `ROLES` constant above. This
 /// Display text IS the FFI-visible message: `lib.rs`'s `read_role` raise site
-/// hand-builds the identical string today (`format!("role must be one of {}, got
-/// {:?}", turn::ROLES.join(", "), invalid.0)`), which a later card can replace
-/// with `invalid.to_string()`.
+/// passes `invalid.to_string()` straight into the raised `Turn::InvalidRole`.
 impl std::fmt::Display for InvalidRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -218,9 +213,8 @@ mod tests {
     }
 
     // Display IS the FFI-visible message: `lib.rs`'s `read_role` raise site
-    // hand-builds `format!("role must be one of {}, got {:?}", ROLES.join(", "),
-    // invalid.0)` today. Pin the exact text so a later card can swap that
-    // call site for `.to_string()` with no byte drift.
+    // raises `invalid.to_string()` verbatim. Pin the exact text so the Ruby
+    // side's pinned error message cannot drift from this Display.
     #[test]
     fn invalid_role_display_is_the_exact_ffi_message() {
         assert_eq!(

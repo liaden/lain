@@ -126,7 +126,7 @@ mod ffi {
         function, gc, method,
         prelude::*,
         r_hash::ForEach,
-        scan_args::get_kwargs,
+        scan_args::{get_kwargs, scan_args},
         typed_data::{self, Obj},
         value::Opaque,
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
@@ -181,7 +181,11 @@ mod ffi {
         /// it was writing may be torn, but that is no reason for a *logger* to
         /// panic too -- especially across an FFI boundary, where unwinding into
         /// Ruby is far worse than a corrupt line. Recover the guard and continue.
-        fn file(&self) -> std::sync::MutexGuard<'_, std::fs::File> {
+        ///
+        /// Named `locked_file`, not `file`: the noun `file` reads as a plain
+        /// accessor, but this call acquires the `Mutex` -- the name should say
+        /// so, matching `Store::locked`.
+        fn locked_file(&self) -> std::sync::MutexGuard<'_, std::fs::File> {
             self.0
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -190,7 +194,7 @@ mod ffi {
 
     impl Write for SharedWriter {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.file().write(buf)
+            self.locked_file().write(buf)
         }
 
         /// Overridden deliberately. The default `write_all` loops over `write`,
@@ -200,11 +204,11 @@ mod ffi {
         /// where they do. Holding the lock across the entire buffer is what
         /// actually keeps one event on one NDJSON line.
         fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-            self.file().write_all(buf)
+            self.locked_file().write_all(buf)
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
-            self.file().flush()
+            self.locked_file().flush()
         }
     }
 
@@ -274,17 +278,56 @@ mod ffi {
         blake3_hex(unsafe { bytes.as_slice() })
     }
 
-    /// Build the `Lain::Canonical::<name>` exception with `message`. Looked up at
-    /// raise-time (not ext-init) because `canonical.rb` defines these classes
-    /// after it requires this extension. A lookup failure surfaces as the
-    /// underlying `NameError` rather than being swallowed.
-    fn canonical_error(ruby: &Ruby, name: &str, message: String) -> Error {
-        let class = ruby
-            .class_object()
-            .const_get::<_, RModule>("Lain")
-            .and_then(|m| m.const_get::<_, RModule>("Canonical"))
-            .and_then(|m| m.const_get::<_, magnus::ExceptionClass>(name));
-        match class {
+    /// Look up `name` as a constant of `scope`, which may be a Module or a
+    /// Class -- `Lain`/`Ext`/`Canonical` are modules, `Store`/`Bm25`/`Turn`/
+    /// `Timeline` are classes, and a `lookup_error` path interleaves both as
+    /// it walks down. `RModule::const_get` and `RClass::const_get` do the
+    /// identical lookup (Ruby's own `Module#const_get`, which `Class`
+    /// inherits); this just picks whichever the value actually is, since a
+    /// `TryConvert` to the wrong one of the two rejects the other's runtime
+    /// type outright.
+    fn scoped_const_get(ruby: &Ruby, scope: Value, name: &str) -> Result<Value, Error> {
+        if let Some(module) = RModule::from_value(scope) {
+            module.const_get(name)
+        } else if let Some(class) = RClass::from_value(scope) {
+            class.const_get(name)
+        } else {
+            Err(Error::new(
+                ruby.exception_type_error(),
+                // SAFETY: classname reads the object's class name; no Ruby
+                // code runs meanwhile.
+                format!("no implicit conversion of {} into Module", unsafe {
+                    scope.classname()
+                }),
+            ))
+        }
+    }
+
+    /// Build the exception named by `path` (a full constant path starting at
+    /// `Lain`, e.g. `["Lain", "Canonical", "AmbiguousKey"]` or `["Lain", "Ext",
+    /// "Store", "MissingObject"]`) with `message`. Looked up at raise-time
+    /// (not ext-init) because the Ruby-side classes are defined after this
+    /// extension loads; a lookup failure surfaces as the underlying
+    /// `NameError`/`TypeError` rather than being swallowed.
+    ///
+    /// Absorbs what were two near-identical functions, `canonical_error`
+    /// (`Lain::Canonical::<name>`, a two-segment walk after the root) and
+    /// `ext_error` (`Lain::Ext::<class>::<error>`, three segments) -- they
+    /// differed only in path depth, and every real caller is one of exactly
+    /// those two shapes.
+    fn lookup_error(ruby: &Ruby, path: &[&str], message: String) -> Error {
+        let (last, init) = path
+            .split_last()
+            .expect("lookup_error path must be non-empty");
+        let scope = init
+            .iter()
+            .try_fold(ruby.class_object().as_value(), |scope, segment| {
+                scoped_const_get(ruby, scope, segment)
+            });
+        let looked = scope
+            .and_then(|scope| scoped_const_get(ruby, scope, last))
+            .and_then(ExceptionClass::try_convert);
+        match looked {
             Ok(exception) => Error::new(exception, message),
             Err(lookup_failure) => lookup_failure,
         }
@@ -325,9 +368,9 @@ mod ffi {
             // SAFETY: classname reads the object's class name; no Ruby code runs
             // meanwhile.
             let class = unsafe { value.classname() }.into_owned();
-            Err(canonical_error(
+            Err(lookup_error(
                 ruby,
-                "UnsupportedType",
+                &["Lain", "Canonical", "UnsupportedType"],
                 format!("cannot canonicalize {class}"),
             ))
         }
@@ -337,9 +380,9 @@ mod ffi {
         // JSON has no NaN/Infinity; a hash over one would not round-trip. Checked
         // before rendering so the error is `NonFiniteFloat`, not JSON's own.
         if !float.to_f64().is_finite() {
-            return Err(canonical_error(
+            return Err(lookup_error(
                 ruby,
-                "NonFiniteFloat",
+                &["Lain", "Canonical", "NonFiniteFloat"],
                 "cannot canonicalize a non-finite Float".to_string(),
             ));
         }
@@ -353,8 +396,13 @@ mod ffi {
             pairs.push((canon_key(ruby, key)?, ruby_to_canon(ruby, val)?));
             Ok(ForEach::Continue)
         })?;
-        let object = canonical::build_object(pairs)
-            .map_err(|ambiguous| canonical_error(ruby, "AmbiguousKey", ambiguous.message()))?;
+        let object = canonical::build_object(pairs).map_err(|ambiguous| {
+            lookup_error(
+                ruby,
+                &["Lain", "Canonical", "AmbiguousKey"],
+                ambiguous.message(),
+            )
+        })?;
         Ok(Canon::Object(object))
     }
 
@@ -364,9 +412,9 @@ mod ffi {
         } else {
             // SAFETY: see `ruby_to_canon`.
             let class = unsafe { key.classname() }.into_owned();
-            Err(canonical_error(
+            Err(lookup_error(
                 ruby,
-                "UnsupportedType",
+                &["Lain", "Canonical", "UnsupportedType"],
                 format!("hash keys must be String or Symbol, got {class}"),
             ))
         }
@@ -376,11 +424,11 @@ mod ffi {
     /// exactly as `Canonical#utf8` does: `RString::to_string` takes the valid
     /// UTF-8 fast path or `rb_str_conv_enc`, and errors on bytes that are not
     /// convertible -- which is precisely when Ruby raises.
-    fn utf8(ruby: &Ruby, string: RString) -> Result<String, Error> {
+    fn validated_utf8(ruby: &Ruby, string: RString) -> Result<String, Error> {
         string.to_string().map_err(|_| {
-            canonical_error(
+            lookup_error(
                 ruby,
-                "UnsupportedType",
+                &["Lain", "Canonical", "UnsupportedType"],
                 "string is not valid UTF-8".to_string(),
             )
         })
@@ -392,9 +440,9 @@ mod ffi {
     /// `read_role`; each caller supplies its own error for the `None` case.
     fn coerce_text(ruby: &Ruby, value: Value) -> Result<Option<String>, Error> {
         if let Some(string) = RString::from_value(value) {
-            Ok(Some(utf8(ruby, string)?))
+            Ok(Some(validated_utf8(ruby, string)?))
         } else if let Some(symbol) = Symbol::from_value(value) {
-            Ok(Some(utf8(ruby, symbol.funcall("to_s", ())?)?))
+            Ok(Some(validated_utf8(ruby, symbol.funcall("to_s", ())?)?))
         } else {
             Ok(None)
         }
@@ -429,26 +477,24 @@ mod ffi {
     // itself not `Ractor.shareable?`.
     // -----------------------------------------------------------------------
 
-    /// Build a `Lain::Ext::<class>::<error>` exception with `message`. Looked up
-    /// at raise-time; a lookup failure surfaces as the underlying `NameError`.
-    fn ext_error(ruby: &Ruby, class_name: &str, error_name: &str, message: String) -> Error {
-        let looked = ruby
-            .class_object()
-            .const_get::<_, RModule>("Lain")
-            .and_then(|m| m.const_get::<_, RModule>("Ext"))
-            .and_then(|m| m.const_get::<_, RClass>(class_name))
-            .and_then(|c| c.const_get::<_, ExceptionClass>(error_name));
-        match looked {
-            Ok(exception) => Error::new(exception, message),
-            Err(lookup_failure) => lookup_failure,
-        }
-    }
-
     /// Map a pure-layer [`dag::DanglingDigest`] onto `Lain::Ext::Store::MissingObject`.
     /// The struct's `Display` is byte-equal to Ruby `Store#fetch`, so a corrupt
     /// chain raises the same class and the same message from every walk.
     fn missing_object(ruby: &Ruby, dangling: dag::DanglingDigest) -> Error {
-        ext_error(ruby, "Store", "MissingObject", dangling.to_string())
+        lookup_error(
+            ruby,
+            &["Lain", "Ext", "Store", "MissingObject"],
+            dangling.to_string(),
+        )
+    }
+
+    /// The `&Store` a `Lain::Ext::Store` Ruby value names. Collapses the
+    /// repeated `store_ref(rb_self.store_value(ruby))` (and its
+    /// `store_ref(store_value)` reuse form, when a caller already
+    /// holds the `Value`) at every DAG-walking `Timeline` method into one
+    /// named site.
+    fn store_ref<'a>(store_value: Value) -> Result<&'a Store, Error> {
+        TryConvert::try_convert(store_value)
     }
 
     /// A frozen Ruby String. Digests, roles, and reconstructed content strings
@@ -476,8 +522,7 @@ mod ffi {
             Canon::Array(items) => {
                 let array = ruby.ary_new_capa(items.len());
                 for item in items {
-                    // Pushing to a fresh, un-shared array cannot fail.
-                    let _ = array.push(canon_to_ruby(ruby, item)?);
+                    array.push(canon_to_ruby(ruby, item)?)?;
                 }
                 array.freeze();
                 array.as_value()
@@ -485,7 +530,7 @@ mod ffi {
             Canon::Object(pairs) => {
                 let hash = ruby.hash_new();
                 for (key, value) in pairs {
-                    let _ = hash.aset(frozen_str(ruby, key), canon_to_ruby(ruby, value)?);
+                    hash.aset(frozen_str(ruby, key), canon_to_ruby(ruby, value)?)?;
                 }
                 hash.freeze();
                 hash.as_value()
@@ -524,10 +569,9 @@ mod ffi {
             None => {
                 // SAFETY: see ruby_to_canon.
                 let class = unsafe { value.classname() }.into_owned();
-                return Err(ext_error(
+                return Err(lookup_error(
                     ruby,
-                    "Turn",
-                    "InvalidRole",
+                    &["Lain", "Ext", "Turn", "InvalidRole"],
                     format!(
                         "role must be one of {}, got a {class}",
                         turn::ROLES.join(", ")
@@ -535,16 +579,13 @@ mod ffi {
                 ));
             }
         };
+        // `InvalidRole`'s `Display` (see `turn.rs`) IS this message; no
+        // hand-built duplicate to keep in sync with the pure error type.
         turn::validate_role(&raw).map_err(|invalid| {
-            ext_error(
+            lookup_error(
                 ruby,
-                "Turn",
-                "InvalidRole",
-                format!(
-                    "role must be one of {}, got {:?}",
-                    turn::ROLES.join(", "),
-                    invalid.0
-                ),
+                &["Lain", "Ext", "Turn", "InvalidRole"],
+                invalid.to_string(),
             )
         })
     }
@@ -562,7 +603,7 @@ mod ffi {
                         "digest must be a String or nil",
                     )
                 })?;
-                Ok(Some(utf8(ruby, string)?))
+                Ok(Some(validated_utf8(ruby, string)?))
             }
         }
     }
@@ -704,10 +745,9 @@ mod ffi {
             let found = rb_self.locked().get(&digest).map(Arc::clone);
             match found {
                 Some(inner) => Ok(Turn::wrap(ruby, inner)),
-                None => Err(ext_error(
+                None => Err(lookup_error(
                     ruby,
-                    "Store",
-                    "MissingObject",
+                    &["Lain", "Ext", "Store", "MissingObject"],
                     format!("no object {digest:?} in store"),
                 )),
             }
@@ -765,6 +805,17 @@ mod ffi {
             ruby.get_inner(self.store)
         }
 
+        // WHY hand-rolled rather than `scan_args`: this parse's actual
+        // contract is "first positional arg, if present, must be a Hash;
+        // `expected keyword arguments` otherwise" -- it accepts any
+        // Hash-shaped value there, not only Ruby's own keyword-argument
+        // calling convention. `scan_args`'s `Kw` machinery parses real
+        // keyword args (the VM-tagged kwargs hash) and raises its own,
+        // differently-worded errors on a bad shape; routing this site through
+        // it risks changing the exact Ruby-observable arity/error text this
+        // sweep must not touch (see the card's escalation trigger), for no
+        // behavior gain. `rewind`'s single optional positional `Int` has no
+        // such ambiguity, so it does take `scan_args` above.
         fn empty(ruby: &Ruby, args: &[Value]) -> Result<Obj<Self>, Error> {
             let store_value = match args.first() {
                 None => Store::new(ruby).as_value(),
@@ -780,7 +831,7 @@ mod ffi {
                 }
             };
             // A non-Store store must fail loudly at construction, not on first walk.
-            let _: &Store = TryConvert::try_convert(store_value)?;
+            let _: &Store = store_ref(store_value)?;
             Ok(Timeline::wrap(ruby, None, store_value))
         }
 
@@ -803,14 +854,13 @@ mod ffi {
             match &rb_self.head {
                 None => Ok(ruby.qnil().as_value()),
                 Some(digest) => {
-                    let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+                    let store: &Store = store_ref(rb_self.store_value(ruby))?;
                     let found = store.locked().get(digest).map(Arc::clone);
                     match found {
                         Some(inner) => Ok(Turn::wrap(ruby, inner).as_value()),
-                        None => Err(ext_error(
+                        None => Err(lookup_error(
                             ruby,
-                            "Store",
-                            "MissingObject",
+                            &["Lain", "Ext", "Store", "MissingObject"],
                             format!("no object {digest:?} in store"),
                         )),
                     }
@@ -830,11 +880,16 @@ mod ffi {
             let meta = read_meta(ruby, args.optional.0)?;
             let turn = TurnData::new(role, content, rb_self.head.clone(), meta);
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = TryConvert::try_convert(store_value)?;
+            let store: &Store = store_ref(store_value)?;
             let digest = store.insert_arc(turn);
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
         }
 
+        // `fork` is O(1) because a Timeline handle is already an immutable
+        // pointer into the shared, content-addressed Store -- there is no
+        // subtree to copy. Returning `rb_self` unchanged IS the fork; the two
+        // handles are indistinguishable, and later commits on either diverge
+        // from here as ordinary content-addressed writes.
         fn fork(rb_self: Obj<Timeline>) -> Obj<Timeline> {
             rb_self
         }
@@ -846,7 +901,7 @@ mod ffi {
         ) -> Result<Obj<Timeline>, Error> {
             let head = read_optional_digest(ruby, Some(digest))?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = TryConvert::try_convert(store_value)?;
+            let store: &Store = store_ref(store_value)?;
             validate_head(ruby, store, &head)?;
             Ok(Timeline::wrap(ruby, head, store_value))
         }
@@ -856,50 +911,69 @@ mod ffi {
             rb_self: Obj<Timeline>,
             args: &[Value],
         ) -> Result<Obj<Timeline>, Error> {
-            let count = match args.first() {
-                Some(value) => i64::try_convert(*value)?,
-                None => 1,
-            };
+            // `scan_args` raises ArgumentError on 2+ positional args where the
+            // old hand-rolled parse silently ignored the extras. Deliberate:
+            // pure Ruby `Lain::Timeline#rewind(count = 1)` already enforces
+            // this arity, so the swallowing was a latent Ruby/Ext divergence
+            // -- cross-implementation parity outranks bug-for-bug preservation.
+            let parsed = scan_args::<(), (Option<i64>,), (), (), (), ()>(args)?;
+            let count = parsed.optional.0.unwrap_or(1);
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = TryConvert::try_convert(store_value)?;
-            let mut digest = rb_self.head.clone();
-            let mut remaining = count;
-            while remaining > 0 {
-                // `None` absorbs (rewinding past the root lands on empty, per
-                // Ruby `Timeline#rewind`); a digest that is present but absent
-                // from the store is corruption and raises, distinct from a root.
-                digest = match digest {
-                    None => None,
-                    Some(current) => dag::parent_of(&store.locked(), &current)
-                        .map_err(|e| missing_object(ruby, e))?,
-                };
-                remaining -= 1;
-            }
+            let store: &Store = store_ref(store_value)?;
+            // One locked read for the whole walk, matching dag.rs's own
+            // single-locked-read doctrine: re-acquiring the Mutex per step
+            // would let another thread's `commit` interleave mid-rewind.
+            let digest = {
+                let map = store.locked();
+                let mut digest = rb_self.head.clone();
+                let mut remaining = count;
+                while remaining > 0 {
+                    // `None` absorbs (rewinding past the root lands on empty,
+                    // per Ruby `Timeline#rewind`); a digest that is present but
+                    // absent from the store is corruption and raises, distinct
+                    // from a root.
+                    digest = match digest {
+                        None => None,
+                        Some(current) => {
+                            dag::parent_of(&map, &current).map_err(|e| missing_object(ruby, e))?
+                        }
+                    };
+                    remaining -= 1;
+                }
+                digest
+            };
             // `parent_of` validates the node stepped FROM, never the digest
             // landed ON: landing exactly on a dangle would hand back a poisoned
             // Timeline whose head the store does not hold. Ruby's rewind lands
             // via #checkout, which validates -- so must we, same message form.
+            // (A fresh, separate lock: the loop's guard above already dropped,
+            // since std's Mutex is not reentrant. The drop-then-relock gap is
+            // unobservable from Ruby: between the two locks there is no Ruby
+            // dispatch point -- `validate_head` reaches `store.key_p` as a
+            // direct Rust call, no funcall/IO/yield -- so this whole method
+            // runs as one uninterrupted stretch under the GVL and no other
+            // thread's `store.put` can land in between.)
             validate_head(ruby, store, &digest)?;
             Ok(Timeline::wrap(ruby, digest, store_value))
         }
 
         fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            let arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
+            let arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
                 .map_err(|e| missing_object(ruby, e))?;
-            Ok(turns_to_array(ruby, arcs))
+            turns_to_array(ruby, arcs)
         }
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            let mut arcs = dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
+            let mut arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
                 .map_err(|e| missing_object(ruby, e))?;
             arcs.reverse();
-            Ok(turns_to_array(ruby, arcs))
+            turns_to_array(ruby, arcs)
         }
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
             let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_deref())
                 .map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(digests.len());
@@ -910,23 +984,27 @@ mod ffi {
         }
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
-                .map_err(|e| missing_object(ruby, e))?
-                .len())
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
+            Ok(
+                dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
+                    .map_err(|e| missing_object(ruby, e))?
+                    .len(),
+            )
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_arcs(&store.locked(), rb_self.head.as_deref())
-                .map_err(|e| missing_object(ruby, e))?
-                .iter()
-                .any(|turn| turn.digest == digest))
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
+            Ok(
+                dag::ancestor_turns(&store.locked(), rb_self.head.as_deref())
+                    .map_err(|e| missing_object(ruby, e))?
+                    .iter()
+                    .any(|turn| turn.digest == digest),
+            )
         }
 
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
-            same_store(ruby, rb_self, other)?;
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            ensure_same_store(ruby, rb_self, other)?;
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
             dag::ancestor_of(
                 &store.locked(),
                 rb_self.head.as_deref(),
@@ -940,9 +1018,9 @@ mod ffi {
             rb_self: Obj<Timeline>,
             other: &Timeline,
         ) -> Result<Obj<Timeline>, Error> {
-            same_store(ruby, &rb_self, other)?;
+            ensure_same_store(ruby, &rb_self, other)?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = TryConvert::try_convert(store_value)?;
+            let store: &Store = store_ref(store_value)?;
             let common = dag::meet(
                 &store.locked(),
                 rb_self.head.as_deref(),
@@ -957,8 +1035,8 @@ mod ffi {
             rb_self: Obj<Timeline>,
             other: &Timeline,
         ) -> Result<Value, Error> {
-            same_store(ruby, &rb_self, other)?;
-            let store: &Store = TryConvert::try_convert(rb_self.store_value(ruby))?;
+            ensure_same_store(ruby, &rb_self, other)?;
+            let store: &Store = store_ref(rb_self.store_value(ruby))?;
             let common = dag::meet(
                 &store.locked(),
                 rb_self.head.as_deref(),
@@ -967,11 +1045,21 @@ mod ffi {
             .map_err(|e| missing_object(ruby, e))?;
             match common {
                 None => Ok(ruby.qnil().as_value()),
+                // `dag::meet` only ever returns a digest it found walking the
+                // store's own ancestor chains (see `dag.rs`), so this second
+                // lookup cannot miss for any well-formed Store. Post-T1 that
+                // is exactly the shape a walk must not shrug off as `nil`: a
+                // miss here means the Store mutated between the two locked
+                // reads (or is corrupt in a way `meet` itself didn't catch),
+                // and `Store::MissingObject` is the same loud answer every
+                // other dangling-digest site in this module gives, not a
+                // second, silent failure mode of its own.
                 Some(digest) => {
-                    let found = store.locked().get(&digest).map(Arc::clone);
-                    Ok(found
-                        .map(|inner| Turn::wrap(ruby, inner).as_value())
-                        .unwrap_or_else(|| ruby.qnil().as_value()))
+                    let inner =
+                        store.locked().get(&digest).map(Arc::clone).ok_or_else(|| {
+                            missing_object(ruby, dag::DanglingDigest(digest.clone()))
+                        })?;
+                    Ok(Turn::wrap(ruby, inner).as_value())
                 }
             }
         }
@@ -984,10 +1072,10 @@ mod ffi {
                     // `to_s`/`inspect` is not a loud walk site: a debug string
                     // must not raise. But a corrupt chain's length is unknowable,
                     // not zero, so it renders as `(?)` rather than a false `(0)`.
-                    let length = TryConvert::try_convert(rb_self.store_value(ruby))
+                    let length = store_ref(rb_self.store_value(ruby))
                         .ok()
                         .and_then(|store: &Store| {
-                            dag::ancestor_arcs(&store.locked(), Some(digest)).ok()
+                            dag::ancestor_turns(&store.locked(), Some(digest)).ok()
                         })
                         .map(|arcs| arcs.len().to_string())
                         .unwrap_or_else(|| "?".to_string());
@@ -999,13 +1087,12 @@ mod ffi {
 
     /// One FFI crossing for a whole chain: wrap each already-walked node into a
     /// frozen `Turn` handle and hand back a single Ruby Array.
-    fn turns_to_array(ruby: &Ruby, arcs: Vec<Arc<TurnData>>) -> RArray {
+    fn turns_to_array(ruby: &Ruby, arcs: Vec<Arc<TurnData>>) -> Result<RArray, Error> {
         let array = ruby.ary_new_capa(arcs.len());
         for arc in arcs {
-            // Pushing to a fresh array cannot fail.
-            let _ = array.push(Turn::wrap(ruby, arc));
+            array.push(Turn::wrap(ruby, arc))?;
         }
-        array
+        Ok(array)
     }
 
     /// Raise `Store::MissingObject` unless `head` (when not a root/empty `None`)
@@ -1020,10 +1107,9 @@ mod ffi {
     /// unifying.
     fn validate_head(ruby: &Ruby, store: &Store, head: &Option<String>) -> Result<(), Error> {
         match head {
-            Some(target) if !store.key_p(target.clone()) => Err(ext_error(
+            Some(target) if !store.key_p(target.clone()) => Err(lookup_error(
                 ruby,
-                "Store",
-                "MissingObject",
+                &["Lain", "Ext", "Store", "MissingObject"],
                 format!("no object {target:?}"),
             )),
             _ => Ok(()),
@@ -1032,7 +1118,10 @@ mod ffi {
 
     /// Raise `Timeline::CrossStore` unless both Timelines name the SAME Store
     /// object. A `Store` defines no `==`, so Ruby `==` is `BasicObject`'s object
-    /// identity -- exactly Ruby's `store.equal?(other.store)`.
+    /// identity -- exactly Ruby's `store.equal?(other.store)`. Named for what it
+    /// does (raises), not merely what it checks -- every call site treats a
+    /// return as "safe to proceed", never inspects an `Ok`/`Err` distinction by
+    /// hand.
     ///
     /// WHY `unwrap_or(false)` here is safe (unlike `ruby_to_canon`'s equal
     /// checks): both operands are `Lain::Ext::Store` handles this crate wraps,
@@ -1042,7 +1131,7 @@ mod ffi {
     /// hypothetical error here would only widen a `false` from "definitely
     /// different" to "different-or-erroring", and the fallthrough (`CrossStore`)
     /// is the correct outcome either way.
-    fn same_store(ruby: &Ruby, a: &Timeline, b: &Timeline) -> Result<(), Error> {
+    fn ensure_same_store(ruby: &Ruby, a: &Timeline, b: &Timeline) -> Result<(), Error> {
         let same = a
             .store_value(ruby)
             .equal(b.store_value(ruby))
@@ -1050,10 +1139,9 @@ mod ffi {
         if same {
             Ok(())
         } else {
-            Err(ext_error(
+            Err(lookup_error(
                 ruby,
-                "Timeline",
-                "CrossStore",
+                &["Lain", "Ext", "Timeline", "CrossStore"],
                 "cannot compare Timelines backed by different stores".to_string(),
             ))
         }
@@ -1120,19 +1208,19 @@ mod ffi {
                 let text = read_pair_field(ruby, pair.entry(1)?, "text")?;
                 batch.push((id, text));
             }
+            // `BuildError`'s `Display` (see `bm25.rs`) IS the FFI-visible
+            // message for both variants; no hand-built duplicate to drift.
             match crate::bm25::Bm25Index::build(batch) {
                 Ok(index) => Ok(Bm25::wrap(ruby, Arc::new(index))),
-                Err(crate::bm25::BuildError::EmptyCorpus) => Err(ext_error(
+                Err(err @ crate::bm25::BuildError::EmptyCorpus) => Err(lookup_error(
                     ruby,
-                    "Bm25",
-                    "EmptyCorpus",
-                    "cannot build a BM25 index from an empty corpus".to_string(),
+                    &["Lain", "Ext", "Bm25", "EmptyCorpus"],
+                    err.to_string(),
                 )),
-                Err(crate::bm25::BuildError::DuplicateId(id)) => Err(ext_error(
+                Err(err @ crate::bm25::BuildError::DuplicateId(_)) => Err(lookup_error(
                     ruby,
-                    "Bm25",
-                    "DuplicateId",
-                    format!("duplicate document id {id:?}"),
+                    &["Lain", "Ext", "Bm25", "DuplicateId"],
+                    err.to_string(),
                 )),
             }
         }
