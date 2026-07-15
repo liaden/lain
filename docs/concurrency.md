@@ -213,3 +213,104 @@ that regime too.
 **Stability note:** the result held identically across every run in both the standalone
 prototype and the committed spec, with no observed flakiness — the escalation trigger for a
 nondeterministic result (stop and report rather than commit) did not fire.
+
+## 2026-07-15 — spike result: effects via Fiber vs handler objects (5-0.2)
+
+**Pinned versions:** ruby 4.0.5 (`+PRISM`). Spike spec:
+`spec/spikes/effects_fiber_spike_spec.rb`, run via `LAIN_SPIKE=1 bundle exec rspec
+spec/spikes`. This answers the plan's open question ("Effects via `Fiber` vs plain handler
+objects. Fibers make multi-shot resumption (speculative branching) natural but wreck stack
+traces when a tool raises. The `Middleware` API is identical either way. Prototype both.") —
+both halves of that claim are measured below, not assumed.
+
+**Method:** two effect interpreters, both adapted into the exact shape
+`Lain::Effect::Handler#to_app` already exposes (an `env -> env` lambda writing `:result`), driven
+through the real `Lain::Middleware::Stack#call(env, &app)` boundary — not a lookalike API, the
+literal one — with one real pass-through member (`Middleware::Identity`) composed into the
+Stack, so the equivalence is proven through an actual composed chain link rather than the
+zero-middleware fold. `Effect::Handler::Mock` stands in for "the existing handler-object interpreter"
+rather than `Live`, because `Live`'s correctness-gate-3 rescue (`StandardError` →
+`Tool::Result.error`) converts a raise into a message-only `Result` before either interpreter's
+own calling convention could be compared — that conversion is doing its own job, not answering
+this question. The fiber prototype (`Spikes::FiberEffectInterpreter` in the spec) hands the same
+resolver to `Fiber.new { resolver.call(effect, context) }.resume` — the resolver's own code runs
+*inside* the fiber's call stack, mirroring where a tool's code will actually execute once 5-0.3
+hosts tool dispatch on `Async::Task` fibers (per 5-0.1 above), not a fake reactor invented for
+this spike.
+
+**Result 1 — equivalence holds.** Both interpreters, given the identical resolver and the
+identical `Effect::ToolCall`, produce the identical `Tool::Result` through the identical
+`Middleware::Stack#call(env, &app)` call. No API divergence was needed to make the fiber
+prototype fit — `Middleware`'s monoid group is untouched by this question, because `to_app`'s
+output is the *terminal app* a `Stack` calls, not a `Composable` member of the stack itself; the
+escalation trigger for a broken monoid law did not fire.
+
+**Result 2 — the fiber trace is measurably wrecked.** Both traces below are recorded verbatim
+from the same resolver raising `"kaboom from tool"`, run through each interpreter's real
+production/prototype code paths:
+
+```
+HANDLER-OBJECT (Handler::Mock) backtrace:
+  capture_traces.rb:22:in 'block in <main>'
+  lib/lain/effect/handler/mock.rb:42:in 'Lain::Effect::Handler::Mock#canned_for'
+  lib/lain/effect/handler/mock.rb:36:in 'Lain::Effect::Handler::Mock#perform'
+  lib/lain/effect/handler.rb:35:in 'Lain::Effect::Handler#call'
+  lib/lain/effect/handler.rb:53:in 'block in Lain::Effect::Handler#to_app'
+  lib/lain/middleware.rb:140:in 'Lain::Middleware::Stack#call'
+  capture_traces.rb:32:in 'Object#run_through_stack'
+  capture_traces.rb:36:in 'Object#capture_backtrace'
+  capture_traces.rb:42:in '<main>'
+
+FIBER (FiberEffectInterpreter) backtrace:
+  capture_traces.rb:22:in 'block in <main>'
+  capture_traces.rb:16:in 'block in Spikes::FiberEffectInterpreter#run'
+```
+
+The handler-object trace is one continuous Ruby call stack, so it reaches all the way out to
+`<main>` — every frame between the raise and the top of the process is visible, including
+`Middleware::Stack#call` and the driving code. The fiber trace stops at two frames: the raise
+site and the `Fiber.new` block itself. `Middleware::Stack#call`, `to_app`, and everything that
+called `.resume` are invisible — not because `resume` fails to re-raise (it does, correctly, at
+the call site), but because `Exception#backtrace` is captured once, at raise time, by walking
+*only* the stack the currently-running fiber owns. A `Fiber` has an independent call stack by
+design; the resuming caller's frames were never part of it. This is exactly the "wreck stack
+traces" half of the open question, now measured rather than guessed at.
+
+**Result 3 — "multi-shot resumption" does not describe Ruby's `Fiber`.** A direct check —
+resume a fiber to completion, then resume it again — raises `FiberError: attempt to resume a
+terminated fiber` every time. Ruby's `Fiber` is a *single-shot* continuation: once resumed past
+a suspend point (or to completion) there is no operation that rewinds it and resumes the same
+suspended point again with a different injected value. The plan's open question hoped fibers
+would make multi-shot resumption "natural" for speculative branching (3c-5.6); that hope does
+not survive contact with the primitive. What *is* already true, and already the mechanism
+3c-5.6 is specced to build on, is `Timeline#fork` — O(1), content-addressed, at the **data**
+layer. Branching a trajectory into N speculative continuations was never going to be a property
+of whichever object interprets one `Effect`; it is a property of the Merkle DAG the loop
+appends to. Fiber-vs-handler-object is a **control**-layer choice; speculative branching is a
+**data**-layer one, and the two do not bind to each other the way the open question implied.
+
+**Recommendation, with reasons:**
+
+1. **Keep `Effect::Handler`'s decorator chain-of-responsibility** (`Live`/`Gate`/`Mock`/`Recorded`)
+   as the effect-interpretation architecture. Do not rebuild it as a `Fiber.yield`/`resume`
+   coroutine dispatcher. Equivalence is exact (Result 1), so there is no behavioral gain to
+   trade against the cost in Result 2 — and there is a cost Result 2 does not even fully
+   capture: a decorator chain can only return or raise, while a hand-rolled coroutine
+   introduces a new failure mode neither has today — a driver that forgets to `.resume` a
+   fiber leaves it suspended forever, silently, rather than failing loudly.
+2. **3c-5.6 (speculative branching) should build directly on `Timeline#fork`**, independent of
+   whatever object is interpreting a single `Effect` at the time. Nothing about Fiber
+   adoption is a prerequisite for it, per Result 3.
+3. **This does not reopen or contradict 5-0.1.** Fibers remain the likely answer for *IO
+   concurrency* — running several tool dispatches as parallel `Async::Task`s so one slow
+   `bash` call does not stall the reactor — for the reason 5-0.1 measured. That adoption sits
+   **above** `Effect::Handler#call`: 5-0.3 should wrap the *existing*, unchanged handler
+   chain's dispatch in `task.async { handler.call(effect, context) }` at the
+   `Agent::ToolRunner`/`Middleware` boundary, not reinterpret the handler chain itself as
+   fiber-yield choreography. Handler objects stay plain, synchronous Ruby, unaware they are
+   running inside a fiber — which keeps gate 3's rescue doing exactly the job it does today.
+   Note honestly: once tool dispatch *does* run inside an `Async::Task` fiber for concurrency,
+   an unhandled bug that somehow crosses gate 3 will see the same truncated-backtrace cost
+   measured here — that is an inherent cost of hosting code on any fiber, not a cost specific
+   to choosing "effects via Fiber" as the *interpretation* style, and 5-0.3 should go in with
+   that cost named rather than rediscovered.
