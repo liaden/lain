@@ -20,19 +20,22 @@ class LainCLI < Thor
   class Backend
     # The providers `--provider` selects between. The unknown-name guard names
     # this set, matching Capability::Policy.for's voice.
-    PROVIDERS = %w[anthropic ollama].freeze
+    PROVIDERS = %w[anthropic ollama bedrock].freeze
 
     def initialize(options)
       @options = options
     end
 
     # Anthropic reads its key from the environment; Ollama is local and takes an
-    # optional `--api-base` override. An unknown name fails loudly, naming the
+    # optional `--api-base` override; Bedrock is also env-configured (the
+    # Mantle client reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION itself, so no
+    # flag threads through here). An unknown name fails loudly, naming the
     # valid set, surfaced as a Thor::Error (a bad flag is user error, cleanly
     # presented, not a bug with a backtrace).
     def provider
       case provider_name
       when "ollama" then Lain::Provider::Ollama.new(api_base: @options[:api_base])
+      when "bedrock" then Lain::Provider::Bedrock.new
       else Lain::Provider::Anthropic.new
       end
     end
@@ -59,6 +62,7 @@ class LainCLI < Thor
     def default_model
       case provider_name
       when "ollama" then Lain::Provider::Ollama::DEFAULT_MODEL
+      when "bedrock" then Lain::Provider::Bedrock::DEFAULT_MODEL
       else Lain::Provider::Anthropic::DEFAULT_MODEL
       end
     end
@@ -120,7 +124,7 @@ class LainCLI < Thor
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
   method_option :provider, type: :string, default: "anthropic",
-                           desc: "Model provider: anthropic or ollama"
+                           desc: "Model provider: anthropic, ollama, or bedrock"
   method_option :api_base, type: :string,
                            desc: "Override the Ollama API base (ollama provider only)"
   method_option :model, type: :string,

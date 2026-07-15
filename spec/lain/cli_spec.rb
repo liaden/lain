@@ -41,6 +41,17 @@ RSpec.describe LainCLI do
       expect { backend(provider: "gemini").provider }
         .to raise_error(Thor::Error, /unknown provider "gemini", expected one of.*anthropic.*ollama/m)
     end
+
+    it "constructs a Provider::Bedrock for --provider bedrock" do
+      # Bedrock is env-configured, same as Anthropic above: the Mantle client
+      # reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION at construction (offline,
+      # no request); stub them so the real client can be built without the
+      # developer's shell leaking in or the run failing for a missing region.
+      provider = with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
+        backend(provider: "bedrock").provider
+      end
+      expect(provider).to be_a(Lain::Provider::Bedrock)
+    end
   end
 
   describe "provider-dependent --model default" do
@@ -55,8 +66,26 @@ RSpec.describe LainCLI do
       expect(model).to eq("qwen3:8b")
     end
 
+    it "defaults to Bedrock's model when --provider bedrock and no --model" do
+      model = backend(provider: "bedrock", model: nil, max_tokens: 4096).context.model
+      expect(model).to eq("anthropic.claude-opus-4-8")
+    end
+
     it "the chat command's --provider flag defaults to anthropic" do
       expect(described_class.commands.fetch("chat").options.fetch(:provider).default).to eq("anthropic")
+    end
+  end
+
+  describe "--help text" do
+    it "lists bedrock alongside anthropic and ollama in the --provider description" do
+      description = described_class.commands.fetch("chat").options.fetch(:provider).description
+      expect(description).to match(/anthropic/).and match(/ollama/).and match(/bedrock/)
+    end
+
+    it "still scopes the --api-base description to ollama" do
+      description = described_class.commands.fetch("chat").options.fetch(:api_base).description
+      expect(description).to match(/ollama/i)
+      expect(description).not_to match(/bedrock/i)
     end
   end
 
