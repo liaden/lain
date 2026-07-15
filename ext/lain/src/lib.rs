@@ -61,6 +61,49 @@ fn blake3_hex(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
 
+/// How a [`Canon::Num`] text must be rebuilt as a Ruby value. `Canon::Num`
+/// holds text a reader already rendered (an Integer's `#to_s` or a Float's
+/// `JSON.generate`, see `canonical.rs`), so this classification is total on
+/// that domain -- but the function is defined on ALL `&str` input, returning
+/// `Err` for anything a reader could never emit. That is deliberate: it turns
+/// "unreachable for reader-produced text" into a checked fact instead of an
+/// assumption, so a future bug that hands this function un-rendered text
+/// fails loudly instead of turning into a silent `NaN` or `nil`.
+#[derive(Debug, PartialEq)]
+enum NumClass {
+    /// A JSON float text (contains `.`, `e`, or `E`), pre-parsed.
+    Float(f64),
+    /// An integer text that fits `i64`, pre-parsed.
+    Small(i64),
+    /// An integer text too large for `i64`. Kept as text -- Rust has no
+    /// arbitrary-precision integer here, so the caller re-parses it through
+    /// Ruby's own `String#to_i`, which is exactly what `canonical_dump`'s
+    /// `Integer#to_s` inverts.
+    Big,
+}
+
+fn classify_num(text: &str) -> Result<NumClass, String> {
+    if text.contains(['.', 'e', 'E']) {
+        return text
+            .parse::<f64>()
+            .map(NumClass::Float)
+            .map_err(|e| format!("unparseable float text {text:?}: {e}"));
+    }
+    if let Ok(small) = text.parse::<i64>() {
+        return Ok(NumClass::Small(small));
+    }
+    // Not an i64: valid only as a bignum if it is a non-empty run of ASCII
+    // digits with an optional leading `-`. Anything else (garbage like
+    // `"abc"` or `""`) must NOT fall through to Ruby's `String#to_i`, which
+    // silently reads a numeric prefix and returns 0 for none at all.
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        Ok(NumClass::Big)
+    } else {
+        Err(format!("unparseable integer text {text:?}"))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FFI surface.
 //
@@ -75,7 +118,7 @@ fn blake3_hex(bytes: &[u8]) -> String {
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{blake3_hex, build_env_filter, dup_writer};
+    use super::{blake3_hex, build_env_filter, classify_num, dup_writer, NumClass};
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::turn::{self, TurnData};
@@ -253,11 +296,16 @@ mod ffi {
     /// Integer via `#to_s`, a Float via `JSON.generate`, so the bytes match
     /// Ruby's exactly even where Rust's float formatting would diverge.
     fn ruby_to_canon(ruby: &Ruby, value: Value) -> Result<Canon, Error> {
+        // `equal` calls Ruby's `#==`, which a hostile or buggy class can
+        // override to raise. Propagated with `?` rather than swallowed to
+        // `false`: falling through would misreport a raising `==` as "not
+        // true, not false" and (most likely) end up raising the wrong error --
+        // `UnsupportedType` for the object's class -- instead of the real one.
         if value.is_nil() {
             Ok(Canon::Null)
-        } else if value.equal(ruby.qtrue()).unwrap_or(false) {
+        } else if value.equal(ruby.qtrue())? {
             Ok(Canon::Bool(true))
-        } else if value.equal(ruby.qfalse()).unwrap_or(false) {
+        } else if value.equal(ruby.qfalse())? {
             Ok(Canon::Bool(false))
         } else if let Some(integer) = Integer::from_value(value) {
             Ok(Canon::Num(integer.funcall("to_s", ())?))
@@ -415,18 +463,21 @@ mod ffi {
     /// Rebuild a Ruby value from a [`Canon`], deeply frozen. Called on demand
     /// (e.g. `turn.content`), so the `Turn` handle itself never has to hold a
     /// Ruby reference -- which is what keeps it trivially `Ractor.shareable?`.
-    fn canon_to_ruby(ruby: &Ruby, canon: &Canon) -> Value {
-        match canon {
+    /// Fallible only because [`num_to_ruby`] is: a `Canon::Num` this crate
+    /// itself never wrote would otherwise be the sole silent corner of an
+    /// FFI surface that is loud everywhere else.
+    fn canon_to_ruby(ruby: &Ruby, canon: &Canon) -> Result<Value, Error> {
+        Ok(match canon {
             Canon::Null => ruby.qnil().as_value(),
             Canon::Bool(true) => ruby.qtrue().as_value(),
             Canon::Bool(false) => ruby.qfalse().as_value(),
-            Canon::Num(text) => num_to_ruby(ruby, text),
+            Canon::Num(text) => num_to_ruby(ruby, text)?,
             Canon::Str(text) => frozen_str(ruby, text),
             Canon::Array(items) => {
                 let array = ruby.ary_new_capa(items.len());
                 for item in items {
                     // Pushing to a fresh, un-shared array cannot fail.
-                    let _ = array.push(canon_to_ruby(ruby, item));
+                    let _ = array.push(canon_to_ruby(ruby, item)?);
                 }
                 array.freeze();
                 array.as_value()
@@ -434,28 +485,34 @@ mod ffi {
             Canon::Object(pairs) => {
                 let hash = ruby.hash_new();
                 for (key, value) in pairs {
-                    let _ = hash.aset(frozen_str(ruby, key), canon_to_ruby(ruby, value));
+                    let _ = hash.aset(frozen_str(ruby, key), canon_to_ruby(ruby, value)?);
                 }
                 hash.freeze();
                 hash.as_value()
             }
-        }
+        })
     }
 
-    /// Rebuild the Ruby number a [`Canon::Num`] text denotes. A JSON float always
-    /// carries `.`, `e`, or `E`; an integer never does -- so the text alone says
-    /// which. Bignums round-trip through Ruby's own parser to keep arbitrary
-    /// precision. The fallbacks are unreachable for text produced by the reader.
-    fn num_to_ruby(ruby: &Ruby, text: &str) -> Value {
-        if text.contains(['.', 'e', 'E']) {
-            ruby.float_from_f64(text.parse::<f64>().unwrap_or(f64::NAN))
-                .as_value()
-        } else if let Ok(small) = text.parse::<i64>() {
-            ruby.integer_from_i64(small).as_value()
-        } else {
-            ruby.str_new(text)
-                .funcall("to_i", ())
-                .unwrap_or_else(|_| ruby.qnil().as_value())
+    /// Rebuild the Ruby number a [`Canon::Num`] text denotes, via the pure
+    /// [`classify_num`] (cargo-tested without an embedded Ruby VM). A JSON
+    /// float always carries `.`, `e`, or `E`; an integer never does -- so the
+    /// text alone says which. Bignums round-trip through Ruby's own parser to
+    /// keep arbitrary precision. `classify_num`'s `Err` arm is unreachable for
+    /// text this crate produced itself (see `canonical.rs`'s `Canon::Num`
+    /// docs) -- exactly why reaching it here must raise loudly rather than
+    /// materialize `NaN` or `nil`.
+    fn num_to_ruby(ruby: &Ruby, text: &str) -> Result<Value, Error> {
+        match classify_num(text) {
+            Ok(NumClass::Float(f)) => Ok(ruby.float_from_f64(f).as_value()),
+            Ok(NumClass::Small(i)) => Ok(ruby.integer_from_i64(i).as_value()),
+            Ok(NumClass::Big) => ruby.str_new(text).funcall("to_i", ()),
+            Err(reason) => Err(Error::new(
+                ruby.exception_runtime_error(),
+                format!(
+                    "Lain::Ext: {reason} -- Canon::Num text must be reader-produced, \
+                     never handed to the FFI boundary unparsed"
+                ),
+            )),
         }
     }
 
@@ -569,7 +626,7 @@ mod ffi {
             frozen_str(ruby, &rb_self.inner.role)
         }
 
-        fn content(ruby: &Ruby, rb_self: &Turn) -> Value {
+        fn content(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
             canon_to_ruby(ruby, &rb_self.inner.content)
         }
 
@@ -580,7 +637,7 @@ mod ffi {
             }
         }
 
-        fn meta(ruby: &Ruby, rb_self: &Turn) -> Value {
+        fn meta(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
             canon_to_ruby(ruby, &rb_self.inner.meta)
         }
 
@@ -588,7 +645,7 @@ mod ffi {
             frozen_str(ruby, &rb_self.inner.digest)
         }
 
-        fn payload(ruby: &Ruby, rb_self: &Turn) -> Value {
+        fn payload(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
             canon_to_ruby(ruby, &rb_self.inner.payload_canon())
         }
 
@@ -976,6 +1033,15 @@ mod ffi {
     /// Raise `Timeline::CrossStore` unless both Timelines name the SAME Store
     /// object. A `Store` defines no `==`, so Ruby `==` is `BasicObject`'s object
     /// identity -- exactly Ruby's `store.equal?(other.store)`.
+    ///
+    /// WHY `unwrap_or(false)` here is safe (unlike `ruby_to_canon`'s equal
+    /// checks): both operands are `Lain::Ext::Store` handles this crate wraps,
+    /// not an arbitrary caller-supplied value, and the class defines no `==`
+    /// override that could raise -- Ruby's own default is the C-level
+    /// `rb_obj_equal` identity check, which cannot raise. Swallowing a
+    /// hypothetical error here would only widen a `false` from "definitely
+    /// different" to "different-or-erroring", and the fallthrough (`CrossStore`)
+    /// is the correct outcome either way.
     fn same_store(ruby: &Ruby, a: &Timeline, b: &Timeline) -> Result<(), Error> {
         let same = a
             .store_value(ruby)
@@ -1109,13 +1175,15 @@ mod ffi {
         share_probe.define_singleton_method("new", function!(ShareProbe::new, 1))?;
         share_probe.define_method("value", method!(ShareProbe::value, 0))?;
 
-        // Subclass Lain::Error where it exists (it is required before this
-        // extension loads); fall back to StandardError so init never fails on it.
+        // Subclass Lain::Error, which `lib/lain.rb` requires before this
+        // extension loads (see `lain/error`, then `lain/lain`). No fallback to
+        // StandardError: a load-order regression that broke that ordering must
+        // fail loudly, here, at require time -- not re-parent every Ext error
+        // under a class none of Lain's `rescue Lain::Error` sites catch.
         let lain_error = ruby
             .class_object()
             .const_get::<_, RModule>("Lain")
-            .and_then(|m| m.const_get::<_, ExceptionClass>("Error"))
-            .unwrap_or_else(|_| ruby.exception_standard_error());
+            .and_then(|m| m.const_get::<_, ExceptionClass>("Error"))?;
 
         let bm25 = ext.define_class("Bm25", ruby.class_object())?;
         bm25.define_error("EmptyCorpus", lain_error)?;
@@ -1174,6 +1242,68 @@ mod ffi {
         timeline.define_method("inspect", method!(Timeline::to_s, 0))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod num_class_tests {
+    use super::{classify_num, NumClass};
+
+    #[test]
+    fn classifies_a_small_integer() {
+        assert_eq!(classify_num("1").unwrap(), NumClass::Small(1));
+    }
+
+    #[test]
+    fn classifies_a_negative_integer() {
+        assert_eq!(classify_num("-3").unwrap(), NumClass::Small(-3));
+    }
+
+    #[test]
+    fn classifies_decimal_float_text() {
+        assert_eq!(classify_num("1.5").unwrap(), NumClass::Float(1.5));
+    }
+
+    #[test]
+    fn classifies_exponent_float_text() {
+        assert_eq!(classify_num("2e10").unwrap(), NumClass::Float(2e10));
+    }
+
+    #[test]
+    fn classifies_a_bignum_beyond_i64() {
+        // i64::MAX is 9223372036854775807; one digit further overflows it.
+        assert_eq!(classify_num("99999999999999999999").unwrap(), NumClass::Big);
+    }
+
+    #[test]
+    fn classifies_a_negative_bignum_beyond_i64() {
+        assert_eq!(
+            classify_num("-99999999999999999999").unwrap(),
+            NumClass::Big
+        );
+    }
+
+    #[test]
+    fn rejects_non_numeric_garbage() {
+        let err = classify_num("abc").expect_err("garbage text must not classify");
+        assert!(err.contains("abc"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn rejects_empty_text() {
+        classify_num("").expect_err("empty text must not classify");
+    }
+
+    #[test]
+    fn rejects_malformed_float_text() {
+        // Contains '.' so it takes the float branch, but is not valid float text.
+        let err = classify_num("1.2.3").expect_err("malformed float text must not classify");
+        assert!(err.contains("1.2.3"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn rejects_bare_sign_text() {
+        classify_num("-").expect_err("a lone sign must not classify as a bignum");
     }
 }
 

@@ -48,4 +48,18 @@ RSpec.describe Lain::Ext::Store do
     expect(store.size).to eq(50)
     expect(turns).to all(satisfy { |t| store.key?(t.digest) })
   end
+
+  # `Lain::Ext::init` subclasses every Ext error from `Lain::Error` at
+  # extension-load time, with NO StandardError fallback -- a load-order
+  # regression (e.g. `lib/lain.rb` requiring `lain/lain` before `lain/error`)
+  # must fail loudly there, not silently re-parent every Ext error under a
+  # class none of Lain's `rescue Lain::Error` sites catch. Pinning the
+  # ancestry here, through the normal `require "lain"` manifest, is the
+  # guarantee: it would fail if that fallback ever came back.
+  it "descends every Ext error class from Lain::Error" do
+    expect(Lain::Ext::Store::MissingObject.ancestors).to include(Lain::Error)
+    expect(Lain::Ext::Turn::InvalidRole.ancestors).to include(Lain::Error)
+    expect(Lain::Ext::Timeline::CrossStore.ancestors).to include(Lain::Error)
+    expect(Lain::Ext::Bm25::EmptyCorpus.ancestors).to include(Lain::Error)
+  end
 end
