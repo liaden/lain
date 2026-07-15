@@ -104,6 +104,9 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
 - **M4-1 — the Rust Timeline.** `[built]` (this session): `Canonical`/`Store`/`Turn`/`Timeline` ported
   to `ext/lain` as `frozen_shareable` `TypedData`, digests byte-identical to the Ruby reference, the
   same shared law groups passing against **both** impls. (M4-2, the Neovim frontend, remains `[planned]`.)
+  **Planned:** `planning/specs/rust-findings-resolution.md` — resolve the 2026-07-15 `ext/lain`
+  findings (loud walks on corrupt chains, idiomatic errors via thiserror, FFI naming/dedup,
+  Digest/Role domain types, edition 2024).
 
 **The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a
