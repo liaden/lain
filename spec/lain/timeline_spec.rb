@@ -173,39 +173,25 @@ RSpec.describe Lain::Timeline do
                      dedup_size: 1
   end
 
-  # Pins the Ruby implementation to the SAME corrupt-chain contract the Rust
-  # twin enforces, so the two cannot re-diverge: a dangling parent must fail
-  # every walk loudly. The Ruby walks already raise (via Store#fetch); pinning
-  # them here is what locks the parity the Rust port must match.
+  # A dangling parent digest (corrupt chain) used to be constructible through
+  # the public API -- `Turn.new(parent: absent) -> store.put -> checkout` --
+  # and every Timeline walk (ancestors, to_a, rewind, ...) had to raise
+  # MissingObject loudly rather than silently truncate at the dangle. That
+  # recipe now raises at `put` itself: referential integrity is checked at
+  # the API boundary, so a corrupt chain can no longer be built there at all.
+  # Prevention at #put is what these examples pin; the walk arms that used to
+  # be exercised here stay loud as the backstop (Store#fetch already raises
+  # on any missing digest, and the Rust pure-layer `dag.rs` cargo tests keep
+  # covering the walk arms directly, since they are unreachable via public
+  # API but not deleted).
   describe "a dangling parent digest (corrupt chain)" do
     let(:missing) { "blake3:absent" }
     let(:head) { Lain::Turn.new(role: :user, content: text("head"), parent: missing) }
-    let(:corrupt) do
-      store.put(head)
-      timeline.checkout(head.digest)
-    end
 
-    it "raises MissingObject naming the missing digest from every walk" do
-      walks = {
-        ancestors: -> { corrupt.ancestors.to_a },
-        to_a: -> { corrupt.to_a },
-        ancestor_digests: -> { corrupt.ancestor_digests },
-        length: -> { corrupt.length },
-        include?: -> { corrupt.include?(missing) },
-        rewind: -> { corrupt.rewind(2) }
-      }
-      walks.each_value do |walk|
-        expect(&walk).to raise_error(Lain::Store::MissingObject, /no object .* in store/)
-      end
-    end
-
-    it "raises the tail-less checkout form when rewind lands exactly on the dangle" do
-      # rewind(1) lands ON the dangle without stepping through it, so the raise
-      # comes from #checkout -> #initialize validating the landed head, whose
-      # message omits Store#fetch's " in store" tail. The Rust twin pins the
-      # same bytes (probes/rewind_parity_probe.rb).
-      expect { corrupt.rewind }
-        .to raise_error(Lain::Store::MissingObject, 'no object "blake3:absent"')
+    it "put refuses the dangling turn before it ever reaches the store" do
+      expect { store.put(head) }
+        .to raise_error(Lain::Store::MissingObject,
+                        %(no object #{missing.inspect} in store: putting #{head.digest.inspect} would dangle))
     end
   end
 

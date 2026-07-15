@@ -105,6 +105,52 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
     }
 }
 
+/// A `Store#put` refused because the node's parent digest is absent from the
+/// store -- the referential-integrity check at the public API boundary. The
+/// message's family form (`no object <parent> in store`) matches every other
+/// dangling-digest raise (see [`dag::DanglingDigest`]); the tail names the
+/// refusal context. This `Display` IS the FFI-visible message, byte-identical
+/// to Ruby `Store#validate_parent!` (`lib/lain/store.rb`) for plain digests --
+/// `{:?}` on a [`crate::digest::Digest`] renders as Ruby's `String#inspect`
+/// does, the same contract `DanglingDigest` documents.
+///
+/// Prevention here is what makes the pure `dag.rs` walk arms unreachable via
+/// the public API; they stay loud regardless (their cargo tests hand-corrupt
+/// a StoreMap directly), same philosophy as `classify_num`'s garbage arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DanglingPut {
+    parent: crate::digest::Digest,
+    child: crate::digest::Digest,
+}
+
+impl std::fmt::Display for DanglingPut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "no object {:?} in store: putting {:?} would dangle",
+            self.parent, self.child
+        )
+    }
+}
+
+impl std::error::Error for DanglingPut {}
+
+/// Whether `node` may enter `map` at the public `put` boundary: its parent must
+/// be `None` (a root) or already present. Plain Rust over the locked map -- the
+/// caller holds the Store's lock across this check AND the insert, so a
+/// concurrent put cannot race in between. The internal commit path skips this
+/// deliberately: its parent is the committing Timeline's own validated head,
+/// so it is inductively safe (see `Timeline::commit` in the `ffi` module).
+fn validate_put(map: &dag::StoreMap, node: &turn::TurnData) -> Result<(), DanglingPut> {
+    match &node.parent {
+        Some(parent) if !map.contains_key(parent) => Err(DanglingPut {
+            parent: parent.clone(),
+            child: node.digest.clone(),
+        }),
+        _ => Ok(()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FFI surface.
 //
@@ -119,7 +165,7 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer};
+    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, validate_put};
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::digest::Digest;
@@ -730,6 +776,13 @@ mod ffi {
 
         /// Insert a node if its digest is absent, returning the digest. The
         /// address names the content, so a second write is a no-op.
+        ///
+        /// Deliberately UNvalidated -- this is the internal commit path, not
+        /// the public boundary. `Timeline::commit` builds its node's parent
+        /// from the committing Timeline's own head, which was validated when
+        /// that Timeline was constructed, so the chain is inductively safe.
+        /// The Ruby-facing [`Store::put`] wraps this shape with the
+        /// referential-integrity check instead of sharing it.
         fn insert_arc(&self, turn: Arc<TurnData>) -> Digest {
             let digest = turn.digest.clone();
             let mut map = self.locked();
@@ -746,9 +799,27 @@ mod ffi {
             self.locked().contains_key(digest)
         }
 
-        fn put(&self, turn: &Turn) -> String {
+        /// The public `put` boundary: refuse a node whose parent digest the
+        /// store does not hold (see [`super::validate_put`]), then insert.
+        /// One lock held across check AND insert -- no TOCTOU window for a
+        /// concurrent put. A digest already present skips the check entirely:
+        /// the store is append-only and content-addressed, so a re-put is a
+        /// no-op and its parent was validated when it first entered.
+        fn put(ruby: &Ruby, rb_self: &Store, turn: &Turn) -> Result<String, Error> {
+            let digest = turn.inner.digest.clone();
+            let mut map = rb_self.locked();
+            if !map.contains_key(&digest) {
+                validate_put(&map, &turn.inner).map_err(|dangling| {
+                    lookup_error(
+                        ruby,
+                        &["Lain", "Ext", "Store", "MissingObject"],
+                        dangling.to_string(),
+                    )
+                })?;
+                *map = map.insert(digest.clone(), Arc::clone(&turn.inner));
+            }
             // FFI-out boundary: the digest returns to Ruby as a String.
-            self.insert_arc(Arc::clone(&turn.inner)).into()
+            Ok(digest.into())
         }
 
         fn fetch(ruby: &Ruby, rb_self: &Store, digest: String) -> Result<Obj<Turn>, Error> {
@@ -1393,6 +1464,78 @@ mod num_class_tests {
     #[test]
     fn rejects_bare_sign_text() {
         classify_num("-").expect_err("a lone sign must not classify as a bignum");
+    }
+}
+
+#[cfg(test)]
+mod validate_put_tests {
+    use super::{DanglingPut, validate_put};
+    use crate::canonical::{Canon, build_object};
+    use crate::dag::StoreMap;
+    use crate::digest::Digest;
+    use crate::turn::{Role, TurnData};
+    use std::sync::Arc;
+
+    fn text(body: &str) -> Canon {
+        Canon::Array(vec![Canon::Object(
+            build_object(vec![("text".to_string(), Canon::Str(body.to_string()))]).unwrap(),
+        )])
+    }
+
+    fn node(body: &str, parent: Option<&Digest>) -> Arc<TurnData> {
+        TurnData::new(
+            Role::User,
+            text(body),
+            parent.cloned(),
+            Canon::Object(vec![]),
+        )
+    }
+
+    #[test]
+    fn accepts_a_root() {
+        assert_eq!(
+            validate_put(&StoreMap::new_sync(), &node("a", None)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn accepts_a_child_whose_parent_is_present() {
+        let root = node("a", None);
+        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
+        assert_eq!(validate_put(&map, &node("b", Some(&root.digest))), Ok(()));
+    }
+
+    #[test]
+    fn refuses_a_child_whose_parent_is_absent() {
+        let absent = Digest::from("blake3:absent".to_string());
+        let child = node("b", Some(&absent));
+        assert_eq!(
+            validate_put(&StoreMap::new_sync(), &child),
+            Err(DanglingPut {
+                parent: absent,
+                child: child.digest.clone(),
+            })
+        );
+    }
+
+    // The Display IS the FFI-visible message; Ruby `Store#put` pins the same
+    // bytes (`no object #{parent.inspect} in store: putting #{digest.inspect}
+    // would dangle`), and `Digest`'s transparent `Debug` is what keeps the two
+    // byte-identical for plain digests.
+    #[test]
+    fn dangling_put_message_matches_ruby_string_inspect() {
+        let child = node("b", Some(&Digest::from("blake3:absent".to_string())));
+        let message = validate_put(&StoreMap::new_sync(), &child)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            message,
+            format!(
+                r#"no object "blake3:absent" in store: putting "{}" would dangle"#,
+                child.digest
+            )
+        );
     }
 }
 

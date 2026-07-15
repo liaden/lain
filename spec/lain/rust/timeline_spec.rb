@@ -140,90 +140,46 @@ RSpec.describe Lain::Ext::Timeline do
   end
 
   describe "a dangling parent digest (corrupt chain)" do
-    # Corrupt-chain recipe through the public API only: build a head Turn whose
-    # parent digest was never `put`, store JUST the head, then check out onto it.
-    # `checkout` succeeds (the head IS present); the corruption is one hop up, so
-    # every ancestry walk must hit the missing parent and raise loudly rather
-    # than silently truncating the chain at the dangle.
+    # A corrupt chain used to be constructible through the public API -- build
+    # a head Turn whose parent digest was never `put`, store JUST the head,
+    # check out onto it -- and these examples pinned every ancestry walk to
+    # raise MissingObject loudly at the dangle. That recipe now raises at
+    # `put` itself: referential integrity is validated at the API boundary,
+    # so prevention at put replaces public-API reachability of the walk
+    # raises. The walk arms STAY loud as the backstop -- the pure-layer
+    # `dag.rs` cargo tests hand-corrupt a StoreMap directly and remain the
+    # coverage for them (same philosophy as classify_num's garbage arm:
+    # unreachable via this surface is exactly why it must not fail silently).
     let(:missing) { "blake3:absent" }
     let(:head) { Lain::Ext::Turn.new(role: :user, content: text("head"), parent: missing) }
-    let(:corrupt) do
-      store.put(head)
-      timeline.checkout(head.digest)
+
+    it "put refuses the dangling turn before it ever reaches the store" do
+      expect { store.put(head) }
+        .to raise_error(Lain::Ext::Store::MissingObject,
+                        %(no object #{missing.inspect} in store: putting #{head.digest.inspect} would dangle))
     end
 
-    it "raises MissingObject naming the missing digest from every walk" do
-      # rewind(2) forces the walk THROUGH the dangling digest (step 1 lands on it,
-      # step 2 looks it up); rewind(1) would merely land on it without a lookup.
-      walks = {
-        ancestors: -> { corrupt.ancestors.to_a },
-        to_a: -> { corrupt.to_a },
-        ancestor_digests: -> { corrupt.ancestor_digests },
-        length: -> { corrupt.length },
-        include?: -> { corrupt.include?(missing) },
-        rewind: -> { corrupt.rewind(2) }
-      }
-      walks.each_value do |walk|
-        expect(&walk).to raise_error(Lain::Ext::Store::MissingObject, /no object .* in store/)
-      end
-    end
-
-    it "renders MissingObject message bytes identical to the Ruby walk" do
+    it "renders the refusal message byte-identical to the Ruby put" do
       # Ruby's String#inspect and Rust's {:?} must agree byte-for-byte. Plain
       # digests and a digest carrying a double-quote both escape identically;
       # deliberately out of scope are control characters AND Ruby's
       # interpolation guards ("#{", "#@", "#$", which String#inspect escapes to
       # "\#{" etc. and Rust's {:?} leaves bare) -- the escape styles genuinely
-      # differ there, and both implementations still raise.
+      # differ there, and both implementations still refuse.
       ["blake3:absent", 'blake3:a"b'].each do |digest|
-        ext_msg = walk_message(Lain::Ext::Store, Lain::Ext::Turn, Lain::Ext::Timeline, digest)
-        ruby_msg = walk_message(Lain::Store, Lain::Turn, Lain::Timeline, digest)
+        ext_msg = put_refusal_message(Lain::Ext::Store, Lain::Ext::Turn, digest)
+        ruby_msg = put_refusal_message(Lain::Store, Lain::Turn, digest)
         expect(ext_msg).to eq(ruby_msg)
-        expect(ext_msg).to eq(%(no object #{digest.inspect} in store))
-      end
-    end
-
-    it "raises the tail-less checkout form when rewind lands exactly on the dangle" do
-      # Probe-become-spec (probes/rewind_parity_probe.rb): rewind(1) LANDS on
-      # the dangling digest without stepping THROUGH it, so the raise comes from
-      # validating the landed head -- in Ruby via checkout/initialize, whose
-      # message omits Store#fetch's " in store" tail. Without landed-digest
-      # validation the Ext rewind returned a poisoned Timeline whose head names
-      # an object the store does not hold. Both implementations must raise, with
-      # EQUAL message bytes.
-      ext_msg = walk_message(Lain::Ext::Store, Lain::Ext::Turn, Lain::Ext::Timeline, missing,
-                             &:rewind)
-      ruby_msg = walk_message(Lain::Store, Lain::Turn, Lain::Timeline, missing, &:rewind)
-      expect(ext_msg).to eq(ruby_msg)
-      expect(ext_msg).to eq(%(no object "blake3:absent"))
-    end
-
-    describe "meet, diverge_at, and ancestor_of? over a corrupt ancestry" do
-      let(:corrupt_base) do
-        store.put(head)
-        timeline.checkout(head.digest)
-      end
-      let(:left) { say(corrupt_base, "l") }
-      let(:right) { say(corrupt_base, "r") }
-
-      it "raises rather than computing over a truncated chain" do
-        expect { left.meet(right) }
-          .to raise_error(Lain::Ext::Store::MissingObject, /no object .* in store/)
-        expect { left.diverge_at(right) }.to raise_error(Lain::Ext::Store::MissingObject)
-        expect { left.ancestor_of?(right) }.to raise_error(Lain::Ext::Store::MissingObject)
       end
     end
   end
 
-  # Build a corrupt one-turn chain (a head whose parent was never put) in the
-  # given implementation, walk it (`to_a` by default, or the given block), and
-  # return the MissingObject message the walk raises.
-  def walk_message(store_class, turn_class, timeline_class, digest, &walk)
-    walk ||= :to_a.to_proc
-    a_store = store_class.new
+  # Put a head whose parent digest was never stored into a fresh store of the
+  # given implementation, and return the MissingObject message the put refuses
+  # with.
+  def put_refusal_message(store_class, turn_class, digest)
     a_head = turn_class.new(role: :user, content: text("head"), parent: digest)
-    a_store.put(a_head)
-    walk.call(timeline_class.empty(store: a_store).checkout(a_head.digest))
+    store_class.new.put(a_head)
     raise "expected #{store_class}::MissingObject to be raised"
   rescue store_class::MissingObject => e
     e.message
