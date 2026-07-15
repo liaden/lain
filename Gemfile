@@ -12,7 +12,6 @@ group :development do
   gem "benchmark-ips", "~> 2.15" # M4 claims fork is O(1) and that Rust beats Ruby; claims get measured
   gem "debug", "~> 1.11"         # rdbg --open, for stepping the agent loop from another pane
   gem "irb"
-  gem "neovim", "~> 0.10" # msgpack-RPC frontend (M4)
   gem "rubocop", "~> 1.21"
   # Renders the Agent's state machine to mermaid SOURCE text (no Node toolchain: the
   # renderer is pure Ruby). A spec regenerates it and diffs it against the committed
@@ -41,9 +40,6 @@ group :test do
 end
 
 group :development, :test do
-  # The 5-0 concurrency spike measures Mixlib::ShellOut under the fiber scheduler.
-  # Spike-only for now; adoption (5-0.3) would promote this to the gemspec.
-  gem "async", "~> 2.34"
   # Loads ANTHROPIC_API_KEY from a gitignored .env, so the key never enters the shell
   # profile -- where Claude Code would silently prefer it over the subscription.
   gem "dotenv", "~> 3.2"

@@ -4,12 +4,14 @@ PATH
     lain (0.1.0)
       activemodel (~> 8.0)
       anthropic (~> 1.55)
+      async (~> 2.34)
       aws-sdk-core (~> 3)
       event_stream_parser (~> 1.0)
       faraday (~> 2.14)
       faraday-net_http (~> 3.4)
       faraday-retry (~> 2.4)
       mixlib-shellout (~> 3.4)
+      neovim (~> 0.10)
       pastel (~> 0.8)
       rb_sys (~> 0.9.91)
       state_machines (~> 0.201)
@@ -269,13 +271,11 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
-  async (~> 2.34)
   benchmark-ips (~> 2.15)
   debug (~> 1.11)
   dotenv (~> 3.2)
   irb
   lain!
-  neovim (~> 0.10)
   rake (~> 13.0)
   rake-compiler
   rantly (~> 3.0)

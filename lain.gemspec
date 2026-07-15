@@ -48,6 +48,10 @@ Gem::Specification.new do |spec|
   # ${IFS}. Safety comes from structured tools, the approval gate, and OS
   # confinement, never from a format validator.
   spec.add_dependency "activemodel", "~> 8.0"
+  # The agent loop runs inside a reactor (5-0.3): structured cancellation and fiber
+  # parking for ask_human promises and within-turn subagent fan-out. Promoted from the
+  # spike-only dev group once adoption landed, exactly as the spike note promised.
+  spec.add_dependency "async", "~> 2.34"
   # The official SDK is kept as a correctness ORACLE, not as the default path: the
   # forked transport is byte-diffed against `Provider::Anthropic#encode`, and one
   # live differential run must produce an identical Lain::Response. It is retired
@@ -78,6 +82,9 @@ Gem::Specification.new do |spec|
   # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
   # isolation arrives later via the out-of-process Rust exec boundary.
   spec.add_dependency "mixlib-shellout", "~> 3.4"
+  # msgpack-RPC client for Frontend::Neovim (4-2). Runtime, not dev: the frontend
+  # ships in the gem and attaches to a running `nvim --listen` socket.
+  spec.add_dependency "neovim", "~> 0.10"
   # Terminal primitives for Frontend::TTY. `reline` (stdlib) does line editing and
   # history. Only the frontend may touch the terminal; see spec/output_discipline_spec.rb.
   spec.add_dependency "pastel", "~> 0.8"
