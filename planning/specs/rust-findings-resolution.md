@@ -1,6 +1,6 @@
 # Rust findings resolution: loud walks, idiomatic errors, domain types
 
-status: in-progress
+status: done (2026-07-15; all six cards landed T1 2dea1f5 / T3 eac15a1 / T2 9bcf762 / T4 d306fbb / T5 5-file commit / T6 7f5d9fa; integration checks 1–5 green — the StandardError grep gate's one hit is the WHY comment documenting the fallback's removal; check 6 is Joel's manual read of the corrupt-chain specs)
 commit-mode: orchestrator-commits
 language: rust
 panel: Raph Levien, Andrew Gallant (burntsushi), Frank McSherry, Ashley Williams, Aaron Patterson
@@ -453,7 +453,7 @@ Scenario: role validation is unchanged at the Ruby surface
 - Role-enum adoption changes the `role()` FFI return or the payload serialization in any
   byte — stop.
 
-### T6 — Migrate the crate to edition 2024          [wave 5] [risk: low]
+### T6 — Migrate the crate to edition 2024          [wave 5] [risk: low] ✅ landed 7f5d9fa (panel: APPROVE, zero findings; cargo fix proposed nothing — diff was edition line + fmt reflow)
 
 **Depends on:** T1, T2, T3, T4, T5
 **Files:** modify `ext/lain/src/*.rs` (whatever `cargo fix --edition` + manual review
