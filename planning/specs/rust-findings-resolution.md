@@ -116,7 +116,7 @@ Critical path: T1 → T2 → T4 → T5 → T6
 
 ## Tasks
 
-### T1 — Make DAG walks raise on dangling digests          [wave 1] [risk: high]
+### T1 — Make DAG walks raise on dangling digests          [wave 1] [risk: high] ✅ landed 2dea1f5 (panel: APPROVE-WITH-FIXES → fixed → APPROVE; probe found Ext rewind landing on a dangle unvalidated — now pinned in both implementations)
 
 **Depends on:** none
 **Files:** modify `ext/lain/src/dag.rs`, `ext/lain/src/lib.rs` (walk call sites:
@@ -259,7 +259,7 @@ Scenario: number-text classification is total and loud
 - Any pinned digest/byte-parity spec moves — number rendering must be byte-identical;
   the classifier extraction must not change what's emitted, only what happens on garbage.
 
-### T3 — Make the pure error types idiomatic and mechanize the shareability audit   [wave 1] [risk: low]
+### T3 — Make the pure error types idiomatic and mechanize the shareability audit   [wave 1] [risk: low] ✅ landed eac15a1 (panel: APPROVE, 2 NITs noted, none actionable)
 
 **Depends on:** none
 **Files:** modify `ext/lain/src/canonical.rs`, `ext/lain/src/turn.rs`, `ext/lain/src/bm25.rs`
