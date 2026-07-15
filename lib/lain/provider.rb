@@ -76,6 +76,7 @@ end
 
 require_relative "provider/anthropic_encoding"
 require_relative "provider/anthropic"
+require_relative "provider/bedrock"
 require_relative "provider/http"
 require_relative "provider/anthropic_raw"
 require_relative "provider/ollama"
