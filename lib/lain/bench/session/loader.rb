@@ -34,6 +34,20 @@ module Lain
           )
         end
 
+        # The session's recorded slot attribution (PS-2): the one slot_fills
+        # record folded back into a {Telemetry::SlotFills} value, or an empty
+        # one for a journal written before the record existed (nothing recorded
+        # is the empty attribution, a value here, not an absence). Loads
+        # UNVERIFIED -- pure attribution, reporting the recorded fills rather
+        # than the live disk state; the rendered system text these digests
+        # address is separately verified through the request_sent chain.
+        def slot_fills
+          record = sole_slot_fills
+          return Telemetry::SlotFills.new(digests: {}, fills: {}) if record.nil?
+
+          Telemetry::SlotFills.new(digests: record.fetch("digests"), fills: record.fetch("fills"))
+        end
+
         private
 
         def of_type(type)
@@ -56,6 +70,18 @@ module Lain
           end
 
           headers.first
+        end
+
+        # Same discipline as {#sole_header}: fills are session-fixed, so a
+        # second record would make "which fills?" an accident of file order.
+        # Nil (no record at all) is fine -- an older journal simply predates
+        # the attribution.
+        def sole_slot_fills
+          records = of_type("slot_fills")
+          return records.first if records.size <= 1
+
+          raise Corrupt, "#{records.size} \"slot_fills\" records in one journal; " \
+                         "fills are session-fixed, one record pins them"
         end
 
         # The default-pipeline Context only -- see the note on {Session}.

@@ -252,6 +252,31 @@ module Lain
       end
     end
 
+    # Attribution for the session-fixed prompt slots (PS-2), written ONCE at
+    # session start. Two maps keyed by slot name: `digests` content-addresses
+    # each slot's RENDERED bytes -- the join key onto a {RequestSent}'s system
+    # blocks, whose rendered text is already journaled in full -- and `fills`
+    # carries the raw override SOURCE, the bytes a reader diffs to see WHY two
+    # runs' prompts differ. Pure attribution, not replay: the rendered system
+    # text is recoverable from {RequestSent}, so this record adds identity and
+    # diffability, never a second copy of the prompt.
+    #
+    # Both maps are held in canonical wire form (String keys, deeply frozen) so
+    # the event stays Ractor-shareable.
+    SlotFills = Data.define(:digests, :fills) do
+      include Journalable
+
+      # The session's one record, built from the loaded {Prompt::Slots}: its
+      # per-slot rendered-byte digests and raw fill sources.
+      def self.from(slots)
+        new(digests: slots.digests, fills: slots.fills)
+      end
+
+      def initialize(digests:, fills:)
+        super(digests: Canonical.normalize(digests), fills: Canonical.normalize(fills))
+      end
+    end
+
     # A `memory_write` withheld by {Middleware::RefuseSecretWrites} before it
     # ever reached the recorder. `pattern` NAMES what matched -- e.g. "aws
     # access key id" -- and MUST NEVER be the matched bytes themselves: a

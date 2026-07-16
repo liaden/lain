@@ -81,6 +81,16 @@ module Lain
         KNOWN.to_h { |name| [name, Canonical.digest(render(name))] }
       end
 
+      # The raw override SOURCE behind each known slot, keyed by slot name --
+      # the bytes a reader diffs to explain why two sessions render differently.
+      # Empty string for a slot with no project override (its substance lives in
+      # the base template around the hole). Pairs with {#digests}, which
+      # content-addresses the RENDERED bytes: source and address are the two
+      # halves of the PS-2 slot attribution one {Telemetry::SlotFills} carries.
+      def fills
+        KNOWN.to_h { |name| [name, resolve(name)] }
+      end
+
       private
 
       # A slot's active partial source: the project override if present, else the
