@@ -61,3 +61,4 @@ end
 
 require_relative "session_record/scribe"
 require_relative "session_record/replay"
+require_relative "session_record/salvage"

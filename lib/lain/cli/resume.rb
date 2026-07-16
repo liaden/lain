@@ -43,64 +43,61 @@ module Lain
       # @return [Result]
       # @raise [Refusal]
       def call(selector: nil, model: nil)
-        rebuild(select(selector), model)
+        rebuild(Selector.new(dir:).call(selector), model)
       end
 
       private
 
       def dir = @dir ||= @paths.sessions_dir
 
+      # T18: an OPEN recording gets one salvage attempt before anything else
+      # runs. A {Salvager#close!} retroactively turns a Recovered crash into
+      # an ordinary closed file, so the reload below reuses the SAME
+      # {Bench::Session::Loader}/{Bench::Session::Anchor} machinery every
+      # other closed session already proves, rather than growing a parallel
+      # "open-plus-salvaged" shape those classes would have to learn. That
+      # reload is also what makes `resumed_from`/`written` correct with no
+      # changes to either class: both derive from `recording.timeline`, which
+      # now legitimately reflects a file that IS closed, anchored at the
+      # salvaged turn.
       def rebuild(path, model)
-        recording = Bench::Session::Loader.new(File.foreach(path), resolve: resolver).recording
+        recording = load_recording(path)
+        outcome = salvage(path, recording)
+        recording = load_recording(path) if outcome.recovered?
         refuse_mid_tool!(path, recording)
-        result(path, recording, SessionRecord::Replay.new(chain_entries(path)), model)
+        result(path, recording, SessionRecord::Replay.new(chain_entries(path)), model, outcome)
       rescue Bench::Session::Corrupt => e
         # Corrupt's own message names digests and reasons; only this layer
         # still holds the path (Bench::CLI#load_session's precedent).
         raise Refusal, "cannot resume #{File.basename(path)}: #{e.message}"
       end
 
+      def load_recording(path)
+        Bench::Session::Loader.new(File.foreach(path), resolve: resolver).recording
+      end
+
+      # Salvage only ever runs against an open session: a gracefully closed
+      # file already flushed everything it could -- its last `request_sent`,
+      # if any, already has a `turn_usage` (T18's card, Scenario 3). A
+      # Recovered outcome closes the file through {Salvager#close!}; {#rebuild}
+      # is what reloads it afterward, so this stays a pure lookup either way.
+      #
+      # @return [SessionRecord::Salvage::Nothing, Recovered, Incomplete]
+      def salvage(path, recording)
+        return SessionRecord::Salvage::Nothing unless recording.open?
+
+        salvager = Salvager.new(path:, timeline: recording.timeline)
+        salvager.close!(head_before: recording.timeline.head_digest) if salvager.outcome.recovered?
+        salvager.outcome
+      end
+
       # `recording.memory` (file-scoped -- T14's stated Loader limit) is
       # deliberately unused: the recorder must cover the WHOLE chain, so it is
       # `replay.memory` over the chain's concatenated records instead.
-      def result(path, recording, replay, model)
+      def result(path, recording, replay, model, outcome)
         Result.new(file: File.basename(path), timeline: recording.timeline,
                    session: replay.session, recorder: replay.memory,
-                   open: recording.open?, notices: notices(path, recording, model))
-      end
-
-      def select(selector)
-        names = session_names
-        raise Refusal, "no sessions to resume under #{dir}" if names.empty?
-
-        File.join(dir, chosen(names, selector.to_s))
-      end
-
-      # Bench::CLI's discovery idiom: Dir.children (a name carrying glob
-      # metacharacters must not parse as a pattern), sorted -- the filenames
-      # are UTC-timestamped, so lexicographic IS chronological and `.last` is
-      # the newest. That is also what makes resume idempotent: an
-      # exited-immediately resumed session is itself the newest file, so a
-      # second `--resume` continues the head of the CHAIN, never forking the
-      # original.
-      def session_names
-        Dir.children(dir).select { |name| name.end_with?(".ndjson") }.sort
-      end
-
-      def chosen(names, selector)
-        return names.last if selector.empty?
-        return selector if names.include?(selector)
-
-        matched(names, selector)
-      end
-
-      def matched(names, selector)
-        matches = names.select { |name| name.start_with?(selector) }
-        return matches.first if matches.size == 1
-
-        raise Refusal, "no session matching #{selector.inspect} under #{dir}" if matches.empty?
-
-        raise Refusal, "#{selector.inspect} is ambiguous under #{dir}: #{matches.join(", ")}"
+                   open: recording.open?, notices: notices(path, recording, model, outcome))
       end
 
       # The Loader's injected filesystem duck (its contract is handed-records,
@@ -166,8 +163,13 @@ module Lain
                        "(walk: #{[*visited, basename].join(" -> ")}); a resume chain must not cycle"
       end
 
-      def notices(path, recording, model)
-        [open_notice(path, recording), model_notice(recording, model)].compact
+      # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the
+      # Null Object), so it drops out of `.compact` like every other absent
+      # notice here; a {SessionRecord::Salvage::Recovered} outcome also
+      # leaves `recording` closed by the time this runs (see {#rebuild}'s
+      # reload), so `open_notice` correctly stops firing once recovery lands.
+      def notices(path, recording, model, outcome)
+        [open_notice(path, recording), outcome.notice, model_notice(recording, model)].compact
       end
 
       def open_notice(path, recording)
@@ -187,3 +189,11 @@ module Lain
     end
   end
 end
+
+# Salvager and Selector reopen Resume to nest themselves (see Salvager's own
+# class comment for why separate files rather than a separate cop-loosening):
+# #salvage and #call send them messages, so they read as the dependent units
+# even though both resolve at runtime, the same ordering note
+# {Bench::Session}'s own require block makes.
+require_relative "resume/salvager"
+require_relative "resume/selector"

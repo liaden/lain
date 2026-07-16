@@ -543,9 +543,10 @@ RSpec.describe Lain::Telemetry do
     end
 
     it "pins the reason enum, rejecting anything outside it, echoing the offender" do
-      expect(described_class::REASONS).to eq(%i[exit interrupted grace_expired])
+      expect(described_class::REASONS).to eq(%i[exit interrupted grace_expired salvaged])
       expect { described_class.new(head: nil, reason: :kaput) }
-        .to raise_error(ArgumentError, "reason must be one of [:exit, :interrupted, :grace_expired], got :kaput")
+        .to raise_error(ArgumentError,
+                        "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged], got :kaput")
     end
 
     it "tolerates a nil head (a session that committed nothing) and stays a frozen value" do

@@ -163,6 +163,186 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  # T18: an open session whose crash left an unanswered request_sent gets one
+  # salvage attempt before anything else about it is decided.
+  describe "salvage on resume (T18)" do
+    let(:committed) { chain("hi", "hello") }
+
+    def in_flight_request
+      Lain::Request.new(model: "recorded-model", max_tokens: 512, messages: [{ role: "user", content: "third" }])
+    end
+
+    def request_sent_record(request)
+      Lain::Telemetry::RequestSent.new(digest: request.digest, payload: request.cache_payload,
+                                       stream: request.stream, extra: request.extra,
+                                       prefix_digests: request.prefix_digests).to_journal
+    end
+
+    def wal_path_for(name) = File.join(paths.sessions_dir, name.sub(/\.ndjson\z/, ".wal"))
+
+    def canned_response
+      Lain::Response.new(id: "msg_salvaged", model: "recorded-model", stop_reason: :end_turn,
+                         content: text("salvaged reply"), usage: Lain::Usage.new(input_tokens: 5, output_tokens: 2))
+    end
+
+    def write_crashed_session(name, request)
+      write_session(name, [open_header] + turn_records(committed) + [request_sent_record(request)])
+    end
+
+    def write_complete_frame(name, request, response)
+      frame = Lain::Provider::ResponseWal.new(wal_path_for(name)).open_frame(request_digest: request.digest)
+      frame.append(AnthropicSSE.body(response))
+      frame.close(complete: true)
+    end
+
+    describe "a complete uncommitted response" do
+      it "recovers the response as the session's new turn, closing the file, without spending again" do
+        request = in_flight_request
+        write_crashed_session("20260101T000000-1.ndjson", request)
+        write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
+
+        result = resume.call
+
+        expect(result.open?).to be(false)
+        expect(result.timeline.to_a.size).to eq(3)
+        expect(result.timeline.head.content).to eq(canned_response.content)
+        expect(result.notices.join).to include("recovered", request.digest)
+        expect(result.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => result.timeline.head_digest)
+        expect(result.written).to eq(result.timeline.to_a.map(&:digest))
+      end
+
+      it "appends the salvage record, the recovered turn, and a session_closed anchor to the crashed file" do
+        request = in_flight_request
+        write_crashed_session("20260101T000000-1.ndjson", request)
+        write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
+
+        resume.call
+
+        path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
+        records = File.foreach(path).map { |line| JSON.parse(line) }
+        expect(records.map { |record| record["type"] }).to include("salvaged", "turn", "session_closed")
+        expect(records.last["type"]).to eq("session_closed")
+        salvaged = records.find { |record| record["type"] == "salvaged" }
+        expect(salvaged["request_digest"]).to eq(request.digest)
+        expect(salvaged["head_before"]).to eq(committed.head_digest)
+        expect(salvaged["head_after"]).to eq(records.last["head"])
+      end
+
+      it "chains cleanly into a further resume: the recovered turn survives a second load" do
+        request = in_flight_request
+        write_crashed_session("20260101T000000-1.ndjson", request)
+        write_complete_frame("20260101T000000-1.ndjson", request, canned_response)
+        result = resume.call
+
+        journal_io = StringIO.new
+        chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
+        chronicle.start(context: recorded_context, toolset:,
+                        resumed_from: result.resumed_from, written: result.written)
+        provider = Lain::Provider::Mock.new(responses: [text_response("answered")])
+        agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
+        agent.ask("fourth")
+        chronicle.catch_up(agent.timeline)
+
+        new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        resolver = lambda { |basename|
+          basename == result.file ? File.foreach(File.join(paths.sessions_dir, result.file)) : nil
+        }
+        loaded = Lain::Bench::Session::Loader.new(new_records, resolve: resolver).recording
+        expect(loaded.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+      end
+    end
+
+    # Panel blocker (Torvalds): a SECOND SIGKILL landing between the `turn`
+    # write and the `session_closed` write left a durable state where
+    # re-resume salvaged AGAIN -- Salvage decided from request_sent-without-
+    # turn_usage (a salvaged turn carries no turn_usage by design), committed
+    # a second copy onto the already-recovered head, and the file loaded with
+    # two consecutive duplicate assistant turns. Every prefix of the
+    # three-record append (`salvaged`, `turn`, `session_closed`) must
+    # re-resume to exactly one recovery, never a duplicate.
+    describe "idempotency across a second crash mid-close" do
+      # Rebuilds the SAME three records {Salvager#close!} would append --
+      # driving {SessionRecord::Salvage} directly against the file exactly as
+      # {Salvager} does, so the manually-truncated prefix is byte-for-byte
+      # what a real interrupted append would have left, not an approximation.
+      def wal_frames(name) = Lain::Provider::ResponseWal.new(wal_path_for(name)).frames
+
+      def recording_for(name)
+        Lain::Bench::Session::Loader.new(File.foreach(name_path(name))).recording
+      end
+
+      def name_path(name) = File.join(paths.sessions_dir, name)
+
+      def salvage_outcome(name)
+        recording = recording_for(name)
+        Lain::SessionRecord::Salvage.new(entries: File.foreach(name_path(name)), frames: wal_frames(name),
+                                         timeline: recording.timeline).call
+      end
+
+      def salvage_append_records(name)
+        outcome = salvage_outcome(name)
+        head_before = recording_for(name).timeline.head_digest
+        [Lain::Telemetry::Salvaged.new(request_digest: outcome.request_digest, head_before:,
+                                       head_after: outcome.turn.digest).to_journal,
+         Lain::SessionRecord.turn(outcome.turn),
+         Lain::Telemetry::SessionClosed.new(head: outcome.turn.digest, reason: :salvaged).to_journal]
+      end
+
+      def append_prefix(name, count)
+        File.open(name_path(name), "a") do |file|
+          salvage_append_records(name).first(count).each { |record| file.puts(JSON.generate(record)) }
+        end
+      end
+
+      # roles ending [..., "assistant", "assistant"] IS the correct shape here
+      # (the crashed request was a follow-up with no new user turn in
+      # between, by this fixture's construction) -- the BUG this guards is a
+      # THIRD consecutive assistant turn (a duplicate recovery), not the
+      # legitimate pair.
+      [0, 1, 2, 3].each do |prefix|
+        it "recovers exactly once when #{prefix} of the 3 closing records already landed before the crash" do
+          name = "20260101T000000-1.ndjson"
+          request = in_flight_request
+          write_crashed_session(name, request)
+          write_complete_frame(name, request, canned_response)
+          append_prefix(name, prefix) if prefix.positive?
+
+          result = resume.call
+
+          expect(result.timeline.to_a.map(&:role)).to eq(%w[user assistant assistant])
+          expect(result.timeline.to_a.size).to eq(3) # committed (2) + exactly ONE recovery, never a duplicate
+          expect(result.timeline.head.content).to eq(canned_response.content)
+          expect(result.open?).to be(false)
+
+          # A further resume is now a clean no-op: the file is closed.
+          again = resume.call
+          expect(again.timeline.to_a.map(&:digest)).to eq(result.timeline.to_a.map(&:digest))
+        end
+      end
+    end
+
+    describe "an incomplete frame" do
+      it "surfaces provenance and leaves the session open, the file untouched" do
+        request = in_flight_request
+        write_crashed_session("20260101T000000-1.ndjson", request)
+        raw = "event: message_start\ndata: {\"type\":\"message_start\""
+        Lain::Provider::ResponseWal.new(wal_path_for("20260101T000000-1.ndjson"))
+                                   .open_frame(request_digest: request.digest).append(raw)
+        # crash: never closed -- the terminator never lands
+
+        path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
+        lines_before = File.readlines(path).size
+
+        result = resume.call
+
+        expect(result.open?).to be(true)
+        expect(result.timeline.head_digest).to eq(committed.head_digest)
+        expect(result.notices.join).to include("did not finish", request.digest)
+        expect(File.readlines(path).size).to eq(lines_before)
+      end
+    end
+  end
+
   describe "run-state and memory replay" do
     let(:memory_chain) do
       Lain::Timeline.empty(store: Lain::Store.new)
