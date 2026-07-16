@@ -16,6 +16,10 @@ module Lain
     # The output uses the SDK's `system_:` keyword (trailing underscore), because
     # the dry-diff compares against the SDK's kwargs. {AnthropicRaw} rewrites that
     # to the wire `system` key on the way out; see its `#complete`.
+    #
+    # The encoder consults the includer's `#supports?` for capability-gated
+    # wire fields (today: tools' `strict`), so an includer must be a Provider
+    # or supply that duck.
     module AnthropicEncoding
       # Anthropic accepts at most this many cache_control breakpoints per
       # request; a fifth is a hard 400 at the wire. The default pipeline
@@ -93,7 +97,20 @@ module Lain
         # Already Canonical-normalized by the Request, but re-normalizing is
         # idempotent and states the cache-stability contract at the seam that
         # actually emits bytes. Tool blocks may also carry the neutral marker.
-        Canonical.normalize(tools).map { |tool| translate_block(tool) }
+        Canonical.normalize(tools).map { |tool| translate_block(mask_strict(tool)) }
+      end
+
+      # `strict` reaches the wire only when the including backend claims
+      # :strict_tools -- asked via the includer's own #supports?, so the
+      # feature masks stay the single authority. Bedrock's Mantle validator
+      # rejects the field as an unknown input ("tools.0.custom.strict: Extra
+      # inputs are not permitted", a live 400), and masking it here keeps one
+      # shared encoder instead of forking a second one the dry differential
+      # would then have to prove per platform.
+      def mask_strict(tool)
+        return tool if supports?(:strict_tools) || !tool.is_a?(Hash)
+
+        tool.except("strict")
       end
 
       # Pure translation: every block's neutral marker, wherever

@@ -23,10 +23,12 @@ module Lain
       # family-substring matching resolves them unchanged.
       DEFAULT_MODEL = "anthropic.claude-opus-4-8"
 
-      # The Bedrock feature mask happens to equal Provider::Anthropic's today,
-      # but it is Bedrock's own list -- the platforms gain and lose features
-      # independently, so the two constants must be free to diverge.
-      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
+      # Bedrock's own feature mask, and it has now earned its divergence from
+      # Provider::Anthropic's: Mantle's request validator rejects the tools'
+      # `strict` field outright ("tools.0.custom.strict: Extra inputs are not
+      # permitted", a live 400), so :strict_tools is deliberately absent and
+      # {AnthropicEncoding#mask_strict} keeps the field off the wire.
+      CAPABILITIES = %i[streaming prompt_caching thinking parallel_tool_use].freeze
 
       # Wraps every `Anthropic::Errors::*` so nothing above the Provider ever
       # rescues an SDK class; the original survives as `#cause`.

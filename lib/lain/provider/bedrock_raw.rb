@@ -27,7 +27,10 @@ module Lain
       # Bedrock model ids carry the `anthropic.` vendor prefix; PriceBook's
       # family-substring matching resolves them unchanged.
       DEFAULT_MODEL = "anthropic.claude-opus-4-8"
-      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
+      # No :strict_tools -- Mantle 400s on the tools' `strict` field; see
+      # {Provider::Bedrock::CAPABILITIES}, which this mask must mirror (the
+      # dry differential proves both arms emit identical bytes).
+      CAPABILITIES = %i[streaming prompt_caching thinking parallel_tool_use].freeze
 
       # Mantle returns the same `anthropic-ratelimit-*-reset` headers as the
       # direct API; token limits bind first on large agentic prompts, so the

@@ -38,11 +38,24 @@ RSpec.describe Lain::Provider::Bedrock do
 
   describe "provider contract subset" do
     it "claims exactly the Bedrock feature mask, as its own literal list" do
-      expect(provider.capabilities).to eq(%i[streaming prompt_caching strict_tools thinking parallel_tool_use])
+      expect(provider.capabilities).to eq(%i[streaming prompt_caching thinking parallel_tool_use])
     end
 
     it "owns its CAPABILITIES constant rather than aliasing another provider's" do
       expect(described_class::CAPABILITIES).not_to be(Lain::Provider::Anthropic::CAPABILITIES)
+    end
+
+    # Mantle's request validator rejects tools' `strict` as an extra input
+    # (a live 400: "tools.0.custom.strict: Extra inputs are not permitted"),
+    # so the shared encoding must keep the field off Bedrock's wire while
+    # Anthropic -- which claims :strict_tools -- still emits it.
+    it "masks the strict field out of every encoded tool" do
+      request = Lain::Request.new(model: "m", max_tokens: 1,
+                                  tools: [{ name: "t", description: "d", strict: true,
+                                            input_schema: { type: :object, properties: {}, required: [] } }],
+                                  messages: [{ role: "user", content: "hi" }])
+
+      expect(provider.encode(request)[:tools].first).not_to have_key("strict")
     end
 
     it "encodes deterministically across Hashes built with keys in opposite order" do
