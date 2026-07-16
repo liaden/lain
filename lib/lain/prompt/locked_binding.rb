@@ -55,7 +55,19 @@ module Lain
       def evaluate(source, label)
         template = ERB.new(source, trim_mode: "-")
         Purity.check!(template.src, label)
-        template.result(binding)
+        template.result(clean_binding)
+      end
+
+      # A binding with zero locals of its own, so a fill's `template = template`
+      # (pure to Prism's grammar -- LocalVariableWrite/Read are both allowed
+      # nodes) can never read {#evaluate}'s ERB instance back out. Split into
+      # its own zero-argument frame rather than reusing {#evaluate}'s: a
+      # binding closes over the LOCALS of the method that captured it, not
+      # just its receiver, so nothing short of a separate call escapes them.
+      # `self` (and therefore the `render` helper) still resolves, because
+      # self travels with the binding regardless of which frame captured it.
+      def clean_binding
+        binding
       end
     end
 

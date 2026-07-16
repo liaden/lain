@@ -114,6 +114,89 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
+  # The evaluator (LockedBinding#evaluate) has its OWN locals (source, label,
+  # template) that must never be reachable from inside a fill -- a fill that
+  # reads them is reading the evaluator's implementation, not the model of a
+  # markdown partial. `template` is the LIVE escape: it is the ERB instance
+  # itself, and its default #to_s embeds the object's address, so a bare
+  # `<% template = template %><%= template %>` renders non-deterministically
+  # across two otherwise-identical loads even though Prism's purity grammar
+  # allows LocalVariableWrite/Read. `source` and `label` are plain strings
+  # (deterministic content regardless of object identity), so they are dead
+  # variants of the same shape -- not pinned here.
+  describe "the evaluator binding leaks no locals of its own" do
+    it "closes the leaked-local escape: renders across two fresh Slots stay byte-identical" do
+      with_project("system" => "<% template = template %><%= template %>") do |root|
+        first = begin
+          described_class.load(root:).render
+        rescue Lain::Prompt::ImpureSlot
+          :rejected
+        end
+        second = begin
+          described_class.load(root:).render
+        rescue Lain::Prompt::ImpureSlot
+          :rejected
+        end
+
+        expect(first).to eq(second)
+      end
+    end
+
+    # A bare read of an evaluator local, with no prior assignment IN THE FILL,
+    # is not even a LocalVariableReadNode to Prism -- lexically it is an
+    # implicit method call, so it is already rejected as an impure call. This
+    # pins that no evaluator-state bytes (a class name, an object id, an
+    # inspect string) ever reach rendered output by that route either.
+    %w[source label template].each do |name|
+      it "rejects a bare `#{name}` read before it can leak evaluator state" do
+        with_project("system" => "<%= #{name} %>") do |root|
+          expect { described_class.load(root:).render }
+            .to raise_error(Lain::Prompt::ImpureSlot, /#{name}/)
+        end
+      end
+    end
+  end
+
+  describe "legitimate fills still render, digests unchanged from HEAD" do
+    # Recorded from `Slots.load(root: <empty dir>).digests` / `#render_role`
+    # against shipped templates only (no project overrides), before T2's fix.
+    # The escalation bar: if fixing the binding moves any of these, stop.
+    let(:shipped_system_digest) { "blake3:b8f7c81556a743daf8049a1a5290bc50c485f2f04edac5a8e810a3b0b5c9d41f" }
+    let(:shipped_role_digests) do
+      {
+        "court-clerk" => "blake3:499fc742e000f14b49882c3c860b89717be9ed2e2f96d08bdab25dc953316de5",
+        "dev" => "blake3:d07a3b13c813c36c6ce8ecd5034893c8b39ca6b2df6c2004a1125f8039a6b9ed",
+        "researcher" => "blake3:8bd27883cf2819e0a9612e776034556b6cd9064d5a1f9be9fa53f22c0ee36a0c",
+        "reviewer-dba" => "blake3:fc9c90ceceeab6c7d82c2bea4fd828155dedd03eccbd5c23acf591ec2026f56e",
+        "reviewer-security" => "blake3:ecb3aa0b4bc3c5edbc7441139277e9d56ea12eede714c2950c76e265a1edecd3",
+        "reviewer-sre" => "blake3:a2368d9430c97547536f3ae515c23ca9c6a9a2b66e17d47aa598097f3d6b6539",
+        "test-engineer" => "blake3:30f5366f06280c98f857304e1983ac6c6956af5b1dccce647a32e2084250b9c0"
+      }
+    end
+
+    it "renders the shipped system template twice, byte-identically, at the HEAD digest" do
+      with_project do |root|
+        slots = described_class.load(root:)
+
+        expect(slots.render).to eq(slots.render)
+        expect(slots.digests.fetch("system")).to eq(shipped_system_digest)
+      end
+    end
+
+    it "renders every shipped role template twice, byte-identically, at the HEAD digest" do
+      with_project do |root|
+        slots = described_class.load(root:)
+
+        shipped_role_digests.each do |role, digest|
+          rendered = slots.render_role(role)
+
+          expect(rendered).to eq(slots.render_role(role))
+          expect(Lain::Canonical.digest(rendered)).to eq(digest)
+        end
+      end
+    end
+  end
+
   describe "an unknown top-level slot file is loud" do
     it "names the file and lists the known slots" do
       with_project("tyop" => "oops") do |root|
