@@ -30,12 +30,23 @@ module Lain
       TEMPLATE_DIR = File.expand_path("templates", __dir__)
       private_constant :TEMPLATE_DIR
 
+      # The role slots (M5 role catalog, PS-3) live one level down, at
+      # `.lain/slots/role/<name>.md`, and each shipped built-in role ships a
+      # default framing template here -- so the set of shipped basenames IS the
+      # set of KNOWN role slots, the role-namespace analogue of {KNOWN}. A role
+      # file naming no shipped role is a typo surfaced loudly, exactly like a
+      # stray top-level file.
+      ROLE_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "role")
+      private_constant :ROLE_TEMPLATE_DIR
+
       class << self
         # Read the overrides under +root+/.lain/slots, validating every filename
-        # against {KNOWN}. Session-fixed: this is the one disk read; #render works
-        # from the returned frozen snapshot.
+        # against {KNOWN} (top-level) and the shipped role set (the `role/`
+        # subdir). Session-fixed: this is the one disk read; #render works from
+        # the returned frozen snapshot.
         def load(root: Dir.pwd)
-          new(fills: read_fills(File.join(root, SLOTS_DIR)))
+          dir = File.join(root, SLOTS_DIR)
+          new(fills: read_fills(dir), role_fills: read_role_fills(File.join(dir, "role")))
         end
 
         # The shipped base template per known slot, read once and memoized. These
@@ -43,6 +54,22 @@ module Lain
         def shipped_templates
           @shipped_templates ||= KNOWN.to_h { |name| [name, File.read(template_path(name))] }.freeze
         end
+
+        # The shipped default framing per role, keyed by the on-disk (hyphenated)
+        # slot basename -- the registry of KNOWN role slots. Read once, memoized.
+        # Unlike a top-level slot (whose default is empty and whose fill AUGMENTS
+        # a base frame), a role's shipped `.md` IS the default framing, and a
+        # `.lain/slots/role/<name>.md` override REPLACES it.
+        def shipped_role_templates
+          @shipped_role_templates ||=
+            Dir.glob(File.join(ROLE_TEMPLATE_DIR, "*.md"))
+               .to_h { |path| [File.basename(path, ".md"), File.read(path)] }.freeze
+        end
+
+        # The pinned role-slot filename mapping (owned here): a role name's
+        # underscores become hyphens, so `:test_engineer` resolves the file
+        # `.lain/slots/role/test-engineer.md`.
+        def role_slot_name(name) = name.to_s.tr("_", "-")
 
         private
 
@@ -56,12 +83,26 @@ module Lain
           end
         end
 
+        def read_role_fills(dir)
+          known = shipped_role_templates
+          Dir.glob(File.join(dir, "*.md")).each_with_object({}) do |path, fills|
+            name = File.basename(path, ".md")
+            raise UnknownSlot, "unknown role slot file #{path.inspect}; known roles: #{known.keys.join(", ")}" \
+              unless known.key?(name)
+
+            fills[name] = File.read(path)
+          end
+        end
+
         def template_path(name) = File.join(TEMPLATE_DIR, "#{name}.md.erb")
       end
 
-      def initialize(fills:, templates: self.class.shipped_templates)
+      def initialize(fills:, role_fills: {}, templates: self.class.shipped_templates,
+                     role_templates: self.class.shipped_role_templates)
         @fills = fills.transform_keys(&:to_s).freeze
+        @role_fills = role_fills.transform_keys(&:to_s).freeze
         @templates = templates
+        @role_templates = role_templates
         freeze
       end
 
@@ -70,6 +111,22 @@ module Lain
       def render(slot = "system")
         engine = LockedBinding.new(resolve: method(:resolve))
         engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
+      end
+
+      # The rendered framing for a subagent role (PS-3): the project override at
+      # `.lain/slots/role/<name>.md` if present, else the shipped default. Pure
+      # and session-fixed exactly like {#render}, so two spawns of one role in a
+      # session render byte-identical -- the cache invariant the role catalog
+      # rests on. Purity is enforced (an impure override fails loudly here, never
+      # a silent nondeterministic value), the same guarantee top-level slots hold.
+      def render_role(name)
+        slot = self.class.role_slot_name(name)
+        source = @role_fills.fetch(slot) do
+          @role_templates.fetch(slot) do
+            raise UnknownSlot, "unknown role #{name.inspect}; known roles: #{@role_templates.keys.join(", ")}"
+          end
+        end
+        LockedBinding.new(resolve: method(:resolve)).render_template(source, "role/#{slot}")
       end
 
       # The content address of each known slot's RENDERED bytes, keyed by slot
