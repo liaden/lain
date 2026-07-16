@@ -20,38 +20,62 @@ if protocol ~= RUNTIME_PROTOCOL then
 end
 vim.g.lain_rpc_version = protocol
 
--- The rendered journal surface. One scratch buffer, found by name so re-attach
--- reuses it (idempotent) instead of stacking a fresh buffer per reconnect.
-local BUFNAME = "lain://journal"
-local function journal_buf()
-  local existing = vim.fn.bufnr(BUFNAME)
+-- Every lain:// buffer -- the append-only journal and the read-only state
+-- views alike -- is found by name so re-attach reuses it (idempotent) instead
+-- of stacking a fresh buffer per reconnect, and stays nomodifiable at rest
+-- (4-2.2: "read-only and unobtrusive") so a human's stray keystroke in one
+-- can never desync it from the state it presents.
+local function named_buf(name)
+  local existing = vim.fn.bufnr(name)
   if existing ~= -1 then
     return existing
   end
 
   local buf = vim.api.nvim_create_buf(true, true)
-  vim.api.nvim_buf_set_name(buf, BUFNAME)
+  vim.api.nvim_buf_set_name(buf, name)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = false
   return buf
 end
 
+-- `nvim_buf_set_lines` itself raises against a nomodifiable buffer, so every
+-- write flips the option around the call rather than leaving it open --
+-- nomodifiable is the buffer's resting state, and the flip is one synchronous
+-- Lua call, never observable as a modifiable window a human could type into.
+local function set_lines(buf, start, stop, lines)
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, start, stop, false, lines)
+  vim.bo[buf].modifiable = false
+end
+
+local JOURNAL = "lain://journal"
+
 _G.__lain = _G.__lain or {}
 
--- Append already-rendered plain lines. The Ruby RPC thread calls this once per
--- drained batch (the batch rule), never per event. A fresh scratch buffer holds
--- one empty line; the first render replaces it rather than appending below it,
--- so the journal never leads with a blank.
+-- Append already-rendered plain lines to the journal. The Ruby RPC thread
+-- calls this once per drained batch (the batch rule), never per event. A
+-- fresh scratch buffer holds one empty line; the first render replaces it
+-- rather than appending below it, so the journal never leads with a blank.
 function _G.__lain.render(lines)
-  local buf = journal_buf()
+  local buf = named_buf(JOURNAL)
   local fresh = vim.api.nvim_buf_line_count(buf) == 1
     and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
   if fresh then
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    set_lines(buf, 0, -1, lines)
   else
-    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    set_lines(buf, -1, -1, lines)
   end
+end
+
+-- Whole-buffer replace for the state views (4-2.2): lain://timeline,
+-- lain://workspace, lain://diff. Unlike the journal these are PROJECTIONS of
+-- live state, not a log, so an update REPLACES the buffer's content rather
+-- than growing it -- never nvim_input/feedkeys, and the buffer is never
+-- focused or jumped to, so a live update cannot steal the human's cursor.
+function _G.__lain.set_view(name, lines)
+  set_lines(named_buf(name), 0, -1, lines)
 end
 
 -- Re-attach is idempotent: delete before create so a name is defined exactly

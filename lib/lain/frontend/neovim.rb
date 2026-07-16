@@ -27,12 +27,23 @@ module Lain
       # @param socket_path [String] a listening nvim's unix socket
       # @param version [String] the gem version, surfaced by :LainVersion
       # @param protocol [String] the runtime handshake token (see {PROTOCOL})
-      def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL)
+      # @param store [Lain::Store] backs the live Timeline (4-2.2's
+      #   lain://timeline view). Defaults to {Buffers::DetachedStore}: an
+      #   un-wired frontend renders the timeline as unavailable rather than
+      #   holding a real-but-disconnected store that crashes on the first
+      #   {Telemetry::TurnUsage} -- see {Buffers}.
+      # @param session [Lain::Session] the run's live reminders source (4-2.2's
+      #   lain://workspace view; see {Buffers})
+      # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
+      def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
+                     store: Buffers::DetachedStore.instance, session: Session::Null.instance,
+                     render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
+        @buffers = Buffers.new(store:, session:)
         # on_death makes RPC-thread death observable: the channel closes, so the
         # drainer exits and producers meet ClosedQueueError instead of feeding a
         # zombie; {#run} then re-raises the recorded failure.
-        @rpc = RpcThread.new(socket_path:, version:, protocol:,
+        @rpc = RpcThread.new(socket_path:, version:, protocol:, render_capacity:,
                              on_death: -> { @channel.close unless @channel.closed? })
       end
 
@@ -73,9 +84,19 @@ module Lain
         @channel.drain { |event| post(event) }
       end
 
+      # Journal lines (append) and view updates (whole-buffer replace, 4-2.2:
+      # {Buffers}) are two independent projections of the SAME event, so both
+      # are attempted regardless of which (if either) actually produces
+      # anything. A ClosedQueueError here means the RPC thread died between this
+      # event's arrival and its post -- its failure already rides {RpcThread#failure}
+      # and re-raises from {#run} once teardown completes, so dropping this one
+      # event is not additional data loss, just the last render racing the death.
       def post(event)
         lines = render_lines(event)
         @rpc.post_render(lines) unless lines.empty?
+        @buffers.updates(event).each { |name, view_lines| @rpc.post_view(name, view_lines) }
+      rescue ClosedQueueError
+        nil
       end
 
       # Plain-text presentation for the buffer -- deliberately NOT the pastel
@@ -104,4 +125,5 @@ module Lain
   end
 end
 
+require_relative "neovim/buffers"
 require_relative "neovim/rpc_thread"

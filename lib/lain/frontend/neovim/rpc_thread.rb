@@ -6,6 +6,82 @@ require "socket"
 module Lain
   module Frontend
     class Neovim
+      # The outbound half of {RpcThread}'s work, split into its own object: the
+      # backlog of not-yet-sent render commands and ITS backpressure (the
+      # T6-inherited fix). {RpcThread} owns attach, the select loop, and
+      # inbound dispatch; this owns nothing nvim-shaped except turning one
+      # queued command into the right `nvim_exec_lua` call -- two
+      # responsibilities that were, before the split, one class doing both.
+      class RenderQueue
+        # Append already-rendered plain lines to the journal. Guarded on
+        # `_G.__lain` so a render that races a not-yet-injected runtime is a
+        # harmless no-op rather than an error notification.
+        APPEND = "local lines = ...; if _G.__lain then _G.__lain.render(lines) end"
+
+        # Whole-buffer replace for a named state view (4-2.2). Same
+        # not-yet-injected guard as {APPEND}.
+        SET_VIEW = "local name, lines = ...; if _G.__lain then _G.__lain.set_view(name, lines) end"
+
+        # One queued command: `name` nil means "append to the journal"
+        # ({APPEND}); any other value names a state-view buffer to replace
+        # wholesale ({SET_VIEW}). One shape, one queue.
+        Command = Data.define(:name, :lines)
+        private_constant :Command
+
+        # Default cap on outstanding commands (journal appends AND view
+        # replacements share this one queue). T6-inherited fix: the queue was an
+        # unbounded Thread::Queue, so a producer outpacing nvim could pile up an
+        # unbounded backlog -- an adversarial probe hit ~800K entries, and
+        # draining it (which runs BEFORE the RPC thread's select gets a turn)
+        # took 6.4s, starving inbound acks. A SizedQueue fixes both at once:
+        # {#post_render}/{#post_view} now BLOCK the producer once the queue is
+        # full, so the backlog literally cannot exceed this cap, and {#drain}'s
+        # per-tick batch is capped the same way for free.
+        DEFAULT_CAPACITY = 1024
+
+        def initialize(capacity: DEFAULT_CAPACITY)
+          @queue = Thread::SizedQueue.new(capacity)
+        end
+
+        # Queue an append. Safe from any thread. BLOCKS the caller once the
+        # queue is full, and raises ClosedQueueError once {#close} has run --
+        # {Neovim#post} rescues that (see its comment).
+        # @param lines [Array<String>]
+        def post_render(lines)
+          @queue.push(Command.new(name: nil, lines:))
+        end
+
+        # Queue a whole-buffer replace for a named state view (4-2.2). Same
+        # queue, same backpressure, same death behavior as {#post_render}.
+        # @param name [String] the lain:// buffer name
+        # @param lines [Array<String>]
+        def post_view(name, lines)
+          @queue.push(Command.new(name:, lines:))
+        end
+
+        # Send everything currently queued, one nvim_exec_lua notify per
+        # command; the caller flushes the connection once, after this returns.
+        def drain(client)
+          @queue.size.times { send_command(client, @queue.pop) }
+        end
+
+        # Release any producer blocked in {#post_render}/{#post_view} with a
+        # ClosedQueueError, the same shape {Lain::Channel#close} uses to
+        # release its own blocked producers. MUST run once nobody will ever
+        # call {#drain} again (RPC-thread death, or normal teardown after the
+        # sole producer thread has already stopped) -- see RpcThread's callers.
+        def close
+          @queue.close unless @queue.closed?
+        end
+
+        private
+
+        def send_command(client, command)
+          lua, args = command.name.nil? ? [APPEND, [command.lines]] : [SET_VIEW, [command.name, command.lines]]
+          client.session.notify("nvim_exec_lua", lua, args)
+        end
+      end
+
       # The single thread that owns the nvim RPC session -- exactly one, because the
       # neovim gem's {::Neovim::Session} is single-threaded by construction
       # (`main_thread_only` raises off-thread). It attaches over a unix socket,
@@ -33,11 +109,6 @@ module Lain
       class RpcThread
         RUNTIME = File.expand_path("runtime.lua", __dir__)
 
-        # Append already-rendered plain lines. Guarded on `_G.__lain` so a render
-        # that races a not-yet-injected runtime is a harmless no-op rather than an
-        # error notification.
-        APPEND = "local lines = ...; if _G.__lain then _G.__lain.render(lines) end"
-
         # How long the readable-wait may block before re-checking the stop flag and
         # the render queue. The wake pipe is the real signal (posts and stop both
         # write it), so this is a pure liveness net bounding recovery from a lost
@@ -52,12 +123,15 @@ module Lain
         # @param protocol [String] the runtime.lua handshake token (see {PROTOCOL})
         # @param on_death [#call] invoked (on this thread) if the loop dies after
         #   {#start} -- the owner's chance to make the loss observable
-        def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL, on_death: -> {})
+        # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
+        #   overridable so a spec can saturate the queue at a scale that runs fast
+        def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL, on_death: -> {},
+                       render_capacity: RenderQueue::DEFAULT_CAPACITY)
           @socket_path = socket_path
           @version = version
           @protocol = protocol
           @on_death = on_death
-          @renders = Thread::Queue.new
+          @render_queue = RenderQueue.new(capacity: render_capacity)
           @command_inbox = Thread::Queue.new
           @wake_read, @wake_write = IO.pipe
           @ready = Thread::Queue.new
@@ -87,11 +161,24 @@ module Lain
         end
 
         # Hand a batch of rendered lines to the RPC thread and wake it. Safe from
-        # any thread: it touches only a queue and a pipe, never nvim.
+        # any thread: it touches only the {RenderQueue} and the wake pipe, never
+        # nvim. Backpressure and the ClosedQueueError-on-death behavior are
+        # {RenderQueue}'s (see its docs); {Neovim#post} rescues that error.
         # @param lines [Array<String>]
         # @return [void]
         def post_render(lines)
-          @renders.push(lines)
+          @render_queue.post_render(lines)
+          wake
+        end
+
+        # Replace a named state-view buffer wholesale (4-2.2). Same queue, same
+        # backpressure, same death behavior as {#post_render} -- one render
+        # pipeline, not two.
+        # @param name [String] the lain:// buffer name
+        # @param lines [Array<String>]
+        # @return [void]
+        def post_view(name, lines)
+          @render_queue.post_view(name, lines)
           wake
         end
 
@@ -102,6 +189,7 @@ module Lain
           @stopped = true
           wake
           @thread&.join
+          @render_queue.close
           [@socket, @wake_read, @wake_write].each { |io| io.close unless io.nil? || io.closed? }
         end
 
@@ -132,8 +220,15 @@ module Lain
         # the caller's thread. After, @ready has no reader ever again -- record
         # the failure where {#failure} exposes it and tell the owner, or the
         # death would be silent and the frontend a zombie.
+        #
+        # Closing the {RenderQueue} HERE (not only in {#stop}) is what keeps a
+        # bounded queue from re-creating the teardown-hang bug the wake pipe
+        # already dodges: once this loop is dead, nobody will ever {RenderQueue#drain}
+        # again, so a producer mid-post against a full queue would block
+        # forever without this (see {RenderQueue#close}).
         def record_death(error)
           @failure = error
+          @render_queue.close
           @announced ? @on_death.call : @ready.push(error)
         end
 
@@ -161,7 +256,7 @@ module Lain
         end
 
         def drain_renders
-          @renders.size.times { @client.session.notify("nvim_exec_lua", APPEND, [@renders.pop]) }
+          @render_queue.drain(@client)
           @connection.flush
         end
 
