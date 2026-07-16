@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "io/console"
 require "pastel"
 require "reline"
 require "tty-cursor"
@@ -49,15 +50,19 @@ module Lain
       # @param history_path [String] durable reline history file, under
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
       #   instead of touching real XDG state (T12)
+      # @param clock [#call] monotonic time source for {#render_countdown},
+      #   injectable for tests -- the same seam {Middleware::Timeout} and
+      #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
+      #   without a real clock tick (T21)
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
-                     history_path: File.join(Paths.new.state_home, "history"))
+                     history_path: File.join(Paths.new.state_home, "history"),
+                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
         @channel = channel
         @output = output
         @input = input
         @pastel = pastel
-        @history_path = history_path
-        @history_writable = true
-        @history_warned = false
+        @history = History.new(path: history_path, notify: method(:render_warning))
+        @countdown = Countdown.new(output:, input:, pastel:, clock:)
       end
 
       # Non-blocking: render whatever is queued right now and return. The
@@ -82,12 +87,16 @@ module Lain
       # than leak past `run`'s return.
       def run
         enter_alternate_screen
-        load_history
+        @history.load
         renderer = Thread.new { render_until_closed }
         yield self
       ensure
         @channel.close unless @channel.closed?
         renderer&.join
+        # After the renderer joins (no concurrent writer left) and before the
+        # screen flips back: a block that raised mid-countdown must never
+        # leave the terminal raw (see Countdown's window lifecycle).
+        @countdown.stop
         exit_alternate_screen
       end
 
@@ -130,54 +139,52 @@ module Lain
         @output.flush
       end
 
+      # One countdown tick (T21): render remaining time + offered keys on the
+      # bottom status line, then make one non-blocking attempt to read a key
+      # and forward it to the shutdown coordinator. Called once per tick by
+      # the caller's own timer -- this method does no sleeping itself, so an
+      # injected clock drives successive calls into successive renders with
+      # no real waiting, and ticks keep landing even while no key arrives.
+      #
+      # The first interactive tick opens the countdown's WINDOW (raw+no-echo
+      # terminal mode, ownership of the bottom line); the window stays open
+      # across ticks until {#stop_countdown} closes it. Delegates to
+      # {Countdown} rather than growing this class -- see its comment for why
+      # the split exists.
+      #
+      # @param deadline [Numeric] absolute time (same clock as the injected
+      #   `clock:`) the window closes
+      # @param options [Hash] `:coordinator` (`#signal`, required), `:bindings`
+      #   (single-char key -> {CLI::Shutdown} input symbol, defaults to c/w/r)
+      def render_countdown(deadline:, options:)
+        @countdown.render(deadline:, options:)
+      end
+
+      # End the countdown window: erase the status line from the bottom of
+      # the screen, restore the terminal mode saved when the window opened,
+      # and return {#render}'s channel events to the plain pre-T21 path.
+      # Idempotent -- the seam T22 calls when {CLI::Shutdown}'s on_transition
+      # reports :running (a cancel) or the window otherwise ends, and {#run}'s
+      # ensure calls defensively.
+      def stop_countdown
+        @countdown.stop
+      end
+
       private
 
       # `reline(…, true)` already feeds an accepted line into the in-memory
-      # `Reline::HISTORY`; this durably appends it too, before the next prompt is
-      # drawn -- write-through rather than dump-at-exit, so a SIGKILL between
-      # prompts loses at most nothing (T12). Durable here means close()-durable
-      # (the process dying), not fsync-durable (the machine dying) -- shell
-      # history does not warrant an fsync per line.
+      # `Reline::HISTORY`; {History#append} durably appends it too, before the
+      # next prompt is drawn (T12 -- see History's comment).
       def read_line_with_history(text)
         line = Reline.readline(@pastel.bold(text), true)
-        append_history(line) if line
+        @history.append(line) if line
         line
       end
 
-      # Populate Reline::HISTORY from the durable file at {#run} entry, so history
-      # round-trips a process. A missing file is the ordinary first-run case, not
-      # a failure -- rescued rather than pre-checked with File.exist?, which
-      # would be a TOCTOU stat for nothing. Any other read error warns.
-      def load_history
-        File.readlines(@history_path, chomp: true).each { |line| Reline::HISTORY.push(line) }
-      rescue Errno::ENOENT
-        nil
-      rescue SystemCallError => e
-        warn_history_unavailable(e)
-      end
-
-      # Append-only, 0600 -- history is a secret-adjacent surface (pasted keys),
-      # so the creation mode is passed to open() itself: the file is never
-      # readable beyond its owner, not even between an open and a chmod (umask
-      # can only remove bits, and 0600 has none it may remove). A failure here
-      # (unwritable state dir) degrades to a rendered warning instead of
-      # crashing the prompt loop, and only warns once even if every subsequent
-      # write keeps failing.
-      def append_history(line)
-        return unless @history_writable
-
-        FileUtils.mkdir_p(File.dirname(@history_path))
-        File.open(@history_path, File::WRONLY | File::CREAT | File::APPEND, 0o600) { |f| f.puts(line) }
-      rescue SystemCallError => e
-        @history_writable = false
-        warn_history_unavailable(e)
-      end
-
-      def warn_history_unavailable(error)
-        return if @history_warned
-
-        @history_warned = true
-        @output.puts(@pastel.yellow("warning: history unavailable (#{error.message})"))
+      # Presentation for a collaborator's degraded-path warning ({History}'s
+      # `notify:` seam) -- the palette stays in TTY proper.
+      def render_warning(message)
+        @output.puts(@pastel.yellow(message))
         @output.flush
       end
 
@@ -196,12 +203,14 @@ module Lain
       # color/format knowledge lives in the decorator, not here -- see
       # {Frontend::Decorators} for why presentation is frontend-owned and never a
       # `Renderable` mixed into the lib value object.
+      # The print routes through {Countdown#print_above} because the countdown
+      # owns the bottom line while it is active (T21): the status line steps
+      # out of the way, the event prints above, the status line redraws --
+      # never a torn splice. With no countdown active it degrades to the
+      # pre-T21 raw print (live tool-output chunks are not line-shaped).
       def render(event)
         rendered = Decorators.for(event)&.render(@pastel)
-        return if rendered.nil?
-
-        @output.print(rendered)
-        @output.flush
+        @countdown.print_above(rendered) unless rendered.nil?
       end
 
       # Leading `::` is load-bearing: unqualified `TTY::Screen` would resolve
@@ -221,6 +230,235 @@ module Lain
       def exit_alternate_screen
         @output.print(ALTERNATE_SCREEN_OFF)
         @output.flush
+      end
+    end
+
+    # Reopened rather than nested in TTY's own class body -- the shutdown.rb
+    # idiom: each collaborator is its own responsibility, and the split keeps
+    # each body within Metrics/ClassLength instead of loosening it.
+    class TTY
+      # Durable reline history (T12): loaded into `Reline::HISTORY` at {#run}
+      # entry so history round-trips a process, write-through on each accepted
+      # line rather than dump-at-exit, so a SIGKILL between prompts loses at
+      # most nothing. Durable means close()-durable (the process dying), not
+      # fsync-durable -- shell history does not warrant an fsync per line.
+      class History
+        # @param path [String] the durable history file
+        # @param notify [#call] renders a degraded-path warning line
+        #   ({TTY#render_warning}) -- presentation stays out of this class
+        def initialize(path:, notify:)
+          @path = path
+          @notify = notify
+          @writable = true
+          @warned = false
+        end
+
+        # A missing file is the ordinary first-run case, not a failure --
+        # rescued rather than pre-checked with File.exist?, which would be a
+        # TOCTOU stat for nothing. Any other read error warns.
+        def load
+          File.readlines(@path, chomp: true).each { |line| Reline::HISTORY.push(line) }
+        rescue Errno::ENOENT
+          nil
+        rescue SystemCallError => e
+          warn_unavailable(e)
+        end
+
+        # Append-only, 0600 -- history is a secret-adjacent surface (pasted
+        # keys), so the creation mode is passed to open() itself: the file is
+        # never readable beyond its owner, not even between an open and a
+        # chmod (umask can only remove bits, and 0600 has none it may
+        # remove). A failure here (unwritable state dir) degrades to a
+        # rendered warning instead of crashing the prompt loop, and only
+        # warns once even if every subsequent write keeps failing.
+        def append(line)
+          return unless @writable
+
+          FileUtils.mkdir_p(File.dirname(@path))
+          File.open(@path, File::WRONLY | File::CREAT | File::APPEND, 0o600) { |f| f.puts(line) }
+        rescue SystemCallError => e
+          @writable = false
+          warn_unavailable(e)
+        end
+
+        private
+
+        def warn_unavailable(error)
+          return if @warned
+
+          @warned = true
+          @notify.call("warning: history unavailable (#{error.message})")
+        end
+      end
+
+      # T21's countdown collaborator: renders the status line, owns the
+      # bottom of the screen while active, and forwards offered keys to the
+      # shutdown coordinator. Split out of TTY proper because the countdown
+      # is a separate responsibility (the `Agent::Budget`/`Agent::ToolRunner`
+      # precedent CLAUDE.md names). Nested, not a new file: the card scopes
+      # T21 to `tty.rb` alone, and this collaborator has no life outside a
+      # TTY.
+      class Countdown
+        DEFAULT_BINDINGS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses }.freeze
+        LABELS = { cancel: "cancel", extend: "wait longer", wait_responses: "respond then exit" }.freeze
+
+        def initialize(output:, input:, pastel:, clock:)
+          @output = output
+          @input = input
+          @pastel = pastel
+          @clock = clock
+          # Serializes the channel-drain thread's prints against countdown
+          # ticks, so the two can never interleave torn writes to @output.
+          @lock = Mutex.new
+          @line = nil
+          @window_open = false
+          @saved_mode = nil
+        end
+
+        # @param deadline [Numeric] absolute time, same clock as `clock:`
+        # @param options [Hash] `:coordinator` (`#signal`, required),
+        #   `:bindings` (single-char key -> input symbol, default c/w/r)
+        def render(deadline:, options:)
+          bindings = options.fetch(:bindings, DEFAULT_BINDINGS)
+          line = status_line(deadline, bindings)
+
+          interactive? ? render_tty(line) : render_plain(line)
+          dispatch_key(options.fetch(:coordinator), bindings) if interactive?
+        end
+
+        # Close the window: erase the status line (erase, never redraw -- the
+        # countdown must leave no trace), give the terminal its saved mode
+        # back, and deactivate so {#print_above} returns to the plain path.
+        # Idempotent: stopping a window that never opened (plain mode, or a
+        # double stop) writes and restores nothing.
+        def stop
+          @lock.synchronize do
+            close_window if @window_open
+          end
+        end
+
+        # {TTY#render}'s seam: print a channel event's bytes without tearing
+        # the status line. While a countdown is active it steps off the
+        # bottom line, the event prints above (given its own line ending),
+        # and the status line redraws; otherwise this is a plain print.
+        def print_above(rendered)
+          @lock.synchronize do
+            active? ? above(rendered) : @output.print(rendered)
+            @output.flush
+          end
+        end
+
+        private
+
+        def active? = !@line.nil?
+
+        def above(rendered)
+          @output.print(::TTY::Cursor.clear_line)
+          @output.print(rendered)
+          @output.puts unless rendered.end_with?("\n")
+          @output.print(@pastel.bold(@line))
+        end
+
+        # Both output and input must be real terminals: escapes drawn on a
+        # non-terminal output are just noise (AC: non-tty degrades to plain
+        # lines), and single-key reads off a non-terminal input are reading
+        # whatever this process's stdin actually is (a pipe, a redirect), not
+        # an interactive choice.
+        def interactive?
+          @output.tty? && @input.respond_to?(:tty?) && @input.tty?
+        end
+
+        # The label fallback is deliberate: a custom binding to an action
+        # LABELS does not know renders as the action's own name rather than
+        # raising -- a missing label must not take down the shutdown UI at
+        # the one moment it exists to serve, and the symbol name is legible.
+        def status_line(deadline, bindings)
+          remaining = [(deadline - @clock.call).ceil, 0].max
+          offered = bindings.map { |key, action| "[#{key}] #{LABELS.fetch(action, action.to_s)}" }.join("  ")
+          "closing in #{remaining}s -- #{offered}"
+        end
+
+        def render_tty(line)
+          @lock.synchronize do
+            open_window
+            @output.print(::TTY::Cursor.clear_line)
+            @output.print(@pastel.bold(line))
+            @output.flush
+            @line = line
+          end
+        end
+
+        # The window opens once, on the first interactive tick: raw+no-echo
+        # for the WHOLE window, not a per-read bracket -- a keystroke landing
+        # between per-tick brackets would be cooked and ECHO would bleed it
+        # onto the status line until the next tick wiped it (the review
+        # panel's PTY probe caught exactly that). The mode that was in force
+        # is saved so {#stop} can put it back.
+        def open_window
+          return if @window_open
+
+          @window_open = true
+          enter_raw
+        end
+
+        def close_window
+          erase_status_line
+          @line = nil
+          @window_open = false
+          restore_mode
+        end
+
+        def erase_status_line
+          return if @line.nil?
+
+          @output.print(::TTY::Cursor.clear_line)
+          @output.flush
+        end
+
+        # A spec's StringIO has no console (`raw!`); it already returns bytes
+        # without line buffering or echo, so it needs no mode at all.
+        def enter_raw
+          return unless @input.respond_to?(:raw!)
+
+          @saved_mode = @input.console_mode
+          @input.raw!(intr: true)
+        end
+
+        def restore_mode
+          @input.console_mode = @saved_mode unless @saved_mode.nil?
+          @saved_mode = nil
+        end
+
+        # Non-tty output has no bottom line to own: one plain line, no
+        # escapes, and {#active?} stays false so a channel event never tries
+        # to clear/redraw a line that was never drawn with cursor control.
+        def render_plain(line)
+          @lock.synchronize do
+            @output.puts(line)
+            @output.flush
+          end
+        end
+
+        # Burst policy: at most one key per tick, fired the tick it is read;
+        # conflicting inputs across ticks (an extend after a cancel) are the
+        # coordinator's problem, and {CLI::Shutdown}'s state machine already
+        # tolerates any input in any state.
+        def dispatch_key(coordinator, bindings)
+          key = read_key
+          return unless key
+
+          action = bindings[key]
+          coordinator.signal(action) if action
+        end
+
+        # One non-blocking attempt to read a single key. The terminal is
+        # already raw for the whole window (see {#open_window}), so this is
+        # just the read; keys register without Enter and never echo.
+        def read_key
+          @input.read_nonblock(1)
+        rescue IO::WaitReadable, EOFError
+          nil
+        end
       end
     end
   end
