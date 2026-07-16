@@ -94,7 +94,10 @@ deliberately deferred, not dropped:
   in `Ollama::Encoding`'s WHY. Revisit if a bench task shows models misattributing results.
   **Acceptance:** either upstream grows ids (track ollama/ollama) or the encoder documents a
   measured mitigation (e.g. result ordering guarantee) pinned by a spec.
-- **R.7 — `bench record` lacks provider/sampler selection.** `Lain::Bench::CLI` constructs its
+- ✅ **R.7 — `bench record` lacks provider/sampler selection.** *(Done 2026-07-15: `CLI::Backend`
+  extracted to lib; `bench record` gains --provider/--api-base/--temperature/--seed; chat and
+  record resolve providers through one object; the session's `SlotFills` journals at record
+  time.)* `Lain::Bench::CLI` constructs its
   own `Provider::Anthropic` and takes no `--provider`/`--temperature`/`--seed`; exe/lain's
   `LainCLI::Backend` resolution (T18) is the reusable piece. Wiring it in makes an Ollama temp-0
   arm recordable. **Acceptance:** `bench record --provider ollama --temperature 0 --seed N`
@@ -203,11 +206,21 @@ deliberately deferred, not dropped:
 - **4-2.0 — VERIFY RPC direction first** (open decision #6): can `Neovim.attach_unix` *serve* inbound
   `rpcrequest`, or must nvim `jobstart` the Ruby handler? **Acceptance:** a spike answering the
   question in prose before any design; use remote *modules*, not deprecated remote plugins.
-- **4-2.1 — Journal-subscribing Neovim frontend skeleton.** Spawn `nvim --listen`, attach.
+- ✅ **4-2.1 — Journal-subscribing Neovim frontend skeleton.** *(Done 2026-07-15:
+  `Frontend::Neovim` skeleton — one RPC thread serves and sends via a coalesced wake signal,
+  enqueue-and-ack inbound, protocol-constant handshake; `:nvim`-tagged specs drive a real
+  headless nvim, LAIN_NVIM=1.)* Spawn `nvim --listen`, attach.
   **Acceptance:** renders Journal events into a buffer; agent knows nothing of it.
-- **4-2.2 — Read-only buffers** (`lain://timeline`, `lain://workspace`, `lain://diff`).
+- ✅ **4-2.2 — Read-only buffers** (`lain://timeline`, `lain://workspace`, `lain://diff`).
+  *(Done 2026-07-15: `lain://timeline`/`workspace`/`diff` as read-only projections; renders
+  ride a bounded queue so backpressure reaches the producer; a missing digest renders visibly,
+  never kills the drain.)*
   **Acceptance:** each reflects live state.
-- **4-2.3 — Editable `lain://request` + `:LainResend`.** The one interface idea that can't be done as
+- ✅ **4-2.3 — Editable `lain://request` + `:LainResend`.** *(Done 2026-07-15: editable
+  `lain://request` + `:LainResend` — a resend journals as a distinct `request_resent` record
+  (never mistakable for a real dispatch) and re-renders the diff; `chat --nvim SOCKET` wires
+  the live views through a journal tee. Provider round-trip of the edited request remains the
+  later [exp] work.)* The one interface idea that can't be done as
   well otherwise. **Acceptance:** editing the buffer and resending re-renders the diff of what
   changed.
 
@@ -219,20 +232,35 @@ deliberately deferred, not dropped:
 - ✅ **5-0.1 — Spike `Async` × `Mixlib::ShellOut`.** *(Done 2026-07-13: cooperates — idle-child measurement; see docs/concurrency.md; 5-0.3 re-verifies under stdout-flood.)* Does the fiber scheduler hook `io_select`, or does
   a `bash` tool stall the reactor (`unix.rb:282`/`:406`)? **Acceptance:** a spike proving either
   fibers work or shellouts must offload to a thread; decision recorded in `docs/concurrency.md`.
-- **5-0.2 — Prototype effects-via-`Fiber` vs handler objects.** Multi-shot resumption vs stack-trace
+- ✅ **5-0.2 — Prototype effects-via-`Fiber` vs handler objects.** *(Done 2026-07-15: spike
+  verdict — Ruby `Fiber` is single-shot, killing multi-shot resumption; the handler-object
+  chain stays; both backtraces + reasons recorded in docs/concurrency.md.)* Multi-shot resumption vs stack-trace
   clarity. **Acceptance:** both prototyped behind the identical `Middleware` API; a recommendation.
-- **5-0.3 — Adopt the chosen model** (likely fibers; `Store` lock reconsidered). **Acceptance:** the
+- ✅ **5-0.3 — Adopt the chosen model** (likely fibers; `Store` lock reconsidered).
+  *(Done 2026-07-15: the loop runs inside Async via a `Sync` bridge (non-reactor callers
+  unchanged); `Budget#interrupt` is the cancel seam; commit+journal are one uninterruptible
+  atom via `defer_stop`; stdout-flood re-verified, ≤150ms heartbeat bound pinned.)* **Acceptance:** the
   loop runs under the model with real structured cancellation on `max_iterations`/cost/interrupt.
 
 ### Stream 5-1 · `Tool::Subagent`
-- **5-1.1 — Fresh-root spawn over shared Store** with `meta["spawned_from"]`. **Acceptance:** child
+- ✅ **5-1.1 — Fresh-root spawn over shared Store** with `meta["spawned_from"]`.
+  *(Done 2026-07-15: `Tool::Subagent` fresh-root spawn over the shared Store; lineage is
+  `:spawn`/`:message` causal-only Events — the causal edge supersedes the
+  `meta["spawned_from"]` convention.)* **Acceptance:** child
   Timeline never contains the parent's prompt chain; `child.meet(parent)` is empty; causal lineage
   reconstructable from `spawned_from`.
-- **5-1.2 — Attenuated toolset** (`toolset.only(:read_file)`). **Acceptance:** child cannot invoke a
+- ✅ **5-1.2 — Attenuated toolset** (`toolset.only(:read_file)`).
+  *(Done 2026-07-15: `SpawnPolicy` `AttenuationPosture` — `:schema` (per-child schemas) and
+  `:handler_union` (shared union schema, handler refusal journaled).)* **Acceptance:** child
+  cannot invoke a
   tool it wasn't handed; possession-is-authorization holds.
-- **5-1.3 — `context: :fresh | :inherit`** (`:inherit` == `parent.fork`). **Acceptance:** both modes;
+- ✅ **5-1.3 — `context: :fresh | :inherit`** (`:inherit` == `parent.fork`).
+  *(Done 2026-07-15: `PrefixStrategy` `:fresh` | `:inherit`; inherit is O(1) at the parent's
+  head, no Store copying. The sibling-template arm stays deferred.)* **Acceptance:** both modes;
   fork mode is O(1).
-- **5-1.4 — Within-turn concurrency** (gather all results, commit one turn — gate 2). *Needs 5-0.*
+- ✅ **5-1.4 — Within-turn concurrency** (gather all results, commit one turn — gate 2). *Needs 5-0.*
+  *(Done 2026-07-15: `ToolRunner` gathers a whole turn of `parallel_safe?` tools as sibling
+  Async tasks; results land in ONE user turn in tool_use order — gate 2 unchanged.)*
   **Acceptance:** async subagents finishing out of order still land all `tool_result`s in one user
   turn.
 
@@ -280,14 +308,25 @@ deliberately deferred, not dropped:
   round-trips through the same `Tool` interface; parallel tools measurably concurrent.
 
 ### Stream 6-2 · Retrieval sweep (the highest-value measurement)
-- **6-2.1 — `Vector` index** (HNSW/`usearch`; open decision #8: embedding provider). **Acceptance:**
+- ✅ **6-2.1 — `Vector` index** (HNSW/`usearch`; open decision #8: embedding provider).
+  *(Done 2026-07-15: `Memory::Vector` — exact cosine in pure Ruby over an `Embedder` seam
+  (usearch declined by the five-rule binding test at bench scale); open decision #8 resolved:
+  local ollama, pinned `nomic-embed-text`, committed fixture embeddings.)* **Acceptance:**
   `#search` returns k hits with `#why`; nondeterminism documented.
-- **6-2.2 — `Hybrid` index** (rank fusion). **Acceptance:** beats `Bm25` and `Vector` alone on the
+- ✅ **6-2.2 — `Hybrid` index** (rank fusion). *(Done 2026-07-15: `Memory::Hybrid`, RRF k=60.
+  NOTE: the "beats both parents" acceptance did NOT hold on the gold corpus — vector .667 vs
+  hybrid .333 (RRF dilution when one arm dominates); the sweep reports it honestly and the
+  corpus/fusion question moves to the M6 follow-ups.)* **Acceptance:** beats `Bm25` and `Vector` alone on the
   bench's recall@k for a fixture corpus.
-- **6-2.3 — `Graph` index** (`[[wikilink]]` seeds + N-hop, `petgraph`). **Acceptance:** cheap,
+- ✅ **6-2.3 — `Graph` index** (`[[wikilink]]` seeds + N-hop, `petgraph`). *(Done 2026-07-15:
+  `Memory::Graph` — pure-Ruby `[[wikilink]]` N-hop (petgraph declined by the five-rule test);
+  unresolved links dead-end silently by design.)* **Acceptance:** cheap,
   explainable hits with `#why`.
-- **6-2.4 — Sweep all five strategies through the bench.** recall@k, tokens-on-recall, cache-hit,
-  grader score — as distributions. *Needs bench (M3c) + memory (5-3).* **Acceptance:** a `Compare`
+- ✅ **6-2.4 — Sweep all five strategies through the bench.** recall@k, tokens-on-recall, cache-hit,
+  grader score — as distributions. *Needs bench (M3c) + memory (5-3).*
+  *(Done 2026-07-15: `lain bench sweep -k 5` — deterministic five-arm recall@k +
+  tokens-on-recall over committed embeddings, zero network; byte-identical across runs.
+  Measured: vector .667, graph .438, bm25 = hybrid = manifest .333.)* **Acceptance:** a `Compare`
   report ranking `Manifest`/`Bm25`/`Vector`/`Hybrid`/`Graph` distributionally — the project's most
   direct transfer artifact.
 

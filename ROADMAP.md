@@ -103,10 +103,15 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
   speculative branching. The committed *core*; the `[exp]`/`[parked]` fold-ins below remain future work.
 - **M4-1 — the Rust Timeline.** `[built]` (this session): `Canonical`/`Store`/`Turn`/`Timeline` ported
   to `ext/lain` as `frozen_shareable` `TypedData`, digests byte-identical to the Ruby reference, the
-  same shared law groups passing against **both** impls. (M4-2, the Neovim frontend, remains `[planned]`.)
+  same shared law groups passing against **both** impls.
   **Planned:** `planning/specs/rust-findings-resolution.md` — resolve the 2026-07-15 `ext/lain`
   findings (loud walks on corrupt chains, idiomatic errors via thiserror, FFI naming/dedup,
   Digest/Role domain types, edition 2024).
+- **M4-2 — the Neovim frontend.** `[built]` (2026-07-15, `chunk-spine-agents-sweep-nvim.md`):
+  journal-subscribing `Frontend::Neovim` skeleton, read-only `lain://timeline`/`workspace`/`diff`
+  projections, and editable `lain://request` + `:LainResend` (a resend journals as
+  `request_resent`, never mistakable for a real dispatch). Provider round-trip of an edited
+  request remains later `[exp]` work.
 
 **The bench — the deliverable — now exists.** For the first time the project can *compare strategies*:
 `DryReplay` re-renders a recorded Timeline byte-identically under one `Context` and yields a
@@ -114,7 +119,9 @@ deterministic diff under another, and `Compare` reports distributions over `n` r
 compare mismatched capability-degraded sets). The remaining committed work — the key-gated **P**
 cleanup and the **M4-2/M5/M6** bands — is inventoried with acceptance criteria in
 [`planning/remaining-work.md`](planning/remaining-work.md); this ROADMAP layers the research- and
-TODO-driven `[exp]` ideas on top and sequences them. Suite: **1161 examples, 0 failures; `cargo test` 49** (post chunk-cache-memory-hands, 2026-07-13).
+TODO-driven `[exp]` ideas on top and sequences them. Suite: **1768 examples, 0 failures, 4 pending
+(the four Ruby↔Rust digest-parity examples parked pending the Event-spine re-port); `cargo test`
+79** (post chunk-spine-agents-sweep-nvim, 2026-07-15).
 
 ---
 
@@ -271,13 +278,29 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     holes in the uncached tail = cheap), shown as a **diff against the base template**. Disclosing the
     harness, made visible — the inspection half of the prompt-slots arm. `[exp]`
 
-### M5 — orchestration, memory, code mode `[planned]`
+### M5 — orchestration, memory, code mode `[planned]` (orchestration core `[built]` 2026-07-15)
 - `Tool::Subagent` (async, attenuated, supervised). `Tool::Todo`. `Memory` (content-addressed,
   `Manifest` + `Bm25`), `Context::Recall` after the last cache breakpoint. **✅ Done (2026-07-15):**
   `planning/specs/memory-read-path.md` — the 5-3.1/5-3.2 close-out (manifest + `memory_read`
   wired into the live session, replay-side memory roots, Bm25 root-keyed cache). Server-side context editing
   as a comparison arm. Structured `edit_file` (`str_replace` + read-before-write). Choose the
   concurrency model. **Code mode** — `eval_ruby` against a persistent binding.
+- **✅ Landed 2026-07-15** (`planning/specs/chunk-spine-agents-sweep-nvim.md`): fibers adopted in
+  the agent loop (`Async` + a `Sync` bridge for non-reactor callers, structured cancellation —
+  5-0.2/5-0.3); the `Lain::Event` envelope + Turn collapse (TL-1/TL-2) and the projections
+  (TL-4 — mailbox/workspace_at/provenance/unique-usage); `Tool::Subagent` one-shot + actor +
+  within-turn concurrency (5-1.1–5-1.4); `ask_human` as a promise (OM-4); and the role catalog
+  on prompt slots (OM-5/PS-3). **Two cards deliberately stayed off main, awaiting a human
+  decision** (see ROADMAP § Near-term sequence item 8): TL-3 (`meet`/`diverge_at` generalized
+  over the causal DAG — the projection `causal_meets` vs a redefinition of `meet`) and TL-5
+  (the Rust re-port, blocked on TL-3). **Remaining M5 tail:** OM-6 supervision (needs the
+  Workspace Timeline), grader-from-Gherkin, the sibling-template prefix arm + `stream_started`
+  (CE-5); plus new follow-ups recorded in the plan doc — role→spawn glue (`Context#cache_marked`
+  always marks the *last* system block and `CacheBreakpoints` budgets one system slot, so a
+  seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an `Embedder`
+  model-id reader (so `Memory::Vector`'s `#why` can name the model, not just the class), and the
+  edge-grain provenance question for OM-1/OM-6 (today's parent→child `tool_result` link is
+  correlation-grain only, no causal edge).
 - **Fold-ins:**
   - **Event-sourced orchestration** (TODO 27–30): fibers (`Async` / socketry); the Store is the event
     log and mailboxes are projections over it; `ask_human` returns a **promise** (continue working,
@@ -319,10 +342,17 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     catalog + `.lain/slots/role/<name>.md` overrides (PS-3); user-defined roles are a longer-term
     goal.** See `planning/specs/orchestration-model.md`. `[exp]`
 
-### M6 — Rust round two & the retrieval sweep `[planned]`
-- Exec-boundary hardening, parallel tools, one Rust-implemented `Tool`. `Vector`, `Hybrid`, `Graph`,
-  then **sweep all retrieval strategies** through the bench (recall@k, tokens on recall, cache-hit,
-  grader) as distributions.
+### M6 — Rust round two & the retrieval sweep `[planned]` (retrieval sweep `[built]` 2026-07-15)
+- Exec-boundary hardening, parallel tools, one Rust-implemented `Tool` remain `[planned]`.
+  **✅ Landed 2026-07-15** (`planning/specs/chunk-spine-agents-sweep-nvim.md`): `Memory::Vector`
+  (exact cosine in pure Ruby over an `Embedder` seam — `Embedder::Ollama`/`nomic-embed-text`,
+  `Embedder::Static` for determinism; usearch declined by the five-rule binding test at bench
+  scale), `Memory::Hybrid` (RRF k=60), `Memory::Graph` (pure-Ruby wikilink N-hop; petgraph
+  declined by the same test), and `lain bench sweep -k 5` — deterministic five-arm recall@k +
+  tokens-on-recall over committed fixture embeddings, zero network, byte-identical across runs.
+  Measured: vector .667, graph .438, bm25 = hybrid = manifest .333 — **hybrid did not beat
+  vector** on this corpus (RRF dilution when one arm dominates), reported honestly rather than
+  gamed; the corpus/fusion question is a follow-up, not a re-run.
 - **Fold-ins (grounded in `references/memory-and-retrieval.md`):**
   - Grade on **LongMemEval** abilities + **ConvoMem** abstention + **MemBench** capacity; the arms to
     beat are **Zep**'s and MemPalace's temporal KGs vs. Lain's content-addressed versioning on the
@@ -610,8 +640,19 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
 7. **Early headline experiment** — quantify harness-induced variance (all prerequisites now built): a
    `DryReplay`/`Compare` sweep over the harness's own recorded sessions. The cache-write columns
    (CE-2) make this the study HN 48883275 could not produce: grader × tokens × cache-write, no proxy.
-8. Then the critical path to the thesis: **memory (M5 · 5-3) → retrieval sweep (M6 · 6-2)**, alongside
-   the M5 orchestration/code-mode band and M4-2 (Neovim) — sequence the rest around keeping that moving.
+8. **✅ Chunk done (2026-07-15)** — the event spine, the M5 orchestration band, the M6 retrieval
+   sweep, and the Neovim frontend, landed together (`planning/specs/chunk-spine-agents-sweep-nvim.md`):
+   the `Lain::Event` envelope + Turn collapse (TL-1/TL-2), projections (TL-4), fibers adopted in
+   the agent loop (5-0.2/5-0.3), `Tool::Subagent` one-shot + actor + within-turn concurrency
+   (5-1.1–5-1.4), `ask_human` as a promise (OM-4), the role catalog on prompt slots (OM-5/PS-3),
+   `Memory::Vector`/`Hybrid`/`Graph` + the gold-corpus sweep (`lain bench sweep -k 5`, 6-2.1–6-2.4),
+   and `Frontend::Neovim` (4-2.1–4-2.3). **Two cards await a human decision and stay off main:**
+   TL-3 (`meet`/`diverge_at` generalized over the causal DAG — the projection `causal_meets` vs a
+   redefinition of `meet`) and TL-5 (the Rust re-port, blocked on TL-3). **Remaining M5 tail:**
+   OM-6 supervision (needs the Workspace Timeline), grader-from-Gherkin, the sibling-template
+   prefix arm + `stream_started` (CE-5); plus new follow-ups from the plan doc: role→spawn glue
+   (a seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an
+   `Embedder` model-id reader, and the edge-grain provenance question for OM-1/OM-6.
 
 ---
 
