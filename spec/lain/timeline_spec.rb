@@ -47,6 +47,28 @@ RSpec.describe Lain::Timeline do
       three = say(say(say(timeline, "a"), "b", role: :assistant), "c")
       expect(three.ancestors.map { |t| t.content.first["text"] }).to eq(%w[c b a])
     end
+
+    # T4: the envelope's payload_digest is an edge the Store enforces, so
+    # #commit puts the body BEFORE the envelope -- a committed turn's payload
+    # is retrievable, and the carried body still answers fetch_body without a
+    # round trip.
+    it "stores a committed turn's body in the store, retrievable under payload_digest" do
+      head = say(timeline, "a").head
+      stored = store.fetch(head.payload_digest)
+      expect(stored).to be_a(Lain::Event::Payload)
+      expect(stored.digest).to eq(head.payload_digest)
+      expect(head.content).to eq(text("a"))
+    end
+
+    # Review fix (T4): commit is the hottest per-turn path, and its digest work
+    # is exactly two Canonical.digest passes -- the payload once (inside
+    # Event.turn) and the envelope once. A third call means the payload was
+    # rebuilt from turn.body instead of reusing the object Event.turn built.
+    it "digests exactly twice per commit: the payload once, the envelope once" do
+      allow(Lain::Canonical).to receive(:digest).and_call_original
+      say(timeline, "a")
+      expect(Lain::Canonical).to have_received(:digest).twice
+    end
   end
 
   describe "time travel" do
@@ -86,7 +108,10 @@ RSpec.describe Lain::Timeline do
       left = say(base.fork, "left")
       right = say(base.fork, "right")
 
-      expect(store.size).to eq(4) # a, b, left, right
+      # Four turns, each with its out-of-line payload -- eight objects. The
+      # shared prefix (a, b and their payloads) is still stored exactly once
+      # despite the two branches, which is the property under test.
+      expect(store.size).to eq(8)
       expect(left.rewind).to eq(right.rewind)
       expect(left).not_to eq(right)
     end

@@ -54,6 +54,11 @@ module Lain
     # its content, with the old head as its parent.
     def commit(role:, content:, meta: {})
       turn = Event.turn(role:, content:, parent: head_digest, meta:, correlation: next_correlation)
+      # The envelope's payload_digest is a Store edge (referential integrity),
+      # so the body must land first or the envelope's own put would dangle. The
+      # turn CARRIES the very Payload it addresses (Event.turn built it), so
+      # storing is a reuse, never a rebuild -- one digest pass per object.
+      store.put(turn.carried_payload)
       store.put(turn)
       self.class.new(head_digest: turn.digest, store:)
     end

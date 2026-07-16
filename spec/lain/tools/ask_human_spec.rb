@@ -66,7 +66,8 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(q.to).to eq("human")
       expect(q.from).to eq(asker)
       expect(q.body.fetch("question")).to eq("which file?")
-      expect(store.size).to eq(before_size + 1)
+      # The message lands as two objects: the envelope and its out-of-line payload.
+      expect(store.size).to eq(before_size + 2)
     end
 
     it "puts the question in the human's mailbox projection" do

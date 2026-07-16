@@ -172,7 +172,8 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
 
       parent_agent.ask("please spawn")
 
-      messages = store.recorded.select { |object| object.respond_to?(:kind) && object.kind == :message }
+      # A :message payload shares its envelope's kind, so select envelopes only.
+      messages = store.recorded.select { |object| object.is_a?(Lain::Event) && object.kind == :message }
       expect(messages.size).to eq(3)
 
       # Each :message names a distinct child final turn, and that turn's own text

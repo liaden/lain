@@ -50,6 +50,22 @@ RSpec.describe Lain::Event do
       expect(ev).to have_attributes(from: nil, to: nil, render_parent: nil,
                                     causal_parents: [], correlation: nil)
     end
+
+    # Review fix (T4): accepting a carried Payload made payload_digest an
+    # optional keyword, so the old required-keyword loudness moves into an
+    # explicit guard -- an envelope with no payload address at all is a bug.
+    it "demands a payload address: neither payload_digest nor carried_payload is loud" do
+      expect { Lain::Event.new(kind: :turn) }
+        .to raise_error(ArgumentError, /payload_digest or carried_payload/)
+    end
+
+    # The carried Payload IS the address, so a separately passed digest or body
+    # could only agree (noise) or disagree (a bug): refuse both.
+    it "refuses a carried Payload alongside an explicit payload_digest or body" do
+      pay = payload
+      expect { Lain::Event.new(kind: :turn, carried_payload: pay, payload_digest: pay.digest) }
+        .to raise_error(ArgumentError, /carried_payload already/)
+    end
   end
 
   describe "#digest" do
@@ -168,6 +184,20 @@ RSpec.describe Lain::Event do
         expect(tagged.payload_digest).to eq(Lain::Event::Payload.new(kind: :turn, body:).digest)
       end
 
+      # Review fix (T4): the turn CARRIES the very Payload object it addresses,
+      # so a writer (Timeline#commit) stores that object rather than rebuilding
+      # an equal one -- which would repeat the normalize+digest pass per commit.
+      it "carries the Payload it addresses, the same object a writer stores" do
+        ev = turn
+        expect(ev.carried_payload).to be_a(Lain::Event::Payload)
+        expect(ev.carried_payload.digest).to eq(ev.payload_digest)
+        expect(ev.body).to equal(ev.carried_payload.body)
+      end
+
+      it "carries no Payload when built from digests alone" do
+        expect(event(kind: :turn, payload_digest: "blake3:p").carried_payload).to be_nil
+      end
+
       it "deeply freezes content" do
         expect(turn.content).to be_deeply_frozen
       end
@@ -249,6 +279,21 @@ RSpec.describe Lain::Event do
 
       expect(ev.payload_digest).to eq(pay.digest)
       expect(store.fetch(ev.payload_digest)).to eq(pay)
+    end
+
+    # T4: storing the payload is purely additive -- payload_digest was already
+    # in the hashed envelope, so an event's identity is unchanged whether or not
+    # its body is in the Store, and the stored body reproduces from the carried
+    # body. This is why every variance fixture still verifies through the Loader.
+    it "storing the body does not change the event digest, and reproduces from the carried body" do
+      store = Lain::Store.new
+      ev = Lain::Event.turn(role: :user, content: block("hi"), meta: { "a" => 1 })
+      before = ev.digest
+      store.put(Lain::Event::Payload.new(kind: :turn, body: ev.body))
+      store.put(ev)
+
+      expect(ev.digest).to eq(before)
+      expect(store.fetch(ev.payload_digest)).to eq(Lain::Event::Payload.new(kind: :turn, body: ev.body))
     end
   end
 end

@@ -75,6 +75,8 @@ module Lain
           event = Event.new(kind:, from:, to:, causal_parents:,
                             correlation: identity(parent),
                             payload_digest: payload.digest, body: payload.body)
+          # payload_digest is a Store edge, so the body lands before the envelope.
+          parent.store.put(payload)
           parent.store.put(event)
           @log << event
           event

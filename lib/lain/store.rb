@@ -55,16 +55,20 @@ module Lain
     private
 
     # The predecessor digests `object` requires the store to already hold. A
-    # Memory::Index::Node names one (`#parent`); an Event names two edges -- a
-    # single `#render_parent` (which its `#parent` aliases, hence the `uniq`)
-    # and a `#causal_parents` set. All are duck-typed: an object whose
-    # `#parent` means something OTHER than "digest of my predecessor in this
-    # store" (today only Event and Memory::Index::Node reach here through it,
-    # and both mean exactly that) would be misvalidated -- give such an object
-    # a differently-named accessor. An object naming no edge (Memory::Item) is
-    # parentless.
+    # Memory::Index::Node names one (`#parent`); an Event names three edges --
+    # a single `#render_parent` (which its `#parent` aliases, hence the `uniq`),
+    # a `#causal_parents` set, and a `#payload_digest` naming its out-of-line
+    # body. All are duck-typed: an object whose `#parent` means something OTHER
+    # than "digest of my predecessor in this store" (today only Event and
+    # Memory::Index::Node reach here through it, and both mean exactly that)
+    # would be misvalidated -- give such an object a differently-named accessor.
+    # An object naming no edge (Memory::Item) is parentless.
+    #
+    # `payload_digest` is ordered AFTER the render edge so a chain built through
+    # the public API (`Event.turn(parent: absent)`, whose body is also unstored)
+    # still refuses on the render edge, the message that seam has always pinned.
     def parent_edges(object)
-      single = %i[parent render_parent].filter_map do |edge|
+      single = %i[parent render_parent payload_digest].filter_map do |edge|
         object.public_send(edge) if object.respond_to?(edge)
       end
       causal = object.respond_to?(:causal_parents) ? object.causal_parents : []

@@ -16,9 +16,11 @@ module Lain
   # ever look at `#digest`. The payload is never inlined INTO THE ADDRESS: the
   # envelope hashes `payload_digest`, and the payload object lives in the same
   # Store, retrievable by that digest -- large results and snapshots stay out of
-  # the addressed header. A locally constructed event additionally CARRIES its
-  # body (see {.turn}), so reading `#content` costs no Store round trip; an
-  # envelope rebuilt from digests alone is detached and says so loudly.
+  # the addressed header. A locally constructed event additionally CARRIES the
+  # {Payload} it addresses (see {.turn} and `#carried_payload`), so reading
+  # `#content` costs no Store round trip and a writer stores that same object
+  # rather than rebuilding it; an envelope rebuilt from digests alone is
+  # detached and says so loudly.
   class Event
     include ContentAddressed
 
@@ -33,7 +35,7 @@ module Lain
     class Detached < Error; end
 
     attr_reader :kind, :from, :to, :render_parent, :causal_parents,
-                :correlation, :payload_digest, :body, :digest
+                :correlation, :payload_digest, :body, :carried_payload, :digest
 
     # The kind coercion is shared with {Payload}: both carry the kind and both
     # owe the same closed, loud enum, so a typo fails identically wherever a kind
@@ -63,11 +65,10 @@ module Lain
     def self.turn(role:, content:, parent: nil, meta: {}, correlation: nil)
       payload = Payload.new(kind: :turn, body: { "role" => normalize_role(role),
                                                  "content" => content, "meta" => meta })
-      new(kind: :turn, payload_digest: payload.digest, body: payload.body,
-          render_parent: parent, correlation:)
+      new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:)
     end
 
-    def initialize(kind:, payload_digest:, body: nil, from: nil, to: nil,
+    def initialize(kind:, payload_digest: nil, body: nil, carried_payload: nil, from: nil, to: nil,
                    render_parent: nil, causal_parents: [], correlation: nil)
       @kind = self.class.normalize_kind(kind)
       @from = Canonical.normalize(from)
@@ -75,8 +76,7 @@ module Lain
       @render_parent = Canonical.normalize(render_parent)
       @causal_parents = normalize_causal(causal_parents)
       @correlation = Canonical.normalize(correlation)
-      @payload_digest = Canonical.normalize(payload_digest)
-      @body = Canonical.normalize(body)
+      resolve_payload(carried_payload, payload_digest, body)
       @digest = Canonical.digest(payload)
       freeze
     end
@@ -121,11 +121,39 @@ module Lain
 
     private
 
+    # A carried {Payload} IS the payload address and body, so the digest-only
+    # path stays as it was, and an envelope with no payload at all refuses
+    # loudly -- making payload_digest optional lost the required-keyword
+    # ArgumentError, and this guard replaces it.
+    def resolve_payload(carried_payload, payload_digest, body)
+      return carry(carried_payload, payload_digest, body) unless carried_payload.nil?
+
+      raise ArgumentError, "an Event needs its payload: pass payload_digest or carried_payload" if
+        payload_digest.nil?
+
+      @carried_payload = nil
+      @payload_digest = Canonical.normalize(payload_digest)
+      @body = Canonical.normalize(body)
+    end
+
+    # The carried Payload's digest and (already-normalized) body are reused,
+    # never recomputed -- which is why one Timeline#commit runs Canonical.digest
+    # exactly twice. A separately passed digest or body could only agree
+    # (noise) or disagree (a bug), so both together refuse.
+    def carry(payload, payload_digest, body)
+      raise ArgumentError, "carried_payload already names the digest and body; pass one, not both" if
+        payload_digest || body
+
+      @carried_payload = payload
+      @payload_digest = payload.digest
+      @body = payload.body
+    end
+
     def fetch_body(key)
       if body.nil?
-        raise Detached, "#{self} carries no body; #{payload_digest} addresses it, but out-of-line " \
-                        "payload storage is deferred -- rebuild the event from its body fields " \
-                        "(e.g. Event.turn) to carry one"
+        raise Detached, "#{self} carries no body; it lives in the Store under #{payload_digest}. " \
+                        "This envelope was rebuilt from digests alone -- fetch that payload through " \
+                        "a Store, or build it via Event.turn to carry one"
       end
 
       body.fetch(key)
