@@ -14,6 +14,14 @@ module Lain
     # {UnknownProvider} (a {Lain::Error}), which the exe layer maps to a
     # Thor::Error. Thor never crosses into lib/ (output/error discipline).
     class Backend
+      # A missing key used to backtrace as {Provider::HTTP::ConfigurationError}
+      # -- a plain StandardError, so it skipped the exe's `rescue Lain::Error`
+      # and dumped a raw trace naming "Transport" (an internal collaborator, not
+      # an operator-facing concept). Named refusal, checked BEFORE construction,
+      # following {Bench::CLI::MissingAPIKey}'s precedent (same shape, not
+      # reused -- Backend does not couple to Bench).
+      class MissingAPIKey < Error; end
+
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama bedrock].freeze
@@ -32,15 +40,17 @@ module Lain
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
       #   answers {Provider::Spool::Null}, never nil, so this is never an `if
-      #   spool` guard). Threaded only into the ONE backend that can actually
-      #   tee to it today: a real spool switches the "anthropic" branch from
-      #   the official SDK client onto {Provider::AnthropicRaw}'s vendored
-      #   transport, which is the transport the spool tee is wired into; the
-      #   Null spool -- meaning no chronicle asked, e.g. bench (never passes
-      #   spool: at all) or --no-journal chat -- keeps constructing the exact
-      #   SDK client this method has always returned there, unchanged. Ollama
-      #   and Bedrock never see the keyword at all: neither constructor
-      #   accepts it, so nothing here risks handing it to them.
+      #   spool` guard). Threaded straight into {Provider::AnthropicRaw}, the
+      #   only backend wired to tee to it: the Null spool -- no chronicle
+      #   asked, e.g. bench (never passes spool: at all) or --no-journal chat
+      #   -- just means nothing gets teed. Ollama and Bedrock never see the
+      #   keyword at all: neither constructor accepts it, so nothing here
+      #   risks handing it to them.
+      #
+      # "anthropic" always means {Provider::AnthropicRaw} here: uniform retry
+      # telemetry and one spool-teeing transport regardless of --journal, same
+      # call bench already made; {Provider::Anthropic} (the SDK client) stays
+      # in the library as the #encode differential oracle, just not on this path.
       def provider(spool: Provider::Spool::Null.new)
         case provider_name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
@@ -70,21 +80,15 @@ module Lain
 
       private
 
-      # A real (non-Null) spool is the one signal that journaling is on --
-      # {CLI::Chronicle}'s spool and {CLI::Chronicle::Null}'s are both real
-      # objects, never nil, so presence alone cannot distinguish them. The
-      # type check IS the decision this method exists to make (which backend
-      # class to build), not a guard the Null Object idiom is meant to erase.
-      #
-      # This split is a DELIBERATE STOPGAP, not the resting design: the honest
-      # end state is "anthropic" always means {Provider::AnthropicRaw} for chat
-      # (bench already made that call for its own "anthropic" arm), and this
-      # branch collapses to one line. Converging is a separate, larger decision
-      # (default request envelope, error classes, live-429 behavior all move
-      # for --no-journal chat too) -- tracked as a follow-up ticket, not done in
-      # this round.
+      # Refuses BEFORE construction: {Provider::AnthropicRaw} validates the key
+      # eagerly too, but as {Provider::HTTP::ConfigurationError}, which is not a
+      # {Lain::Error} and so reaches the operator as a raw backtrace instead of
+      # the exe's clean Thor::Error mapping. Checking here keeps that mapping
+      # intact for the one refusal an anthropic chat run can hit before any
+      # request goes out.
       def anthropic_provider(spool)
-        return Provider::Anthropic.new if spool.is_a?(Provider::Spool::Null)
+        raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
+          if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
         Provider::AnthropicRaw.new(spool:)
       end
@@ -102,7 +106,7 @@ module Lain
         case provider_name
         when "ollama" then Provider::Ollama::DEFAULT_MODEL
         when "bedrock" then Provider::Bedrock::DEFAULT_MODEL
-        else Provider::Anthropic::DEFAULT_MODEL
+        else Provider::AnthropicRaw::DEFAULT_MODEL
         end
       end
 

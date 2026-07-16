@@ -21,11 +21,11 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider.instance_variable_get(:@config).ollama_api_base).to eq("http://localhost:11434")
     end
 
-    it "constructs a Provider::Anthropic for --provider anthropic" do
+    it "constructs a Provider::AnthropicRaw for --provider anthropic" do
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
         backend_for(provider: "anthropic").provider
       end
-      expect(provider).to be_a(Lain::Provider::Anthropic)
+      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
     end
 
     it "constructs a Provider::Bedrock for --provider bedrock" do
@@ -46,32 +46,54 @@ RSpec.describe Lain::CLI::Backend do
     it "raises a Lain::Error (so the exe's Lain::Error rescue presents it cleanly)" do
       expect(Lain::CLI::UnknownProvider).to be < Lain::Error
     end
+
+    # A missing key used to reach AnthropicRaw's own eager check and backtrace
+    # as Provider::HTTP::ConfigurationError -- a plain StandardError the exe's
+    # `rescue Lain::Error` does not catch. This refuses BEFORE construction, as
+    # a named Lain error, so the exe's clean mapping applies here too.
+    it "fails loudly on a missing ANTHROPIC_API_KEY with a named Lain error, not a raw backtrace class" do
+      with_env("ANTHROPIC_API_KEY" => nil) do
+        expect { backend_for(provider: "anthropic").provider }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY.*--provider anthropic/m)
+      end
+    end
+
+    it "raises a Lain::Error for a missing key too (so the exe's rescue presents it cleanly)" do
+      expect(Lain::CLI::Backend::MissingAPIKey).to be < Lain::Error
+    end
   end
 
-  # T17's wiring obligation: the chronicle's response spool (real only when
-  # journaling is on) threads into whichever backend can actually tee raw
-  # bytes to it -- AnthropicRaw today. No caller here passes spool: at all
-  # except the new examples, so the FIRST two tests above (bare #provider)
-  # already prove the untouched default keeps returning the plain SDK client.
+  # T17w's convergence: "anthropic" always means {Provider::AnthropicRaw} for
+  # chat now, whether or not journaling is on -- the spool no longer switches
+  # provider CLASS, only whether the spool it's handed is Null (--no-journal,
+  # bench's no-spool-at-all default) or a real tee (journaling on). Class
+  # identity alone is now vacuous (every branch here builds AnthropicRaw), so
+  # these pin the ACTUAL spool object reaching the built provider -- the same
+  # ivar-inspection idiom the Ollama --api-base example above uses.
   describe "#provider spool threading" do
-    it "still constructs the plain SDK client when no spool is given at all" do
+    it "still constructs AnthropicRaw with the default Null spool when none is given at all" do
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic").provider }
-      expect(provider).to be_a(Lain::Provider::Anthropic)
+      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
+      expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool))
+        .to be_a(Lain::Provider::Spool::Null)
     end
 
-    it "constructs the plain SDK client when handed the Null spool -- --no-journal's answer" do
+    it "constructs AnthropicRaw with the given Null spool -- --no-journal's answer" do
+      spool = Lain::Provider::Spool::Null.new
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
-        backend_for(provider: "anthropic").provider(spool: Lain::Provider::Spool::Null.new)
+        backend_for(provider: "anthropic").provider(spool:)
       end
-      expect(provider).to be_a(Lain::Provider::Anthropic)
+      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
+      expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
     end
 
-    it "switches to AnthropicRaw, carrying the spool, when journaling hands in a real one" do
+    it "carries the SAME spool object into AnthropicRaw when journaling hands in a real one" do
       spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
         backend_for(provider: "anthropic").provider(spool:)
       end
       expect(provider).to be_a(Lain::Provider::AnthropicRaw)
+      expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
     end
 
     it "never hands ollama or bedrock the spool keyword -- their constructors don't accept it" do

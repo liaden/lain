@@ -36,13 +36,13 @@ RSpec.describe LainCLI do
       expect(provider.instance_variable_get(:@config).ollama_api_base).to eq("http://localhost:11434")
     end
 
-    it "constructs a Provider::Anthropic for --provider anthropic" do
-      # Anthropic's SDK client reads ANTHROPIC_API_KEY at construction (offline,
-      # no request); a placeholder is enough to build the object.
+    it "constructs a Provider::AnthropicRaw for --provider anthropic" do
+      # AnthropicRaw reads ANTHROPIC_API_KEY at construction too (offline, no
+      # request); a placeholder is enough to build the object.
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
         backend(provider: "anthropic").provider
       end
-      expect(provider).to be_a(Lain::Provider::Anthropic)
+      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
     end
 
     it "fails loudly on an unknown provider, naming the valid set" do
@@ -111,10 +111,16 @@ RSpec.describe LainCLI do
   # memory_write, because both tools share the one session Recorder.
   describe "the chat toolset" do
     let(:recorder) { Lain::Memory::Recorder.new }
+    # The research subagent this toolset wires in builds its own provider
+    # eagerly (AnthropicRaw validates ANTHROPIC_API_KEY at construction, unlike
+    # the SDK client it replaced there -- see T17w), so building the toolset
+    # at all needs a key present even though nothing here makes a request.
     let(:chat_toolset) do
       ask_human = Lain::Tools::AskHuman.new(parent: -> {})
-      wiring.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
-                                            parent: -> {}, journal: Lain::Channel.new, ask_human:)
+      with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        wiring.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
+                                              parent: -> {}, journal: Lain::Channel.new, ask_human:)
+      end
     end
 
     it "contains a memory_read tool" do
