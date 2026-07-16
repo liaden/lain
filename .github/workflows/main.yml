@@ -47,4 +47,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      # The cargo-deny hook is `language: system`; the runner image does not ship it.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
       - uses: pre-commit/action@v3.0.1
