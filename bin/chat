@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Paired-pane chat: one tmux session, nvim (left) listening on a private
+# socket, `lain chat --nvim` (right) attached to it. Arguments pass through
+# to chat, e.g.:
+#
+#   bin/chat --provider bedrock
+#
+# The socket path is minted here and handed to both sides, so the two can
+# never disagree on it; it is per-invocation, so a stale socket from a dead
+# session can never be dialed by mistake.
+set -euo pipefail
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+sock="${XDG_RUNTIME_DIR:-/tmp}/lain-nvim-$$.sock"
+session="lain-$$"
+
+# The chat pane re-exports the launching shell's environment explicitly:
+# tmux panes inherit from the tmux SERVER, which may predate this shell and
+# carry a stale PATH (the wrong ruby) or none of the provider credentials.
+exports="export PATH=$(printf %q "$PATH")"
+for var in AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_API_KEY; do
+  if [[ -v $var ]]; then exports+="; export $var=$(printf %q "${!var}")"; fi
+done
+
+args=""
+for arg in "$@"; do args+=" $(printf %q "$arg")"; done
+
+# Wait for nvim to open the socket before chat dials it (attach refuses
+# loudly on a missing socket), and hold the pane open after chat exits so a
+# crash message is readable instead of vanishing with the pane.
+chat_cmd="$exports; cd $(printf %q "$root") || exit 1
+while [ ! -S $(printf %q "$sock") ]; do sleep 0.1; done
+bundle exec ruby exe/lain chat --nvim $(printf %q "$sock")$args
+printf '\n[chat exited %d -- press enter to close]' \$?; read -r _"
+
+tmux new-session -d -s "$session" -c "$root" "nvim --listen $(printf %q "$sock")"
+tmux split-window -h -t "$session" -c "$root" "$chat_cmd"
+
+if [ -t 0 ]; then
+  exec tmux attach -t "$session"
+else
+  echo "not a tty; attach with: tmux attach -t $session"
+fi
