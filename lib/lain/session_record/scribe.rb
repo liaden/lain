@@ -34,11 +34,18 @@ module Lain
       # @param context [Lain::Context] the context this session renders under
       # @param toolset [#to_schema] the toolset in effect
       # @param workspace [Lain::Workspace] the workspace in effect
-      def initialize(journal:, context:, toolset:, workspace: Workspace.empty)
+      # @param resumed_from [Hash, nil] `{"file" =>, "head" =>}` naming the
+      #   prior file this session chains to (T19); header-only, absent when nil
+      # @param written [Array<String>] the resumed chain's already-recorded
+      #   turn digests. Seeding them is load-bearing: they live in the PRIOR
+      #   file, so catch_up must skip them (re-recording the whole chain here
+      #   would double every turn a chain loader folds in), and the
+      #   extends-check must anchor on the resumed head, not nil.
+      def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
         @journal = journal
-        @written = Set.new
-        @head = nil
-        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil)
+        @written = Set.new(written)
+        @head = written.last
+        @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:)
       end
 
       # The {Event::ChainWriter} observer duck: journal a :message/:spawn event

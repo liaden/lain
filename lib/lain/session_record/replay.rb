@@ -52,6 +52,17 @@ module Lain
         end
       end
 
+      # The ONE recorder {#session}'s manifest projects from -- public and
+      # memoized (T19) so a resume can hand the SAME object to the memory
+      # tools ("one index, three views"); a second recorder here would give
+      # the manifest and the tools silently divergent indexes.
+      #
+      # @return [Memory::Recorder]
+      def memory
+        @memory ||= Memory::Recorder.new(index: Bench::Session::MemoryReplay.new(turns:, roots:)
+                                                                            .recorded_memory.index)
+      end
+
       private
 
       def reads
@@ -64,10 +75,6 @@ module Lain
 
       def items(record)
         record.fetch("todos").map { |todo| Todo.new(content: todo.fetch("content"), status: todo.fetch("status")) }
-      end
-
-      def memory
-        Memory::Recorder.new(index: Bench::Session::MemoryReplay.new(turns:, roots:).recorded_memory.index)
       end
 
       def turns

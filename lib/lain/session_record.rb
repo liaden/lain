@@ -37,12 +37,16 @@ module Lain
     # {Context}'s constructor inputs plus the tool schema, reminders, and the
     # head anchor. `head:` defaults to nil -- the OPEN marker -- because the
     # scribe writes this before any turn commits and never rewrites it.
-    def header(context:, toolset:, workspace: Workspace.empty, head: nil)
-      { "type" => HEADER_TYPE, "context_class" => context.class.name,
-        "model" => context.model, "max_tokens" => context.max_tokens,
-        "system" => context.system, "stream" => context.stream, "extra" => context.extra,
-        "head" => head,
-        "tools" => toolset.to_schema, "reminders" => workspace.reminders }
+    # `resumed_from:` (T14's chain shape, `{"file" =>, "head" =>}`) merges in
+    # only when present: a fresh session's header must stay byte-identical to
+    # the pre-resume format, so absence is no key, never a nil value.
+    def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil)
+      record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
+                 "model" => context.model, "max_tokens" => context.max_tokens,
+                 "system" => context.system, "stream" => context.stream, "extra" => context.extra,
+                 "head" => head,
+                 "tools" => toolset.to_schema, "reminders" => workspace.reminders }
+      resumed_from.nil? ? record : record.merge("resumed_from" => resumed_from)
     end
 
     # One turn record, the same fields {Bench::Session} writes: the body plus the

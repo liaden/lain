@@ -111,6 +111,30 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # T19: a resumed chat opens a NEW chained journal -- the header names the
+  # prior file (T14's resumed_from shape), and the scribe treats the resumed
+  # chain's turns as already written, so catch_up records only what is new
+  # and anchors its extends-check on the resumed head.
+  describe "a resumed #start" do
+    it "writes resumed_from into the open header and catch_up skips the already-written turns" do
+      resumed_from = { "file" => "a.ndjson", "head" => timeline.head_digest }
+      chronicle.start(context:, toolset:, resumed_from:, written: timeline.to_a.map(&:digest))
+
+      expect(of_type("session").first).to include("head" => nil, "resumed_from" => resumed_from)
+
+      extended = timeline.commit(role: :assistant, content: text("hello again"))
+      chronicle.catch_up(extended)
+
+      expect(of_type("turn").map { |record| record.fetch("digest") }).to eq([extended.head_digest])
+    end
+
+    it "keeps a fresh session's header byte-shape: no resumed_from key when not resuming" do
+      chronicle.start(context:, toolset:)
+
+      expect(of_type("session").first).not_to have_key("resumed_from")
+    end
+  end
+
   describe "#observer" do
     it "routes tool events to the scribe: a ChainWriter put lands as a message record" do
       chronicle.start(context:, toolset:)

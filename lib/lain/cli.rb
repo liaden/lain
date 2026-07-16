@@ -16,4 +16,6 @@ end
 require_relative "cli/backend"
 require_relative "cli/chronicle"
 require_relative "cli/journal_tee"
+require_relative "cli/resume"
+require_relative "cli/sessions"
 require_relative "cli/shutdown"

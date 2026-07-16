@@ -103,8 +103,12 @@ module Lain
       end
 
       # Write the OPEN header, pinning exactly what the Agent renders with.
-      def start(context:, toolset:, workspace: Workspace.empty)
-        @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:)
+      # A resumed chat (T19) passes `resumed_from:` (the chained-header shape)
+      # and `written:` (the resumed chain's turn digests) straight through to
+      # the scribe -- see {SessionRecord::Scribe#initialize} for why both.
+      def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
+        @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
+                                            resumed_from:, written:)
         self
       end
 
