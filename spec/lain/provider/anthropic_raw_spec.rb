@@ -58,6 +58,22 @@ RSpec.describe Lain::Provider::AnthropicRaw do
     end
   end
 
+  # T17w fix round: Backend now hands live chat traffic to this transport
+  # under --journal, where it used to be the SDK client -- so its effective
+  # request envelope must match the SDK's, not the vendored HTTP stack's own
+  # (ruby_llm-derived) generic defaults, or --journal silently trades away
+  # timeout/retry budget nobody asked to trade.
+  describe "the default request envelope" do
+    it "mirrors the SDK's own timeout and retry budget, not HTTP::Configuration's generic defaults" do
+      config = described_class.new(api_key: "sk-test").instance_variable_get(:@config)
+
+      # Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS (600.0) / DEFAULT_MAX_RETRIES (2) --
+      # HTTP::Configuration's own option defaults are 300 / 3, vendored from ruby_llm.
+      expect(config.request_timeout).to eq(600)
+      expect(config.max_retries).to eq(2)
+    end
+  end
+
   describe "#complete over the streaming path" do
     it "retains the full ordered block list -- thinking, text, tool_use -- with every signature" do
       canned = Lain::Response.new(

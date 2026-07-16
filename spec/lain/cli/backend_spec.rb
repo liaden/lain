@@ -48,6 +48,44 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # T17's wiring obligation: the chronicle's response spool (real only when
+  # journaling is on) threads into whichever backend can actually tee raw
+  # bytes to it -- AnthropicRaw today. No caller here passes spool: at all
+  # except the new examples, so the FIRST two tests above (bare #provider)
+  # already prove the untouched default keeps returning the plain SDK client.
+  describe "#provider spool threading" do
+    it "still constructs the plain SDK client when no spool is given at all" do
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") { backend_for(provider: "anthropic").provider }
+      expect(provider).to be_a(Lain::Provider::Anthropic)
+    end
+
+    it "constructs the plain SDK client when handed the Null spool -- --no-journal's answer" do
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_for(provider: "anthropic").provider(spool: Lain::Provider::Spool::Null.new)
+      end
+      expect(provider).to be_a(Lain::Provider::Anthropic)
+    end
+
+    it "switches to AnthropicRaw, carrying the spool, when journaling hands in a real one" do
+      spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_for(provider: "anthropic").provider(spool:)
+      end
+      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
+    end
+
+    it "never hands ollama or bedrock the spool keyword -- their constructors don't accept it" do
+      spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
+
+      expect { backend_for(provider: "ollama").provider(spool:) }.not_to raise_error
+      expect do
+        with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
+          backend_for(provider: "bedrock").provider(spool:)
+        end
+      end.not_to raise_error
+    end
+  end
+
   describe "#context" do
     it "defaults the model to the selected provider's own default" do
       expect(backend_for(provider: "ollama", model: nil, max_tokens: 1024).context.model)

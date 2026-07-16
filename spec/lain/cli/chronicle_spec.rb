@@ -48,6 +48,48 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # T17's last obligation: chat must actually write a `.wal` when journaling
+  # is on. #spool derives the sibling path from the SAME Journal.default_path
+  # `.for` opened -- proven here by writing one frame and checking it landed
+  # beside the NDJSON, not by trusting a stubbed path.
+  describe "#spool" do
+    it "opens no file until the spool is actually used" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        expect(Dir.glob(File.join(dir, "lain", "sessions", "**", "*.wal"))).to be_empty
+        opened.close
+      end
+    end
+
+    it "spools a frame into <session-stem>.wal, beside the NDJSON" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        frame = opened.spool.open_frame(request_digest: "blake3:abc")
+        frame.append("hello")
+        frame.close(complete: true)
+
+        session_path = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson")).first
+        wal_path = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.wal")).first
+        expect(wal_path).to eq(session_path.sub(/\.ndjson\z/, ".wal"))
+        opened.close
+      end
+    end
+
+    it "memoizes the spool -- every provider this run builds tees into the SAME file" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        expect(opened.spool).to be(opened.spool)
+        opened.close
+      end
+    end
+  end
+
   describe "two-phase start" do
     it "writes no header at construction; #start writes the OPEN header pinning the toolset" do
       chronicle
@@ -214,6 +256,12 @@ RSpec.describe Lain::CLI::Chronicle do
 
       expect(kwargs.fetch(:journal)).to be(tee)
       expect(kwargs.fetch(:model_middleware).to_a.first).to be_a(Lain::Middleware::JournalRequests)
+    end
+
+    # --no-journal's half of T17: no chronicle, no spool, no `.wal` file --
+    # ever. Provider::Spool::Null never touches a filesystem by construction.
+    it "answers Spool::Null so --no-journal creates no file" do
+      expect(null.spool).to be_a(Lain::Provider::Spool::Null)
     end
   end
 end

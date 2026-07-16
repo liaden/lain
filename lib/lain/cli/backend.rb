@@ -28,11 +28,24 @@ module Lain
       # flag threads through here). An unknown name fails loudly, naming the
       # valid set, as {UnknownProvider} (a bad flag is user error, surfaced by
       # the exe as a clean Thor::Error, not a bug with a backtrace).
-      def provider
+      #
+      # @param spool [#open_frame] the chronicle's response spool -- a real
+      #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
+      #   answers {Provider::Spool::Null}, never nil, so this is never an `if
+      #   spool` guard). Threaded only into the ONE backend that can actually
+      #   tee to it today: a real spool switches the "anthropic" branch from
+      #   the official SDK client onto {Provider::AnthropicRaw}'s vendored
+      #   transport, which is the transport the spool tee is wired into; the
+      #   Null spool -- meaning no chronicle asked, e.g. bench (never passes
+      #   spool: at all) or --no-journal chat -- keeps constructing the exact
+      #   SDK client this method has always returned there, unchanged. Ollama
+      #   and Bedrock never see the keyword at all: neither constructor
+      #   accepts it, so nothing here risks handing it to them.
+      def provider(spool: Provider::Spool::Null.new)
         case provider_name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
         when "bedrock" then Provider::Bedrock.new
-        else Provider::Anthropic.new
+        else anthropic_provider(spool)
         end
       end
 
@@ -56,6 +69,25 @@ module Lain
       end
 
       private
+
+      # A real (non-Null) spool is the one signal that journaling is on --
+      # {CLI::Chronicle}'s spool and {CLI::Chronicle::Null}'s are both real
+      # objects, never nil, so presence alone cannot distinguish them. The
+      # type check IS the decision this method exists to make (which backend
+      # class to build), not a guard the Null Object idiom is meant to erase.
+      #
+      # This split is a DELIBERATE STOPGAP, not the resting design: the honest
+      # end state is "anthropic" always means {Provider::AnthropicRaw} for chat
+      # (bench already made that call for its own "anthropic" arm), and this
+      # branch collapses to one line. Converging is a separate, larger decision
+      # (default request envelope, error classes, live-429 behavior all move
+      # for --no-journal chat too) -- tracked as a follow-up ticket, not done in
+      # this round.
+      def anthropic_provider(spool)
+        return Provider::Anthropic.new if spool.is_a?(Provider::Spool::Null)
+
+        Provider::AnthropicRaw.new(spool:)
+      end
 
       # Validated once, so #provider and #default_model both key off a name
       # already known to be in PROVIDERS.

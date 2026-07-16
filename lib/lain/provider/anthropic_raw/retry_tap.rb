@@ -12,6 +12,17 @@ module Lain
       # attempts), and the transport must stay digest-blind, so the rotation
       # has to live on this side of the transport. One frame is live at a time
       # because a Provider is one round trip, never a loop.
+      #
+      # T17w now lets the main Agent's Provider and each subagent's share ONE
+      # {Chronicle}-owned spool, so more than one {RetryTap} (each with its own
+      # live frame) can genuinely append to the SAME {ResponseWal}'s single
+      # unsynchronized `File` writer from different fibers at once. That is
+      # safe with no mutex only because `Frame#append`'s `IO#write` is a
+      # blocking syscall that never yields to the fiber scheduler mid-call --
+      # unlike the network IO around it (Faraday/Async socket reads DO yield
+      # between chunks), so two fibers' writes can interleave AT CHUNK
+      # boundaries but never tear a single `#write` call's bytes. If that
+      # writer ever moves to non-blocking/Async IO, this stops being true.
       class RetryTap
         def initialize(spool:, channel:)
           @spool = spool

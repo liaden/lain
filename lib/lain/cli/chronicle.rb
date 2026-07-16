@@ -37,6 +37,12 @@ module Lain
         def catch_up(_timeline) = self
         def interrupted(**) = self
         def close(**) = self
+
+        # --no-journal's answer to {Chronicle#spool}: the same Null spool
+        # {Provider::AnthropicRaw} already defaults to, so a provider built
+        # with it opens no `.wal` and creates no file -- the Null Object
+        # duck, not a caller-side `if journal`.
+        def spool = Provider::Spool::Null.new
       end
 
       class << self
@@ -46,7 +52,12 @@ module Lain
         def for(enabled:, tee: nil, paths: Paths.new)
           return Null.new(tee:) unless enabled
 
-          new(journal: Journal.open(fsync: true, paths:), tee:)
+          # Computed here, not left to Journal.open's own default, so THIS path
+          # is the one #spool later derives the sibling `.wal` from -- the
+          # journal and the spool must never be able to name different
+          # sessions.
+          path = Journal.default_path(paths:)
+          new(journal: Journal.open(path, fsync: true), tee:, journal_path: path)
         end
 
         # Where TurnUsage (the Agent's journal:) and RequestSent (the
@@ -61,9 +72,10 @@ module Lain
         end
       end
 
-      def initialize(journal:, tee: nil)
+      def initialize(journal:, tee: nil, journal_path: nil)
         @journal = journal
         @tee = tee
+        @journal_path = journal_path
         @recorder = nil
       end
 
@@ -71,6 +83,24 @@ module Lain
       # late-bound through {#scribe}: an event before {#start} raises rather
       # than vanishing.
       def observer = ->(event) { scribe.call(event) }
+
+      # The response WAL beside this session's NDJSON: `<session-stem>.wal`,
+      # lazily opened so a run that never completes a provider round trip
+      # never creates the file (matches {Provider::ResponseWal}'s own lazy
+      # writer). Memoized so every provider construction this run makes --
+      # the main Agent's and each subagent's -- spools into the SAME file.
+      #
+      # For T18 (salvage-on-resume): a subagent's round trips land frames here
+      # too, but {Middleware::JournalRequests} -- the thing that journals
+      # `request_sent` -- is wired only into the main Agent's `model_middleware`
+      # (see {.telemetry_kwargs}), so a subagent's frames have no matching
+      # `request_sent` digest in the session record. That is BY DESIGN, not a
+      # gap this card owes: salvage keys off `request_sent`, so subagent frames
+      # simply cannot be salvage targets today, and T18 should not assume every
+      # frame in the file is matchable.
+      def spool
+        @spool ||= Provider::ResponseWal.new(wal_path)
+      end
 
       # Write the OPEN header, pinning exactly what the Agent renders with.
       def start(context:, toolset:, workspace: Workspace.empty)
@@ -147,6 +177,22 @@ module Lain
       def scribe
         @scribe or raise NotStarted, "the chronicle has not started: no toolset was pinned, so there " \
                                      "is no scribe to record through -- call #start first"
+      end
+
+      # Same stem as the NDJSON, `.wal` in place of whatever extension the
+      # journal path carries -- "<session-stem>.wal beside the NDJSON" per
+      # the response-WAL plan, not a hardcoded ".ndjson" strip.
+      #
+      # FLAG: this couples #spool to whatever filename shape Journal.default_path
+      # produces (currently `<timestamp>-<pid>.ndjson`) purely by string surgery
+      # on the SAME path .for already computed -- there is no shared naming
+      # authority between Journal and ResponseWal. Fine while ONE method (.for)
+      # is the only place that decides both names; would need a real seam
+      # (Journal handing back a stem, not a full path) if a second caller ever
+      # needs to derive a WAL path independently.
+      def wal_path
+        stem = File.basename(@journal_path, ".*")
+        File.join(File.dirname(@journal_path), "#{stem}.wal")
       end
     end
   end

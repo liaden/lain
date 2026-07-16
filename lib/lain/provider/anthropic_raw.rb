@@ -36,6 +36,14 @@ module Lain
       # timestamps; the exact one to honor should be confirmed against a live 429
       # (see the plan's open questions) -- token limits bind first on large
       # agentic prompts, so the tokens reset is the default until then.
+      #
+      # T17w widens the stakes on this open question: this class used to be
+      # bench-only (a money-gated, explicitly opt-in recording path), so an
+      # unconfirmed backoff header was a contained risk. Backend now hands it
+      # live default --journal chat traffic, so a wrong header here throttles
+      # (or fails to throttle) ordinary conversations, not just `bench record`
+      # runs. Still not confirmed against a live 429 -- that confirmation is a
+      # named follow-up ticket, not something to chase in this fix round.
       RATE_LIMIT_RESET_HEADER = "anthropic-ratelimit-tokens-reset"
 
       NUMERIC_SECONDS = /\A\d+(\.\d+)?\z/
@@ -56,6 +64,15 @@ module Lain
 
       # Wraps a vendored transport error so nothing above the Provider rescues a
       # Provider::HTTP class. The original is preserved as `#cause`.
+      #
+      # UNRELATED to {Anthropic::APIError}: same name, same shape, no shared
+      # ancestor besides {Lain::Error} -- verified nothing above the Provider
+      # rescues either by name today (Backend can now hand chat either backend
+      # depending on whether journaling is on, see T17w). A future caller that
+      # wants to rescue "an Anthropic API error" regardless of which backend
+      # produced it must handle both explicitly, or a shared marker module must
+      # be introduced first -- do not assume `rescue AnthropicRaw::APIError`
+      # catches an {Anthropic} (SDK) failure, or vice versa.
       class APIError < Lain::Error; end
 
       # A non-2xx response; `#status` is lifted out so callers branch on it
@@ -105,6 +122,17 @@ module Lain
         config = Provider::HTTP::Configuration.new
         config.anthropic_api_key = api_key || ENV.fetch("ANTHROPIC_API_KEY", nil)
         config.anthropic_api_base = api_base unless api_base.nil?
+        # HTTP::Configuration's own request_timeout/max_retries (300 / 3) are
+        # vendored ruby_llm generic defaults, not Anthropic's -- T17w's fix round:
+        # Backend now hands this transport live --journal chat traffic where the
+        # SDK client (Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS = 600,
+        # DEFAULT_MAX_RETRIES = 2) used to sit, so the effective envelope must
+        # match those, not silently trade timeout/retry budget for a WAL. Set
+        # HERE, not on Configuration's own default, so Ollama/Bedrock (their own
+        # constructors, their own Configuration) are untouched; bench's raw
+        # provider inherits these too, which only tightens its fidelity.
+        config.request_timeout = 600
+        config.max_retries = 2
         config.retry_block = @retries.retry_block
         config.exhausted_retries_block = @retries.exhausted_block
         config.rate_limit_reset_header = RATE_LIMIT_RESET_HEADER

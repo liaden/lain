@@ -37,6 +37,15 @@ module Lain
       # rescues an SDK class. The original is preserved as `#cause` (Ruby sets it
       # automatically when we re-raise inside the rescue), so a caller that wants
       # the wire details can still reach them without depending on the SDK type.
+      #
+      # UNRELATED to {AnthropicRaw::APIError}: same name, same shape, no shared
+      # ancestor besides {Lain::Error} -- verified nothing above the Provider
+      # rescues either by name today (Backend can now hand chat either backend
+      # depending on whether journaling is on, see T17w). A future caller that
+      # wants to rescue "an Anthropic API error" regardless of which backend
+      # produced it must handle both explicitly, or a shared marker module must
+      # be introduced first -- do not assume `rescue Anthropic::APIError` catches
+      # an {AnthropicRaw} failure, or vice versa.
       class APIError < Lain::Error; end
 
       # A non-2xx response. `#status` is the HTTP status Integer, lifted out of
