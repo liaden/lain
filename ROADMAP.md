@@ -653,6 +653,10 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
    prefix arm + `stream_started` (CE-5); plus new follow-ups from the plan doc: role→spawn glue
    (a seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an
    `Embedder` model-id reader, and the edge-grain provenance question for OM-1/OM-6.
+9. **Planned (2026-07-16)** — the 2026-07-16 review's blocker + majors, XDG conformance
+   (§ Interface & UX), durable chat sessions + `--resume` (incl. SIGKILL/power-loss via a
+   response WAL), and graceful-exit signals with a grace countdown:
+   `planning/specs/chunk-fixes-xdg-resume-signals.md` (panel-reviewed, 22 cards, 6 waves).
 
 ---
 
