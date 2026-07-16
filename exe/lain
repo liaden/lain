@@ -430,6 +430,9 @@ class LainCLI < Thor
 end
 
 # Guarded so a spec can `load` this file to reach the class seam (build_agent,
-# build_provider) without parsing ARGV or hitting the network. True when run as
-# the gem executable ($0 is this script); false when loaded from elsewhere.
-LainCLI.start(ARGV) if $PROGRAM_NAME == __FILE__
+# build_provider) without parsing ARGV or hitting the network. Direct execution
+# compares paths; an INSTALLED gem runs through the RubyGems binstub, which
+# `load`s this file with $0 still naming the wrapper -- the wrapper's basename
+# is also "lain", which a spec's $0 (rspec) never is. Found by the gem-install
+# smoke: the path-only guard made the installed executable a silent no-op.
+LainCLI.start(ARGV) if $PROGRAM_NAME == __FILE__ || File.basename($PROGRAM_NAME) == File.basename(__FILE__)
