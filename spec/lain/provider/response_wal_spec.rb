@@ -166,6 +166,124 @@ RSpec.describe Lain::Provider::ResponseWal do
     end
   end
 
+  # T17w blocker: the main Agent and every parallel subagent share ONE spool,
+  # and subagents fan out as sibling async fibers that yield on socket IO
+  # BETWEEN writes. Two frames streaming to one file would interleave at record
+  # granularity -- exactly the "bytes trail a terminator record" corruption the
+  # Reader refuses, which would make a crashed parallel-subagent session
+  # unresumable. Only one frame streams; every other fiber's frame buffers and
+  # lands atomically, so no records ever interleave.
+  describe "concurrent frames from different fibers" do
+    # Steps two fibers through open/append/close the way the async scheduler
+    # would -- yielding between every write, so the OLD single-shared-writer path
+    # interleaves records here deterministically (and the Reader refuses them).
+    def step(fiber) = fiber.resume
+
+    it "keeps each fiber's frame contiguous when they open and append alternately" do
+      subject = wal
+      a = Fiber.new do
+        frame = subject.open_frame(request_digest: "a")
+        frame.append("a1")
+        Fiber.yield
+        frame.append("a2")
+        Fiber.yield
+        frame.close(complete: true)
+      end
+      b = Fiber.new do
+        frame = subject.open_frame(request_digest: "b")
+        frame.append("b1")
+        Fiber.yield
+        frame.append("b2")
+        Fiber.yield
+        frame.close(complete: true)
+      end
+      [a, b, a, b, a, b].each { |fiber| step(fiber) }
+      subject.close
+
+      entries = wal.frames.to_a
+      expect(entries.map(&:request_digest)).to eq(%w[a b])
+      expect(entries).to all(be_complete)
+      expect(entries.map(&:bytes)).to eq(%w[a1a2 b1b2])
+    end
+
+    # A streaming frame ABANDONED terminator-less (terminal error / retry
+    # exhaustion) is never closed, so its close never drains @pending. A COMPLETE
+    # buffered sibling must still reach disk on a clean spool close -- losing a
+    # paid-for response on a graceful exit (not even a SIGKILL) is the blocker.
+    it "writes a completed buffered sibling even when the streaming frame is abandoned before spool close" do
+      subject = wal
+      streamer = Fiber.new do
+        frame = subject.open_frame(request_digest: "streamer")
+        frame.append("partial")
+        # abandoned: a terminal error unwound the dispatch, the frame never closed
+      end
+      sibling = Fiber.new do
+        frame = subject.open_frame(request_digest: "sibling")
+        frame.append("complete-body")
+        frame.close(complete: true)
+      end
+      step(streamer)  # streamer opens (streams), appends its partial, returns unclosed
+      step(sibling)   # sibling opens (different fiber -> buffers), completes -> @pending
+      subject.close   # clean exit MUST flush the pending sibling
+
+      entries = wal.frames.to_a
+      expect(entries.map(&:request_digest)).to eq(%w[streamer sibling])
+      expect(entries.first).not_to be_complete # abandoned torn tail
+      recovered = entries.find { |entry| entry.request_digest == "sibling" }
+      expect(recovered).to be_complete
+      expect(recovered.bytes).to eq("complete-body")
+    end
+
+    # A same-fiber takeover after abandonment must drain @pending FIRST, or the
+    # completed sibling lands after the taker (wrong order) or is stranded.
+    it "flushes a pending sibling before a same-fiber takeover, keeping every frame readable" do
+      subject = wal
+      streamer = subject.open_frame(request_digest: "streamer") # main fiber
+      streamer.append("partial") # abandoned, never closed
+      Fiber.new do
+        frame = subject.open_frame(request_digest: "sibling")
+        frame.append("sib-body")
+        frame.close(complete: true) # buffers into @pending (streamer still live)
+      end.resume
+      taker = subject.open_frame(request_digest: "taker") # same fiber -> takeover
+      taker.append("taker-body")
+      taker.close(complete: true)
+      subject.close
+
+      entries = wal.frames.to_a
+      expect(entries.map(&:request_digest)).to eq(%w[streamer sibling taker])
+      expect(entries.map(&:complete?)).to eq([false, true, true])
+      expect(entries.last.bytes).to eq("taker-body")
+    end
+
+    it "flushes a buffered frame that closes FIRST only once the streaming frame closes" do
+      subject = wal
+      streamer = Fiber.new do
+        frame = subject.open_frame(request_digest: "streamer")
+        frame.append("s1")
+        Fiber.yield
+        frame.append("s2")
+        Fiber.yield
+        frame.close(complete: true)
+      end
+      buffered = Fiber.new do
+        frame = subject.open_frame(request_digest: "buffered")
+        frame.append("whole")
+        frame.close(complete: true) # closes while the streamer is still live
+      end
+      step(streamer)  # streamer opens (streams), s1
+      step(buffered)  # buffered opens (different fiber -> buffers), appends, closes -> pending
+      step(streamer)  # s2
+      step(streamer)  # streamer closes -> writes its terminator, then drains the buffered blob
+      subject.close
+
+      entries = wal.frames.to_a
+      expect(entries.map(&:request_digest)).to eq(%w[streamer buffered])
+      expect(entries).to all(be_complete)
+      expect(entries.map(&:bytes)).to eq(%w[s1s2 whole])
+    end
+  end
+
   describe "durability" do
     it "fsyncs on frame close and whenever the mid-stream watermark is crossed" do
       subject = wal(fsync_watermark: 8)

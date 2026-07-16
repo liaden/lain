@@ -135,6 +135,33 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
   end
 
+  # A legacy interleaved WAL (written before frames were serialized) can leave a
+  # mis-slotted region -- exactly the "bytes trail a terminator record" shape the
+  # strict Reader refuses. Salvage must still reach a CLEAN frame written after
+  # it and report the skip, never lose a paid-for response to corruption
+  # elsewhere in the file.
+  describe "a corrupt region before a clean newer frame" do
+    it "recovers the clean frame tolerantly and reports the skipped region, never raising" do
+      request = anthropic_request
+      wal = Lain::Provider::ResponseWal
+      clean_sse = AnthropicSSE.body(canned)
+      corrupt = "#{wal.header_record("corrupt-old")}body#{wal.terminator_record(4, true)}TRAILING"
+      clean = wal.header_record(request.digest) + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
+      File.binwrite(@wal_path, corrupt + clean)
+
+      # The strict reader refuses this file outright -- that is why salvage reads
+      # it tolerantly.
+      expect { wal.new(@wal_path).frames.to_a }.to raise_error(wal::CorruptFrame)
+
+      outcome = described_class.new(entries: [request_sent(request.digest)],
+                                    frames: wal.new(@wal_path).salvageable_frames, timeline:).call
+
+      expect(outcome).to be_recovered
+      expect(outcome.response.content).to eq(canned.content)
+      expect(outcome.notice).to include("recovered", "corrupt region")
+    end
+  end
+
   describe "an incomplete frame" do
     it "is surfaced as a reviewable artifact, never committed, and leaves the Timeline head unchanged" do
       wal = Lain::Provider::ResponseWal.new(@wal_path)

@@ -150,14 +150,14 @@ module Lain
       end
 
       # The Provider owns frame opening (it computes the digest) AND attempt
-      # boundaries: the frame stays live inside {RetryTap} so a retry rotates it
-      # rather than concatenating two attempts into one frame.
+      # boundaries: the frame is threaded onto the request context so a retry
+      # rotates THIS request's frame rather than concatenating two attempts into
+      # one -- reentrant across parallel subagents sharing one Provider (see
+      # {RetryTap}).
       def dispatch(request)
         payload = wire_payload(request)
         frame = @retries.open_frame(request_digest: request.digest)
         request.stream ? stream_dispatch(payload, frame) : sync_dispatch(payload, frame)
-      ensure
-        @retries.release
       end
 
       def stream_dispatch(payload, frame)

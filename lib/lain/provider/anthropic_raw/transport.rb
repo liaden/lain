@@ -49,6 +49,9 @@ module Lain
         def stream(payload, headers = {}, frame: Spool::Null::Frame.new, &on_event)
           connection.post(stream_url, payload) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
+            # On the context so RetryTap#retry_block reaches THIS request's frame
+            # off the retried env, exactly as the sync path already does.
+            req.options.context = (req.options.context || {}).merge(wal_frame: frame)
             install_on_data(req, frame, &on_event)
           end
           frame.close(complete: true)

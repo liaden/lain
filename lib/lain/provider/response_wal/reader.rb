@@ -21,12 +21,29 @@ module Lain
       # tail if it ends the file (emitted incomplete), and {CorruptFrame} -- loud,
       # never a silent mis-slot -- anywhere else, because mid-file it can only
       # mean a payload smuggled the record separator.
+      #
+      # == Tolerant mode
+      #
+      # `tolerant: true` swaps every mid-file refusal for a {Corrupt} marker and
+      # a resync on the next header, so a corrupt region cannot hide a clean
+      # frame written after it. The strict mode's job is to trust `complete`
+      # loudly; the tolerant mode's job is to let a salvage pass still reach a
+      # paid-for response beyond a legacy mis-slot (see {ResponseWal#frames}
+      # vs {ResponseWal#salvageable_frames}).
       class Reader
         # A frame whose header has been read but whose terminator has not.
         Open = Data.define(:request_digest, :raw)
 
-        def initialize(data)
+        # A mis-slotted region that tolerant mode skipped. Its `reason` names why
+        # the scan could not trust the bytes there; a caller partitions it from a
+        # real {Entry} by `#corrupt?`.
+        Corrupt = Data.define(:reason) do
+          def corrupt? = true
+        end
+
+        def initialize(data, tolerant: false)
           @records = data.split(RECORD_SEPARATOR, -1)
+          @tolerant = tolerant
         end
 
         def each(&emit)
@@ -57,22 +74,34 @@ module Lain
           Open.new(request_digest: json["request_digest"], raw:)
         end
 
-        def finish_frame(json, rest, open)
-          raise CorruptFrame, "terminator record with no open frame" if open.nil?
-          raise CorruptFrame, "bytes trail a terminator record" unless rest.empty?
+        def finish_frame(json, rest, open, &emit)
+          return corrupt("terminator record with no open frame", &emit) if open.nil?
+          return corrupt("bytes trail a terminator record", &emit) unless rest.empty?
 
-          yield Entry.new(request_digest: open.request_digest, bytes: open.raw,
-                          complete: json["complete"] == true && json["bytes"] == open.raw.bytesize)
+          emit.call(Entry.new(request_digest: open.request_digest, bytes: open.raw,
+                              complete: json["complete"] == true && json["bytes"] == open.raw.bytesize))
           nil
         end
 
-        def unrecognized(record, open, tail:)
-          unless tail
-            raise CorruptFrame,
-                  "unrecognized record mid-file (payload smuggled the record separator?): #{record[0, 40].inspect}"
-          end
+        def unrecognized(record, open, tail:, &emit)
+          return torn_tail(open, &emit) if tail
 
-          yield(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false))
+          corrupt("unrecognized record mid-file (payload smuggled the record separator?): " \
+                  "#{record[0, 40].inspect}", &emit)
+        end
+
+        def torn_tail(open, &emit)
+          emit.call(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false))
+          nil
+        end
+
+        # Strict mode refuses; tolerant mode drops the mis-slotted region as a
+        # {Corrupt} marker and resyncs (the open frame is abandoned, the next
+        # header starts fresh), so a clean frame after the corruption still reads.
+        def corrupt(reason, &emit)
+          raise CorruptFrame, reason unless @tolerant
+
+          emit.call(Corrupt.new(reason:))
           nil
         end
 

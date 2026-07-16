@@ -70,6 +70,13 @@ module Lain
         # Corrupt's own message names digests and reasons; only this layer
         # still holds the path (Bench::CLI#load_session's precedent).
         raise Refusal, "cannot resume #{File.basename(path)}: #{e.message}"
+      rescue Provider::ResponseWal::CorruptFrame => e
+        # The response WAL should never raise here -- salvage reads it TOLERANTLY
+        # ({Salvager#wal_frames}), so a mis-slotted region resyncs to a notice,
+        # not an exception. This is the loud backstop: a CorruptFrame escaping
+        # is a bug in the tolerant path, and it must refuse namedly rather than
+        # crash the whole resume with a raw provider error the exe cannot map.
+        raise Refusal, "cannot resume #{File.basename(path)}: its response log is corrupt (#{e.message})"
       end
 
       def load_recording(path)

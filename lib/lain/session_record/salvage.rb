@@ -84,7 +84,11 @@ module Lain
       # -- no second commit -- and a caller (`CLI::Resume::Salvager`) knows to
       # write only the missing `session_closed` anchor, not a duplicate
       # `salvaged`/`turn` pair.
-      Recovered = Data.define(:request_digest, :response, :timeline, :newly_committed) do
+      #
+      # `corruption` is nil unless a mis-slotted region was skipped to reach
+      # this frame (a legacy interleaved WAL); it rides the notice so the skip
+      # is reported, never silent, even when a clean newer frame recovered fine.
+      Recovered = Data.define(:request_digest, :response, :timeline, :newly_committed, :corruption) do
         def recovered? = true
         def newly_committed? = newly_committed
 
@@ -92,33 +96,38 @@ module Lain
 
         def notice
           verb = newly_committed? ? "recovered" : "recovery already landed for"
-          "#{verb} turn #{turn.digest} (request #{request_digest}) from the response log -- no new spend"
+          base = "#{verb} turn #{turn.digest} (request #{request_digest}) from the response log -- no new spend"
+          corruption ? "#{base}; #{corruption}" : base
         end
       end
 
       # A frame that never finished -- or never arrived at all (`bytes` is 0
       # when nothing matching the digest reached the WAL before the crash).
       # Surfaced as provenance only; a caller must not commit it.
-      Incomplete = Data.define(:request_digest, :bytes) do
+      Incomplete = Data.define(:request_digest, :bytes, :corruption) do
         def recovered? = false
 
         def notice
-          "request #{request_digest} did not finish before the crash (#{bytes} bytes recovered); " \
-            "not recovered -- re-ask if you still need it"
+          base = "request #{request_digest} did not finish before the crash (#{bytes} bytes recovered); " \
+                 "not recovered -- re-ask if you still need it"
+          corruption ? "#{base}; #{corruption}" : base
         end
       end
 
       # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck --
       #   the session's own journal records, in file order
       # @param frames [Enumerable] every frame in the session's `.wal`, in
-      #   write order -- the {Provider::ResponseWal#frames} duck (#request_digest,
-      #   #bytes, #complete?)
+      #   write order. Pass the TOLERANT duck ({Provider::ResponseWal#salvageable_frames}):
+      #   a corrupt region elsewhere must surface as a {Provider::ResponseWal::Reader::Corrupt}
+      #   marker to be reported, never a raise that aborts recovery of a clean
+      #   frame beyond it. Real frames answer #request_digest/#bytes/#complete?;
+      #   a Corrupt marker answers #corrupt?.
       # @param timeline [Lain::Timeline] the loaded session's current head; a
       #   {Recovered} commits onto this without mutating it (Timeline is
       #   already immutable, stated here for the reader)
       def initialize(entries:, frames:, timeline:)
         @records = entries.filter_map { |entry| Journal.parse(entry) }
-        @frames = frames.to_a
+        @corruptions, @frames = frames.to_a.partition(&:corrupt?)
         @timeline = timeline
       end
 
@@ -133,6 +142,14 @@ module Lain
       end
 
       private
+
+      # nil unless the tolerant reader skipped a mis-slotted region on the way
+      # to the frames above; a caller renders it as a notice (never a raise).
+      def corruption
+        return nil if @corruptions.empty?
+
+        "#{@corruptions.size} corrupt region(s) in the response log were skipped during salvage"
+      end
 
       # The last `request_sent` with no `turn_usage` anywhere after it in the
       # file -- {Agent#commit_and_account}'s atomic commit-then-journal means a
@@ -158,7 +175,7 @@ module Lain
         return already_recovered(digest, response) if already_committed?(response)
 
         timeline = @timeline.commit(role: :assistant, content: response.content)
-        Recovered.new(request_digest: digest, response:, timeline:, newly_committed: true)
+        Recovered.new(request_digest: digest, response:, timeline:, newly_committed: true, corruption:)
       end
 
       # Content, never digest: a re-resume commits the SAME response onto a
@@ -183,11 +200,11 @@ module Lain
       end
 
       def already_recovered(digest, response)
-        Recovered.new(request_digest: digest, response:, timeline: @timeline, newly_committed: false)
+        Recovered.new(request_digest: digest, response:, timeline: @timeline, newly_committed: false, corruption:)
       end
 
       def incomplete(digest, frame)
-        Incomplete.new(request_digest: digest, bytes: frame.nil? ? 0 : frame.bytes.bytesize)
+        Incomplete.new(request_digest: digest, bytes: frame.nil? ? 0 : frame.bytes.bytesize, corruption:)
       end
 
       # A fresh {Provider::AnthropicRaw::StreamAssembler} for exactly one

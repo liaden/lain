@@ -321,6 +321,32 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # A legacy interleaved WAL leaves a mis-slotted region the strict Reader
+    # refuses. Resume must salvage a CLEAN frame written after it, report the
+    # skip as a notice, and proceed -- never let a raw CorruptFrame escape and
+    # block resume of a session whose paid-for response is still recoverable.
+    describe "a corrupt region in the response log before a clean frame" do
+      def write_corrupt_then_complete_frame(name, request, response)
+        wal = Lain::Provider::ResponseWal
+        clean_sse = AnthropicSSE.body(response)
+        corrupt = "#{wal.header_record("corrupt-old")}body#{wal.terminator_record(4, true)}TRAILING"
+        clean = wal.header_record(request.digest) + clean_sse + wal.terminator_record(clean_sse.bytesize, true)
+        File.binwrite(wal_path_for(name), corrupt + clean)
+      end
+
+      it "recovers the clean frame, reports the skipped region, and resumes closed" do
+        request = in_flight_request
+        write_crashed_session("20260101T000000-1.ndjson", request)
+        write_corrupt_then_complete_frame("20260101T000000-1.ndjson", request, canned_response)
+
+        result = resume.call
+
+        expect(result.open?).to be(false)
+        expect(result.timeline.head.content).to eq(canned_response.content)
+        expect(result.notices.join).to include("recovered", "corrupt region")
+      end
+    end
+
     describe "an incomplete frame" do
       it "surfaces provenance and leaves the session open, the file untouched" do
         request = in_flight_request

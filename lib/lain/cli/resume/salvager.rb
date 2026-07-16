@@ -69,8 +69,12 @@ module Lain
            anchor]
         end
 
+        # The TOLERANT enumeration: a mis-slotted region (a legacy interleaved
+        # WAL) surfaces as a skipped-region notice through {SessionRecord::Salvage},
+        # never a raise that would abort recovery of a clean frame written after
+        # it -- losing a paid-for response to corruption elsewhere in the file.
         def wal_frames
-          Provider::ResponseWal.new(wal_path).frames
+          Provider::ResponseWal.new(wal_path).salvageable_frames
         end
 
         # {Paths.wal_for} is the one naming authority; {CLI::Chronicle#spool}

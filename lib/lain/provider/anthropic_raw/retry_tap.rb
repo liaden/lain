@@ -14,33 +14,31 @@ module Lain
       # because a Provider is one round trip, never a loop.
       #
       # T17w now lets the main Agent's Provider and each subagent's share ONE
-      # {Chronicle}-owned spool, so more than one {RetryTap} (each with its own
-      # live frame) can genuinely append to the SAME {ResponseWal}'s single
-      # unsynchronized `File` writer from different fibers at once. That is
-      # safe with no mutex only because `Frame#append`'s `IO#write` is a
-      # blocking syscall that never yields to the fiber scheduler mid-call --
-      # unlike the network IO around it (Faraday/Async socket reads DO yield
-      # between chunks), so two fibers' writes can interleave AT CHUNK
-      # boundaries but never tear a single `#write` call's bytes. If that
-      # writer ever moves to non-blocking/Async IO, this stops being true.
+      # {Chronicle}-owned spool, so more than one round trip -- each with its own
+      # live frame -- can be in flight through this SAME {RetryTap} instance from
+      # different fibers at once (a {Provider} is constructed once and reused).
+      # The live frame therefore CANNOT live in instance state: a retry firing
+      # for one request would rotate whichever sibling last opened, re-enabling
+      # the very "complete frame that lies about concatenated attempts" the
+      # rotation exists to prevent. Instead the frame is threaded onto the
+      # request's Faraday context at open (see {Transport}), and {#retry_block}
+      # reaches ITS request's frame off the retried env -- reentrant, per-request,
+      # no shared mutable state. ({ResponseWal} itself serializes the bytes.)
       class RetryTap
         def initialize(spool:, channel:)
           @spool = spool
           @channel = channel
         end
 
-        # Opens the frame for one round trip and keeps it live for {#retry_block}.
+        # Opens the frame for one round trip and returns it; the Provider threads
+        # it onto the request env, where {#retry_block} finds it again.
         def open_frame(request_digest:)
-          @live = Spool::RotatingFrame.new(spool: @spool, request_digest:)
-        end
-
-        def release
-          @live = nil
+          Spool::RotatingFrame.new(spool: @spool, request_digest:)
         end
 
         def retry_block
           lambda do |env:, retry_count:, exception:, will_retry_in:, **|
-            @live&.rotate
+            frame_on(env)&.rotate
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
           end
@@ -51,6 +49,18 @@ module Lain
             @channel.push(Telemetry::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
                                                        status: env[:status], reason: exception.class.name))
           end
+        end
+
+        private
+
+        # The RotatingFrame this request's transport stashed on its Faraday
+        # context at frame-open ({Transport#sync_post}/{#stream}). `env[:request]`
+        # reads the RequestOptions on a real Faraday::Env and on a plain-Hash
+        # test double alike; nil-safe so a request opened over the Null spool (or
+        # one whose context never took) simply does not rotate.
+        def frame_on(env)
+          context = env[:request]&.context
+          context && context[:wal_frame]
         end
       end
     end
