@@ -258,6 +258,53 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  # T15: pin the Agent's existing Timeline injection seam (agent.rb:71,84) --
+  # `timeline: nil` already defaults to a fresh Timeline, so passing one in is
+  # already "resume from here". Subagent#spawn_agent is the production caller
+  # (lib/lain/tools/subagent.rb:222); these examples pin the behavior it
+  # depends on before T19 builds further on it. Spec-only: no lib change.
+  describe "an injected Timeline" do
+    let(:seeded_store) { Lain::Store.new }
+
+    def committed(store, *turns)
+      turns.inject(Lain::Timeline.empty(store:)) do |timeline, (role, text)|
+        timeline.commit(role:, content: [{ "type" => "text", "text" => text }])
+      end
+    end
+
+    def seed(store)
+      committed(store, [:user, "first"], [:assistant, "ack"], [:user, "second"])
+    end
+
+    it "is the starting state: the request renders all three turns before the new user turn" do
+      provider = Lain::Provider::Mock.new(responses: [text_response("hello")])
+      a = described_class.new(provider:, toolset:, context:, timeline: seed(seeded_store))
+      a.ask("hi")
+
+      rendered = provider.last_request.messages
+      expect(rendered.map { |message| message["role"] }).to eq(%w[user assistant user user])
+      # The content sequence is the pin: two seeded turns share role "user", so
+      # the role sequence alone would not catch a transposition of their content.
+      expect(rendered.map { |message| message["content"].first["text"] }).to eq(%w[first ack second hi])
+    end
+
+    it "shares its Store with the Agent: subsequent commits land in the same Store, no copy" do
+      a = agent(text_response("hello"), timeline: seed(seeded_store))
+      a.ask("hi")
+
+      expect(a.timeline.store).to be(seeded_store)
+    end
+
+    it "resumes an assistant head without inventing a user turn" do
+      assistant_head = committed(Lain::Store.new, [:user, "first"], [:assistant, "ack"])
+
+      a = agent(text_response("hello"), timeline: assistant_head)
+      a.ask("more")
+
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+    end
+  end
+
   describe "#rewind" do
     it "moves the head back and reopens the loop" do
       a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response])
