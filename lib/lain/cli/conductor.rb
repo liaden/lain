@@ -58,7 +58,8 @@ module Lain
         @clock = clock
         @timeline = nil
         @closed = false
-        @ticker = CountdownTicker.new(tty:, tick:)
+        @reply_outstanding = false
+        @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @reply_outstanding })
       end
 
       # Supervise one ask. `timeline` is a thunk to the agent's live Timeline --
@@ -109,6 +110,31 @@ module Lain
       rescue PromptBreaker::Break
         close(reason: :exit)
         nil
+      end
+
+      # Read an ask_human reply through the conductor so it KNOWS Reline owns
+      # stdin for the span. Unlike {#read_prompt} there IS a run in flight (the
+      # supervised ask), so signals stay routed at the coordinator and the grace
+      # clock keeps running: a terminating signal still arms, expires, or promotes
+      # exactly as it would with no reply outstanding, and an expiry interrupts the
+      # run through {Agent::Budget} while {Repl#respond}'s ensure stops the replier
+      # fiber parked here -- Reline's own ensure restores the terminal on that
+      # fiber-stop (PTY-probed, see the handback), so no breaker is needed.
+      #
+      # What DOES change for the span: the countdown ticker is suppressed. It
+      # neither renders its status line (which would smear against Reline's echo)
+      # nor makes its non-blocking key read (which would STEAL a keystroke out of
+      # the operator's answer -- an 'r' silently firing wait_responses). The flag
+      # is conductor-owned (single writer, this fiber) and the ticker checks it
+      # each tick; any status line already on screen is erased once before Reline
+      # draws. When the reply returns and a grace window is still live, the
+      # countdown reappears from the next tick with the live remaining time.
+      def read_reply(tty, text)
+        @reply_outstanding = true
+        @ticker.stop
+        tty.prompt(text)
+      ensure
+        @reply_outstanding = false
       end
 
       # The coordinator's `closer:` duck AND chat's normal-exit closer. Guarded so
@@ -215,9 +241,14 @@ module Lain
       # (see {Conductor#build_shutdown}), so ONE cadence serves both the render and
       # the erase.
       class CountdownTicker
-        def initialize(tty:, tick:)
+        # @param suppressed [#call] -> Boolean, the conductor-owned flag that is
+        #   true while an ask_human reply owns stdin ({Conductor#read_reply}); a
+        #   suppressed tick renders nothing and reads no key, so Reline alone owns
+        #   the terminal for the reply's span. Defaults to never-suppressed.
+        def initialize(tty:, tick:, suppressed: -> { false })
           @tty = tty
           @tick = tick
+          @suppressed = suppressed
         end
 
         # One tick per @tick until the fiber is stopped: render the grace window
@@ -239,7 +270,13 @@ module Lain
 
         private
 
+        # A suppressed tick touches nothing: no render, no key read, and no erase
+        # -- Reline owns the terminal for the reply span (the status line was
+        # erased once at {Conductor#read_reply} entry), so the ticker steps fully
+        # aside until the reply returns.
         def tick(shutdown)
+          return if @suppressed.call
+
           if shutdown.state == :grace
             @tty.render_countdown(deadline: shutdown.deadline, options: { coordinator: shutdown })
           else

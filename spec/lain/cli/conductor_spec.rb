@@ -347,4 +347,166 @@ RSpec.describe Lain::CLI::Conductor do
       expect(chronicle.events).to eq([%i[close exit]])
     end
   end
+
+  # FB (interrupt-readline UX fix): while an ask_human reply is outstanding, Reline
+  # owns stdin -- so the countdown ticker must NEITHER render its status line NOR
+  # make its non-blocking key read (which would otherwise STEAL a keystroke out of
+  # the operator's typed answer, e.g. an 'r' silently firing :wait_responses). The
+  # grace clock still runs and a terminating signal still arms/expires/promotes;
+  # only the ticker's render+read are suppressed, resuming from the next tick once
+  # the reply returns. #read_reply is the seam that flips the conductor-owned
+  # suppression flag (single writer, checked by the ticker each tick).
+  describe "countdown suppression while a reply is outstanding" do
+    def grace_shutdown(deadline: 1060.0)
+      Struct.new(:state, :deadline).new(:grace, deadline)
+    end
+
+    # A tty-shaped input the countdown would read from: a real terminal duck
+    # (tty?/raw!/console_mode) feeding successive bytes of `answer`, then EAGAIN.
+    let(:key_reader_class) do
+      Class.new do
+        def initialize(answer)
+          @bytes = answer.chars
+          @reads = 0
+        end
+        attr_reader :reads
+
+        def tty? = true
+        def raw!(**) = nil
+        def console_mode = :saved
+
+        def console_mode=(_mode)
+          nil
+        end
+
+        def read_nonblock(_size)
+          @reads += 1
+          @bytes.empty? ? raise(IO::EAGAINWaitReadable) : @bytes.shift
+        end
+
+        def remaining = @bytes.join
+      end
+    end
+
+    def key_reader(answer) = key_reader_class.new(answer)
+
+    def grace_coordinator
+      Class.new do
+        def initialize = @signals = []
+        attr_reader :signals
+
+        def state = :grace
+        def deadline = 1060.0
+        def signal(action) = @signals << action
+      end.new
+    end
+
+    # A real Frontend::TTY over `input` so the stolen-keystroke path is the actual
+    # Countdown#read_nonblock, not a stub -- output is a tty-presenting sink.
+    def real_tty(input:)
+      sink = Class.new do
+        def tty? = true
+        def print(*) = nil
+        def puts(*) = nil
+        def flush = nil
+      end.new
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, input:, output: sink,
+                              pastel: Pastel.new(enabled: false),
+                              history_path: File.join(Dir.mktmpdir, "history"), clock: -> { 1000.0 })
+    end
+
+    it "renders nothing while suppressed, then resumes from the next tick after release" do
+      suppressed = true
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty:, tick: 0.001, suppressed: -> { suppressed })
+
+      Sync do |task|
+        runner = task.async { ticker.run(grace_shutdown, task) }
+        task.sleep(0.02) # many ticks elapse, all suppressed
+        expect(tty.renders).to be_empty
+        suppressed = false
+        expect(tty.rendered.dequeue).to eq(1060.0) # the very next tick renders
+        runner.stop
+      end
+    end
+
+    it "does not read (steal) a reply keystroke while suppressed" do
+      key_input = key_reader("ready")
+      coordinator = grace_coordinator
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: real_tty(input: key_input),
+                                                         tick: 0.001, suppressed: -> { true })
+
+      Sync do |task|
+        runner = task.async { ticker.run(coordinator, task) }
+        task.sleep(0.02)
+        runner.stop
+      end
+
+      expect(key_input.reads).to eq(0)
+      expect(coordinator.signals).to be_empty
+      expect(key_input.remaining).to eq("ready")
+    end
+
+    # The theft the suppression prevents, pinned as a characterization: an
+    # UNsuppressed tick reads the answer's first byte ('r') and fires
+    # :wait_responses -- exactly the seam #read_reply exists to close.
+    it "characterizes the theft: an unsuppressed tick steals the leading 'r'" do
+      key_input = key_reader("ready")
+      coordinator = grace_coordinator
+      ticker = Lain::CLI::Conductor::CountdownTicker.new(tty: real_tty(input: key_input),
+                                                         tick: 0.001, suppressed: -> { false })
+
+      Sync do |task|
+        runner = task.async { ticker.run(coordinator, task) }
+        task.sleep(0.02)
+        runner.stop
+      end
+
+      expect(coordinator.signals).to include(:wait_responses)
+      expect(key_input.remaining).not_to eq("ready")
+    end
+  end
+
+  # The expiry-during-reply path (the PTY probe in the handback is the evidence
+  # for the terminal-restore half; this pins the reason + suppression under the
+  # supervised reactor). A run parks inside the model call while a reply is
+  # outstanding at human>; a SIGTERM arms grace, the jumped clock expires it, and
+  # the coordinator interrupts the run and closes grace_expired -- with the ticker
+  # suppressed the whole window, so no status line ever smears over Reline.
+  describe "grace expiry while a reply is outstanding at human>" do
+    it "still interrupts the run and closes grace_expired, rendering no countdown" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0, 1061.0), signals:)
+      reply_parked = Async::Queue.new
+      blocking_tty = Class.new do
+        def initialize(parked) = @parked = parked
+
+        def prompt(_text)
+          @parked.enqueue(true)
+          sleep # park the replier as Reline's blocking read would
+        end
+      end.new(reply_parked)
+      outcome = nil
+
+      Sync do |task|
+        replier = task.async { conductor.read_reply(blocking_tty, "human> ") }
+        driver = task.async do
+          entered.dequeue # the run is provably inside the model call
+          reply_parked.dequeue # the reply is provably parked
+          Process.kill("TERM", Process.pid) # arm grace; the jumped clock expires it
+        end
+        outcome = conductor.supervise(task, -> { agent.timeline }) { agent.ask("hi") }
+        replier.stop
+        driver.wait
+      end
+
+      expect(outcome.closed?).to be(true)
+      expect(chronicle.events.last).to eq(%i[close grace_expired])
+      expect(tty.renders).to be_empty
+    ensure
+      signals.uninstall
+    end
+  end
 end

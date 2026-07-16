@@ -412,13 +412,17 @@ class LainCLI < Thor
     end
 
     # Parks on dequeue (a real scheduler yield -- woken per question, never
-    # polling). `.to_s` is load-bearing: EOF makes prompt return nil, and an
-    # empty answer is honest where Tool::Result.ok(nil) would raise.
+    # polling). The prompt routes through the conductor's #read_reply, not the
+    # tty directly, so the conductor KNOWS Reline owns stdin for the reply's span
+    # and suppresses its countdown ticker's render + key-read -- otherwise the
+    # ticker would steal the operator's answer keystrokes. `.to_s` is load-bearing:
+    # EOF makes prompt return nil, and an empty answer is honest where
+    # Tool::Result.ok(nil) would raise.
     def answer_loop(task)
       task.async do
         loop do
           @tty.render_question(@questions.dequeue)
-          @ask_human.reply(@tty.prompt("human> ").to_s)
+          @ask_human.reply(@conductor.read_reply(@tty, "human> ").to_s)
         end
       end
     end
