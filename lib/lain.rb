@@ -8,6 +8,7 @@
 # new units join this list where their dependencies place them.
 require_relative "lain/version"
 require_relative "lain/error"
+require_relative "lain/paths"
 require_relative "lain/canonical"
 require_relative "lain/prompt"
 require_relative "lain/freezable"
