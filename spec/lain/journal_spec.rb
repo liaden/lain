@@ -148,6 +148,64 @@ RSpec.describe Lain::Journal do
         expect(File).to exist(path)
       end
     end
+
+    # Default journal placement is Paths' concern now -- Journal just asks for
+    # sessions_dir and appends its timestamp+pid naming.
+    it "lands its default path under Paths' XDG state sessions_dir when no path is given" do
+      Dir.mktmpdir do |tmp|
+        paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => tmp })
+
+        journal = described_class.open(paths:)
+        journal.record("type" => "hello")
+        journal.close
+
+        expect(Dir.glob(File.join(paths.sessions_dir, "*.ndjson")).size).to eq(1)
+      end
+    end
+  end
+
+  describe ".default_path" do
+    it "is <sessions_dir>/<UTC-timestamp>-<pid>.ndjson" do
+      Dir.mktmpdir do |tmp|
+        paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => tmp })
+
+        path = described_class.default_path(paths:)
+
+        expect(File.dirname(path)).to eq(paths.sessions_dir)
+        expect(File.basename(path)).to match(/\A\d{8}T\d{6}-#{Process.pid}\.ndjson\z/)
+      end
+    end
+  end
+
+  describe "fsync mode" do
+    it "invokes IO#fsync after the write when fsync: true" do
+      file_io = instance_double(File, write: nil, "sync=": nil, fsync: nil)
+      journal = described_class.new(io: file_io, clock: -> { "T" }, fsync: true)
+
+      journal.record("type" => "x")
+
+      expect(file_io).to have_received(:fsync).once
+    end
+
+    it "does not fsync when fsync mode is off (the default)" do
+      file_io = instance_double(File, write: nil, "sync=": nil, fsync: nil)
+      journal = described_class.new(io: file_io, clock: -> { "T" })
+
+      journal.record("type" => "x")
+
+      expect(file_io).not_to have_received(:fsync)
+    end
+
+    # NOT a StringIO: stringio 3.2.0 answers #fsync as a no-op returning 0, so it
+    # would pass even without the respond_to? guard. A strict double that lacks
+    # #fsync entirely raises on any unstubbed message -- deleting the guard makes
+    # this example fail loudly, which is the point.
+    it "attempts no fsync on an injected IO that lacks it, even with fsync: true" do
+      bare_io = double("io without #fsync", write: nil, "sync=": nil)
+      journal = described_class.new(io: bare_io, clock: -> { "T" }, fsync: true)
+
+      expect { journal.record("type" => "x") }.not_to raise_error
+    end
   end
 
   # The ONE duck every Journal reader speaks (Handler::Recorded, Ledger::Index):

@@ -20,7 +20,7 @@ module Lain
   # writing them as one buffer means a line is never torn, the same discipline the
   # Rust `SharedWriter` follows so Ruby events and Rust `tracing` spans can share
   # one fd and still parse line by line. The fd is the Journal's own -- a file
-  # under `.lain/sessions/` by default, a StringIO in specs -- and NEVER stderr.
+  # under {Paths#sessions_dir} by default, a StringIO in specs -- and NEVER stderr.
   #
   # == Every line parses, even when serialization fails
   #
@@ -39,27 +39,32 @@ module Lain
   class Journal
     class Closed < Error; end
 
-    SESSIONS_DIR = ".lain/sessions"
-
     # Open a Journal on a freshly created session file, owning and later closing
-    # it. The default path is a timestamped NDJSON file under `.lain/sessions/`.
+    # it. The default path is a timestamped NDJSON file under {Paths#sessions_dir}
+    # (`$XDG_STATE_HOME/lain/sessions/<project-hash>/`).
     #
-    # @param path [String] the file to append to (created, with parents)
+    # @param path [String, nil] the file to append to (created, with parents);
+    #   defaults to {default_path}
     # @param clock [#call] returns the timestamp string stamped on each record
+    # @param fsync [Boolean] fsync the fd after every {#record} -- see {#initialize}
+    # @param paths [Paths] resolves the default location; injectable so a spec
+    #   never touches the real XDG env
     # @return [Journal]
-    def self.open(path = default_path, clock: DEFAULT_CLOCK)
+    def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new)
+      path ||= default_path(paths:)
       FileUtils.mkdir_p(File.dirname(path))
       # Append mode so a shared fd (ours and a dup handed to Rust tracing) writes
       # atomically at end-of-file, never overwriting the other's bytes. File.new
       # (not the block form) because the Journal OWNS this handle for its whole
       # life and closes it in #close -- there is no scope to hand it to.
       io = File.new(path, "ab")
-      new(io:, clock:, owns_io: true)
+      new(io:, clock:, owns_io: true, fsync:)
     end
 
-    # @return [String] a timestamped path under {SESSIONS_DIR}
-    def self.default_path
-      File.join(SESSIONS_DIR, "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson")
+    # @param paths [Paths] resolves `sessions_dir`; injectable for specs
+    # @return [String] a timestamped path under `paths.sessions_dir`
+    def self.default_path(paths: Paths.new)
+      File.join(paths.sessions_dir, "#{Time.now.utc.strftime("%Y%m%dT%H%M%S")}-#{Process.pid}.ndjson")
     end
 
     DEFAULT_CLOCK = -> { Time.now.utc.iso8601(6) }
@@ -102,10 +107,16 @@ module Lain
     # @param io [IO, StringIO] the destination the Journal writes to
     # @param clock [#call] returns the timestamp string stamped on each record
     # @param owns_io [Boolean] whether {#close} should close `io`
-    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false)
+    # @param fsync [Boolean] fsync `io` after every {#record} that lands, so a
+    #   crash between the write and the OS's own flush can't lose it. Silently a
+    #   no-op on an `io` that truly lacks `#fsync` (note StringIO is NOT such an
+    #   IO -- it answers `#fsync` as a no-op itself) -- this is a durability
+    #   upgrade, never a new failure mode.
+    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false, fsync: false)
       @io = io
       @clock = clock
       @owns_io = owns_io
+      @fsync = fsync
       @monitor = Monitor.new
       @closed = false
       # Unbuffered writes: an event that reached #record is on the fd before the
@@ -126,6 +137,7 @@ module Lain
         raise Closed, "journal is closed" if @closed
 
         @io.write(line)
+        @io.fsync if @fsync && @io.respond_to?(:fsync)
       end
       self
     end
