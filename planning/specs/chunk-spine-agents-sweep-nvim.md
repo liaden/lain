@@ -1000,8 +1000,9 @@ Scenario: attribution survives concurrency
 
 **✅ landed** (panel: REQUEST-CHANGES → perform-wedge refusal + settle failure-path +
 folded cursor → APPROVE; model-dispatched :actor refuses loudly pending OM-6; residual
-NIT recorded: the cursor advances at render time, not send time — pin delivery semantics
-with OM-6)
+NIT (cursor advanced at render time, not send time) SUPERSEDED by T6 of
+chunk-fixes-xdg-resume-signals — the cursor is gone; Mailbox is a pure projection and
+"folded" is derived from committed causal edges)
 
 > **Orchestrator note (from T19's review):** the one-shot Subagent tool is stateful and
 > parent-bound (@parent thunk; per-call observability state) — safe for synchronous

@@ -593,7 +593,10 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
   init.lua>` — deterministic, plugin-free, `NVIM_APPNAME` rejected (a parallel profile that still
   drifts). Injected commands are namespaced, idempotent on re-attach, and version-handshaked.
 
-**XDG conformance** `[planned]` (added 2026-07-11)
+**XDG conformance** `[landed]` (added 2026-07-11; landed 2026-07-16 via
+chunk-fixes-xdg-resume-signals: `Lain::Paths` resolver, journal + reline history under
+`$XDG_STATE_HOME/lain/`, session discovery directory-derived, `/tmp/lain` runtime fallback;
+relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 - Lain the CLI is an XDG Base Directory citizen: user config in `$XDG_CONFIG_HOME/lain/`, caches in
   `$XDG_CACHE_HOME/lain/`, durable state (reline history, session index) in `$XDG_STATE_HOME/lain/`,
   sockets and other ephemera in `$XDG_RUNTIME_DIR/lain/` (the nvim socket convention already assumes
@@ -653,10 +656,16 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
    prefix arm + `stream_started` (CE-5); plus new follow-ups from the plan doc: role→spawn glue
    (a seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an
    `Embedder` model-id reader, and the edge-grain provenance question for OM-1/OM-6.
-9. **Planned (2026-07-16)** — the 2026-07-16 review's blocker + majors, XDG conformance
+9. **Landed (2026-07-16)** — the 2026-07-16 review's blocker + majors, XDG conformance
    (§ Interface & UX), durable chat sessions + `--resume` (incl. SIGKILL/power-loss via a
-   response WAL), and graceful-exit signals with a grace countdown:
-   `planning/specs/chunk-fixes-xdg-resume-signals.md` (panel-reviewed, 22 cards, 6 waves).
+   response WAL with resume-time salvage), and graceful-exit signals with a grace countdown:
+   `planning/specs/chunk-fixes-xdg-resume-signals.md` — all 22 cards on main. Resume-after-
+   crash is now a property (M2): chat journals a loadable session by default, the Loader
+   reads open sessions and resume chains, salvage recovers paid-for responses without
+   re-spending. Residuals recorded in the plan doc: OM-6 render-side snapshot seam, the
+   interactive countdown at an idle prompt, provider field in the session header,
+   always-AnthropicRaw-for-chat convergence, streamed-4xx retry coercion, live-429
+   rate-limit-header confirmation.
 
 ---
 

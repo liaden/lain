@@ -1,6 +1,9 @@
 # Chunk: critique fixes · XDG paths · durable sessions & resume · graceful exit
 
-status: draft
+status: done (2026-07-16 — all 22 cards landed on main; suite 2073/0/4 pending (pre-existing
+T25 parity); gem-install, XDG, live-resume, and compaction-retention integration checks
+passed; kill dance (check 4) owed as Joel's manual pass — see the countdown-at-idle-prompt
+veto flag under T21 and the follow-ups recorded inline)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -136,6 +139,12 @@ of old sessions reads the log, never the summary.
    a resumed run's header carries `resumed_from` (prior file's basename + its verified
    head digest). The Loader follows the chain. The one-header-per-file rule stands;
    a SIGKILL can never corrupt a prior run's bytes.
+   > **Amended (orchestrator, T18 review):** one deliberate, provenance-stamped bend —
+   > a `Recovered` salvage APPENDS to the crashed file (salvage record + recovered turn
+   > + `session_closed` anchor), retroactively closing it so the Loader's existing
+   > closed-session path reads it with zero changes. No prior byte is ever modified;
+   > the salvage append is content-idempotent across every prefix of itself (a second
+   > SIGKILL mid-salvage re-resumes cleanly, never duplicating the recovered turn).
 5. **The response WAL** (2026-07-16 mid-plan addition, Joel's DB-WAL framing). Three
    options considered:
    (a) *journal-only*: fsync'd turn records at commit — crash mid-response loses the
@@ -475,6 +484,22 @@ Scenario: projection no longer aliases its input
   this card supersedes that note — update the T23 residual-NIT line in
   `chunk-spine-agents-sweep-nvim.md` (one-line edit, orchestrator applies).
 
+> **Escalation resolved (orchestrator, 2026-07-16):** the first trigger FIRED — the
+> review probe showed render and commit CAN disagree (the log is mutable during the
+> provider round-trip; a mid-dispatch arrival was claimed-but-never-rendered, then
+> lost). Ruling: B2's "no side-channel" stands for derived state, but the INPUT gets
+> pinned — the Agent captures one frozen log snapshot per turn and both render and
+> commit fold that snapshot. Agreement is structural; the mid-dispatch probe became
+> a spec.
+>
+> **Residual for OM-6 (re-review finding, carried forward):** the render pipeline has
+> no seam yet to receive the per-iteration snapshot — a `Mailbox` combinator binds its
+> snapshot at pipeline construction, so `mailbox: Source` on an Agent whose pipeline
+> was not built per-turn consumes messages no request rendered. OM-6 must deliver the
+> per-turn snapshot to the render pipeline (per-turn pipeline construction by the
+> supervisor, or a snapshot seam on render) and, until then, treat a `Source` without
+> render wiring as unfinished wiring.
+
 ### T7 — Give spawned children a real Session   [wave 1] [risk: low]
 
 **Depends on:** none
@@ -769,6 +794,12 @@ Scenario: ask_human Q&A survives
   new types must be additive; if any existing discriminator wants renaming, stop.
 - If per-turn fsync measurably stalls the REPL (it should not at human cadence), stop
   rather than silently dropping fsync.
+
+> **Scope expansion (orchestrator, 2026-07-16):** `lib/lain/tools/subagent.rb` and
+> `lib/lain/tools/ask_human.rb` added to T13's Files — both gain an `observer:`
+> forwarding kwarg (Null default, existing paths byte-identical) so the exe can thread
+> the scribe into the tools' ChainWriters. Without it the observer seam is unreachable
+> from chat and live `:message`/`:spawn` events would never hit the session record.
 
 ### T14 — Teach the Loader open sessions and resume chains   [wave 4] [risk: medium]
 
@@ -1135,6 +1166,14 @@ Scenario: non-tty degrades to plain lines
 - Reline owns the terminal while parked at a prompt — a countdown firing mid-`readline`
   must not fight it; if the only clean answer is "interrupt the readline and re-prompt
   after", stop and confirm that UX.
+
+> **Escalation resolved (orchestrator, 2026-07-16):** the trigger FIRED — a real
+> PTY+Reline probe showed Reline swallows every countdown key and fights over the
+> bottom line. Ruling: interrupt-the-readline-and-re-prompt IS the UX, derived from
+> what the plan already pins (decision 6: `c`/Enter cancels; T22's at-prompt AC:
+> "the readline is broken out of"). On a signal at a parked prompt, T22 breaks the
+> readline, the countdown renders with keys live, and a cancel re-prompts. Flagged
+> for Joel's manual pass (kill dance) as the place to veto.
 - Only the frontend touches `$stdout` (output_discipline_spec) — the countdown must live
   entirely in TTY; if any coordinator state wants to print, it goes through the Channel.
 
