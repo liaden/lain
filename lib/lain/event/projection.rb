@@ -21,9 +21,12 @@ module Lain
       #   construction means constructing a new Projection over it
       # @param usage [Hash{String=>Usage}] digest => summed usage, Journal-derived
       def initialize(events = [], usage: {})
-        @events = events.to_a
+        # Copied, not aliased: `Array#to_a` returns the receiver, so without the
+        # `dup` a caller that later appends to its own Array would silently
+        # mutate this projection's log and every view over it. A projection is a
+        # pure fold, which is a lie the instant its inputs can change underneath.
+        @events = events.to_a.dup.freeze
         @usage = usage
-        @by_digest = @events.to_h { |event| [event.digest, event] }
       end
 
       # Exactly the :message events addressed to `recipient`, in log order. A
@@ -35,6 +38,24 @@ module Lain
       def mailbox(recipient)
         wanted = Canonical.normalize(recipient)
         @events.lazy.select { |event| event.kind == :message && event.to == wanted }
+      end
+
+      # The recipient's messages still pending: a :message is pending iff no
+      # committed :turn in the log names it a causal parent (decision 2). "Folded"
+      # is thus a pure function of the log, never a consumed queue -- a dispatch
+      # that never commits re-folds everything. Purity is NOT agreement: the
+      # live log is mutable between a render and its commit, so two calls over
+      # separately-read logs CAN disagree about the pending set. Render and
+      # commit must both fold ONE frozen per-turn snapshot of it
+      # ({Context::Mailbox::Snapshot}) -- neither may read the log live.
+      # Consumption counts :turn edges ONLY: a :message or :spawn carries
+      # causal_parents for lineage, which is not consumption.
+      #
+      # @param recipient [String, Symbol]
+      # @return [Enumerator::Lazy<Event>]
+      def pending(recipient)
+        consumed = consumed_by_turns
+        mailbox(recipient).reject { |event| consumed.include?(event.digest) }
       end
 
       # The :snapshot in force at `turn`: the last snapshot taken at or before
@@ -82,6 +103,15 @@ module Lain
 
       private
 
+      # The digests every committed :turn names among its causal parents -- the
+      # consumed set {#pending} subtracts. A Set because membership is the only
+      # question asked of it, once per candidate message.
+      def consumed_by_turns
+        @events.each_with_object(Set.new) do |event, consumed|
+          consumed.merge(event.causal_parents) if event.kind == :turn
+        end
+      end
+
       # The transitive causal ancestry of `event`: every log-resident event
       # reachable through `causal_parents`, depth-first along the (already
       # sorted) edges. An explicit work-stack, NOT recursion -- a 10,000-link
@@ -106,9 +136,17 @@ module Lain
       def drain(stack, seen)
         until stack.empty?
           digest = stack.pop
-          source = seen.add?(digest) && @by_digest[digest]
+          source = seen.add?(digest) && by_digest[digest]
           yield source if source
         end
+      end
+
+      # Memoized on first provenance walk rather than built eagerly: the hot
+      # per-turn path (Mailbox's #pending snapshot) never asks for it, so a
+      # projection constructed every turn should not pay an O(log) index it
+      # will not use (panel NIT #3).
+      def by_digest
+        @by_digest ||= @events.to_h { |event| [event.digest, event] }
       end
 
       # The tool_result blocks an event carries in its content, or none when the

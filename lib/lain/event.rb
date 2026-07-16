@@ -61,11 +61,16 @@ module Lain
     # the body digest, because it carries causal lineage like "spawned_from");
     # `parent` is the single render edge. `correlation` names the chain by its
     # root event digest -- {Timeline#commit} derives it, so it is nil only on a
-    # root or on a turn built outside any chain.
-    def self.turn(role:, content:, parent: nil, meta: {}, correlation: nil)
+    # root or on a turn built outside any chain. `causal_parents` defaults to the
+    # empty set, so an ordinary turn hashes exactly as before; the assistant
+    # commit populates it with the turn's folded mailbox messages (decision 2),
+    # the first production writer of causal edges onto a :turn -- read from the
+    # frozen per-turn {Context::Mailbox::Snapshot} the render also folded, never
+    # from the live log, or the edge would claim a message the prompt never saw.
+    def self.turn(role:, content:, parent: nil, meta: {}, correlation: nil, causal_parents: [])
       payload = Payload.new(kind: :turn, body: { "role" => normalize_role(role),
                                                  "content" => content, "meta" => meta })
-      new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:)
+      new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:, causal_parents:)
     end
 
     def initialize(kind:, payload_digest: nil, body: nil, carried_payload: nil, from: nil, to: nil,

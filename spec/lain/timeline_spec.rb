@@ -71,6 +71,35 @@ RSpec.describe Lain::Timeline do
     end
   end
 
+  # T6/decision 2: the assistant commit records the messages a render folded as
+  # the turn's causal_parents -- the first production writer of causal edges on
+  # turns. The default (no mailbox) path passes none, and its digest must stay
+  # byte-identical to a pre-mailbox turn.
+  describe "#commit with causal_parents" do
+    it "threads the given causal parents onto the committed turn" do
+      base = say(timeline, "a")
+      folded = base.commit(role: :assistant, content: text("b"), causal_parents: [base.head_digest])
+      expect(folded.head.causal_parents).to eq([base.head_digest])
+    end
+
+    it "changes the turn digest, because causal_parents are hashed content" do
+      base = say(timeline, "a")
+      plain = base.commit(role: :assistant, content: text("b"))
+      causal = base.fork.commit(role: :assistant, content: text("b"), causal_parents: [base.head_digest])
+      expect(causal.head_digest).not_to eq(plain.head_digest)
+    end
+
+    it "records no causal parents by default" do
+      expect(say(timeline, "a").head.causal_parents).to eq([])
+    end
+
+    it "refuses a causal parent the store has never seen, the same edge Store enforces" do
+      base = say(timeline, "a")
+      expect { base.commit(role: :assistant, content: text("b"), causal_parents: ["blake3:ghost"]) }
+        .to raise_error(Lain::Store::MissingObject)
+    end
+  end
+
   describe "time travel" do
     let(:three) { say(say(say(timeline, "a"), "b", role: :assistant), "c") }
 

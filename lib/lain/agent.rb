@@ -71,6 +71,7 @@ module Lain
                    timeline: nil,
                    workspace: Workspace.empty,
                    session: Session.new,
+                   mailbox: Context::Mailbox::Null,
                    budget: Budget.new,
                    journal: Channel::Null.instance,
                    transition_listener: TransitionListener::Null,
@@ -78,14 +79,14 @@ module Lain
                    tool_middleware: Middleware::Stack.new,
                    turn_middleware: Middleware::Stack.new)
       super() # state_machines sets the initial state through the super chain.
-      @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
       @toolset = toolset
       @context = context
       @timeline = timeline || Timeline.empty(store: Store.new)
       @workspace = workspace
+      @mailbox = mailbox
       @budget = budget
       @turn_middleware = turn_middleware
-      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware)
+      wire_callers(provider:, model_middleware:, handler:, tool_middleware:)
       seed_run_state(transition_listener, journal, session)
     end
 
@@ -150,6 +151,15 @@ module Lain
       end
     end
 
+    # The two middleware-wrapped callers the loop drives -- the provider round
+    # trip and tool dispatch, each behind its own {Middleware::Stack}. Grouped
+    # out of #initialize so the constructor reads as the wiring seam its own
+    # comment describes rather than growing a line per collaborator.
+    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:)
+      @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
+      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware)
+    end
+
     # The mutable run context, kept apart from #initialize on purpose: the
     # collaborators above are the immutable wiring, and these four are the state
     # a run mutates as it goes -- a fresh Accounting rolling up over the injected
@@ -170,9 +180,17 @@ module Lain
     def step
       @budget.check_iterations!(@iterations)
       @iterations += 1
-      response = call_model
-      commit_and_account(response)
-      response
+      # The turn's inbox is snapshotted HERE, before the render, and that one
+      # frozen Snapshot is what both sides of the turn consume: the render-side
+      # Mailbox fold (the OM-6 pipeline wiring) and this turn's commit. The
+      # shared log is mutable DURING the provider round trip -- an actor reply
+      # can land mid-dispatch -- so neither side may read it live: a live read
+      # at commit would claim that arrival as a causal parent of a turn that
+      # never rendered it, marking it consumed and losing it (panel probe #2).
+      # Captured per turn and consumed only by a successful commit, so a raised
+      # dispatch drops the snapshot and the next turn re-captures: re-folds.
+      inbox = @mailbox.capture(@timeline)
+      call_model.tap { |response| commit_and_account(response, inbox) }
     end
 
     # The commit->journal pair, shielded as ONE atom against cancellation.
@@ -183,11 +201,17 @@ module Lain
     # free. A stop requested inside the region still lands, at its exit; note
     # it also preempts a raise from inside the region (a simultaneous stop and
     # token-ceiling bust settles as the stop -- both are harness halts).
-    def commit_and_account(response)
+    def commit_and_account(response, inbox)
       Async::Task.current.defer_stop do
         # Correctness gate 1: commit the FULL content -- text, thinking, AND
         # tool_use blocks. Extracting only the text corrupts the very next turn.
-        @timeline = @timeline.commit(role: :assistant, content: response.content)
+        # `inbox` is the frozen Snapshot #step captured at turn start -- the
+        # same one the render folded -- so the causal_parents recorded here are
+        # exactly the messages this turn's prompt contained, by construction. A
+        # message that arrived during the round trip is NOT in the snapshot and
+        # stays pending for the next turn's capture (see #step).
+        @timeline = @timeline.commit(role: :assistant, content: response.content,
+                                     causal_parents: inbox.folded)
         # Commit BEFORE the token check: a turn that busts the ceiling was still
         # paid for, so it stays in the record -- Timeline and Journal both --
         # rather than vanishing with the raise.
@@ -218,10 +242,8 @@ module Lain
     def settle(response)
       perform_tools(response) if awaiting_tools?
       @failure_reason = FAILURE_REASONS[response.stop_reason] if failed?
-      settled? ? :settled : :continue
+      done? || failed? ? :settled : :continue
     end
-
-    def settled? = done? || failed?
 
     def call_model
       dispatch!

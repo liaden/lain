@@ -52,8 +52,14 @@ module Lain
     # redundant self-assignment worth deleting. Deleting it would silently drop
     # every turn. The git verb says what actually happens: a new object, named by
     # its content, with the old head as its parent.
-    def commit(role:, content:, meta: {})
-      turn = Event.turn(role:, content:, parent: head_digest, meta:, correlation: next_correlation)
+    #
+    # `causal_parents` defaults to the empty set (a plain turn hashes exactly as
+    # before); the Agent passes the mailbox messages this turn folded so they
+    # stop being pending (decision 2). Each is a Store edge, so {Store#put}
+    # refuses a turn naming a message the store has not already seen -- the same
+    # referential-integrity guard `parent` and `payload_digest` ride.
+    def commit(role:, content:, meta: {}, causal_parents: [])
+      turn = Event.turn(role:, content:, parent: head_digest, meta:, correlation: next_correlation, causal_parents:)
       # The envelope's payload_digest is a Store edge (referential integrity),
       # so the body must land first or the envelope's own put would dangle. The
       # turn CARRIES the very Payload it addresses (Event.turn built it), so

@@ -67,6 +67,62 @@ RSpec.describe Lain::Event::Projection do
     end
   end
 
+  # Decision 2 / TL-4: "pending" is DERIVED, never a consumed queue. A :message
+  # is pending iff no committed :turn in the log names it a causal parent -- so
+  # render and commit, folding the same log, cannot disagree about what a turn
+  # consumed. Pure: the same log yields the same set every time.
+  describe "#pending" do
+    it "lists the recipient's messages no committed turn has named a causal parent" do
+      first = message(to: "parent")
+      second = message(to: "parent", from: "worker")
+      expect(described_class.new([first, second]).pending("parent").to_a).to eq([first, second])
+    end
+
+    it "drops a message a committed turn named among its causal parents" do
+      consumed = message(to: "parent")
+      kept = message(to: "parent", from: "worker")
+      fold = turn("assistant answered", causal_parents: [consumed.digest])
+      expect(described_class.new([consumed, kept, fold]).pending("parent").to_a).to eq([kept])
+    end
+
+    it "counts only :turn causal edges as consumption -- a message's own lineage never consumes" do
+      addressed = message(to: "parent")
+      # A later :message that names `addressed` among its causal parents is
+      # lineage (a reply), not a turn, so `addressed` stays pending.
+      reply = Lain::Event.new(kind: :message, payload_digest: "blake3:reply",
+                              from: "parent", to: "worker", causal_parents: [addressed.digest])
+      expect(described_class.new([addressed, reply]).pending("parent").to_a).to eq([addressed])
+    end
+
+    it "is diverge-safe: the same message is pending in a log lacking the consuming turn" do
+      consumed = message(to: "parent")
+      fold = turn("folded", causal_parents: [consumed.digest])
+      expect(described_class.new([consumed, fold]).pending("parent").to_a).to be_empty
+      expect(described_class.new([consumed]).pending("parent").to_a).to eq([consumed])
+    end
+
+    it "matches a Symbol recipient against the canonical (String) address" do
+      to_parent = message(to: "parent")
+      expect(described_class.new([to_parent]).pending(:parent).to_a).to eq([to_parent])
+    end
+
+    it "streams lazily so a caller need not materialize the whole log" do
+      expect(described_class.new([message(to: "parent")]).pending("parent")).to be_a(Enumerator::Lazy)
+    end
+  end
+
+  # Scenario: projection no longer aliases its input.
+  describe "input isolation" do
+    it "is unchanged when the caller appends to the Array it was constructed from" do
+      log = [message(to: "human")]
+      projection = described_class.new(log)
+      log << message(to: "human", from: "worker")
+
+      expect(projection.mailbox(:human).to_a.size).to eq(1)
+      expect(projection.pending(:human).to_a.size).to eq(1)
+    end
+  end
+
   # Scenario: workspace at a point in time.
   describe "#workspace_at" do
     # Snapshots taken after the 2nd and the 5th turn in the log.
