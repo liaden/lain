@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
   let(:store) { Lain::Store.new }
@@ -267,6 +269,97 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(provider.last_request.tools.map { |t| t["name"] }).to eq(union.names)
+    end
+  end
+
+  # ---- T7: children get a real Session --------------------------------------
+  #
+  # Before this card, every spawned child ran under Session::Null
+  # (spawn_agent's `session: Session::Null.instance`), so EditFile's
+  # read-before-write contract -- its `requires` block calls
+  # `session_of(invocation).read?(input.path)` -- could never be satisfied:
+  # Session::Null#read? is unconditionally false. A write-capable child was
+  # structurally unable to ever pass its own contract.
+  describe "children get a real Session (T7)" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmpdir = dir
+        example.run
+      end
+    end
+
+    attr_reader :tmpdir
+
+    def write(name, content)
+      path = File.join(tmpdir, name)
+      File.write(path, content)
+      path
+    end
+
+    def tool_result_blocks(timeline)
+      timeline.to_a.select { |turn| turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" } }
+                   .flat_map(&:content)
+                   .select { |b| b["type"] == "tool_result" }
+    end
+
+    def read_edit_toolset
+      Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::EditFile.new])
+    end
+
+    it "lets a write-capable child satisfy read-before-write" do
+      path = write("hello.txt", "hello world")
+      provider = mock(
+        tool_response(["r1", "read_file", { "path" => path }]),
+        tool_response(["e1", "edit_file", { "path" => path, "old_string" => "hello", "new_string" => "goodbye" }]),
+        text_response("edited")
+      )
+      tool = build_subagent(provider:, toolset: read_edit_toolset, policy: spawn_policy(only: %i[read_file edit_file]))
+
+      result = tool.call({ "prompt" => "read then edit" }, invocation)
+
+      expect(result).to be_ok
+      expect(tool_result_blocks(tool.last_child)).to all(include("is_error" => false))
+      expect(File.read(path)).to eq("goodbye world")
+    end
+
+    it "does not hand a child the parent's read-set: the child's session starts empty" do
+      path = write("hello.txt", "hello world")
+      parent_session = Lain::Session.new.record_read(path)
+      provider = mock(
+        tool_response(["e1", "edit_file", { "path" => path, "old_string" => "hello", "new_string" => "goodbye" }]),
+        text_response("gave up")
+      )
+      tool = build_subagent(provider:, toolset: read_edit_toolset, policy: spawn_policy(only: %i[read_file edit_file]))
+
+      result = tool.call({ "prompt" => "edit blind" }, Lain::Tool::Invocation.new(context: parent_session))
+
+      expect(result).to be_ok
+      results = tool_result_blocks(tool.last_child)
+      expect(results).not_to be_empty
+      expect(results.first["is_error"]).to be(true)
+      expect(File.read(path)).to eq("hello world")
+    end
+
+    it "gives sibling children their own Session: a second spawn does not inherit the first's read-set" do
+      path = write("hello.txt", "hello world")
+      provider = mock(
+        tool_response(["r1", "read_file", { "path" => path }]),
+        tool_response(["e1", "edit_file", { "path" => path, "old_string" => "hello", "new_string" => "goodbye" }]),
+        text_response("first done"),
+        tool_response(["e2", "edit_file", { "path" => path, "old_string" => "goodbye", "new_string" => "farewell" }]),
+        text_response("second done")
+      )
+      tool = build_subagent(provider:, toolset: read_edit_toolset, policy: spawn_policy(only: %i[read_file edit_file]))
+
+      first = tool.call({ "prompt" => "read then edit" }, invocation)
+      expect(first).to be_ok
+      expect(File.read(path)).to eq("goodbye world")
+
+      second = tool.call({ "prompt" => "edit blind" }, invocation)
+      expect(second).to be_ok
+      second_results = tool_result_blocks(tool.last_child)
+      expect(second_results.first["is_error"]).to be(true)
+      expect(File.read(path)).to eq("goodbye world")
     end
   end
 end

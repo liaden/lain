@@ -214,13 +214,21 @@ module Lain
         end)
       end
 
+      # A fresh {Session} per spawn -- never {Session::Null} -- so a
+      # write-capable child (read_file + edit_file in its `only`-set) can
+      # satisfy EditFile's read-before-write contract against its OWN
+      # read-set. Built here, not memoized on `self`: a Subagent instance is
+      # reused across sibling spawns (T19's re-entrancy contract), so a
+      # per-tool ivar would leak one sibling's reads into the next. `Session.new`
+      # never sees the parent's Session -- this tool was never handed a
+      # reference to it -- so the child's read-set starts empty by construction.
       def spawn_agent(parent, union, allowed)
         Agent.new(
           provider: @provider, context: @context_factory.call,
           toolset: @policy.posture.rendered_toolset(union:, allowed:),
           handler: child_handler(union, allowed),
           timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
-          session: Session::Null.instance, budget: @budget, journal: @journal
+          session: Session.new, budget: @budget, journal: @journal
         )
       end
 
