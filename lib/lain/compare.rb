@@ -140,34 +140,23 @@ module Lain
         fmt = METRICS.fetch(key).fetch(:fmt)
         [METRICS.fetch(key).fetch(:label), dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map(&fmt)]
       end
-      table(%w[metric n mean median min max], rows)
+      Table.new(headers: %w[metric n mean median min max], rows:).to_s
     end
 
     def per_run_table
       headers = ["run", *shown_metrics.map { |key| METRICS.fetch(key).fetch(:label) }]
       rows = @runs.map { |run| [run.name, *shown_metrics.map { |key| cell(key, run) }] }
-      table(headers, rows)
+      Table.new(headers:, rows:).to_s
     end
 
     def cell(key, run)
       spec = METRICS.fetch(key)
       spec.fetch(:fmt).call(run.public_send(spec.fetch(:reader)))
     end
-
-    # Fixed-width table: first column left-justified (labels), the rest right-
-    # justified (numbers line up on the decimal). A dashed rule under the header.
-    def table(headers, rows)
-      widths = column_widths(headers, rows)
-      separator = widths.map { |w| "-" * w }.join("  ")
-      [row_line(headers, widths), separator, *rows.map { |row| row_line(row, widths) }].join("\n")
-    end
-
-    def column_widths(headers, rows)
-      headers.each_index.map { |i| ([headers[i]] + rows.map { |row| row[i] }).map(&:length).max }
-    end
-
-    def row_line(cells, widths)
-      cells.each_index.map { |i| i.zero? ? cells[i].ljust(widths[i]) : cells[i].rjust(widths[i]) }.join("  ")
-    end
   end
 end
+
+# After the class body: Table reopens Compare, and nothing in the body above
+# needs it before runtime (the same children-after-the-class-body load order
+# effect/handler.rb uses).
+require_relative "compare/table"

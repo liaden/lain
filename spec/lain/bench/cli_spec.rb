@@ -98,6 +98,31 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
+  describe "#sweep_report" do
+    it "returns the five-arm retrieval report as a String, without printing" do
+      expect { cli.sweep_report(k: 5) }.not_to output.to_stdout
+      expect { cli.sweep_report(k: 5) }.not_to output.to_stderr
+      report = cli.sweep_report(k: 5)
+      expect(report).to include("manifest").and include("bm25").and include("vector")
+        .and include("hybrid").and include("graph")
+    end
+
+    it "is deterministic across calls" do
+      expect(cli.sweep_report(k: 5)).to eq(cli.sweep_report(k: 5))
+    end
+
+    # Refusal parity with record's --n: user input refuses in the experimenter's
+    # vocabulary through the exe's `rescue Lain::Error`, never a bare
+    # ArgumentError backtrace.
+    it "refuses a non-positive k with a Refusal, not a deep ArgumentError" do
+      expect { cli.sweep_report(k: 0) }.to raise_error(described_class::Refusal, /whole number|at least/)
+    end
+
+    it "refuses a fractional k rather than silently truncating recall@2.5 to recall@2" do
+      expect { cli.sweep_report(k: 2.5) }.to raise_error(described_class::Refusal, /whole number/)
+    end
+  end
+
   describe "#record" do
     let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
     # The last mock response repeats once exhausted, so one script drives

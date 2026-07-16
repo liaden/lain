@@ -17,10 +17,24 @@ module Lain
       # prefix, so truncating the tail would otherwise pass), and every
       # request_sent record must rebuild to its own recorded digest.
       class Loader
+        # The default context factory: rebuilds the recorded run's Context with
+        # the SAME default pipeline it recorded under. Injectable so a caller
+        # replaying push-recall can supply a Context whose pipeline composes a
+        # memory stage (Context::Recall) after CacheBreakpoints, WITHOUT this
+        # class hardcoding that choice. The default keeps byte-identical
+        # behavior for every existing caller -- the transport fields it is handed
+        # are exactly the recorded ones.
+        DEFAULT_CONTEXT_FACTORY = lambda do |model:, max_tokens:, system:, stream:, extra:|
+          Context.new(model:, max_tokens:, system:, stream:, extra:)
+        end
+
         # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck;
         #   entries it answers nil for are somebody else's records and skipped
-        def initialize(entries)
+        # @param context_factory [#call] builds the Context from the recorded
+        #   transport fields; defaults to the recorded default pipeline.
+        def initialize(entries, context_factory: DEFAULT_CONTEXT_FACTORY)
           @records = entries.filter_map { |entry| Journal.parse(entry) }
+          @context_factory = context_factory
         end
 
         # @return [Recording]
@@ -84,13 +98,14 @@ module Lain
                          "fills are session-fixed, one record pins them"
         end
 
-        # The default-pipeline Context only -- see the note on {Session}.
+        # The recorded transport fields, handed to the injected factory (default:
+        # the recorded default pipeline -- see {DEFAULT_CONTEXT_FACTORY}).
         # `extra` (sampler params) loads unverified like the other transport
         # fields; `|| {}` tolerates recordings written before the key existed.
         def context
-          Context.new(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
-                      system: header["system"], stream: header.fetch("stream"),
-                      extra: header["extra"] || {})
+          @context_factory.call(model: header.fetch("model"), max_tokens: header.fetch("max_tokens"),
+                                system: header["system"], stream: header.fetch("stream"),
+                                extra: header["extra"] || {})
         end
 
         def toolset

@@ -66,9 +66,18 @@ class LainCLI < Thor
     rescue Lain::Error => e
       raise Thor::Error, e.message
     end
+
+    desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
+    method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
+                      aliases: "-k", desc: "retrieval depth (recall@k)"
+    def sweep
+      say Lain::Bench::CLI.new.sweep_report(k: options[:k])
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
   end
 
-  desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record)"
+  desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record, sweep)"
   subcommand "bench", Bench
 
   desc "chat", "Start an interactive Lain session"

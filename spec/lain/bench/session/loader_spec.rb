@@ -68,6 +68,30 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  describe "the injectable context factory" do
+    it "defaults to rebuilding a plain Context with the recorded transport fields (byte-identical)" do
+      ctx = recording.context
+      expect(ctx).to be_a(Lain::Context)
+      expect(ctx.model).to eq("claude-opus-4-8")
+      expect(ctx.system).to eq("be terse")
+      expect(ctx.max_tokens).to eq(1024)
+    end
+
+    it "hands the recorded transport fields to a custom factory and uses the Context it returns" do
+      seen = nil
+      sentinel = Lain::Context.new(model: "custom-pipeline", max_tokens: 7)
+      factory = lambda do |**fields|
+        seen = fields
+        sentinel
+      end
+
+      rebuilt = described_class.new(entries, context_factory: factory).recording
+
+      expect(rebuilt.context).to be(sentinel)
+      expect(seen).to include(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+    end
+  end
+
   describe "integrity" do
     def forge(type)
       records = entries.map { |line| JSON.parse(line) }

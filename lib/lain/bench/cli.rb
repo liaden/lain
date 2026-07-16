@@ -40,6 +40,21 @@ module Lain
         build_variance(recordings, paths, price_book).report
       end
 
+      # The five-arm retrieval sweep (6-2.4): a deterministic, offline recall@k
+      # eval over the committed gold corpus, ranked with a tokens-on-recall
+      # column. No provider, no money, no network -- the vector arm reads
+      # committed fixture embeddings -- so unlike {#record} this needs neither a
+      # {Lain::CLI::Backend} nor the key gate. A stale fixture raises
+      # {Sweep::StaleEmbeddings} (a Lain::Error the exe presents); a bad `k` is
+      # user input and refuses like record's run count -- see {#check_k}.
+      #
+      # @param k [Integer] retrieval depth (recall@k)
+      # @return [String] the Compare-style report; never printed here
+      # @raise [Refusal] on a k that is not a positive whole number
+      # rubocop:disable Naming/MethodParameterName -- `k` is the pinned recall@k name.
+      def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
+      # rubocop:enable Naming/MethodParameterName
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.
@@ -77,9 +92,8 @@ module Lain
         # PS-2 must attribute what ACTUALLY rendered: `--system` renders
         # instead of the slots, and SlotFills.from owns that distinction.
         attribution = Telemetry::SlotFills.from(backend.slots, override: system)
-        (1..runs).map do |index|
-          record_run(provider, context, attribution, prompts, File.join(out, "#{index}.ndjson"))
-        end
+        run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:)
+        (1..runs).map { |index| run_recorder.record(File.join(out, "#{index}.ndjson")) }
       end
 
       private
@@ -147,6 +161,20 @@ module Lain
         count
       end
 
+      # Refusal parity with {#check_runs}: a fractional k must refuse rather
+      # than truncate (Integer(2.5) quietly scores recall@2), and recall@0
+      # retrieves nothing. Same Integer(value.to_s, exception: false) shape,
+      # whatever type the flag parser produced.
+      # rubocop:disable Naming/MethodParameterName -- pinned recall@k name.
+      def check_k(k)
+        depth = Integer(k.to_s, exception: false)
+        raise Refusal, "k must be a whole number, got #{k}" if depth.nil?
+        raise Refusal, "k must be at least 1; recall@#{depth} retrieves nothing" if depth < 1
+
+        depth
+      end
+      # rubocop:enable Naming/MethodParameterName
+
       def prompts_from(taskfile)
         raise Refusal, "no task file at #{taskfile}" unless File.file?(taskfile)
 
@@ -170,51 +198,11 @@ module Lain
 
         Provider::AnthropicRaw.new
       end
-
-      # One run, one journal, one file (Session's format contract), with
-      # JournalRequests INNERMOST so the baseline is the bytes the provider
-      # actually received. An occupied path REFUSES rather than replaces:
-      # Journal.open appends, a second header in one file would destroy both
-      # sweeps' loadability, and the existing bytes cost real money.
-      def record_run(provider, context, attribution, prompts, path)
-        raise Refusal, "#{path} already exists; refusing to overwrite a recorded session" if
-          File.exist?(path)
-
-        journal = Journal.open(path)
-        begin
-          # One slot_fills record per session, at session start (Loader reads
-          # by record TYPE, not file position, so leading with it reorders
-          # nothing downstream).
-          journal << attribution
-          run_and_write(provider, context, prompts, journal)
-        ensure
-          journal.close
-        end
-        path
-      end
-
-      # A fresh Agent per run, so no Timeline state leaks between samples.
-      def run_and_write(provider, context, prompts, journal)
-        agent = build_agent(provider, context, journal)
-        prompts.each { |prompt| agent.ask(prompt) }
-        Session.write(journal, timeline: agent.timeline, context:, toolset: agent.toolset)
-      end
-
-      # The memory stack the chunk built, wired even though these synthetic
-      # tasks carry no memory_write tool yet: a Recorder holds the live root,
-      # JournalMemoryRoot pairs each turn's digest with the root in force when
-      # it rendered (so a later run's recall replays against the exact
-      # snapshot), and RefuseSecretWrites guards the write seam. The raw
-      # `journal` -- not the wrapped one -- backs JournalRequests and
-      # WriteRefused, so those land unpaired; JournalMemoryRoot only decorates
-      # the Agent's own turn_usage stream.
-      def build_agent(provider, context, journal)
-        recorder = Memory::Recorder.new
-        Agent.new(provider:, toolset: Toolset.new([]), context:,
-                  journal: Memory::JournalMemoryRoot.new(journal:, recorder:),
-                  model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]),
-                  tool_middleware: Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal:)]))
-      end
     end
   end
 end
+
+# After the class body: RunRecorder reopens CLI (and raises CLI::Refusal), and
+# nothing in the body above needs it before runtime -- the same children-after-
+# the-class-body load order effect/handler.rb uses.
+require_relative "cli/run_recorder"
