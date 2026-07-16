@@ -16,7 +16,7 @@ require "json"
 RSpec.describe "custom matchers (spec/support/matchers/)" do
   describe "be_ractor_shareable" do
     it "passes for a deeply frozen value object" do
-      turn = Lain::Turn.new(role: "user", content: [{ "type" => "text", "text" => "hi" }])
+      turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
       expect(turn).to be_ractor_shareable
     end
 
@@ -28,7 +28,7 @@ RSpec.describe "custom matchers (spec/support/matchers/)" do
     end
 
     it "negated failure message names the object too" do
-      turn = Lain::Turn.new(role: "user", content: [{ "type" => "text", "text" => "hi" }])
+      turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
 
       expect { expect(turn).not_to be_ractor_shareable }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /not to be Ractor\.shareable\?, but it was/)
@@ -65,7 +65,7 @@ RSpec.describe "custom matchers (spec/support/matchers/)" do
 
   describe "have_same_digest_as" do
     def turn(text)
-      Lain::Turn.new(role: "user", content: [{ "type" => "text", "text" => text }])
+      Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => text }])
     end
 
     it "passes for two values that content-address to the same digest" do
@@ -107,7 +107,7 @@ RSpec.describe "custom matchers (spec/support/matchers/)" do
 
   describe "be_deeply_frozen" do
     it "passes for a value object that is frozen with no reachable mutable state" do
-      turn = Lain::Turn.new(role: "user", content: [{ "type" => "text", "text" => "hi" }])
+      turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
       expect(turn).to be_deeply_frozen
     end
 

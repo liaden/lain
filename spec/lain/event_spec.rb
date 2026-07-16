@@ -11,6 +11,12 @@ RSpec.describe Lain::Event do
     Lain::Event.new(kind:, payload_digest:, **rest)
   end
 
+  # TL-2, the cut: Turn collapsed into Event(kind: :turn), so the one primitive
+  # is all there is -- one content-addressing scheme, one Store, one Ractor spec.
+  it "is the only turn primitive: no Lain::Turn constant remains" do
+    expect(Lain.const_defined?(:Turn)).to be(false)
+  end
+
   describe "the closed kind set" do
     it "accepts each of the four legal kinds" do
       %i[turn spawn message snapshot].each do |kind|
@@ -112,6 +118,109 @@ RSpec.describe Lain::Event do
     it "dedupes in a Set by digest" do
       set = Set.new([event(payload_digest: "blake3:p"), event(payload_digest: "blake3:p")])
       expect(set.size).to eq(1)
+    end
+  end
+
+  # The former Lain::Turn surface, now the :turn constructor on the one
+  # primitive. These examples moved from turn_spec.rb with the collapse; the
+  # reader surface (role/content/parent/meta/digest/root?) is unchanged.
+  describe ".turn" do
+    def turn(**args)
+      Lain::Event.turn(role: :user, content: block("hi"), **args)
+    end
+
+    describe "construction" do
+      it "accepts the two wire roles" do
+        expect(Lain::Event::ROLES).to contain_exactly("user", "assistant")
+      end
+
+      it "rejects any other role" do
+        expect { turn(role: "system") }
+          .to raise_error(Lain::Event::InvalidRole, /must be one of/)
+      end
+
+      it "accepts a Symbol role" do
+        expect(turn(role: :user).role).to eq("user")
+      end
+
+      it "is a root when it has no parent" do
+        expect(turn).to be_root
+      end
+
+      it "carries the prompt chain on the single render edge, which #parent aliases" do
+        chained = turn(parent: "blake3:abc")
+        expect(chained.render_parent).to eq("blake3:abc")
+        expect(chained.parent).to eq("blake3:abc")
+      end
+    end
+
+    describe "the carried body" do
+      # What is hashed and what is retained must not drift apart, so the event
+      # carries the normalized wire form rather than whatever the caller passed.
+      it "stores content in normalized wire form" do
+        event = Lain::Event.turn(role: :user, content: [{ type: :text, text: "hi" }])
+        expect(event.content).to eq([{ "type" => "text", "text" => "hi" }])
+      end
+
+      it "addresses the body out of line: payload_digest names Payload(kind: :turn, body:)" do
+        tagged = turn(meta: { "a" => 1 })
+        body = { "role" => "user", "content" => block("hi"), "meta" => { "a" => 1 } }
+        expect(tagged.payload_digest).to eq(Lain::Event::Payload.new(kind: :turn, body:).digest)
+      end
+
+      it "deeply freezes content" do
+        expect(turn.content).to be_deeply_frozen
+      end
+
+      # Deep shareability is the guarantee "no reachable mutable state"; it
+      # fails loudly the moment an ivar stops being frozen. `Symbol#to_s` and
+      # string interpolation both hand back mutable Strings, which is how it
+      # broke once.
+      it "is deeply immutable, hence Ractor-shareable without make_shareable" do
+        expect(turn(meta: { "a" => 1 })).to be_ractor_shareable
+      end
+
+      it "answers no body fields when detached (built from digests alone), loudly" do
+        detached = event(kind: :turn, payload_digest: "blake3:p")
+        expect { detached.role }.to raise_error(Lain::Event::Detached, /carries no body/)
+      end
+    end
+
+    describe "#digest" do
+      it "is identical for identical content" do
+        expect(turn).to have_same_digest_as(turn)
+      end
+
+      it "changes with content" do
+        expect(turn).not_to have_same_digest_as(Lain::Event.turn(role: :user, content: block("bye")))
+      end
+
+      it "changes with role" do
+        expect(turn).not_to have_same_digest_as(turn(role: :assistant))
+      end
+
+      it "changes with parent, which is what chains the DAG" do
+        expect(turn).not_to have_same_digest_as(turn(parent: "blake3:abc"))
+      end
+
+      # meta carries causal lineage (e.g. "spawned_from"), so it must stay
+      # inside the content address -- it rides through the body's
+      # payload_digest -- or two causally distinct turns would share an address.
+      it "changes with meta, via the body digest" do
+        tagged = turn(meta: { "spawned_from" => "blake3:abc" })
+        expect(turn).not_to have_same_digest_as(tagged)
+        expect(turn.payload_digest).not_to eq(tagged.payload_digest)
+      end
+    end
+
+    describe "equality (Regular)" do
+      include_examples "a Regular value",
+                       equal_pair: lambda {
+                         [Lain::Event.turn(role: :user, content: block("hi")),
+                          Lain::Event.turn(role: :user, content: block("hi"))]
+                       },
+                       unequal: -> { Lain::Event.turn(role: :user, content: block("bye")) },
+                       non_member: -> { Lain::Event.turn(role: :user, content: block("hi")).digest }
     end
   end
 

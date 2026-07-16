@@ -4,11 +4,11 @@ module Lain
   # Mutable state for ONE run, and deliberately not a value object.
   #
   # Everything else in the harness that the model sees is either content-
-  # addressed and frozen (a {Lain::Turn} in the Timeline) or frozen and sent-
+  # addressed and frozen (an {Lain::Event} in the Timeline) or frozen and sent-
   # not-stored (a {Lain::Workspace}). Session is the exception on purpose: it is
   # the run's scratch memory -- which files have been read, and the todo list --
   # and it must accumulate as tools run. So it is never appended to the
-  # Timeline, never enters a Turn's content, and stays reachable only from the
+  # Timeline, never enters a turn's content, and stays reachable only from the
   # Agent and from the {Tool::Invocation#context} threaded to each tool. Keeping
   # it off the Timeline is what keeps `Ractor.shareable?(turn)` true: the mutable
   # state lives here, where nothing frozen reaches it. It is also why rewinding

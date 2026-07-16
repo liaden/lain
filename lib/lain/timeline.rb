@@ -53,7 +53,7 @@ module Lain
     # every turn. The git verb says what actually happens: a new object, named by
     # its content, with the old head as its parent.
     def commit(role:, content:, meta: {})
-      turn = Turn.new(role:, content:, parent: head_digest, meta:, correlation: next_correlation)
+      turn = Event.turn(role:, content:, parent: head_digest, meta:, correlation: next_correlation)
       store.put(turn)
       self.class.new(head_digest: turn.digest, store:)
     end
@@ -122,7 +122,7 @@ module Lain
     end
     alias & meet
 
-    # The Turn where two branches diverged, or nil if they share no history.
+    # The event where two branches diverged, or nil if they share no history.
     # Walking two chains and comparing digests is all that cache-break
     # localization needs.
     def diverge_at(other)

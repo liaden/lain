@@ -8,7 +8,7 @@ module Lain
   # This distinction is the whole reason Workspace exists. Todo lists, a
   # file-staleness ledger, and a remaining-budget countdown all have to reach the
   # model, and they have to reflect *current* truth on every turn. Appending them
-  # as Turns would be wrong twice over: the Timeline would accrete a stale copy
+  # as turn events would be wrong twice over: the Timeline would accrete a stale copy
   # per turn (compounding token cost forever), and rewinding would resurrect a
   # todo list that has since been completed.
   #

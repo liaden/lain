@@ -3,7 +3,7 @@
 RSpec.describe Lain::Store do
   subject(:store) { described_class.new }
 
-  def turn(body) = Lain::Turn.new(role: :user, content: [{ "type" => "text", "text" => body }])
+  def turn(body) = Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => body }])
 
   it "starts empty" do
     expect(store.size).to eq(0)
@@ -41,7 +41,7 @@ RSpec.describe Lain::Store do
   # flipped dangling-parent block).
   describe "referential integrity" do
     let(:missing) { "blake3:absent" }
-    let(:dangling) { Lain::Turn.new(role: :user, content: [{ "type" => "text", "text" => "head" }], parent: missing) }
+    let(:dangling) { Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => "head" }], parent: missing) }
 
     it "refuses a turn whose parent digest was never put" do
       expect { store.put(dangling) }
@@ -56,14 +56,14 @@ RSpec.describe Lain::Store do
     it "accepts a well-formed chain, parent-first" do
       root = turn("a")
       store.put(root)
-      child = Lain::Turn.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
+      child = Lain::Event.turn(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
       expect(store.put(child)).to eq(child.digest)
     end
 
     it "re-puts an existing chained turn as a no-op" do
       root = turn("a")
       store.put(root)
-      child = Lain::Turn.new(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
+      child = Lain::Event.turn(role: :assistant, content: [{ "type" => "text", "text" => "b" }], parent: root.digest)
       store.put(child)
       expect { store.put(child) }.not_to raise_error
       expect(store.size).to eq(2)

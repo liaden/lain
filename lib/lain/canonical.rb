@@ -5,8 +5,8 @@ require "json"
 module Lain
   # Deterministic serialization, serving two invariants with one function.
   #
-  # 1. Turn identity. A Turn's hash is the BLAKE3 of its canonical form, so two
-  #    turns that mean the same thing on the wire must serialize to the same bytes.
+  # 1. Event identity. An Event's hash is the BLAKE3 of its canonical form, so two
+  #    events that mean the same thing on the wire must serialize to the same bytes.
   # 2. Prompt-cache stability. Anthropic's cache is a prefix match over the encoded
   #    request; a Hash that iterates in insertion order across two Toolset
   #    constructions would silently invalidate the cache with no error anywhere.
@@ -30,7 +30,7 @@ module Lain
     class << self
       # The wire form of +value+: JSON-native types only, String keys, objects
       # sorted, everything deeply frozen. Callers that need to *store* content
-      # (see Lain::Turn) keep this rather than the original, so what is hashed
+      # (see Lain::Event) keep this rather than the original, so what is hashed
       # and what is retained cannot drift apart.
       def normalize(value)
         case value

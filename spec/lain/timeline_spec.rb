@@ -174,7 +174,7 @@ RSpec.describe Lain::Timeline do
   end
 
   # A dangling parent digest (corrupt chain) used to be constructible through
-  # the public API -- `Turn.new(parent: absent) -> store.put -> checkout` --
+  # the public API -- `Event.turn(parent: absent) -> store.put -> checkout` --
   # and every Timeline walk (ancestors, to_a, rewind, ...) had to raise
   # MissingObject loudly rather than silently truncate at the dangle. That
   # recipe now raises at `put` itself: referential integrity is checked at
@@ -186,7 +186,7 @@ RSpec.describe Lain::Timeline do
   # API but not deleted).
   describe "a dangling parent digest (corrupt chain)" do
     let(:missing) { "blake3:absent" }
-    let(:head) { Lain::Turn.new(role: :user, content: text("head"), parent: missing) }
+    let(:head) { Lain::Event.turn(role: :user, content: text("head"), parent: missing) }
 
     it "put refuses the dangling turn before it ever reaches the store" do
       expect { store.put(head) }

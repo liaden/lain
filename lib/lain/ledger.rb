@@ -76,7 +76,7 @@ module Lain
     # digest. A digest the Journal never priced contributes {Usage.zero}, so
     # user turns and un-instrumented turns are simply free.
     #
-    # @param turn [Lain::Turn]
+    # @param turn [Lain::Event]
     # @return [Lain::Usage]
     def usage_of(turn)
       @index.entries_for(turn.digest).reduce(Usage.zero) { |sum, entry| sum + entry.usage }
@@ -87,7 +87,7 @@ module Lain
     # silently-free payment would be a lie -- unless the PriceBook carries a
     # fallback, which still prices it.
     #
-    # @param turn [Lain::Turn]
+    # @param turn [Lain::Event]
     # @return [BigDecimal]
     def cost_of(turn)
       @index.entries_for(turn.digest).reduce(BigDecimal(0)) do |sum, entry|
@@ -109,7 +109,7 @@ module Lain
             "provider reports none); pass a PriceBook with a fallback to price these"
     end
 
-    # digest => Turn across all timelines, deduplicated by content-address. A Hash
+    # digest => turn event across all timelines, deduplicated by content-address. A Hash
     # keyed on the digest is the whole point: the shared prefix collapses to one
     # entry no matter how many branches reach it.
     def unique_turns(timelines)
