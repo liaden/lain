@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "async"
+require "async/queue"
+
 # OM-3: the long-lived actor subagent. Unlike the one-shot (which runs
 # synchronously inside one tool dispatch), an actor persists across the parent's
 # turns on its own supervised fiber, exchanges messages as attributed Store
@@ -169,6 +172,117 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
         farewell = actor.stop
         expect(farewell.kind).to eq(:message)
       end
+    end
+
+    # T3 fix round (Metz/Torvalds): `stopped?` stays false after a failure (the
+    # fiber ended normally; probe 6 pins that), so the honest "do not message
+    # me" answer a supervisor consults is a SEPARATE terminal predicate.
+    it "answers dead? true after a failure, true after a stop, false while healthy" do
+      Sync do
+        failed = actor_tool.launch_actor("start")
+        expect { failed.settle }.to raise_error(Lain::Error)
+        expect(failed).to be_dead
+        expect(failed).not_to be_stopped
+
+        healthy = actor_tool(text_response("ok")).launch_actor("start")
+        healthy.settle
+        expect(healthy).not_to be_dead
+        healthy.stop
+        expect(healthy).to be_dead
+      end
+    end
+
+    # T3 panel #2: a child whose turn raised ends its fiber NORMALLY, so neither
+    # the @stopped flag nor @task.stopped? reads true -- yet a tell would append
+    # to a mailbox no fold will ever visit. Refuse it as loudly as a stopped one.
+    it "refuses tell after the initial turn raised, and the mailbox does not grow" do
+      Sync do
+        actor = actor_tool.launch_actor("start")
+        expect { actor.settle }.to raise_error(Lain::Error)
+        before = log.to_a.size
+
+        expect { actor.tell("still there?") }
+          .to raise_error(Lain::Tools::Subagent::Actor::Stopped)
+        expect(log.to_a.size).to eq(before)
+      end
+    end
+  end
+
+  # T3 scenario: settle never parks forever after an early stop. The child's
+  # initial turn is parked in-flight (inside the provider) when stop lands; the
+  # cancellation is Async::Stop, not a StandardError, so a rescue-only #run would
+  # leave @ready unresolved and a later settle would hang.
+  describe "settle after an early stop" do
+    before do
+      stub_const("ParkingChildProvider", Class.new(Lain::Provider) do
+        def initialize(entered:)
+          super()
+          @entered = entered
+          @release = Async::Queue.new
+        end
+
+        # Announce arrival, then block on a queue nothing feeds: the fiber is
+        # deterministically parked inside the model call when the test stops it.
+        def complete(_request)
+          @entered.enqueue(true)
+          @release.dequeue
+          Lain::Response.new(content: [{ "type" => "text", "text" => "unreachable" }], stop_reason: :end_turn)
+        end
+      end)
+    end
+
+    def parking_actor_tool(entered:)
+      Lain::Tools::Subagent.new(
+        provider: ParkingChildProvider.new(entered:),
+        context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
+        toolset: Lain::Toolset.new([EchoTool.new]),
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+        parent: parent_timeline, journal: Lain::Channel::Null.instance,
+        budget: Lain::Agent::Budget.new, max_depth: 1, mode: :actor, log:
+      )
+    end
+
+    it "returns within the reactor tick rather than parking forever" do
+      Sync do |task|
+        entered = Async::Queue.new
+        actor = parking_actor_tool(entered:).launch_actor("start")
+        entered.dequeue # the child's initial turn is now parked in the provider
+        actor.stop
+
+        # with_timeout makes a regression fail loudly (Async::TimeoutError) rather
+        # than hang the suite: settle must resolve well within this window.
+        settled = task.with_timeout(2) { actor.settle }
+        expect(settled).to eq(actor)
+        expect(actor).to be_stopped
+      end
+    end
+  end
+
+  # T3 scenario: stop before launch fails loudly without side effects. Before
+  # #launch there is no fiber to cancel and no address to attribute a farewell
+  # to; emitting one would put a nil-addressed event into the Store and then
+  # crash on the nil task. Refuse first, touch nothing.
+  describe "a lifecycle op before launch" do
+    def unlaunched_actor
+      lineage = Lain::Tools::Subagent::Lineage.new(
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []), log:
+      )
+      Lain::Tools::Subagent::Actor.new(agent: Object.new, lineage:, parent: parent_timeline)
+    end
+
+    it "stop raises NotLaunched and no farewell event enters the Store" do
+      actor = unlaunched_actor
+
+      expect { actor.stop }.to raise_error(Lain::Tools::Subagent::Actor::NotLaunched, /launch/)
+      expect(log.to_a).to be_empty
+    end
+
+    it "tell and settle also refuse before launch" do
+      actor = unlaunched_actor
+
+      expect { actor.tell("hello?") }.to raise_error(Lain::Tools::Subagent::Actor::NotLaunched)
+      expect { actor.settle }.to raise_error(Lain::Tools::Subagent::Actor::NotLaunched)
+      expect(log.to_a).to be_empty
     end
   end
 

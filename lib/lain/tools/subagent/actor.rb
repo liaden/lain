@@ -38,7 +38,15 @@ module Lain
         # Telling a stopped actor is a caller bug, loudly: the farewell already
         # landed, nobody will ever fold the mailbox again, so the message would
         # be silently lost -- exactly the failure shape this codebase refuses.
+        # A child that FAILED its turn is dead the same way: its fiber is gone,
+        # so a message to it would never be folded either.
         class Stopped < Error; end
+
+        # Any lifecycle op before {#launch} is a caller bug, loudly: there is no
+        # fiber to await or cancel and no address to attribute an event to, so a
+        # farewell would enter the Store nil-addressed and then crash on the nil
+        # task. Refuse first, touch nothing.
+        class NotLaunched < Error; end
 
         # `address` is the stable name the parent tells this actor by -- its
         # :spawn event digest, content-addressed and present from launch (before
@@ -57,7 +65,11 @@ module Lain
 
         # Record the spawn (fixing the actor's address), then run the fiber. The
         # spawn is emitted synchronously so `address` is usable the instant
-        # launch returns, whether or not the fiber has been scheduled yet.
+        # launch returns, whether or not the fiber has been scheduled yet. Note
+        # async's `.async` is eager (depth-first): the initial turn runs on the
+        # CALLER's stack up to its first await, so launch is not fire-and-return
+        # for a non-yielding prefix -- a synchronously-raising provider has
+        # already set `@failure` by the time launch returns.
         def launch(prompt)
           @spawn = @lineage.spawn(@parent)
           @address = @spawn.digest
@@ -76,6 +88,8 @@ module Lain
         # that raised mid-turn surfaces here as that error, never as a caller
         # parked forever on a variable nobody will resolve.
         def settle
+          raise NotLaunched, "actor was never launched; nothing to settle" unless launched?
+
           @ready.wait
           raise @failure if @failure
 
@@ -85,9 +99,11 @@ module Lain
         # parent -> actor: an attributed :message the actor's own mailbox
         # projects. Emitting touches the Store and Log, not the fiber, so a
         # caller may tell an actor whether its fiber is working or parked --
-        # but never a stopped one, whose mailbox nobody will fold again.
+        # but never a dead one (stopped, or failed its turn), whose mailbox
+        # nobody will fold again.
         def tell(text)
-          raise Stopped, "actor #{@address} is stopped; a message to it would never be folded" if @stopped
+          raise NotLaunched, "actor was never launched; nothing to tell" unless launched?
+          raise Stopped, "actor #{@address} is dead (stopped or failed); a message to it would never be folded" if dead?
 
           @lineage.note(@parent, from: @parent_correlation, to: @address, text:,
                                  causal_parents: [@address])
@@ -98,6 +114,13 @@ module Lain
         # `stopped?` -- the actor still must.
         def stopped? = @stopped || @task&.stopped? || false
 
+        # Terminal: nothing will ever fold this actor's mailbox again, whether
+        # it was stopped deliberately or its turn raised. `stopped?` stays the
+        # narrow "was stop invoked" answer (a failed child was NOT stopped, and
+        # may still be); this is the honest "do not message me" a supervisor
+        # consults, and the predicate {#tell} keys on.
+        def dead? = stopped? || !@failure.nil?
+
         # Structured stop: land a final attributed :message, then cancel the
         # fiber. `Async::Task#stop` raises `Async::Stop` at the fiber's parked
         # await -- so its unwinding runs and the child Timeline is left whole,
@@ -105,6 +128,7 @@ module Lain
         # before returning, so `stopped?` holds the moment `stop` returns.
         # Idempotent: a second stop re-returns the same farewell, emitting nothing.
         def stop
+          raise NotLaunched, "actor was never launched; nothing to stop" unless launched?
           return @farewell if @stopped
 
           @stopped = true
@@ -114,25 +138,35 @@ module Lain
           @farewell
         end
 
-        private
+        # `launch` is what fixes the address, the correlation, and the fiber, so
+        # its presence is the mechanical statement that the actor has a lifecycle
+        # at all -- the guard the three public ops share.
+        def launched? = !@task.nil?
 
         # The fiber body: run the initial turn, announce readiness, then park.
         # The park is where a future card awaits the next inbound message; today
         # it is simply the suspend point `stop`'s cancellation lands on, which is
         # what makes the fiber genuinely long-lived rather than run-to-completion.
         #
-        # A raise from the turn is CAPTURED, and `@ready` resolves regardless --
-        # a failed child must surface in {#settle} as its error, not leave the
-        # awaiting caller parked forever. Captured rather than re-raised so the
-        # failure reaches the one caller who awaits it, instead of doubling as
-        # an unhandled task exception. `Async::Stop` is not a StandardError, so
-        # a cancellation mid-park flows past this rescue as it must.
+        # A raise from the turn is CAPTURED so the failure reaches the one caller
+        # who awaits it ({#settle}) instead of doubling as an unhandled task
+        # exception. But resolution of `@ready` lives in `ensure`, not the
+        # rescue: an early `stop` raises `Async::Stop` -- NOT a StandardError, so
+        # it flows past the rescue as it must -- and were `@ready` resolved only
+        # on the StandardError path, a cancellation mid-turn would unwind with
+        # `@ready` unresolved and leave a later `settle` parked forever. `ensure`
+        # runs on every exit (value, StandardError, or cancellation), so it is
+        # the one place that guarantees `settle` cannot hang. The `resolved?`
+        # guard is load-bearing, not defensive: `Async::Variable#resolve` raises
+        # FrozenError on a second call, so the happy path's `resolve(true)` would
+        # otherwise blow up here in the ensure.
         def run(prompt)
           process(prompt)
           @ready.resolve(true)
           @park.wait
         rescue StandardError => e
           @failure = e
+        ensure
           @ready.resolve(false) unless @ready.resolved?
         end
 
