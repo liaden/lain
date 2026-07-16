@@ -95,6 +95,8 @@ class LainCLI < Thor
                               desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
   method_option :seed, type: :numeric,
                        desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
+  method_option :nvim, type: :string,
+                       desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   default_task :chat
 
   def chat
@@ -103,18 +105,50 @@ class LainCLI < Thor
     # single mutable holder of the live Memory::Index, so each write supersedes
     # the last (its prior root still resolves the old item).
     recorder = Lain::Memory::Recorder.new
-    agent = wire_agent(channel:, recorder:)
-    tty = Lain::Frontend::TTY.new(channel:)
-    repl_middleware = build_repl_middleware
-
-    repl = Repl.new(agent:, tty:, middleware: repl_middleware,
-                    ask_human: @ask_human, questions: @questions)
-    tty.run { repl.converse }
+    session = Lain::Session.new(memory: recorder)
+    setup_nvim_views if options[:nvim]
+    agent = wire_agent(channel:, recorder:, session:)
+    run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:)
   rescue Lain::CLI::UnknownProvider => e
     raise Thor::Error, e.message
   end
 
   private
+
+  # A #<< adapter that fans agent telemetry to BOTH the record and the live
+  # views. (Trivial; promote to Lain::Channel::Tee if a second caller wants it.)
+  class JournalTee
+    def initialize(journal, channel)
+      @journal = journal
+      @channel = channel
+    end
+
+    def <<(event)
+      @journal << event
+      @channel << event
+      self
+    end
+  end
+
+  # --nvim: the editor may drop view events but never block the agent; the
+  # NDJSON record sees everything. The frontend's own journal: is the RAW
+  # Journal, not the tee -- a resend is recorded once, never re-fanned onto
+  # the views (the frontend pushes the resent event there itself).
+  def setup_nvim_views
+    @nvim_channel = Lain::Channel::DropOldest.new
+    @nvim_journal = Lain::Journal.open
+    @nvim_tee = JournalTee.new(@nvim_journal, @nvim_channel)
+  end
+
+  def run_chat(tty:, agent:, session:)
+    repl = Repl.new(agent:, tty:, middleware: build_repl_middleware,
+                    ask_human: @ask_human, questions: @questions)
+    return tty.run { repl.converse } unless @nvim_channel
+
+    nvim = Lain::Frontend::Neovim.new(channel: @nvim_channel, socket_path: options[:nvim],
+                                      store: agent.timeline.store, session:, journal: @nvim_journal)
+    tty.run { nvim.run { repl.converse } }
+  end
 
   # The repl phase: a Middleware::Stack wrapping EACH command typed at the
   # prompt, wired the same way Agent's model_/tool_/turn_middleware already
@@ -130,19 +164,19 @@ class LainCLI < Thor
   # late-bound through a thunk: the closure captures the BINDING, and `agent` is
   # assigned after the toolset that closes over it. The SAME recorder backs the
   # session's manifest and the read/write tools -- one index, three views.
-  def wire_agent(channel:, recorder:)
+  def wire_agent(channel:, recorder:, session:)
     backend = Backend.new(options)
     agent = nil
     parent = -> { agent.timeline }
-    # The replier fiber (see #respond) parks on @questions and answers through
-    # @ask_human -- exe-instance state because the reply path and the toolset
-    # are wired in different methods of this one command invocation. The
-    # enqueue happens inside #ask (before perform's await), and Async::Queue
-    # is buffered, so the replier can never park on an already-asked question.
+    # The replier fiber (see Repl#answer_loop) parks on @questions and answers
+    # through @ask_human -- exe-instance state because the reply path and the
+    # toolset are wired in different methods of this one command invocation.
+    # The enqueue happens inside #ask (before perform's await), and
+    # Async::Queue is buffered, so the replier never misses a question.
     @questions = Async::Queue.new
     @ask_human = Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:)
     toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
-    agent = build_agent(toolset:, channel:, session: Lain::Session.new(memory: recorder), backend:)
+    agent = build_agent(toolset:, channel:, session:, backend:)
   end
 
   def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
@@ -184,7 +218,17 @@ class LainCLI < Thor
     gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
 
     Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate, session:,
-                    tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]))
+                    tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
+                    **telemetry_kwargs)
+  end
+
+  # --nvim only: TurnUsage (journal:) and RequestSent (the JournalRequests
+  # phase) fan through the tee to both the record and the live views.
+  def telemetry_kwargs
+    return {} unless @nvim_tee
+
+    { journal: @nvim_tee,
+      model_middleware: Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal: @nvim_tee)]) }
   end
 
   def approval_policy

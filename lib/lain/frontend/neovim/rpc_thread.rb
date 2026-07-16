@@ -22,10 +22,16 @@ module Lain
         # not-yet-injected guard as {APPEND}.
         SET_VIEW = "local name, lines = ...; if _G.__lain then _G.__lain.set_view(name, lines) end"
 
+        # Whole-buffer replace for the ONE editable view, lain://request (4-2.3).
+        # Distinct from {SET_VIEW} only in the lua entry point it calls (which
+        # skips the nomodifiable flip); same not-yet-injected guard.
+        SET_REQUEST = "local name, lines = ...; if _G.__lain then _G.__lain.set_request(name, lines) end"
+
         # One queued command: `name` nil means "append to the journal"
-        # ({APPEND}); any other value names a state-view buffer to replace
-        # wholesale ({SET_VIEW}). One shape, one queue.
-        Command = Data.define(:name, :lines)
+        # ({APPEND}); any other value names a buffer to replace wholesale, and
+        # `lua` is the entry point that does it ({SET_VIEW} for a read-only view,
+        # {SET_REQUEST} for the editable one). One shape, one queue.
+        Command = Data.define(:name, :lines, :lua)
         private_constant :Command
 
         # Default cap on outstanding commands (journal appends AND view
@@ -48,15 +54,19 @@ module Lain
         # {Neovim#post} rescues that (see its comment).
         # @param lines [Array<String>]
         def post_render(lines)
-          @queue.push(Command.new(name: nil, lines:))
+          @queue.push(Command.new(name: nil, lines:, lua: APPEND))
         end
 
-        # Queue a whole-buffer replace for a named state view (4-2.2). Same
-        # queue, same backpressure, same death behavior as {#post_render}.
+        # Queue a whole-buffer replace for a named buffer. `editable:` picks the
+        # lua entry point: the read-only state views (4-2.2) get {SET_VIEW}; the
+        # one editable view, lain://request (4-2.3), gets {SET_REQUEST}, which
+        # skips the nomodifiable flip. Same queue, backpressure, and death
+        # behavior either way -- one render pipeline, not two.
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
-        def post_view(name, lines)
-          @queue.push(Command.new(name:, lines:))
+        # @param editable [Boolean]
+        def post_view(name, lines, editable: false)
+          @queue.push(Command.new(name:, lines:, lua: editable ? SET_REQUEST : SET_VIEW))
         end
 
         # Send everything currently queued, one nvim_exec_lua notify per
@@ -77,8 +87,8 @@ module Lain
         private
 
         def send_command(client, command)
-          lua, args = command.name.nil? ? [APPEND, [command.lines]] : [SET_VIEW, [command.name, command.lines]]
-          client.session.notify("nvim_exec_lua", lua, args)
+          args = command.name.nil? ? [command.lines] : [command.name, command.lines]
+          client.session.notify("nvim_exec_lua", command.lua, args)
         end
       end
 
@@ -123,20 +133,25 @@ module Lain
         # @param protocol [String] the runtime.lua handshake token (see {PROTOCOL})
         # @param on_death [#call] invoked (on this thread) if the loop dies after
         #   {#start} -- the owner's chance to make the loss observable
+        # @param on_resend [#call] invoked with the edited lain://request lines
+        #   when :LainResend fires (4-2.3). MUST NOT block this thread: it runs
+        #   inline after the microsecond ack, so the owner hands the lines to a
+        #   worker via a non-blocking queue (never straight onto a bounded
+        #   Channel, which could wedge this thread against a full render queue).
         # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
         #   overridable so a spec can saturate the queue at a scale that runs fast
         def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL, on_death: -> {},
-                       render_capacity: RenderQueue::DEFAULT_CAPACITY)
+                       on_resend: ->(_lines) {}, render_capacity: RenderQueue::DEFAULT_CAPACITY)
           @socket_path = socket_path
           @version = version
           @protocol = protocol
           @on_death = on_death
+          @on_resend = on_resend
           @render_queue = RenderQueue.new(capacity: render_capacity)
           @command_inbox = Thread::Queue.new
           @wake_read, @wake_write = IO.pipe
           @ready = Thread::Queue.new
-          @stopped = false
-          @announced = false
+          @stopped = @announced = false
         end
 
         # The exception that killed the serving loop after {#start}, or nil while
@@ -171,14 +186,16 @@ module Lain
           wake
         end
 
-        # Replace a named state-view buffer wholesale (4-2.2). Same queue, same
-        # backpressure, same death behavior as {#post_render} -- one render
-        # pipeline, not two.
+        # Replace a named buffer wholesale. `editable:` distinguishes the
+        # read-only state views (4-2.2) from the one editable view, lain://request
+        # (4-2.3); see {RenderQueue#post_view}. Same queue, backpressure, and
+        # death behavior as {#post_render} -- one render pipeline, not two.
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
+        # @param editable [Boolean]
         # @return [void]
-        def post_view(name, lines)
-          @render_queue.post_view(name, lines)
+        def post_view(name, lines, editable: false)
+          @render_queue.post_view(name, lines, editable:)
           wake
         end
 
@@ -275,9 +292,20 @@ module Lain
           if request.method_name == "lain_command"
             @command_inbox.push(request.arguments)
             respond(request.id, true)
+            route_resend(request.arguments)
           else
             respond(request.id, nil, "lain: unknown request #{request.method_name}")
           end
+        end
+
+        # A resend command carries the edited lain://request lines as its second
+        # argument (4-2.3). It still lands in {#command_inbox} above like every
+        # command (a future agent-side consumer may want it); the {#on_resend}
+        # hand-off is the frontend's OWN reaction, driven AFTER the ack so a slow
+        # hand-off never delays the editor. Non-resend commands fall through
+        # untouched.
+        def route_resend(arguments)
+          @on_resend.call(arguments[1] || []) if arguments.first == "resend"
         end
 
         # Answer an inbound request, then flush by hand -- the gem otherwise defers

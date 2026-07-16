@@ -50,6 +50,23 @@ local function set_lines(buf, start, stop, lines)
   vim.bo[buf].modifiable = false
 end
 
+-- The ONE editable lain:// buffer (4-2.3): same scratch shape as named_buf but
+-- left MODIFIABLE at rest, because a human edits the pending request here before
+-- :LainResend. Idempotent by name on re-attach, like every other lain:// buffer.
+local function editable_buf(name)
+  local existing = vim.fn.bufnr(name)
+  if existing ~= -1 then
+    return existing
+  end
+
+  local buf = vim.api.nvim_create_buf(true, true)
+  vim.api.nvim_buf_set_name(buf, name)
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  return buf
+end
+
 local JOURNAL = "lain://journal"
 
 _G.__lain = _G.__lain or {}
@@ -78,6 +95,26 @@ function _G.__lain.set_view(name, lines)
   set_lines(named_buf(name), 0, -1, lines)
 end
 
+-- Whole-buffer replace for the ONE editable view, lain://request (4-2.3). It
+-- writes WITHOUT the nomodifiable flip set_view does, so the buffer stays
+-- editable for the human after the render. Like set_view it never focuses or
+-- jumps to the buffer, so a re-render can't steal the cursor mid-edit.
+function _G.__lain.set_request(name, lines)
+  vim.api.nvim_buf_set_lines(editable_buf(name), 0, -1, false, lines)
+end
+
+-- The current lain://request bytes, for :LainResend to hand back to Ruby -- read
+-- HERE, in the lua callback, so the resend rpcrequest carries the edited lines
+-- as its argument and the Ruby side never has to nest a buffer read inside its
+-- inbound dispatch. Empty when nobody has rendered a request yet.
+local function request_lines()
+  local buf = vim.fn.bufnr("lain://request")
+  if buf == -1 then
+    return {}
+  end
+  return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+end
+
 -- Re-attach is idempotent: delete before create so a name is defined exactly
 -- once, and every command is Lain-namespaced (no collision with the human's
 -- config or a plugin).
@@ -95,7 +132,13 @@ local function agent_command(name)
   end
 end
 
-define("LainResend", agent_command("resend"))
+-- :LainResend carries the edited buffer along, so it can't reuse agent_command
+-- (which sends only the verb): it reads lain://request and passes the lines as
+-- the command's second argument. Still enqueue-and-ack -- the Ruby side queues
+-- the resend and answers in microseconds, exactly like the bare commands.
+define("LainResend", function()
+  vim.rpcrequest(chan, "lain_command", "resend", request_lines())
+end)
 define("LainSend", agent_command("send"))
 define("LainContext", agent_command("context"))
 

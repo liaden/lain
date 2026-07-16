@@ -11,7 +11,7 @@ RSpec.describe Lain::Telemetry do
   # Lain::Telemetry.
   it "keeps every telemetry record under Lain::Telemetry, none under the reused Lain::Event name" do
     records = %i[ToolOutput Dropped ProviderRetry TurnUsage RequestSent
-                 MemoryRoot CapabilityDegraded WriteRefused]
+                 RequestResent MemoryRoot CapabilityDegraded WriteRefused]
     records.each do |record|
       expect(Lain::Telemetry.const_defined?(record, false)).to be(true)
       expect(Lain::Event.const_defined?(record, false)).to be(false)
@@ -67,7 +67,8 @@ RSpec.describe Lain::Telemetry do
       {
         "ToolOutput" => "tool_output", "Dropped" => "dropped",
         "ProviderRetry" => "provider_retry", "TurnUsage" => "turn_usage",
-        "RequestSent" => "request_sent", "MemoryRoot" => "memory_root",
+        "RequestSent" => "request_sent", "RequestResent" => "request_resent",
+        "MemoryRoot" => "memory_root",
         "CapabilityDegraded" => "capability_degraded", "WriteRefused" => "write_refused"
       }.each do |name, expected|
         hand_rolled = name.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
@@ -355,6 +356,39 @@ RSpec.describe Lain::Telemetry do
         expect(record.fetch("ts")).to eq("2026-07-11T00:00:00.000000Z")
         expect(rebuild(record).digest).to eq(record.fetch("digest"))
       end
+    end
+  end
+
+  # 4-2.3 provenance (T16 panel fix #1). A hand-edited resend from the editor
+  # must journal DISTINGUISHABLY from a real dispatch: JournalRequests documents
+  # "a request_sent with no following turn_usage is how a failure reads", and a
+  # resend never dispatches, so recording it as a plain request_sent would
+  # fabricate one failed dispatch per hand-edit. The stamp is the record TYPE
+  # itself -- an inheriting event with its own journal discriminator -- rather
+  # than a marker in `extra`, because `extra` is documented as exactly what
+  # Request.new needs to rebuild the request, and a provenance flag there would
+  # ride onto the wire on any rebuild-and-dispatch.
+  describe Lain::Telemetry::RequestResent do
+    subject(:event) { described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {}) }
+
+    it "IS a RequestSent, so every diff/render projection treats it identically" do
+      expect(event).to be_a(Lain::Telemetry::RequestSent)
+    end
+
+    it "journals under its own discriminator, never as request_sent" do
+      expect(event.journal_type).to eq("request_resent")
+      expect(event.to_journal.fetch("type")).to eq("request_resent")
+    end
+
+    it "is distinguishable by any Loader reading the journal back" do
+      io = StringIO.new
+      journal = Lain::Journal.new(io:)
+      journal << Lain::Telemetry::RequestSent.new(digest: "real", payload: {}, stream: true, extra: {})
+      journal << event
+
+      entries = io.string.lines
+      expect(Lain::Journal.records(entries, type: "request_sent").map { |r| r.fetch("digest") }.to_a).to eq(["real"])
+      expect(Lain::Journal.records(entries, type: "request_resent").map { |r| r.fetch("digest") }.to_a).to eq(["d"])
     end
   end
 

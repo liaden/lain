@@ -206,6 +206,21 @@ module Lain
       end
     end
 
+    # A hand-edited request resent from the editor (4-2.3), never dispatched to
+    # a provider. The same shape as {RequestSent} -- and it IS one, by
+    # inheritance, so every projection that diffs or renders requests treats it
+    # identically -- under its OWN journal discriminator ("request_resent",
+    # derived from the class name like every {Journalable}). The distinct type
+    # is the provenance stamp: {Middleware::JournalRequests} documents that "a
+    # request_sent with no following turn_usage is how a failure reads", and a
+    # resend never dispatches, so recording it as a plain request_sent would
+    # fabricate one failed real dispatch per hand-edit. The stamp lives in the
+    # TYPE rather than in `extra` because `extra` is exactly what Request.new
+    # needs to rebuild the request -- a marker there would ride onto the wire
+    # on any rebuild-and-dispatch.
+    class RequestResent < RequestSent
+    end
+
     # The memory root in force at one committed turn: `turn_digest` names the
     # assistant Turn just committed (the Timeline head at commit time) and
     # `root` names the Memory::Index root live at that moment. Emitted by
