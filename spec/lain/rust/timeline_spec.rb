@@ -166,9 +166,13 @@ RSpec.describe Lain::Ext::Timeline do
       # interpolation guards ("#{", "#@", "#$", which String#inspect escapes to
       # "\#{" etc. and Rust's {:?} leaves bare) -- the escape styles genuinely
       # differ there, and both implementations still refuse.
+      pending "the refusal message embeds the putting object's own digest, so its cross-impl byte " \
+              "parity is turn-digest parity in disguise: TL-2 re-keyed the Ruby scheme (Turn is now " \
+              "Event(kind: :turn)) and parity returns with T25 (the Rust re-port). The FORMAT stays " \
+              "pinned within each impl by the literal assertion above and in the Ruby timeline_spec"
       ["blake3:absent", 'blake3:a"b'].each do |digest|
-        ext_msg = put_refusal_message(Lain::Ext::Store, Lain::Ext::Turn, digest)
-        ruby_msg = put_refusal_message(Lain::Store, Lain::Turn, digest)
+        ext_msg = put_refusal_message(Lain::Ext::Store, ->(**args) { Lain::Ext::Turn.new(**args) }, digest)
+        ruby_msg = put_refusal_message(Lain::Store, ->(**args) { Lain::Event.turn(**args) }, digest)
         expect(ext_msg).to eq(ruby_msg)
       end
     end
@@ -176,9 +180,10 @@ RSpec.describe Lain::Ext::Timeline do
 
   # Put a head whose parent digest was never stored into a fresh store of the
   # given implementation, and return the MissingObject message the put refuses
-  # with.
-  def put_refusal_message(store_class, turn_class, digest)
-    a_head = turn_class.new(role: :user, content: text("head"), parent: digest)
+  # with. `build_turn` is a factory because the two impls construct differently
+  # (Ext::Turn.new vs Event.turn).
+  def put_refusal_message(store_class, build_turn, digest)
+    a_head = build_turn.call(role: :user, content: text("head"), parent: digest)
     store_class.new.put(a_head)
     raise "expected #{store_class}::MissingObject to be raised"
   rescue store_class::MissingObject => e

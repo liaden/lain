@@ -53,7 +53,7 @@ module Lain
     # every turn. The git verb says what actually happens: a new object, named by
     # its content, with the old head as its parent.
     def commit(role:, content:, meta: {})
-      turn = Turn.new(role:, content:, parent: head_digest, meta:)
+      turn = Turn.new(role:, content:, parent: head_digest, meta:, correlation: next_correlation)
       store.put(turn)
       self.class.new(head_digest: turn.digest, store:)
     end
@@ -145,6 +145,16 @@ module Lain
     alias inspect to_s
 
     private
+
+    # TL-2 (pinned): correlation is DERIVED by chain construction -- a chain is
+    # named by its root event's digest, no separate id machinery. The root
+    # cannot contain its own address, so it carries nil; the first descendant
+    # reads the root digest off the head, and everyone below inherits it.
+    def next_correlation
+      return nil if empty?
+
+      head.correlation || head_digest
+    end
 
     def same_store!(other)
       return if store.equal?(other.store)

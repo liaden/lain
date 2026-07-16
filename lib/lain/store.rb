@@ -55,24 +55,25 @@ module Lain
     private
 
     # The predecessor digests `object` requires the store to already hold. A
-    # Turn or Memory::Index::Node names one (`#parent`); an Event names two
-    # edges -- a single `#render_parent` and a `#causal_parents` set. All are
-    # duck-typed: an object whose `#parent` means something OTHER than "digest
-    # of my predecessor in this store" (today only Turn and Memory::Index::Node
-    # reach here through it, and both mean exactly that) would be misvalidated
-    # -- give such an object a differently-named accessor. An object naming no
-    # edge (Memory::Item) is parentless.
+    # Memory::Index::Node names one (`#parent`); an Event names two edges -- a
+    # single `#render_parent` (which its `#parent` aliases, hence the `uniq`)
+    # and a `#causal_parents` set. All are duck-typed: an object whose
+    # `#parent` means something OTHER than "digest of my predecessor in this
+    # store" (today only Event and Memory::Index::Node reach here through it,
+    # and both mean exactly that) would be misvalidated -- give such an object
+    # a differently-named accessor. An object naming no edge (Memory::Item) is
+    # parentless.
     def parent_edges(object)
       single = %i[parent render_parent].filter_map do |edge|
         object.public_send(edge) if object.respond_to?(edge)
       end
       causal = object.respond_to?(:causal_parents) ? object.causal_parents : []
-      [*single, *causal]
+      [*single.uniq, *causal]
     end
 
     # Refuses the FIRST predecessor edge the store does not already hold, in the
-    # message the single-parent (Turn) put pins byte-for-byte across the Ruby and
-    # Rust stores -- extended to events, never reworded. Reads `@objects`
+    # message the original single-parent turn put pinned byte-for-byte across the
+    # Ruby and Rust stores -- extended to events, never reworded. Reads `@objects`
     # directly (never `#key?`): `Monitor` is reentrant, so a second `#synchronize`
     # here would not deadlock, but it would be a pointless second lock
     # acquisition inside one already held.

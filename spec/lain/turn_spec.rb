@@ -93,6 +93,39 @@ RSpec.describe Lain::Turn do
     end
   end
 
+  # TL-2: Turn IS Event(kind: :turn). The reader surface above is unchanged;
+  # the value underneath is the one event primitive, so one content-addressing
+  # scheme, one Store, and one Ractor spec cover the whole spine.
+  describe "the Turn ≅ Event(:turn) isomorphism" do
+    subject(:turn) do
+      described_class.new(role: :user, content: text("hi"), parent: "blake3:abc", meta: { "a" => 1 })
+    end
+
+    it "returns the one event primitive, kind-tagged :turn" do
+      expect(turn).to be_a(Lain::Event)
+      expect(turn.kind).to eq(:turn)
+    end
+
+    it "carries the prompt chain on the single render edge, which #parent aliases" do
+      expect(turn.render_parent).to eq("blake3:abc")
+      expect(turn.parent).to eq("blake3:abc")
+    end
+
+    it "addresses its body out of line: payload_digest names Payload(kind: :turn, body:)" do
+      body = { "role" => "user", "content" => text("hi"), "meta" => { "a" => 1 } }
+      expect(turn.payload_digest).to eq(Lain::Event::Payload.new(kind: :turn, body:).digest)
+    end
+
+    # meta rode the old Turn digest (causal lineage such as "spawned_from" must
+    # keep distinct addresses); under the envelope it rides through the body's
+    # payload_digest instead -- same guarantee, one addressing scheme.
+    it "keeps meta inside the content address, via the body digest" do
+      plain = described_class.new(role: :user, content: text("hi"))
+      tagged = described_class.new(role: :user, content: text("hi"), meta: { "spawned_from" => "blake3:abc" })
+      expect(plain.payload_digest).not_to eq(tagged.payload_digest)
+    end
+  end
+
   describe "equality (Regular)" do
     include_examples "a Regular value",
                      equal_pair: lambda {

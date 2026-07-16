@@ -162,10 +162,14 @@ module Lain
           }
         end
 
-        # `Turn#payload` is the exact structure that was hashed, so recording
-        # it beside the digest is what lets {Loader} recompute and compare.
+        # The body fields plus the render edge -- exactly what {Loader#timeline}
+        # re-commits through the event chain, so recording them beside the
+        # digest is what lets the Loader recompute and compare. (The turn's own
+        # envelope hashes correlation too, but correlation derives from the
+        # chain itself, so the re-commit reproduces it from these bytes alone.)
         def turn_record(turn)
-          { "type" => TURN_TYPE, "digest" => turn.digest }.merge(turn.payload)
+          { "type" => TURN_TYPE, "digest" => turn.digest, "role" => turn.role,
+            "content" => turn.content, "parent" => turn.parent, "meta" => turn.meta }
         end
       end
     end

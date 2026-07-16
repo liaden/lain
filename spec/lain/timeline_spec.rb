@@ -195,6 +195,42 @@ RSpec.describe Lain::Timeline do
     end
   end
 
+  # TL-2 (pinned): correlation is DERIVED by chain construction, not new id
+  # machinery -- a chain is named by its root event's digest. The root itself
+  # carries nil (its digest IS the identity, and a content address cannot
+  # contain itself); every descendant carries the root digest.
+  describe "correlation" do
+    let(:root) { say(timeline, "a") }
+    let(:child) { say(root, "b", role: :assistant) }
+
+    it "leaves the root's correlation nil" do
+      expect(root.head.correlation).to be_nil
+    end
+
+    it "stamps the root digest on the first descendant" do
+      expect(child.head.correlation).to eq(root.head_digest)
+    end
+
+    it "is inherited unchanged down the chain" do
+      expect(say(child, "c").head.correlation).to eq(root.head_digest)
+    end
+
+    it "is shared across forks, which stay one conversation" do
+      expect(say(child.fork, "left").head.correlation).to eq(root.head_digest)
+      expect(say(child.fork, "right").head.correlation).to eq(root.head_digest)
+    end
+
+    it "survives a rewind-and-recommit, which resumes the same chain" do
+      expect(say(child.rewind, "redo", role: :assistant).head.correlation).to eq(root.head_digest)
+    end
+
+    it "starts fresh on a subagent's fresh root over the shared store" do
+      other = say(described_class.empty(store:), "child task")
+      expect(other.head.correlation).to be_nil
+      expect(say(other, "reply", role: :assistant).head.correlation).to eq(other.head_digest)
+    end
+  end
+
   # Subagents get a fresh root over the shared store; the parent's head is
   # recorded in meta, not as a Turn parent, so it never renders into the prompt.
   describe "subagent lineage" do
