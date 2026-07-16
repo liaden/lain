@@ -23,6 +23,19 @@ module Lain
       # future gem bump a false mismatch warning.
       PROTOCOL = "1"
 
+      # One of the three background threads (the RPC thread, the drain, or the
+      # resend worker -- see {#reraise_recorded_failure}) died and {#run}'s
+      # block had already returned without raising of its own by the time
+      # teardown finished. Wraps whatever StandardError killed the thread so a
+      # caller's `rescue Lain::Error` (the exe's own convention -- see
+      # exe/lain) presents editor-session loss as a clean notice, not a raw
+      # IOError/NoMethodError with a backtrace at exit (T9). The message NAMES
+      # the dead thread -- exe/lain forwards it verbatim, and a bare "Broken
+      # pipe" with no source is not a notice a human can act on. The original
+      # rides `cause`, so nothing about the underlying failure is actually
+      # lost -- only what reaches the human by default is tamed.
+      class SessionFailure < Lain::Error; end
+
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param socket_path [String] a listening nvim's unix socket
       # @param version [String] the gem version, surfaced by :LainVersion
@@ -87,11 +100,20 @@ module Lain
       # The failures the background threads RECORDED rather than raised (a raise
       # on a background thread is silent, and a join re-raise inside the ensure
       # would clobber the block's own exception), surfaced only after teardown
-      # completes. RPC-thread death outranks worker death when both happened:
-      # a dead editor is the bigger loss.
+      # completes -- wrapped in {SessionFailure}, labeled with WHICH thread
+      # died, so this is a clean, actionable notice rather than a raw re-raise
+      # with a backtrace (T9's AC4).
       def reraise_recorded_failure
-        raise @rpc.failure if @rpc.failure
-        raise @resend_failure if @resend_failure
+        label, failure = recorded_failures.first
+        raise SessionFailure, "#{label}: #{failure.message}", cause: failure if failure
+      end
+
+      # Insertion order is priority order: RPC-thread death outranks worker
+      # death when both happened -- a dead editor is the bigger loss.
+      def recorded_failures
+        { "nvim rpc thread died" => @rpc.failure,
+          "render drain died" => @drain_failure,
+          "resend worker died" => @resend_failure }.compact
       end
 
       # Close-drain-stop, in that order: closing the channel lets the drainer's
@@ -99,16 +121,38 @@ module Lain
       # blocking pop return (and a resent event mid-push meets ClosedQueueError,
       # never a wedge). Only returned workers make stopping the RPC thread
       # race-free.
+      #
+      # The joins are wrapped, not bare: both siblings already record-and-die
+      # rather than dying loudly (see {#drain}, {#resend_loop}), so a join
+      # raising here should never actually happen -- but if it ever did, a bare
+      # `drainer&.join` would raise INSIDE this `ensure`-called method and skip
+      # `@rpc.stop` below, leaking the RPC thread AND clobbering {#run}'s
+      # block's own exception (the T9 bug this replaces). Deferring instead
+      # keeps `@rpc.stop` unconditional and lets {#reraise_recorded_failure}
+      # surface the failure afterward, same as every other recorded death.
       def teardown(drainer, resender)
         @channel.close unless @channel.closed?
         @resend_inbox.close
-        drainer&.join
-        resender&.join
+        join_deferring_failure(drainer) { |e| @drain_failure ||= e }
+        join_deferring_failure(resender) { |e| @resend_failure ||= e }
         @rpc.stop
       end
 
+      def join_deferring_failure(thread)
+        thread&.join
+      rescue StandardError => e
+        yield e
+      end
+
+      # An unrescued render exception (a malformed event's NoMethodError, say)
+      # must not kill this thread in silence -- that would stop the Channel
+      # draining with nobody left to notice, and a producer would eventually
+      # wedge against a full queue. Same record-and-die shape as the resend
+      # worker ({#record_worker_death}); the drainer's inlet IS the channel.
       def drain
         @channel.drain { |event| post(event) }
+      rescue StandardError => e
+        @drain_failure = record_worker_death(e)
       end
 
       # The resend worker (4-2.3): a synthetic PRODUCER, not a renderer. It turns
@@ -130,22 +174,31 @@ module Lain
         # cut-short resend at shutdown is fine (mirrors {#post}'s own rescue).
         nil
       rescue StandardError => e
-        record_resend_death(e)
+        # A raising journal write (this worker's native failure) must not die
+        # silently while the inbox black-holes every later :LainResend.
+        @resend_failure = record_worker_death(e, inlet: @resend_inbox)
       end
 
-      # The same death-observability discipline the RPC thread gets: a raising
-      # journal write (the worker's native failure) must not die silently while
-      # the inbox black-holes every later :LainResend. Record the failure where
-      # {#run} re-raises it after teardown (never masking the block's own
-      # exception -- an ensure re-raise would; this is a post-ensure check),
-      # close the inbox so nothing queues behind a dead consumer, and close the
-      # channel so the loss is observable the moment it happens. Rescuing here
-      # (not re-raising) is also what keeps teardown's `resender.join` from
-      # re-raising INSIDE the ensure and clobbering the block's exception.
-      def record_resend_death(error)
-        @resend_failure = error
-        @resend_inbox.close
+      # The ONE record-and-die shape the two Neovim-owned worker threads share
+      # (T9's card: the third copy becoming a shared shape): hand back the
+      # failure for the caller to record in its own slot -- where
+      # {#reraise_recorded_failure} picks it up AFTER teardown, never masking
+      # the block's own exception the way an ensure re-raise would -- close the
+      # dead worker's inlet so nothing queues behind a dead consumer, and close
+      # the channel so the loss is observable the moment it happens.
+      # Rescue-into-this (not re-raising) is also what keeps teardown's joins
+      # from re-raising INSIDE the ensure and clobbering the block's exception.
+      #
+      # {RpcThread#record_death} is deliberately NOT folded in: its copy
+      # genuinely differs -- before {RpcThread#start} has returned, the failure
+      # rides the @ready handshake back to the caller's thread instead of a
+      # recorded slot, and its resource is the render queue plus an owner
+      # callback -- so unifying across that class boundary would mean
+      # parameterizing away everything the method does.
+      def record_worker_death(error, inlet: @channel)
+        inlet.close unless inlet.closed?
         @channel.close unless @channel.closed?
+        error
       end
 
       # {RpcThread}'s on_resend hand-off. A push onto a closed inbox (the worker
