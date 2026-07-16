@@ -143,3 +143,6 @@ end
 # Payload references Event::KINDS and Event.normalize_kind, so the class body
 # must load first.
 require_relative "event/payload"
+# Projection reopens Event to nest itself; its Usage/Timeline references resolve
+# at call time, so those units may load after this one.
+require_relative "event/projection"
