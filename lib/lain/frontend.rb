@@ -14,3 +14,4 @@ end
 require_relative "frontend/decorators"
 require_relative "frontend/approval_policy"
 require_relative "frontend/tty"
+require_relative "frontend/neovim"

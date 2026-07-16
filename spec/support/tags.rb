@@ -69,6 +69,24 @@ RSpec.configure do |config|
   config.filter_run_excluding(:spike) unless SPIKE_ENABLED
 end
 
+# :nvim specs drive a REAL headless nvim over msgpack-RPC (spec/lain/frontend/neovim_spec.rb).
+# They cost no money and touch no network, but they spawn an editor and are slow, so they are
+# opt-in like :spike -- run only with LAIN_NVIM=1. When opted in but the nvim binary is absent,
+# an example SKIPS (never fails): a missing editor is an environment gap, not a lain regression.
+#
+#     LAIN_NVIM=1 bundle exec rspec spec/lain/frontend/neovim_spec.rb
+NVIM_ENABLED = ENV["LAIN_NVIM"] == "1"
+
+RSpec.configure do |config|
+  config.filter_run_excluding(:nvim) unless NVIM_ENABLED
+
+  config.before(:each, :nvim) do
+    unless system("nvim", "--version", out: File::NULL, err: File::NULL)
+      skip("nvim not found on PATH -- install neovim to run :nvim specs")
+    end
+  end
+end
+
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
     NetworkAccess.permit { example.run }
