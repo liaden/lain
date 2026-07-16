@@ -93,15 +93,35 @@ module Lain
           "steps it takes to get there."
       end
 
+      # A spawn is safe to run concurrently with its siblings: each child runs a
+      # SEPARATE Timeline over the SHARED, Monitor-guarded, content-addressed
+      # Store, so parallel commits neither race nor reorder gate 2 (which orders
+      # the parent's returned blocks, not Store insertion). This is what lets the
+      # {Agent::ToolRunner} fan a turn of subagent calls out as sibling tasks --
+      # the async-fan-out win (5-1.4). The spawn path itself is re-entrant: see
+      # {#perform}, which threads the spawn's records through LOCALS, never the
+      # `@last_*` observability ivars, across the child's IO yield point.
+      def parallel_safe?
+        true
+      end
+
       protected
 
+      # Re-entrant by construction (5-1.4): the spawn's records ride LOCALS, never
+      # the `@last_*` ivars, across `run_child`'s IO yield -- so a sibling fan-out
+      # task resuming mid-flight cannot make `message` name the wrong spawn or
+      # child. The ivars are written once at the end, together (#remember), a
+      # single atomic burst with no yield between the three, so the observability
+      # projection stays mutually consistent (the last completer's whole record)
+      # under concurrency and exact under a one-shot call.
       def perform(input, _invocation)
         return depth_exceeded if @max_depth <= 0
 
         parent = parent_timeline
-        @last_spawn = lineage.spawn(parent)
-        @last_child, response = run_child(input.prompt, parent)
-        @last_message = lineage.message(parent, @last_spawn, @last_child, response)
+        spawn = lineage.spawn(parent)
+        child, response = run_child(input.prompt, parent)
+        message = lineage.message(parent, spawn, child, response)
+        remember(spawn, child, message)
         Tool::Result.ok(response.text)
       end
 
@@ -120,6 +140,15 @@ module Lain
       end
 
       private
+
+      # The observability write, kept apart from #perform so the spawn path reads
+      # as pure locals: this is the ONE place the `@last_*` ivars are set, all at
+      # once with no yield between, so a reader never sees a half-updated record.
+      def remember(spawn, child, message)
+        @last_spawn = spawn
+        @last_child = child
+        @last_message = message
+      end
 
       # A fresh child Agent over the base Timeline the prefix strategy chose,
       # rendering the toolset the posture chose, enforced by the handler the
