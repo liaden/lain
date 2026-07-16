@@ -32,17 +32,16 @@ module Lain
 
       NULL = Null.new
 
-      # Install the traps routing to `sink` for the duration of the block, then
-      # restore the prior handlers -- even if the block raises. Yields the
-      # installer so the caller can {#route} the sink per ask.
+      # Construct a fresh installer and {#guarding} it for the duration of the
+      # block -- the convenience form for a caller with no Signals instance of
+      # its own yet. A caller that already holds one (e.g. {CLI::Conductor},
+      # which must keep routing its OWN instance for the ask's duration, not a
+      # freshly constructed one) calls {#guarding} directly instead; both share
+      # this one install/yield/ensure-uninstall implementation.
       #
       # @param sink [#signal] the initial routing target
-      def self.guarding(sink: NULL)
-        installer = new(sink:)
-        installer.install
-        yield installer
-      ensure
-        installer&.uninstall
+      def self.guarding(sink: NULL, &block)
+        new(sink:).guarding(&block)
       end
 
       # @param sink [#signal] the current routing target; defaults to {NULL}
@@ -75,6 +74,18 @@ module Lain
         @previous.each { |name, handler| Signal.trap(name, handler) }
         @previous = {}
         self
+      end
+
+      # {#install}, yield self, {#uninstall} -- even on a raise. The one
+      # implementation of the install/yield/ensure-uninstall pattern; {.guarding}
+      # (the class method) delegates here on a freshly constructed instance,
+      # and {CLI::Conductor#guard} delegates here on its already-injected
+      # instance, so there is exactly one place this ordering is written.
+      def guarding
+        install
+        yield self
+      ensure
+        uninstall
       end
     end
   end

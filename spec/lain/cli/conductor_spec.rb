@@ -288,6 +288,40 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
+  describe "#guard" do
+    it "installs traps for the block and restores the prior handlers after, even when the block raises" do
+      sentinel = ->(_signo) {}
+      Signal.trap("INT", sentinel)
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+
+      expect { conductor.guard { raise "boom" } }.to raise_error("boom")
+
+      # Trapping again returns the handler currently in force -- proof the
+      # sentinel installed before #guard is back, via the same install/uninstall
+      # path Signals.guarding uses (Conductor#guard delegates to it).
+      expect(Signal.trap("INT", "DEFAULT")).to be(sentinel)
+    end
+
+    it "routes a real signal to the injected Signals instance while the block runs" do
+      signals = Lain::CLI::Signals.new
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:)
+      sink = Class.new do
+        def initialize = @received = []
+        attr_reader :received
+
+        def signal(name) = @received << name
+      end.new
+
+      conductor.guard do
+        signals.route(sink)
+        Process.kill("INT", Process.pid)
+        Timeout.timeout(2) { sleep(0.001) until sink.received.size == 1 }
+      end
+
+      expect(sink.received).to eq([:sigint])
+    end
+  end
+
   describe "the guarded closer" do
     it "writes session_closed once, so a signal-close and a later close(:exit) do not double up" do
       entered = Async::Queue.new

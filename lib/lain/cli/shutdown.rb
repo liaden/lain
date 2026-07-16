@@ -16,6 +16,15 @@ module Lain
     # trap-safety reasoning); this class is pure policy over the symbols the
     # ingress yields.
     #
+    # == `actors:` and `on_transition:` are unwired in production
+    #
+    # Both seams are fully built and spec'd, but {CLI::Conductor#build_shutdown}
+    # -- the only production caller -- passes neither. Today `#drain`
+    # (`wait_responses`) settles ZERO actors (only the run task's own `#wait`),
+    # and `#enter` notifies nobody on a state change (T21/T22 chose poll-driven
+    # rendering over transition-driven). See each param doc below for who is
+    # expected to wire it.
+    #
     # == Interrupting through Budget
     #
     # On expiry, a promote, or a sigquit the run is stopped via
@@ -64,9 +73,16 @@ module Lain
       #   {Middleware::Timeout} seam)
       # @param grace [Numeric] seconds the countdown runs before expiry
       # @param actors [Enumerable<#settle>] long-lived children to settle on a
-      #   graceful drain (T3 makes `settle` safe); none by default
+      #   graceful drain (T3 makes `settle` safe); none by default. UNWIRED in
+      #   production -- {CLI::Conductor#build_shutdown} passes no actors, so
+      #   `#drain` settles nothing beyond the run task itself today. OM-6 is
+      #   expected to wire the actor registry here.
       # @param on_transition [#call] notified `(state, deadline)` after each
-      #   transition -- the seam T21's countdown UI renders on
+      #   transition -- the seam T21's countdown UI renders on. UNWIRED in
+      #   production -- {CLI::Conductor#build_shutdown} passes the default
+      #   no-op, because T21/T22 built the countdown as poll-driven
+      #   ({CLI::Conductor::CountdownTicker}) instead. A future event-driven UI
+      #   is the expected caller.
       def initialize(run_task:, closer:, budget: Agent::Budget.new,
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                      grace: GRACE_DEFAULT, actors: [].freeze, on_transition: ->(_state, _deadline) {})

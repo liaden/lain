@@ -132,11 +132,15 @@ module Lain
       # raise. Traps come off AFTER the block returns, by which point every
       # per-ask coordinator pipe and prompt breaker is already disposed, so
       # nothing races a torn-down pipe.
-      def guard
-        @signals.install
-        yield self
-      ensure
-        @signals.uninstall
+      #
+      # Delegates to {Signals#guarding} on the ALREADY-INJECTED @signals rather
+      # than reimplementing install/yield/ensure-uninstall (there is exactly one
+      # such implementation) or calling the {Signals.guarding} class method
+      # (which would construct a fresh instance and discard this one's routing
+      # state -- {#start_shutdown} and {#teardown} both call {Signals#route} on
+      # THIS @signals across the ask).
+      def guard(&block)
+        @signals.guarding(&block)
       end
 
       private
@@ -158,6 +162,10 @@ module Lain
       # ({CountdownTicker}), not transition-driven, so a cancel's status-line
       # clear lands on the next tick -- an up-to-@tick (1s) latency, accepted as
       # the price of one cadence for both the render and the clear.
+      #
+      # actors: is also left at Shutdown's default (none) -- deliberately: there
+      # is no actor registry to hand it yet. OM-6 is the follow-up that wires
+      # one in; until then `#drain` settles only the run task.
       def build_shutdown(run)
         Shutdown.new(run_task: run, closer: self, budget: @budget, clock: @clock, grace: @grace)
       end
