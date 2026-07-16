@@ -102,6 +102,8 @@ class LainCLI < Thor
                                "filename/prefix under this project's session dir"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
+  method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
+                        desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
   default_task :chat
 
   # The lifecycle bracket: resolve --resume, open the journal, run the
@@ -119,11 +121,11 @@ class LainCLI < Thor
   rescue Lain::Error => e
     raise Thor::Error, e.message
   ensure
-    # Graceful close anchors the head; a hard kill skips this, leaving the open
-    # header behind -- exactly how a reader recognizes an open session. (A
-    # SIGINT lands here as :exit too; routing signals to :interrupted /
-    # :grace_expired is the graceful-exit-signals card's business.)
-    chronicle.close(reason: :exit)
+    # Graceful close anchors the head; a hard kill skips this. Routed through the
+    # conductor: its close is guarded, so a signal that already closed the
+    # session (:interrupted / :grace_expired) makes this a no-op, and a plain quit
+    # closes :exit. Falls back to the chronicle if chat raised before wiring.
+    (@conductor || chronicle).close(reason: :exit)
   end
 
   desc "sessions", "List this project's recorded sessions (newest first)"
@@ -177,25 +179,19 @@ class LainCLI < Thor
 
   # The ask_human reply path (@ask_human / @questions) is owned by Wiring, the
   # collaborator that wired the toolset those two ivars belong to; the Repl
-  # reads them off it here rather than through exe-instance state.
+  # reads them off it here rather than through exe-instance state. The
+  # conductor guards the whole conversation: traps installed around it, every
+  # ask supervised through the shutdown coordinator.
   def run_chat(tty:, agent:, session:, wiring:)
-    repl = Repl.new(agent:, tty:, middleware: build_repl_middleware,
-                    ask_human: wiring.ask_human, questions: wiring.questions, chronicle:)
-    return tty.run { repl.converse } unless @nvim_channel
-
-    nvim = Lain::Frontend::Neovim.new(channel: @nvim_channel, socket_path: options[:nvim],
-                                      store: agent.timeline.store, session:, journal: @nvim_journal)
-    tty.run { nvim.run { repl.converse } }
+    @conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: options[:grace])
+    repl = Repl.new(agent:, tty:, ask_human: wiring.ask_human,
+                    questions: wiring.questions, chronicle:, conductor: @conductor)
+    @conductor.guard { repl.run(nvim: nvim_views, store: agent.timeline.store, session:) }
   end
 
-  # The repl phase: a Middleware::Stack wrapping EACH command typed at the
-  # prompt, wired the same way Agent's model_/tool_/turn_middleware already
-  # are (see lib/lain/agent.rb) -- reusing Middleware::Stack rather than
-  # inventing a parallel mechanism. An honest pass-through by default; this is
-  # the seam a future history/logging/confirmation phase lands on, not that
-  # feature yet.
-  def build_repl_middleware
-    Lain::Middleware::Stack.new
+  # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
+  def nvim_views
+    @nvim_channel && { channel: @nvim_channel, socket_path: options[:nvim], journal: @nvim_journal }
   end
 
   # --nvim views first (the chronicle's telemetry follows the tee), then the
@@ -333,27 +329,44 @@ class LainCLI < Thor
   class Repl
     # `chronicle:` is required, not defaulted -- the same reasoning as
     # build_agent's `session:`: a defaulted Null here would let a caller
-    # silently lose the session record with no error anywhere.
-    def initialize(agent:, tty:, middleware:, ask_human:, questions:, chronicle:)
+    # silently lose the session record with no error anywhere. `middleware:`
+    # is the repl phase: a Middleware::Stack wrapping EACH command typed at
+    # the prompt, the seam a future history/logging/confirmation phase lands
+    # on; an honest pass-through by default.
+    def initialize(agent:, tty:, ask_human:, questions:, chronicle:, conductor:,
+                   middleware: Lain::Middleware::Stack.new)
       @agent = agent
       @tty = tty
       @middleware = middleware
       @ask_human = ask_human
       @questions = questions
       @chronicle = chronicle
+      @conductor = conductor
     end
 
     # No next/break: the loop exit is text own truthiness, reassigned each
-    # pass, the same shape the project style favors elsewhere.
+    # pass, the same shape the project style favors elsewhere. Prompts read
+    # through the conductor so an idle-prompt signal breaks out cleanly.
     def converse
-      text = @tty.prompt("you> ")
-      while text && !farewell?(text)
+      text = @conductor.read_prompt(@tty, "you> ")
+      while continue?(text)
         dispatch(text)
-        text = @tty.prompt("you> ")
+        text = @conductor.closed? ? nil : @conductor.read_prompt(@tty, "you> ")
       end
     end
 
+    # Run the conversation inside the terminal frontend, nested inside the optional
+    # Neovim frontend when one is attached (`nvim:` carries its wiring bits, or nil).
+    # Both frontends' ensures -- nvim's RPC stop+join (T9 order) and tty#run's screen
+    # restore -- run when converse returns, including a signal-ended session.
+    def run(nvim:, store:, session:)
+      frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, **nvim)
+      @tty.run { frontend ? frontend.run { converse } : converse }
+    end
+
     private
+
+    def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
     # Routes one typed command through the repl phase. `:text`/`:agent` go in;
     # the phase downstream runs the real dispatch and adds `:response` (nil on
@@ -373,7 +386,7 @@ class LainCLI < Thor
     def respond(text)
       Sync do |task|
         replier = answer_loop(task)
-        deliver(task.async { @agent.ask(text) }.wait)
+        deliver(@conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response)
       ensure
         replier&.stop
       end
