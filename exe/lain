@@ -97,23 +97,25 @@ class LainCLI < Thor
                        desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
   method_option :journal, type: :boolean, default: true,
                           desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
+  method_option :resume, type: :string, banner: "[SESSION]", lazy_default: "",
+                         desc: "Resume a recorded session: bare --resume picks the newest; or a " \
+                               "filename/prefix under this project's session dir"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   default_task :chat
 
+  # The lifecycle bracket: resolve --resume, open the journal, run the
+  # conversation, always close. Resume is resolved BEFORE open_chronicle so a
+  # refusal (nothing to resume, an ambiguous selector, a mid-tool head) raises
+  # before any journal file is opened -- a refusal never orphans a fresh
+  # journal. A bare --resume arrives as "" (newest); absent as nil (a plain new
+  # session). The assemble-and-run body is #run_conversation so this method
+  # stays the thin flag-parse-and-bracket it is meant to be.
   def chat
-    channel = Lain::Channel.new
-    # One Recorder backs the memory_write tool for the whole session -- the
-    # single mutable holder of the live Memory::Index, so each write supersedes
-    # the last (its prior root still resolves the old item).
-    recorder = Lain::Memory::Recorder.new
+    backend = Backend.new(options)
+    resumed = options[:resume] && Lain::CLI::Resume.new.call(selector: options[:resume], model: backend.context.model)
     open_chronicle
-    # The chronicle decorates both run-state seams: reads/todos journal through
-    # Session::Journaled, and each turn_usage pairs with the memory root in
-    # force (JournalMemoryRoot) -- identity under --no-journal.
-    session = chronicle.wrap_session(Lain::Session.new(memory: chronicle.wrap_memory(recorder)))
-    agent = wire_agent(channel:, recorder:, session:)
-    run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:)
+    run_conversation(backend:, resumed:)
   rescue Lain::Error => e
     raise Thor::Error, e.message
   ensure
@@ -124,7 +126,41 @@ class LainCLI < Thor
     chronicle.close(reason: :exit)
   end
 
+  desc "sessions", "List this project's recorded sessions (newest first)"
+  def sessions
+    say Lain::CLI::Sessions.new.listing
+  rescue Lain::Error => e
+    raise Thor::Error, e.message
+  end
+
   private
+
+  # Assemble the run's collaborators over the now-open chronicle and hand off
+  # to the frontend.
+  def run_conversation(backend:, resumed:)
+    channel = Lain::Channel.new
+    recorder, session = wrap_run_state(resumed)
+    wiring = Wiring.new(options:, chronicle:)
+    agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
+    resumed&.notices&.each { |notice| say notice }
+    run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:, wiring:)
+  end
+
+  # The recorder and the journaled Session, fresh or resumed. One Recorder
+  # backs the memory_write tool for the whole session -- the single mutable
+  # holder of the live Memory::Index, so each write supersedes the last (its
+  # prior root still resolves the old item); a resumed chat inherits the
+  # chain-wide recorder instead, so its manifest sees every memory the resumed
+  # sessions wrote. The chronicle then decorates both run-state seams:
+  # reads/todos journal through Session::Journaled, and each turn_usage pairs
+  # with the memory root in force (JournalMemoryRoot) -- identity under
+  # --no-journal.
+  def wrap_run_state(resumed)
+    recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
+    session = resumed ? resumed.session : Lain::Session.new(memory: recorder)
+    chronicle.wrap_memory(recorder)
+    [recorder, chronicle.wrap_session(session)]
+  end
 
   # --nvim: the editor may drop view events but never block the agent; the
   # NDJSON record sees everything. The frontend's own journal: is the RAW
@@ -139,9 +175,12 @@ class LainCLI < Thor
     @nvim_tee = Lain::CLI::JournalTee.new(@nvim_journal, @nvim_channel)
   end
 
-  def run_chat(tty:, agent:, session:)
+  # The ask_human reply path (@ask_human / @questions) is owned by Wiring, the
+  # collaborator that wired the toolset those two ivars belong to; the Repl
+  # reads them off it here rather than through exe-instance state.
+  def run_chat(tty:, agent:, session:, wiring:)
     repl = Repl.new(agent:, tty:, middleware: build_repl_middleware,
-                    ask_human: @ask_human, questions: @questions, chronicle:)
+                    ask_human: wiring.ask_human, questions: wiring.questions, chronicle:)
     return tty.run { repl.converse } unless @nvim_channel
 
     nvim = Lain::Frontend::Neovim.new(channel: @nvim_channel, socket_path: options[:nvim],
@@ -173,84 +212,118 @@ class LainCLI < Thor
   # replaces it per the --journal flag before any wiring runs.
   def chronicle = @chronicle ||= Lain::CLI::Chronicle::Null.new(tee: @nvim_tee)
 
-  # The subagent tool reads the live parent head at spawn time, so the Agent is
-  # late-bound through a thunk: the closure captures the BINDING, and `agent` is
-  # assigned after the toolset that closes over it. The SAME recorder backs the
-  # session's manifest and the read/write tools -- one index, three views.
-  # The chronicle starts here -- after the toolset (its header pins the
-  # finished schema), before the Agent (whose turn middleware records through
-  # it).
-  def wire_agent(channel:, recorder:, session:)
-    backend = Backend.new(options)
-    agent = nil
-    parent = -> { agent.timeline }
-    @ask_human = notifying_ask_human(parent)
-    toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
-    chronicle.start(context: backend.context, toolset:)
-    agent = build_agent(toolset:, channel:, session:, backend:)
-  end
+  # The chat-assembly responsibility, lifted out of the Thor class the way Repl
+  # was: assembling a chat's Agent -- its toolset, subagent, approval gate,
+  # provider spool, and the ask_human reply seam -- is its own job (and the
+  # Metrics trip said so: extract, do not loosen). Constructed with what it
+  # needs (the flags, and the chronicle whose lifecycle #chat owns); it hands
+  # back the built Agent, and exposes @ask_human/@questions so #run_chat can
+  # give the Repl the reply path this object wired.
+  class Wiring
+    attr_reader :ask_human, :questions
 
-  # The replier fiber (see Repl#answer_loop) parks on @questions and answers
-  # through @ask_human -- exe-instance state because the reply path and the
-  # toolset are wired in different methods of this one command invocation.
-  # The enqueue happens inside #ask (before perform's await), and
-  # Async::Queue is buffered, so the replier never misses a question. The
-  # observer routes the Q/A :message events into the session record -- a
-  # Timeline walk can never find them.
-  def notifying_ask_human(parent)
-    @questions = Async::Queue.new
-    Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:,
-                                         observer: chronicle.observer)
-  end
+    def initialize(options:, chronicle:)
+      @options = options
+      @chronicle = chronicle
+    end
 
-  def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
-    base = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new,
-                              Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
-                              Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new])
-    Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
-  end
+    # The subagent tool reads the live parent head at spawn time, so the Agent is
+    # late-bound through a thunk: the closure captures the BINDING, and `agent` is
+    # assigned after the toolset that closes over it. The SAME recorder backs the
+    # session's manifest and the read/write tools -- one index, three views.
+    # The chronicle starts here -- after the toolset (its header pins the
+    # finished schema), before the Agent (whose turn middleware records through
+    # it). A resumed chat threads the chained-header fields (resumed_from/written)
+    # into that header and seeds the Agent with the resumed Timeline.
+    def wire_agent(channel:, recorder:, session:, backend:, resumed: nil)
+      agent = nil
+      parent = -> { agent.timeline }
+      @ask_human = notifying_ask_human(parent)
+      toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
+      chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
+      agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline)
+    end
 
-  # The chat default: an attenuated read-only child (schema posture, depth 1).
-  # The observer routes its :spawn/:message lineage events into the session
-  # record, exactly as ask_human's Q/A goes.
-  def research_subagent(base, backend:, parent:, journal:)
-    Lain::Tools::Subagent.new(
-      provider: backend.provider, context_factory: -> { backend.context }, toolset: base,
-      policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema,
-                                          only: %i[read_file list_files]),
-      parent:, journal:, max_depth: 1, observer: chronicle.observer
-    )
-  end
+    private
 
-  # Gate and Live share ONE Toolset (the single-map invariant the plan
-  # calls out): a second Toolset reference here could let the approval gate
-  # and the executor disagree about what a tool name means. RefuseSecretWrites
-  # sits in the tool phase so a credential-shaped memory_write is withheld
-  # before it ever reaches the recorder (a memory, once indexed, replays into
-  # every future context -- there is no un-indexing it).
-  # `session:` is REQUIRED, not defaulted: a defaulted fresh Session would
-  # silently mis-wire memory -- a caller passing a recorder-bearing toolset
-  # but forgetting session: would get working memory tools with a permanently
-  # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
-  # degrade (T1 panel, Schneeman).
-  # Telemetry (TurnUsage via journal:, RequestSent via the JournalRequests
-  # phase) and per-iteration turn durability both come from the chronicle;
-  # under --nvim they fan through the tee to the live views too. The `tap`
-  # gives the turn middleware's thunk the same late-bound agent binding the
-  # subagent's parent handle uses.
-  def build_agent(toolset:, channel:, session:, backend:)
-    live = Lain::Effect::Handler::Live.new(toolset:, channel:)
-    gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
+    attr_reader :options, :chronicle
 
-    agent = nil
-    Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate, session:,
-                    tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
-                    turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
-                    **chronicle.telemetry_kwargs).tap { |built| agent = built }
-  end
+    # A resumed chat opens its NEW journal chained to the old one; a fresh chat
+    # passes nothing, and the scribe writes an unchained header. Derived from
+    # the Resume result so the exe never assembles the wire-format hashes.
+    def resume_start(resumed)
+      resumed ? { resumed_from: resumed.resumed_from, written: resumed.written } : {}
+    end
 
-  def approval_policy
-    options[:yolo] ? Lain::Effect::Handler::Gate::ApproveAll.new : Lain::Frontend::ApprovalPolicy.new
+    # The replier fiber (see Repl#answer_loop) parks on @questions and answers
+    # through @ask_human -- Wiring-instance state because the reply path and the
+    # toolset are wired in different methods of this one assembly. The enqueue
+    # happens inside #ask (before perform's await), and Async::Queue is
+    # buffered, so the replier never misses a question. The observer routes the
+    # Q/A :message events into the session record -- a Timeline walk can never
+    # find them.
+    def notifying_ask_human(parent)
+      @questions = Async::Queue.new
+      Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:,
+                                           observer: chronicle.observer)
+    end
+
+    def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
+      base = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new,
+                                Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
+                                Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new])
+      Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
+    end
+
+    # The chat default: an attenuated read-only child (schema posture, depth 1).
+    # The observer routes its :spawn/:message lineage events into the session
+    # record, exactly as ask_human's Q/A goes.
+    def research_subagent(base, backend:, parent:, journal:)
+      Lain::Tools::Subagent.new(
+        provider: spooled_provider(backend), context_factory: -> { backend.context }, toolset: base,
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema,
+                                            only: %i[read_file list_files]),
+        parent:, journal:, max_depth: 1, observer: chronicle.observer
+      )
+    end
+
+    # Gate and Live share ONE Toolset (the single-map invariant the plan
+    # calls out): a second Toolset reference here could let the approval gate
+    # and the executor disagree about what a tool name means. RefuseSecretWrites
+    # sits in the tool phase so a credential-shaped memory_write is withheld
+    # before it ever reaches the recorder (a memory, once indexed, replays into
+    # every future context -- there is no un-indexing it).
+    # `session:` is REQUIRED, not defaulted: a defaulted fresh Session would
+    # silently mis-wire memory -- a caller passing a recorder-bearing toolset
+    # but forgetting session: would get working memory tools with a permanently
+    # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
+    # degrade (T1 panel, Schneeman).
+    # Telemetry (TurnUsage via journal:, RequestSent via the JournalRequests
+    # phase) and per-iteration turn durability both come from the chronicle;
+    # under --nvim they fan through the tee to the live views too. The `tap`
+    # gives the turn middleware's thunk the same late-bound agent binding the
+    # subagent's parent handle uses. `timeline:` seeds a resumed chat's Agent
+    # with the chain-verified Timeline (nil = Agent's fresh default).
+    def build_agent(toolset:, channel:, session:, backend:, timeline: nil)
+      live = Lain::Effect::Handler::Live.new(toolset:, channel:)
+      gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
+
+      agent = nil
+      Lain::Agent.new(provider: spooled_provider(backend), toolset:, context: backend.context, handler: gate,
+                      session:, timeline:,
+                      tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
+                      turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
+                      **chronicle.telemetry_kwargs).tap { |built| agent = built }
+    end
+
+    # Both provider construction sites tee their round trips into the
+    # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real
+    # ResponseWal when journaling, the Null spool under --no-journal.
+    def spooled_provider(backend) = backend.provider(spool: chronicle.spool)
+
+    def approval_policy
+      options[:yolo] ? Lain::Effect::Handler::Gate::ApproveAll.new : Lain::Frontend::ApprovalPolicy.new
+    end
   end
 
   # One conversation: reads commands at `you>`, routes each through the repl

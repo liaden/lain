@@ -21,6 +21,14 @@ RSpec.describe LainCLI do
   # so it is exercised directly -- no Thor instance, no network.
   def backend(**options) = LainCLI::Backend.new(options)
 
+  # The chat-assembly seams (build_toolset/build_agent) moved off the Thor
+  # class into LainCLI::Wiring, so they are exercised on a Wiring built with a
+  # plain options hash and the Null chronicle -- the same records-nothing duct
+  # a directly-constructed CLI instance used to get from #chronicle.
+  def wiring(chronicle: Lain::CLI::Chronicle::Null.new, **options)
+    LainCLI::Wiring.new(options:, chronicle:)
+  end
+
   describe LainCLI::Backend, "#provider" do
     it "constructs a Provider::Ollama honoring --api-base" do
       provider = backend(provider: "ollama", api_base: "http://localhost:11434").provider
@@ -56,7 +64,7 @@ RSpec.describe LainCLI do
 
   describe "provider-dependent --model default" do
     it "defaults to Ollama's model when --provider ollama and no --model" do
-      agent = cli(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096)
+      agent = wiring
               .send(:build_agent, toolset:, channel:, session: Lain::Session.new,
                                   backend: backend(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096))
       expect(agent.context.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
@@ -66,9 +74,8 @@ RSpec.describe LainCLI do
     # let a caller wire a recorder-bearing toolset to an agent whose manifest
     # can never see that recorder, with no error anywhere (T1 panel fix).
     it "requires session: on build_agent so memory cannot be silently mis-wired" do
-      thor = cli(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096)
-      backend = thor.class::Backend.new({ provider: "ollama" })
-      expect { thor.send(:build_agent, toolset:, channel:, backend:) }.to raise_error(ArgumentError, /session/)
+      backend = LainCLI::Backend.new({ provider: "ollama" })
+      expect { wiring.send(:build_agent, toolset:, channel:, backend:) }.to raise_error(ArgumentError, /session/)
     end
 
     it "honors an explicit --model over the provider default" do
@@ -106,8 +113,8 @@ RSpec.describe LainCLI do
     let(:recorder) { Lain::Memory::Recorder.new }
     let(:chat_toolset) do
       ask_human = Lain::Tools::AskHuman.new(parent: -> {})
-      cli.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
-                                         parent: -> {}, journal: Lain::Channel.new, ask_human:)
+      wiring.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
+                                            parent: -> {}, journal: Lain::Channel.new, ask_human:)
     end
 
     it "contains a memory_read tool" do
@@ -128,18 +135,18 @@ RSpec.describe LainCLI do
   end
 
   # T13: the session-record lifecycle lives in Lain::CLI::Chronicle (see its
-  # spec); the exe only wires it. A directly-constructed CLI instance -- this
-  # file's way of driving the private seams without running #chat -- gets the
-  # Null chronicle, so build_toolset/build_agent record nothing and need no
-  # chronicle setup here.
+  # spec); the exe only wires it. A directly-constructed CLI instance still
+  # memoizes the Null chronicle (its #chronicle reader), and Wiring drives the
+  # assembly seams over that same Null duck, so build_toolset/build_agent
+  # record nothing and need no chronicle setup here.
   describe "the chronicle seam" do
     it "defaults a bare instance to the Null chronicle" do
       expect(cli.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
     end
 
     it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
-      agent = cli.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
-                                     backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
+      agent = wiring.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
+                                        backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
       expect(agent.instance_variable_get(:@turn_middleware).to_a).to eq([])
     end
   end
