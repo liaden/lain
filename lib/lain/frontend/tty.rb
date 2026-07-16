@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "pastel"
 require "reline"
 require "tty-cursor"
@@ -45,11 +46,18 @@ module Lain
       # @param output [#print, #puts, #flush] default $stdout, a StringIO in specs
       # @param input [#gets, #tty?] default $stdin, a StringIO in specs
       # @param pastel [Pastel]
-      def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?))
+      # @param history_path [String] durable reline history file, under
+      #   {Paths#state_home} by default -- injectable so specs use a tmpdir
+      #   instead of touching real XDG state (T12)
+      def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
+                     history_path: File.join(Paths.new.state_home, "history"))
         @channel = channel
         @output = output
         @input = input
         @pastel = pastel
+        @history_path = history_path
+        @history_writable = true
+        @history_warned = false
       end
 
       # Non-blocking: render whatever is queued right now and return. The
@@ -74,6 +82,7 @@ module Lain
       # than leak past `run`'s return.
       def run
         enter_alternate_screen
+        load_history
         renderer = Thread.new { render_until_closed }
         yield self
       ensure
@@ -90,7 +99,7 @@ module Lain
       #
       # @return [String, nil] the line, or nil at EOF (Ctrl-D / closed input)
       def prompt(text = "> ")
-        return Reline.readline(@pastel.bold(text), true) if @input.respond_to?(:tty?) && @input.tty?
+        return read_line_with_history(text) if @input.respond_to?(:tty?) && @input.tty?
 
         @output.print(text)
         @output.flush
@@ -122,6 +131,55 @@ module Lain
       end
 
       private
+
+      # `reline(…, true)` already feeds an accepted line into the in-memory
+      # `Reline::HISTORY`; this durably appends it too, before the next prompt is
+      # drawn -- write-through rather than dump-at-exit, so a SIGKILL between
+      # prompts loses at most nothing (T12). Durable here means close()-durable
+      # (the process dying), not fsync-durable (the machine dying) -- shell
+      # history does not warrant an fsync per line.
+      def read_line_with_history(text)
+        line = Reline.readline(@pastel.bold(text), true)
+        append_history(line) if line
+        line
+      end
+
+      # Populate Reline::HISTORY from the durable file at {#run} entry, so history
+      # round-trips a process. A missing file is the ordinary first-run case, not
+      # a failure -- rescued rather than pre-checked with File.exist?, which
+      # would be a TOCTOU stat for nothing. Any other read error warns.
+      def load_history
+        File.readlines(@history_path, chomp: true).each { |line| Reline::HISTORY.push(line) }
+      rescue Errno::ENOENT
+        nil
+      rescue SystemCallError => e
+        warn_history_unavailable(e)
+      end
+
+      # Append-only, 0600 -- history is a secret-adjacent surface (pasted keys),
+      # so the creation mode is passed to open() itself: the file is never
+      # readable beyond its owner, not even between an open and a chmod (umask
+      # can only remove bits, and 0600 has none it may remove). A failure here
+      # (unwritable state dir) degrades to a rendered warning instead of
+      # crashing the prompt loop, and only warns once even if every subsequent
+      # write keeps failing.
+      def append_history(line)
+        return unless @history_writable
+
+        FileUtils.mkdir_p(File.dirname(@history_path))
+        File.open(@history_path, File::WRONLY | File::CREAT | File::APPEND, 0o600) { |f| f.puts(line) }
+      rescue SystemCallError => e
+        @history_writable = false
+        warn_history_unavailable(e)
+      end
+
+      def warn_history_unavailable(error)
+        return if @history_warned
+
+        @history_warned = true
+        @output.puts(@pastel.yellow("warning: history unavailable (#{error.message})"))
+        @output.flush
+      end
 
       # The background render loop: blocking drain of the Channel so live tool
       # output (a running bash command's stdout) renders as it arrives rather

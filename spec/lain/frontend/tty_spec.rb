@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::Frontend::TTY do
   let(:channel) { Lain::Channel.new }
@@ -10,6 +11,23 @@ RSpec.describe Lain::Frontend::TTY do
 
   def tool_output(tool_use_id: "tu_1", stream: :stdout, bytes: "hello\n")
     Lain::Telemetry::ToolOutput.new(tool_use_id:, stream:, bytes:)
+  end
+
+  # Reline::HISTORY is process-global (Reline::History < Array), so every example
+  # that touches it must restore the pre-existing content -- otherwise a line
+  # pushed by one example leaks into the next.
+  around do |example|
+    original = Reline::HISTORY.to_a
+    Reline::HISTORY.clear
+    example.run
+    Reline::HISTORY.clear
+    Reline::HISTORY.concat(original)
+  end
+
+  # A double standing in for a real terminal's input: #prompt only takes the
+  # reline/history path when `input.tty?` is true, which StringIO never is.
+  def tty_input
+    instance_double(IO, tty?: true)
   end
 
   describe "#drain_and_render" do
@@ -100,6 +118,88 @@ RSpec.describe Lain::Frontend::TTY do
       tty.prompt("> ")
 
       expect(output.string).to include(">")
+    end
+  end
+
+  describe "history (XDG state, T12)" do
+    around do |example|
+      Dir.mktmpdir { |dir| @history_dir = dir and example.run }
+    end
+
+    def history_path
+      File.join(@history_dir, "history")
+    end
+
+    def tty_with_history(history_path: self.history_path, input: tty_input)
+      described_class.new(channel:, output:, input:, history_path:)
+    end
+
+    it "loads an existing history file into Reline::HISTORY, in order, when TTY starts" do
+      File.write(history_path, "first command\nsecond command\n")
+
+      tty_with_history.run { channel.close }
+
+      expect(Reline::HISTORY.to_a).to eq(["first command", "second command"])
+    end
+
+    it "writes an accepted line to disk before the next prompt" do
+      allow(Reline).to receive(:readline).and_return("remember me")
+
+      tty_with_history.prompt
+
+      expect(File.read(history_path)).to eq("remember me\n")
+    end
+
+    it "creates the history file owner-only (0600) at open(), with no chmod window" do
+      allow(Reline).to receive(:readline).and_return("secret-adjacent line")
+      expect(File).not_to receive(:chmod)
+
+      tty_with_history.prompt
+
+      expect(File.stat(history_path).mode & 0o777).to eq(0o600)
+    end
+
+    it "appends rather than truncating across multiple accepted lines" do
+      allow(Reline).to receive(:readline).and_return("one", "two")
+
+      history_tty = tty_with_history
+      2.times { history_tty.prompt }
+
+      expect(File.read(history_path)).to eq("one\ntwo\n")
+    end
+
+    it "never creates the history file for non-tty input" do
+      allow(input).to receive(:tty?).and_return(false)
+      input.string = "plain line\n"
+
+      described_class.new(channel:, output:, input:, history_path:).prompt
+
+      expect(File.exist?(history_path)).to be(false)
+    end
+
+    it "degrades loudly-but-usable when the history location is unwritable" do
+      blocking_file = File.join(@history_dir, "blocked")
+      File.write(blocking_file, "not a directory")
+      unwritable_path = File.join(blocking_file, "history")
+      allow(Reline).to receive(:readline).and_return("still works")
+
+      line = nil
+      expect { line = tty_with_history(history_path: unwritable_path).prompt }.not_to raise_error
+
+      expect(line).to eq("still works")
+      expect(output.string.downcase).to include("warning")
+    end
+
+    it "renders exactly one warning even after repeated failed writes" do
+      blocking_file = File.join(@history_dir, "blocked")
+      File.write(blocking_file, "not a directory")
+      unwritable_path = File.join(blocking_file, "history")
+      allow(Reline).to receive(:readline).and_return("a", "b")
+
+      history_tty = tty_with_history(history_path: unwritable_path)
+      2.times { history_tty.prompt }
+
+      expect(output.string.downcase.scan("warning").size).to eq(1)
     end
   end
 
