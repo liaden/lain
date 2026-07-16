@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require "faraday"
 require "json"
 require "time"
 
+require_relative "anthropic_raw/retry_tap"
 require_relative "anthropic_raw/stream_assembler"
 require_relative "anthropic_raw/transport"
 
@@ -71,10 +73,12 @@ module Lain
       #   {Transport} over the vendored connection otherwise.
       # @param channel [Lain::Channel] where retry events are journaled
       # @param sink [Lain::Sink] where the transport's debug/log lines go
+      # @param spool [#open_frame] where the raw response bytes are teed; the Null
+      #   spool by default, so no WAL file exists unless a session opts in
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
-                     api_key: nil, api_base: nil)
+                     spool: Spool::Null.new, api_key: nil, api_base: nil)
         super()
-        @channel = channel
+        @retries = RetryTap.new(spool:, channel:)
         @config = config || build_config(api_key:, api_base:)
         @transport = transport || Transport.new(@config, sink:)
       end
@@ -88,6 +92,11 @@ module Lain
         build_response(dispatch(request))
       rescue Provider::HTTP::Error => e
         raise wrap_error(e)
+      rescue Faraday::Error => e
+        # Exhausted retries re-raise the last connection-level failure
+        # (ConnectionFailed, a timeout) as a bare Faraday class; nothing above
+        # the Provider rescues a transport class, so it wraps like the rest.
+        raise APIError, e.message
       end
 
       private
@@ -96,8 +105,8 @@ module Lain
         config = Provider::HTTP::Configuration.new
         config.anthropic_api_key = api_key || ENV.fetch("ANTHROPIC_API_KEY", nil)
         config.anthropic_api_base = api_base unless api_base.nil?
-        config.retry_block = retry_journal
-        config.exhausted_retries_block = exhausted_journal
+        config.retry_block = @retries.retry_block
+        config.exhausted_retries_block = @retries.exhausted_block
         config.rate_limit_reset_header = RATE_LIMIT_RESET_HEADER
         config.header_parser_block = RESET_HEADER_PARSER
         config
@@ -112,19 +121,25 @@ module Lain
         payload
       end
 
+      # The Provider owns frame opening (it computes the digest) AND attempt
+      # boundaries: the frame stays live inside {RetryTap} so a retry rotates it
+      # rather than concatenating two attempts into one frame.
       def dispatch(request)
         payload = wire_payload(request)
-        request.stream ? stream_dispatch(payload) : sync_dispatch(payload)
+        frame = @retries.open_frame(request_digest: request.digest)
+        request.stream ? stream_dispatch(payload, frame) : sync_dispatch(payload, frame)
+      ensure
+        @retries.release
       end
 
-      def stream_dispatch(payload)
+      def stream_dispatch(payload, frame)
         assembler = StreamAssembler.new
-        @transport.stream(payload) { |data| assembler.add(data) }
+        @transport.stream(payload, frame:) { |data| assembler.add(data) }
         assembler.result
       end
 
-      def sync_dispatch(payload)
-        body = @transport.sync_post(payload).body || {}
+      def sync_dispatch(payload, frame)
+        body = @transport.sync_post(payload, frame:).body || {}
         StreamAssembler::Assembled.new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
                                        content: body["content"] || [], usage: body["usage"] || {})
       end
@@ -157,22 +172,6 @@ module Lain
       def wrap_error(error)
         status = error.response.respond_to?(:status) ? error.response.status : nil
         status ? APIStatusError.new(error.message, status:) : APIError.new(error.message)
-      end
-
-      def retry_journal
-        channel = @channel
-        lambda do |env:, retry_count:, exception:, will_retry_in:, **|
-          channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
-                                                    status: env[:status], reason: exception.class.name))
-        end
-      end
-
-      def exhausted_journal
-        channel = @channel
-        lambda do |env:, exception:, options:|
-          channel.push(Telemetry::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
-                                                    status: env[:status], reason: exception.class.name))
-        end
       end
     end
   end

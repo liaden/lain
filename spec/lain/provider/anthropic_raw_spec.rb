@@ -12,13 +12,13 @@ RSpec.describe Lain::Provider::AnthropicRaw do
   # or returns a scripted body (sync).
   def transport_streaming(events)
     Class.new do
-      define_method(:stream) { |_payload, _headers = {}, &blk| events.each(&blk) }
+      define_method(:stream) { |_payload, _headers = {}, **, &blk| events.each(&blk) }
     end.new
   end
 
   def transport_sync(body)
     Class.new do
-      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(body) }
+      define_method(:sync_post) { |_payload, _headers = {}, **| Struct.new(:body).new(body) }
     end.new
   end
 
@@ -130,7 +130,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
   describe "#complete error wrapping" do
     def transport_raising(error)
       Class.new do
-        define_method(:stream) { |_payload, _headers = {}, &_blk| raise error }
+        define_method(:stream) { |_payload, _headers = {}, **, &_blk| raise error }
       end.new
     end
 

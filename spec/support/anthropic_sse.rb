@@ -116,13 +116,13 @@ module AnthropicSSE
       @calls = []
     end
 
-    def stream(payload, _headers = {}, &on_event)
+    def stream(payload, _headers = {}, **, &on_event)
       @calls << payload
       AnthropicSSE.events(next_response).each(&on_event)
       nil
     end
 
-    def sync_post(payload, _headers = {})
+    def sync_post(payload, _headers = {}, **)
       @calls << payload
       Struct.new(:body).new(AnthropicSSE.body_hash(next_response))
     end
