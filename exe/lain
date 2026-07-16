@@ -115,29 +115,17 @@ class LainCLI < Thor
 
   private
 
-  # A #<< adapter that fans agent telemetry to BOTH the record and the live
-  # views. (Trivial; promote to Lain::Channel::Tee if a second caller wants it.)
-  class JournalTee
-    def initialize(journal, channel)
-      @journal = journal
-      @channel = channel
-    end
-
-    def <<(event)
-      @journal << event
-      @channel << event
-      self
-    end
-  end
-
   # --nvim: the editor may drop view events but never block the agent; the
   # NDJSON record sees everything. The frontend's own journal: is the RAW
   # Journal, not the tee -- a resend is recorded once, never re-fanned onto
-  # the views (the frontend pushes the resent event there itself).
+  # the views (the frontend pushes the resent event there itself). The tee
+  # itself is Lain::CLI::JournalTee (lib/lain/cli/journal_tee.rb) -- quitting
+  # nvim closes @nvim_channel, and the tee survives the resulting
+  # ClosedQueueError so the journal leg keeps landing.
   def setup_nvim_views
     @nvim_channel = Lain::Channel::DropOldest.new
     @nvim_journal = Lain::Journal.open
-    @nvim_tee = JournalTee.new(@nvim_journal, @nvim_channel)
+    @nvim_tee = Lain::CLI::JournalTee.new(@nvim_journal, @nvim_channel)
   end
 
   def run_chat(tty:, agent:, session:)
