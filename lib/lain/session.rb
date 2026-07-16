@@ -43,6 +43,17 @@ module Lain
       @manifest_reminders = [].freeze
     end
 
+    # The read-set's path identity, public so {Session::Journaled} can ask
+    # "which path did that read just normalize to?" without reaching into a
+    # private method -- the one seam a journaling decorator needs to know
+    # WHICH path to record, since it must match exactly what {#read?} will
+    # answer true for afterwards.
+    #
+    # @return [String]
+    def self.normalize_path(path)
+      File.expand_path(path.to_s)
+    end
+
     # Record that `path` was read this session. Normalized so a later `read?`
     # cannot be defeated by a different spelling of the same file.
     #
@@ -116,7 +127,7 @@ module Lain
     # queried (or the reverse) are the same file, so the read-set answers on the
     # file, not on the string the model happened to type.
     def normalize(path)
-      File.expand_path(path.to_s)
+      self.class.normalize_path(path)
     end
 
     def render_todos(list)
@@ -156,6 +167,57 @@ module Lain
       def self.instance
         INSTANCE
       end
+    end
+
+    # A Journal-duck decorator over a real Session -- {Memory::JournalMemoryRoot}'s
+    # shape, applied here (T16): every call forwards to the wrapped Session
+    # untouched, and two of them are ALSO journaled, so
+    # {SessionRecord::Replay} can fold a fresh Session back to the same
+    # run-state. This is the seam that keeps {Session} itself
+    # journal-ignorant -- its own spec never mentions a journal -- because the
+    # journaling lives here, one layer out, not inside the domain object.
+    #
+    # A read journals only the FIRST time {#read?} would flip false -> true
+    # for a path: a big read/edit loop that revisits the same file every
+    # iteration must not turn into one journal line per iteration (the
+    # escalation this design closes without inventing batching). A todo write
+    # journals every call, unconditionally, as the WHOLE list -- see
+    # {Telemetry::TodoSnapshot}.
+    class Journaled
+      # @param session [Session] the real Session every call forwards to
+      # @param journal [#<<] where {Telemetry::SessionRead} /
+      #   {Telemetry::TodoSnapshot} land
+      def initialize(session:, journal:)
+        @session = session
+        @journal = journal
+      end
+
+      # The check-before-forward pair is fiber-safe: there is no yield point
+      # between the `read?` check and the Set mutation (both pure Ruby, no
+      # IO), and the journal write -- the only place a fiber COULD yield --
+      # runs after the mutation, so two fibers reading the same path cannot
+      # both see "first".
+      #
+      # @return [self]
+      def record_read(path)
+        first_read = !@session.read?(path)
+        @session.record_read(path)
+        @journal << Telemetry::SessionRead.new(path: Session.normalize_path(path)) if first_read
+        self
+      end
+
+      # @return [Boolean]
+      def read?(path) = @session.read?(path)
+
+      # @return [self]
+      def write_todos(todos)
+        @session.write_todos(todos)
+        @journal << Telemetry::TodoSnapshot.from(todos)
+        self
+      end
+
+      # @return [Array<String>]
+      def reminders = @session.reminders
     end
   end
 end

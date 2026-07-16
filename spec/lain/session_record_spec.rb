@@ -224,3 +224,88 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 end
+
+# T16: the read side of Session::Journaled's write side. A journal that never
+# saw a session_read/todo_snapshot/memory_root record (an older recording, or
+# a run with no reads/writes) replays to the corresponding neutral state --
+# the same tolerant zero-record precedent Bench::Session::MemoryReplay itself
+# already sets for a memory_root-free chain.
+RSpec.describe Lain::SessionRecord::Replay do
+  let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
+  let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+  let(:workspace) { Lain::Workspace.empty }
+  let(:journal_io) { StringIO.new }
+  let(:journal) { Lain::Journal.new(io: journal_io) }
+
+  def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+  def replayed_session(source = journal_io.string.each_line)
+    described_class.new(source).session
+  end
+
+  # AC1: reads and todos round-trip.
+  describe "reads and todos round-trip" do
+    it "answers read? true for every recorded path and renders the LAST todo list only" do
+      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled.record_read("/tmp/a.rb")
+      journaled.record_read("/tmp/b.rb")
+      journaled.write_todos([todo("first pass", "in_progress")])
+      journaled.write_todos([todo("second pass", "completed")])
+
+      fresh = replayed_session
+
+      expect(fresh.read?("/tmp/a.rb")).to be(true)
+      expect(fresh.read?("/tmp/b.rb")).to be(true)
+      expect(fresh.read?("/tmp/never.rb")).to be(false)
+      expect(fresh.reminders).to eq(["Current todo list:\n- [completed] second pass"])
+    end
+
+    it "accepts already-parsed Hash entries, not only raw NDJSON lines (the Journal.parse duck)" do
+      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled.record_read("/tmp/a.rb")
+
+      hashes = journal_io.string.each_line.map { |line| JSON.parse(line) }
+
+      expect(replayed_session(hashes).read?("/tmp/a.rb")).to be(true)
+    end
+
+    it "skips foreign records the parse duck answers nil for" do
+      journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+      journaled.record_read("/tmp/a.rb")
+      lines = ["not json at all\n", "[1, 2, 3]\n"] + journal_io.string.each_line.to_a
+
+      expect(replayed_session(lines).read?("/tmp/a.rb")).to be(true)
+    end
+
+    it "replays cleanly to empty run-state from a journal with no session_read/todo_snapshot records" do
+      Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:)
+
+      fresh = replayed_session
+
+      expect(fresh.read?("/tmp/anything.rb")).to be(false)
+      expect(fresh.reminders).to eq([])
+    end
+  end
+
+  # AC2: the manifest pair needs no new record -- reconstructed through the
+  # existing Bench::Session::MemoryReplay root, over the SAME turn/memory_root
+  # records a memory-bearing run already journals.
+  describe "the manifest pair needs no new record" do
+    it "reconstructs manifest reminders through the existing MemoryReplay root" do
+      recorder = Lain::Memory::Recorder.new
+      memory_toolset = Lain::Toolset.new([Lain::Tools::MemoryWrite.new(recorder:)])
+      memory_journal = Lain::Memory::JournalMemoryRoot.new(journal:, recorder:)
+      input = { "id" => "aspirin-dosing", "description" => "Aspirin dosing bounds", "body" => "40mg/kg max" }
+      usage = Lain::Usage.new(input_tokens: 10, output_tokens: 5)
+      responses = [tool_response(["tu_1", "memory_write", input], usage:, model: "claude-opus-4-8"),
+                   text_response("done", usage:, model: "claude-opus-4-8")]
+
+      agent, = record_journaled_run(responses, journal: memory_journal, toolset: memory_toolset, context:,
+                                               workspace:)
+      Lain::SessionRecord::Scribe.new(journal:, context:, toolset: memory_toolset, workspace:)
+                                 .catch_up(agent.timeline)
+
+      expect(replayed_session.reminders.last).to include("aspirin-dosing | Aspirin dosing bounds")
+    end
+  end
+end

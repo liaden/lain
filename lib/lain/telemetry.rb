@@ -399,4 +399,65 @@ module Lain
       end
     end
   end
+
+  # T16's two run-state records, reopening Telemetry a third time for the same
+  # reason T13's block exists (CLAUDE.md: a tripped Metrics/ModuleLength names
+  # a missing seam, and here the seam is "yet another distinct group of
+  # session-record events"). Both are emitted by {Session::Journaled}, the
+  # decorator that keeps {Session} itself journal-ignorant -- neither the
+  # Agent nor any tool ever constructs one directly.
+  module Telemetry
+    # T16's construction contract, reopening {Guards} the way this block
+    # reopens Telemetry (the same validate-then-freeze convention as every
+    # carrier above).
+    module Guards
+      # A read record must name the file read.
+      class SessionRead < Guard
+        attribute :path
+        validates :path, presence: { message: "must name the file read, got nil" }
+      end
+    end
+
+    # One path, the first time {Session#read?} would flip false -> true for
+    # it this session. `path` is the SAME `File.expand_path`-normalized form
+    # {Session} keys its read-set on (not the model's raw spelling) --
+    # consistent with every other path already reachable from this journal
+    # (a `tool_result`'s quoted file contents), and it is what
+    # {SessionRecord::Replay} feeds straight back into a fresh Session's
+    # `record_read` with no re-normalization required. A RE-read never lands
+    # a second record: that dedupe is what keeps a big read/edit loop from
+    # journaling one line per iteration.
+    SessionRead = Data.define(:path) do
+      include Journalable
+
+      def initialize(path:)
+        Guards::SessionRead.check!(path:)
+
+        super(path: path.dup.freeze)
+      end
+    end
+
+    # The run's ENTIRE todo list, one record per {Tools::TodoWrite} call --
+    # matching {Session#write_todos}'s own replace-not-merge semantics, so
+    # {SessionRecord::Replay} needs no merge logic of its own either: folding
+    # every record in order and keeping only the last one's effect IS
+    # {Session#write_todos}'s contract, applied N times. `todos` holds
+    # `{content, status}` pairs in canonical wire form (String keys), the
+    # same shape {Tools::TodoWrite}'s own Item carries.
+    TodoSnapshot = Data.define(:todos) do
+      include Journalable
+
+      # Built from the duck {Session#write_todos} itself accepts -- any
+      # Enumerable of objects answering `#content`/`#status` -- so the
+      # decorator forwards its argument here unchanged rather than
+      # pre-shaping it into hashes.
+      def self.from(todos)
+        new(todos: todos.map { |todo| { "content" => todo.content, "status" => todo.status } })
+      end
+
+      def initialize(todos:)
+        super(todos: Canonical.normalize(todos))
+      end
+    end
+  end
 end

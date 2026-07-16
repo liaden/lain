@@ -56,3 +56,4 @@ module Lain
 end
 
 require_relative "session_record/scribe"
+require_relative "session_record/replay"

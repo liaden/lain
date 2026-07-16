@@ -107,8 +107,11 @@ class LainCLI < Thor
     # single mutable holder of the live Memory::Index, so each write supersedes
     # the last (its prior root still resolves the old item).
     recorder = Lain::Memory::Recorder.new
-    session = Lain::Session.new(memory: recorder)
     open_chronicle
+    # The chronicle decorates both run-state seams: reads/todos journal through
+    # Session::Journaled, and each turn_usage pairs with the memory root in
+    # force (JournalMemoryRoot) -- identity under --no-journal.
+    session = chronicle.wrap_session(Lain::Session.new(memory: chronicle.wrap_memory(recorder)))
     agent = wire_agent(channel:, recorder:, session:)
     run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:)
   rescue Lain::Error => e

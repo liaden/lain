@@ -30,6 +30,8 @@ module Lain
 
         def observer = Event::ChainWriter::Null.new
         def start(**) = self
+        def wrap_session(session) = session
+        def wrap_memory(recorder) = recorder
         def turn_middleware(_timeline) = Middleware::Stack.new
         def telemetry_kwargs = Chronicle.telemetry_kwargs(@tee)
         def catch_up(_timeline) = self
@@ -62,6 +64,7 @@ module Lain
       def initialize(journal:, tee: nil)
         @journal = journal
         @tee = tee
+        @recorder = nil
       end
 
       # The tools' observer seam ({Event::ChainWriter}'s `observer:` duck),
@@ -75,6 +78,29 @@ module Lain
         self
       end
 
+      # Decorate the run's Session so its reads and todo writes ALSO land in
+      # the session record ({Session::Journaled}) -- run-state records go to
+      # the session journal itself, never the tee, because they are record
+      # data like the scribe's turn records, not live-view telemetry. Usable
+      # before {#start}: the decorator writes through the journal directly,
+      # no scribe involved.
+      def wrap_session(session)
+        Session::Journaled.new(session:, journal: @journal)
+      end
+
+      # Register the run's {Memory::Recorder} so {#telemetry_kwargs} pairs
+      # each turn_usage with the memory root in force at that turn
+      # ({Memory::JournalMemoryRoot} -- until now wired only on the bench
+      # paths, so a live chat's journal carried no memory_root records and a
+      # replay would silently rebuild empty memory). Returns the recorder
+      # UNCHANGED: JournalMemoryRoot decorates the journal, not the recorder,
+      # so Session's `memory:` and the memory tools keep the recorder duck
+      # they already speak.
+      def wrap_memory(recorder)
+        @recorder = recorder
+        recorder
+      end
+
       # Per-iteration durability: every committed turn is on disk before the
       # NEXT model call. The scribe duck handed to {Middleware::JournalTurns}
       # is `self`, so this stack can be wired before {#start} -- iterations
@@ -84,8 +110,17 @@ module Lain
       end
 
       # Telemetry follows the tee when --nvim fans events to live views too;
-      # otherwise it lands in the session journal itself.
-      def telemetry_kwargs = self.class.telemetry_kwargs(@tee || @journal)
+      # otherwise it lands in the session journal itself. With a recorder
+      # wrapped, ONLY the Agent's `journal:` leg (the turn_usage stream) is
+      # decorated with JournalMemoryRoot -- JournalRequests keeps the raw
+      # destination, run_recorder's precedent: request_sent lands unpaired.
+      def telemetry_kwargs
+        destination = @tee || @journal
+        kwargs = self.class.telemetry_kwargs(destination)
+        return kwargs if @recorder.nil?
+
+        kwargs.merge(journal: Memory::JournalMemoryRoot.new(journal: destination, recorder: @recorder))
+      end
 
       def catch_up(timeline)
         scribe.catch_up(timeline)

@@ -109,6 +109,58 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # T16 fix round: the write-side wiring for Session run-state. The chronicle
+  # owns the decoration so the exe stays a one-line wire and Session itself
+  # stays journal-ignorant (Session::Journaled's whole point).
+  describe "#wrap_session" do
+    it "returns a decorated session that journals a session_read on the first read only" do
+      wrapped = chronicle.wrap_session(Lain::Session.new)
+
+      wrapped.record_read("/tmp/app.rb")
+      wrapped.record_read("/tmp/app.rb")
+
+      reads = of_type("session_read")
+      expect(reads.size).to eq(1)
+      expect(reads.first).to include("path" => "/tmp/app.rb")
+      expect(wrapped.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "journals todo snapshots into the session record" do
+      wrapped = chronicle.wrap_session(Lain::Session.new)
+
+      wrapped.write_todos([Struct.new(:content, :status).new("a", "pending")])
+
+      expect(of_type("todo_snapshot").first)
+        .to include("todos" => [{ "content" => "a", "status" => "pending" }])
+    end
+  end
+
+  # Without this, real chat journals carry NO memory_root records and a
+  # replay would silently rebuild empty memory: JournalMemoryRoot was wired
+  # only on the bench paths (run_recorder, live_replay) until now.
+  describe "#wrap_memory" do
+    let(:recorder) { Lain::Memory::Recorder.new }
+
+    it "returns the recorder itself, so Session and the memory tools keep their duck" do
+      expect(chronicle.wrap_memory(recorder)).to be(recorder)
+    end
+
+    it "pairs each turn_usage through telemetry_kwargs' journal with the recorder's live root" do
+      chronicle.wrap_memory(recorder)
+      recorder.write(Lain::Memory::Item.new(id: "aspirin", description: "dosing", body: "40mg/kg"))
+
+      chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+        digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
+      )
+
+      expect(of_type("memory_root").first).to include("turn_digest" => "blake3:t1", "root" => recorder.root)
+    end
+
+    it "leaves telemetry_kwargs' journal undecorated when no recorder was wrapped (run_recorder's raw-journal rule)" do
+      expect(chronicle.telemetry_kwargs.fetch(:journal)).to be(journal)
+    end
+  end
+
   describe "lifecycle delegation" do
     before { chronicle.start(context:, toolset:) }
 
@@ -146,6 +198,14 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.catch_up(nil)).to be(null)
       expect(null.interrupted(head: "x")).to be(null)
       expect(null.close(reason: :exit)).to be(null)
+    end
+
+    it "wraps session and memory as identity -- --no-journal decorates nothing" do
+      session = Lain::Session.new
+      recorder = Lain::Memory::Recorder.new
+
+      expect(null.wrap_session(session)).to be(session)
+      expect(null.wrap_memory(recorder)).to be(recorder)
     end
 
     it "still carries the --nvim tee's telemetry leg, which exists independent of the record" do

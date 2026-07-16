@@ -139,4 +139,73 @@ RSpec.describe Lain::Session do
       expect(described_class.instance).to be(null)
     end
   end
+
+  # T16: the decorator that journals a real Session's reads/todos while
+  # leaving Session itself with no journal in sight (every example above this
+  # block constructs a plain Session and never mentions one).
+  describe Lain::Session::Journaled do
+    def todo(content, status) = Struct.new(:content, :status).new(content, status)
+
+    let(:inner) { Lain::Session.new }
+    let(:journal) { [] }
+
+    subject(:journaled) { described_class.new(session: inner, journal:) }
+
+    def of_type(type) = journal.select { |record| record.journal_type == type }
+
+    it "forwards record_read/read? to the wrapped Session, unchanged behavior" do
+      journaled.record_read("/tmp/app.rb")
+
+      expect(journaled.read?("/tmp/app.rb")).to be(true)
+      expect(inner.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "journals a SessionRead the FIRST time a path is read, with the expand_path-normalized path" do
+      Dir.chdir("/tmp") { journaled.record_read("./app.rb") }
+
+      reads = of_type("session_read")
+      expect(reads.size).to eq(1)
+      expect(reads.first.path).to eq("/tmp/app.rb")
+    end
+
+    it "journals nothing on a re-read of the same path (any spelling) -- no chatty per-iteration lines" do
+      journaled.record_read("/tmp/app.rb")
+      journaled.record_read("/tmp/app.rb")
+      Dir.chdir("/tmp") { journaled.record_read("app.rb") }
+
+      expect(of_type("session_read").size).to eq(1)
+    end
+
+    it "journals a fresh SessionRead for a genuinely different path" do
+      journaled.record_read("/tmp/app.rb")
+      journaled.record_read("/tmp/other.rb")
+
+      expect(of_type("session_read").map(&:path)).to contain_exactly("/tmp/app.rb", "/tmp/other.rb")
+    end
+
+    # The record the decorator emits carries a construction contract of its
+    # own (the validate-then-freeze convention): a pathless read record could
+    # never replay, so it must fail loudly at construction, not at load.
+    it "pins SessionRead's guard: a nil path raises at construction" do
+      expect { Lain::Telemetry::SessionRead.new(path: nil) }
+        .to raise_error(ArgumentError, "path must name the file read, got nil")
+    end
+
+    it "journals every write_todos call as a whole-list TodoSnapshot, forwarding to the wrapped Session too" do
+      journaled.write_todos([todo("a", "pending")])
+      journaled.write_todos([todo("b", "completed")])
+
+      snapshots = of_type("todo_snapshot")
+      expect(snapshots.size).to eq(2)
+      expect(snapshots.first.todos).to eq([{ "content" => "a", "status" => "pending" }])
+      expect(snapshots.last.todos).to eq([{ "content" => "b", "status" => "completed" }])
+      expect(inner.reminders).to eq(["Current todo list:\n- [completed] b"])
+    end
+
+    it "reflects the wrapped Session's reminders" do
+      journaled.write_todos([todo("a", "pending")])
+
+      expect(journaled.reminders).to eq(inner.reminders)
+    end
+  end
 end
