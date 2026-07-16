@@ -61,11 +61,15 @@ module Lain
       # the corresponding half happens.
       attr_reader :name, :last_question, :last_answer
 
-      def initialize(parent:, name: "ask_human")
+      # `observer` rides the ChainWriter this tool builds (T13): Q and A are
+      # exactly the events a Timeline walk can never find, so the session
+      # scribe attaches here or not at all. Null default, same as Lineage's --
+      # nothing about the unobserved path changes.
+      def initialize(parent:, name: "ask_human", observer: Event::ChainWriter::Null.new)
         super()
         @parent = parent
         @name = name
-        @chain_writer = Event::ChainWriter.new
+        @chain_writer = Event::ChainWriter.new(observer:)
       end
 
       def description

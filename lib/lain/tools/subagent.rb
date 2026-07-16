@@ -81,9 +81,14 @@ module Lain
       # parent as mailbox events instead. `log` is the append-only read-side that
       # {Lineage} writes every event to -- the actor's mailbox folds it; the
       # one-shot defaults to {Log::Null} because nothing folds its stream.
+      # `observer` is Lineage's outward slot (T13), forwarded verbatim: the
+      # session scribe can only attach at THIS constructor, the one seam the exe
+      # wires, so an unforwardable observer would be silent record loss one
+      # level up.
       def initialize(provider:, context_factory:, toolset:, policy:, parent:,
                      journal: Channel::Null.instance, budget: Agent::Budget.new,
-                     max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null)
+                     max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null,
+                     observer: Event::ChainWriter::Null.new)
         super()
         @provider = provider
         @context_factory = context_factory
@@ -92,6 +97,7 @@ module Lain
         @parent = parent
         @journal = journal
         @budget = budget
+        @observer = observer
         seed_config(max_depth, name, mode, log)
       end
 
@@ -162,7 +168,10 @@ module Lain
         self.class.new(
           provider: @provider, context_factory: @context_factory, toolset: @toolset,
           policy: @policy, parent:, journal: @journal, budget: @budget,
-          max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log
+          # The observer descends with the copy: a grandchild's :spawn/:message
+          # events must reach the same scribe, or nested spawns silently vanish
+          # from the session record -- the failure class this seam closes.
+          max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log, observer: @observer
         )
       end
 
@@ -249,9 +258,7 @@ module Lain
       # join reasoning). Memoized here, not built in #initialize, only to keep
       # the wiring point within its Metrics budget -- Lineage is pure over the
       # frozen @policy, so late construction changes nothing.
-      def lineage
-        @lineage ||= Lineage.new(policy: @policy, log: @log)
-      end
+      def lineage = @lineage ||= Lineage.new(policy: @policy, log: @log, observer: @observer)
 
       # The config axis, apart from the injected collaborators (the Agent
       # `seed_run_state` split). Mode fails loudly here -- a mistyped mode must

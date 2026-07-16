@@ -14,4 +14,5 @@ module Lain
 end
 
 require_relative "cli/backend"
+require_relative "cli/chronicle"
 require_relative "cli/journal_tee"

@@ -528,4 +528,76 @@ RSpec.describe Lain::Telemetry do
       end
     end
   end
+
+  # T13's additive session-record types (SessionClosed, RunInterrupted, Message).
+  # Each new discriminator is pinned here as the on-disk contract -- additive by
+  # construction, so the turn-chain loader's `of_type` narrowing skips them and an
+  # older reader stays unaffected.
+  describe Lain::Telemetry::SessionClosed do
+    it "journals as session_closed carrying the head anchor and the reason" do
+      event = described_class.new(head: "blake3:abc", reason: :exit)
+      expect(event.journal_type).to eq("session_closed")
+      expect(event.to_journal).to eq("type" => "session_closed", "head" => "blake3:abc", "reason" => :exit)
+      expect(JSON.parse(JSON.generate(event.to_journal)))
+        .to include("type" => "session_closed", "reason" => "exit")
+    end
+
+    it "pins the reason enum, rejecting anything outside it, echoing the offender" do
+      expect(described_class::REASONS).to eq(%i[exit interrupted grace_expired])
+      expect { described_class.new(head: nil, reason: :kaput) }
+        .to raise_error(ArgumentError, "reason must be one of [:exit, :interrupted, :grace_expired], got :kaput")
+    end
+
+    it "tolerates a nil head (a session that committed nothing) and stays a frozen value" do
+      event = described_class.new(head: nil, reason: :interrupted)
+      expect(event.head).to be_nil
+      expect(event).to be_deeply_frozen
+      expect(event).to be_ractor_shareable
+    end
+  end
+
+  describe Lain::Telemetry::RunInterrupted do
+    it "journals as run_interrupted anchored at the last committed turn" do
+      event = described_class.new(head: "blake3:def")
+      expect(event.journal_type).to eq("run_interrupted")
+      expect(event.to_journal).to eq("type" => "run_interrupted", "head" => "blake3:def")
+      expect(described_class.new(head: nil)).to be_deeply_frozen
+    end
+  end
+
+  describe Lain::Telemetry::Message do
+    let(:store) { Lain::Store.new }
+    let(:parent) do
+      Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+    let(:event) do
+      Lain::Event::ChainWriter.new.put(parent, kind: :message, from: parent.correlation, to: "human",
+                                               causal_parents: [parent.head_digest], body: { "question" => "q?" })
+    end
+
+    it "journals a :message Event as an additive `message` record, field-pinned" do
+      record = described_class.from_event(event)
+      expect(record.journal_type).to eq("message")
+      expect(record.to_journal).to eq(
+        "type" => "message", "digest" => event.digest, "kind" => :message,
+        "from" => parent.correlation, "to" => "human", "payload" => { "question" => "q?" },
+        "causal_parents" => event.causal_parents, "correlation" => event.correlation
+      )
+    end
+
+    it "carries a :spawn Event under the same type, kind distinguishing it, a nil `to` tolerated" do
+      spawn = Lain::Event::ChainWriter.new.put(parent, kind: :spawn, from: parent.correlation, to: nil,
+                                                       causal_parents: [parent.head_digest], body: {})
+      record = described_class.from_event(spawn)
+      expect(record.kind).to eq(:spawn)
+      expect(record.to).to be_nil
+      expect(record.journal_type).to eq("message")
+    end
+
+    it "is a frozen, Ractor-shareable value" do
+      record = described_class.from_event(event)
+      expect(record).to be_deeply_frozen
+      expect(record).to be_ractor_shareable
+    end
+  end
 end

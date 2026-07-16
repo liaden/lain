@@ -183,4 +183,45 @@ RSpec.describe Lain::Tools::AskHuman do
       end
     end
   end
+
+  # ---- T13 scope expansion: the observer reaches the ChainWriter -------------
+
+  # AskHuman builds its own ChainWriter, so the session scribe can only attach
+  # through the tool's constructor -- the same seam Lineage exposes. Q and A are
+  # exactly the events a Timeline walk can never find (panel B1), which is why
+  # this observer is the ONLY way they reach the session record.
+  describe "the injectable observer (T13)" do
+    it "sees Q and then A, in write order, as the exchange happens" do
+      seen = []
+      tool = described_class.new(parent:, observer: seen.method(:push))
+
+      Sync do
+        tool.ask("which file?")
+        tool.reply("config.rb")
+      end
+
+      expect(seen).to eq([tool.last_question, tool.last_answer])
+      expect(seen.map(&:kind)).to eq(%i[message message])
+    end
+
+    it "flows through Notifying's kwarg forwarding unchanged" do
+      seen = []
+      notifying = Lain::Tools::AskHuman::Notifying.new(notify: ->(_q) {}, parent:,
+                                                       observer: seen.method(:push))
+
+      Sync do
+        notifying.ask("which file?")
+        notifying.reply("config.rb")
+      end
+
+      expect(seen.size).to eq(2)
+    end
+
+    it "defaults to no observer, every existing path byte-identical" do
+      Sync do
+        tool.ask("which file?")
+        expect(tool.reply("config.rb").kind).to eq(:message)
+      end
+    end
+  end
 end

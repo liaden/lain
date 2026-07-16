@@ -362,4 +362,33 @@ RSpec.describe Lain::Tools::Subagent do
       expect(File.read(path)).to eq("goodbye world")
     end
   end
+
+  # ---- T13 scope expansion: the observer reaches Lineage from the outside ----
+
+  # The live session scribe attaches at the TOOL's constructor (the only seam
+  # the exe wires), so Subagent must forward an `observer:` to the Lineage it
+  # builds -- an observer nobody can wire from the exe is silent record loss
+  # one level up.
+  describe "the injectable observer (T13)" do
+    it "sees the :spawn and :message events a spawn writes, with @log still receiving them" do
+      seen = []
+      log = Lain::Tools::Subagent::Log.new
+      tool = described_class.new(
+        provider: mock(text_response("did the thing")), context_factory: -> { child_context },
+        toolset: union, policy: spawn_policy, parent:,
+        log:, observer: seen.method(:push)
+      )
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(seen).to eq([tool.last_spawn, tool.last_message])
+      expect(log.to_a).to eq([tool.last_spawn, tool.last_message])
+    end
+
+    it "defaults to no observer, every existing path byte-identical" do
+      tool = build_subagent(provider: mock(text_response("done")))
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+    end
+  end
 end

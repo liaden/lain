@@ -152,5 +152,19 @@ RSpec.describe Lain::Event::ChainWriter do
 
       expect(log.to_a).to eq([spawn])
     end
+
+    # T13 makes the composition order load-bearing: Lineage's wiring is
+    # `@log << event; observer.call(event)`, so a raising injected observer (a
+    # scribe that is down) must leave @log STILL holding the event -- the mailbox
+    # fold does not lose the event just because the outward observation failed.
+    it "appends to @log BEFORE the observer runs, so a raising observer leaves @log intact" do
+      log = Lain::Tools::Subagent::Log.new
+      lineage = Lain::Tools::Subagent::Lineage.new(policy:, log:, observer: ->(_event) { raise "scribe down" })
+
+      expect { lineage.spawn(parent) }.to raise_error("scribe down")
+
+      expect(log.to_a.size).to eq(1)
+      expect(log.to_a.first.kind).to eq(:spawn)
+    end
   end
 end

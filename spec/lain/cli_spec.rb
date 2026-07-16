@@ -127,6 +127,23 @@ RSpec.describe LainCLI do
     end
   end
 
+  # T13: the session-record lifecycle lives in Lain::CLI::Chronicle (see its
+  # spec); the exe only wires it. A directly-constructed CLI instance -- this
+  # file's way of driving the private seams without running #chat -- gets the
+  # Null chronicle, so build_toolset/build_agent record nothing and need no
+  # chronicle setup here.
+  describe "the chronicle seam" do
+    it "defaults a bare instance to the Null chronicle" do
+      expect(cli.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
+    end
+
+    it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
+      agent = cli.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
+                                     backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
+      expect(agent.instance_variable_get(:@turn_middleware).to_a).to eq([])
+    end
+  end
+
   # AC2: --temperature 0 --seed 7 reach the Ollama wire payload's options, but
   # NOT the Request digest -- temperature is a sampler knob, not a prompt.
   describe "temperature and seed threading" do

@@ -95,6 +95,8 @@ class LainCLI < Thor
                               desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
   method_option :seed, type: :numeric,
                        desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
+  method_option :journal, type: :boolean, default: true,
+                          desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   default_task :chat
@@ -106,11 +108,17 @@ class LainCLI < Thor
     # the last (its prior root still resolves the old item).
     recorder = Lain::Memory::Recorder.new
     session = Lain::Session.new(memory: recorder)
-    setup_nvim_views if options[:nvim]
+    open_chronicle
     agent = wire_agent(channel:, recorder:, session:)
     run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:)
   rescue Lain::Error => e
     raise Thor::Error, e.message
+  ensure
+    # Graceful close anchors the head; a hard kill skips this, leaving the open
+    # header behind -- exactly how a reader recognizes an open session. (A
+    # SIGINT lands here as :exit too; routing signals to :interrupted /
+    # :grace_expired is the graceful-exit-signals card's business.)
+    chronicle.close(reason: :exit)
   end
 
   private
@@ -130,7 +138,7 @@ class LainCLI < Thor
 
   def run_chat(tty:, agent:, session:)
     repl = Repl.new(agent:, tty:, middleware: build_repl_middleware,
-                    ask_human: @ask_human, questions: @questions)
+                    ask_human: @ask_human, questions: @questions, chronicle:)
     return tty.run { repl.converse } unless @nvim_channel
 
     nvim = Lain::Frontend::Neovim.new(channel: @nvim_channel, socket_path: options[:nvim],
@@ -148,45 +156,66 @@ class LainCLI < Thor
     Lain::Middleware::Stack.new
   end
 
+  # --nvim views first (the chronicle's telemetry follows the tee), then the
+  # session record itself per --journal.
+  def open_chronicle
+    setup_nvim_views if options[:nvim]
+    @chronicle = Lain::CLI::Chronicle.for(enabled: options[:journal], tee: @nvim_tee)
+  end
+
+  # The session record's lifecycle collaborator (journal, scribe, observer,
+  # per-iteration durability -- see Lain::CLI::Chronicle). Defaults to the Null
+  # duck so a directly-constructed instance (cli_spec drives the private seams
+  # without running #chat) records nothing and checks nothing for nil; #chat
+  # replaces it per the --journal flag before any wiring runs.
+  def chronicle = @chronicle ||= Lain::CLI::Chronicle::Null.new(tee: @nvim_tee)
+
   # The subagent tool reads the live parent head at spawn time, so the Agent is
   # late-bound through a thunk: the closure captures the BINDING, and `agent` is
   # assigned after the toolset that closes over it. The SAME recorder backs the
   # session's manifest and the read/write tools -- one index, three views.
+  # The chronicle starts here -- after the toolset (its header pins the
+  # finished schema), before the Agent (whose turn middleware records through
+  # it).
   def wire_agent(channel:, recorder:, session:)
     backend = Backend.new(options)
     agent = nil
     parent = -> { agent.timeline }
-    # The replier fiber (see Repl#answer_loop) parks on @questions and answers
-    # through @ask_human -- exe-instance state because the reply path and the
-    # toolset are wired in different methods of this one command invocation.
-    # The enqueue happens inside #ask (before perform's await), and
-    # Async::Queue is buffered, so the replier never misses a question.
-    @questions = Async::Queue.new
-    @ask_human = Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:)
+    @ask_human = notifying_ask_human(parent)
     toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
+    chronicle.start(context: backend.context, toolset:)
     agent = build_agent(toolset:, channel:, session:, backend:)
   end
 
+  # The replier fiber (see Repl#answer_loop) parks on @questions and answers
+  # through @ask_human -- exe-instance state because the reply path and the
+  # toolset are wired in different methods of this one command invocation.
+  # The enqueue happens inside #ask (before perform's await), and
+  # Async::Queue is buffered, so the replier never misses a question. The
+  # observer routes the Q/A :message events into the session record -- a
+  # Timeline walk can never find them.
+  def notifying_ask_human(parent)
+    @questions = Async::Queue.new
+    Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:,
+                                         observer: chronicle.observer)
+  end
+
   def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
-    base = Lain::Toolset.new([
-                               Lain::Tools::ReadFile.new,
-                               Lain::Tools::ListFiles.new,
-                               Lain::Tools::EditFile.new,
-                               Lain::Tools::TodoWrite.new,
-                               Lain::Tools::MemoryWrite.new(recorder:),
-                               Lain::Tools::MemoryRead.new(index: recorder),
-                               Lain::Tools::Bash.new
-                             ])
+    base = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new,
+                              Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
+                              Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new])
     Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
   end
 
   # The chat default: an attenuated read-only child (schema posture, depth 1).
+  # The observer routes its :spawn/:message lineage events into the session
+  # record, exactly as ask_human's Q/A goes.
   def research_subagent(base, backend:, parent:, journal:)
     Lain::Tools::Subagent.new(
       provider: backend.provider, context_factory: -> { backend.context }, toolset: base,
       policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema,
                                           only: %i[read_file list_files]),
-      parent:, journal:, max_depth: 1
+      parent:, journal:, max_depth: 1, observer: chronicle.observer
     )
   end
 
@@ -201,28 +230,24 @@ class LainCLI < Thor
   # but forgetting session: would get working memory tools with a permanently
   # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
   # degrade (T1 panel, Schneeman).
+  # Telemetry (TurnUsage via journal:, RequestSent via the JournalRequests
+  # phase) and per-iteration turn durability both come from the chronicle;
+  # under --nvim they fan through the tee to the live views too. The `tap`
+  # gives the turn middleware's thunk the same late-bound agent binding the
+  # subagent's parent handle uses.
   def build_agent(toolset:, channel:, session:, backend:)
     live = Lain::Effect::Handler::Live.new(toolset:, channel:)
     gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
 
+    agent = nil
     Lain::Agent.new(provider: backend.provider, toolset:, context: backend.context, handler: gate, session:,
                     tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
-                    **telemetry_kwargs)
-  end
-
-  # --nvim only: TurnUsage (journal:) and RequestSent (the JournalRequests
-  # phase) fan through the tee to both the record and the live views.
-  def telemetry_kwargs
-    return {} unless @nvim_tee
-
-    { journal: @nvim_tee,
-      model_middleware: Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal: @nvim_tee)]) }
+                    turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
+                    **chronicle.telemetry_kwargs).tap { |built| agent = built }
   end
 
   def approval_policy
-    return Lain::Effect::Handler::Gate::ApproveAll.new if options[:yolo]
-
-    Lain::Frontend::ApprovalPolicy.new
+    options[:yolo] ? Lain::Effect::Handler::Gate::ApproveAll.new : Lain::Frontend::ApprovalPolicy.new
   end
 
   # One conversation: reads commands at `you>`, routes each through the repl
@@ -230,12 +255,16 @@ class LainCLI < Thor
   # Thor class because a conversation is its own responsibility (and the
   # Metrics trip said so -- extract, do not loosen).
   class Repl
-    def initialize(agent:, tty:, middleware:, ask_human:, questions:)
+    # `chronicle:` is required, not defaulted -- the same reasoning as
+    # build_agent's `session:`: a defaulted Null here would let a caller
+    # silently lose the session record with no error anywhere.
+    def initialize(agent:, tty:, middleware:, ask_human:, questions:, chronicle:)
       @agent = agent
       @tty = tty
       @middleware = middleware
       @ask_human = ask_human
       @questions = questions
+      @chronicle = chronicle
     end
 
     # No next/break: the loop exit is text own truthiness, reassigned each
@@ -268,13 +297,29 @@ class LainCLI < Thor
     def respond(text)
       Sync do |task|
         replier = answer_loop(task)
-        response = task.async { @agent.ask(text) }.wait
-        @tty.render_response(response) if response
+        deliver(task.async { @agent.ask(text) }.wait)
       ensure
         replier&.stop
       end
     rescue Lain::Error => e
+      record_interruption
       @tty.render_error(e.message)
+    end
+
+    # Turns durable before the reply renders: the belt over the chronicle's
+    # per-iteration JournalTurns braces (idempotent), and it re-anchors the
+    # head a graceful close records.
+    def deliver(response)
+      @chronicle.catch_up(@agent.timeline)
+      @tty.render_response(response) if response
+    end
+
+    # B5 (panel amendment): catch_up FIRST -- a raise can land AFTER commits
+    # (the ask tore mid-loop), so the committed turns are journaled before the
+    # stop is recorded, and interrupted then names the true last commit.
+    def record_interruption
+      @chronicle.catch_up(@agent.timeline)
+      @chronicle.interrupted(head: @agent.timeline.head_digest)
     end
 
     # Parks on dequeue (a real scheduler yield -- woken per question, never
