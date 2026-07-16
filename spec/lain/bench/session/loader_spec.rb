@@ -127,6 +127,213 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  # T14: the live session format's open sessions and resume chains. Built
+  # directly from {Lain::SessionRecord} and {Lain::Event::ChainWriter}, not
+  # through {Lain::Bench::Session.write} -- these shapes are the live
+  # scribe's (T13), never the offline recorder's, which this describe's
+  # sibling blocks already cover under "bench files load unchanged".
+  describe "open sessions and resume chains" do
+    def text(body) = [{ "type" => "text", "text" => body }]
+
+    # Every record here is round-tripped through the SAME JSON encode/decode
+    # a real file gives a Loader -- {Lain::Journal.parse}'s Hash path only
+    # string-keys the TOP level, so a raw Ruby Hash (a Symbol `kind`, say)
+    # would exercise a shape no file on disk actually has.
+    def roundtrip(records) = records.map { |record| JSON.parse(JSON.generate(record)) }
+
+    def open_header(resumed_from: nil)
+      header = Lain::SessionRecord.header(context:, toolset:, workspace:, head: nil)
+      resumed_from.nil? ? header : header.merge("resumed_from" => resumed_from)
+    end
+
+    describe "an open (crashed) session" do
+      it "loads flagged open, with the timeline head the last verified turn" do
+        chain = Lain::Timeline.empty(store: Lain::Store.new)
+                              .commit(role: :user, content: text("hi"))
+                              .commit(role: :assistant, content: text("hello"))
+        records = roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.open?).to be(true)
+        expect(loaded.timeline.head_digest).to eq(chain.head_digest)
+      end
+
+      it "loads a header-only session (0 turns) flagged open with a nil head" do
+        loaded = described_class.new(roundtrip([open_header])).recording
+
+        expect(loaded.open?).to be(true)
+        expect(loaded.timeline.head_digest).to be_nil
+      end
+
+      # run_interrupted.head is JOIN-OPTIONAL: a SIGKILL between the Agent's
+      # commit+journal atom and catch_up can leave a run_interrupted naming a
+      # head with no turn record in the file. Tolerated by never consulting
+      # it -- the record marks one ASK, not the session's open/closed state.
+      it "tolerates a run_interrupted whose head has no turn record, still open" do
+        chain = Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("hi"))
+        interrupted = Lain::Telemetry::RunInterrupted.new(head: "blake3:#{"f" * 64}").to_journal
+        records = roundtrip([open_header, Lain::SessionRecord.turn(chain.head), interrupted])
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.open?).to be(true)
+        expect(loaded.timeline.head_digest).to eq(chain.head_digest)
+      end
+    end
+
+    # A CLOSED live session's anchor lives in the session_closed record's OWN
+    # head, never the header ({SessionRecord}'s format contract: the header is
+    # written open and never rewritten) -- the most load-bearing Anchor branch.
+    describe "a gracefully closed live session" do
+      let(:chain) do
+        Lain::Timeline.empty(store: Lain::Store.new)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("hello"))
+      end
+
+      def closed_records(head)
+        closed = Lain::Telemetry::SessionClosed.new(head:, reason: :exit).to_journal
+        roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) } + [closed])
+      end
+
+      it "verifies against session_closed's own head when the header head is nil, not flagged open" do
+        loaded = described_class.new(closed_records(chain.head_digest)).recording
+
+        expect(loaded.open?).to be(false)
+        expect(loaded.timeline.head_digest).to eq(chain.head_digest)
+      end
+
+      it "raises Corrupt when session_closed's head disagrees with the rebuilt chain" do
+        wrong = "blake3:#{"0" * 64}"
+
+        expect { described_class.new(closed_records(wrong)).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error| expect(error.message).to include(wrong, chain.head_digest) }
+      end
+    end
+
+    describe "a resume chain" do
+      let(:a_chain) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("first")) }
+      let(:a_records) { roundtrip([open_header] + a_chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) }) }
+      let(:resolver) { ->(basename) { basename == "a.ndjson" ? a_records : raise("unexpected #{basename}") } }
+
+      def resumed_header(head) = open_header(resumed_from: { "file" => "a.ndjson", "head" => head })
+
+      it "loads file A then file B as one conversation, every digest verified" do
+        b_chain = a_chain.commit(role: :assistant, content: text("second"))
+        b_records = roundtrip([resumed_header(a_chain.head_digest), Lain::SessionRecord.turn(b_chain.head)])
+
+        loaded = described_class.new(b_records, resolve: resolver).recording
+
+        expect(loaded.timeline.to_a.map(&:digest)).to eq(b_chain.to_a.map(&:digest))
+      end
+
+      it "refuses when resumed_from's recorded head does not match A's actual head, naming both digests" do
+        wrong = "blake3:#{"0" * 64}"
+        new_turn = a_chain.commit(role: :assistant, content: text("second")).head
+        b_records = roundtrip([resumed_header(wrong), Lain::SessionRecord.turn(new_turn)])
+
+        expect { described_class.new(b_records, resolve: resolver).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error| expect(error.message).to include(wrong, a_chain.head_digest) }
+      end
+
+      it "raises ArgumentError naming the seam when resumed_from is present but no resolver was given" do
+        b_records = roundtrip([resumed_header(a_chain.head_digest)])
+
+        expect { described_class.new(b_records).recording }.to raise_error(ArgumentError, /a\.ndjson/)
+      end
+
+      it "refuses a resolver answering nil, naming the missing file" do
+        b_records = roundtrip([resumed_header(a_chain.head_digest)])
+
+        expect { described_class.new(b_records, resolve: ->(_basename) {}).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /a\.ndjson/)
+      end
+
+      # A cyclic chain must refuse as a CLASSIFIED error, never recurse to a
+      # SystemStackError -- an Exception, not a StandardError, so no caller
+      # can rescue it as the refusal the card demands.
+      describe "cyclic chains" do
+        it "refuses a self-referential chain (A resumed_from A), naming the revisited file" do
+          records = roundtrip([resumed_header(a_chain.head_digest)] +
+                              a_chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
+          cyclic_resolver = ->(basename) { basename == "a.ndjson" ? records : raise("unexpected #{basename}") }
+
+          expect { described_class.new(records, resolve: cyclic_resolver).recording }
+            .to raise_error(Lain::Bench::Session::Corrupt, /a\.ndjson/)
+        end
+
+        it "refuses a two-cycle (A resumed_from B, B resumed_from A), naming the revisited file" do
+          a_records = roundtrip([open_header(resumed_from: { "file" => "b.ndjson", "head" => "blake3:#{"1" * 64}" })])
+          b_records = roundtrip([open_header(resumed_from: { "file" => "a.ndjson", "head" => "blake3:#{"2" * 64}" })])
+          cyclic_resolver = lambda do |basename|
+            { "a.ndjson" => a_records, "b.ndjson" => b_records }.fetch(basename)
+          end
+
+          expect { described_class.new(a_records, resolve: cyclic_resolver).recording }
+            .to raise_error(Lain::Bench::Session::Corrupt, /b\.ndjson/)
+        end
+      end
+
+      # Allowed, not refused: a never-closed predecessor still resumes,
+      # because B's own recorded head retroactively re-anchors A's otherwise
+      # unverified tail (any A-side truncation changes A's rebuilt head, which
+      # then disagrees with what B recorded at resume time).
+      it "resumes from an OPEN (never-closed) predecessor, B's recorded head re-anchoring A" do
+        b_chain = a_chain.commit(role: :assistant, content: text("second"))
+        b_records = roundtrip([resumed_header(a_chain.head_digest), Lain::SessionRecord.turn(b_chain.head)])
+
+        loaded = described_class.new(b_records, resolve: resolver).recording
+
+        expect(loaded.timeline.head_digest).to eq(b_chain.head_digest)
+        expect(loaded.open?).to be(true)
+      end
+    end
+
+    describe "message records rejoin the Store" do
+      let(:chain) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("ask me")) }
+      let(:writer) { Lain::Event::ChainWriter.new }
+      let(:question) do
+        writer.put(chain, kind: :message, from: chain.correlation, to: "human",
+                          causal_parents: [chain.head_digest], body: { "question" => "which file?" })
+      end
+      let(:answer) do
+        writer.put(chain, kind: :message, from: "human", to: chain.correlation,
+                          causal_parents: [question.digest], body: { "answer" => "the readme" })
+      end
+
+      it "are fetchable by digest with their causal edges intact" do
+        records = roundtrip([open_header, Lain::SessionRecord.turn(chain.head),
+                             Lain::Telemetry::Message.from_event(question).to_journal,
+                             Lain::Telemetry::Message.from_event(answer).to_journal])
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.messages.map(&:digest)).to eq([question.digest, answer.digest])
+        expect(loaded.timeline.store.fetch(question.digest).causal_parents).to eq(question.causal_parents)
+        expect(loaded.timeline.store.fetch(answer.digest).causal_parents).to eq([question.digest])
+      end
+
+      it "fails an edited message record's digest check with Corrupt" do
+        records = roundtrip([open_header, Lain::SessionRecord.turn(chain.head),
+                             Lain::Telemetry::Message.from_event(question).to_journal])
+        records.last["payload"] = { "question" => "forged" }
+
+        expect { described_class.new(records).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /message record/)
+      end
+    end
+
+    describe "an existing bench (offline) recording" do
+      it "loads unchanged: not flagged open, and carries no messages" do
+        loaded = recording
+
+        expect(loaded.open?).to be(false)
+        expect(loaded.messages).to eq([])
+      end
+    end
+  end
+
   # The memory read path, event-sourced from the recording itself: successful
   # memory_write tool_use inputs ARE the write log, and content addressing
   # makes the journaled memory_root chain the proof -- replaying the same

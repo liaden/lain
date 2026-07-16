@@ -28,23 +28,41 @@ module Lain
           Context.new(model:, max_tokens:, system:, stream:, extra:)
         end
 
+        # The default `resolve:` -- raised only when a header actually names a
+        # `resumed_from` file and no resolver was injected. The Loader takes
+        # entries, never paths (see the class note on chain-following): a
+        # caller that wants chains followed must hand in the duck that reads
+        # them, so filesystem knowledge never leaks into this unit.
+        NO_RESOLVER = lambda do |basename|
+          raise ArgumentError, "session resumes from #{basename.inspect} but no resolver was given; " \
+                               "pass resolve: ->(basename) { entries for that file } to Loader.new"
+        end
+
         # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck;
         #   entries it answers nil for are somebody else's records and skipped
         # @param context_factory [#call] builds the Context from the recorded
         #   transport fields; defaults to the recorded default pipeline.
-        def initialize(entries, context_factory: DEFAULT_CONTEXT_FACTORY)
+        # @param resolve [#call] `basename -> entries`, consulted only when a
+        #   header names `resumed_from`; defaults to {NO_RESOLVER}.
+        def initialize(entries, context_factory: DEFAULT_CONTEXT_FACTORY, resolve: NO_RESOLVER)
           @records = entries.filter_map { |entry| Journal.parse(entry) }
           @context_factory = context_factory
+          @resolve = resolve
         end
 
+        # {#timeline} must build (and so populate {#store}) before {#messages}
+        # re-puts a single message: a `message` record's causal_parents can
+        # name a turn, and keyword arguments evaluate left to right, so
+        # `timeline:` stays the FIRST keyword naming either.
+        #
         # @return [Recording]
         def recording
           Recording.new(
+            timeline:, messages:,
             context:, context_class: header.fetch("context_class"),
-            toolset:, workspace:,
-            timeline:, baseline:,
+            toolset:, workspace:, baseline:,
             ledger_index: Ledger::Index.from_journal(@records),
-            degraded:, memory:
+            degraded:, memory:, open: open?
           )
         end
 
@@ -60,6 +78,25 @@ module Lain
           return Telemetry::SlotFills.new(digests: {}, fills: {}) if record.nil?
 
           Telemetry::SlotFills.new(digests: record.fetch("digests"), fills: record.fetch("fills"))
+        end
+
+        # {#timeline}, {#store}, and {#messages} are public rather than
+        # private: a resume chain's {ResumeChain} calls all three on the
+        # PRIOR file's own Loader (a separate instance, and a separate
+        # class), so none of the three can hide behind this instance's own
+        # `self`.
+        def timeline = anchor.verify(build_chain)
+
+        # @return [Store] the ONE store this file (and, in a resume chain,
+        #   every prior one) rebuilds into -- see {ResumeChain}.
+        def store = resume_chain.store
+
+        # {MessageReplay} owns the re-put (see its class comment); this only
+        # supplies the file-order `prior` -- a resume chain's PRIOR file's own
+        # messages, verified before this file's own so a later `message`
+        # naming an earlier one as a causal_parent finds it already landed.
+        def messages
+          MessageReplay.new(records: of_type("message"), store:, prior: resume_chain.prior_messages).messages
         end
 
         private
@@ -116,13 +153,17 @@ module Lain
           Workspace.new(reminders: header.fetch("reminders"))
         end
 
-        def timeline
-          chain = of_type(TURN_TYPE).each_with_index.inject(Timeline.empty(store: Store.new)) do |acc, (record, i)|
+        # The base is either a fresh empty Timeline (no resume chain) or the
+        # prior file's own verified head (a resume chain) -- either way built
+        # on the ONE shared {#store}, so a `message` record on either side of
+        # the file boundary can name a causal_parent that crosses it.
+        def build_chain
+          base = resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
+          of_type(TURN_TYPE).each_with_index.inject(base) do |acc, (record, i)|
             verified_turn(acc.commit(role: record.fetch("role"), content: record.fetch("content"),
                                      meta: record.fetch("meta", {})),
                           record, i)
           end
-          anchored(chain)
         end
 
         def verified_turn(chain, record, index)
@@ -133,37 +174,25 @@ module Lain
                          "re-commits to #{chain.head_digest}; its content no longer matches its content address"
         end
 
-        def anchored(chain)
-          expected = header.fetch("head")
-          return chain if chain.head_digest == expected
-
-          raise Corrupt, "the header anchors head #{expected.inspect} but the turn chain rebuilds to " \
-                         "#{chain.head_digest.inspect}; the tail has been truncated or spliced"
+        # {Anchor} owns the open/closed classification and the verify-or-raise
+        # (see its class comment); memoized like {#header} since both are
+        # asked more than once per {#recording}.
+        def anchor
+          @anchor ||= Anchor.new(header:, session_closed_records: of_type("session_closed"))
         end
 
-        # The proven rebuild idiom (see Telemetry::RequestSent and its spec): the
-        # payload's keys are exactly Request.new's content keywords, and the
-        # record carries the digest-excluded transport fields alongside. Each
-        # rebuild must land on the record's own digest -- RequestSent carries
-        # it precisely so a forged PAYLOAD cannot load clean and book as
-        # harness variance downstream. The transport fields (stream, extra)
-        # ride alongside unverified: the digest deliberately excludes them,
-        # so tampering there is invisible to this check.
-        def baseline
-          of_type("request_sent").each_with_index.map do |record, index|
-            verified_request(Request.new(stream: record.fetch("stream"), extra: record.fetch("extra"),
-                                         **record.fetch("payload").transform_keys(&:to_sym)),
-                             record, index)
-          end.freeze
+        def open? = anchor.open?
+
+        # {ResumeChain} owns following `resumed_from` and sharing a Store
+        # across the files it names (see its class comment); memoized so
+        # {#store}, {#build_chain}, and {#messages} all reach the same prior
+        # Loader rather than re-resolving it.
+        def resume_chain
+          @resume_chain ||= ResumeChain.new(resumed_from: header["resumed_from"],
+                                            context_factory: @context_factory, resolve: @resolve)
         end
 
-        def verified_request(request, record, index)
-          recorded = record.fetch("digest")
-          return request if request.digest == recorded
-
-          raise Corrupt, "request_sent record #{index} recorded as #{recorded} rebuilds to #{request.digest}; " \
-                         "its payload no longer matches its content address"
-        end
+        def baseline = RequestReplay.new(records: of_type("request_sent")).baseline
 
         def degraded
           Capability::DegradedSet.new(

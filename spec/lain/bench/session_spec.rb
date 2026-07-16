@@ -133,7 +133,7 @@ RSpec.describe Lain::Bench::Session do
       recording = load_session
       expect(recording).to be_frozen
       expect(recording.timeline).to be_frozen
-      %i[context context_class toolset workspace baseline ledger_index degraded].each do |member|
+      %i[context context_class toolset workspace baseline ledger_index degraded open messages].each do |member|
         expect(recording.public_send(member)).to be_ractor_shareable
       end
     end
