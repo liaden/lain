@@ -54,6 +54,10 @@ module Lain
 
       input_model Input
 
+      # The lifecycle axis (OM-2 vs OM-3), closed and loud: a mode outside this
+      # set raises at construction rather than defaulting.
+      MODES = %i[one_shot actor].freeze
+
       # The most recent spawn's records, exposed for observability: the study
       # bench reads the orchestration events, and a one-shot call is synchronous,
       # so the last :spawn/:message events and the child's final Timeline are the
@@ -71,9 +75,15 @@ module Lain
       # (its mailbox projection), not on tool state.
       attr_reader :name, :last_spawn, :last_message, :last_child
 
+      # Two lifecycle modes over the same spawn machinery (OM-2/OM-3): `:one_shot`
+      # runs a child to a single result within one dispatch (the 5-1 model);
+      # `:actor` launches a long-lived {Actor} fiber whose outputs reach the
+      # parent as mailbox events instead. `log` is the append-only read-side that
+      # {Lineage} writes every event to -- the actor's mailbox folds it; the
+      # one-shot defaults to {Log::Null} because nothing folds its stream.
       def initialize(provider:, context_factory:, toolset:, policy:, parent:,
                      journal: Channel::Null.instance, budget: Agent::Budget.new,
-                     max_depth: 1, name: "subagent")
+                     max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null)
         super()
         @provider = provider
         @context_factory = context_factory
@@ -82,8 +92,7 @@ module Lain
         @parent = parent
         @journal = journal
         @budget = budget
-        @max_depth = Integer(max_depth)
-        @name = name
+        seed_config(max_depth, name, mode, log)
       end
 
       def description
@@ -101,21 +110,39 @@ module Lain
       # the async-fan-out win (5-1.4). The spawn path itself is re-entrant: see
       # {#perform}, which threads the spawn's records through LOCALS, never the
       # `@last_*` observability ivars, across the child's IO yield point.
-      def parallel_safe?
-        true
+      def parallel_safe? = true
+
+      # Launch a long-lived {Actor} over a freshly built child, and return the
+      # handle -- the orchestration seam a supervisor uses to `tell`/`stop` it
+      # and read its Timeline. Programmatic ONLY: the fiber spawns on the
+      # current task, so the caller must hold a reactor that outlives the
+      # parent's asks (an orchestration Sync/Async above the Agent). {#perform}
+      # never routes here -- a tool-dispatched actor is refused (see there).
+      def launch_actor(prompt, parent: parent_timeline)
+        Actor.new(agent: build_child(parent), lineage:, parent:, journal: @journal).launch(prompt)
       end
 
       protected
 
-      # Re-entrant by construction (5-1.4): the spawn's records ride LOCALS, never
-      # the `@last_*` ivars, across `run_child`'s IO yield -- so a sibling fan-out
-      # task resuming mid-flight cannot make `message` name the wrong spawn or
-      # child. The ivars are written once at the end, together (#remember), a
-      # single atomic burst with no yield between the three, so the observability
-      # projection stays mutually consistent (the last completer's whole record)
-      # under concurrency and exact under a one-shot call.
+      # A model-dispatched `:actor` is REFUSED, never launched (T23 panel #1):
+      # Agent#ask's per-call Sync owns any fiber a tool dispatch spawns, so a
+      # perform-launched actor would park as ask's own child and structured
+      # concurrency would never let ask return -- the loop wedges, outer
+      # reactor or not. Until the OM-6 supervisor provides an orchestration
+      # reactor above the Agent, the actor seam is programmatic only
+      # ({#launch_actor}); like the depth cap, the refusal emits no event and
+      # touches no Store.
+      #
+      # The one-shot path is re-entrant by construction (5-1.4): the spawn's
+      # records ride LOCALS, never the `@last_*` ivars, across `run_child`'s IO
+      # yield -- so a sibling fan-out task resuming mid-flight cannot make
+      # `message` name the wrong spawn or child. The ivars are written once at
+      # the end, together (#remember), a single atomic burst with no yield
+      # between the three, so the observability projection stays mutually
+      # consistent under concurrency and exact under a one-shot call.
       def perform(input, _invocation)
         return depth_exceeded if @max_depth <= 0
+        return actor_refused if @mode == :actor
 
         parent = parent_timeline
         spawn = lineage.spawn(parent)
@@ -135,7 +162,7 @@ module Lain
         self.class.new(
           provider: @provider, context_factory: @context_factory, toolset: @toolset,
           policy: @policy, parent:, journal: @journal, budget: @budget,
-          max_depth: [@max_depth, ceiling].min, name: @name
+          max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log
         )
       end
 
@@ -215,11 +242,25 @@ module Lain
       # the wiring point within its Metrics budget -- Lineage is pure over the
       # frozen @policy, so late construction changes nothing.
       def lineage
-        @lineage ||= Lineage.new(policy: @policy)
+        @lineage ||= Lineage.new(policy: @policy, log: @log)
       end
 
-      def depth_exceeded
-        Tool::Result.error("subagent spawn depth exceeded: this agent is at the spawn-depth ceiling")
+      # The config axis, apart from the injected collaborators (the Agent
+      # `seed_run_state` split). Mode fails loudly here -- a mistyped mode must
+      # not silently fall through to one-shot (unknown values raise, per the
+      # loud-failure premise the CLAUDE notes pin), not default.
+      def seed_config(max_depth, name, mode, log)
+        @max_depth = Integer(max_depth)
+        @name = name
+        @mode = MODES.include?(mode.to_sym) ? mode.to_sym : raise(ArgumentError, "bad subagent mode #{mode.inspect}")
+        @log = log
+      end
+
+      def depth_exceeded = Tool::Result.error("subagent spawn depth exceeded: this agent is at the ceiling")
+
+      def actor_refused
+        Tool::Result.error("actor mode cannot be launched from a tool call: a long-lived actor needs " \
+                           "the OM-6 supervisor reactor; launch it programmatically via #launch_actor")
       end
 
       # The parent Timeline, live: a Timeline passes through, a thunk is called
@@ -232,9 +273,11 @@ module Lain
   end
 end
 
-# Both children reopen Subagent (and RefusingHandler subclasses Effect::Handler,
+# These children reopen Subagent (and RefusingHandler subclasses Effect::Handler,
 # long loaded by the time tools.rb requires this unit), so they load after the
 # class body -- subagent.rb is this subtree's index, the effect/handler.rb
-# convention.
+# convention. Log leads: Lineage's `log:` default names Log::Null.
+require_relative "subagent/log"
 require_relative "subagent/lineage"
 require_relative "subagent/refusing_handler"
+require_relative "subagent/actor"

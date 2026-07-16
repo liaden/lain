@@ -9,8 +9,14 @@ module Lain
       # (`render_parent` nil), so neither enters any render chain: `meet`, the
       # first-parent walk, and gate 2 are untouched.
       class Lineage
-        def initialize(policy:)
+        # `log` is the append-only read-side (see {Log}): every event this
+        # writer puts into the shared Store is also appended there in emission
+        # order, so a mailbox {Event::Projection} can fold it. The one-shot path
+        # injects {Log::Null}, whose appends vanish -- its stream is consumed
+        # within a dispatch and nobody folds it.
+        def initialize(policy:, log: Log::Null)
           @policy = policy
+          @log = log
         end
 
         # The :spawn event -- the causal record the fresh root omits. Its
@@ -47,6 +53,21 @@ module Lain
                       causal_parents: [spawn.digest, final].compact, body:)
         end
 
+        # A plain message between two chain identities, carrying renderable
+        # `text` (what {Context::Mailbox} folds). The actor's inbound (parent ->
+        # actor, addressed to the actor's spawn digest) and outbound (actor ->
+        # parent, addressed to the parent's correlation) both go through here --
+        # a result IS a message, the same reasoning as {#message}, but the actor
+        # exchanges continuously rather than returning once.
+        def note(parent, from:, to:, text:, causal_parents:)
+          put(parent, kind: :message, from:, to:, causal_parents:, body: { "text" => text })
+        end
+
+        # The correlation an actor addresses its parent by -- the parent chain's
+        # root digest, the same identity {#put} stamps on every event. Public so
+        # an {Actor} can address the parent without reaching into `identity`.
+        def correlation_of(timeline) = identity(timeline)
+
         private
 
         def put(parent, kind:, from:, to:, causal_parents:, body:)
@@ -55,6 +76,7 @@ module Lain
                             correlation: identity(parent),
                             payload_digest: payload.digest, body: payload.body)
           parent.store.put(event)
+          @log << event
           event
         end
 
