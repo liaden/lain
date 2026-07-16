@@ -110,4 +110,20 @@ RSpec.describe Lain::Bench::Sweep do
       expect { described_class.new(k: 0) }.to raise_error(ArgumentError, /k/)
     end
   end
+
+  describe "a missing corpus refuses namedly" do
+    it "raises a Lain::Error naming the missing corpus path, not Errno::ENOENT" do
+      missing = "#{described_class::CORPUS_PATH}.does-not-exist"
+
+      expect { described_class.new(k: 5, corpus_path: missing).report }
+        .to raise_error(Lain::Bench::Sweep::MissingCorpus, /#{Regexp.escape(missing)}/)
+    end
+
+    it "raises a Lain::Error naming a missing embeddings path" do
+      missing = "#{described_class::EMBEDDINGS_PATH}.does-not-exist"
+
+      expect { described_class.new(k: 5, embeddings_path: missing).report }
+        .to raise_error(Lain::Bench::Sweep::MissingCorpus, /#{Regexp.escape(missing)}/)
+    end
+  end
 end

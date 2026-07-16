@@ -89,7 +89,7 @@ RSpec.describe "the gold retrieval corpus" do
     text.to_s.downcase.scan(/\w+/).uniq
   end
 
-  let(:corpus_path) { File.expand_path("../../fixtures/memory/retrieval_corpus.yml", __dir__) }
+  let(:corpus_path) { Lain::Bench::Sweep::CORPUS_PATH }
   let(:corpus) { YAML.safe_load_file(corpus_path, symbolize_names: true) }
   let(:items) { corpus.fetch(:items) }
   let(:queries) { corpus.fetch(:queries) }

@@ -18,16 +18,24 @@ module Lain
     # (the mean/median/min/max value object), and renders its own ranked table.
     #
     # Zero network by construction: the vector arm reads COMMITTED fixture
-    # embeddings (spec/fixtures/memory/corpus_embeddings.json) through
-    # {Embeddings}, never a live embedder, so the whole sweep runs under the
-    # suite's offline posture. The gold corpus and its embeddings are committed
-    # SPEC fixtures because the eval is bound to exactly that gold set; the paths
-    # below reach into spec/ deliberately for that reason.
+    # embeddings (corpus/corpus_embeddings.json) through {Embeddings}, never a
+    # live embedder, so the whole sweep runs under the suite's offline posture.
+    # The gold corpus and its embeddings ship WITH THE GEM (lib/lain/bench/corpus/)
+    # rather than living under spec/ -- the eval is bound to exactly that gold
+    # set, and a `lain bench sweep` run in an installed gem (no spec/ tree) needs
+    # them present.
     class Sweep
       # Raised when the committed embeddings were recorded under a different
       # model than the sweep asks for -- a silent stale fixture would measure the
       # wrong model's geometry and lie. Names both ids (see {Embeddings.load}).
       class StaleEmbeddings < Lain::Error; end
+
+      # Raised when a corpus or embeddings path does not exist -- a packaging
+      # mistake or a deleted fixture, never a normal ArgumentError. Named and
+      # path-bearing like {StaleEmbeddings}, so the exe presents it without a
+      # backtrace (`exe/lain`'s `rescue Lain::Error` on the sweep command)
+      # instead of an unhelpful Errno::ENOENT.
+      class MissingCorpus < Lain::Error; end
 
       DEFAULT_K = 5
       DEFAULT_MODEL = Embedder::Ollama::DEFAULT_MODEL
@@ -43,8 +51,8 @@ module Lain
       RECALL_TAG = "<recall>"
       private_constant :RECALL_TAG
 
-      CORPUS_PATH = File.expand_path("../../../spec/fixtures/memory/retrieval_corpus.yml", __dir__)
-      EMBEDDINGS_PATH = File.expand_path("../../../spec/fixtures/memory/corpus_embeddings.json", __dir__)
+      CORPUS_PATH = File.expand_path("corpus/retrieval_corpus.yml", __dir__)
+      EMBEDDINGS_PATH = File.expand_path("corpus/corpus_embeddings.json", __dir__)
 
       COLUMNS = ["arm", "n", "mean", "median", "min", "max", "recall tokens"].freeze
       private_constant :COLUMNS
@@ -213,11 +221,21 @@ module Lain
       end
 
       def corpus
-        @corpus ||= YAML.safe_load_file(@corpus_path)
+        @corpus ||= YAML.safe_load_file(existing!(@corpus_path))
       end
 
       def embeddings
-        @embeddings ||= Embeddings.load(path: @embeddings_path, items:, model: @model)
+        @embeddings ||= Embeddings.load(path: existing!(@embeddings_path), items:, model: @model)
+      end
+
+      # A missing corpus or embeddings file is a packaging/checkout mistake,
+      # not user input to refuse (contrast Bench::CLI::Refusal) -- it names the
+      # exact path so the fix is obvious, and it is Errno::ENOENT's replacement,
+      # never its wrapper, so the exe's `rescue Lain::Error` catches it cleanly.
+      def existing!(path)
+        raise MissingCorpus, "no sweep corpus file at #{path}" unless File.file?(path)
+
+        path
       end
 
       def render(ranked_arms)

@@ -3,7 +3,7 @@
 require "yaml"
 require "json"
 
-# The regeneration path for spec/fixtures/memory/corpus_embeddings.json -- the
+# The regeneration path for lib/lain/bench/corpus/corpus_embeddings.json -- the
 # committed vectors the offline Bench::Sweep vector arm reads. It is tagged
 # :ollama (skipped unless LAIN_OLLAMA=1 with a reachable server), so the DEFAULT
 # suite never touches the network: the fixture is committed, the sweep reads it,
@@ -16,8 +16,8 @@ require "json"
 #   LAIN_OLLAMA=1 bundle exec rspec spec/lain/bench/sweep_fixture_spec.rb
 RSpec.describe "the sweep's committed corpus embeddings", :ollama do
   let(:model) { Lain::Embedder::Ollama::DEFAULT_MODEL }
-  let(:corpus_path) { File.expand_path("../../fixtures/memory/retrieval_corpus.yml", __dir__) }
-  let(:fixture_path) { File.expand_path("../../fixtures/memory/corpus_embeddings.json", __dir__) }
+  let(:corpus_path) { Lain::Bench::Sweep::CORPUS_PATH }
+  let(:fixture_path) { Lain::Bench::Sweep::EMBEDDINGS_PATH }
   let(:corpus) { YAML.safe_load_file(corpus_path) }
 
   def items(corpus)
