@@ -351,3 +351,4 @@ end
 
 require_relative "tool/input"
 require_relative "tool/invocation"
+require_relative "tool/spawn_policy"

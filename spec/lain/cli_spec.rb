@@ -57,7 +57,8 @@ RSpec.describe LainCLI do
   describe "provider-dependent --model default" do
     it "defaults to Ollama's model when --provider ollama and no --model" do
       agent = cli(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096)
-              .send(:build_agent, toolset:, channel:, session: Lain::Session.new)
+              .send(:build_agent, toolset:, channel:, session: Lain::Session.new,
+                                  backend: backend(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096))
       expect(agent.context.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
     end
 
@@ -66,7 +67,8 @@ RSpec.describe LainCLI do
     # can never see that recorder, with no error anywhere (T1 panel fix).
     it "requires session: on build_agent so memory cannot be silently mis-wired" do
       thor = cli(provider: "ollama", api_base: nil, model: nil, max_tokens: 4096)
-      expect { thor.send(:build_agent, toolset:, channel:) }.to raise_error(ArgumentError, /session/)
+      backend = thor.class::Backend.new({ provider: "ollama" })
+      expect { thor.send(:build_agent, toolset:, channel:, backend:) }.to raise_error(ArgumentError, /session/)
     end
 
     it "honors an explicit --model over the provider default" do
@@ -102,7 +104,10 @@ RSpec.describe LainCLI do
   # memory_write, because both tools share the one session Recorder.
   describe "the chat toolset" do
     let(:recorder) { Lain::Memory::Recorder.new }
-    let(:chat_toolset) { cli.send(:build_toolset, recorder) }
+    let(:chat_toolset) do
+      cli.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
+                                         parent: -> {}, journal: Lain::Channel.new)
+    end
 
     it "contains a memory_read tool" do
       expect(chat_toolset.names).to include("memory_read")
