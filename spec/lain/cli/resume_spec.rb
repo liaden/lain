@@ -178,7 +178,7 @@ RSpec.describe Lain::CLI::Resume do
                                        prefix_digests: request.prefix_digests).to_journal
     end
 
-    def wal_path_for(name) = File.join(paths.sessions_dir, name.sub(/\.ndjson\z/, ".wal"))
+    def wal_path_for(name) = Lain::Paths.wal_for(File.join(paths.sessions_dir, name))
 
     def canned_response
       Lain::Response.new(id: "msg_salvaged", model: "recorded-model", stop_reason: :end_turn,

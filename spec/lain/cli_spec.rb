@@ -157,6 +157,102 @@ RSpec.describe LainCLI do
     end
   end
 
+  # The two-journal split: setup_nvim_views used to open its OWN
+  # Lain::Journal.open at Journal.default_path, microseconds before
+  # open_chronicle opened a SECOND one at the same default path -- almost
+  # always the same second-granularity filename by ACCIDENT. When the two
+  # calls straddle a second tick, telemetry (request_sent/turn_usage/
+  # memory_root) fans through the tee into the NVIM journal while the scribe
+  # writes turns into the OTHER file: the durable session record silently
+  # loses salvage, bills zero, and skips memory verification. The fix is ONE
+  # Journal, opened by the Chronicle; --nvim's tee wraps THAT journal rather
+  # than opening its own.
+  describe "the --nvim + --journal wiring (one journal, not two)" do
+    def context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
+
+    it "opens Journal.default_path exactly once for --journal + --nvim, even across a split-second clock tick" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          calls = 0
+          allow(Lain::Journal).to receive(:default_path).and_wrap_original do |original, **kwargs|
+            calls += 1
+            # Simulates the split second: each call would name a DIFFERENT
+            # file if more than one were ever made.
+            original.call(**kwargs).sub(/\.ndjson\z/, "-take#{calls}.ndjson")
+          end
+
+          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
+          instance.send(:open_chronicle)
+
+          expect(calls).to eq(1)
+          instance.send(:chronicle).close
+        end
+      end
+    end
+
+    it "makes the nvim tee's journal leg the SAME object the scribe writes turns into" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
+          instance.send(:open_chronicle)
+
+          chronicle = instance.send(:chronicle)
+          nvim_journal = instance.instance_variable_get(:@nvim_journal)
+
+          expect(nvim_journal).to be(chronicle.instance_variable_get(:@journal))
+          chronicle.close
+        end
+      end
+    end
+
+    it "lands telemetry (request_sent/turn_usage/memory_root) in the SAME file the scribe writes turns into" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
+          instance.send(:open_chronicle)
+
+          chronicle = instance.send(:chronicle)
+          chronicle.start(context:, toolset: Lain::Toolset.new)
+          chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+            digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
+          )
+          chronicle.close
+
+          session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
+          expect(session_files.size).to eq(1)
+
+          types = File.readlines(session_files.first).map { |line| JSON.parse(line).fetch("type") }
+          expect(types).to include("session", "turn_usage")
+        end
+      end
+    end
+
+    it "still gives nvim its OWN real journal under --no-journal (Null chronicle has no journal to share)" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          instance = cli(journal: false, nvim: "/tmp/lain-cli-spec.sock")
+          instance.send(:open_chronicle)
+
+          expect(instance.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
+          nvim_journal = instance.instance_variable_get(:@nvim_journal)
+          expect(nvim_journal).to be_a(Lain::Journal)
+
+          session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
+          expect(session_files.size).to eq(1) # nvim's own, not the (nonexistent) session record
+
+          nvim_journal.close
+        end
+      end
+    end
+
+    it "opens no journal at all without --nvim" do
+      instance = cli(journal: false)
+      instance.send(:open_chronicle)
+
+      expect(instance.instance_variable_get(:@nvim_journal)).to be_nil
+    end
+  end
+
   # AC2: --temperature 0 --seed 7 reach the Ollama wire payload's options, but
   # NOT the Request digest -- temperature is a sampler knob, not a prompt.
   describe "temperature and seed threading" do

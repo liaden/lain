@@ -19,15 +19,11 @@ module Lain
 
       # The same duck with no record behind it (--no-journal): every message
       # answers, nothing lands, so the exe carries no nil-checks
-      # ({Sink::Null}'s idiom). `tee:` still carries the --nvim telemetry leg,
-      # which exists independently of the session record. The `(**)`
-      # signatures accept the real methods' keywords without naming arguments
-      # a Null never reads.
+      # ({Sink::Null}'s idiom). `@tee` starts nil and is set only through
+      # {#wrap_tee} -- --nvim's telemetry leg, which exists independently of
+      # the session record. The `(**)` signatures accept the real methods'
+      # keywords without naming arguments a Null never reads.
       class Null
-        def initialize(tee: nil)
-          @tee = tee
-        end
-
         def observer = Event::ChainWriter::Null.new
         def start(**) = self
         def wrap_session(session) = session
@@ -37,6 +33,18 @@ module Lain
         def catch_up(_timeline) = self
         def interrupted(**) = self
         def close(**) = self
+
+        # --no-journal + --nvim: there is no session record to share (no
+        # journal was ever opened), so nvim gets its OWN real journal --
+        # exactly the file it opened before this class carried a #wrap_tee
+        # seam at all. Still returns the journal it opened, the same duck the
+        # real Chronicle's #wrap_tee answers, so the exe's wiring is one line
+        # regardless of which Chronicle it holds.
+        def wrap_tee(channel)
+          journal = Journal.open
+          @tee = JournalTee.new(journal, channel)
+          journal
+        end
 
         # --no-journal's answer to {Chronicle#spool}: the same Null spool
         # {Provider::AnthropicRaw} already defaults to, so a provider built
@@ -48,16 +56,21 @@ module Lain
       class << self
         # The one factory the exe calls: a recording Chronicle over a
         # Paths-based fsync journal when journaling is on, the {Null} duck
-        # when --no-journal.
-        def for(enabled:, tee: nil, paths: Paths.new)
-          return Null.new(tee:) unless enabled
+        # when --no-journal. Takes no `tee:` -- a caller wanting --nvim's
+        # tee wraps it AFTER construction, through {#wrap_tee}, so the tee's
+        # journal leg can be the ONE journal this method just opened rather
+        # than a second one opened independently (the split-second bug this
+        # seam exists to close: two `Journal.open` calls landing on
+        # different filenames when they straddle a clock tick).
+        def for(enabled:, paths: Paths.new)
+          return Null.new unless enabled
 
           # Computed here, not left to Journal.open's own default, so THIS path
           # is the one #spool later derives the sibling `.wal` from -- the
           # journal and the spool must never be able to name different
           # sessions.
           path = Journal.default_path(paths:)
-          new(journal: Journal.open(path, fsync: true), tee:, journal_path: path)
+          new(journal: Journal.open(path, fsync: true), journal_path: path)
         end
 
         # Where TurnUsage (the Agent's journal:) and RequestSent (the
@@ -72,9 +85,14 @@ module Lain
         end
       end
 
-      def initialize(journal:, tee: nil, journal_path: nil)
+      # `@tee` starts nil and is set only through {#wrap_tee} -- there is no
+      # production caller left that constructs a Chronicle with a tee
+      # already in hand, now that --nvim wraps one over the journal THIS
+      # opens rather than handing in one built from a second, independent
+      # journal.
+      def initialize(journal:, journal_path: nil)
         @journal = journal
-        @tee = tee
+        @tee = nil
         @journal_path = journal_path
         @recorder = nil
       end
@@ -83,6 +101,19 @@ module Lain
       # late-bound through {#scribe}: an event before {#start} raises rather
       # than vanishing.
       def observer = ->(event) { scribe.call(event) }
+
+      # --nvim shares THIS session's own journal instead of opening a second
+      # one: the tee's journal leg becomes `@journal`, so {#telemetry_kwargs}
+      # (which prefers `@tee` once this has run) routes request_sent/
+      # turn_usage/memory_root into the SAME file the scribe writes turns
+      # into -- one Journal instance, one Monitor, no split-second race
+      # between two independent `Journal.open` calls. Returns the journal
+      # itself: the nvim frontend's OWN `journal:` kwarg (where a hand-edited
+      # resend lands) must be this identical journal, not a second one.
+      def wrap_tee(channel)
+        @tee = JournalTee.new(@journal, channel)
+        @journal
+      end
 
       # The response WAL beside this session's NDJSON: `<session-stem>.wal`,
       # lazily opened so a run that never completes a provider round trip
@@ -169,9 +200,14 @@ module Lain
       # Skips the session_closed record when nothing started: chat's ensure
       # runs even when wiring raised before the header was written, and a
       # closer with no header would be an orphan record (while raising here
-      # would mask the original error).
+      # would mask the original error). `@spool&.close`, not `spool.close`:
+      # the spool is a long-lived append handle that opens its `.wal` lazily
+      # on first frame, and a run that never spooled a frame must still
+      # create no file at teardown -- reading `@spool` directly (rather than
+      # calling {#spool}) is what keeps that lazy open from being forced.
       def close(reason: :exit)
         @scribe&.close(reason:)
+        @spool&.close
         @journal.close
         self
       end
@@ -183,21 +219,9 @@ module Lain
                                      "is no scribe to record through -- call #start first"
       end
 
-      # Same stem as the NDJSON, `.wal` in place of whatever extension the
-      # journal path carries -- "<session-stem>.wal beside the NDJSON" per
-      # the response-WAL plan, not a hardcoded ".ndjson" strip.
-      #
-      # FLAG: this couples #spool to whatever filename shape Journal.default_path
-      # produces (currently `<timestamp>-<pid>.ndjson`) purely by string surgery
-      # on the SAME path .for already computed -- there is no shared naming
-      # authority between Journal and ResponseWal. Fine while ONE method (.for)
-      # is the only place that decides both names; would need a real seam
-      # (Journal handing back a stem, not a full path) if a second caller ever
-      # needs to derive a WAL path independently.
-      def wal_path
-        stem = File.basename(@journal_path, ".*")
-        File.join(File.dirname(@journal_path), "#{stem}.wal")
-      end
+      # {Paths.wal_for} is the one naming authority; {Resume::Salvager} reads
+      # back the same derivation on the same file after a crash.
+      def wal_path = Paths.wal_for(@journal_path)
     end
   end
 end

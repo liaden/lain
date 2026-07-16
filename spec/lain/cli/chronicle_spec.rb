@@ -88,6 +88,35 @@ RSpec.describe Lain::CLI::Chronicle do
         opened.close
       end
     end
+
+    # The WAL fd otherwise outlives the process's own close bracket: #close
+    # closed the scribe and the journal, but the memoized spool -- a
+    # long-lived append handle spanning every frame of the session -- had no
+    # production caller of its own #close at all.
+    it "#close closes the spool it opened, once the spool has actually been used" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        spool = opened.spool
+        expect(spool).to receive(:close).and_call_original
+        opened.close
+      end
+    end
+
+    # Never force the lazy open just to close it: a run that never spooled a
+    # frame must still create no `.wal` file, even at teardown.
+    it "#close does not open the spool merely to close it" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        expect(Lain::Provider::ResponseWal).not_to receive(:new)
+        opened.close
+
+        expect(Dir.glob(File.join(dir, "lain", "sessions", "**", "*.wal"))).to be_empty
+      end
+    end
   end
 
   describe "two-phase start" do
@@ -169,9 +198,27 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(kwargs.fetch(:model_middleware).to_a.first).to be_a(Lain::Middleware::JournalRequests)
     end
 
-    it "prefers the tee when --nvim fans telemetry to live views too" do
-      tee = StringIO.new
-      expect(described_class.new(journal:, tee:).telemetry_kwargs.fetch(:journal)).to be(tee)
+    it "prefers the tee once #wrap_tee has run, so --nvim fans telemetry to live views too" do
+      chronicle.wrap_tee([])
+      expect(chronicle.telemetry_kwargs.fetch(:journal)).to be_a(Lain::CLI::JournalTee)
+    end
+  end
+
+  describe "#wrap_tee" do
+    it "returns the SAME journal the scribe writes turns into -- not a second one" do
+      expect(chronicle.wrap_tee([])).to be(journal)
+    end
+
+    it "fans telemetry onto both the underlying journal and the given channel" do
+      channel = []
+      chronicle.wrap_tee(channel)
+
+      chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+        digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
+      )
+
+      expect(of_type("turn_usage").first).to include("digest" => "blake3:t1")
+      expect(channel.size).to eq(1)
     end
   end
 
@@ -242,6 +289,89 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # The proof of "one journal, and nothing downstream breaks": a REAL
+  # Chronicle (through .for, exactly as the exe builds it), --nvim wired
+  # through #wrap_tee, produces one session file carrying real turns, real
+  # telemetry (request_sent/turn_usage/memory_root), AND an actual
+  # nvim-shaped request_resent appended through the shared journal. The file
+  # then round-trips through the SAME machinery a live resume/salvage would
+  # use: Loader#recording must not raise, RequestReplay's baseline must
+  # exclude the resend, and a salvage-style request_sent join must land on
+  # the real dispatched request's digest, never the resend's.
+  describe "end-to-end: a chronicle-produced file with an nvim resend round-trips clean" do
+    it "loads through Loader, excludes the resend from RequestReplay, and salvage finds the real digest" do
+      Dir.mktmpdir do |dir|
+        real_paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        chronicle = described_class.for(enabled: true, paths: real_paths)
+        recorder = Lain::Memory::Recorder.new
+        chronicle.wrap_memory(recorder)
+        nvim_journal = chronicle.wrap_tee([])
+
+        run_context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
+        chronicle.start(context: run_context, toolset: Lain::Toolset.new)
+
+        store = Lain::Store.new
+        write_input = { "id" => "aspirin", "description" => "dosing", "body" => "40mg/kg" }
+        tool_use = { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write", "input" => write_input }
+        tool_result = { "type" => "tool_result", "tool_use_id" => "tu_1", "is_error" => false,
+                        "content" => [{ "type" => "text", "text" => "ok" }] }
+
+        after_ask = Lain::Timeline.empty(store:).commit(role: :user, content: text("remember aspirin"))
+        after_tool_use = after_ask.commit(role: :assistant, content: [tool_use])
+        conversation = after_tool_use.commit(role: :user, content: [tool_result])
+        chronicle.catch_up(conversation)
+
+        # TurnUsage journals BEFORE the tool executes (Agent::Accounting's real
+        # order), so the paired memory_root's root is the PRE-write snapshot --
+        # matching what MemoryReplay itself reconstructs from the turn content.
+        chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+          digest: after_tool_use.head_digest, model: "claude-opus-4-8", stop_reason: :tool_use, usage: {}
+        )
+        recorder.write(Lain::Memory::Item.new(id: "aspirin", description: "dosing", body: "40mg/kg"))
+
+        # A THIRD ask, dispatched but never answered -- the crash this file
+        # is a stand-in for.
+        request = Lain::Request.new(model: "claude-opus-4-8", max_tokens: 16,
+                                    messages: [{ role: "user", content: "and ibuprofen?" }])
+        chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::RequestSent.new(
+          digest: request.digest, payload: request.cache_payload, stream: request.stream,
+          extra: request.extra, prefix_digests: request.prefix_digests
+        )
+
+        # The nvim-shaped hand-edit: a human resent the same in-flight request
+        # from the editor, over the SAME journal the scribe writes into (the
+        # split-second fix) -- never dispatched, must never read as a second
+        # real request downstream.
+        nvim_journal << Lain::Telemetry::RequestResent.new(
+          digest: "blake3:hand-edited", payload: request.cache_payload, stream: request.stream,
+          extra: request.extra
+        )
+
+        chronicle.close(reason: :exit)
+
+        session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
+        expect(session_files.size).to eq(1)
+        session_path = session_files.first
+
+        recording = Lain::Bench::Session::Loader.new(File.foreach(session_path)).recording
+
+        expect(recording.timeline.to_a.map(&:digest)).to eq(conversation.to_a.map(&:digest))
+        expect(recording.baseline.map(&:digest)).to eq([request.digest])
+        # The paired memory_root agreed with MemoryReplay's own pre-write
+        # snapshot (nil -- the index was still empty when TurnUsage journaled),
+        # which is exactly what proves the record didn't raise Corrupt above.
+        expect(recording.memory.roots.fetch(after_tool_use.head_digest)).to be_nil
+        expect(recorder.root).not_to be_nil
+
+        outcome = Lain::SessionRecord::Salvage.new(entries: File.foreach(session_path), frames: [],
+                                                   timeline: recording.timeline)
+                                              .call
+        expect(outcome).to be_a(Lain::SessionRecord::Salvage::Incomplete)
+        expect(outcome.request_digest).to eq(request.digest)
+      end
+    end
+  end
+
   describe "#close before #start" do
     # chat's ensure runs even when wiring raised before the header was written:
     # close must not mask the original error, and a session_closed with no
@@ -274,11 +404,18 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.wrap_memory(recorder)).to be(recorder)
     end
 
-    it "still carries the --nvim tee's telemetry leg, which exists independent of the record" do
-      tee = StringIO.new
-      kwargs = described_class.new(tee:).telemetry_kwargs
+    # --no-journal + --nvim: no session record exists to share, so #wrap_tee
+    # opens a REAL journal of its own -- the telemetry leg still exists
+    # independent of the (absent) record.
+    it "wrap_tee opens its OWN real journal and still carries the --nvim tee's telemetry leg" do
+      fresh_journal = instance_double(Lain::Journal, :<< => nil)
+      allow(Lain::Journal).to receive(:open).with(no_args).and_return(fresh_journal)
 
-      expect(kwargs.fetch(:journal)).to be(tee)
+      returned = null.wrap_tee([])
+      kwargs = null.telemetry_kwargs
+
+      expect(returned).to be(fresh_journal)
+      expect(kwargs.fetch(:journal)).to be_a(Lain::CLI::JournalTee)
       expect(kwargs.fetch(:model_middleware).to_a.first).to be_a(Lain::Middleware::JournalRequests)
     end
 

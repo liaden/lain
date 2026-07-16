@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 RSpec.describe Lain::Paths do
   # Every scenario builds its own env Hash -- injected via `env:`, never mutating the
   # real ENV -- so the suite never reads or writes the real $HOME.
@@ -106,6 +108,26 @@ RSpec.describe Lain::Paths do
         p = paths("XDG_STATE_HOME" => tmp)
         expect(p.sessions_dir).to eq("#{tmp}/lain/sessions/#{p.project_hash}")
       end
+    end
+  end
+
+  describe ".wal_for" do
+    it "derives <session-stem>.wal beside the given NDJSON path" do
+      expect(described_class.wal_for("/x/lain/sessions/proj/20260101T000000-1.ndjson"))
+        .to eq("/x/lain/sessions/proj/20260101T000000-1.wal")
+    end
+
+    it "strips whatever extension the given path carries, not a hardcoded .ndjson" do
+      expect(described_class.wal_for("/tmp/session.json")).to eq("/tmp/session.wal")
+    end
+
+    it "is the ONE authority both Chronicle#spool and Salvager#wal_path delegate to" do
+      chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new),
+                                           journal_path: "/x/lain/sessions/proj/a.ndjson")
+      expect(chronicle.send(:wal_path)).to eq(described_class.wal_for("/x/lain/sessions/proj/a.ndjson"))
+
+      salvager = Lain::CLI::Resume::Salvager.new(path: "/x/lain/sessions/proj/a.ndjson", timeline: nil)
+      expect(salvager.send(:wal_path)).to eq(described_class.wal_for("/x/lain/sessions/proj/a.ndjson"))
     end
   end
 

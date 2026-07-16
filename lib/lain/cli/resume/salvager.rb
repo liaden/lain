@@ -73,15 +73,9 @@ module Lain
           Provider::ResponseWal.new(wal_path).frames
         end
 
-        # `<session-stem>.wal` beside the NDJSON -- {CLI::Chronicle#spool}'s
-        # own naming, duplicated rather than shared: that method is private,
-        # and the two callers agreeing on the SAME string-surgery transform
-        # (not a shared constant) is the whole naming authority today (see
-        # the FLAG note on {CLI::Chronicle#wal_path}).
-        def wal_path
-          stem = File.basename(@path, ".*")
-          File.join(File.dirname(@path), "#{stem}.wal")
-        end
+        # {Paths.wal_for} is the one naming authority; {CLI::Chronicle#spool}
+        # writes to the same derivation on the session's own path.
+        def wal_path = Paths.wal_for(@path)
       end
     end
   end

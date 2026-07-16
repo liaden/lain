@@ -23,6 +23,19 @@ module Lain
       end
     end
 
+    # The ONE naming authority for a session's response WAL: `<stem>.wal`
+    # beside whatever NDJSON path it sits next to, stem taken by stripping
+    # WHATEVER extension the given path carries (not a hardcoded ".ndjson"
+    # strip). {CLI::Chronicle#spool} and {CLI::Resume::Salvager} both derive
+    # the wal path from the SAME session file for the SAME reason -- one
+    # writes it, the other reads it back after a crash -- so this lives here,
+    # a class method, rather than duplicated string surgery in each: a class
+    # method because the transform is pure and needs no XDG env to resolve.
+    def self.wal_for(ndjson_path)
+      stem = File.basename(ndjson_path, ".*")
+      File.join(File.dirname(ndjson_path), "#{stem}.wal")
+    end
+
     def initialize(env: ENV)
       @env = env
     end
