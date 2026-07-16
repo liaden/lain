@@ -65,6 +65,7 @@ module Lain
         super()
         @parent = parent
         @name = name
+        @chain_writer = Event::ChainWriter.new
       end
 
       def description
@@ -126,28 +127,19 @@ module Lain
 
       private
 
-      # A :message event in the shared Store, built the Lineage way: a :message
-      # Payload out of line, an envelope carrying the attribution and the causal
-      # edges, correlated to the asker's chain. Causal-only -- no `render_parent`
-      # -- so it never enters a render chain.
+      # A :message event in the shared Store, delegated to the shared
+      # {Event::ChainWriter}: a :message Payload out of line, an envelope
+      # carrying the attribution and the causal edges, correlated to the
+      # asker's chain. Causal-only -- no `render_parent` -- so it never
+      # enters a render chain.
       def write_message(parent, from:, to:, body:, causal_parents:)
-        payload = Event::Payload.new(kind: :message, body:)
-        event = Event.new(kind: :message, from:, to:, causal_parents:,
-                          correlation: identity(parent),
-                          payload_digest: payload.digest, body: payload.body)
-        # payload_digest is a Store edge, so the body lands before the envelope.
-        parent.store.put(payload)
-        parent.store.put(event)
-        event
+        @chain_writer.put(parent, kind: :message, from:, to:, causal_parents:, body:)
       end
 
       # A chain is named by its root event digest (the pinned correlation
       # convention), so the asker is addressable without new id machinery --
       # the same derivation Subagent's Lineage uses.
-      def identity(timeline)
-        head = timeline.head
-        head && (head.correlation || timeline.head_digest)
-      end
+      def identity(timeline) = Event::ChainWriter.correlation_of(timeline)
 
       # The parent Timeline, live: a Timeline passes through, a thunk is called
       # (the toolset is built before the Agent, so the exe hands a

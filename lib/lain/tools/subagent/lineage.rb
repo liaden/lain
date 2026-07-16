@@ -14,9 +14,19 @@ module Lain
         # order, so a mailbox {Event::Projection} can fold it. The one-shot path
         # injects {Log::Null}, whose appends vanish -- its stream is consumed
         # within a dispatch and nobody folds it.
-        def initialize(policy:, log: Log::Null)
+        #
+        # `observer` is the outward slot on the same funnel -- how a session
+        # scribe (T13) sees every event this writer puts, attached as one line
+        # at the call site. A further observer must COMPOSE with the @log
+        # append (as this constructor composes `observer`), never substitute
+        # for it, or @log's mailbox fold silently stops.
+        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new)
           @policy = policy
           @log = log
+          @chain_writer = Event::ChainWriter.new(observer: lambda { |event|
+            @log << event
+            observer.call(event)
+          })
         end
 
         # The :spawn event -- the causal record the fresh root omits. Its
@@ -27,7 +37,7 @@ module Lain
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head }
-          put(parent, kind: :spawn, from: identity(parent), to: nil,
+          put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
         end
 
@@ -49,7 +59,7 @@ module Lain
         def message(parent, spawn, child, response)
           final = child.head_digest
           body = { "result" => response.text, "final" => final }
-          put(parent, kind: :message, from: identity(child), to: identity(parent),
+          put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
                       causal_parents: [spawn.digest, final].compact, body:)
         end
 
@@ -66,28 +76,15 @@ module Lain
         # The correlation an actor addresses its parent by -- the parent chain's
         # root digest, the same identity {#put} stamps on every event. Public so
         # an {Actor} can address the parent without reaching into `identity`.
-        def correlation_of(timeline) = identity(timeline)
+        def correlation_of(timeline) = Event::ChainWriter.correlation_of(timeline)
 
         private
 
+        # Delegates the payload-then-envelope write to the shared
+        # {Event::ChainWriter} -- this method's own body used to build the
+        # Payload and envelope by hand; @chain_writer is the one home now.
         def put(parent, kind:, from:, to:, causal_parents:, body:)
-          payload = Event::Payload.new(kind:, body:)
-          event = Event.new(kind:, from:, to:, causal_parents:,
-                            correlation: identity(parent),
-                            payload_digest: payload.digest, body: payload.body)
-          # payload_digest is a Store edge, so the body lands before the envelope.
-          parent.store.put(payload)
-          parent.store.put(event)
-          @log << event
-          event
-        end
-
-        # A chain is named by its root event digest (the pinned `correlation`
-        # convention), so parent and child are addressable without new id
-        # machinery.
-        def identity(timeline)
-          head = timeline.head
-          head && (head.correlation || timeline.head_digest)
+          @chain_writer.put(parent, kind:, from:, to:, causal_parents:, body:)
         end
       end
     end

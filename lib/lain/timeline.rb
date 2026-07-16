@@ -134,6 +134,16 @@ module Lain
       meet(other).head
     end
 
+    # TL-2 (pinned): the chain's identity, by the same derivation
+    # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
+    # a chain is named by its root event's digest, no separate id machinery.
+    # Public so any caller can address a Timeline by identity without reaching
+    # into `head.correlation`; {Event::ChainWriter.correlation_of} is the one
+    # shared implementation.
+    def correlation
+      Event::ChainWriter.correlation_of(self)
+    end
+
     # Regular: two Timelines are equal exactly when they name the same turn.
     def ==(other)
       other.is_a?(Timeline) && head_digest == other.head_digest
@@ -151,15 +161,11 @@ module Lain
 
     private
 
-    # TL-2 (pinned): correlation is DERIVED by chain construction -- a chain is
-    # named by its root event's digest, no separate id machinery. The root
-    # cannot contain its own address, so it carries nil; the first descendant
-    # reads the root digest off the head, and everyone below inherits it.
-    def next_correlation
-      return nil if empty?
-
-      head.correlation || head_digest
-    end
+    # #commit's own name for the value #correlation already derives -- kept
+    # as a distinct, private name because "the correlation to stamp on the
+    # NEXT turn" is a different intent from "this chain's identity," even
+    # though {Event::ChainWriter.correlation_of} answers both the same way.
+    def next_correlation = correlation
 
     def same_store!(other)
       return if store.equal?(other.store)

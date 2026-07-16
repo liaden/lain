@@ -171,6 +171,9 @@ end
 # Payload references Event::KINDS and Event.normalize_kind, so the class body
 # must load first.
 require_relative "event/payload"
+# ChainWriter reopens Event to nest itself and references Payload (the
+# payload-then-envelope write), so it loads after Payload.
+require_relative "event/chain_writer"
 # Projection reopens Event to nest itself; its Usage/Timeline references resolve
 # at call time, so those units may load after this one.
 require_relative "event/projection"
