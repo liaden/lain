@@ -123,4 +123,16 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("something broke")
     end
   end
+
+  # OM-4: a pending ask_human question is surfaced synchronously so the human
+  # sees what they are answering before #prompt reads the reply -- like
+  # #render_response, it bypasses the Channel (a finished exchange, not a
+  # concurrently-arriving stream).
+  describe "#render_question" do
+    it "prints the question the agent put to the human" do
+      tty.render_question("which config file should I edit?")
+
+      expect(output.string).to include("which config file should I edit?")
+    end
+  end
 end

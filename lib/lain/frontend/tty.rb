@@ -111,6 +111,16 @@ module Lain
         @output.flush
       end
 
+      # Surface a question the agent has put to the human (ask_human, OM-4).
+      # Synchronous and Channel-bypassing for the same reason {#render_response}
+      # is: the reply-path shows the question and reads the answer inline, a
+      # finished exchange rather than a concurrently-arriving stream.
+      def render_question(question)
+        @output.puts(@pastel.yellow.bold("the agent asks:"))
+        @output.puts(@pastel.yellow(question))
+        @output.flush
+      end
+
       private
 
       # The background render loop: blocking drain of the Channel so live tool

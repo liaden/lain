@@ -107,7 +107,9 @@ class LainCLI < Thor
     tty = Lain::Frontend::TTY.new(channel:)
     repl_middleware = build_repl_middleware
 
-    tty.run { converse(agent, tty, repl_middleware) }
+    repl = Repl.new(agent:, tty:, middleware: repl_middleware,
+                    ask_human: @ask_human, questions: @questions)
+    tty.run { repl.converse }
   rescue Lain::CLI::UnknownProvider => e
     raise Thor::Error, e.message
   end
@@ -131,11 +133,19 @@ class LainCLI < Thor
   def wire_agent(channel:, recorder:)
     backend = Backend.new(options)
     agent = nil
-    toolset = build_toolset(recorder, backend:, parent: -> { agent.timeline }, journal: channel)
+    parent = -> { agent.timeline }
+    # The replier fiber (see #respond) parks on @questions and answers through
+    # @ask_human -- exe-instance state because the reply path and the toolset
+    # are wired in different methods of this one command invocation. The
+    # enqueue happens inside #ask (before perform's await), and Async::Queue
+    # is buffered, so the replier can never park on an already-asked question.
+    @questions = Async::Queue.new
+    @ask_human = Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:)
+    toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
     agent = build_agent(toolset:, channel:, session: Lain::Session.new(memory: recorder), backend:)
   end
 
-  def build_toolset(recorder, backend:, parent:, journal:)
+  def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
     base = Lain::Toolset.new([
                                Lain::Tools::ReadFile.new,
                                Lain::Tools::ListFiles.new,
@@ -145,7 +155,7 @@ class LainCLI < Thor
                                Lain::Tools::MemoryRead.new(index: recorder),
                                Lain::Tools::Bash.new
                              ])
-    Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:)])
+    Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
   end
 
   # The chat default: an attenuated read-only child (schema posture, depth 1).
@@ -183,35 +193,73 @@ class LainCLI < Thor
     Lain::Frontend::ApprovalPolicy.new
   end
 
-  # No next/break: the loop's exit condition is `text`'s own truthiness,
-  # reassigned each pass, the same shape the project's style favors elsewhere
-  # (`digest &&= step`).
-  def converse(agent, tty, repl_middleware)
-    text = tty.prompt("you> ")
-    while text && !farewell?(text)
-      dispatch(agent, tty, repl_middleware, text)
-      text = tty.prompt("you> ")
+  # One conversation: reads commands at `you>`, routes each through the repl
+  # phase, and hosts the two-fiber ask_human reply path. Extracted from the
+  # Thor class because a conversation is its own responsibility (and the
+  # Metrics trip said so -- extract, do not loosen).
+  class Repl
+    def initialize(agent:, tty:, middleware:, ask_human:, questions:)
+      @agent = agent
+      @tty = tty
+      @middleware = middleware
+      @ask_human = ask_human
+      @questions = questions
     end
-  end
 
-  # Routes one typed command through the repl phase. `:text`/`:agent` go in;
-  # the phase's downstream runs the real dispatch and adds `:response` (nil on
-  # a rescued Lain::Error) on the way out -- the same in/out shape
-  # model_middleware uses for `:request`/`:response`.
-  def dispatch(agent, tty, repl_middleware, text)
-    repl_middleware.call({ text:, agent: }) do |env|
-      env.merge(response: respond(agent, tty, env.fetch(:text)))
+    # No next/break: the loop exit is text own truthiness, reassigned each
+    # pass, the same shape the project style favors elsewhere.
+    def converse
+      text = @tty.prompt("you> ")
+      while text && !farewell?(text)
+        dispatch(text)
+        text = @tty.prompt("you> ")
+      end
     end
-  end
 
-  def respond(agent, tty, text)
-    tty.render_response(agent.ask(text))
-  rescue Lain::Error => e
-    tty.render_error(e.message)
-  end
+    private
 
-  def farewell?(text)
-    %w[exit quit].include?(text.strip.downcase)
+    # Routes one typed command through the repl phase. `:text`/`:agent` go in;
+    # the phase downstream runs the real dispatch and adds `:response` (nil on
+    # a rescued Lain::Error) on the way out -- the same in/out shape
+    # model_middleware uses for `:request`/`:response`.
+    def dispatch(text)
+      @middleware.call({ text:, agent: @agent }) do |env|
+        env.merge(response: respond(env.fetch(:text)))
+      end
+    end
+
+    # Two fibers: `ask` parks inside ask_human#perform awaiting the reply, and
+    # the reply comes from this same terminal -- a single-fiber ask-then-prompt
+    # deadlocks (OM-4 depends on OM-0). `replier.stop` in ensure is
+    # load-bearing: a parked replier holds Sync open forever on the
+    # no-question path.
+    def respond(text)
+      Sync do |task|
+        replier = answer_loop(task)
+        response = task.async { @agent.ask(text) }.wait
+        @tty.render_response(response) if response
+      ensure
+        replier&.stop
+      end
+    rescue Lain::Error => e
+      @tty.render_error(e.message)
+    end
+
+    # Parks on dequeue (a real scheduler yield -- woken per question, never
+    # polling). `.to_s` is load-bearing: EOF makes prompt return nil, and an
+    # empty answer is honest where Tool::Result.ok(nil) would raise.
+    def answer_loop(task)
+      task.async do
+        loop do
+          @tty.render_question(@questions.dequeue)
+          @ask_human.reply(@tty.prompt("human> ").to_s)
+        end
+      end
+    end
+
+    def farewell?(text)
+      %w[exit quit].include?(text.strip.downcase)
+    end
   end
 end
 

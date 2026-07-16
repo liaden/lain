@@ -105,8 +105,9 @@ RSpec.describe LainCLI do
   describe "the chat toolset" do
     let(:recorder) { Lain::Memory::Recorder.new }
     let(:chat_toolset) do
+      ask_human = Lain::Tools::AskHuman.new(parent: -> {})
       cli.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
-                                         parent: -> {}, journal: Lain::Channel.new)
+                                         parent: -> {}, journal: Lain::Channel.new, ask_human:)
     end
 
     it "contains a memory_read tool" do
