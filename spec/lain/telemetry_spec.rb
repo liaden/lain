@@ -4,11 +4,18 @@ require "json"
 require "stringio"
 
 RSpec.describe Lain::Telemetry do
-  # T1: the module moved from Lain::Event to Lain::Telemetry. The old constant
-  # must be gone -- not merely aliased -- so nothing new can be written against
-  # it, while the wire format (journal_type tags) stays byte-identical.
-  it "frees the old constant name" do
-    expect(defined?(Lain::Event)).to be_falsy
+  # T1 freed the Lain::Event name from telemetry (records moved to
+  # Lain::Telemetry); T8 then reused Lain::Event for the event envelope. The
+  # rename must not have left a telemetry record resolvable under Lain::Event --
+  # the envelope owns the name now, and every record still lives only under
+  # Lain::Telemetry.
+  it "keeps every telemetry record under Lain::Telemetry, none under the reused Lain::Event name" do
+    records = %i[ToolOutput Dropped ProviderRetry TurnUsage RequestSent
+                 MemoryRoot CapabilityDegraded WriteRefused]
+    records.each do |record|
+      expect(Lain::Telemetry.const_defined?(record, false)).to be(true)
+      expect(Lain::Event.const_defined?(record, false)).to be(false)
+    end
   end
 
   # The five events whose hand-rolled guards moved to validate-then-freeze

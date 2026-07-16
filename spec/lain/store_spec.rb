@@ -75,6 +75,45 @@ RSpec.describe Lain::Store do
     end
   end
 
+  # An Event names two predecessor edges -- a single render_parent and a
+  # causal_parents set -- and both flow through the SAME dangling-parent
+  # refusal, in the SAME message format the single-parent (Turn) put pins.
+  describe "referential integrity across an event's two edges" do
+    def event(render_parent: nil, causal_parents: [])
+      Lain::Event.new(kind: :message, payload_digest: "blake3:payload",
+                      render_parent:, causal_parents:)
+    end
+
+    it "refuses an event whose render_parent was never put" do
+      missing = "blake3:absent-render"
+      ev = event(render_parent: missing)
+      expect { store.put(ev) }
+        .to raise_error(Lain::Store::MissingObject,
+                        %(no object #{missing.inspect} in store: putting #{ev.digest.inspect} would dangle))
+    end
+
+    it "refuses an event whose causal parent was never put" do
+      missing = "blake3:absent-causal"
+      ev = event(causal_parents: [missing])
+      expect { store.put(ev) }
+        .to raise_error(Lain::Store::MissingObject,
+                        %(no object #{missing.inspect} in store: putting #{ev.digest.inspect} would dangle))
+    end
+
+    it "accepts an event whose render_parent and every causal parent are already present" do
+      a = turn("a")
+      b = turn("b")
+      store.put(a)
+      store.put(b)
+      ev = event(render_parent: a.digest, causal_parents: [a.digest, b.digest])
+      expect(store.put(ev)).to eq(ev.digest)
+    end
+
+    it "accepts an event with neither edge (a root event)" do
+      expect { store.put(event) }.not_to raise_error
+    end
+  end
+
   it "survives concurrent writers" do
     turns = Array.new(50) { |i| turn("body-#{i}") }
     threads = turns.each_slice(10).map do |slice|
