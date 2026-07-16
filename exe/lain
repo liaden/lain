@@ -15,69 +15,10 @@ class LainCLI < Thor
   # about -- which Provider backend, and the Context carrying the model and the
   # sampler params (temperature/seed) that ride Request#extra. A plain object,
   # not a bag of methods on LainCLI: the provider/model resolution is then
-  # unit-testable without a Thor instance, and the executable keeps one
-  # responsibility per object (CLAUDE.md's Metrics rule -- extract, don't loosen).
-  class Backend
-    # The providers `--provider` selects between. The unknown-name guard names
-    # this set, matching Capability::Policy.for's voice.
-    PROVIDERS = %w[anthropic ollama bedrock].freeze
-
-    def initialize(options)
-      @options = options
-    end
-
-    # Anthropic reads its key from the environment; Ollama is local and takes an
-    # optional `--api-base` override; Bedrock is also env-configured (the
-    # Mantle client reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION itself, so no
-    # flag threads through here). An unknown name fails loudly, naming the
-    # valid set, surfaced as a Thor::Error (a bad flag is user error, cleanly
-    # presented, not a bug with a backtrace).
-    def provider
-      case provider_name
-      when "ollama" then Lain::Provider::Ollama.new(api_base: @options[:api_base])
-      when "bedrock" then Lain::Provider::Bedrock.new
-      else Lain::Provider::Anthropic.new
-      end
-    end
-
-    # `--model` defaults to the SELECTED provider's own default (resolved here,
-    # not in the Thor flag, whose default is fixed at load before `--provider`
-    # is known). Sampler params ride Request#extra via the Context.
-    def context
-      Lain::Context.new(model: @options[:model] || default_model,
-                        max_tokens: @options[:max_tokens], extra: sampler_extra,
-                        system: Lain::Prompt::Slots.load.render)
-    end
-
-    private
-
-    # Validated once, so #provider and #default_model both key off a name
-    # already known to be in PROVIDERS.
-    def provider_name
-      name = @options[:provider]
-      return name if PROVIDERS.include?(name)
-
-      raise Thor::Error, "unknown provider #{name.inspect}, expected one of #{PROVIDERS.inspect}"
-    end
-
-    def default_model
-      case provider_name
-      when "ollama" then Lain::Provider::Ollama::DEFAULT_MODEL
-      when "bedrock" then Lain::Provider::Bedrock::DEFAULT_MODEL
-      else Lain::Provider::Anthropic::DEFAULT_MODEL
-      end
-    end
-
-    # Only the sampler flags the caller actually set, String-keyed to match
-    # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`
-    # (not `if value`) so `--temperature 0` -- the determinism recipe -- is kept.
-    def sampler_extra
-      %i[temperature seed].each_with_object({}) do |key, extra|
-        value = @options[key]
-        extra[key.to_s] = value unless value.nil?
-      end
-    end
-  end
+  # unit-testable without a Thor instance. It lives in lib (Lain::CLI::Backend)
+  # so `bench record` resolves providers through the identical object; the exe
+  # keeps the alias and maps its Lain error to Thor's.
+  Backend = Lain::CLI::Backend
 
   # Errors (a Thor::Error surfaced from a subcommand included) print their
   # message and exit nonzero, instead of Thor's legacy exit-0 default.
@@ -103,16 +44,25 @@ class LainCLI < Thor
     method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),
                       desc: "how many runs"
     method_option :out, type: :string, required: true, desc: "directory the session files land in"
-    method_option :model, type: :string, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:model),
-                          desc: "Anthropic model id"
+    method_option :model, type: :string,
+                          desc: "Model id; defaults to the selected provider's own default when unset"
     method_option :max_tokens, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens),
                                desc: "max_tokens per model turn"
     method_option :system, type: :string, desc: "system prompt"
+    method_option :provider, type: :string, default: "anthropic",
+                             desc: "Model provider: anthropic, ollama, or bedrock"
+    method_option :api_base, type: :string, desc: "Override the Ollama API base (ollama provider only)"
+    method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
+    method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
+    # Flag name → Bench::CLI#record keyword. One declarative map, so adding a
+    # sampler flag is one line here and one method_option above.
+    RECORD_FLAGS = { n: :runs, out: :out, model: :model, max_tokens: :max_tokens,
+                     system: :system, provider: :provider_name, api_base: :api_base,
+                     temperature: :temperature, seed: :seed }.freeze
+
     def record(taskfile)
-      paths = Lain::Bench::CLI.new.record(taskfile:, runs: options[:n], out: options[:out],
-                                          model: options[:model], max_tokens: options[:max_tokens],
-                                          system: options[:system])
-      paths.each { |path| say path }
+      kwargs = RECORD_FLAGS.to_h { |flag, keyword| [keyword, options[flag]] }
+      Lain::Bench::CLI.new.record(taskfile:, **kwargs).each { |path| say path }
     rescue Lain::Error => e
       raise Thor::Error, e.message
     end
@@ -154,6 +104,8 @@ class LainCLI < Thor
     repl_middleware = build_repl_middleware
 
     tty.run { converse(agent, tty, repl_middleware) }
+  rescue Lain::CLI::UnknownProvider => e
+    raise Thor::Error, e.message
   end
 
   private

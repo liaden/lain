@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "tmpdir"
 
 # Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
@@ -200,6 +201,102 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp) }
           .to raise_error(described_class::MissingAPIKey, /ANTHROPIC_API_KEY/)
+      end
+    end
+
+    # AC2: chat and record resolve providers through the SAME Backend, so an
+    # unknown --provider name raises the one named Lain error from either path,
+    # never Thor::Error out of lib/.
+    it "raises Lain::CLI::UnknownProvider on an unknown --provider name" do
+      Dir.mktmpdir do |tmp|
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp, provider_name: "gemini") }
+          .to raise_error(Lain::CLI::UnknownProvider, /gemini/)
+      end
+    end
+
+    # AC1: an ollama temp-0 arm records. The provider is stubbed (money), but
+    # the sampler flags ride the Context into Request#extra, so the recorded
+    # session HEADER carries them and the recording still replays dry.
+    describe "an ollama temp-0 arm" do
+      it "records the sampler extra into the session header and replays dry" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, provider_name: "ollama",
+                     temperature: 0, seed: 7, provider:)
+
+          recording = Lain::Bench::Session.load(File.join(out, "1.ndjson"))
+          expect(recording.context.extra).to include("temperature" => 0, "seed" => 7)
+          expect { recording.dry_replay }.not_to raise_error
+        end
+      end
+    end
+
+    # The orchestrator amendment: bench record owns PS-2 emission. Each recorded
+    # journal carries EXACTLY ONE slot_fills record, built from the slots the
+    # Backend's context rendered, and Loader#slot_fills reads it back.
+    describe "slot attribution (PS-2)" do
+      def slot_fills_count(path)
+        File.readlines(path).map { |line| JSON.parse(line) }.count { |record| record["type"] == "slot_fills" }
+      end
+
+      it "emits exactly one slot_fills record per recorded session" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
+                             model: "claude-sonnet-4-6", provider:)
+
+          expect(paths.map { |path| slot_fills_count(path) }).to all(eq(1))
+        end
+      end
+
+      it "records fills Loader#slot_fills reads back as the session's attribution" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
+                     model: "claude-sonnet-4-6", provider:)
+
+          loader = Lain::Bench::Session::Loader.new(File.foreach(File.join(out, "1.ndjson")))
+          expect(loader.slot_fills.digests).not_to be_empty
+        end
+      end
+
+      # The attribution's one claim is the JOIN: digests["system"] content-
+      # addresses the system bytes the request_sent records journal in full
+      # (the T9 join-guard idiom). That must hold under --system too -- an
+      # override renders INSTEAD of the slots, so a record still carrying the
+      # untouched slots' digests would be a coherent-looking lie.
+      def journaled_system_text(records)
+        payload_system = records.find { |record| record["type"] == "request_sent" }
+                                .fetch("payload").fetch("system")
+        return payload_system if payload_system.is_a?(String)
+
+        payload_system.map { |block| block.fetch("text") }.join
+      end
+
+      it "attributes a --system override so the digest still joins onto the journaled system bytes" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
+                     model: "claude-sonnet-4-6", system: "Reply with one word.", provider:)
+
+          records = File.readlines(File.join(out, "1.ndjson")).map { |line| JSON.parse(line) }
+          slot_fills = records.find { |record| record["type"] == "slot_fills" }
+          expect(slot_fills.fetch("digests").fetch("system"))
+            .to eq(Lain::Canonical.digest(journaled_system_text(records)))
+          expect(slot_fills.fetch("fills").fetch("system")).to eq("Reply with one word.")
+        end
+      end
+
+      it "attributes the default slot render so the digest joins onto the journaled system bytes" do
+        Dir.mktmpdir do |tmp|
+          out = File.join(tmp, "sessions")
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
+                     model: "claude-sonnet-4-6", provider:)
+
+          records = File.readlines(File.join(out, "1.ndjson")).map { |line| JSON.parse(line) }
+          expect(records.find { |record| record["type"] == "slot_fills" }.fetch("digests").fetch("system"))
+            .to eq(Lain::Canonical.digest(journaled_system_text(records)))
+        end
       end
     end
   end

@@ -48,17 +48,38 @@ module Lain
       # need none, and an empty Toolset keeps the recorded schema trivial.
       # Tool-bearing task files are future work.
       #
-      # @param provider [Lain::Provider, nil] injected in specs; nil builds the
-      #   real {Provider::AnthropicRaw}, which is key-gated
+      # Provider and Context resolve through the SAME {Lain::CLI::Backend} the
+      # chat path uses, so `--provider`/`--temperature`/`--seed` mean one thing
+      # across commands and an unknown provider name raises the one
+      # {Lain::CLI::UnknownProvider} from either. `model` defaults to the selected
+      # provider's own default (nil here, resolved in Backend); the sampler flags
+      # ride the Context into Request#extra, and the recorded HEADER carries them.
+      #
+      # `provider_name` is the `--provider` FLAG; `provider` is the injected
+      # Provider OBJECT the specs pass (nil resolves the real, money-gated
+      # recording client). Two distinct seams: a name to resolve, and an object
+      # to stub.
+      #
+      # @param provider [Lain::Provider, nil] injected in specs; nil resolves the
+      #   real recording provider (AnthropicRaw is key-gated; ollama/bedrock come
+      #   from {Lain::CLI::Backend})
       # @return [Array<String>] the written session paths, in run order
       def record(taskfile:, out:, runs: RECORD_DEFAULTS.fetch(:runs),
-                 model: RECORD_DEFAULTS.fetch(:model), max_tokens: RECORD_DEFAULTS.fetch(:max_tokens),
-                 system: nil, provider: nil)
+                 model: nil, max_tokens: RECORD_DEFAULTS.fetch(:max_tokens),
+                 system: nil, provider_name: "anthropic", api_base: nil,
+                 temperature: nil, seed: nil, provider: nil)
         runs = check_runs(runs)
         prompts = prompts_from(taskfile)
-        provider ||= build_provider
-        context = Context.new(model:, max_tokens:, system:)
-        (1..runs).map { |index| record_run(provider, context, prompts, File.join(out, "#{index}.ndjson")) }
+        backend = Lain::CLI::Backend.new(provider: provider_name, api_base:, model:,
+                                         max_tokens:, temperature:, seed:)
+        provider ||= resolve_provider(backend, provider_name)
+        context = backend.context(system_override: system)
+        # PS-2 must attribute what ACTUALLY rendered: `--system` renders
+        # instead of the slots, and SlotFills.from owns that distinction.
+        attribution = Telemetry::SlotFills.from(backend.slots, override: system)
+        (1..runs).map do |index|
+          record_run(provider, context, attribution, prompts, File.join(out, "#{index}.ndjson"))
+        end
       end
 
       private
@@ -135,10 +156,17 @@ module Lain
         prompts
       end
 
-      def build_provider
-        if ENV["ANTHROPIC_API_KEY"].to_s.empty?
-          raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it"
-        end
+      # The recording provider for a KNOWN name. ollama and bedrock come from the
+      # SAME {Lain::CLI::Backend} chat uses; an unknown name never reaches here as
+      # `anthropic`, so it falls to {Lain::CLI::Backend#provider}, whose own guard
+      # raises {Lain::CLI::UnknownProvider} -- one error, both paths. The default
+      # `anthropic` arm is the RAW client (lossless HTTP recording) behind the
+      # money gate: refusing keyless up front beats a transport error n prompts in.
+      def resolve_provider(backend, provider_name)
+        return backend.provider unless provider_name == "anthropic"
+
+        raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it" \
+          if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
         Provider::AnthropicRaw.new
       end
@@ -148,12 +176,16 @@ module Lain
       # actually received. An occupied path REFUSES rather than replaces:
       # Journal.open appends, a second header in one file would destroy both
       # sweeps' loadability, and the existing bytes cost real money.
-      def record_run(provider, context, prompts, path)
+      def record_run(provider, context, attribution, prompts, path)
         raise Refusal, "#{path} already exists; refusing to overwrite a recorded session" if
           File.exist?(path)
 
         journal = Journal.open(path)
         begin
+          # One slot_fills record per session, at session start (Loader reads
+          # by record TYPE, not file position, so leading with it reorders
+          # nothing downstream).
+          journal << attribution
           run_and_write(provider, context, prompts, journal)
         ensure
           journal.close

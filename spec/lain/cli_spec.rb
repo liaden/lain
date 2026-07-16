@@ -39,7 +39,7 @@ RSpec.describe LainCLI do
 
     it "fails loudly on an unknown provider, naming the valid set" do
       expect { backend(provider: "gemini").provider }
-        .to raise_error(Thor::Error, /unknown provider "gemini", expected one of.*anthropic.*ollama/m)
+        .to raise_error(Lain::CLI::UnknownProvider, /unknown provider "gemini", expected one of.*anthropic.*ollama/m)
     end
 
     it "constructs a Provider::Bedrock for --provider bedrock" do

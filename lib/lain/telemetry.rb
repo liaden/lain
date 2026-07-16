@@ -266,10 +266,18 @@ module Lain
     SlotFills = Data.define(:digests, :fills) do
       include Journalable
 
-      # The session's one record, built from the loaded {Prompt::Slots}: its
-      # per-slot rendered-byte digests and raw fill sources.
-      def self.from(slots)
-        new(digests: slots.digests, fills: slots.fills)
+      # The session's one record, attributing what ACTUALLY rendered. Built
+      # from the loaded {Prompt::Slots} -- per-slot rendered-byte digests and
+      # raw fill sources -- unless `override:` names a caller-supplied system
+      # prompt (bench record's `--system`), which renders INSTEAD of the slots:
+      # a record still built from them would carry digests that fail the join
+      # onto {RequestSent}'s system blocks, a coherent-looking lie. The honest
+      # record addresses the override bytes, with the override itself as the
+      # diffable source.
+      def self.from(slots, override: nil)
+        return new(digests: slots.digests, fills: slots.fills) if override.nil?
+
+        new(digests: { "system" => Canonical.digest(override) }, fills: { "system" => override })
       end
 
       def initialize(digests:, fills:)
