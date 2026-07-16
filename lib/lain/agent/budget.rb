@@ -38,6 +38,23 @@ module Lain
 
         raise Exceeded, "spent #{usage.total_tokens} tokens, ceiling is #{max_total_tokens}"
       end
+
+      # The third way a run halts, and the only cooperative one. The two ceilings
+      # above RAISE from inside the loop when the harness runs out of rope; an
+      # interrupt STOPS the loop's task from OUTSIDE -- a user's Ctrl-C, a
+      # supervising timeout -- and all three are the *harness* deciding to halt,
+      # distinct from a model outcome like `:refusal`. Grouping the interrupt here,
+      # with the ceilings, keeps that whole vocabulary in one object.
+      #
+      # It is `Async::Task#stop`, not `Thread#kill`, on purpose (see
+      # docs/concurrency.md): structured cancellation raises `Async::Stop` only at
+      # a scheduler-controlled yield point, so `ensure` blocks run and the
+      # immutable Timeline is only ever stopped *between* whole commits -- never
+      # mid-commit. The task is duck-typed as "something that responds to #stop";
+      # Budget stays ignorant of async itself.
+      def interrupt(task)
+        task.stop
+      end
     end
   end
 end

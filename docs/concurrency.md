@@ -314,3 +314,121 @@ appends to. Fiber-vs-handler-object is a **control**-layer choice; speculative b
    measured here — that is an inherent cost of hosting code on any fiber, not a cost specific
    to choosing "effects via Fiber" as the *interpretation* style, and 5-0.3 should go in with
    that cost named rather than rediscovered.
+
+## 2026-07-15 — adoption: the loop is reactor-hosted and cancellable (5-0.3 / OM-0)
+
+**Pinned versions:** ruby 4.0.5 (`+PRISM`), `async` 2.42.0, `mixlib-shellout` 3.4.10. Specs:
+`spec/lain/agent_cancellation_spec.rb` (default suite) and
+`spec/spikes/async_shellout_flood_spec.rb` (`:spike`, run via `LAIN_SPIKE=1 bundle exec rspec
+spec/spikes`).
+
+This is the adoption the two spikes above cleared the way for: fibers become the concurrency
+model, chosen with the bench in hand exactly as the summary promised. What landed here is
+deliberately narrow — the loop is *hosted* on the reactor and made *cancellable*; fanning tool
+dispatch out across parallel `Async::Task`s (the `task.async { handler.call(...) }` boundary
+5-0.2 recommended) is a later card. This one buys the two properties that had to come first.
+
+**The Sync bridge.** `Agent#run` now wraps its loop in `Sync { run_loop }`. `Sync` joins the
+caller's reactor when there is one (so an outer `Async` can stop the run) and spins one up
+transparently when there is not. That second half is what keeps every non-reactor caller in the
+suite unchanged: `agent.ask("hi")` outside any reactor behaves exactly as before, because `Sync`
+establishes the reactor, runs the loop to a value, and returns it — gate 7's bounded-loop raise
+and all existing agent specs pass untouched (verified: full suite 1509 examples green, up 4 from
+the new cancellation specs). A red-first probe (`ReactorAssertingProvider`, whose `#complete`
+raises unless `Async::Task.current?`) pins that the bridge actually establishes the reactor
+rather than the suite merely tolerating its absence.
+
+**The cancel seam.** `Agent::Budget#interrupt(task)` is `task.stop` — structured cancellation,
+grouped with the two ceilings because all three are *the harness deciding to halt* (a
+`:refusal` is the model's outcome; these three are ours). It is `Async::Task#stop`, not
+`Thread#kill`, for the reason the "Threads" section rejected the latter: the stop raises
+`Async::Stop` only at a scheduler-controlled yield point, so `ensure` blocks run and — the
+invariant the cancellation spec pins — the Timeline is only ever stopped *between* whole
+commits. `@timeline = @timeline.commit(...)` is an atomic reference swap over a deeply-frozen,
+content-addressed value, so a mid-turn stop leaves either the committed turn or no partial turn,
+never a torn one: a stop during the first model call leaves `[user]` (no assistant turn exists —
+not a torn one, none); a stop during a later model call leaves the whole committed prefix
+`[user, assistant(tool_use), user(tool_result)]` intact with nothing appended after it. The
+machine is left in a legal, resumable state (`:awaiting_model`), which is why no new `LoopMachine`
+state or transition was needed — gate-6 totality is untouched, and the escalation trigger for a
+machine change did not fire. (`Async::Stop < Exception`, not `StandardError`, so gate 3's
+`rescue StandardError` in `Handler::Live` cannot swallow a cancellation — it flows past the tool
+error path as it must.)
+
+**Flood re-verify — cooperative, bound pinned.** 5-0.1 measured the select/waitpid cooperation
+path for an *idle* child and flagged that a stdout-flooding child (chunked `read_nonblock` under
+pipe-buffer backpressure) was *not* measured. This card measured it. A child streams ~10MB to
+stdout as a sustained trickle over ~1.2s (200 × 50KB chunks, each above the ~64KB pipe buffer's
+drain granularity, with a 5ms pause between them) inside the reactor, while a heartbeat fiber
+ticks every 50ms. A one-shot 10MB write drains in ~30ms — shorter than one tick, so it could not
+distinguish cooperative from starved and the bound would be vacuous; the trickle spans a window
+~25 ticks wide, which is what makes the measurement mean something (and it mirrors how real
+`bash` output arrives — a trickle over a pipe, per this document's opening).
+
+**Result:** cooperative under flood, not starved. Across runs the heartbeat kept ticking at
+~50ms *throughout* the flood window, ~25 ticks inside it (a starved reactor delivers ~1). The
+worst inter-tick gap observed across the calibration runs was **71.6ms** (others 51.0 / 53.1 /
+59.9ms) — roughly 1.5× the 50ms baseline. A starved reactor would instead show a single gap the
+size of the whole flood window, ~1200ms.
+
+**The pinned bound, and its rationale (the panel amendment):** the spec asserts every inter-tick
+gap during the flood stays **≤ 150ms = 3× the 50ms tick baseline**. That ceiling sits above the
+measured worst-case jitter (71.6ms, ~1.5×) with ~2× headroom, and roughly 8× below the ~1200ms
+stall a non-yielding read loop would produce — so it fails loudly on a real stall without flaking
+on scheduler jitter. "Bounded" is a number, not a mood. The result held identically across 3
+consecutive suite runs plus 4 standalone calibration runs; no flakiness observed.
+
+**Decision:** no shellout-to-thread offload is needed, now confirmed for the flooding regime as
+well as the idle one — the scope caveat 5-0.1 attached to its recommendation is discharged.
+`bash` runs as an ordinary `Async` task alongside everything else on fibers. This card does not
+touch `Tools::Bash` (the escalation trigger that would have required it — a stalled reactor —
+did not fire). Naming the cost 5-0.2 asked to carry forward: once a later card runs tool dispatch
+*inside* an `Async::Task` fiber for concurrency, an unhandled bug that crosses gate 3 will see
+the truncated-backtrace cost 5-0.2 measured — inherent to hosting code on any fiber, not a
+regression introduced here.
+
+**The commit→journal shield.** The torn-commit guarantee above has a second half. The Timeline
+commit is a pure reference swap with no yield point, so it can never tear internally — but the
+journal write that immediately follows it (`Accounting#observe` pushing a `Telemetry::TurnUsage`)
+*is* IO-shaped, and a stop parked inside `journal.<<` would leave a committed assistant turn
+with no usage record. The reverse tear is structurally impossible (the journal writes strictly
+after the commit), but this direction is a real loss: bench cost accounting reads the Journal,
+never `turn.meta`, so an interrupted turn's spend would silently price as free in the experiment
+record. The fix is `Async::Task#defer_stop` around the pair (`Agent#commit_and_account`): a stop
+requested inside the region is held until the region exits, so commit and journal write land as
+one atom, and the stop still lands — at the region's exit, before the loop can take another
+turn. Probe-verified precedence note: a stop deferred across the region *preempts* an exception
+raised inside it, so a simultaneous interrupt and token-ceiling bust settles as the stop
+(`Async::Stop` replaces `Budget::Exceeded` at the region boundary). Both are the harness
+deciding to halt, so either is a legal outcome; the interrupt being the more imperative of the
+two is the sensible tiebreak, and it is measured, not assumed.
+
+**Using the cancel seam — a worked supervisor.** `Budget#interrupt` stops the `Async::Task`
+*hosting* a run, so the run must be on its own task for there to be anything to stop —
+`agent.budget.interrupt(...)` from inside the run's own fiber has no task handle that isn't
+itself. The shape is: wrap `ask` in `task.async`, keep the handle, stop it from a sibling fiber
+(a signal handler, a timeout, a UI event):
+
+```ruby
+agent = Lain::Agent.new(provider:, toolset:, context:)
+
+Sync do |task|
+  run = task.async { agent.ask("investigate the flaky spec") }
+
+  watchdog = task.async do
+    sleep 30                      # or: a Ctrl-C trap, a supervising UI event
+    agent.budget.interrupt(run)   # structured: lands at run's next scheduler yield
+  end
+
+  run.wait                        # returns nil if stopped; the agent is left in a
+ensure                            # legal, resumable state (see the cancel seam above)
+  watchdog.stop                   # a fast run must not wait out the watchdog's timer
+end
+```
+
+Three behaviours worth knowing at the call site, each verified against async 2.42.0: a stopped
+task's `#wait` returns `nil` rather than re-raising `Async::Stop` (detect cancellation by the
+missing `Response`, not by rescuing); interrupting a task that already settled is a harmless
+no-op, so the watchdog need not race the run to the finish line; and without the `ensure`, a
+run that finishes in 50ms still holds the reactor open for the watchdog's full timer — `Sync`
+returns only when every child task is done.
