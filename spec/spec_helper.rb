@@ -15,6 +15,12 @@ require "tmpdir"
 # to alphabetical luck. Configuration -- as opposed to loading -- lives in spec/support.
 require "webmock/rspec"
 
+# Profiling lenses for the suite itself -- dormant until asked for via env:
+#   TEST_STACK_PROF=1 bundle exec rspec ...   sampling profile -> flamegraph
+#   TAG_PROF=type     bundle exec rspec ...   time per example type
+#   EVENT_PROF=...    bundle exec rspec ...   time per instrumented event
+require "test_prof"
+
 # Every spec-suite concern is one file under spec/support. Parallel branches ADD a file here
 # rather than editing this one, which is why this file is allowed to be boring. `Dir[]` has
 # sorted its results since Ruby 3.0, so the order is stable without an explicit `.sort`.

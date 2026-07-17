@@ -162,6 +162,8 @@ GEM
       uri (>= 0.11.1)
     optimist (3.2.1)
     parallel (2.1.0)
+    parallel_tests (5.7.0)
+      parallel
     parser (3.3.11.1)
       ast (~> 2.4.1)
       racc
@@ -233,6 +235,7 @@ GEM
       simplecov_json_formatter (~> 0.1)
     simplecov-html (0.13.2)
     simplecov_json_formatter (0.1.4)
+    stackprof (0.2.28)
     standardwebhooks (1.1.0)
     state_machines (0.201.0)
     state_machines-diagram (0.1.0)
@@ -246,6 +249,8 @@ GEM
       attr_extras (>= 6.2.4, < 8)
       diff-lcs (~> 1.5)
       patience_diff (~> 1.2)
+    test-prof (1.6.2)
+      logger
     thor (1.5.0)
     traces (0.18.2)
     tsort (0.2.0)
@@ -276,6 +281,7 @@ DEPENDENCIES
   dotenv (~> 3.2)
   irb
   lain!
+  parallel_tests (~> 5.0)
   rake (~> 13.0)
   rake-compiler
   rantly (~> 3.0)
@@ -283,8 +289,10 @@ DEPENDENCIES
   rubocop (~> 1.21)
   shoulda-matchers (~> 6.0)
   simplecov (~> 0.22)
+  stackprof (~> 0.2)
   state_machines-mermaid (~> 0.1)
   super_diff (~> 0.16)
+  test-prof (~> 1.4)
   vcr (~> 6.4)
   webmock (~> 3.0)
   yard (~> 0.9)
@@ -352,6 +360,7 @@ CHECKSUMS
   net-http (0.9.1) sha256=25ba0b67c63e89df626ed8fac771d0ad24ad151a858af2cc8e6a716ca4336996
   optimist (3.2.1) sha256=8cf8a0fd69f3aa24ab48885d3a666717c27bc3d9edd6e976e18b9d771e72e34e
   parallel (2.1.0) sha256=b35258865c2e31134c5ecb708beaaf6772adf9d5efae28e93e99260877b09356
+  parallel_tests (5.7.0) sha256=3f1762c46ca2c223b8af8ef877217f9d76974e191bfa934f2580b58bcf1d005c
   parser (3.3.11.1) sha256=d17ace7aabe3e72c3cc94043714be27cc6f852f104d81aa284c2281aecc65d54
   pastel (0.8.0) sha256=481da9fb7d2f6e6b1a08faf11fa10363172dc40fd47848f096ae21209f805a75
   patience_diff (1.2.0) sha256=f492094486af02fff4a80070fa6b4d0ebbcf4d42fb38bba29d095eef43f6822c
@@ -384,11 +393,13 @@ CHECKSUMS
   simplecov (0.22.0) sha256=fe2622c7834ff23b98066bb0a854284b2729a569ac659f82621fc22ef36213a5
   simplecov-html (0.13.2) sha256=bd0b8e54e7c2d7685927e8d6286466359b6f16b18cb0df47b508e8d73c777246
   simplecov_json_formatter (0.1.4) sha256=529418fbe8de1713ac2b2d612aa3daa56d316975d307244399fa4838c601b428
+  stackprof (0.2.28) sha256=4ec2ace02f386012b40ca20ef80c030ad711831f59511da12e83b34efb0f9a04
   standardwebhooks (1.1.0) sha256=356ba711c14def4fb27310e4163b26bd5cccf325212c3440cabadd825e4be11f
   state_machines (0.201.0) sha256=807bafdd5d7dbfb3e23d77897edfe38e505b6e0738a2b7259dab566f46b9d319
   state_machines-diagram (0.1.0) sha256=c7cbad778d2b87d7b1e9229a5b4f54f3ce9fbc2fe1b318eddabfb5a78a753202
   state_machines-mermaid (0.1.0) sha256=3bdfe4acd24dcfa15e6843b2d2b9e31f9454c343eb6720c4ce7a876a7b86920d
   super_diff (0.19.0) sha256=c35fc1c0daa223d67b203fe3fb49a6cfd67850a53920319565c3c654e03ec902
+  test-prof (1.6.2) sha256=eebcf3034d73c0220afe7391ec82966a0a41009e65f2822ffaabcdc108b51e4c
   thor (1.5.0) sha256=e3a9e55fe857e44859ce104a84675ab6e8cd59c650a49106a05f55f136425e73
   traces (0.18.2) sha256=80f1649cb4daace1d7174b81f3b3b7427af0b93047759ba349960cb8f315e214
   tsort (0.2.0) sha256=9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f

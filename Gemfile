@@ -22,8 +22,17 @@ group :development do
 end
 
 group :test do
+  # `rake pspec` / pre-commit: one worker per core over a suite that is
+  # parallel-safe by construction (tmpdirs, per-pid sockets, injected env).
+  # Roughly halves the wall clock every commit hook pays.
+  gem "parallel_tests", "~> 5.0"
   gem "rantly", "~> 3.0" # property tests for the algebra: monoid/semilattice laws
   gem "rspec", "~> 3.0"
+  # Suite profiling lenses, dormant until their env vars ask: TEST_STACK_PROF=1
+  # (flamegraphs, via stackprof), TAG_PROF=type, EVENT_PROF=... -- required from
+  # spec_helper, a no-op on a plain run.
+  gem "stackprof", "~> 0.2"
+  gem "test-prof", "~> 1.4"
   # ActiveModel validation matchers; integrated :rspec + :active_model only (no Rails).
   gem "shoulda-matchers", "~> 6.0"
   # A REVIEW LENS, NEVER A GATE. Used while reviewing a branch to find untested

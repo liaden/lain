@@ -57,17 +57,16 @@ repos:
         pass_filenames: false
         files: ^(Cargo\.(toml|lock)|deny\.toml)$
 
-      - id: rubocop
-        name: rubocop
-        entry: bundle exec rubocop --force-exclusion
-        language: system
-        types: [ruby]
-
-      # `rspec` cannot load `lain` until the Rust extension is compiled, so the
-      # extension is rebuilt first. Touching either language re-runs the suite.
-      - id: rspec
-        name: rspec
-        entry: bundle exec rake compile spec
+      # pre-commit runs hooks serially, so rubocop and rspec overlap INSIDE one
+      # hook: `rake check` is a multitask fanning them out together, after the
+      # one compile both need (`rspec` cannot load `lain` until the Rust
+      # extension is built). rspec itself runs parallel_rspec, one worker per
+      # core. Touching either language re-runs the lot; rubocop now checks the
+      # whole repo (cached) rather than staged filenames, the same scope
+      # `rake default` and CI use.
+      - id: ruby-checks
+        name: ruby checks (rubocop + rspec, parallel)
+        entry: bundle exec rake compile check
         language: system
         types_or: [ruby, rust]
         pass_filenames: false
