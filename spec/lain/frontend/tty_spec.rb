@@ -121,6 +121,119 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # I3: the prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
+  # shows a warmth glyph -- a snapshot taken once, right before Reline waits
+  # (interface-integration.md's fixed-prompt limitation), never mid-wait.
+  describe "prompt warmth (I3)" do
+    around do |example|
+      Dir.mktmpdir { |dir| @state_dir = dir and example.run }
+    end
+
+    def state_path
+      File.join(@state_dir, ".lain", "state.json")
+    end
+
+    def write_state(cache_deadline:)
+      FileUtils.mkdir_p(File.dirname(state_path))
+      File.write(state_path, JSON.generate({ "cache_deadline" => cache_deadline, "fleet" => [], "inbox_count" => 0 }))
+    end
+
+    def write_raw(bytes)
+      FileUtils.mkdir_p(File.dirname(state_path))
+      File.write(state_path, bytes)
+    end
+
+    # A fixed wall clock ("now" = epoch 1_000) so warm/cold is a plain
+    # before/after comparison against a deadline written into the fixture
+    # file -- no real time passes and no example races a real deadline.
+    def tty_with_state(state_path: self.state_path, output_tty: true, input: tty_input)
+      allow(output).to receive(:tty?).and_return(output_tty)
+      described_class.new(channel:, output:, input:, state_path:, wall_clock: -> { Time.at(1_000) },
+                          pastel: Pastel.new(enabled: false))
+    end
+
+    it "renders a warm glyph when the deadline is still ahead of now" do
+      write_state(cache_deadline: Time.at(1_500).utc.iso8601)
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline)
+        .with(a_string_including(described_class::Warmth::WARM), true)
+      expect(Reline).not_to have_received(:readline)
+        .with(a_string_including(described_class::Warmth::COLD), true)
+    end
+
+    it "renders a cold glyph when the deadline has already passed" do
+      write_state(cache_deadline: Time.at(500).utc.iso8601)
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline)
+        .with(a_string_including(described_class::Warmth::COLD), true)
+    end
+
+    it "renders today's bare prompt when no state file has ever been published" do
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state(state_path: File.join(@state_dir, "never-written", "state.json")).prompt
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    it "renders today's bare prompt when the feed exists but has no cache_deadline yet" do
+      write_state(cache_deadline: nil)
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    # Review fix round: the reviewer reproduced a crash where a syntactically
+    # valid state.json with a semantically bad cache_deadline reached
+    # Time.iso8601 uncaught, taking down the whole prompt loop -- not just the
+    # glyph. The contract is "never raise at the prompt, for any file
+    # content", so every malformed shape below must degrade to the bare
+    # prompt exactly like a missing file does.
+    it "renders today's bare prompt when the state file is not valid JSON" do
+      write_raw("not json at all {{{")
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    it "renders today's bare prompt when cache_deadline is not a parseable timestamp" do
+      write_state(cache_deadline: "not-a-real-timestamp")
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    it "renders today's bare prompt when the published JSON's top level is not a Hash" do
+      write_raw(JSON.generate([1, 2, 3]))
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_state.prompt
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    it "leaves non-tty output byte-identical to today: no glyph, no escapes" do
+      write_state(cache_deadline: Time.at(1_500).utc.iso8601)
+      input.string = "hi\n"
+
+      tty_with_state(output_tty: false, input:).prompt("> ")
+
+      expect(output.string).to eq("> ")
+    end
+  end
+
   describe "history (XDG state, T12)" do
     around do |example|
       Dir.mktmpdir { |dir| @history_dir = dir and example.run }

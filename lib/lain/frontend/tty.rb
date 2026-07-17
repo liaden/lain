@@ -2,8 +2,10 @@
 
 require "fileutils"
 require "io/console"
+require "json"
 require "pastel"
 require "reline"
+require "time"
 require "tty-cursor"
 require "tty-screen"
 
@@ -54,15 +56,26 @@ module Lain
       #   injectable for tests -- the same seam {Middleware::Timeout} and
       #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
       #   without a real clock tick (T21)
+      # @param state_path [String] {StatusFeed}'s published state, under
+      #   `.lain/state.json` by default (a project artifact, matching
+      #   {StatusFeed}'s own default -- see its class comment on why this is
+      #   not an XDG path) -- injectable so specs use a tmpdir (I3)
+      # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
+      #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
+      #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
+      #   answers a different question (I3)
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
                      history_path: File.join(Paths.new.state_home, "history"),
-                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
+                     state_path: File.join(Dir.pwd, ".lain", "state.json"),
+                     wall_clock: -> { Time.now })
         @channel = channel
         @output = output
         @input = input
         @pastel = pastel
         @history = History.new(path: history_path, notify: method(:render_warning))
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
+        @warmth = Warmth.new(path: state_path, clock: wall_clock)
       end
 
       # Non-blocking: render whatever is queued right now and return. The
@@ -105,6 +118,17 @@ module Lain
       # pipe) reads a plain line instead -- reline's line editor requires a
       # real terminal (it calls `IO#winsize`) and has no business running
       # against a StringIO in a unit spec.
+      #
+      # The interactive path is also where {Warmth} prepends a cache-warmth
+      # glyph -- a per-prompt SNAPSHOT of {StatusFeed}'s published deadline,
+      # read once right here. This is deliberate, not a shortcut: Reline's
+      # `readline` fixes its prompt string for the whole wait (the approved
+      # doc's documented limitation, interface-integration.md § 1), so there
+      # is no mid-wait refresh to build -- tmux's status-right is where live
+      # ticking lives. A non-tty `output` gets no glyph at all (gated
+      # separately from `@pastel`'s own disabled-when-non-tty styling,
+      # because the glyph is plain text, not an escape code Pastel would
+      # already strip) -- see {#warmth_prefix}.
       #
       # @return [String, nil] the line, or nil at EOF (Ctrl-D / closed input)
       def prompt(text = "> ")
@@ -176,9 +200,20 @@ module Lain
       # `Reline::HISTORY`; {History#append} durably appends it too, before the
       # next prompt is drawn (T12 -- see History's comment).
       def read_line_with_history(text)
-        line = Reline.readline(@pastel.bold(text), true)
+        line = Reline.readline("#{warmth_prefix}#{@pastel.bold(text)}", true)
         @history.append(line) if line
         line
+      end
+
+      # Empty string (never nil) when `output` is not a real terminal or
+      # {StatusFeed} has published nothing yet -- concatenation with "" is a
+      # no-op, so the prompt text this produces is byte-identical to the
+      # pre-I3 prompt in both cases (AC: non-tty output untouched, no feed
+      # renders today's bare prompt).
+      def warmth_prefix
+        return "" unless @output.tty?
+
+        @warmth.prefix(@pastel)
       end
 
       # Presentation for a collaborator's degraded-path warning ({History}'s
@@ -289,6 +324,68 @@ module Lain
           @warned = true
           @notify.call("warning: history unavailable (#{error.message})")
         end
+      end
+
+      # I3's warmth collaborator: reads {StatusFeed}'s published
+      # `.lain/state.json` directly -- the same "one state feed, three
+      # renderers" split I1 established for tmux's status-right (never an
+      # in-process registry; StatusFeed and TTY may even be different
+      # processes). Split out of TTY proper for the same reason
+      # {Countdown}/{History} are: a separate responsibility, one collaborator
+      # each (`Agent::Budget`/`Agent::ToolRunner` precedent). Nested, not a
+      # new file: the card scopes I3 to `tty.rb` alone.
+      class Warmth
+        WARM = "●" # filled circle -- the cache was read or written within its sliding TTL
+        COLD = "○" # hollow circle -- the deadline StatusFeed last published has already passed
+
+        # @param path [String] StatusFeed's published state file
+        # @param clock [#call] absolute (wall) time source, injectable so a
+        #   spec never races a real deadline comparison
+        def initialize(path:, clock:)
+          @path = path
+          @clock = clock
+        end
+
+        # @param pastel [Pastel] presentation stays out of this class, as with
+        #   every other TTY collaborator -- callers hand in the palette
+        # @return [String] a colored glyph + trailing space, or "" when
+        #   nothing has published a deadline yet (no file, or a fresh
+        #   StatusFeed whose `cache_deadline` is still `null`) -- callers
+        #   never branch on nil, they just concatenate
+        def prefix(pastel)
+          deadline = read_deadline
+          return "" if deadline.nil?
+
+          warm?(deadline) ? "#{pastel.green(WARM)} " : "#{pastel.dim(COLD)} "
+        end
+
+        private
+
+        # The contract is "never raise at the prompt, for ANY file content" --
+        # a missing file (StatusFeed never ran), a syntactically-malformed
+        # one, and a syntactically-VALID-but-semantically-wrong one (a bad
+        # timestamp string, a non-Hash top level such as a bare Array once
+        # parsed) are all the same "no warmth to report" case, matching
+        # {History#load}'s missing-file-is-ordinary precedent. Split into two
+        # narrow rescues -- reading bytes vs. coercing them -- so the
+        # coverage each guards is self-evident rather than one broad catch.
+        def read_deadline
+          raw = read_state["cache_deadline"]
+          raw && Time.iso8601(raw)
+        rescue ArgumentError, TypeError, NoMethodError
+          # ArgumentError: Time.iso8601 rejected the string (bad timestamp).
+          # TypeError: `["cache_deadline"]` on a parsed Array/Integer/etc.
+          # NoMethodError: `["cache_deadline"]` on a parsed true/false/nil.
+          nil
+        end
+
+        def read_state
+          JSON.parse(File.read(@path))
+        rescue Errno::ENOENT, JSON::ParserError
+          {}
+        end
+
+        def warm?(deadline) = deadline > @clock.call
       end
 
       # T21's countdown collaborator: renders the status line, owns the
