@@ -8,7 +8,10 @@
 # ever drifts, the suite says so before a commit does.
 
 require "bundler/setup"
-require "lain/bench/variance_fixtures"
+# The leaf alone cannot load: leaf files carry no internal requires (see
+# CLAUDE.md), so the constants VarianceFixtures references resolve only
+# through the lain.rb manifest.
+require "lain"
 
 dir = File.expand_path("../spec/fixtures/sessions/variance", __dir__)
 Lain::Bench::VarianceFixtures.write(dir:).each { |path| puts "wrote #{path} (#{File.size(path)} bytes)" }
