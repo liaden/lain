@@ -88,6 +88,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     Timeout.timeout(8) { journal.pop }
   end
 
+  # Priming (see Neovim#prime_views) gives every view placeholder text from
+  # attach, so a bare `.any?` wait would pass before the render under test
+  # lands -- wait for the rendered JSON itself.
+  def request_json_lines
+    lines = buffer_lines("lain://request")
+    lines if lines.first&.start_with?("{")
+  end
+
   let(:payload) do
     { "model" => "a", "max_tokens" => 16,
       "messages" => [{ "role" => "user", "content" => "hi" }] }
@@ -104,11 +112,31 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         push_request(payload)
 
-        rendered = wait_until { buffer_lines("lain://request") if buffer_lines("lain://request").any? }
+        rendered = wait_until { request_json_lines }
         expect(JSON.parse(rendered.join("\n"))).to eq(payload)
         # Unlike the read-only projections, this buffer is left modifiable so a
         # human can edit the request in place before resending.
         expect(buffer_modifiable("lain://request")).to be(true)
+      end
+    end
+
+    it "exists at attach as an editable placeholder whose resend is a no-op" do
+      frontend = described_class.new(channel:, socket_path: @socket, journal:)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://request") == ["(no request yet)"] }
+        expect(buffer_modifiable("lain://request")).to be(true)
+
+        inspector.command("LainResend") # no baseline yet -- must journal nothing
+
+        push_request(payload)
+        wait_until { request_json_lines }
+        set_buffer("lain://request", JSON.pretty_generate(payload.merge("model" => "b")).split("\n"))
+        inspector.command("LainResend")
+
+        # The first journaled resend is the REAL one: had the placeholder
+        # resend journaled anything, this pop would yield that instead.
+        expect(next_journaled.payload["model"]).to eq("b")
       end
     end
   end
@@ -119,7 +147,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
       frontend.run do
         push_request(payload)
-        wait_until { buffer_lines("lain://request").any? }
+        wait_until { request_json_lines }
 
         edited = payload.merge("model" => "b")
         set_buffer("lain://request", JSON.pretty_generate(edited).split("\n"))
@@ -154,7 +182,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         push_request(payload)
         # The first request renders as all-additions in the diff; wait for that
         # so the empty diff after resend is a real transition, not a not-yet.
-        wait_until { buffer_lines("lain://request").any? && buffer_lines("lain://diff").any? }
+        wait_until { request_json_lines && buffer_lines("lain://diff").any? { |line| line.start_with?("+") } }
 
         inspector.command("LainResend") # no edit
 
@@ -190,7 +218,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       error = begin
         frontend.run do
           push_request(payload)
-          wait_until { buffer_lines("lain://request").any? }
+          wait_until { request_json_lines }
           inspector.command("LainResend")
           death_closed_channel = begin
             wait_until(timeout: 6) { channel.closed? }
@@ -205,8 +233,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
 
       expect(death_closed_channel).to be(true)
-      expect(error).to be_a(RuntimeError)
-      expect(error.message).to eq("journal broke")
+      # T9: the recorded failure re-raises WRAPPED -- a SessionFailure naming
+      # the dead thread, the raw error riding cause -- so exe/lain's
+      # `rescue Lain::Error` presents the loss as an actionable notice.
+      expect(error).to be_a(Lain::Frontend::Neovim::SessionFailure)
+      expect(error.message).to eq("resend worker died: journal broke")
+      expect(error.cause).to be_a(RuntimeError)
       expect(frontend.instance_variable_get(:@resend_inbox)).to be_closed
     end
   end
@@ -224,7 +256,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         channel.push(Lain::Telemetry::TurnUsage.new(digest: head, model: "m", stop_reason: :end_turn, usage: {}))
         push_request(payload)
-        wait_until { buffer_lines("lain://request").any? && buffer_lines("lain://timeline").any? }
+        wait_until { request_json_lines && buffer_lines("lain://timeline").include?("user: hi") }
 
         set_buffer("lain://request", JSON.pretty_generate(payload.merge("model" => "b")).split("\n"))
         inspector.command("LainResend")

@@ -49,6 +49,15 @@ module Lain
           @baseline = nil
         end
 
+        # The at-rest projection, posted once at attach (see {Buffers#initial}).
+        # Deliberately NOT empty JSON: with no baseline yet {#resend} is already
+        # a no-op, and a plausible-looking empty request would invite editing a
+        # request that does not exist.
+        # @return [Hash{String=>Array<String>}]
+        def initial
+          { REQUEST => ["(no request yet)"] }
+        end
+
         # Drain-thread projection: an agent (or resent) RequestSent becomes the
         # editable buffer and the new resend baseline. Every other event moves
         # nothing.

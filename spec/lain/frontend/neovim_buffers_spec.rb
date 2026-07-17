@@ -83,6 +83,24 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     frontend.instance_variable_get(:@rpc).instance_variable_get(:@render_queue).instance_variable_get(:@queue)
   end
 
+  describe "the views exist from attach" do
+    # Before priming, an idle session's :buffers listed no lain:// buffer at
+    # all -- which a human reads as "broken", not "waiting" (found in the first
+    # manual verification pass). Every view now exists at attach, read-only,
+    # each stating what it awaits; workspace renders its real (empty) state.
+    it "primes every read-only view with its at-rest projection before any event flows" do
+      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://timeline").any? }
+        expect(buffer_lines("lain://timeline")).to eq(["(no turns yet)"])
+        expect(buffer_lines("lain://diff")).to eq(["(no requests yet)"])
+        expect(buffer_lines("lain://workspace")).to eq(["(no reminders)"])
+        expect(buffer_modifiable("lain://timeline")).to be(false)
+      end
+    end
+  end
+
   describe "lain://timeline reflects a turn commit" do
     it "renders the whole ancestor chain, root first, when a Telemetry::TurnUsage names the head" do
       timeline = Lain::Timeline.empty(store:)
@@ -94,7 +112,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         channel.push(Lain::Telemetry::TurnUsage.new(digest: timeline.head_digest, model: "m", stop_reason: :end_turn,
                                                     usage: {}))
 
-        wait_until { buffer_lines("lain://timeline").any? }
+        wait_until { buffer_lines("lain://timeline").include?("user: hi") }
         expect(buffer_lines("lain://timeline")).to eq(["user: hi", "assistant: hello there"])
       end
     end
@@ -105,8 +123,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
 
-        wait_until { buffer_lines("lain://journal").any? } # something rendered
-        expect(buffer_lines("lain://timeline")).to eq([])
+        wait_until { buffer_lines("lain://journal").grep(/hi/).any? } # something rendered
+        expect(buffer_lines("lain://timeline")).to eq(["(no turns yet)"])
       end
     end
 
@@ -184,7 +202,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         first = { "messages" => [{ "role" => "user", "content" => "a" }] }
         channel.push(Lain::Telemetry::RequestSent.new(digest: "d1", payload: first, stream: true, extra: {}))
-        wait_until { buffer_lines("lain://diff").any? }
+        wait_until { buffer_lines("lain://diff").any? { |line| line.start_with?("+") } }
         expect(buffer_lines("lain://diff")).to all(start_with("+"))
 
         second = { "messages" => [{ "role" => "user", "content" => "a" },
@@ -216,7 +234,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                                     usage: {}))
         channel.push(Lain::Telemetry::RequestSent.new(digest: "d1", payload: { "a" => 1 }, stream: true, extra: {}))
 
-        wait_until { buffer_lines("lain://timeline").any? && buffer_lines("lain://diff").any? }
+        wait_until do
+          buffer_lines("lain://timeline").include?("user: hi") &&
+            buffer_lines("lain://diff").any? { |line| line.start_with?("+") }
+        end
 
         %w[lain://timeline lain://workspace lain://diff].each do |name|
           expect(buffer_modifiable(name)).to be(false), "#{name} was modifiable"

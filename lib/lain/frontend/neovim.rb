@@ -58,6 +58,7 @@ module Lain
         @channel = channel
         @buffers = Buffers.new(store:, session:)
         @request_buffer = RequestBuffer.new(journal:)
+        @journal_view = JournalView.new
         # Edited lain://request lines land here from the RPC thread's inbound
         # dispatch and are drained by the resend worker ({#resend_loop}). An
         # unbounded Thread::Queue so on_resend never blocks the RPC thread; a
@@ -96,6 +97,21 @@ module Lain
       end
 
       private
+
+      # Post every projection's at-rest state so the full lain:// buffer set is
+      # in `:buffers` from attach -- an idle session that shows no buffers reads
+      # as "broken" (the first manual verification pass stumbled exactly there).
+      # Runs FIRST on the drain thread ({#drain}), so priming strictly precedes
+      # every event render. The rescue mirrors {#post}'s: an RPC thread dead
+      # this early is already loud through on_death and {#run}'s re-raise.
+      def prime_views
+        [@journal_view, @buffers].each do |view|
+          view.initial.each { |name, lines| @rpc.post_view(name, lines) }
+        end
+        @request_buffer.initial.each { |name, lines| @rpc.post_view(name, lines, editable: true) }
+      rescue ClosedQueueError
+        nil
+      end
 
       # The failures the background threads RECORDED rather than raised (a raise
       # on a background thread is silent, and a join re-raise inside the ensure
@@ -150,6 +166,7 @@ module Lain
       # wedge against a full queue. Same record-and-die shape as the resend
       # worker ({#record_worker_death}); the drainer's inlet IS the channel.
       def drain
+        prime_views
         @channel.drain { |event| post(event) }
       rescue StandardError => e
         @drain_failure = record_worker_death(e)
@@ -219,7 +236,7 @@ module Lain
       # and re-raises from {#run} once teardown completes, so dropping this one
       # event is not additional data loss, just the last render racing the death.
       def post(event)
-        lines = render_lines(event)
+        lines = @journal_view.lines(event)
         @rpc.post_render(lines) unless lines.empty?
         @buffers.updates(event).each { |name, view_lines| @rpc.post_view(name, view_lines) }
         # The editable view is posted with editable: true, so the runtime leaves
@@ -229,33 +246,11 @@ module Lain
       rescue ClosedQueueError
         nil
       end
-
-      # Plain-text presentation for the buffer -- deliberately NOT the pastel
-      # {Decorators} the TTY uses, because a buffer wants text, not ANSI escapes.
-      # (The bytes themselves may still carry a tool's own raw ANSI; stripping or
-      # highlighting them is the rendering follow-up card's concern, not this
-      # skeleton's.) Only {Telemetry::ToolOutput} renders today, matching the
-      # TTY's one-member set; other events stay Journal-only.
-      def render_lines(event)
-        case event
-        when Telemetry::ToolOutput
-          attribute_lines(event)
-        else
-          []
-        end
-      end
-
-      # `chomp` strips only the trailing-newline artifact of line-oriented output;
-      # interior blank lines are real lines and survive (a blank renders as the
-      # bare attribution prefix).
-      def attribute_lines(event)
-        prefix = "[#{event.tool_use_id} #{event.stream}]"
-        event.bytes.chomp.split("\n", -1).map { |line| line.empty? ? prefix : "#{prefix} #{line}" }
-      end
     end
   end
 end
 
 require_relative "neovim/buffers"
+require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
 require_relative "neovim/rpc_thread"

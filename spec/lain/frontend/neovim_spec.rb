@@ -90,6 +90,19 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    # Priming (see Neovim#prime_views): the journal exists from attach in the
+    # exact one-empty-line state a fresh named_buf holds, so :buffers shows it
+    # before any event and the render above still replaces rather than appends
+    # (the example below pins that the leading blank never survives).
+    it "creates an empty lain://journal at attach, before any event" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        wait_until { journal_lines == [""] }
+        expect(journal_lines).to eq([""])
+      end
+    end
+
     # Panel fix #4 (and the leading-blank nit): interior blank lines are real
     # lines and must survive; only the trailing-newline artifact is stripped;
     # and the first render replaces the fresh buffer's single empty line, so
@@ -173,11 +186,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # NoMethodError, say) is recorded and closes the channel like its two
     # siblings (the RPC thread, the resend worker) already do, instead of
     # dying silently and wedging a producer against a Channel nobody drains
-    # anymore. `render_lines` is private, but stubbing it is the cleanest way
-    # to make ONE specific render raise without a purpose-built event type.
+    # anymore. Stubbing the JournalView collaborator is the cleanest way to
+    # make ONE specific render raise without a purpose-built event type --
+    # the same ivar idiom the resend-death example uses on @request_buffer.
     it "records an unexpected drain exception, closes the channel, and re-raises it after teardown" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend).to receive(:render_lines).and_raise(NoMethodError, "boom")
+      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "boom")
 
       error = begin
         frontend.run do
@@ -227,7 +241,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # reason the card names, not an incidental one.
     it "still stops the RPC thread when the drainer already died" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend).to receive(:render_lines).and_raise(NoMethodError, "boom")
+      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "boom")
       rpc_thread = nil
 
       begin
@@ -251,7 +265,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # observability here means "not silently dropped", not a public reader.
     it "propagates the block's own exception unswapped, and still records the drainer's death" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend).to receive(:render_lines).and_raise(NoMethodError, "drain boom")
+      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "drain boom")
       block_error = Class.new(StandardError)
 
       error = begin

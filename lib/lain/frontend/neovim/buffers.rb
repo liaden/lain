@@ -69,6 +69,16 @@ module Lain
           @last_payload = nil
         end
 
+        # The at-rest projection, posted once at attach: every view exists (and
+        # says what it awaits) before the first event, so an idle session's
+        # `:buffers` does not read as "broken". Workspace needs no placeholder --
+        # reminders are readable before any event, so it renders real state and
+        # seeds the change tracking, sparing the first event a no-op re-render.
+        # @return [Hash{String=>Array<String>}] buffer name => initial lines
+        def initial
+          { TIMELINE => ["(no turns yet)"], WORKSPACE => workspace_update, DIFF => ["(no requests yet)"] }.compact
+        end
+
         # @param event [Object] one Channel event
         # @return [Hash{String=>Array<String>}] buffer name => full replacement
         #   lines, for every view this event moved -- empty when it moved none
