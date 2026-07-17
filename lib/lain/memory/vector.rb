@@ -31,6 +31,10 @@ module Lain
         @embedder_id = embedder.class.name
         @items = index.to_a
         @vectors = @items.empty? ? [] : @embedder.embed(@items.map { |item| "#{item.description}\n#{item.body}" })
+        # Norms depend only on the vectors embedded above, so they are paid
+        # once here instead of once per search -- a norm is itself a full dot,
+        # and #search was recomputing every item's on every query.
+        @norms = @vectors.map { |vector| norm(vector) }
         freeze
       end
 
@@ -68,8 +72,8 @@ module Lain
         query_norm = norm(query_vector)
         return [] if query_norm.zero?
 
-        @items.zip(@vectors)
-              .filter_map { |item, vector| hit_for(item, vector, query_vector, query_norm) }
+        @items.zip(@vectors, @norms)
+              .filter_map { |item, vector, item_norm| hit_for(item, vector, item_norm, query_vector, query_norm) }
               .sort_by { |hit| [-hit.score, hit.id] }
       end
 
@@ -80,8 +84,7 @@ module Lain
       # index (Hit's own floor is finite-and-non-negative, so a negative
       # score could never become a Hit anyway; the guard here is what keeps
       # that floor a design choice instead of a rescued exception).
-      def hit_for(item, vector, query_vector, query_norm)
-        item_norm = norm(vector)
+      def hit_for(item, vector, item_norm, query_vector, query_norm)
         return nil if item_norm.zero?
 
         score = dot(vector, query_vector) / (item_norm * query_norm)
@@ -90,8 +93,13 @@ module Lain
         Manifest::Hit.new(id: item.id, description: item.description, score:, why: why_for(score))
       end
 
+      # Index-walked rather than zip'd: this is the sweep's hottest loop, and
+      # `zip` allocates one pair Array per element for bytes `sum` immediately
+      # discards -- the pairs alone were ~a quarter of the bench suite's wall
+      # time and most of its GC. Same Enumerable#sum (same compensated float
+      # summation, same order), no intermediates.
       def dot(vec_a, vec_b)
-        vec_a.zip(vec_b).sum { |a, b| a * b }
+        (0...vec_a.size).sum { |i| vec_a[i] * vec_b[i] }
       end
 
       def norm(vector)
