@@ -28,21 +28,38 @@ module Lain
         # threads temperature/seed through here from the CLI.
         SAMPLER_KEYS = %w[temperature seed num_ctx].freeze
 
+        # `think` requests the reasoning trace onto `message.thinking` (qwen3
+        # emits it only when this is set -- references/ollama/api-chat.md). It
+        # is deliberately NOT a SAMPLER_KEY: Ollama's schema keeps `think` a
+        # top-level sibling of `stream`/`tools`, not a member of `options`.
+        THINK_KEY = "think"
+
         # The exact `/api/chat` body. Pure and deterministic: no clock, no
         # ordering that depends on how the Request's Hashes were built. `stream`
         # carries `request.stream` (Request coerces it to a bool) -- Ollama's wire
         # default is `true`, so the flag is always sent explicitly; {Ollama#complete}
         # routes to the streaming or non-streaming transport on the same value.
         def encode(request)
-          payload = { model: request.model, messages: encode_messages(request), stream: request.stream }
-          tools = encode_tools(request.tools)
-          options = encode_options(request.extra)
-          payload[:tools] = tools unless tools.empty?
-          payload[:options] = options unless options.empty?
-          payload
+          { model: request.model, messages: encode_messages(request), stream: request.stream }
+            .merge(optional_fields(request))
         end
 
         private
+
+        # The fields that only belong on the wire when the Request actually
+        # carries them: an empty `tools`/`options` renders as an absent key
+        # (matching what the non-cache-marker path already does), and `think`
+        # is present only when Request#extra asked for it -- a Request with no
+        # think extra must produce byte-identical bytes to before R5.
+        def optional_fields(request)
+          tools = encode_tools(request.tools)
+          options = encode_options(request.extra)
+          fields = {}
+          fields[:tools] = tools unless tools.empty?
+          fields[:options] = options unless options.empty?
+          fields[:think] = request.extra[THINK_KEY] if request.extra.key?(THINK_KEY)
+          fields
+        end
 
         def encode_messages(request)
           system = encode_system(request.system)

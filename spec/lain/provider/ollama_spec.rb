@@ -26,12 +26,15 @@ RSpec.describe Lain::Provider::Ollama do
   end
 
   describe "#capabilities" do
-    # :streaming is honest now that the NDJSON path exists (T17). The remaining
-    # capabilities stay off deliberately -- declaring one the native path cannot
-    # demonstrate would be a lying capability in the subsystem built to catch them.
-    it "declares :streaming and nothing it cannot demonstrate" do
+    # :streaming is honest now that the NDJSON path exists (T17); :thinking is
+    # honest now that `think` rides Request#extra onto the wire and the decode
+    # path (already built) turns message.thinking into a thinking block (R5).
+    # The remaining capabilities stay off deliberately -- declaring one the
+    # native path cannot demonstrate would be a lying capability in the
+    # subsystem built to catch them.
+    it "declares :streaming and :thinking, and nothing it cannot demonstrate" do
       provider = described_class.new(transport: transport_sync({}))
-      expect(provider.capabilities).to eq(%i[streaming])
+      expect(provider.capabilities).to eq(%i[streaming thinking])
       expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
     end
   end
@@ -125,6 +128,44 @@ RSpec.describe Lain::Provider::Ollama do
     it "omits options entirely when no sampler knobs are given" do
       encoded = described_class.new(transport: transport_sync({})).encode(request)
       expect(encoded).not_to have_key(:options)
+    end
+
+    # AC: think round-trips. `think` is a top-level wire field (a sibling of
+    # `stream`/`tools`), NOT part of `options` -- Ollama's own schema keeps it
+    # out of the sampler knobs (references/ollama/api-chat.md).
+    it "carries think onto its own top-level field, not into options" do
+      encoded = described_class.new(transport: transport_sync({})).encode(request(extra: { think: true }))
+      expect(encoded[:think]).to be(true)
+      expect(encoded[:options]).to be_nil
+    end
+
+    # AC: non-think runs unchanged. No think extra means no `think` key at
+    # all -- today's wire bytes are untouched.
+    it "omits think entirely when no think extra is given" do
+      encoded = described_class.new(transport: transport_sync({})).encode(request)
+      expect(encoded).not_to have_key(:think)
+    end
+  end
+
+  # AC: think round-trips, end to end -- the request body carries think and the
+  # decoded Response carries a thinking block shaped the same way the Anthropic
+  # path shapes one ({"type" => "thinking", "thinking" => ...}; Ollama has no
+  # signature to carry, so that key is simply absent rather than nil-padded).
+  describe "#complete with think enabled" do
+    it "sends think:true and decodes a thinking block matching the Anthropic shape" do
+      canned = Lain::Response.new(
+        content: [{ "type" => "thinking", "thinking" => "reasoning trace" },
+                  { "type" => "text", "text" => "42" }],
+        stop_reason: :end_turn
+      )
+      transport = OllamaWire.queue_transport(canned)
+      provider = described_class.new(transport:)
+
+      response = provider.complete(request(extra: { think: true }))
+
+      expect(transport.calls.first[:think]).to be(true)
+      expect(response.blocks_of_type("thinking")).to eq([{ "type" => "thinking", "thinking" => "reasoning trace" }])
+      expect(response.text).to eq("42")
     end
   end
 

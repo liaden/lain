@@ -64,6 +64,20 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end.new
   end
 
+  # Like #stream_transport, but also captures the payload it was handed -- so a
+  # think-enabled round trip can assert on the request body, not just the
+  # decoded Response.
+  def capturing_stream_transport(chunks)
+    Class.new do
+      attr_reader :payload
+
+      define_method(:stream) do |payload, _headers = {}, &block|
+        @payload = payload
+        chunks.each { |chunk| block.call(chunk) }
+      end
+    end.new
+  end
+
   # A transport double returning a scripted single body (the non-streaming path).
   def transport_sync(body)
     Class.new do
@@ -162,6 +176,28 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect { provider.complete(request(stream: true)) }.to raise_error(
         Lain::Provider::Ollama::APIError, /corrupt NDJSON line/
       ) { |error| expect(error.cause).to be_a(JSON::ParserError) }
+    end
+
+    # AC: think round-trips, on the NDJSON path. Ollama interleaves `thinking`
+    # chunks before `content` chunks (references/ollama/api-chat.md); the
+    # StreamAssembler already buffers both until `done` (stream_assembler.rb),
+    # so this is the encode half (think:true reaches the wire) exercised
+    # together with that existing decode half.
+    it "sends think:true and reassembles a thinking block matching the Anthropic shape" do
+      think_lines = [
+        { "model" => "qwen3:4b", "message" => { "role" => "assistant", "thinking" => "let me " }, "done" => false },
+        { "model" => "qwen3:4b", "message" => { "role" => "assistant", "thinking" => "think" }, "done" => false },
+        { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "42" }, "done" => false },
+        { "model" => "qwen3:4b", "message" => { "role" => "assistant", "content" => "" },
+          "done" => true, "done_reason" => "stop", "prompt_eval_count" => 5, "eval_count" => 3 }
+      ]
+      transport = capturing_stream_transport([ndjson(think_lines)])
+
+      response = described_class.new(transport:).complete(request(stream: true, extra: { think: true }))
+
+      expect(transport.payload[:think]).to be(true)
+      expect(response.blocks_of_type("thinking")).to eq([{ "type" => "thinking", "thinking" => "let me think" }])
+      expect(response.text).to eq("42")
     end
   end
 

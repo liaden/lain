@@ -34,13 +34,16 @@ module Lain
 
       DEFAULT_MODEL = "qwen3:4b"
 
-      # The NDJSON streaming path (below) makes :streaming honest. The others
-      # stay off deliberately: declaring :prompt_caching, :thinking, or
-      # :strict_tools -- which the native path cannot demonstrate -- would be a
-      # lying capability in the one subsystem built to catch them, so the
-      # capability policy's `:degrade` journals those gaps, which is the bench
-      # working as designed.
-      CAPABILITIES = %i[streaming].freeze
+      # The NDJSON streaming path (below) makes :streaming honest. :thinking is
+      # honest too (R5): `think` rides Request#extra onto its own top-level
+      # wire field (Encoding#encode), and #decode_content already turns
+      # `message.thinking` into a thinking block on both the sync and streamed
+      # paths. :prompt_caching and :strict_tools stay off deliberately --
+      # declaring one the native path cannot demonstrate would be a lying
+      # capability in the one subsystem built to catch them, so the capability
+      # policy's `:degrade` journals those gaps, which is the bench working as
+      # designed.
+      CAPABILITIES = %i[streaming thinking].freeze
 
       # Wraps a vendored transport error so nothing above the Provider rescues a
       # Provider::HTTP class. The original is preserved as `#cause`.
