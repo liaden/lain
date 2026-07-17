@@ -5,13 +5,37 @@ require "rspec/core/rake_task"
 
 RSpec::Core::RakeTask.new(:spec)
 
-# The parallel spec run: one worker per core. The suite is parallel-safe by
-# construction (tmpdirs, per-pid sockets, injected env), and the untagged
-# posture guards live in a real spec file (spec/network_posture_spec.rb), so
-# no worker re-runs what another already owns.
-desc "Run the spec suite across CPU cores"
+# The parallel spec run: one worker per PHYSICAL core, files knapsack-packed
+# by recorded runtime. The suite is parallel-safe by construction (tmpdirs,
+# per-pid sockets, injected env), and the untagged posture guards live in a
+# real spec file (spec/network_posture_spec.rb), so no worker re-runs what
+# another already owns.
+#
+# Both knobs are measured, not guessed (2026-07-17, 8-core/16-thread):
+#   * Worker count: boot and specs are CPU-bound, and SMT siblings share
+#     execution units, so 16 workers ran SLOWER than 8 (3.4s vs 2.7s wall)
+#     at more than twice the CPU (32s vs 14s).
+#   * Grouping: parallel_tests' default groups by file SIZE, and this suite's
+#     slowest files are small ones that are slow for reasons size cannot see
+#     (a real subprocess kill, a sweep build). RuntimeLogger re-records per-file
+#     runtimes into the gitignored tmp log on every run; the next run packs by
+#     them. A fresh clone has no log yet and --group-by runtime raises ENOENT
+#     rather than falling back, so the fallback lives here.
+desc "Run the spec suite across physical CPU cores"
 task :pspec do
-  sh "bundle exec parallel_rspec spec"
+  runtime_log = "tmp/parallel_runtime_rspec.log"
+  group_by = File.exist?(runtime_log) ? "--group-by runtime " : ""
+  sh "bundle exec parallel_rspec spec -n #{physical_cores} #{group_by}--test-options " \
+     "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
+end
+
+# `lscpu -p=core` yields one line per LOGICAL cpu naming its physical core;
+# the unique count is the physical-core count. Logical count as the fallback
+# for platforms without lscpu -- over-provisioned beats zero workers.
+def physical_cores
+  require "etc"
+  cores = `lscpu -p=core 2>/dev/null`.lines.grep_v(/\A#/).map(&:to_i).uniq.size
+  cores.positive? ? cores : Etc.nprocessors
 end
 
 # pre-commit runs its HOOKS serially -- overlap between checks has to happen
