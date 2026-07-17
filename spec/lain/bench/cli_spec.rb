@@ -100,9 +100,12 @@ RSpec.describe Lain::Bench::CLI do
 
   describe "#sweep_report" do
     it "returns the five-arm retrieval report as a String, without printing" do
-      expect { cli.sweep_report(k: 5) }.not_to output.to_stdout
-      expect { cli.sweep_report(k: 5) }.not_to output.to_stderr
-      report = cli.sweep_report(k: 5)
+      report = nil
+      # One build serves all three assertions -- a sweep is ~0.3s, and the
+      # output matcher runs its block anyway, so silence and content are the
+      # same observation. (Only the frontend may print; see
+      # spec/output_discipline_spec.rb for the whole-tree guarantee.)
+      expect { report = cli.sweep_report(k: 5) }.to output("").to_stdout.and output("").to_stderr
       expect(report).to include("manifest").and include("bm25").and include("vector")
         .and include("hybrid").and include("graph")
     end
