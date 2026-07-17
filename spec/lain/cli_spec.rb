@@ -205,24 +205,71 @@ RSpec.describe LainCLI do
       end
     end
 
+    # Dir.chdir into the tmpdir so the I1 StatusFeed sink (now always on the
+    # live-view tee, so `.lain/state.json` publishes for the tmux HUD) writes
+    # its state file under the temp tree rather than the repo. The journal path
+    # keys off XDG_STATE_HOME, not cwd, so the chdir is invisible to it.
     it "lands telemetry (request_sent/turn_usage/memory_root) in the SAME file the scribe writes turns into" do
       Dir.mktmpdir do |dir|
         with_env("XDG_STATE_HOME" => dir) do
-          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
+          Dir.chdir(dir) do
+            instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
+            instance.send(:open_chronicle)
+
+            chronicle = instance.send(:chronicle)
+            chronicle.start(context:, toolset: Lain::Toolset.new)
+            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+              digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
+            )
+            chronicle.close
+
+            session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
+            expect(session_files.size).to eq(1)
+
+            types = File.readlines(session_files.first).map { |line| JSON.parse(line).fetch("type") }
+            expect(types).to include("session", "turn_usage")
+          end
+        end
+      end
+    end
+
+    # I1 wiring: the state feed is a live-view tee sink even without --nvim, so
+    # `.lain/state.json` publishes for the tmux HUD (`lain up`'s chat window
+    # carries no --nvim). A turn that touched the cache slides the deadline; a
+    # journal-only run still fans telemetry through the tee to the state feed.
+    it "publishes .lain/state.json when telemetry flows, under --journal even with no --nvim" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          Dir.chdir(dir) do
+            instance = cli(journal: true)
+            instance.send(:open_chronicle)
+
+            chronicle = instance.send(:chronicle)
+            chronicle.start(context:, toolset: Lain::Toolset.new)
+            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+              digest: "blake3:t1", model: nil, stop_reason: :end_turn,
+              usage: { "cache_read_input_tokens" => 10 }
+            )
+            chronicle.close
+
+            state = JSON.parse(File.read(File.join(dir, ".lain", "state.json")))
+            expect(state).to include("cache_deadline", "fleet", "inbox_count")
+            expect(state["cache_deadline"]).not_to be_nil
+          end
+        end
+      end
+    end
+
+    # Pure --no-journal --no-nvim opens no tee at all, so a headless-ish run
+    # stays byte-identical: no state feed, no state.json written.
+    it "opens no live-view tee (and no state.json) under --no-journal --no-nvim" do
+      Dir.mktmpdir do |dir|
+        Dir.chdir(dir) do
+          instance = cli(journal: false)
           instance.send(:open_chronicle)
 
-          chronicle = instance.send(:chronicle)
-          chronicle.start(context:, toolset: Lain::Toolset.new)
-          chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
-            digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
-          )
-          chronicle.close
-
-          session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
-          expect(session_files.size).to eq(1)
-
-          types = File.readlines(session_files.first).map { |line| JSON.parse(line).fetch("type") }
-          expect(types).to include("session", "turn_usage")
+          expect(instance.instance_variable_get(:@nvim_journal)).to be_nil
+          expect(File.exist?(File.join(dir, ".lain", "state.json"))).to be(false)
         end
       end
     end

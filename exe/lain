@@ -177,29 +177,19 @@ class LainCLI < Thor
   # to the frontend.
   def run_conversation(backend:, resumed:)
     channel = Lain::Channel.new
-    recorder, session = wrap_run_state(resumed)
     wiring = Wiring.new(options:, chronicle:)
+    recorder, session = wiring.run_state(resumed)
     agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
     resumed&.notices&.each { |notice| say notice }
     run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:, wiring:)
   end
 
-  # The recorder and the journaled Session, fresh or resumed. One Recorder
-  # backs the memory_write tool for the whole session -- the single mutable
-  # holder of the live Memory::Index, so each write supersedes the last (its
-  # prior root still resolves the old item); a resumed chat inherits the
-  # chain-wide recorder instead, so its manifest sees every memory the resumed
-  # sessions wrote. The chronicle then decorates both run-state seams:
-  # reads/todos journal through Session::Journaled, and each turn_usage pairs
-  # with the memory root in force (JournalMemoryRoot) -- identity under
-  # --no-journal.
-  def wrap_run_state(resumed)
-    recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
-    session = resumed ? resumed.session : Lain::Session.new(memory: recorder)
-    chronicle.wrap_memory(recorder)
-    [recorder, chronicle.wrap_session(session)]
-  end
-
+  # The live-view tee: telemetry, spawn, and Q/A message records fan onto the
+  # session journal (durable, first) and every live-view sink. I1's StatusFeed
+  # is always a sink here so `.lain/state.json` publishes for the tmux HUD (the
+  # primary renderer -- `lain up`'s chat window carries no --nvim); the nvim
+  # Channel joins it when an editor is attached.
+  #
   # --nvim: the editor may drop view events but never block the agent; the
   # NDJSON record sees everything. The frontend's own journal: is the RAW
   # Journal, not the tee -- a resend is recorded once, never re-fanned onto
@@ -215,10 +205,21 @@ class LainCLI < Thor
   # second tick they named different files -- telemetry silently split from
   # the session record it belonged in. Chronicle::Null#wrap_tee preserves the
   # OLD behavior for --no-journal + --nvim, where there is no session journal
-  # to share.
-  def setup_nvim_views
-    @nvim_channel = Lain::Channel::DropOldest.new
-    @nvim_journal = chronicle.wrap_tee(@nvim_channel)
+  # to share. wrap_tee takes ONE sink slot, so several sinks fold through a
+  # Null-journal JournalTee (a pure fan-out -- the same generalized tee, I1)
+  # before that slot.
+  # The I1 state feed ({cache_deadline, fleet, inbox_count} → `.lain/state.json`)
+  # is always a sink; the nvim Channel joins it when an editor is attached.
+  def setup_live_views
+    @nvim_channel = Lain::Channel::DropOldest.new if options[:nvim]
+    @nvim_journal = chronicle.wrap_tee(live_view_sink([@nvim_channel, Lain::StatusFeed.new].compact))
+  end
+
+  # One sink passes straight through; several fold into a Null-journal
+  # JournalTee (a pure fan-out that swallows a closed nvim Channel per sink,
+  # so the state feed still lands) before wrap_tee's single slot.
+  def live_view_sink(sinks)
+    sinks.one? ? sinks.first : Lain::CLI::JournalTee.new(Lain::Channel::Null.instance, *sinks)
   end
 
   # The ask_human reply path (@ask_human / @questions) is owned by Wiring, the
@@ -227,11 +228,18 @@ class LainCLI < Thor
   # conductor guards the whole conversation: traps installed around it, every
   # ask supervised through the shutdown coordinator.
   def run_chat(tty:, agent:, session:, wiring:)
-    @conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: options[:grace])
-    repl = Repl.new(agent:, tty:, ask_human: wiring.ask_human,
-                    questions: wiring.questions, chronicle:, conductor: @conductor,
-                    approvals: wiring.approvals)
+    @conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: options[:grace], supervisor: wiring.supervisor)
+    repl = build_repl(tty:, agent:, wiring:)
     @conductor.guard { repl.run(nvim: nvim_views, store: agent.timeline.store, session:) }
+  end
+
+  # The Repl over the run's collaborators -- lifted from #run_chat so that
+  # thin method stays the conductor-open/guard bracket it reads as (the wiring
+  # accessors are Wiring's own seams; reading them here is the exe's job).
+  def build_repl(tty:, agent:, wiring:)
+    Repl.new(agent:, tty:, ask_human: wiring.ask_human, questions: wiring.questions,
+             chronicle:, conductor: @conductor, approvals: wiring.approvals,
+             notifier: wiring.notifier, supervisor: wiring.supervisor)
   end
 
   # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
@@ -245,7 +253,10 @@ class LainCLI < Thor
   # second tick and split telemetry from the session file it belonged in.
   def open_chronicle
     @chronicle = Lain::CLI::Chronicle.for(enabled: options[:journal])
-    setup_nvim_views if options[:nvim]
+    # A live-view tee is built for --nvim (its Channel) OR --journal (the state
+    # feed publishes for the tmux HUD). Pure --no-journal --no-nvim opens none,
+    # so a headless run stays byte-identical -- no tee, no state feed.
+    setup_live_views if options[:nvim] || options[:journal]
   end
 
   # The session record's lifecycle collaborator (journal, scribe, observer,
@@ -263,7 +274,7 @@ class LainCLI < Thor
   # back the built Agent, and exposes @ask_human/@questions so #run_chat can
   # give the Repl the reply path this object wired.
   class Wiring
-    attr_reader :ask_human, :questions, :approvals
+    attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor
 
     def initialize(options:, chronicle:)
       @options = options
@@ -278,9 +289,30 @@ class LainCLI < Thor
     # finished schema), before the Agent (whose turn middleware records through
     # it). A resumed chat threads the chained-header fields (resumed_from/written)
     # into that header and seeds the Agent with the resumed Timeline.
+    # The recorder and the journaled Session, fresh or resumed. One Recorder
+    # backs the memory_write tool for the whole session -- the single mutable
+    # holder of the live Memory::Index, so each write supersedes the last (its
+    # prior root still resolves the old item); a resumed chat inherits the
+    # chain-wide recorder instead, so its manifest sees every memory the
+    # resumed sessions wrote. The chronicle then decorates both run-state
+    # seams: reads/todos journal through Session::Journaled, and each
+    # turn_usage pairs with the memory root in force (JournalMemoryRoot) --
+    # identity under --no-journal.
+    def run_state(resumed)
+      recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
+      session = resumed ? resumed.session : Lain::Session.new(memory: recorder)
+      chronicle.wrap_memory(recorder)
+      [recorder, chronicle.wrap_session(session)]
+    end
+
     def wire_agent(channel:, recorder:, session:, backend:, resumed: nil)
       agent = nil
       parent = -> { agent.timeline }
+      @notifier = Lain::Notify.for
+      # OM-6: the reactor above the Agent that un-refuses model-dispatched
+      # actors. Journals a bounded drain's timeout to the live Channel; the exe
+      # #run_chat below runs it under a chat-level reactor that outlives asks.
+      @supervisor = Lain::Supervisor.new(journal: channel)
       @ask_human = notifying_ask_human(parent)
       toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
       chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
@@ -307,8 +339,16 @@ class LainCLI < Thor
     # find them.
     def notifying_ask_human(parent)
       @questions = Async::Queue.new
-      Lain::Tools::AskHuman::Notifying.new(notify: @questions.method(:enqueue), parent:,
+      Lain::Tools::AskHuman::Notifying.new(notify: ->(question) { announce(question) }, parent:,
                                            observer: chronicle.observer)
+    end
+
+    # I5: fans the existing enqueue-for-the-TTY-replier seam out to ALSO fire a
+    # desktop notification naming the asking agent. Notify::Null under no
+    # dunstify on PATH, so this stays one call site regardless of the desktop.
+    def announce(question)
+      @questions.enqueue(question)
+      @notifier.question(agent: "lain", text: question)
     end
 
     def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
@@ -325,7 +365,7 @@ class LainCLI < Thor
       Lain::Tools::Subagent.new(
         provider: spooled_provider(backend), context_factory: -> { backend.context }, toolset: base,
         policy: backend.spawn_policy(:researcher),
-        parent:, journal:, max_depth: 1, observer: chronicle.observer
+        parent:, journal:, max_depth: 1, observer: chronicle.observer, supervisor: @supervisor
       )
     end
 
@@ -351,7 +391,7 @@ class LainCLI < Thor
       gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
 
       agent = nil
-      Lain::Agent.new(provider: spooled_provider(backend), toolset:, context: backend.context, handler: gate,
+      Lain::Agent.new(provider: spooled_provider(backend, channel:), toolset:, context: backend.context, handler: gate,
                       session:, timeline:,
                       tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
                       turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
@@ -360,8 +400,13 @@ class LainCLI < Thor
 
     # Both provider construction sites tee their round trips into the
     # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real
-    # ResponseWal when journaling, the Null spool under --no-journal.
-    def spooled_provider(backend) = backend.provider(spool: chronicle.spool)
+    # ResponseWal when journaling, the Null spool under --no-journal. `channel:`
+    # is the live TTY Channel for the MAIN agent (CE-5 stream_started reaches
+    # the frontend); a subagent leaves the Null default -- its stream is not
+    # rendered, only the spool tee matters there.
+    def spooled_provider(backend, channel: Lain::Channel::Null.instance)
+      backend.provider(spool: chronicle.spool, channel:)
+    end
 
     # I4: the queue replaces the inline y/N prompt as Gate's policy -- the
     # gated fiber parks on it, and the TTY surface answers from its own Repl
@@ -380,26 +425,32 @@ class LainCLI < Thor
   end
 
   # One conversation: reads commands at `you>`, routes each through the repl
-  # phase, and hosts the two-fiber ask_human reply path. Extracted from the
-  # Thor class because a conversation is its own responsibility (and the
-  # Metrics trip said so -- extract, do not loosen).
+  # phase, hosts the fleet's reactor for the conversation's life, and delegates
+  # the ask_human reply surfaces to {HumanReplies}. Extracted from the Thor
+  # class because a conversation is its own responsibility (and the Metrics
+  # trip said so -- extract, do not loosen).
   class Repl
     # `chronicle:` is required, not defaulted -- the same reasoning as
     # build_agent's `session:`: a defaulted Null here would let a caller
     # silently lose the session record with no error anywhere. `middleware:`
     # is the repl phase: a Middleware::Stack wrapping EACH command typed at
     # the prompt, the seam a future history/logging/confirmation phase lands
-    # on; an honest pass-through by default.
+    # on; an honest pass-through by default. `notifier:` is the I5 desktop
+    # surface watching the SAME approval queue the TTY prompt does (first
+    # answer wins); Null when no dunstify, so the second watch fiber is inert.
+    # `supervisor:` is the OM-6 fleet reactor #run hosts across asks.
     def initialize(agent:, tty:, ask_human:, questions:, chronicle:, conductor:, approvals: nil,
+                   notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
                    middleware: Lain::Middleware::Stack.new)
       @agent = agent
       @tty = tty
       @middleware = middleware
-      @ask_human = ask_human
-      @questions = questions
       @chronicle = chronicle
       @conductor = conductor
       @approvals = approvals
+      @notifier = notifier
+      @supervisor = supervisor
+      @replies = HumanReplies.new(tty:, conductor:, ask_human:, questions:)
       @approval_surface = approval_surface
     end
 
@@ -433,9 +484,22 @@ class LainCLI < Thor
     # Neovim frontend when one is attached (`nvim:` carries its wiring bits, or nil).
     # Both frontends' ensures -- nvim's RPC stop+join (T9 order) and tty#run's screen
     # restore -- run when converse returns, including a signal-ended session.
+    # OM-6: the supervisor's reactor must OUTLIVE each per-ask Sync (an actor
+    # launched inside an ask's Sync would be that ask's captive child), so one
+    # chat-level Sync here gives every inner ask the shared reactor and the
+    # fleet a home across asks. supervisor.stop farewells the fleet before the
+    # reactor closes; the drain-on-shutdown itself is wired lib-side through
+    # the conductor. The editor's :LainReply queue (or nil, no editor) is bound
+    # onto the reply surfaces before converse runs.
     def run(nvim:, store:, session:)
       frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, **nvim)
-      @tty.run { frontend ? frontend.run { converse } : converse }
+      @replies.bind_editor(frontend&.command_inbox)
+      Sync do |task|
+        @supervisor.run(task)
+        @tty.run { frontend ? frontend.run { converse } : converse }
+      ensure
+        @supervisor.stop
+      end
     end
 
     private
@@ -452,14 +516,14 @@ class LainCLI < Thor
       end
     end
 
-    # Two fibers: `ask` parks inside ask_human#perform awaiting the reply, and
-    # the reply comes from this same terminal -- a single-fiber ask-then-prompt
-    # deadlocks (OM-4 depends on OM-0). `replier.stop` in ensure is
-    # load-bearing: a parked replier holds Sync open forever on the
-    # no-question path.
+    # Concurrent surfaces beside the ask: the {HumanReplies} reply fibers (`ask`
+    # parks inside ask_human#perform awaiting the reply, and the reply comes
+    # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
+    # depends on OM-0) and the approval watchers. Every surface `.stop` in the
+    # ensure is load-bearing: a parked one holds Sync open forever otherwise.
     def respond(text)
       Sync do |task|
-        surfaces = [answer_loop(task), approval_loop(task)]
+        surfaces = [*@replies.surfaces(task), *approval_loop(task)]
         deliver(@conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response)
       ensure
         surfaces&.each { |surface| surface&.stop }
@@ -485,31 +549,111 @@ class LainCLI < Thor
       @chronicle.interrupted(head: @agent.timeline.head_digest)
     end
 
-    # Parks on dequeue (a real scheduler yield -- woken per question, never
-    # polling). The prompt routes through the conductor's #read_reply, not the
-    # tty directly, so the conductor KNOWS Reline owns stdin for the reply's span
-    # and suppresses its countdown ticker's render + key-read -- otherwise the
-    # ticker would steal the operator's answer keystrokes. `.to_s` is load-bearing:
-    # EOF makes prompt return nil, and an empty answer is honest where
-    # Tool::Result.ok(nil) would raise.
-    def answer_loop(task)
-      task.async do
-        loop do
-          @tty.render_question(@questions.dequeue)
-          @ask_human.reply(@conductor.read_reply(@tty, "human> ").to_s)
-        end
-      end
-    end
-
-    # The approval surface, sibling to answer_loop for the same reason: the
-    # gated fiber parks inside tool dispatch, so its answerer must be a
-    # concurrent fiber in the same reactor. Nil under --yolo (no queue).
+    # Two surfaces now watch the SAME queue -- the TTY prompt and dunst --
+    # first answer wins (Pending's own doctrine). Nil under --yolo (no queue),
+    # so neither watch fiber spawns; the notifier is Null with no dunstify.
     def approval_loop(task)
-      @approvals && task.async { @approval_surface.watch(@approvals) }
+      @approvals && [task.async { @approval_surface.watch(@approvals) },
+                     task.async { @notifier.watch(@approvals) }]
     end
 
     def farewell?(text)
       %w[exit quit].include?(text.strip.downcase)
+    end
+  end
+
+  # The human-reply surfaces (I6), lifted out of Repl the way Wiring lifted
+  # chat assembly: answering ask_human is its own responsibility -- the
+  # arrival note, the `/inbox` drain, and the editor's :LainReply leg -- and
+  # the Metrics trip said so. The single pending question is the invariant the
+  # drain keeps: one question at a time, one AskHuman, one reply resolves it.
+  class HumanReplies
+    # I6: one pending human question as the drain surface lists it -- who is
+    # stuck (the asker's chain correlation), since when, and the question.
+    InboxItem = Struct.new(:question, :from, :asked_at, keyword_init: true)
+
+    def initialize(tty:, conductor:, ask_human:, questions:)
+      @tty = tty
+      @conductor = conductor
+      @ask_human = ask_human
+      @questions = questions
+      @command_inbox = nil
+      @inbox = []
+    end
+
+    # The editor's :LainReply queue (or nil, no editor), bound before converse
+    # runs so #editor_reply_loop knows whether to spawn its consumer fiber.
+    def bind_editor(command_inbox) = @command_inbox = command_inbox
+
+    # The concurrent reply surfaces for one ask: the TTY drain loop, and --
+    # only when an editor is attached -- the :LainReply consumer. The caller
+    # (Repl#respond) stops them in its ensure.
+    def surfaces(task) = [answer_loop(task), editor_reply_loop(task)]
+
+    private
+
+    # A question ARRIVES as a one-line note; the reply read stays fiber-parked
+    # (the ask cannot complete without it -- the single-question invariant is
+    # untouched), but the surface is the drain. `/inbox` at the reply prompt
+    # lists the pending items before answering; any other line answers
+    # directly (the inline path stays the no-inbox fallback). Parks on dequeue
+    # (a real scheduler yield -- woken per question, never polling).
+    def answer_loop(task)
+      task.async do
+        loop do
+          question = @questions.dequeue
+          @inbox << InboxItem.new(question:, from: @ask_human.last_question&.from, asked_at: Time.now)
+          @tty.render_arrival(question)
+          resolve_reply(read_drained_answer)
+        end
+      end
+    end
+
+    # The reply read routes through the conductor's #read_reply (not the tty
+    # directly) so the conductor KNOWS Reline owns stdin for the span and
+    # suppresses its countdown ticker's render + key-read. `.to_s` is
+    # load-bearing on both reads: EOF returns nil, and an empty answer is
+    # honest where Tool::Result.ok(nil) would raise.
+    def read_drained_answer
+      line = @conductor.read_reply(@tty, "human> ").to_s
+      return line unless line.strip == "/inbox"
+
+      answer = nil
+      @tty.drain_inbox(@inbox, reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }) { |a| answer = a }
+      answer.to_s
+    end
+
+    # AlreadyResolved: the editor's :LainReply beat this prompt -- drop the
+    # duplicate rather than killing the loop. The shift retires the item this
+    # answer resolved regardless of which surface won.
+    def resolve_reply(answer)
+      @ask_human.reply(answer)
+    rescue Lain::Promise::AlreadyResolved
+      nil
+    ensure
+      @inbox.shift
+    end
+
+    # The editor reply leg (I6): the :LainReply command lands on the frontend's
+    # command_inbox and this fiber resolves the pending ask from it.
+    # Thread::Queue is popped NON-blocking (a blocking pop would freeze the
+    # reactor thread); an empty pop parks the fiber a tick and retries.
+    # `pending?` guards the TTY answer that already won -- the raced loser is
+    # dropped. Non-"reply" verbs are ignored (they rode their own path here).
+    def editor_reply_loop(task)
+      @command_inbox && task.async do
+        loop do
+          verb, args = pop_command
+          @ask_human.reply(args.first.to_s) if verb == "reply" && @ask_human.pending?
+          sleep(0.1) if verb.nil?
+        end
+      end
+    end
+
+    def pop_command
+      @command_inbox.pop(true)
+    rescue ThreadError
+      nil
     end
   end
 end

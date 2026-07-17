@@ -16,6 +16,10 @@ target/
 # rspec failure tracking
 .rspec_status
 
+# StatusFeed's HUD state (I1): a per-project runtime artifact like .git/, atomically
+# republished each turn for `lain up`'s tmux status line. Never versioned.
+/.lain/
+
 # ANTHROPIC_API_KEY lives here, never in the shell profile -- Claude Code silently
 # prefers an exported key over the subscription.
 .env

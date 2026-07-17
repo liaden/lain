@@ -51,11 +51,17 @@ module Lain
       # telemetry and one spool-teeing transport regardless of --journal, same
       # call bench already made; {Provider::Anthropic} (the SDK client) stays
       # in the library as the #encode differential oracle, just not on this path.
-      def provider(spool: Provider::Spool::Null.new)
+      #
+      # @param channel [Lain::Channel] where {Provider::AnthropicRaw}'s retry
+      #   and CE-5 stream_started events land -- chat's live TTY Channel, so a
+      #   stream start actually reaches the frontend. Like spool it defaults to
+      #   the Null instance (headless/bench pass nothing, so their events land
+      #   nowhere) and Ollama/Bedrock never receive the keyword.
+      def provider(spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
         case provider_name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
         when "bedrock" then Provider::Bedrock.new
-        else anthropic_provider(spool)
+        else anthropic_provider(spool, channel)
         end
       end
 
@@ -97,11 +103,11 @@ module Lain
       # the exe's clean Thor::Error mapping. Checking here keeps that mapping
       # intact for the one refusal an anthropic chat run can hit before any
       # request goes out.
-      def anthropic_provider(spool)
+      def anthropic_provider(spool, channel)
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::AnthropicRaw.new(spool:)
+        Provider::AnthropicRaw.new(spool:, channel:)
       end
 
       # Validated once, so #provider and #default_model both key off a name

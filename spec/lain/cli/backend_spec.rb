@@ -108,6 +108,27 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # CE-5: the RAW provider emits retry and stream_started events onto its
+  # `channel:`. Chat's live TTY Channel must be that channel or the frontend
+  # never sees a stream start; the headless/bench paths (no channel given)
+  # keep the Null channel default, so nothing is emitted where nothing drains.
+  describe "#provider channel threading" do
+    it "threads the given live Channel into AnthropicRaw so stream_started reaches it" do
+      channel = Lain::Channel.new
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_for(provider: "anthropic").provider(channel:)
+      end
+      expect(provider.instance_variable_get(:@channel)).to be(channel)
+    end
+
+    it "defaults to the Null channel when none is given (headless/bench stay quiet)" do
+      provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_for(provider: "anthropic").provider
+      end
+      expect(provider.instance_variable_get(:@channel)).to be(Lain::Channel::Null.instance)
+    end
+  end
+
   describe "#context" do
     it "defaults the model to the selected provider's own default" do
       expect(backend_for(provider: "ollama", model: nil, max_tokens: 1024).context.model)
