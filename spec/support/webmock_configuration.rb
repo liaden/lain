@@ -19,16 +19,8 @@ require "net/http"
 # `allow_http_connections_when_no_cassette?`, set false in
 # vcr_configuration.rb, and an unmatched request raises
 # VCR::Errors::UnhandledHTTPRequestError -- not WebMock's own
-# NetConnectNotAllowedError. Both facts are pinned by the examples below. That
-# VCR now owns the switch is why opting back INTO the network takes
-# NetworkAccess.permit rather than a bare WebMock.allow_net_connect!.
-RSpec.describe "network isolation" do
-  it "blocks HTTP connections when no cassette is inserted" do
-    expect(VCR.configuration.allow_http_connections_when_no_cassette?).to be(false)
-  end
-
-  it "raises rather than silently reaching out, for a request with no stub or cassette" do
-    expect { Net::HTTP.get(URI("https://api.anthropic.com/v1/messages")) }
-      .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
-  end
-end
+# NetConnectNotAllowedError. Both facts are pinned by the untagged guards in
+# spec/network_posture_spec.rb (a real spec file, so parallel workers run
+# them once, not once per worker). That VCR now owns the switch is why opting
+# back INTO the network takes NetworkAccess.permit rather than a bare
+# WebMock.allow_net_connect!.

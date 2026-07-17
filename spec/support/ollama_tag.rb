@@ -84,22 +84,6 @@ RSpec.configure do |config|
   end
 end
 
-# Untagged ON PURPOSE, exactly like spec/support/network_access.rb's guard block:
-# these examples run in the DEFAULT suite so the offline-by-default posture for
-# the Ollama arm is proven, not assumed. A regression spec tagged :ollama would
-# be excluded by default and catch nothing.
-RSpec.describe "the :ollama tag's offline default" do
-  it "excludes :ollama examples unless LAIN_OLLAMA=1" do
-    skip "LAIN_OLLAMA=1 opts :ollama examples in" if OLLAMA_ENABLED
-
-    expect(RSpec.configuration.exclusion_filter[:ollama]).to be(true)
-  end
-
-  it "blocks a localhost Ollama call from any untagged example" do
-    # No :ollama tag here, so NetworkAccess.permit never runs and VCR (the layer
-    # that owns the switch once hooked into WebMock) refuses the request -- the
-    # request never leaves the machine, whether or not a server is listening.
-    expect { Net::HTTP.get(URI.join(OLLAMA_API_BASE, "/api/tags")) }
-      .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
-  end
-end
+# The offline-default guards for this tag are untagged real specs in
+# spec/network_posture_spec.rb -- see its header for why they are neither
+# here nor tagged :ollama.
