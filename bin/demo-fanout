@@ -1,0 +1,107 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# CE-5's fan-out measurement, runnable live (the plan's own requirement: "C3
+# ends with a reproducible driver script the demo can run live"). Builds four
+# real sibling-template Requests (byte-identical prefix, C2), dispatches them
+# two ways against a mock provider, and prints the comparison table:
+# staggered (through Stagger) shows 1 writable prefix + N-1 byte-identical
+# reuses; the unstaggered control shows N independent first-dispatches.
+#
+# Not gem-shipped -- a dev/demo tool, mirroring bin/regenerate-session-
+# fixtures' `require "lain"` posture, not a `lib/` unit `lain.rb`'s manifest
+# owns.
+#
+# The fixture-building and classification logic below is DELIBERATELY
+# duplicated from spec/lain/tools/subagent/stagger_spec.rb's "the measurement
+# shows the point" examples, not shared via a new lib/ file or a spec/support
+# require: `spec/support/mock_recording.rb`'s EchoTool cannot load standalone
+# (it ends in `RSpec.configure`, so requiring it here would pull in RSpec for
+# a script that has to run without it), and `bin/` scripts in this repo are
+# already single self-contained files (see bin/regenerate-session-fixtures,
+# which does not share code with any spec either). Promoting ~20 lines of
+# demo glue to a new lib/ unit would need its own require_relative wiring in
+# subagent.rb, on top of Stagger's own still-pending one-line wiring -- more
+# surface than a comparison script earns. spec/lain/tools/subagent/
+# stagger_driver_spec.rb runs this file as a subprocess and pins its table
+# shape, so the two copies cannot silently drift without a spec noticing.
+
+require "bundler/setup"
+require "lain"
+require "async"
+
+TEMPLATE = "Shared sibling brief, the bulk every worker reads first. " * 80
+TASKS = %w[alpha-task beta-task gamma-task delta-task].freeze
+
+def sibling_requests(tasks)
+  factory_context = Lain::Context.new(model: "child-model", max_tokens: 512)
+  strategy = Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: TEMPLATE)
+  toolset = Lain::Toolset.new([]) # tools render at position 0; empty is sibling-invariant too
+  store = Lain::Store.new
+  shaped = strategy.child_context(factory_context)
+  tasks.map do |task|
+    timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => task }])
+    shaped.render(timeline:, toolset:)
+  end
+end
+
+def prefix_head(request) = request.prefix_digests.to_h.fetch(-1)
+
+# `release`, when given, is a shared {Lain::Promise} the unit parks on AFTER
+# logging its own dispatch and BEFORE it may signal `stream_started` -- the
+# barrier the unstaggered control needs so "N siblings dispatch
+# simultaneously" is a guarantee, not a hopeful race against the async
+# scheduler's own fairness (see the stagger_spec.rb "Finding": a bare
+# `Async::Task.current.yield` alone is empirically wrong 200/200 trials
+# under async 2.42).
+def dispatch_unit_for(index, request, log, release: nil)
+  lambda do |on_stream_started:|
+    digest = prefix_head(request)
+    log << [:dispatch, index, digest]
+    release&.await
+    on_stream_started.call(digest)
+    log << [:stream_started, index, digest]
+    request
+  end
+end
+
+# A dispatch is a READ of its prefix iff an EARLIER dispatch shares the same
+# byte-identical prefix digest and had already reached `stream_started` (CE-5:
+# the earliest point its cache write becomes probe-able) by the time THIS one
+# started -- otherwise it is a WRITE. Purely a function of observed
+# chronological order, so the same classifier reads both runs below.
+def demo_table(log)
+  opened = Set.new
+  log.each_with_object([]) do |(event, index, digest), rows|
+    rows << [index, opened.include?(digest) ? :read : :write] if event == :dispatch
+    opened << digest if event == :stream_started
+  end
+end
+
+def print_table(label, rows)
+  puts "=== #{label} ==="
+  rows.each { |index, kind| puts "  child #{index}: #{kind}" }
+  puts "  writes=#{rows.count { |_i, k| k == :write }} reads=#{rows.count { |_i, k| k == :read }}"
+  puts
+end
+
+requests = sibling_requests(TASKS)
+heads = requests.map { |request| prefix_head(request) }
+puts "=== fixture ==="
+puts "#{requests.size} siblings, #{heads.uniq.size} distinct template chain head(s)"
+puts
+
+log = []
+tasks = requests.each_with_index.map { |request, i| dispatch_unit_for(i, request, log) }
+Lain::Tools::Subagent::Stagger.new(journal: []).call(tasks)
+print_table("STAGGERED (through Stagger)", demo_table(log))
+
+log = []
+release = Lain::Promise.new
+tasks = requests.each_with_index.map { |request, i| dispatch_unit_for(i, request, log, release:) }
+Sync do |root|
+  handles = tasks.map { |task| root.async { task.call(on_stream_started: ->(_digest) {}) } }
+  release.resolve(true)
+  handles.map(&:wait)
+end
+print_table("UNSTAGGERED CONTROL", demo_table(log))
