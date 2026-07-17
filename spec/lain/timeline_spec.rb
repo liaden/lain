@@ -9,6 +9,13 @@ RSpec.describe Lain::Timeline do
 
   def say(from, body, role: :user) = from.commit(role:, content: text(body))
 
+  # A fan-in (synthesis) event: it CONTINUES `from`'s render chain and names
+  # the heads of `folds` as causal parents -- the cross-chain edges that make
+  # the object graph a DAG.
+  def fan_in(from, folds, body: "synthesis")
+    from.commit(role: :assistant, content: text(body), causal_parents: folds.map(&:head_digest))
+  end
+
   describe "an empty timeline" do
     it "has no head" do
       expect(timeline).to be_empty
@@ -179,16 +186,110 @@ RSpec.describe Lain::Timeline do
     end
 
     describe "the laws" do
-      # Build a random forest over one store, then assert the meet laws on
-      # randomly chosen members. Randomized because a hand-picked shape is
-      # exactly where an associativity bug hides.
+      # Build a random render forest, then fan-in events whose causal parents
+      # cross-link the chains, and assert the meet laws on randomly chosen
+      # members. To be precise about what this guards: #meet walks the render
+      # edge only, and the fan-in members sit as leaves ON that render tree, so
+      # no meet here ever traverses a causal edge -- this population does not
+      # (cannot) exercise meet "over a DAG". What it pins is that ADDING causal
+      # cross-links to the Store leaves the render-tree meet unperturbed.
+      # Randomized because a hand-picked shape is exactly where an
+      # associativity bug hides.
       let(:population) do
         timelines = [say(timeline, "root")]
         30.times { |i| timelines << say(timelines.sample, "n#{i}") }
-        timelines
+        timelines + Array.new(10) { fan_in(timelines.sample, timelines.sample(2)) }
       end
 
       include_examples "a meet semilattice under ancestry", population: -> { population }
+    end
+  end
+
+  # TL-3 ruling (Joel, 2026-07-17): three operators, each honest about its
+  # question. #meet/#diverge_at stay render-edge and byte-unchanged (cache-break
+  # localization); #causal_meets is the SET of maximal lower bounds of the
+  # causal ancestry order -- reachability over BOTH parent edges, git's "all
+  # parents" -- in git merge-base's shape, plural under criss-cross. It is
+  # deliberately NOT under the MeetSemilattice law group: a set-valued operator
+  # makes no semilattice claim (that is dominator_meet's job, a different
+  # operator).
+  describe "#causal_meets" do
+    let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
+    let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
+    let(:right) { say(base, "r1") }
+
+    it "returns the maximal common causal ancestors as a frozen, digest-ordered set" do
+      # base's whole chain is common ancestry, but only its head is maximal:
+      # everything below it is an ancestor of another common ancestor.
+      expect(left.causal_meets(right)).to eq([base.head_digest])
+      expect(left.causal_meets(right)).to be_frozen
+    end
+
+    it "follows causal edges, seeing ancestry the render walk cannot" do
+      synthesis = fan_in(left, [right])
+      # right's head IS a causal ancestor of the synthesis (via the fold), so
+      # the meet set reaches it -- while the render meet still stops at base.
+      expect(synthesis.causal_meets(right)).to eq([right.head_digest])
+      expect(synthesis.meet(right)).to eq(base)
+    end
+
+    it "returns both maximal ancestors of a criss-cross, never an arbitrary singleton" do
+      x = say(base, "x")
+      y = say(base.fork, "y", role: :assistant)
+      cross_a = fan_in(x, [y])
+      cross_b = fan_in(y, [x])
+      # x and y are incomparable (neither reaches the other), and every deeper
+      # common ancestor sits below both -- git merge-base's plural case.
+      expect(cross_a.causal_meets(cross_b)).to eq([x.head_digest, y.head_digest].sort)
+      expect(cross_b.causal_meets(cross_a)).to eq(cross_a.causal_meets(cross_b))
+    end
+
+    it "collapses to the ancestor's own head when one timeline is an ancestor of the other" do
+      expect(base.causal_meets(left)).to eq([base.head_digest])
+    end
+
+    # The set-valued analog of idempotence -- the one law this operator still
+    # owes after opting out of the MeetSemilattice group (plural codomain).
+    it "is reflexive: a timeline's meet set with itself is its own head" do
+      expect(left.causal_meets(left)).to eq([left.head_digest])
+      synthesis = fan_in(left, [right])
+      expect(synthesis.causal_meets(synthesis)).to eq([synthesis.head_digest])
+    end
+
+    it "is empty when the causal ancestries share nothing, and on the empty timeline" do
+      stranger = say(described_class.empty(store:), "unrelated")
+      expect(left.causal_meets(stranger)).to eq([])
+      expect(timeline.causal_meets(left)).to eq([])
+    end
+
+    it "never mutates: no Store put, no Timeline commit" do
+      synthesis = fan_in(left, [right])
+      allow(store).to receive(:put).and_call_original
+      before = store.size
+      synthesis.causal_meets(right)
+      expect(store).not_to have_received(:put)
+      expect(store.size).to eq(before)
+    end
+
+    it "refuses to compare across stores" do
+      stranger = say(described_class.empty(store: Lain::Store.new), "x")
+      expect { left.causal_meets(stranger) }.to raise_error(described_class::CrossStore)
+    end
+  end
+
+  # #meet and #diverge_at walk the render edge only; causal edges landing in
+  # the Store must not perturb them. On single-parent render chains they return
+  # exactly what they returned before causal edges existed -- the ruling's
+  # premise, pinned as a strict regression.
+  describe "the render meet under causal-edge insertion" do
+    let(:base) { say(say(timeline, "a"), "b", role: :assistant) }
+    let(:left) { say(say(base, "l1"), "l2", role: :assistant) }
+    let(:right) { say(base, "r1") }
+
+    it "leaves #meet and #diverge_at exactly as before" do
+      fan_in(left, [right]) # a causal edge now exists in the store
+      expect(left.meet(right)).to eq(base)
+      expect(left.diverge_at(right)).to eq(base.head)
     end
   end
 

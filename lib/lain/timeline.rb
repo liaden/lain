@@ -140,6 +140,24 @@ module Lain
       meet(other).head
     end
 
+    # TL-3 (pinned, 2026-07-17): the causal ancestry order -- reachability over
+    # BOTH parent edges, render and causal, git's "all parents" -- has no unique
+    # greatest lower bound: a criss-cross fan-in leaves incomparable maximal
+    # common ancestors, and any singleton answer would be arbitrary. So this
+    # takes git merge-base's shape: the SET of maximal lower bounds (the common
+    # causal ancestors that are not ancestors of another common one), as frozen
+    # digests in digest order -- the one canonical order incomparable elements
+    # admit. A pure projection over the Store; #meet/#diverge_at stay
+    # render-edge and untouched, because cache-break localization needs answers
+    # that are stable as causal edges land.
+    def causal_meets(other)
+      same_store!(other)
+      order = CausalAncestry.new(store)
+      mine = order.closure([head_digest])
+      common = order.closure([other.head_digest]).keys.select { |digest| mine.key?(digest) }
+      order.maximal(common).sort.freeze
+    end
+
     # TL-2 (pinned): the chain's identity, by the same derivation
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
     # a chain is named by its root event's digest, no separate id machinery.
@@ -177,6 +195,49 @@ module Lain
       return if store.equal?(other.store)
 
       raise CrossStore, "cannot compare Timelines backed by different stores"
+    end
+  end
+
+  class Timeline
+    # {Timeline#causal_meets}'s collaborator: the causal ancestry ORDER --
+    # reachability over BOTH parent edges, render and causal, git's "all
+    # parents". It takes the Store rather than a head because the order
+    # belongs to the shared DAG; a Timeline is only one pointer into it.
+    class CausalAncestry
+      def initialize(store)
+        @store = store
+      end
+
+      # Reflexive-transitive closure of the seeds, seeds included (nil seeds
+      # -- the empty Timeline -- contribute nothing, which is what keeps
+      # #causal_meets total). Iterative with an explicit frontier: causal
+      # chains reach thousands of events deep, and Ruby's stack does not.
+      def closure(seeds)
+        seen = {}
+        frontier = seeds.compact
+        while (digest = frontier.pop)
+          unless seen.key?(digest)
+            seen[digest] = true
+            frontier.concat(edges(@store.fetch(digest)))
+          end
+        end
+        seen
+      end
+
+      # The members of `digests` no other member sits above. A member is
+      # non-maximal exactly when it is reachable from another member's
+      # parents, so ONE closure over all those parents finds every
+      # non-maximal member at once, instead of one walk per candidate pair.
+      def maximal(digests)
+        covered = closure(digests.flat_map { |digest| edges(@store.fetch(digest)) })
+        digests.reject { |digest| covered.key?(digest) }
+      end
+
+      private
+
+      def edges(event)
+        [event.render_parent, *event.causal_parents].compact
+      end
     end
   end
 end
