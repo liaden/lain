@@ -78,6 +78,17 @@ module Lain
         @slots ||= Prompt::Slots.load
       end
 
+      # RES4: the {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
+      # {Role::Catalog} rather than hand-assembled at the call site -- the same
+      # "one seam decides" shape #provider gives `--provider` and #context
+      # gives `--model`. A spawn seam names the ROLE it wants (`:researcher`);
+      # the catalog is the one place that name's `only`-set can change, so a
+      # role's capability set cannot drift between a spawn site and its
+      # definition. An uncataloged name fails loudly as {Role::Catalog::Unknown}
+      # (a {Lain::Error}), naming the catalog, exactly as {Role::Catalog.fetch}
+      # already does -- there is no separate refusal to keep in sync.
+      def spawn_policy(role_name) = Role::Catalog.fetch(role_name).spawn_policy
+
       private
 
       # Refuses BEFORE construction: {Provider::AnthropicRaw} validates the key

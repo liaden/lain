@@ -134,6 +134,75 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # RES4: the exe's research subagent used to hand-assemble a SpawnPolicy
+  # inline (exe/lain:293-297) instead of naming a catalog role, so the child's
+  # capability set could drift from {Lain::Role::Catalog}'s own idea of what
+  # "researcher" means. #spawn_policy resolves through the catalog instead --
+  # the same "one seam decides" shape #provider and #context already give
+  # --provider and --model.
+  describe "#spawn_policy" do
+    # SpawnPolicy's `prefix`/`posture` normalize to freshly-built strategy
+    # objects (PrefixStrategy::Fresh.new, AttenuationPosture::Schema.new) with
+    # no custom `==`, so two structurally-identical policies are NOT `==` by
+    # Data's generated equality (it falls through to Object#==, i.e. identity)
+    # -- comparing the policy "field-for-field" means comparing each field's
+    # own value (a strategy's `#label`, and `only`), not `==` on the whole.
+    it "matches today's inline research policy field-for-field: fresh, schema, read_file+list_files" do
+      resolved = backend.spawn_policy(:researcher)
+
+      expect(resolved.prefix.label).to eq("fresh")
+      expect(resolved.posture.label).to eq("schema")
+      expect(resolved.only).to eq(%w[read_file list_files])
+    end
+
+    it "comes from Role::Catalog.fetch, not a parallel construction -- attenuates identically" do
+      union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new])
+
+      resolved = backend.spawn_policy(:researcher)
+      cataloged = Lain::Role::Catalog.fetch(:researcher).spawn_policy
+
+      expect(resolved.attenuate(union).names).to eq(cataloged.attenuate(union).names)
+    end
+
+    it "fails loudly on an uncataloged role name, naming the catalog (Role::Catalog's own refusal)" do
+      expect { backend.spawn_policy(:chef) }
+        .to raise_error(Lain::Role::Catalog::Unknown, /chef.*researcher/m)
+    end
+  end
+
+  # RES4's escalation trigger: Context#cache_marked always marks the LAST
+  # system block, and CacheBreakpoints budgets exactly ONE system cache slot
+  # (the T24 follow-up) -- Anthropic's cache_control cap is 4 breakpoints, so
+  # a second system mark here is a live 400 risk, not a style nit. A role's
+  # prelude is TWO segments (the shared bulk, then the role tail --
+  # {Lain::Role#prelude_segments}); rendering them as two ordinary text
+  # blocks -- neither pre-marked -- through Context must spend that ONE mark
+  # on the tail and leave the bulk unmarked, not double it. This spec is the
+  # guard: if it ever found two marked blocks, that is the recorded risk, and
+  # spending it is the orchestrator's call, not this glue's.
+  describe "a role prelude rendered through Context spends exactly one cache mark" do
+    let(:store) { Lain::Store.new }
+    let(:timeline) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+
+    it "marks exactly one system block, not one per prelude segment" do
+      role = Lain::Role::Catalog.fetch(:researcher)
+      bulk, tail = role.prelude_segments(slots: backend.slots)
+      context = Lain::Context.new(
+        model: "probe", max_tokens: 64,
+        system: [{ "type" => "text", "text" => bulk }, { "type" => "text", "text" => tail }]
+      )
+
+      request = context.render(timeline:, toolset: Lain::Toolset.new)
+      marked = request.system.select { |block| block["cache"] }
+
+      expect(marked.size).to eq(1)
+      expect(marked.first["text"]).to eq(tail)
+    end
+  end
+
   # The loaded Slots are exposed (not just the rendered String) so the bench
   # record path can emit ONE Telemetry::SlotFills built from the exact slots
   # #context rendered, without a second disk read.

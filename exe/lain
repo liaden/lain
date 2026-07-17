@@ -293,8 +293,7 @@ class LainCLI < Thor
     def research_subagent(base, backend:, parent:, journal:)
       Lain::Tools::Subagent.new(
         provider: spooled_provider(backend), context_factory: -> { backend.context }, toolset: base,
-        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema,
-                                            only: %i[read_file list_files]),
+        policy: backend.spawn_policy(:researcher),
         parent:, journal:, max_depth: 1, observer: chronicle.observer
       )
     end
