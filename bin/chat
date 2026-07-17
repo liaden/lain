@@ -16,9 +16,12 @@ session="lain-$$"
 
 # The chat pane re-exports the launching shell's environment explicitly:
 # tmux panes inherit from the tmux SERVER, which may predate this shell and
-# carry a stale PATH (the wrong ruby) or none of the provider credentials.
+# carry a stale PATH (the wrong ruby), no GEM_HOME/GEM_PATH (bundler then
+# cannot see chruby's user-installed gems), or none of the provider
+# credentials.
 exports="export PATH=$(printf %q "$PATH")"
-for var in AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_API_KEY; do
+for var in GEM_HOME GEM_PATH RUBYOPT \
+           AWS_BEARER_TOKEN_BEDROCK AWS_REGION AWS_DEFAULT_REGION ANTHROPIC_API_KEY; do
   if [[ -v $var ]]; then exports+="; export $var=$(printf %q "${!var}")"; fi
 done
 
