@@ -1,0 +1,163 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The W4 flagship demo, end-to-end against Provider::Mock: an actor three
+# assistant turns in (two of them writing files, each snapshotted into its
+# session record with workspace_blob sidecar bytes), its fiber killed abruptly
+# and the workspace wiped, then restarted by the Supervisor --
+# supervision-as-replay through Bench::Session::Loader's verified re-commit,
+# workspace restored from the record alone, zero provider calls during replay.
+# Prints the kill, the restart, and the two head digests; exits 0 iff they
+# match and the files came back. Not gem-shipped: a manual driver, so stdout
+# is its surface (bin/regenerate-session-fixtures' posture).
+
+require "bundler/setup"
+require "async"
+require "stringio"
+require "tmpdir"
+# The leaf alone cannot load: leaf files carry no internal requires (see
+# CLAUDE.md), so constants resolve only through the lain.rb manifest.
+require "lain"
+
+# One life, one kill, one restart -- an object so each act stays a small named
+# method rather than one long script body.
+class DemoSupervision
+  ROLE = "note-keeper"
+
+  # The same structured mutating shape the restart spec drives: writes under
+  # the demo workspace and records the write, so the snapshot writer has scope.
+  class ScribbleTool < Lain::Tool
+    def initialize(root:)
+      super()
+      @root = root
+    end
+
+    def name = "scribble"
+    def description = "Writes content to a file under the workspace."
+
+    def input_schema
+      { type: :object, properties: { name: { type: :string }, content: { type: :string } },
+        required: %i[name content] }
+    end
+
+    def perform(input, invocation)
+      path = File.join(@root, input.fetch("name"))
+      File.write(path, input.fetch("content"))
+      session_of(invocation).record_write(path)
+      Lain::Tool::Result.ok("wrote #{input.fetch("name")}")
+    end
+  end
+
+  def initialize(dir:)
+    @dir = dir
+    @store = Lain::Store.new
+    @context = Lain::Context.new(model: "demo-actor", max_tokens: 128)
+    @toolset = Lain::Toolset.new([ScribbleTool.new(root: dir)])
+    @record_io = StringIO.new
+    @journal = Lain::Journal.new(io: @record_io)
+    @provider = Lain::Provider::Mock.new(responses: script)
+    @revive_provider = Lain::Provider::Mock.new(responses: [])
+  end
+
+  def run
+    Sync do |task|
+      life(task)
+      kill
+      restart(task)
+    end
+    verdict
+  end
+
+  private
+
+  def scribble(id, name, content)
+    { "type" => "tool_use", "id" => id, "name" => "scribble",
+      "input" => { "name" => name, "content" => content } }
+  end
+
+  def script
+    [
+      Lain::Response.new(content: [scribble("t1", "notes.md", "v1")], stop_reason: :tool_use),
+      Lain::Response.new(content: [scribble("t2", "notes.md", "v2"),
+                                   scribble("t3", "log.md", "one restart survived")], stop_reason: :tool_use),
+      Lain::Response.new(content: [{ "type" => "text", "text" => "notes kept" }], stop_reason: :end_turn)
+    ]
+  end
+
+  def actor
+    scribe = Lain::SessionRecord::Scribe.new(journal: @journal, context: @context, toolset: @toolset)
+    @scribe = scribe
+    observer = Lain::Supervisor::Restart::JournalBlobs.new(journal: @journal, store: @store, observer: scribe)
+    agent = Lain::Agent.new(provider: @provider, toolset: @toolset, context: @context,
+                            timeline: Lain::Timeline.empty(store: @store),
+                            snapshot_writer: Lain::Workspace::Snapshot.new(observer:, root: @dir))
+    Lain::Tools::Subagent::Actor.new(agent:, parent: parent_timeline, lineage:)
+  end
+
+  def parent_timeline
+    Lain::Timeline.empty(store: @store)
+                  .commit(role: :user, content: [{ "type" => "text", "text" => "keep notes" }])
+  end
+
+  def lineage
+    policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+    Lain::Tools::Subagent::Lineage.new(policy:)
+  end
+
+  def life(task)
+    live = actor
+    @host = task.async { live.launch("keep the notes current") }
+    # The initial turn does real file IO, so the launch's synchronous prefix
+    # suspends before its task handle is assigned -- await the launch block
+    # itself before touching the actor (Supervisor#adopt's own discipline).
+    @host.wait
+    live.settle
+    @scribe.catch_up(live.timeline)
+    @killed_head = live.timeline.head_digest
+    puts "[life 1]  actor settled #{@provider.requests.size} provider calls in; head #{@killed_head}"
+  end
+
+  def kill
+    @host.stop
+    @host.wait
+    File.delete(File.join(@dir, "notes.md"), File.join(@dir, "log.md"))
+    puts "[kill]    fiber cancelled at its park -- no farewell, no session_closed; workspace wiped"
+  end
+
+  def restart(task)
+    supervisor = Lain::Supervisor.new.run(task)
+    result = restarter(supervisor).call(role: ROLE) do |recording|
+      Lain::Agent.new(provider: @revive_provider, toolset: @toolset, context: @context,
+                      timeline: recording.timeline)
+    end
+    report(supervisor, result)
+    supervisor.stop
+  end
+
+  def restarter(supervisor)
+    Lain::Supervisor::Restart.new(entries: @record_io.string.each_line, supervisor:,
+                                  journal: @journal, root: @dir)
+  end
+
+  def report(supervisor, result)
+    result.notices.each { |notice| puts "[notice]  #{notice}" }
+    @restarted_head = result.actor.timeline.head_digest
+    puts adoption_line(supervisor, result)
+    puts "[restart] #{@revive_provider.requests.size} provider calls during replay"
+  end
+
+  def adoption_line(supervisor, result)
+    "[restart] adopted role=#{supervisor.map(&:role).join} state=#{supervisor.map(&:state).join}; " \
+      "restored #{result.restored.written.join(", ")}; snapshot #{result.snapshot}"
+  end
+
+  def verdict
+    puts "[killed head]    #{@killed_head}"
+    puts "[restarted head] #{@restarted_head}"
+    abort "[FAIL] heads diverge" unless @killed_head == @restarted_head
+    abort "[FAIL] workspace not restored" unless File.read(File.join(@dir, "notes.md")) == "v2"
+    puts "[ok] heads match; workspace matches the last snapshot; zero provider calls during replay"
+  end
+end
+
+Dir.mktmpdir("lain-demo-supervision") { |dir| DemoSupervision.new(dir:).run }

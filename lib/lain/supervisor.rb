@@ -272,3 +272,8 @@ module Lain
     end
   end
 end
+
+# Restart reopens Supervisor and its records mix in Telemetry::Journalable
+# (long loaded), so it loads after the class body -- supervisor.rb is this
+# subtree's index, the effect/handler.rb convention.
+require_relative "supervisor/restart"
