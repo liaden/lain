@@ -43,11 +43,16 @@ RSpec.describe "the byte-identical prelude invariant across processes (CE-3)" do
   # Spawns a FRESH ruby process (via RbConfig.ruby -- see the file comment)
   # that requires nothing but the lib/ path this process already trusts, and
   # renders the same fixture the same way. Returns the parsed JSON the
-  # subprocess printed.
+  # subprocess printed. Bootsnap loads ahead of "lain" so the subprocess's
+  # full-gem-graph boot reads the suite's warm iseq cache -- caching is
+  # semantics-neutral, so the byte-identity claim is untouched (and the spec
+  # holds on a cold cache too, just slower).
   def render_in_subprocess(path)
     lib = File.expand_path("../../../lib", __dir__)
     stdout, stderr, status = Open3.capture3(
-      RbConfig.ruby, "-I", lib, "-r", "lain",
+      RbConfig.ruby, "-I", lib,
+      "-r", File.expand_path("../../bootsnap_setup", __dir__),
+      "-r", "lain",
       "-e", render_script, path
     )
     raise "subprocess failed (status #{status.exitstatus}): #{stderr}" unless status.success?

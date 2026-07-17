@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+# Bootsnap first: everything below -- lain and the whole gem graph it pulls
+# in -- loads through its iseq cache. See spec/bootsnap_setup.rb.
+require_relative "bootsnap_setup"
+
 require "lain"
 
 # The universal stdlib set: these appear across ten-plus spec files (Ruling 8 of the

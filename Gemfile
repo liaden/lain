@@ -49,6 +49,11 @@ group :test do
 end
 
 group :development, :test do
+  # Iseq/load-path caching for the suite AND its fresh-ruby subprocess boots
+  # (the prelude invariant spec pays a full `require "lain"` per run). Setup is
+  # spec/bootsnap_setup.rb -- the top of spec_helper and the subprocess both
+  # require it before "lain"; the cache lives under gitignored tmp/cache.
+  gem "bootsnap", "~> 1.18"
   # Loads ANTHROPIC_API_KEY from a gitignored .env, so the key never enters the shell
   # profile -- where Claude Code would silently prefer it over the subscription.
   gem "dotenv", "~> 3.2"
