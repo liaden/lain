@@ -1,14 +1,17 @@
 //! Pure ancestry queries over a content-addressed store.
 //!
-//! The Store maps a digest to its [`TurnData`]; walking parent pointers through
-//! that map is all `ancestors`, `meet`, and `ancestor_of?` need. Keeping these
-//! as plain functions over an `rpds` map -- no `magnus` -- means the whole
+//! The Store maps a digest to its [`EventData`]; walking render-parent pointers
+//! through that map is all `ancestors`, `meet`, and `ancestor_of?` need. Every
+//! walk here follows the SINGLE render edge -- the first-parent chain -- and is
+//! unchanged by the envelope re-port: `causal_parents` never participates
+//! (causal projections stay Ruby-only until a bench shows them hot). Keeping
+//! these as plain functions over an `rpds` map -- no `magnus` -- means the whole
 //! meet-semilattice can be unit-tested without an embedded Ruby VM, and the FFI
 //! layer performs each walk ENTIRELY in Rust, crossing the boundary once with a
 //! batched result rather than once per node.
 
 use crate::digest::Digest;
-use crate::turn::TurnData;
+use crate::event::EventData;
 use rpds::HashTrieMapSync;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,7 +19,7 @@ use std::sync::Arc;
 /// The content-addressed object map. A persistent HAMT, so a `fork` shares the
 /// whole prefix and a shared prefix is stored once. Keyed by [`Digest`], not a
 /// bare `String`, so a walk cannot be handed an arbitrary string as an address.
-pub type StoreMap = HashTrieMapSync<Digest, Arc<TurnData>>;
+pub type StoreMap = HashTrieMapSync<Digest, Arc<EventData>>;
 
 /// A walk referenced a digest that is not in the map. A well-formed Timeline
 /// never dangles, so this is corruption, NOT the ordinary end of a chain --
@@ -51,14 +54,14 @@ impl std::error::Error for DanglingDigest {}
 pub fn ancestor_turns(
     map: &StoreMap,
     head: Option<&Digest>,
-) -> Result<Vec<Arc<TurnData>>, DanglingDigest> {
+) -> Result<Vec<Arc<EventData>>, DanglingDigest> {
     let mut out = Vec::new();
     let mut cursor = head.cloned();
     while let Some(digest) = cursor.take() {
         let turn = map
             .get(&digest)
             .ok_or_else(|| DanglingDigest(digest.clone()))?;
-        cursor = turn.parent.clone();
+        cursor = turn.render_parent.clone();
         out.push(Arc::clone(turn));
     }
     Ok(out)
@@ -81,7 +84,7 @@ pub fn ancestor_digests(
 /// to step back without materializing the whole chain.
 pub fn parent_of(map: &StoreMap, digest: &Digest) -> Result<Option<Digest>, DanglingDigest> {
     map.get(digest)
-        .map(|turn| turn.parent.clone())
+        .map(|turn| turn.render_parent.clone())
         .ok_or_else(|| DanglingDigest(digest.clone()))
 }
 
@@ -122,7 +125,7 @@ pub fn ancestor_of(
 mod tests {
     use super::*;
     use crate::canonical::{Canon, build_object};
-    use crate::turn::Role;
+    use crate::event::Role;
 
     fn text(body: &str) -> Canon {
         Canon::Array(vec![Canon::Object(
@@ -139,11 +142,13 @@ mod tests {
 
     // Commit `body` onto `parent`, returning (new map, new head digest).
     fn commit(map: &StoreMap, parent: Option<&Digest>, body: &str) -> (StoreMap, Digest) {
-        let turn = TurnData::new(
+        let turn = EventData::turn(
             Role::User,
             text(body),
             parent.cloned(),
             Canon::Object(vec![]),
+            None,
+            Vec::new(),
         );
         let digest = turn.digest.clone();
         (map.insert(digest.clone(), turn), digest)

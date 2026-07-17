@@ -59,10 +59,6 @@ RSpec.describe Lain::Ext::Store do
     # dangling-parent block in rust/timeline_spec.rb; this example pins the
     # plain-digest bytes against both the Ruby message and the literal.
     it "renders the refusal message byte-identical to Ruby's" do
-      pending "the refusal message embeds the putting object's own digest, so its cross-impl byte " \
-              "parity is turn-digest parity in disguise: TL-2 re-keyed the Ruby scheme (Turn is now " \
-              "Event(kind: :turn)) and parity returns with T25 (the Rust re-port). The message FORMAT " \
-              "stays pinned within each impl -- the literal assertions above and in timeline_spec"
       ruby_head = Lain::Event.turn(role: :user, content: [{ "type" => "text", "text" => "head" }],
                                    parent: missing)
       ext_msg = refusal_message(Lain::Ext::Store::MissingObject) { store.put(dangling) }

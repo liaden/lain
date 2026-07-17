@@ -11,7 +11,7 @@ mod bm25;
 mod canonical;
 mod dag;
 mod digest;
-mod turn;
+mod event;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
 /// directive string (e.g. `"info"`, `"debug"`, `"lain=trace,warn"`).
@@ -105,14 +105,14 @@ fn classify_num(text: &str) -> Result<NumClass, String> {
     }
 }
 
-/// A `Store#put` refused because the node's parent digest is absent from the
-/// store -- the referential-integrity check at the public API boundary. The
-/// message's family form (`no object <parent> in store`) matches every other
-/// dangling-digest raise (see [`dag::DanglingDigest`]); the tail names the
-/// refusal context. This `Display` IS the FFI-visible message, byte-identical
-/// to Ruby `Store#validate_parent!` (`lib/lain/store.rb`) for plain digests --
-/// `{:?}` on a [`crate::digest::Digest`] renders as Ruby's `String#inspect`
-/// does, the same contract `DanglingDigest` documents.
+/// A `Store#put` refused because one of the node's parent digests is absent
+/// from the store -- the referential-integrity check at the public API
+/// boundary. The message's family form (`no object <parent> in store`) matches
+/// every other dangling-digest raise (see [`dag::DanglingDigest`]); the tail
+/// names the refusal context. This `Display` IS the FFI-visible message,
+/// byte-identical to Ruby `Store#validate_parents!` (`lib/lain/store.rb`) for
+/// plain digests -- `{:?}` on a [`crate::digest::Digest`] renders as Ruby's
+/// `String#inspect` does, the same contract `DanglingDigest` documents.
 ///
 /// Prevention here is what makes the pure `dag.rs` walk arms unreachable via
 /// the public API; they stay loud regardless (their cargo tests hand-corrupt
@@ -135,19 +135,29 @@ impl std::fmt::Display for DanglingPut {
 
 impl std::error::Error for DanglingPut {}
 
-/// Whether `node` may enter `map` at the public `put` boundary: its parent must
-/// be `None` (a root) or already present. Plain Rust over the locked map -- the
-/// caller holds the Store's lock across this check AND the insert, so a
-/// concurrent put cannot race in between. The internal commit path skips this
-/// deliberately: its parent is the committing Timeline's own validated head,
-/// so it is inductively safe (see `Timeline::commit` in the `ffi` module).
-fn validate_put(map: &dag::StoreMap, node: &turn::TurnData) -> Result<(), DanglingPut> {
-    match &node.parent {
-        Some(parent) if !map.contains_key(parent) => Err(DanglingPut {
-            parent: parent.clone(),
+/// Whether `node` may enter `map` at the public `put` boundary: every parent
+/// edge -- the single render edge, then each causal parent in their pinned
+/// sorted order -- must already be present. The refusal names the FIRST
+/// dangling edge, the same order Ruby `Store#parent_edges` checks (render
+/// parent before causal set; `payload_digest` has no arm here because the Ext
+/// store carries an event's payload inline with its envelope, never as a
+/// separate object). Plain Rust over the locked map -- the caller holds the
+/// Store's lock across this check AND the insert, so a concurrent put cannot
+/// race in between. The internal commit path skips this deliberately: its
+/// parent is the committing Timeline's own validated head, so it is
+/// inductively safe (see `Timeline::commit` in the `ffi` module).
+fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), DanglingPut> {
+    let dangling = node
+        .render_parent
+        .iter()
+        .chain(node.causal_parents.iter())
+        .find(|edge| !map.contains_key(*edge));
+    match dangling {
+        Some(edge) => Err(DanglingPut {
+            parent: edge.clone(),
             child: node.digest.clone(),
         }),
-        _ => Ok(()),
+        None => Ok(()),
     }
 }
 
@@ -169,7 +179,7 @@ mod ffi {
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::digest::Digest;
-    use crate::turn::{Role, TurnData};
+    use crate::event::{EventData, Role};
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
         RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
@@ -516,7 +526,7 @@ mod ffi {
     // in Rust against the Store's `rpds` map. A method returns either a scalar,
     // one fresh handle, or a single Ruby Array built in one pass -- never one
     // FFI call per node, which is where a naive binding loses to plain Ruby.
-    // `Turn` holds only immutable Rust state (an `Arc<TurnData>`: no reachable
+    // `Turn` holds only immutable Rust state (an `Arc<EventData>`: no reachable
     // Ruby object), so `frozen_shareable` is honest once the handle is frozen.
     // `Timeline` is the one handle that references a Ruby object (its `Store`),
     // so it marks that reference and is deliberately NOT frozen_shareable --
@@ -661,13 +671,44 @@ mod ffi {
         }
     }
 
-    /// A frozen node of the Timeline DAG. Holds only an `Arc<TurnData>` -- pure
+    /// A causal_parents argument: absent or nil is the empty set, otherwise an
+    /// Array whose every element is a digest String. Normalization (dedup,
+    /// pinned sort order) happens in the pure layer, not here.
+    fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Error> {
+        match value {
+            Some(inner) if !inner.is_nil() => {
+                let array = RArray::from_value(inner).ok_or_else(|| {
+                    Error::new(
+                        ruby.exception_type_error(),
+                        "causal_parents must be an Array of digest Strings",
+                    )
+                })?;
+                array
+                    .into_iter()
+                    .map(|element| {
+                        let string = RString::from_value(element).ok_or_else(|| {
+                            Error::new(
+                                ruby.exception_type_error(),
+                                "causal_parents must contain only digest Strings",
+                            )
+                        })?;
+                        Ok(Digest::from(validated_utf8(ruby, string)?))
+                    })
+                    .collect()
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    /// A frozen node of the Timeline DAG, wearing the full Event envelope
+    /// (T25's re-port: kind, both parent edges, correlation, and the carried,
+    /// content-addressed payload). Holds only an `Arc<EventData>` -- pure
     /// immutable Rust, no Ruby reference -- so once frozen it is honestly
     /// `Ractor.shareable?` with no `mark` and no reachable mutable state.
     #[derive(TypedData)]
     #[magnus(class = "Lain::Ext::Turn", free_immediately, frozen_shareable)]
     struct Turn {
-        inner: Arc<TurnData>,
+        inner: Arc<EventData>,
     }
 
     impl DataTypeFunctions for Turn {}
@@ -687,52 +728,130 @@ mod ffi {
     }
 
     impl Turn {
-        fn wrap(ruby: &Ruby, inner: Arc<TurnData>) -> Obj<Self> {
+        fn wrap(ruby: &Ruby, inner: Arc<EventData>) -> Obj<Self> {
             let obj = ruby.obj_wrap(Turn { inner });
             obj.freeze();
             obj
         }
 
         fn new(ruby: &Ruby, kw: RHash) -> Result<Obj<Self>, Error> {
-            let args = get_kwargs::<_, (Value, Value), (Option<Value>, Option<Value>), ()>(
+            type OptionalArgs = (Option<Value>, Option<Value>, Option<Value>, Option<Value>);
+            let args = get_kwargs::<_, (Value, Value), OptionalArgs, ()>(
                 kw,
                 &["role", "content"],
-                &["parent", "meta"],
+                &["parent", "meta", "correlation", "causal_parents"],
             )?;
             let (role_value, content_value) = args.required;
-            let (parent_value, meta_value) = args.optional;
+            let (parent_value, meta_value, correlation_value, causal_value) = args.optional;
             let role = read_role(ruby, role_value)?;
             let content = ruby_to_canon(ruby, content_value)?;
             let parent = read_optional_digest(ruby, parent_value)?;
             let meta = read_meta(ruby, meta_value)?;
-            Ok(Turn::wrap(ruby, TurnData::new(role, content, parent, meta)))
+            let correlation = read_optional_digest(ruby, correlation_value)?;
+            let causal_parents = read_causal_parents(ruby, causal_value)?;
+            Ok(Turn::wrap(
+                ruby,
+                EventData::turn(role, content, parent, meta, correlation, causal_parents),
+            ))
         }
 
-        fn role(ruby: &Ruby, rb_self: &Turn) -> Value {
-            frozen_str(ruby, rb_self.inner.role.as_str())
+        /// A carried-body field. The :turn constructor -- the only way this
+        /// class is built -- always writes `role`, `content`, and `meta` into
+        /// the body, so a miss here is unreachable via the FFI surface; it
+        /// raises loudly all the same (`classify_num`'s garbage-arm
+        /// philosophy) rather than materializing `nil`.
+        fn body_field<'a>(ruby: &Ruby, rb_self: &'a Turn, key: &str) -> Result<&'a Canon, Error> {
+            rb_self.inner.body_field(key).ok_or_else(|| {
+                Error::new(
+                    ruby.exception_runtime_error(),
+                    format!("Lain::Ext: a :turn event's carried body must hold {key:?}"),
+                )
+            })
         }
 
-        fn content(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
-            canon_to_ruby(ruby, &rb_self.inner.content)
-        }
-
-        fn parent(ruby: &Ruby, rb_self: &Turn) -> Value {
-            match &rb_self.inner.parent {
-                Some(digest) => frozen_str(ruby, digest.as_str()),
-                None => ruby.qnil().as_value(),
+        fn role(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
+            match Self::body_field(ruby, rb_self, "role")? {
+                Canon::Str(role) => Ok(frozen_str(ruby, role)),
+                _ => Err(Error::new(
+                    ruby.exception_runtime_error(),
+                    "Lain::Ext: a :turn event's role must be a wire string",
+                )),
             }
         }
 
+        fn content(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
+            canon_to_ruby(ruby, Self::body_field(ruby, rb_self, "content")?)
+        }
+
+        fn parent(ruby: &Ruby, rb_self: &Turn) -> Value {
+            Self::optional_digest_value(ruby, &rb_self.inner.render_parent)
+        }
+
         fn meta(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
-            canon_to_ruby(ruby, &rb_self.inner.meta)
+            canon_to_ruby(ruby, Self::body_field(ruby, rb_self, "meta")?)
         }
 
         fn digest(ruby: &Ruby, rb_self: &Turn) -> Value {
             frozen_str(ruby, rb_self.inner.digest.as_str())
         }
 
+        fn kind(ruby: &Ruby, rb_self: &Turn) -> Value {
+            // A Symbol, matching Ruby `Event#kind` -- the wire string is what
+            // the digest hashes; the Symbol is the loud in-process enum.
+            ruby.to_symbol(rb_self.inner.kind.as_str()).as_value()
+        }
+
+        fn payload_digest(ruby: &Ruby, rb_self: &Turn) -> Value {
+            frozen_str(ruby, rb_self.inner.payload.digest.as_str())
+        }
+
+        fn correlation(ruby: &Ruby, rb_self: &Turn) -> Value {
+            Self::optional_digest_value(ruby, &rb_self.inner.correlation)
+        }
+
+        fn causal_parents(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
+            let array = ruby.ary_new_capa(rb_self.inner.causal_parents.len());
+            for digest in &rb_self.inner.causal_parents {
+                array.push(frozen_str(ruby, digest.as_str()))?;
+            }
+            array.freeze();
+            Ok(array.as_value())
+        }
+
+        fn optional_digest_value(ruby: &Ruby, digest: &Option<Digest>) -> Value {
+            match digest {
+                Some(digest) => frozen_str(ruby, digest.as_str()),
+                None => ruby.qnil().as_value(),
+            }
+        }
+
+        /// The envelope structure the digest was taken over, as Ruby
+        /// `Event#payload` builds it -- rendered from the SAME
+        /// `payload_canon()` the digest hashed, so the two cannot drift. One
+        /// field is patched on the way through: Ruby's hash holds `kind` as a
+        /// SYMBOL (the wire string is what the digest hashes -- Canonical
+        /// collapses Symbol/String), and the byte-parity spec compares with
+        /// `eq`, where `:turn != "turn"`.
         fn payload(ruby: &Ruby, rb_self: &Turn) -> Result<Value, Error> {
-            canon_to_ruby(ruby, &rb_self.inner.payload_canon())
+            let Canon::Object(pairs) = rb_self.inner.payload_canon() else {
+                // Unreachable: envelope_canon always builds an object. Loud
+                // regardless -- classify_num's garbage-arm philosophy.
+                return Err(Error::new(
+                    ruby.exception_runtime_error(),
+                    "Lain::Ext: the envelope canon must be an object",
+                ));
+            };
+            let hash = ruby.hash_new();
+            for (key, value) in &pairs {
+                let rendered = if key == "kind" {
+                    Self::kind(ruby, rb_self)
+                } else {
+                    canon_to_ruby(ruby, value)?
+                };
+                hash.aset(frozen_str(ruby, key), rendered)?;
+            }
+            hash.freeze();
+            Ok(hash.as_value())
         }
 
         fn root_p(&self) -> bool {
@@ -741,10 +860,13 @@ mod ffi {
 
         // to_s is the human-facing projection; inspect keeps the class-tagged,
         // debug-oriented form -- the same convention Ruby's DegradedSet uses.
+        // Not a loud site: a debug string must not raise, so an (FFI-
+        // unreachable) roleless body renders "?" rather than raising -- the
+        // same convention as Timeline#to_s's "(?)" length.
         fn to_s(&self) -> String {
             let digest = self.inner.digest.as_str();
             let prefix = digest.get(..19).unwrap_or(digest);
-            format!("{} {prefix}...", self.inner.role.as_str())
+            format!("{} {prefix}...", self.inner.role_str().unwrap_or("?"))
         }
 
         fn inspect(&self) -> String {
@@ -786,7 +908,7 @@ mod ffi {
         /// that Timeline was constructed, so the chain is inductively safe.
         /// The Ruby-facing [`Store::put`] wraps this shape with the
         /// referential-integrity check instead of sharing it.
-        fn insert_arc(&self, turn: Arc<TurnData>) -> Digest {
+        fn insert_arc(&self, turn: Arc<EventData>) -> Digest {
             let digest = turn.digest.clone();
             let mut map = self.locked();
             if !map.contains_key(&digest) {
@@ -964,11 +1086,52 @@ mod ffi {
             let role = read_role(ruby, role_value)?;
             let content = ruby_to_canon(ruby, content_value)?;
             let meta = read_meta(ruby, args.optional.0)?;
-            let turn = TurnData::new(role, content, rb_self.head.clone(), meta);
             let store_value = rb_self.store_value(ruby);
             let store: &Store = store_ref(store_value)?;
+            let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
+            let turn = EventData::turn(
+                role,
+                content,
+                rb_self.head.clone(),
+                meta,
+                correlation,
+                Vec::new(),
+            );
             let digest = store.insert_arc(turn);
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
+        }
+
+        /// The chain identity to stamp on the next turn -- the port of
+        /// `Event::ChainWriter.correlation_of` (TL-2: a chain is named by its
+        /// root event's digest). The root cannot contain its own address, so
+        /// it carries no correlation and every descendant inherits either the
+        /// head's correlation or, when the head IS the root, the head's own
+        /// digest. `None` only on an empty Timeline, exactly as Ruby's
+        /// `head &&` guard. A head digest the store no longer holds is
+        /// corruption and raises, the same loud arm every walk has.
+        fn next_correlation(
+            ruby: &Ruby,
+            head: Option<&Digest>,
+            store: &Store,
+        ) -> Result<Option<Digest>, Error> {
+            match head {
+                None => Ok(None),
+                Some(head_digest) => {
+                    let node =
+                        store
+                            .locked()
+                            .get(head_digest)
+                            .map(Arc::clone)
+                            .ok_or_else(|| {
+                                missing_object(ruby, dag::DanglingDigest(head_digest.clone()))
+                            })?;
+                    Ok(Some(
+                        node.correlation
+                            .clone()
+                            .unwrap_or_else(|| head_digest.clone()),
+                    ))
+                }
+            }
         }
 
         // `fork` is O(1) because a Timeline handle is already an immutable
@@ -1165,7 +1328,7 @@ mod ffi {
 
     /// One FFI crossing for a whole chain: wrap each already-walked node into a
     /// frozen `Turn` handle and hand back a single Ruby Array.
-    fn turns_to_array(ruby: &Ruby, arcs: Vec<Arc<TurnData>>) -> Result<RArray, Error> {
+    fn turns_to_array(ruby: &Ruby, arcs: Vec<Arc<EventData>>) -> Result<RArray, Error> {
         let array = ruby.ary_new_capa(arcs.len());
         for arc in arcs {
             array.push(Turn::wrap(ruby, arc))?;
@@ -1366,8 +1529,15 @@ mod ffi {
         turn.define_method("role", method!(Turn::role, 0))?;
         turn.define_method("content", method!(Turn::content, 0))?;
         turn.define_method("parent", method!(Turn::parent, 0))?;
+        // The render chain is the first-parent walk, so `parent` IS the render
+        // edge -- both names answer it, as Ruby's `alias parent render_parent`.
+        turn.define_method("render_parent", method!(Turn::parent, 0))?;
         turn.define_method("meta", method!(Turn::meta, 0))?;
         turn.define_method("digest", method!(Turn::digest, 0))?;
+        turn.define_method("kind", method!(Turn::kind, 0))?;
+        turn.define_method("payload_digest", method!(Turn::payload_digest, 0))?;
+        turn.define_method("correlation", method!(Turn::correlation, 0))?;
+        turn.define_method("causal_parents", method!(Turn::causal_parents, 0))?;
         turn.define_method("payload", method!(Turn::payload, 0))?;
         turn.define_method("root?", method!(Turn::root_p, 0))?;
         turn.define_method("==", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
@@ -1482,7 +1652,7 @@ mod validate_put_tests {
     use crate::canonical::{Canon, build_object};
     use crate::dag::StoreMap;
     use crate::digest::Digest;
-    use crate::turn::{Role, TurnData};
+    use crate::event::{EventData, Role};
     use std::sync::Arc;
 
     fn text(body: &str) -> Canon {
@@ -1491,12 +1661,14 @@ mod validate_put_tests {
         )])
     }
 
-    fn node(body: &str, parent: Option<&Digest>) -> Arc<TurnData> {
-        TurnData::new(
+    fn node(body: &str, parent: Option<&Digest>) -> Arc<EventData> {
+        EventData::turn(
             Role::User,
             text(body),
             parent.cloned(),
             Canon::Object(vec![]),
+            None,
+            Vec::new(),
         )
     }
 
@@ -1523,6 +1695,33 @@ mod validate_put_tests {
             validate_put(&StoreMap::new_sync(), &child),
             Err(DanglingPut {
                 parent: absent,
+                child: child.digest.clone(),
+            })
+        );
+    }
+
+    // The causal set is a Store edge exactly as the render edge is (Ruby
+    // `Store#parent_edges`); the refusal names the FIRST dangling edge, and
+    // causal parents check in their pinned sorted order.
+    #[test]
+    fn refuses_a_child_whose_causal_parent_is_absent() {
+        let root = node("a", None);
+        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
+        let child = EventData::turn(
+            Role::User,
+            text("b"),
+            Some(root.digest.clone()),
+            Canon::Object(vec![]),
+            None,
+            vec![
+                Digest::from("blake3:msg-b".to_string()),
+                Digest::from("blake3:msg-a".to_string()),
+            ],
+        );
+        assert_eq!(
+            validate_put(&map, &child),
+            Err(DanglingPut {
+                parent: Digest::from("blake3:msg-a".to_string()),
                 child: child.digest.clone(),
             })
         );
