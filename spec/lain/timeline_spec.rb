@@ -277,6 +277,202 @@ RSpec.describe Lain::Timeline do
     end
   end
 
+  # TL-3 ruling (Joel, 2026-07-17), third operator: #dominator_meet is the
+  # deepest common dominator over the UNION graph -- render and causal edges
+  # together, virtual root over the closure's forest roots -- the
+  # checkpoint/safe-compaction primitive. Unlike #causal_meets it IS a true
+  # meet-semilattice (dominator sets are totally ordered, so the deepest
+  # common dominator is the unique nearest common ancestor on the dominator
+  # tree), which is why it runs under the same MeetSemilattice law group as
+  # the render meet, with the dominance order injected.
+  describe "#dominator_meet" do
+    let(:dominators) { described_class::Dominators.new(store) }
+
+    # trunk: root -> spawn-point. Children are fresh render roots causally
+    # anchored at the spawn head -- the dominance-relevant collapse of the
+    # production spawn/message chain ({Tools::Subagent::Lineage} writes a
+    # :spawn event whose causal_parents name the parent's head).
+    let(:trunk) { say(say(timeline, "root"), "spawn-point", role: :assistant) }
+    let(:child_a) { say(spawn_child(trunk, "task a"), "result a", role: :assistant) }
+    let(:child_b) { say(spawn_child(trunk, "task b"), "result b", role: :assistant) }
+    let(:join) { fan_in(trunk, [child_a, child_b], body: "fold both results") }
+    let(:post_join) { say(join, "onward") }
+
+    def spawn_child(anchor, task)
+      described_class.empty(store:)
+                     .commit(role: :user, content: text(task),
+                             causal_parents: [anchor.head_digest],
+                             meta: { "spawned_from" => anchor.head_digest })
+    end
+
+    it "collapses to the dominated head when one head dominates the other" do
+      expect(post_join.dominator_meet(join)).to eq(join)
+      expect(join.dominator_meet(post_join)).to eq(join)
+    end
+
+    it "meets unrelated roots at the empty timeline, never exposing the virtual root" do
+      stranger = say(described_class.empty(store:), "unrelated")
+      met = trunk.dominator_meet(stranger)
+      expect(met).to be_empty
+      expect(met.head_digest).to be_nil
+    end
+
+    it "treats the empty timeline as the bottom element" do
+      expect(timeline.dominator_meet(trunk)).to be_empty
+      expect(trunk.dominator_meet(timeline)).to be_empty
+    end
+
+    it "refuses to compare across stores" do
+      stranger = say(described_class.empty(store: Lain::Store.new), "x")
+      expect { trunk.dominator_meet(stranger) }.to raise_error(described_class::CrossStore)
+    end
+
+    describe "the checkpoint (a fan-out that fully joins back)" do
+      it "names the join as the latest event every root-path to the post-join head passes through" do
+        # Paths from the virtual root reach post_join through the trunk AND
+        # through each child branch; the join turn is where they all
+        # converge, so it dominates post_join while no single branch does.
+        expect(dominators.dominates?(join.head_digest, post_join.head_digest)).to be(true)
+        expect(dominators.dominates?(child_a.head_digest, post_join.head_digest)).to be(false)
+        expect(dominators.dominates?(child_b.head_digest, post_join.head_digest)).to be(false)
+      end
+
+      it "meets heads at or after the join at the join point or later, never earlier" do
+        expect(say(join, "x").dominator_meet(say(join.fork, "y"), dominators:)).to eq(join)
+        expect(say(post_join, "x").dominator_meet(say(post_join.fork, "y"), dominators:)).to eq(post_join)
+      end
+
+      # The card's Gherkin reads "the post-join head with any PRE-join head
+      # is the join point", but a meet sits below BOTH operands (the law the
+      # shared group asserts), and no pre-join event is dominated by the
+      # later join -- so the lawful answer for a pre-join operand is the
+      # spawn point, where the fan-out's paths last agreed. Deviation
+      # flagged in the hand-back rather than specced as written.
+      it "meets a pre-join head at the spawn point, never later" do
+        expect(post_join.dominator_meet(child_a, dominators:)).to eq(trunk)
+        expect(post_join.dominator_meet(trunk, dominators:)).to eq(trunk)
+      end
+    end
+
+    # The CRDT causal-stability caveat, pinned as documented behavior: one
+    # quiet participant stalls the checkpoint frontier.
+    describe "a quiet branch freezes the frontier" do
+      it "answers at the spawn point while a spawned branch stays open, however far the parent advances" do
+        parent = say(say(trunk, "keeps"), "working", role: :assistant)
+        expect(parent.dominator_meet(child_a, dominators:)).to eq(trunk)
+      end
+
+      it "answers before the spawn point (bottom) when the child is linked by meta alone, as today's roots are" do
+        orphan = described_class.empty(store:)
+                                .commit(role: :user, content: text("task"),
+                                        meta: { "spawned_from" => trunk.head_digest })
+        expect(trunk.dominator_meet(orphan)).to be_empty
+      end
+    end
+
+    describe "purity and the memo" do
+      it "never mutates: no Store put, no Timeline commit" do
+        heads = [post_join, child_a] # materialize the fixture before watching the store
+        allow(store).to receive(:put).and_call_original
+        before = store.size
+        heads.first.dominator_meet(heads.last, dominators:)
+        expect(store).not_to have_received(:put)
+        expect(store.size).to eq(before)
+      end
+
+      it "answers a repeated head pair from the memo with no second walk, in either argument order" do
+        first = post_join.dominator_meet(child_a, dominators:)
+        allow(store).to receive(:fetch).and_call_original
+        expect(post_join.dominator_meet(child_a, dominators:)).to eq(first)
+        expect(child_a.dominator_meet(post_join, dominators:)).to eq(first)
+        expect(store).not_to have_received(:fetch)
+      end
+    end
+
+    describe "against brute force (small random union graphs)" do
+      # Kept to ~a dozen events so exhaustive root-to-node path enumeration
+      # stays tractable.
+      let(:population) do
+        pop = [say(timeline, "root")]
+        5.times { |i| pop << say(pop.sample, "c#{i}") }
+        pop << spawn_child(pop.sample, "spawned")
+        2.times { |i| pop << say(pop.sample, "d#{i}") }
+        2.times do |i|
+          from, *folds = pop.sample(3)
+          pop << fan_in(from, folds, body: "f#{i}")
+        end
+        pop
+      end
+
+      def union_parents(digest)
+        event = store.fetch(digest)
+        parents = [event.render_parent, *event.causal_parents].compact.uniq
+        parents.empty? ? [:virtual_root] : parents
+      end
+
+      def union_nodes(heads)
+        seen = {}
+        frontier = heads.dup
+        while (digest = frontier.pop)
+          unless seen.key?(digest)
+            seen[digest] = true
+            frontier.concat(union_parents(digest) - [:virtual_root])
+          end
+        end
+        seen.keys
+      end
+
+      # Every virtual-root-to-node path, enumerated backward over parent
+      # edges -- exponential in general, tractable at this size.
+      def every_path(digest)
+        return [[:virtual_root]] if digest == :virtual_root
+
+        union_parents(digest).flat_map { |parent| every_path(parent).map { |path| path + [digest] } }
+      end
+
+      # The nodes present on EVERY root path: the meet-over-all-paths
+      # definition of dominance, independent of the implementation's tree.
+      def brute_dominators(digest)
+        every_path(digest).reduce(:&)
+      end
+
+      it "agrees with exhaustive path enumeration on every node's dominator set" do
+        nodes = union_nodes(population.map(&:head_digest))
+        nodes.each do |node|
+          brute = brute_dominators(node)
+          nodes.each do |candidate|
+            expect(dominators.dominates?(candidate, node)).to eq(brute.include?(candidate)),
+                                                              "dominates?(#{candidate}, #{node}) != brute force"
+          end
+        end
+      end
+
+      it "returns the deepest member of the brute-force dominator intersection for random pairs" do
+        10.times do
+          a, b = population.sample(2)
+          common = brute_dominators(a.head_digest) & brute_dominators(b.head_digest)
+          deepest = common.find { |candidate| (common - brute_dominators(candidate)).empty? }
+          expected = deepest == :virtual_root ? nil : deepest
+          expect(a.dominator_meet(b, dominators:).head_digest).to eq(expected)
+        end
+      end
+    end
+
+    describe "the laws (dominance order injected)" do
+      # The SAME group and verbatim laws the render meet runs under -- only
+      # the knobs change: the meet is dominator_meet through one shared
+      # Dominators (so the law run also soaks the memo), and the order
+      # predicate is dominance, which the group's default render-ancestry
+      # predicate is strictly weaker than.
+      let(:population) { MeetSemilatticePopulations.union_graph(timeline) }
+
+      include_examples "a meet semilattice under ancestry",
+                       population: -> { population },
+                       meet: ->(a, b) { a.dominator_meet(b, dominators:) },
+                       ancestor_of: ->(m, a) { dominators.dominates?(m.head_digest, a.head_digest) }
+    end
+  end
+
   # #meet and #diverge_at walk the render edge only; causal edges landing in
   # the Store must not perturb them. On single-parent render chains they return
   # exactly what they returned before causal edges existed -- the ruling's

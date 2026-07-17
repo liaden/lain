@@ -67,3 +67,52 @@ RSpec.shared_examples "a meet semilattice under ancestry" do |config|
     end
   end
 end
+
+# The population side of the law group, grown a UNION-GRAPH shape for the
+# dominator meet (S3): render chains alone exercise the render meet, but the
+# dominance order lives on render AND causal edges under a virtual root, so
+# its laws need fan-ins and forest roots in the population. A new module
+# rather than a change to the group or to the existing consumers' inline
+# render-forest populations -- the generator gains a shape, it never changes
+# the old one (the render-meet law runs, Ruby and Rust, are untouched).
+module MeetSemilatticePopulations
+  module_function
+
+  # A random union graph over `empty`'s store: render chains, causal fan-in
+  # events, fresh roots causally anchored mid-graph (the subagent spawn
+  # shape), and one unanchored stranger so meets exercise the bottom
+  # element. Spawns land mid-build so later chain growth extends them.
+  def union_graph(empty)
+    population = grow([commit(empty, "root")], 10, "a")
+    3.times { |i| population << spawn(empty, population.sample, "s#{i}") }
+    grow(population, 10, "b")
+    5.times { |i| population << fan_in(population.sample(3), "f#{i}") }
+    population << commit(empty, "stranger")
+  end
+
+  def grow(population, count, tag)
+    count.times { |i| population << commit(population.sample, "#{tag}#{i}") }
+    population
+  end
+
+  def commit(timeline, body)
+    timeline.commit(role: :user, content: [{ "type" => "text", "text" => body }])
+  end
+
+  # A fan-in continues `from`'s render chain and names the other heads as
+  # causal parents -- the cross-chain edges that make the union graph a DAG.
+  def fan_in((from, *folds), body)
+    from.commit(role: :assistant, content: [{ "type" => "text", "text" => body }],
+                causal_parents: folds.map(&:head_digest))
+  end
+
+  # A fresh render root causally anchored at `anchor`'s head -- the
+  # dominance-relevant collapse of the production spawn/message chain
+  # ({Tools::Subagent::Lineage} writes a :spawn event naming the parent's
+  # head; the anchored root carries that edge directly).
+  def spawn(empty, anchor, body)
+    empty.commit(role: :user, content: [{ "type" => "text", "text" => body }],
+                 causal_parents: [anchor.head_digest],
+                 meta: { "spawned_from" => anchor.head_digest })
+  end
+end
