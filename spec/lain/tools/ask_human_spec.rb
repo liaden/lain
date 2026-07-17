@@ -184,6 +184,53 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
+  # ---- I6: the delivery-commit consumption seam ------------------------------
+
+  # The sync gate completing means THIS tool_result carries the answer into
+  # the conversation -- so the tool remembers Q's digest for the Agent's
+  # delivery commit to cite as a causal parent (the :turn edge that is the
+  # ONLY thing Projection#pending counts as consumption). Handed over exactly
+  # once: the edge belongs to the one commit that delivers the answer.
+  describe "#take_answered_questions" do
+    def complete_exchange(question, answer)
+      Sync do |task|
+        run = task.async { tool.call({ "question" => question }, invocation) }
+        tool.reply(answer)
+        run.wait
+      end
+    end
+
+    it "is empty before any answer is delivered" do
+      expect(tool.take_answered_questions).to eq([])
+    end
+
+    it "hands over the answered question's digest exactly once" do
+      complete_exchange("which file?", "config.rb")
+
+      expect(tool.take_answered_questions).to eq([tool.last_question.digest])
+      expect(tool.take_answered_questions).to eq([])
+    end
+
+    it "accumulates when two exchanges complete before one hand-over" do
+      complete_exchange("which file?", "config.rb")
+      first = tool.last_question.digest
+      complete_exchange("which port?", "5432")
+
+      expect(tool.take_answered_questions).to eq([first, tool.last_question.digest])
+    end
+
+    it "hands over nothing for an ask/reply that never passed the sync gate" do
+      Sync do
+        tool.ask("which file?")
+        tool.reply("config.rb")
+      end
+
+      # No perform ran, so no tool_result delivers this answer -- there is no
+      # delivery commit for the edge to ride.
+      expect(tool.take_answered_questions).to eq([])
+    end
+  end
+
   # ---- T13 scope expansion: the observer reaches the ChainWriter -------------
 
   # AskHuman builds its own ChainWriter, so the session scribe can only attach

@@ -174,6 +174,24 @@ RSpec.describe Lain::CLI::Chronicle do
 
       expect(of_type("message").first).to include("digest" => event.digest)
     end
+
+    # I6: with --nvim's tee wrapped, Q/A message records ride it to the live
+    # views (lain://inbox, StatusFeed) -- routed, never duplicated: the tee's
+    # journal leg is this session's own journal, so the file still gets each
+    # record exactly once.
+    it "routes message records through the tee once #wrap_tee has run: file once, live sink too" do
+      channel = []
+      chronicle.wrap_tee(channel)
+      chronicle.start(context:, toolset:)
+      writer = Lain::Event::ChainWriter.new(observer: chronicle.observer)
+
+      event = writer.put(timeline, kind: :message, from: "a", to: "human",
+                                   causal_parents: [], body: { "question" => "q?" })
+
+      expect(of_type("message").size).to eq(1)
+      expect(of_type("message").first).to include("digest" => event.digest)
+      expect(channel.map(&:class)).to eq([Lain::Telemetry::Message])
+    end
   end
 
   describe "#turn_middleware" do

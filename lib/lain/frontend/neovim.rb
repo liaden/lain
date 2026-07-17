@@ -21,7 +21,8 @@ module Lain
       # shape -- and never for a gem release: the gem version is display
       # (:LainVersion), this is compatibility, and conflating them made every
       # future gem bump a false mismatch warning.
-      PROTOCOL = "1"
+      # "2": I6 added :LainReply and the inbox drain autocmd.
+      PROTOCOL = "2"
 
       # One of the three background threads (the RPC thread, the drain, or the
       # resend worker -- see {#reraise_recorded_failure}) died and {#run}'s
@@ -250,6 +251,7 @@ module Lain
   end
 end
 
+require_relative "neovim/inbox_view"
 require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"

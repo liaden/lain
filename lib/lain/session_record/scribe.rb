@@ -41,8 +41,17 @@ module Lain
       #   file, so catch_up must skip them (re-recording the whole chain here
       #   would double every turn a chain loader folds in), and the
       #   extends-check must anchor on the resumed head, not nil.
-      def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
+      # @param message_journal [#<<, nil] where {#call}'s message records land
+      #   -- the telemetry tee under --nvim (I6), so the live inbox surfaces
+      #   (lain://inbox, {StatusFeed}) fold the same Q/A records the file
+      #   holds. ROUTED, not duplicated: the tee's journal leg IS `journal`,
+      #   so the file still gets each record exactly once. Defaults to the
+      #   journal itself; turn records never route -- they are record data,
+      #   not live-view telemetry.
+      def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
+                     message_journal: nil)
         @journal = journal
+        @message_journal = message_journal || journal
         @written = Set.new(written)
         @head = written.last
         @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:)
@@ -56,7 +65,7 @@ module Lain
       # @param event [Lain::Event]
       # @return [self]
       def call(event)
-        @journal << Telemetry::Message.from_event(event)
+        @message_journal << Telemetry::Message.from_event(event)
         self
       end
 

@@ -12,7 +12,7 @@ local gem_version, protocol, chan = ...
 -- gem release, which is why the handshake does not compare gem versions. A
 -- mismatch WARNS and keeps going: a stale editor half-works (commands still
 -- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "1"
+local RUNTIME_PROTOCOL = "2"
 if protocol ~= RUNTIME_PROTOCOL then
   vim.api.nvim_echo({
     { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },
@@ -118,9 +118,9 @@ end
 -- Re-attach is idempotent: delete before create so a name is defined exactly
 -- once, and every command is Lain-namespaced (no collision with the human's
 -- config or a plugin).
-local function define(name, fn)
+local function define(name, fn, opts)
   pcall(vim.api.nvim_del_user_command, name)
-  vim.api.nvim_create_user_command(name, fn, {})
+  vim.api.nvim_create_user_command(name, fn, opts or {})
 end
 
 -- Agent-facing commands enqueue-and-ack: the callback makes ONE blocking
@@ -141,6 +141,41 @@ define("LainResend", function()
 end)
 define("LainSend", agent_command("send"))
 define("LainContext", agent_command("context"))
+
+-- The human inbox drain (I6). :LainReply {answer} submits the typed answer as
+-- a "reply" command -- enqueue-and-ack like every command, so the agent-side
+-- consumer resolves the pending ask_human promise off its own queue and the
+-- editor never blocks on it. The answer rides as the command's argument;
+-- per-item targeting waits for the multi-question design step (today one
+-- question is pending at a time -- ask_human's single-@pending invariant).
+local function submit_reply(answer)
+  if answer ~= "" then
+    vim.rpcrequest(chan, "lain_command", "reply", { answer })
+  end
+end
+
+define("LainReply", function(opts)
+  submit_reply(opts.args)
+end, { nargs = "+" })
+
+-- The cursor-on-an-item drain: `r` in lain://inbox prompts for the answer and
+-- submits it -- the buffer-local half of the same reply path. Bound from a
+-- BufEnter autocmd (in a cleared augroup, so re-attach redefines rather than
+-- stacks) because the buffer is created lazily by the first render, not here.
+local group = vim.api.nvim_create_augroup("lain_inbox", { clear = true })
+vim.api.nvim_create_autocmd("BufEnter", {
+  group = group,
+  pattern = "lain://inbox",
+  callback = function(ev)
+    vim.keymap.set("n", "r", function()
+      vim.ui.input({ prompt = "answer> " }, function(answer)
+        if answer then
+          submit_reply(answer)
+        end
+      end)
+    end, { buffer = ev.buf, desc = "lain: answer the pending question" })
+  end,
+})
 
 -- The observable half of the version handshake: :LainVersion surfaces the gem
 -- version the attach recorded, straight into :messages -- no rpc round trip.

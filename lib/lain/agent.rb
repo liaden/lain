@@ -157,7 +157,7 @@ module Lain
     # comment describes rather than growing a line per collaborator.
     def wire_callers(provider:, model_middleware:, handler:, tool_middleware:)
       @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
-      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware)
+      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware, toolset: @toolset)
     end
 
     # The mutable run context, kept apart from #initialize on purpose: the
@@ -271,8 +271,12 @@ module Lain
     # is re-derived from on the next mutating turn, so unlike a TurnUsage
     # record it needs no cancellation shield -- and file IO stays out of the
     # uninterruptible region's heartbeat budget.
+    # The delivery is {ToolRunner#delivery}'s value -- the result blocks plus
+    # the consumption edges an answered ask_human question rides (I6). The
+    # role stays HERE: one USER message holding every result is this class's
+    # statement about the Timeline, exactly as before.
     def perform_tools(response)
-      @timeline = @timeline.commit(role: :user, content: @tool_runner.run(response, context: @session))
+      @timeline = @timeline.commit(role: :user, **@tool_runner.delivery(response, context: @session))
       @snapshot_writer.write(timeline: @timeline, paths: @session.writes)
     end
   end

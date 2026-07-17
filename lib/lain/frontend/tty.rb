@@ -76,6 +76,7 @@ module Lain
         @history = History.new(path: history_path, notify: method(:render_warning))
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
+        @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
       end
 
       # Non-blocking: render whatever is queued right now and return. The
@@ -161,6 +162,25 @@ module Lain
         @output.puts(@pastel.yellow.bold("the agent asks:"))
         @output.puts(@pastel.yellow(question))
         @output.flush
+      end
+
+      # I6: a question ARRIVES as one line, not as {#render_question}'s modal
+      # block -- the human keeps whatever they were doing and drains at their
+      # own pace (/inbox here, or the nvim lain://inbox buffer).
+      def render_arrival(question)
+        @inbox.arrival(question)
+      end
+
+      # I6: the TTY-only drain. Lists every pending item (sender, age,
+      # question), reads ONE answer, and yields it to the block when the human
+      # actually typed one -- resolution stays the caller's (AskHuman#reply is
+      # the Repl's seam, never this class's). `reader:` is injectable for the
+      # same reason the Repl routes replies through the conductor's
+      # read_reply: while a countdown ticker owns the bottom line, a bare
+      # prompt read would race it for stdin (see exe/lain's approval_surface
+      # comment); specs and direct callers get the plain prompt.
+      def drain_inbox(items, reader: method(:prompt), &on_answer)
+        @inbox.drain(items, reader:, &on_answer)
       end
 
       # One countdown tick (T21): render remaining time + offered keys on the
@@ -386,6 +406,60 @@ module Lain
         end
 
         def warm?(deadline) = deadline > @clock.call
+      end
+
+      # I6's inbox collaborator: the arrival note and the /inbox drain
+      # listing. Split out of TTY proper for the same reason {Warmth} and
+      # {Countdown} are -- a separate responsibility, one collaborator each --
+      # and nested, not a new file, because the card scopes I6's TTY half to
+      # `tty.rb` alone. Presentation only: the reply RESOLUTION stays with the
+      # caller's block (AskHuman#reply is the Repl's seam).
+      class Inbox
+        # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
+        def initialize(output:, pastel:, clock:)
+          @output = output
+          @pastel = pastel
+          @clock = clock
+        end
+
+        # One line, never {TTY#render_question}'s modal block.
+        def arrival(question)
+          @output.puts(@pastel.yellow("? #{question}  (/inbox to answer)"))
+          @output.flush
+        end
+
+        # List, read one answer through `reader`, yield it when non-empty.
+        # An empty inbox says so and never prompts.
+        def drain(items, reader:)
+          return render_empty if items.empty?
+
+          items.each { |item| @output.puts(line_for(item)) }
+          @output.flush
+          answer = reader.call("human> ").to_s
+          yield answer unless answer.empty?
+        end
+
+        private
+
+        def render_empty
+          @output.puts(@pastel.dim("(no questions pending)"))
+          @output.flush
+        end
+
+        # Sender and age lead so a glance answers "who is stuck, and for how
+        # long" before the question itself is read.
+        def line_for(item)
+          "#{@pastel.yellow(item.from.to_s[0, 19])} #{@pastel.dim(age_of(item.asked_at))}  #{item.question}"
+        end
+
+        # Coarse on purpose: the inbox answers "how stale", not "when exactly".
+        def age_of(asked_at)
+          seconds = (@clock.call - asked_at).to_i
+          return "#{seconds}s" if seconds < 60
+          return "#{seconds / 60}m" if seconds < 3600
+
+          "#{seconds / 3600}h"
+        end
       end
 
       # T21's countdown collaborator: renders the status line, owns the

@@ -119,14 +119,36 @@ module Lain
         !@pending.nil? && !@pending.resolved?
       end
 
+      # The delivery-commit consumption seam (I6, ruled): the digests of every
+      # question whose answer has passed the sync gate since the last
+      # hand-over, then cleared. The Agent's tool_result commit cites these as
+      # causal parents -- the :turn edge that is the ONLY consumption
+      # {Event::Projection#pending} counts (a reply :message alone never
+      # retires its question). Handed over exactly once because the edge
+      # belongs to the one commit that delivers the answer; an {#ask}/{#reply}
+      # pair that never passed {#perform} contributes nothing, since no
+      # tool_result delivers it.
+      #
+      # @return [Array<String>] the answered questions' digests, in ask order
+      def take_answered_questions
+        answered = @answered_questions.to_a
+        @answered_questions = nil
+        answered
+      end
+
       protected
 
       # The sync gate: emit the question, then await the answer and return it as
       # the tool_result. Awaiting parks this fiber until {#reply} resolves the
-      # promise; a reply already in hand returns at once.
+      # promise; a reply already in hand returns at once. The await returning
+      # means THIS tool_result carries the answer into the conversation, so Q's
+      # digest is remembered for the delivery commit to cite (see
+      # {#take_answered_questions}).
       def perform(input, _invocation)
         promise = ask(input.question)
-        Tool::Result.ok(promise.await)
+        answer = promise.await
+        (@answered_questions ||= []) << @last_question.digest
+        Tool::Result.ok(answer)
       end
 
       private

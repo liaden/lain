@@ -128,6 +128,57 @@ RSpec.describe "Lain::Agent cancellation" do
     end
   end
 
+  # I6 review fix: the exactly-once consumption edge holds by construction --
+  # Async::Stop escapes `rescue StandardError`, and AskHuman#perform appends
+  # the hand-over only AFTER promise.await returns -- but nothing pinned it.
+  # This parks a stop exactly inside the await and pins the no-drop /
+  # no-double-cite property: nothing appended, nothing cited, and a resumed
+  # exchange cites ONLY its own question. (Verified red by mutation: appending
+  # the digest BEFORE the await makes the resumed delivery cite the cancelled
+  # question and this example fail -- see the I6 handback.)
+  describe "a stop raised while ask_human awaits the human (I6)" do
+    it "appends no hand-over, cites no turn, and a resumed exchange cites only its own question" do
+      agent = nil
+      ask = Lain::Tools::AskHuman.new(parent: -> { agent.timeline })
+      provider = Lain::Provider::Mock.new(responses: [
+                                            tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
+                                            tool_response(["tu_2", "ask_human", { "question" => "which port?" }]),
+                                            text_response("done")
+                                          ])
+      agent = Lain::Agent.new(provider:, toolset: Lain::Toolset.new([ask]), context:)
+
+      Sync do |task|
+        child = task.async { agent.ask("hi") }
+        expect(ask.pending?).to be(true) # ran synchronously up to the await -- parked inside it
+        cancelled = ask.last_question
+        agent.budget.interrupt(child)
+        child.wait
+
+        # The stop escaped the await BEFORE the hand-over append: nothing is
+        # held for a later commit to claim, and no committed turn cites the
+        # question whose answer never arrived.
+        expect(ask.take_answered_questions).to eq([])
+        expect(agent.timeline.to_a.flat_map(&:causal_parents)).to eq([])
+
+        # Resume-able: a fresh ask completes and its delivery cites ONLY its
+        # own question -- the cancelled Q was neither dropped into a phantom
+        # cite nor double-cited later.
+        run = task.async { agent.ask("go on") }
+        ask.reply("5432")
+        run.wait
+
+        deliveries = agent.timeline.to_a.select { |turn| turn.causal_parents.any? }
+        expect(deliveries.size).to eq(1)
+        expect(deliveries.first.causal_parents).to eq([ask.last_question.digest])
+        expect(deliveries.first.causal_parents).not_to include(cancelled.digest)
+        # And the record stays honest: the cancelled question is still pending
+        # in the human's projection -- unanswered, never claimed as consumed.
+        log = agent.timeline.to_a + [cancelled, ask.last_question, ask.last_answer]
+        expect(Lain::Event::Projection.new(log).pending("human").to_a.map(&:digest)).to eq([cancelled.digest])
+      end
+    end
+  end
+
   describe "the Timeline after a torn-commit attempt" do
     it "stays deeply frozen and shareable -- the interrupt left no mutable half-state" do
       agent, = cancel_mid_turn(park_on: 1, responses: [text_response])

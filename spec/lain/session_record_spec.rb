@@ -210,6 +210,40 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(of_type("message").first).to include("digest" => spawn.digest, "kind" => "spawn", "to" => nil)
     end
 
+    # I6: the live inbox surfaces (nvim's lain://inbox, StatusFeed) fold Q/A
+    # records off the telemetry tee, so the scribe routes its message records
+    # through an injected sink when one is given -- ROUTED, not duplicated:
+    # the tee's journal leg IS the session journal, so the record lands in the
+    # file exactly once, and each live sink sees the same record.
+    it "routes message records through an injected message_journal (a tee) with single delivery to the file" do
+      sink = []
+      tee = Lain::CLI::JournalTee.new(journal, sink)
+      routed = described_class.new(journal:, context:, toolset:, workspace:, message_journal: tee)
+      writer = Lain::Event::ChainWriter.new(observer: routed)
+
+      question = writer.put(parent, kind: :message, from: parent.correlation, to: "human",
+                                    causal_parents: [parent.head_digest], body: { "question" => "which file?" })
+
+      expect(of_type("message").size).to eq(1) # the journal got it ONCE, via the tee's journal leg
+      expect(of_type("message").first).to include("digest" => question.digest)
+      expect(sink.size).to eq(1)
+      expect(sink.first).to be_a(Lain::Telemetry::Message)
+      expect(sink.first.digest).to eq(question.digest)
+    end
+
+    # Turn records are unaffected by the routing: they are record data, not
+    # live-view telemetry, and stay on the journal directly.
+    it "keeps turn records on the session journal even when a message_journal is injected" do
+      sink = []
+      routed = described_class.new(journal:, context:, toolset:, workspace:,
+                                   message_journal: Lain::CLI::JournalTee.new(journal, sink))
+
+      routed.catch_up(timeline)
+
+      expect(of_type("turn").size).to eq(4)
+      expect(sink).to be_empty
+    end
+
     # The escalation this seam exists to close: a scribe that raises must not be
     # swallowed. The ChainWriter's pinned contract is that the raise propagates
     # AFTER the Store write lands, so the record loss is loud, never silent.

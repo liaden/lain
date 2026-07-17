@@ -137,9 +137,13 @@ module Lain
       # A resumed chat (T19) passes `resumed_from:` (the chained-header shape)
       # and `written:` (the resumed chain's turn digests) straight through to
       # the scribe -- see {SessionRecord::Scribe#initialize} for why both.
+      # `message_journal` is the tee when --nvim wrapped one (the exe's
+      # open_chronicle runs {#wrap_tee} before any wiring calls this), so Q/A
+      # message records fan to the live views while the file gets them once --
+      # see {SessionRecord::Scribe#initialize}.
       def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
-                                            resumed_from:, written:)
+                                            resumed_from:, written:, message_journal: @tee)
         self
       end
 

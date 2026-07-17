@@ -16,9 +16,12 @@ module Lain
     # Gate 2 stays with the Agent, because "all results in ONE user turn" is a
     # statement about the Timeline, not about any individual tool.
     class ToolRunner
-      def initialize(handler:, middleware: Middleware::Stack.new)
+      # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
+      # itself still routes through `handler`, never a direct tool lookup.
+      def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new)
         @handler = handler
         @middleware = middleware
+        @toolset = toolset
       end
 
       # @return [Array<Hash>] one tool_result block per tool_use, in order
@@ -27,7 +30,30 @@ module Lain
         gatherable?(uses) ? gather(uses, context) : sequential(uses, context)
       end
 
+      # One user-turn delivery (I6, ruled): the tool_result blocks PLUS the
+      # causal edges the Agent's commit cites -- the consumption edge that
+      # retires an answered question from {Event::Projection#pending}("human")
+      # (the full rule lives on {Tools::AskHuman#take_answered_questions}).
+      # Both are properties of the dispatch that just ran, which is why they
+      # are built here as one value: the tools run FIRST, since only a
+      # completed dispatch makes the hand-over readable. Toolsets with nothing
+      # to hand over yield `causal_parents: []`, so ordinary turns' recorded
+      # digests do not move.
+      #
+      # @return [Hash] {Timeline#commit} kwargs: `content:`, `causal_parents:`
+      def delivery(response, context:)
+        content = run(response, context:)
+        { content:, causal_parents: answered_questions }
+      end
+
       private
+
+      # {#delivery}'s harvest, duck-collected from whichever tools answer the
+      # hand-over message; each hands over exactly once.
+      def answered_questions
+        @toolset.select { |tool| tool.respond_to?(:take_answered_questions) }
+                .flat_map(&:take_answered_questions)
+      end
 
       # The default, order-preserving map: each tool_use resolved before the next.
       # Load-bearing for tools that make no parallelism claim -- gate 2 is an

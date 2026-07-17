@@ -62,9 +62,12 @@ module Lain
         #   into, so its ancestors are actually reachable here. Defaults to
         #   {DetachedStore}, which renders every timeline as unavailable.
         # @param session [Lain::Session] the run's live reminders source
-        def initialize(store: DetachedStore.instance, session: Session::Null.instance)
+        # @param inbox [InboxView, nil] the fourth view (I6); built over the
+        #   same store by default, injectable so a spec pins its clock
+        def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil)
           @store = store
           @session = session
+          @inbox = inbox || InboxView.new(store:)
           @last_reminders = nil
           @last_payload = nil
         end
@@ -76,14 +79,16 @@ module Lain
         # seeds the change tracking, sparing the first event a no-op re-render.
         # @return [Hash{String=>Array<String>}] buffer name => initial lines
         def initial
-          { TIMELINE => ["(no turns yet)"], WORKSPACE => workspace_update, DIFF => ["(no requests yet)"] }.compact
+          { TIMELINE => ["(no turns yet)"], WORKSPACE => workspace_update,
+            DIFF => ["(no requests yet)"] }.compact.merge(@inbox.initial)
         end
 
         # @param event [Object] one Channel event
         # @return [Hash{String=>Array<String>}] buffer name => full replacement
         #   lines, for every view this event moved -- empty when it moved none
         def updates(event)
-          { TIMELINE => timeline_update(event), WORKSPACE => workspace_update, DIFF => diff_update(event) }.compact
+          { TIMELINE => timeline_update(event), WORKSPACE => workspace_update, DIFF => diff_update(event),
+            InboxView::NAME => @inbox.update(event) }.compact
         end
 
         private

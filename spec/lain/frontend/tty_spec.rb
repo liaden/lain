@@ -349,6 +349,81 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # I6: a question ARRIVES as a one-line note -- never the modal inline block
+  # render_question prints -- so the human keeps their prompt and drains at
+  # their own pace (/inbox, or the nvim buffer).
+  describe "#render_arrival" do
+    it "renders exactly one line naming the question and pointing at /inbox" do
+      tty.render_arrival("which database should staging use?")
+
+      expect(output.string).to include("which database should staging use?")
+      expect(output.string).to include("/inbox")
+      expect(output.string.chomp).not_to include("\n")
+    end
+  end
+
+  # I6: the TTY-only drain surface. Lists what is pending (sender and age) and
+  # reads ONE answer; the resolution itself stays with the caller's block --
+  # AskHuman#reply is the Repl's seam, never the TTY's.
+  describe "#drain_inbox" do
+    let(:drain_tty) do
+      described_class.new(channel:, output:, input:, pastel: Pastel.new(enabled: false),
+                          wall_clock: -> { Time.at(1_000) })
+    end
+
+    def item(question:, from: "orchestrator", asked_at: Time.at(880))
+      Struct.new(:question, :from, :asked_at).new(question, from, asked_at)
+    end
+
+    it "lists every pending item with sender and age before prompting" do
+      input.string = "postgres\n"
+      items = [item(question: "which db?", from: "orchestrator", asked_at: Time.at(880)),
+               item(question: "deploy now?", from: "researcher", asked_at: Time.at(997))]
+
+      drain_tty.drain_inbox(items) { |_answer| nil }
+
+      expect(output.string).to include("orchestrator").and include("which db?").and include("2m")
+      expect(output.string).to include("researcher").and include("deploy now?").and include("3s")
+    end
+
+    it "yields a non-empty answer to the block -- the resolution seam" do
+      input.string = "postgres\n"
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: "which db?")]) { |answer| resolved << answer }
+
+      expect(resolved).to eq(["postgres"])
+    end
+
+    it "renders the empty note and never prompts or yields when nothing is pending" do
+      drain_tty.drain_inbox([]) { |_answer| raise "must not yield" }
+
+      expect(output.string).to include("(no questions pending)")
+      expect(output.string).not_to include("human>")
+    end
+
+    it "does not yield for an empty line or EOF" do
+      input.string = "\n"
+
+      expect { |probe| drain_tty.drain_inbox([item(question: "which db?")], &probe) }
+        .not_to yield_control
+    end
+
+    it "reads the answer through an injected reader (the conductor's read_reply seam)" do
+      prompts = []
+      reader = lambda do |prompt|
+        prompts << prompt
+        "from-conductor"
+      end
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: "which db?")], reader:) { |answer| resolved << answer }
+
+      expect(resolved).to eq(["from-conductor"])
+      expect(prompts).to eq(["human> "])
+    end
+  end
+
   # T21: the countdown status line, ticked externally (a real caller is a
   # timer thread; these specs drive it directly with an injected clock so no
   # example needs a real sleep).

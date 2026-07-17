@@ -54,6 +54,80 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  # I6 (ruled): the tool_result commit is what DELIVERS an ask_human answer
+  # back into the conversation, so that commit is the consumption edge -- the
+  # :turn whose causal_parents cite Q, which is the ONLY thing that retires Q
+  # from Projection#pending("human") (a reply :message alone never does; the
+  # rule is pinned in status_feed_spec and projection's own doc).
+  describe "ask_human consumption: the delivery commit cites the answered question" do
+    it "records Q's digest as a causal parent of the tool_result turn" do
+      a = nil
+      ask = Lain::Tools::AskHuman.new(parent: -> { a.timeline })
+      a = described_class.new(
+        provider: Lain::Provider::Mock.new(responses: [
+                                             tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
+                                             text_response("done")
+                                           ]),
+        toolset: Lain::Toolset.new([ask]), context:
+      )
+
+      Sync do |task|
+        run = task.async { a.ask("hi") }
+        # The ask ran synchronously up to its await, so the question is
+        # already pending -- no sleep, no timing race (ask_human_spec's idiom).
+        expect(ask.pending?).to be(true)
+        ask.reply("postgres")
+        run.wait
+      end
+
+      delivery = a.timeline.to_a[2]
+      expect(delivery.role).to eq("user")
+      expect(delivery.content.map { |block| block["type"] }).to eq(["tool_result"])
+      expect(delivery.causal_parents).to include(ask.last_question.digest)
+      # And the projection agrees: the delivered question is no longer pending.
+      log = a.timeline.to_a + [ask.last_question, ask.last_answer]
+      expect(Lain::Event::Projection.new(log).pending("human").to_a).to be_empty
+    end
+
+    it "cites the digest exactly once: a later tool turn carries no stale edge" do
+      a = nil
+      ask = Lain::Tools::AskHuman.new(parent: -> { a.timeline })
+      a = described_class.new(
+        provider: Lain::Provider::Mock.new(responses: [
+                                             tool_response(["tu_1", "ask_human", { "question" => "which db?" }]),
+                                             tool_response(["tu_2", "ask_human", { "question" => "and port?" }]),
+                                             text_response("done")
+                                           ]),
+        toolset: Lain::Toolset.new([ask]), context:
+      )
+
+      Sync do |task|
+        run = task.async { a.ask("hi") }
+        first_question = ask.last_question
+        ask.reply("postgres")
+        # In a reactor, sleep yields this fiber, so the resumed loop commits
+        # the first delivery and parks on the second ask before we continue.
+        sleep(0.01)
+        expect(ask.last_question).not_to eq(first_question)
+        ask.reply("5432")
+        run.wait
+
+        turns = a.timeline.to_a
+        deliveries = turns.select { |turn| turn.role == "user" && turn.causal_parents.any? }
+        expect(deliveries.size).to eq(2)
+        expect(deliveries.first.causal_parents).to eq([first_question.digest])
+        expect(deliveries.last.causal_parents).to eq([ask.last_question.digest])
+      end
+    end
+
+    it "keeps an ordinary tool turn's causal_parents empty (recorded digests unmoved)" do
+      a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response])
+      a.ask("hi")
+
+      expect(a.timeline.to_a[2].causal_parents).to eq([])
+    end
+  end
+
   describe "gate 3: a raising tool becomes an error result, and the loop continues" do
     it "reports is_error and keeps going" do
       a = agent([tool_response(["tu_1", "boom", {}]), text_response("recovered")])

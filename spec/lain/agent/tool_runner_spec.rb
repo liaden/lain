@@ -77,4 +77,70 @@ RSpec.describe Lain::Agent::ToolRunner do
     expect(seen.effect).to be_a(Lain::Effect::ToolCall)
     expect(seen[:context]).to eq(:ctx)
   end
+
+  # I6: one user-turn delivery = the tool_result blocks PLUS the consumption
+  # edges harvested from the toolset -- pinned here at the collaborator's own
+  # boundary with consume-once fakes, so the contract does not rest on
+  # agent_spec's end-to-end examples alone.
+  describe "#delivery" do
+    # The real Tools::AskHuman#take_answered_questions shape: hands its
+    # digests over exactly once, empty ever after.
+    def handover_tool(name, digests)
+      fake = Struct.new(:name).new(name)
+      queue = digests.dup
+      fake.define_singleton_method(:take_answered_questions) do
+        handed = queue.dup
+        queue.clear
+        handed
+      end
+      fake
+    end
+
+    def plain_tool(name) = Struct.new(:name).new(name)
+
+    def runner(*tools)
+      described_class.new(handler: echoing_handler, toolset: Lain::Toolset.new(tools))
+    end
+
+    it "pairs the tool_result blocks with the harvested digests as causal_parents" do
+      subject = runner(plain_tool("echo"), handover_tool("ask_human", ["blake3:q1"]))
+
+      delivery = subject.delivery(tool_response(["tu_1", "ask_human", { "question" => "q?" }]), context: nil)
+
+      expect(delivery.fetch(:content).map { |block| block["tool_use_id"] }).to eq(["tu_1"])
+      expect(delivery.fetch(:causal_parents)).to eq(["blake3:q1"])
+    end
+
+    it "harvests exactly once: the next delivery cites nothing" do
+      subject = runner(handover_tool("ask_human", ["blake3:q1"]))
+      subject.delivery(tool_response(["tu_1", "ask_human", { "question" => "q?" }]), context: nil)
+
+      second = subject.delivery(tool_response(["tu_2", "ask_human", { "question" => "again?" }]), context: nil)
+
+      expect(second.fetch(:causal_parents)).to eq([])
+    end
+
+    it "collects across every hand-over tool and ignores tools without the message" do
+      subject = runner(plain_tool("echo"), handover_tool("ask_a", ["blake3:q1"]),
+                       handover_tool("ask_b", ["blake3:q2"]))
+
+      delivery = subject.delivery(tool_response(["tu_1", "echo", {}]), context: nil)
+
+      # Toolset iterates name-sorted, so the collection order is deterministic.
+      expect(delivery.fetch(:causal_parents)).to eq(%w[blake3:q1 blake3:q2])
+    end
+
+    it "yields causal_parents: [] for a toolset with nothing to hand over (ordinary turns unmoved)" do
+      delivery = runner(plain_tool("echo")).delivery(tool_response(["tu_1", "echo", {}]), context: nil)
+
+      expect(delivery.fetch(:causal_parents)).to eq([])
+    end
+
+    it "yields causal_parents: [] under the default (empty) toolset" do
+      delivery = described_class.new(handler: echoing_handler)
+                                .delivery(tool_response(["tu_1", "echo", {}]), context: nil)
+
+      expect(delivery.fetch(:causal_parents)).to eq([])
+    end
+  end
 end
