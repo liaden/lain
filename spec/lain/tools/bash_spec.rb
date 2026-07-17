@@ -51,10 +51,36 @@ RSpec.describe Lain::Tools::Bash do
     end
   end
 
-  it "kills a command that runs past its timeout" do
-    result = tool.call({ command: "sleep 5", timeout: 1 }, invocation)
-    expect(result).to be_error
-    expect(result.content).to match(/timed out/)
+  describe "timeout" do
+    # The real process-group kill, end to end: TERM actually hits a live
+    # `sleep 5` group and mixlib reaps it. The injected factory only shortens
+    # the TERM->KILL grace -- mixlib-shellout hardcodes `sleep 3` inside
+    # reap_errant_child with no option to configure it, and 3 idle seconds
+    # would dominate the whole suite's runtime.
+    it "kills a command that runs past its timeout" do
+      short_grace = lambda do |*args, **opts|
+        Mixlib::ShellOut.new(*args, **opts).tap do |shell_out|
+          def shell_out.sleep(_grace) = super(0.1)
+        end
+      end
+
+      result = described_class.new(shell_out_factory: short_grace)
+                              .call({ command: "sleep 5", timeout: 1 }, invocation)
+      expect(result).to be_error
+      expect(result.content).to match(/timed out/)
+    end
+
+    # The rescue->Result mapping in isolation: no subprocess, no clock.
+    it "maps CommandTimeout to an error Result naming the timeout" do
+      timed_out = Class.new do
+        def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s"
+      end
+      tool = described_class.new(shell_out_factory: ->(*, **) { timed_out.new })
+
+      result = tool.call({ command: "sleep 5", timeout: 7 }, invocation)
+      expect(result).to be_error
+      expect(result.content).to match(/timed out after 7s/)
+    end
   end
 
   describe "attributed live streaming" do

@@ -37,6 +37,15 @@ module Lain
 
       input_model Input
 
+      # The subprocess machinery is injected as a factory, not constructed
+      # inline: specs substitute a ShellOut whose TERM->KILL grace is short
+      # (mixlib-shellout hardcodes `sleep 3` in reap_errant_child, with no
+      # option) without giving up the real process-group kill.
+      def initialize(shell_out_factory: Mixlib::ShellOut.public_method(:new))
+        super()
+        @shell_out_factory = shell_out_factory
+      end
+
       def name = "bash"
 
       def description
@@ -67,7 +76,7 @@ module Lain
       private
 
       def build_shell_out(input, invocation)
-        Mixlib::ShellOut.new(
+        @shell_out_factory.call(
           input.command,
           cwd: input.cwd,
           timeout: input.timeout || DEFAULT_TIMEOUT,
