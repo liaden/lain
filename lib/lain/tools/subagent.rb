@@ -93,9 +93,10 @@ module Lain
       def initialize(provider:, context_factory:, toolset:, policy:, parent:,
                      journal: Channel::Null.instance, budget: Agent::Budget.new,
                      max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null,
-                     observer: Event::ChainWriter::Null.new, supervisor: Supervisor::Null)
+                     observer: Event::ChainWriter::Null.new, supervisor: Supervisor::Null,
+                     persona: Role::Persona::Null)
         super()
-        @builder = ChildBuilder.new(provider:, context_factory:, toolset:, policy:, journal:, budget:)
+        @builder = ChildBuilder.new(provider:, context_factory:, toolset:, policy:, journal:, budget:, persona:)
         @parent = parent
         @journal = journal
         @observer = observer
@@ -285,20 +286,23 @@ module Lain
       class ChildBuilder
         attr_reader :policy
 
-        def initialize(provider:, context_factory:, toolset:, policy:, journal:, budget:)
+        def initialize(provider:, context_factory:, toolset:, policy:, journal:, budget:,
+                       persona: Role::Persona::Null)
           @provider = provider
           @context_factory = context_factory
           @toolset = toolset
           @policy = policy
           @journal = journal
           @budget = budget
+          @persona = persona
         end
 
         # The constructor kwargs a descended copy re-injects ({Subagent#descend}):
-        # spawn wiring is shared config, so every copy gets it verbatim.
+        # spawn wiring is shared config, so every copy gets it verbatim -- the
+        # persona included, so a grandchild renders the same role framing.
         def config
           { provider: @provider, context_factory: @context_factory, toolset: @toolset,
-            policy: @policy, journal: @journal, budget: @budget }
+            policy: @policy, journal: @journal, budget: @budget, persona: @persona }
         end
 
         # A fresh child Agent over the base Timeline the prefix strategy chose,
@@ -349,11 +353,22 @@ module Lain
         # record.
         def spawn_agent(parent, union, allowed)
           Agent.new(
-            provider: @provider, context: @policy.prefix.child_context(@context_factory.call, journal: @journal),
+            provider: @provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
             timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
             session: Session.new, budget: @budget, journal: @journal
           )
+        end
+
+        # The child's Context, in two composed reshapes over the factory's: the
+        # PERSONA first (its system becomes the role prelude segments -- a Null
+        # persona is identity, so a role-less spawn is untouched), then the
+        # PREFIX strategy (sibling_template's shared tail, identity on the other
+        # arms). Persona is the inner reshape so the role's marked bulk is what a
+        # fresh child renders; a strategy that rewrites system sees the persona'd
+        # context, not the bare factory one.
+        def child_context
+          @policy.prefix.child_context(@persona.child_context(@context_factory.call), journal: @journal)
         end
 
         # `schema` renders the attenuated set, so a plain executor over it

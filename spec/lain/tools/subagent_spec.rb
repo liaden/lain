@@ -361,6 +361,44 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- T-D1: the injected role persona reshapes the child system (PS-3) ------
+  #
+  # The persona is a NEW injected collaborator ({Role::Persona}); its Null
+  # default keeps every existing spawn path byte-identical. The full persona
+  # acceptance (segment sharing, override reach, fused-String failure) lives in
+  # spec/lain/role_prelude_wiring_spec.rb; these two pin the seam's presence and
+  # its Null default here, beside the tool.
+  describe "the injected role persona (PS-3)" do
+    it "defaults to Null: with no persona wired the child's system is unchanged" do
+      provider = mock(text_response("done"))
+      build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      # child_context carries system: nil, and the Null persona is identity.
+      expect(provider.last_request.system).to be_nil
+    end
+
+    it "reshapes the child system to the role prelude segments when a persona is wired" do
+      Dir.mktmpdir do |root|
+        slots = Lain::Prompt::Slots.load(root:)
+        role = Lain::Role::Catalog.fetch(:researcher)
+        read_union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new])
+        provider = mock(text_response("done"))
+        tool = described_class.new(
+          provider:, context_factory: -> { child_context }, toolset: read_union,
+          policy: role.spawn_policy, parent:, persona: Lain::Role::Persona.new(role:, slots:)
+        )
+
+        tool.call({ "prompt" => "go" }, invocation)
+
+        system = provider.last_request.system
+        expect(system.size).to eq(2)
+        expect(system.first["text"]).to eq(slots.render("system"))
+        expect(system.first["cache"]).to be(true)
+        expect(system.last["text"]).to eq(slots.render_role(:researcher))
+      end
+    end
+  end
+
   # ---- Depth ceiling (escalation-trigger guard) -----------------------------
 
   describe "the spawn-depth ceiling" do

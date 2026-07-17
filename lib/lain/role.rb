@@ -61,6 +61,50 @@ module Lain
     def prelude(slots:)
       prelude_segments(slots:).join("\n\n")
     end
+
+    # The factory Context reshaped into this role's persona, ready to be the
+    # spawned child's Context. Its system BECOMES the prelude segments as two
+    # blocks -- segment 0 (the shared bulk) cache-marked so heterogeneous
+    # siblings share the warm tools-plus-bulk prefix (CE-4), segment 1 (the
+    # role tail) unmarked after the breakpoint -- REPLACING the factory's own
+    # system, never appending: the bulk already IS `slots.render("system")`
+    # (prelude_segments position 0), so appending to a factory whose system is
+    # that same render would double the bulk (the RES double-bulk trap). Model,
+    # max_tokens, stream, and `extra` ride through unchanged, so only the
+    # persona is added.
+    def child_context(context, slots:)
+      bulk, tail = prelude_segments(slots:)
+      Context.new(
+        model: context.model, max_tokens: context.max_tokens, stream: context.stream, extra: context.extra,
+        system: [{ "type" => "text", "text" => bulk, "cache" => true }, { "type" => "text", "text" => tail }]
+      )
+    end
+  end
+
+  # Reopened rather than defined in the `Data.define ... do` block above: a
+  # constant declared inside that block scopes to the enclosing module, not the
+  # Data class (the trap {Request::SYSTEM_PREFIX} documents), so `Persona` would
+  # land as `Lain::Persona`, not `Role::Persona`.
+  class Role
+    # A {Role} paired with the session {Prompt::Slots}, so a spawn seam can
+    # reshape a child's factory Context into the role persona
+    # ({Role#child_context}) without itself carrying either dependency. The seam
+    # holds ONE injected collaborator and asks it `child_context`, never
+    # branching on whether a role is present -- {Persona::Null} answers the same
+    # message with the factory context untouched.
+    Persona = Data.define(:role, :slots) do
+      def child_context(context) = role.child_context(context, slots:)
+    end
+
+    # Reopened (the effect/handler idiom) to hold the Null identity beside the
+    # value: no role wired means the child keeps the factory Context
+    # byte-for-byte, so every pre-RES spawn path renders identically. Frozen --
+    # deep immutability is the shareable-value discipline.
+    class Persona
+      Null = Class.new do
+        def child_context(context) = context
+      end.new.freeze
+    end
   end
 end
 
