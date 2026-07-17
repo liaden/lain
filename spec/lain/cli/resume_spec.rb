@@ -29,9 +29,15 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  def open_header(resumed_from: nil)
+  # `provider:` merges in only when given -- absence is no key, never a nil
+  # value, the same discipline `resumed_from` already follows here: an old,
+  # pre-RES2 header genuinely has no "provider" key at all, not a nil-valued
+  # one, and the fixture must be able to say that.
+  def open_header(resumed_from: nil, provider: nil)
     header = Lain::SessionRecord.header(context: recorded_context, toolset:, head: nil)
-    resumed_from.nil? ? header : header.merge("resumed_from" => resumed_from)
+    header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
+    header = header.merge("provider" => provider) unless provider.nil?
+    header
   end
 
   def turn_records(timeline) = timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
@@ -44,8 +50,9 @@ RSpec.describe Lain::CLI::Resume do
     path
   end
 
-  def write_closed(name, timeline, extra: [])
-    write_session(name, [open_header] + turn_records(timeline) + extra + [closed_record(timeline.head_digest)])
+  def write_closed(name, timeline, extra: [], provider: nil)
+    write_session(name,
+                  [open_header(provider:)] + turn_records(timeline) + extra + [closed_record(timeline.head_digest)])
   end
 
   describe "restoring the whole conversation (a closed session of three turns)" do
@@ -431,6 +438,38 @@ RSpec.describe Lain::CLI::Resume do
 
     it "stays silent when they agree" do
       expect(resume.call(model: "recorded-model").notices).to be_empty
+    end
+  end
+
+  # RES2: the same LOUD-and-continue policy T19 already gave `model`, extended
+  # to the provider the header now names as data.
+  describe "the provider-mismatch notice (LOUD, then continue with the flags)" do
+    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "anthropic") }
+
+    it "names both providers when the current flags disagree with the recording" do
+      notices = resume.call(provider: "ollama").notices
+      expect(notices.join).to include("anthropic", "ollama")
+    end
+
+    it "stays silent when they agree" do
+      expect(resume.call(provider: "anthropic").notices).to be_empty
+    end
+
+    it "stays silent when the current flags name no provider" do
+      expect(resume.call.notices).to be_empty
+    end
+  end
+
+  # RES2: a header written before this field existed carries no "provider" key
+  # at all -- resume must still proceed (never a refusal), naming the gap.
+  describe "a header recorded with no provider field (old-caller compatibility)" do
+    before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
+
+    it "proceeds with a 'provider unrecorded' notice rather than a refusal" do
+      result = resume.call(provider: "ollama")
+
+      expect(result.timeline.head_digest).not_to be_nil
+      expect(result.notices.join).to include("provider unrecorded", "ollama")
     end
   end
 

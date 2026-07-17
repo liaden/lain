@@ -40,10 +40,13 @@ module Lain
       #   project's session dir
       # @param model [String, nil] the model the current flags resolved to,
       #   compared against the recording for the mismatch notice
+      # @param provider [String, nil] the provider name ({CLI::Backend}'s
+      #   naming, e.g. "anthropic") the current `--provider` flag resolved to,
+      #   compared against the recorded header for the mismatch notice (RES2)
       # @return [Result]
       # @raise [Refusal]
-      def call(selector: nil, model: nil)
-        rebuild(Selector.new(dir:).call(selector), model)
+      def call(selector: nil, model: nil, provider: nil)
+        rebuild(Selector.new(dir:).call(selector), model, provider)
       end
 
       private
@@ -60,12 +63,13 @@ module Lain
       # changes to either class: both derive from `recording.timeline`, which
       # now legitimately reflects a file that IS closed, anchored at the
       # salvaged turn.
-      def rebuild(path, model)
+      def rebuild(path, model, provider)
         recording = load_recording(path)
         outcome = salvage(path, recording)
         recording = load_recording(path) if outcome.recovered?
         refuse_mid_tool!(path, recording)
-        result(path, recording, SessionRecord::Replay.new(chain_entries(path)), model, outcome)
+        result(path, recording, SessionRecord::Replay.new(chain_entries(path)), outcome,
+               MismatchNotices.new(recording:, path:).call(model:, provider:))
       rescue Bench::Session::Corrupt => e
         # Corrupt's own message names digests and reasons; only this layer
         # still holds the path (Bench::CLI#load_session's precedent).
@@ -101,10 +105,10 @@ module Lain
       # `recording.memory` (file-scoped -- T14's stated Loader limit) is
       # deliberately unused: the recorder must cover the WHOLE chain, so it is
       # `replay.memory` over the chain's concatenated records instead.
-      def result(path, recording, replay, model, outcome)
+      def result(path, recording, replay, outcome, mismatches)
         Result.new(file: File.basename(path), timeline: recording.timeline,
                    session: replay.session, recorder: replay.memory,
-                   open: recording.open?, notices: notices(path, recording, model, outcome))
+                   open: recording.open?, notices: notices(path, recording, outcome, mismatches))
       end
 
       # The Loader's injected filesystem duck (its contract is handed-records,
@@ -175,8 +179,10 @@ module Lain
       # notice here; a {SessionRecord::Salvage::Recovered} outcome also
       # leaves `recording` closed by the time this runs (see {#rebuild}'s
       # reload), so `open_notice` correctly stops firing once recovery lands.
-      def notices(path, recording, model, outcome)
-        [open_notice(path, recording), outcome.notice, model_notice(recording, model)].compact
+      # `mismatches` is {MismatchNotices}'s already-compacted model/provider
+      # pair, spread in rather than recomputed here.
+      def notices(path, recording, outcome, mismatches)
+        [open_notice(path, recording), outcome.notice, *mismatches].compact
       end
 
       def open_notice(path, recording)
@@ -184,23 +190,15 @@ module Lain
 
         "#{File.basename(path)} was not gracefully closed; resuming from its last verified turn"
       end
-
-      # The mismatch policy is LOUD-and-continue (the card's ruling): name
-      # both, run with the flags. The recorded header is display-only here.
-      def model_notice(recording, model)
-        recorded = recording.context.model
-        return if model.nil? || model == recorded
-
-        "recorded with model #{recorded}; continuing with #{model} (the current flags win)"
-      end
     end
   end
 end
 
-# Salvager and Selector reopen Resume to nest themselves (see Salvager's own
-# class comment for why separate files rather than a separate cop-loosening):
-# #salvage and #call send them messages, so they read as the dependent units
-# even though both resolve at runtime, the same ordering note
-# {Bench::Session}'s own require block makes.
+# Salvager, Selector, and MismatchNotices reopen Resume to nest themselves
+# (see Salvager's own class comment for why separate files rather than a
+# separate cop-loosening): #salvage, #call, and #call send them messages, so
+# they read as the dependent units even though all three resolve at runtime,
+# the same ordering note {Bench::Session}'s own require block makes.
 require_relative "resume/salvager"
 require_relative "resume/selector"
+require_relative "resume/mismatch_notices"

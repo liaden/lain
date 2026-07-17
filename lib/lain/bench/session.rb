@@ -162,9 +162,15 @@ module Lain
         # @param context [Lain::Context] the context the run rendered under
         # @param toolset [#to_schema] the toolset in effect at record time
         # @param workspace [Lain::Workspace] the workspace in effect at record time
+        # @param provider [String, nil] the provider name (CLI::Backend#provider's
+        #   naming, e.g. "anthropic") the run dispatched through, recorded as
+        #   pure data beside the model -- never constantized, the same idiom
+        #   `context_class` already sets. Optional (default nil) so an EXISTING
+        #   caller that has not threaded a provider name through yet still
+        #   writes a valid header (RES2's additive-field constraint).
         # @return [#<<] the journal
-        def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty)
-          journal << header_record(timeline, context, toolset, workspace)
+        def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil)
+          journal << header_record(timeline, context, toolset, workspace, provider)
           timeline.to_a.each { |turn| journal << turn_record(turn) }
           journal
         end
@@ -189,17 +195,29 @@ module Lain
         end
 
         # `head` anchors the whole turn chain (see the class note on
-        # truncation); `context_class` is pure data -- {Loader} never
-        # constantizes it, it names what rendered the run for the record's
-        # sake.
-        def header_record(timeline, context, toolset, workspace)
-          {
+        # truncation); `context_class` and `provider` are both pure data --
+        # {Loader} never constantizes either, they name what rendered and what
+        # dispatched the run for the record's sake. `provider` rides beside
+        # `model` rather than inside `context` because it genuinely is not one
+        # of {Context}'s constructor inputs (see the sibling guard spec) --
+        # the choice of backend and the render pipeline are separate concerns
+        # that only happen to be pinned by the same header.
+        #
+        # `provider` merges in only when given, {SessionRecord.header}'s own
+        # `resumed_from` idiom: an existing caller that has not threaded a
+        # provider name through yet (RunRecorder, VarianceFixtures) must keep
+        # writing byte-identical headers, so absence is no key, never a nil
+        # value -- proven by the committed variance fixtures' own
+        # byte-identity regeneration spec.
+        def header_record(timeline, context, toolset, workspace, provider)
+          record = {
             "type" => HEADER_TYPE, "context_class" => context.class.name,
             "model" => context.model, "max_tokens" => context.max_tokens,
             "system" => context.system, "stream" => context.stream, "extra" => context.extra,
             "head" => timeline.head_digest,
             "tools" => toolset.to_schema, "reminders" => workspace.reminders
           }
+          provider.nil? ? record : record.merge("provider" => provider)
         end
 
         # The body fields plus the render edge -- exactly what {Loader#timeline}

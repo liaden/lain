@@ -69,9 +69,34 @@ RSpec.describe Lain::Bench::Session do
     it "records every Context constructor input, so a new kwarg cannot be dropped in silence" do
       header = parsed_records.find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
-      recorded = header.keys - %w[type context_class head tools reminders ts]
+      # `provider` is deliberately NOT a Context constructor input (RES2) -- the
+      # provider choice lives beside the context, never inside it.
+      recorded = header.keys - %w[type context_class head tools reminders ts provider]
       expect(recorded.map(&:to_sym))
         .to match_array(Lain::Context.instance_method(:initialize).parameters.map(&:last))
+    end
+
+    # RES2: the header names its provider, as pure data beside the model --
+    # never constantized, the same idiom `context_class` already sets. The
+    # kwarg is optional so every EXISTING caller (RunRecorder, VarianceFixtures)
+    # keeps writing valid headers without threading a new argument through.
+    it "records the given provider name as data alongside the model" do
+      journal_io2 = StringIO.new
+      other_journal = Lain::Journal.new(io: journal_io2)
+      described_class.write(other_journal, timeline: agent.timeline, context:, toolset:, workspace:,
+                                           provider: "anthropic")
+      header = journal_io2.string.each_line.map { |line| JSON.parse(line) }.find { |r| r["type"] == "session" }
+      expect(header.fetch("provider")).to eq("anthropic")
+      expect(header.fetch("model")).to eq("claude-opus-4-8")
+    end
+
+    # No key, never a nil value: an EXISTING caller (RunRecorder,
+    # VarianceFixtures) that has not threaded a provider name through yet must
+    # keep writing byte-identical headers, the same discipline
+    # `SessionRecord.header`'s `resumed_from` already follows.
+    it "writes no provider key at all when the caller does not supply one (old-caller compatibility)" do
+      header = parsed_records.find { |record| record["type"] == "session" }
+      expect(header).not_to have_key("provider")
     end
 
     it "appends one turn record per turn, root to head, payload plus digest" do
