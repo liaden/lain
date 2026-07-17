@@ -199,7 +199,8 @@ class LainCLI < Thor
   def run_chat(tty:, agent:, session:, wiring:)
     @conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: options[:grace])
     repl = Repl.new(agent:, tty:, ask_human: wiring.ask_human,
-                    questions: wiring.questions, chronicle:, conductor: @conductor)
+                    questions: wiring.questions, chronicle:, conductor: @conductor,
+                    approvals: wiring.approvals)
     @conductor.guard { repl.run(nvim: nvim_views, store: agent.timeline.store, session:) }
   end
 
@@ -232,7 +233,7 @@ class LainCLI < Thor
   # back the built Agent, and exposes @ask_human/@questions so #run_chat can
   # give the Repl the reply path this object wired.
   class Wiring
-    attr_reader :ask_human, :questions
+    attr_reader :ask_human, :questions, :approvals
 
     def initialize(options:, chronicle:)
       @options = options
@@ -332,8 +333,19 @@ class LainCLI < Thor
     # ResponseWal when journaling, the Null spool under --no-journal.
     def spooled_provider(backend) = backend.provider(spool: chronicle.spool)
 
+    # I4: the queue replaces the inline y/N prompt as Gate's policy -- the
+    # gated fiber parks on it, and the TTY surface answers from its own Repl
+    # fiber. --yolo stays ApproveAll (never a queue); DenyAll stays Gate's
+    # own no-frontend default. Under --no-journal, decisions journal to the
+    # null device: the operator declined the record, not the gate.
     def approval_policy
-      options[:yolo] ? Lain::Effect::Handler::Gate::ApproveAll.new : Lain::Frontend::ApprovalPolicy.new
+      return Lain::Effect::Handler::Gate::ApproveAll.new if options[:yolo]
+
+      @approvals = Lain::Approval::Queue.new(journal: approval_journal)
+    end
+
+    def approval_journal
+      chronicle.telemetry_kwargs.fetch(:journal) { Lain::Journal.new(io: File.open(File::NULL, "ab")) }
     end
   end
 
@@ -348,7 +360,7 @@ class LainCLI < Thor
     # is the repl phase: a Middleware::Stack wrapping EACH command typed at
     # the prompt, the seam a future history/logging/confirmation phase lands
     # on; an honest pass-through by default.
-    def initialize(agent:, tty:, ask_human:, questions:, chronicle:, conductor:,
+    def initialize(agent:, tty:, ask_human:, questions:, chronicle:, conductor:, approvals: nil,
                    middleware: Lain::Middleware::Stack.new)
       @agent = agent
       @tty = tty
@@ -357,6 +369,23 @@ class LainCLI < Thor
       @questions = questions
       @chronicle = chronicle
       @conductor = conductor
+      @approvals = approvals
+      @approval_surface = approval_surface
+    end
+
+    # WHY the reader routes through the conductor: a bare `@input.gets` in
+    # the surface fiber races answer_loop's Reline read for the one stdin,
+    # escapes the conductor's countdown-ticker suppression (read_reply
+    # exists precisely so the ticker's render + key-read pause while a
+    # human types), and -- being a thread-blocking, non-scheduler read --
+    # freezes the whole reactor, so the queue's fail-closed timer could
+    # NEVER fire while the prompt sat unanswered. read_reply parks the
+    # fiber instead: prompts serialize with ask_human replies, and an
+    # unattended prompt still times out to denial.
+    def approval_surface
+      Lain::Frontend::ApprovalPolicy.new(
+        reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }
+      )
     end
 
     # No next/break: the loop exit is text own truthiness, reassigned each
@@ -400,10 +429,10 @@ class LainCLI < Thor
     # no-question path.
     def respond(text)
       Sync do |task|
-        replier = answer_loop(task)
+        surfaces = [answer_loop(task), approval_loop(task)]
         deliver(@conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response)
       ensure
-        replier&.stop
+        surfaces&.each { |surface| surface&.stop }
       end
     rescue Lain::Error => e
       record_interruption
@@ -440,6 +469,13 @@ class LainCLI < Thor
           @ask_human.reply(@conductor.read_reply(@tty, "human> ").to_s)
         end
       end
+    end
+
+    # The approval surface, sibling to answer_loop for the same reason: the
+    # gated fiber parks inside tool dispatch, so its answerer must be a
+    # concurrent fiber in the same reactor. Nil under --yolo (no queue).
+    def approval_loop(task)
+      @approvals && task.async { @approval_surface.watch(@approvals) }
     end
 
     def farewell?(text)
