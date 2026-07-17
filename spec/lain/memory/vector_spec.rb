@@ -1,5 +1,14 @@
 # frozen_string_literal: true
 
+# An #embed-only duck with no #model_id, mirroring the shape of
+# Bench::Sweep::Embeddings (the committed-fixture stand-in Bench::Sweep hands
+# to Vector as its `embedder:`) -- named, not `Class.new`, because the
+# fallback-naming law below asserts against #class.name, which is nil for an
+# anonymous class.
+class VectorSpecEmbedOnlyDuck
+  def embed(texts) = texts.map { [1.0, 0.0] }
+end
+
 # Memory::Vector is a Manifest::Hit-duck search index (T10) over an injected
 # Embedder (the batch #embed(texts) -> [[Float]] duck): items are embedded
 # ONCE at construction -- Bm25's build-once shape, bm25.rb:32-42 -- and a
@@ -39,7 +48,7 @@ RSpec.describe Lain::Memory::Vector do
 
   describe "#search" do
     # Scenario: nearest neighbor ranks first
-    it "ranks the item nearest the query first, why naming the cosine score and embedder id" do
+    it "ranks the item nearest the query first, why naming the cosine score and the model id" do
       x = item("x", "renal biopsy of the kidney")
       decoy = item("decoy", "unrelated liver enzyme panel")
       embedder = embedder_over("renal biopsy kidney unrelated liver enzyme panel")
@@ -50,7 +59,50 @@ RSpec.describe Lain::Memory::Vector do
       expect(hits.first.id).to eq("x")
       expect(hits.first.why).to include("cosine")
       expect(hits.first.why).to match(/\d\.\d+/)
-      expect(hits.first.why).to include(embedder.class.name)
+      expect(hits.first.why).to include(embedder.model_id)
+    end
+
+    # Scenario: why names the model (T10 follow-up: Vector's why used to name
+    # only the embedder's Ruby class, never which model actually ran).
+    it "names the embedding model id, not just the embedder class, for a Vector over Embedder::Ollama" do
+      transport = Class.new do
+        define_method(:embed_post) do |payload|
+          Struct.new(:body).new({ "embeddings" => Array.new(payload[:input].size) { [1.0, 0.0] } })
+        end
+      end.new
+      embedder = Lain::Embedder::Ollama.new(model: "nomic-embed-text", transport:)
+      index = index_over(item("a", "renal biopsy of the kidney"))
+
+      hit = described_class.new(index:, embedder:).search("kidney biopsy").first
+
+      expect(hit.why).to include("nomic-embed-text")
+      expect(hit.why).not_to include(embedder.class.name)
+    end
+
+    # Scenario: the static embedder is honest
+    it "names Embedder::Static as a deterministic fixture in #why, not a model that never ran" do
+      embedder = embedder_over("renal biopsy kidney")
+      index = index_over(item("a", "renal biopsy of the kidney"))
+
+      hit = described_class.new(index:, embedder:).search("kidney biopsy").first
+
+      expect(hit.why).to include(Lain::Embedder::Static::MODEL_ID)
+      expect(hit.why).not_to include(embedder.class.name)
+    end
+
+    # Guards Bench::Sweep's committed-fixture arm: Sweep::Embeddings is an
+    # #embed-only duck (never a Static/Ollama instance, and never given a
+    # #model_id), so its #why must keep naming it by class exactly as before
+    # #model_id existed -- the sweep report's recall-tokens column reads #why
+    # text, and this is what keeps the committed sweep bytes stable across
+    # this change (T10 follow-up; see the escalation note on the task card).
+    it "falls back to the embedder's own class name when it declares no #model_id" do
+      duck = VectorSpecEmbedOnlyDuck.new
+      index = index_over(item("a", "renal biopsy of the kidney"))
+
+      hit = described_class.new(index:, embedder: duck).search("kidney biopsy").first
+
+      expect(hit.why).to include("VectorSpecEmbedOnlyDuck")
     end
 
     # Scenario: determinism and ties

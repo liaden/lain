@@ -69,6 +69,11 @@ module Lain
         raise wrap_error(e)
       end
 
+      # @return [String] the pinned embed model, e.g. "nomic-embed-text".
+      def model_id
+        @model
+      end
+
       private
 
       def payload_for(texts)

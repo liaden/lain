@@ -24,6 +24,16 @@ module Lain
     def embed(_texts)
       raise NotImplementedError, "#{self.class} must implement #embed"
     end
+
+    # @return [String] the model identity a consumer's #why should name --
+    # Ollama's pinned model id, Static's own honest "not a real model" label --
+    # never just this Ruby class's name, which names the backend but not what
+    # it ran (T10 follow-up: Memory::Vector#why used to name only the class).
+    # Abstract like {#embed}: every concrete backend states its own identity
+    # rather than inheriting a guess.
+    def model_id
+      raise NotImplementedError, "#{self.class} must implement #model_id"
+    end
   end
 end
 

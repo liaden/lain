@@ -15,6 +15,12 @@ module Lain
     class Static < Embedder
       TOKEN = /[a-z0-9]+/
 
+      # Names itself honestly rather than posing as a model: nothing named
+      # "nomic-embed-text" or similar ever produced this vector, and a sweep
+      # report or a Hit#why that blurred the two would misrepresent which arm
+      # ran.
+      MODEL_ID = "deterministic-fixture"
+
       # @param vocabulary [Array<String>] the fixed basis; de-duplicated (a
       #   repeated term must not inflate the dimension) with first-seen order kept
       #   so the vector's axes are stable and readable.
@@ -27,6 +33,10 @@ module Lain
         raise Error, "embed takes an Array of texts, got #{texts.class}" unless texts.is_a?(Array)
 
         texts.map { |text| vectorize(text) }
+      end
+
+      def model_id
+        MODEL_ID
       end
 
       private

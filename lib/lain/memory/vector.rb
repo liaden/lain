@@ -25,10 +25,14 @@ module Lain
       #   [[Float]], one equal-dimension vector per input text, in order.
       #   Injected, never constructed -- Embedder::Static is the deterministic
       #   bench arm this class is unit-tested against; Ollama is the same duck
-      #   for a live sweep.
+      #   for a live sweep. #model_id is OPTIONAL on the duck: an Embedder
+      #   subclass states one (T10 follow-up), but Bench::Sweep's committed-
+      #   fixture stand-in (Sweep::Embeddings) is #embed-only and is named by
+      #   its class instead -- exactly the identification #why gave it before
+      #   #model_id existed, so the sweep's committed report stays byte-stable.
       def initialize(index:, embedder:)
         @embedder = embedder
-        @embedder_id = embedder.class.name
+        @embedder_id = embedder.respond_to?(:model_id) ? embedder.model_id : embedder.class.name
         @items = index.to_a
         @vectors = @items.empty? ? [] : @embedder.embed(@items.map { |item| "#{item.description}\n#{item.body}" })
         # Norms depend only on the vectors embedded above, so they are paid
