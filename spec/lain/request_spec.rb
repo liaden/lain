@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 RSpec.describe Lain::Request do
   def request(**overrides)
     described_class.new(
@@ -166,6 +168,116 @@ RSpec.describe Lain::Request do
       req = described_class.new(model: "claude-opus-4-8", messages: [ambiguous], max_tokens: 1024)
 
       expect { req.prefix_digests }.to raise_error(Lain::Request::AmbiguousMarkerPosition)
+    end
+
+    # R.1: the chain is a ROLLING hash -- each entry H(previous entry,
+    # marker-stripped message), seeded by the fixed prefix -- so journaling
+    # cost is linear in messages, where format 1 re-digested the full
+    # stripped prefix per marker (O(turns^2) per session).
+    describe "rolling chain (format 2)" do
+      it "names its format: PREFIX_CHAIN_VERSION is 2" do
+        expect(Lain::Request::PREFIX_CHAIN_VERSION).to eq(2)
+      end
+
+      it "chains each entry as H(previous entry, marker-stripped message), seeded by the fixed prefix" do
+        req = chained_request(system_cache: true, texts: %w[m0 m1], caches: [true, true])
+
+        seed = Lain::Canonical.digest(
+          "model" => req.model, "tools" => [], "system" => [{ "type" => "text", "text" => "sys" }]
+        )
+        entry0 = Lain::Canonical.digest(
+          [seed, { "role" => "user", "content" => [{ "type" => "text", "text" => "m0" }] }]
+        )
+        entry1 = Lain::Canonical.digest(
+          [entry0, { "role" => "user", "content" => [{ "type" => "text", "text" => "m1" }] }]
+        )
+        expect(req.prefix_digests).to eq([[-1, seed], [0, entry0], [1, entry1]])
+      end
+
+      # The linearity claim, observed at the primitive: N messages under N
+      # markers cost N + 1 digest calls (one seed, one per message), and no
+      # call ever digests a multi-message prefix -- the O(N^2) shape format 1
+      # had is structurally impossible, not merely avoided.
+      it "invokes the digest primitive once per message plus one seed, never over a multi-message prefix" do
+        req = chained_request(texts: Array.new(8) { |i| "m#{i}" }, caches: [true] * 8)
+
+        digested = []
+        allow(Lain::Canonical).to receive(:digest).and_wrap_original do |original, value|
+          digested << value
+          original.call(value)
+        end
+        req.prefix_digests
+
+        expect(digested.size).to eq(9)
+        full_prefix_payloads = digested.select { |value| value.is_a?(Hash) && value.key?("messages") }
+        expect(full_prefix_payloads).to be_empty
+      end
+    end
+  end
+
+  describe "#cache_payload" do
+    # Canonical BY CONSTRUCTION -- sorted String keys, deeply frozen, values
+    # normalized at Request.new -- so the journaling path can carry it without
+    # a second deep normalize pass (R.3): Canonical.normalize of this Hash is
+    # a structural no-op.
+    # Pinned by BYTES, not Hash#==: equality is insertion-order-blind, so
+    # `normalize(payload) eq payload` could never catch a key-order drift.
+    # JSON.generate preserves insertion order and Canonical.dump sorts
+    # recursively -- byte equality IS the canonical-by-construction contract,
+    # at every nesting depth.
+    it "is already canonical wire form: byte-identical to its own canonical dump, and deeply frozen" do
+      payload = request(system: "be terse").cache_payload
+
+      expect(JSON.generate(payload)).to eq(Lain::Canonical.dump(payload))
+      expect(payload).to be_deeply_frozen
+    end
+  end
+
+  # R.1's version marker and R.3's one-pass normalization are properties of
+  # the JOURNALING seam (Middleware::JournalRequests -> Telemetry::RequestSent),
+  # pinned here because both exist to serve Request's chain contract.
+  describe "journaling: a versioned chain, one normalize pass (R.1/R.3)" do
+    let(:journal) { RecordingChannel.new }
+
+    def journaled(req)
+      Lain::Middleware::JournalRequests.new(journal:).call({ request: req }) { |env| env }
+      journal.events.first
+    end
+
+    def marked_request
+      request(system: [{ "type" => "text", "text" => "sys", "cache" => true }])
+    end
+
+    it "names the chain format version on the record, so an offline reader can refuse cross-format comparison" do
+      event = journaled(marked_request)
+
+      expect(event.prefix_chain_version).to eq(Lain::Request::PREFIX_CHAIN_VERSION)
+      expect(event.to_journal.fetch("prefix_chain_version")).to eq(Lain::Request::PREFIX_CHAIN_VERSION)
+    end
+
+    it "normalizes the payload once -- the digest's own pass -- not twice" do
+      req = marked_request
+      payload = req.cache_payload
+      allow(Lain::Canonical).to receive(:normalize).and_call_original
+
+      journaled(req)
+
+      expect(Lain::Canonical).to have_received(:normalize).with(payload).once
+    end
+
+    it "structurally shares the request's members rather than re-copying the message history" do
+      req = marked_request
+      event = journaled(req)
+
+      expect(event.payload["messages"]).to equal(req.messages)
+      expect(event.payload["system"]).to equal(req.system)
+    end
+
+    it "stays deeply frozen and Ractor-shareable on the fast path" do
+      event = journaled(marked_request)
+
+      expect(event).to be_deeply_frozen
+      expect(event).to be_ractor_shareable
     end
   end
 end

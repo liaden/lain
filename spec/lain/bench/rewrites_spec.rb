@@ -141,6 +141,108 @@ RSpec.describe Lain::Bench::Rewrites do
     end
   end
 
+  # R.1: the rolling chain (format 2) changed every recorded digest VALUE, so
+  # the record carries `prefix_chain_version` and this projection dual-reads --
+  # old unversioned journals localize divergence exactly as before, new ones
+  # under the version tag, and the two formats are never compared to each
+  # other (their digests disagree everywhere by construction; reporting that
+  # as a rewrite would misread the migration as a prompt edit).
+  describe "chain format dual-read (R.1)" do
+    def versioned_record(chain)
+      record(chain).merge("prefix_chain_version" => Lain::Request::PREFIX_CHAIN_VERSION)
+    end
+
+    # Format 1, emulated: the retired whole-stripped-prefix digest per marker.
+    # Executable HERE because lib no longer computes it -- this is the
+    # dual-read suite's definition of "old recorded journal", and the frozen
+    # corpus below pins it against real recorded bytes. Final-block markers
+    # only, so block truncation never enters.
+    def legacy_chain(request)
+      request.prefix_digests.map(&:first).map do |position|
+        slice = position == Lain::Request::SYSTEM_PREFIX ? [] : request.messages.first(position + 1)
+        [position, Lain::Canonical.digest(
+          "model" => request.model, "tools" => strip(request.tools),
+          "system" => strip(request.system), "messages" => strip(slice)
+        )]
+      end
+    end
+
+    def strip(value)
+      case value
+      when Hash then value.except("cache").transform_values { |v| strip(v) }
+      when Array then value.map { |v| strip(v) }
+      else value
+      end
+    end
+
+    # One session as a Request: two shared turns, every message marked, the
+    # third turn carrying the divergence.
+    def session_diverging_at_two(final_text)
+      shared = [
+        { "role" => "user", "content" => [{ "type" => "text", "text" => "m0", "cache" => true }] },
+        { "role" => "assistant", "content" => [{ "type" => "text", "text" => "m1", "cache" => true }] }
+      ]
+      diverging = { "role" => "user", "content" => [{ "type" => "text", "text" => final_text, "cache" => true }] }
+      Lain::Request.new(model: "claude-opus-4-8", messages: shared + [diverging], max_tokens: 64)
+    end
+
+    it "localizes two sessions' divergence at the same position under old and new formats" do
+      a = session_diverging_at_two("diverges-a")
+      b = session_diverging_at_two("diverges-b")
+
+      old_format = described_class.from_journal([record(legacy_chain(a)), record(legacy_chain(b))])
+      new_format = described_class.from_journal([versioned_record(a.prefix_digests),
+                                                 versioned_record(b.prefix_digests)])
+
+      expect(old_format.count).to eq(1)
+      expect(new_format.count).to eq(1)
+      expect(old_format.first.depth).to eq(2)
+      expect(new_format.first.depth).to eq(old_format.first.depth)
+    end
+
+    it "treats a format boundary as incomparable, never as a rewrite" do
+      req = session_diverging_at_two("same bytes both sides")
+      migration = [record(legacy_chain(req)), versioned_record(req.prefix_digests)]
+
+      expect(described_class.from_journal(migration).count).to eq(0)
+    end
+
+    it "still skips a nil (not-computed) chain regardless of its neighbors' formats" do
+      req = session_diverging_at_two("same bytes both sides")
+      entries = [versioned_record(req.prefix_digests), record(nil), versioned_record(req.prefix_digests)]
+
+      expect(described_class.from_journal(entries).count).to eq(0)
+    end
+
+    # The frozen corpus is REAL recorded bytes (see its README): copies of the
+    # variance fixtures made before the rolling chain landed, never
+    # regenerated. Old journals staying loadable is the acceptance criterion,
+    # proven against bytes no current writer can produce.
+    describe "the frozen v1 corpus (spec/fixtures/sessions/rewrites_v1)" do
+      let(:corpus_dir) { File.expand_path("../../fixtures/sessions/rewrites_v1", __dir__) }
+
+      it "reads a whole recorded v1 session and finds no false rewrite as its markers slide" do
+        rewrites = described_class.from_journal(File.foreach(File.join(corpus_dir, "one.ndjson")))
+
+        expect(rewrites.count).to eq(0)
+      end
+
+      it "localizes real divergence between two recorded v1 sessions of the one task" do
+        # Sessions one and two share their first model call and diverge from
+        # the tool_use on, so their second requests disagree at position 2
+        # (the tool_result turn) and agree at the shared system marker (-1).
+        second_requests = %w[one two].map do |name|
+          File.foreach(File.join(corpus_dir, "#{name}.ndjson"))
+              .select { |line| line.include?('"type":"request_sent"') }.last
+        end
+        rewrites = described_class.from_journal(second_requests)
+
+        expect(rewrites.count).to eq(1)
+        expect(rewrites.first.depth).to eq(2)
+      end
+    end
+  end
+
   describe "Enumerable" do
     it "is enumerable over its Rewrite values" do
       rewrites = described_class.from_journal([record([[0, "blake3:a"]]), record([[0, "blake3:b"]])])

@@ -28,14 +28,7 @@ module Lain
       end
 
       def call(env, &app)
-        request = env.fetch(:request)
-        @journal << Telemetry::RequestSent.new(
-          digest: request.digest,
-          payload: request.cache_payload,
-          stream: request.stream,
-          extra: request.extra,
-          prefix_digests: request.prefix_digests
-        )
+        @journal << Telemetry::RequestSent.from(env.fetch(:request))
         downstream(env, &app)
       end
     end

@@ -190,18 +190,46 @@ module Lain
     # request journals `[]`. An offline rewrite projection must not read
     # "nobody measured" as "zero markers", so absence IS the signal here --
     # nil is a value, not a missing Null Object.
-    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests) do
+    #
+    # `prefix_chain_version` names the chain's FORMAT
+    # ({Request::PREFIX_CHAIN_VERSION} for chains this codebase computes); nil
+    # covers both a nil chain and the unversioned format-1 chains in journals
+    # recorded before the rolling chain landed. {Bench::Rewrites} compares
+    # chains only within one format -- the formats' digests never agree, so an
+    # unversioned reader would misread the migration itself as a rewrite.
+    RequestSent = Data.define(:digest, :payload, :stream, :extra, :prefix_digests, :prefix_chain_version) do
       include Journalable
 
-      def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil)
+      # The journaling constructor ({Middleware::JournalRequests}): every
+      # field read off a live {Request}, whose members are already canonical
+      # (Request.new normalized them; #cache_payload is canonical by
+      # construction) -- so this path asserts `normalized:` and skips the deep
+      # re-walk of the full message history the keyword constructor performs
+      # on arbitrary input. That skip is R.3's "one normalize pass per
+      # payload": the only remaining walk is the digest's own.
+      def self.from(request)
+        new(digest: request.digest, payload: request.cache_payload, stream: request.stream,
+            extra: request.extra, prefix_digests: request.prefix_digests,
+            prefix_chain_version: Request::PREFIX_CHAIN_VERSION, normalized: true)
+      end
+
+      # `normalized: true` is a trust assertion, not an optimization hint: the
+      # caller vouches that payload and extra are ALREADY canonical wire form
+      # (String keys, sorted, deeply frozen). Only {.from} may make it -- a
+      # wrong assertion corrupts journal bytes with no error anywhere. The
+      # chain is normalized regardless: it arrives as small fresh Arrays that
+      # still need freezing, at O(markers) cost.
+      def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil, prefix_chain_version: nil,
+                     normalized: false)
         Guards::RequestSent.check!(stream:)
 
         super(
           digest: digest.dup.freeze,
-          payload: Canonical.normalize(payload),
+          payload: normalized ? payload : Canonical.normalize(payload),
           stream:,
-          extra: Canonical.normalize(extra),
-          prefix_digests: Canonical.normalize(prefix_digests)
+          extra: normalized ? extra : Canonical.normalize(extra),
+          prefix_digests: Canonical.normalize(prefix_digests),
+          prefix_chain_version:
         )
       end
     end

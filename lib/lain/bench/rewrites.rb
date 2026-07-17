@@ -23,6 +23,14 @@ module Lain
     # gap; an `[]` chain participates normally -- it shares no positions with
     # any neighbor, so it can only rule a rewrite out, never be one.
     #
+    # Chains are comparable only within ONE format: the record's
+    # `prefix_chain_version` (nil for journals recorded before the rolling
+    # chain -- format 1) tags each chain, and a pair straddling a format
+    # boundary reports nothing. The two formats' digests never agree on a
+    # shared position by construction, so an unversioned comparison would
+    # misread the migration itself as one giant rewrite at the earliest
+    # shared position.
+    #
     # ONE CONFLATION, inherited from the chain itself: `Request#prefix_digests`
     # folds `model` into every entry (the chains are per-model by design --
     # a prompt cache never spans models), so a model switch between
@@ -54,13 +62,14 @@ module Lain
       def self.from_journal(entries)
         chains = Journal.records(entries, type: "request_sent")
                         .reject { |record| record["prefix_digests"].nil? }
-                        .map { |record| record["prefix_digests"] }
+                        .map { |record| [record["prefix_chain_version"], record["prefix_digests"]] }
         new(chains:)
       end
 
-      # @param chains [Enumerable<Array<Array(Integer, String)>>] one
-      #   position/digest chain per request_sent record that HAD one
-      #   computed, in journal (call) order
+      # @param chains [Enumerable<Array(Object, Array<Array(Integer, String)>)>]
+      #   one `[format_version, position/digest chain]` pair per request_sent
+      #   record that HAD a chain computed, in journal (call) order; the
+      #   version is nil for pre-versioning (format 1) journals
       def initialize(chains:)
         # `.to_a` before `.freeze`: `chains` from {.from_journal} is
         # `Journal.records`' lazy walk, and `each_cons`/`filter_map` on a
@@ -84,7 +93,12 @@ module Lain
 
       private
 
-      def rewrite_between(before, after)
+      # A cross-format pair is INCOMPARABLE, not a rewrite: see the class
+      # comment. Same-format pairs (both nil, or both the same version)
+      # compare exactly as before.
+      def rewrite_between((before_version, before), (after_version, after))
+        return nil unless before_version == after_version
+
         before_chain = before.to_h
         after_chain = after.to_h
         diverging = (before_chain.keys & after_chain.keys)

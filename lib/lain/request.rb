@@ -34,9 +34,16 @@ module Lain
     # The bytes that matter for cache identity: `stream` and `extra` are transport
     # concerns and deliberately excluded, so toggling streaming does not read as a
     # different prompt.
+    #
+    # Written in canonical wire form BY CONSTRUCTION -- keys in sorted order,
+    # frozen, every value already normalized by #initialize -- so
+    # `Canonical.normalize` of this Hash is a structural no-op and the
+    # journaling path ({Telemetry::RequestSent.from}) can carry it without a
+    # second deep walk of the full message history (R.3). The odd-looking
+    # alphabetical key order is that contract, and request_spec pins it.
     def cache_payload
-      { "model" => model, "tools" => tools, "system" => system, "messages" => messages,
-        "max_tokens" => max_tokens, "reasoning" => reasoning }
+      { "max_tokens" => max_tokens, "messages" => messages, "model" => model,
+        "reasoning" => reasoning, "system" => system, "tools" => tools }.freeze
     end
 
     def digest
@@ -76,11 +83,20 @@ module Lain
 
     # The sentinel position for a marker that sits in `system`: system
     # precedes every message on the wire, so its chain entry always reads as
-    # "nothing from messages yet". Chosen so `messages.first(position + 1)`
-    # (see #digest_through) generalizes to the empty array at position -1
-    # without the negative-range footgun `messages[0..-1]` would be (that
-    # slice means "the whole array", not "nothing").
+    # "nothing from messages yet". Chosen so `states[position + 1]` (see
+    # #entry_at) generalizes to the seed state at position -1 without the
+    # negative-range footgun `messages[0..-1]` would be (that slice means
+    # "the whole array", not "nothing").
     SYSTEM_PREFIX = -1
+
+    # The chain format journaled alongside the chain (see
+    # {Telemetry::RequestSent}). Format 1 -- implicit in journals recorded
+    # before the version existed -- digested the FULL stripped prefix per
+    # marker, O(prefix) each; format 2 is the rolling chain below. The two
+    # formats' digests never agree on a shared position, which is exactly why
+    # the version must ride with the chain: {Bench::Rewrites} refuses to
+    # compare across formats rather than misread the migration as a rewrite.
+    PREFIX_CHAIN_VERSION = 2
 
     # A digest CHAIN, one entry per neutral cache marker, in ascending
     # position order: `[[position, digest], ...]`. This mirrors the
@@ -88,25 +104,33 @@ module Lain
     # (CE-2), so a bench projection can find where a rewrite happened the
     # same way `diverge_at` finds it in the Timeline.
     #
+    # The chain is a ROLLING hash (format {PREFIX_CHAIN_VERSION}): a seed
+    # digest over the fixed prefix -- `model` and `tools`, which lead every
+    # message on the wire, plus `system` -- then one step per message,
+    # `state = H(previous state, message)`. Linear in messages, where format
+    # 1 re-digested the full prefix per marker (O(turns^2) journaling cost
+    # per session). Merkle-style prefix sensitivity is preserved: a change at
+    # message k changes every entry at or beyond k, and only those.
+    #
     # The chain must survive MARKER MOVEMENT: `CacheBreakpoints` always marks
     # a message's last block, and its cap slides which messages get marked
     # as a session grows, so a chain sampled over marker-BEARING bytes would
-    # read every append as a rewrite. Each entry is instead the digest of the
-    # marker-STRIPPED prefix through that position -- the same content
-    # prefix hashes identically whether or not a marker sits on it today.
-    # `position` is a message index, or {SYSTEM_PREFIX} for a marker in
-    # `system` (which precedes every message on the wire). `tools` carries no
-    # position of its own -- it enters every entry unconditionally, alongside
-    # `model`, as the fixed part of the prefix.
+    # read every append as a rewrite. Every hashed message is therefore
+    # marker-STRIPPED -- the same content prefix hashes identically whether
+    # or not a marker sits on it today. `position` is a message index, or
+    # {SYSTEM_PREFIX} for a marker in `system`.
     #
     # The cut is BLOCK-granular, matching what `cache_control` actually covers
     # on the wire: bytes through the marked block, not through the whole
-    # message. So a marker on a non-final block yields a digest over the
+    # message. So a marker on a non-final block yields an entry over the
     # content UP TO AND INCLUDING that block, invariant to any unmarked blocks
     # appended after it -- which is what lets Recall append a `<recall>` block
     # to the tail without the entry reading as a rewrite of the cached prefix.
+    # (The rolling STATE still folds the whole message in, because later
+    # entries cover the full wire bytes of every earlier message.)
     def prefix_digests
-      marked_cuts.map { |position, block_index| [position, digest_through(position, block_index)] }
+      cuts = marked_cuts
+      cuts.empty? ? [] : rolled_entries(cuts.to_h)
     end
 
     private
@@ -154,23 +178,37 @@ module Lain
       block.is_a?(Hash) && block["cache"] == true
     end
 
-    # Tools lead system lead messages on the wire and enter every entry
-    # unconditionally; the messages slice is what varies. At SYSTEM_PREFIX the
-    # slice is empty; at a message position it is every preceding message plus
-    # that message truncated through its marked block.
-    def digest_through(position, block_index)
-      Canonical.digest(
-        "model" => model,
-        "tools" => strip_cache_markers(tools),
-        "system" => strip_cache_markers(system),
-        "messages" => strip_cache_markers(messages_through(position, block_index))
-      )
+    # `states[k]` is the chain state after k messages: `states[0]` the seed
+    # over the fixed prefix, then one digest per stripped message. The walk
+    # stops at the deepest cut -- later messages cannot enter any entry.
+    def rolled_entries(cuts)
+      stripped = messages.first(cuts.keys.max + 1).map { |message| strip_cache_markers(message) }
+      states = stripped.each_with_object([fixed_prefix_digest]) do |message, chain|
+        chain << Canonical.digest([chain.last, message])
+      end
+      cuts.map { |position, block_index| [position, entry_at(position, block_index, stripped, states)] }
     end
 
-    def messages_through(position, block_index)
-      return [] if position == SYSTEM_PREFIX
+    # `states[position + 1]` generalizes to the seed at {SYSTEM_PREFIX} the
+    # same way the empty messages slice did in format 1. A marker on a
+    # message's final block cuts exactly where the rolling state does; a
+    # non-final marker digests the truncation `cache_control` actually
+    # covers -- the one extra digest in the whole walk.
+    def entry_at(position, block_index, stripped, states)
+      return states[position + 1] if position == SYSTEM_PREFIX || final_block?(stripped[position], block_index)
 
-      messages.first(position) + [truncate_through(messages[position], block_index)]
+      Canonical.digest([states[position], truncate_through(stripped[position], block_index)])
+    end
+
+    def final_block?(message, block_index)
+      block_index == message["content"].size - 1
+    end
+
+    # Model and tools lead system lead messages on the wire; none carries a
+    # position of its own, so together they seed every entry unconditionally.
+    def fixed_prefix_digest
+      Canonical.digest("model" => model, "tools" => strip_cache_markers(tools),
+                       "system" => strip_cache_markers(system))
     end
 
     # The marked message, keeping only its content up to and including the
