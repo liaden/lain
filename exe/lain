@@ -141,7 +141,37 @@ class LainCLI < Thor
     raise Thor::Error, e.message
   end
 
+  desc "up", "Create/attach the lain tmux session (chat window + status HUD)"
+  method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
+                          desc: "tmux session name"
+  method_option :socket, type: :string,
+                         desc: "tmux socket (-L); default tmux socket when unset"
+  def up
+    # ENV.key?("TMUX") is THIS shell's own answer to "am I already an
+    # attached tmux client" -- Up#attach_command turns that into the right
+    # verb (switch-client vs. attach); see its doc comment for why the
+    # branch has to happen before exec, and the cross-server known gap.
+    plan = Lain::CLI::Up.new(session: options[:session], socket: options[:socket],
+                             chat_command: chat_launch_command).launch_plan(nested: ENV.key?("TMUX"))
+    plan.messages.each { |line| say(line) }
+    # exec REPLACES this process, so nothing after this line ever runs --
+    # flush stdout first: `say`'s writes above are not guaranteed flushed
+    # yet when stdout isn't a TTY (no at_exit/implicit flush fires once
+    # exec has taken over).
+    $stdout.flush
+    Kernel.exec(*plan.argv)
+  rescue Lain::Error => e
+    raise Thor::Error, e.message
+  end
+
   private
+
+  # tmux's new-session does not source an interactive shell's chruby (see
+  # CLAUDE.md's toolchain note), so the chat window's own command re-exports
+  # the PATH fix before re-invoking this SAME binary's `chat` subcommand.
+  def chat_launch_command
+    "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
+  end
 
   # Assemble the run's collaborators over the now-open chronicle and hand off
   # to the frontend.
