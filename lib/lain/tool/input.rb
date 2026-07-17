@@ -70,10 +70,18 @@ module Lain
         # Note on `required:` and booleans: `presence: true` rejects `false`, which
         # is virtually never what you mean. A required boolean is validated by
         # inclusion in [true, false] instead.
-        def field(name, type = :string, description:, required: false, **)
+        #
+        # `blank_ok:` is the same kind of carve-out for a required field whose
+        # legitimate value can be `""` -- a whole-file writer's `content` is the
+        # motivating case: the model must still SUPPLY the key (it stays in the
+        # JSON Schema's `required`), but an empty file is a real, first-class
+        # thing to write, and `presence: true` treats `""` as absent. `blank_ok`
+        # keeps the "key must be present" check (nil is still rejected) while
+        # dropping the blank-string rejection.
+        def field(name, type = :string, description:, required: false, blank_ok: false, **)
           attribute(name, type, **)
           fields[name.to_s] = { type: type.to_s, description:, required: }
-          require_field(name, type) if required
+          require_field(name, type, blank_ok:) if required
           name
         end
 
@@ -103,9 +111,15 @@ module Lain
 
         private
 
-        def require_field(name, type)
+        def require_field(name, type, blank_ok: false)
           if type.to_s == "boolean"
             validates(name, inclusion: { in: [true, false] })
+          elsif blank_ok
+            # `exclusion: { in: [nil] }` rather than `presence: true`: presence
+            # treats `""` as absent, which is exactly the rejection blank_ok
+            # exists to lift. This still catches an omitted key (ActiveModel
+            # leaves it nil), just not a deliberately empty one.
+            validates(name, exclusion: { in: [nil], message: "can't be nil" })
           else
             validates(name, presence: true)
           end
