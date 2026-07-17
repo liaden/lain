@@ -144,7 +144,7 @@ RSpec.describe Lain::Embedder::Ollama do
         .to_return(status: 500, headers: { "Content-Type" => "application/json" },
                    body: JSON.generate("error" => "server error"))
 
-      expect { described_class.new.embed(%w[a]) }.to raise_error(
+      expect { described_class.new(config: zero_retry_config).embed(%w[a]) }.to raise_error(
         Lain::Embedder::Ollama::APIStatusError
       ) { |error| expect(error.status).to eq(500) }
     end

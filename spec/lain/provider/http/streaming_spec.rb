@@ -32,7 +32,9 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
   end
 
   def anthropic_provider
-    config = Lain::Provider::HTTP::Configuration.new
+    # Zeroed retry sleeps: the error-event example below raises OverloadedError,
+    # which faraday-retry retries with real backoff before it surfaces.
+    config = zero_retry_config
     config.anthropic_api_key = "sk-ant-test"
     Lain::Provider::HTTP::Providers::Anthropic.new(config)
   end

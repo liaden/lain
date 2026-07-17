@@ -190,7 +190,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
         .to_return(status: 500, headers: { "Content-Type" => "application/json" },
                    body: JSON.generate("error" => "model runner has unexpectedly stopped"))
 
-      expect { described_class.new.complete(request(stream: true)) }.to raise_error(
+      expect { described_class.new(config: zero_retry_config).complete(request(stream: true)) }.to raise_error(
         Lain::Provider::Ollama::APIStatusError
       ) { |error| expect(error.status).to eq(500) }
     end

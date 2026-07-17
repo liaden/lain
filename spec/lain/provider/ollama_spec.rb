@@ -181,14 +181,22 @@ RSpec.describe Lain::Provider::Ollama do
     # The sync error arm: a non-2xx body raises through the vendored
     # ErrorMiddleware and is wrapped by wrap_error, so nothing above the
     # Provider rescues a Provider::HTTP class -- status lifted onto the error.
-    it "wraps a 500 into APIStatusError with the status lifted out" do
+    # The zeroed config keeps faraday-retry's loop in play without its sleeps,
+    # and the config's retry_block seam proves the retries actually fired
+    # before the error surfaced.
+    it "wraps a 500 into APIStatusError with the status lifted out, after exhausting retries" do
       stub_request(:post, "http://localhost:11434/api/chat")
         .to_return(status: 500, headers: { "Content-Type" => "application/json" },
                    body: JSON.generate("error" => "model runner has unexpectedly stopped"))
 
-      expect { described_class.new.complete(request(stream: false)) }.to raise_error(
+      config = zero_retry_config
+      retries = []
+      config.retry_block = ->(retry_count:, **) { retries << retry_count }
+
+      expect { described_class.new(config:).complete(request(stream: false)) }.to raise_error(
         Lain::Provider::Ollama::APIStatusError
       ) { |error| expect(error.status).to eq(500) }
+      expect(retries).to eq([0, 1, 2])
     end
   end
 
