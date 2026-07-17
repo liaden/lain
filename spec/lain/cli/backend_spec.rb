@@ -168,16 +168,21 @@ RSpec.describe Lain::CLI::Backend do
     # Data's generated equality (it falls through to Object#==, i.e. identity)
     # -- comparing the policy "field-for-field" means comparing each field's
     # own value (a strategy's `#label`, and `only`), not `==` on the whole.
-    it "matches today's inline research policy field-for-field: fresh, schema, read_file+list_files" do
+    it "resolves the researcher policy from the catalog: fresh, schema, read + web egress" do
       resolved = backend.spawn_policy(:researcher)
 
+      # The researcher gained the tier-1 web tools (web_fetch/web_search): a
+      # deliberate capability grant, not tree-mutating, so the role stays a
+      # read-and-fetch researcher with no edit/write. The policy resolves through
+      # Role::Catalog, so this set tracks the catalog rather than a parallel list.
       expect(resolved.prefix.label).to eq("fresh")
       expect(resolved.posture.label).to eq("schema")
-      expect(resolved.only).to eq(%w[read_file list_files])
+      expect(resolved.only).to eq(%w[read_file list_files web_fetch web_search])
     end
 
     it "comes from Role::Catalog.fetch, not a parallel construction -- attenuates identically" do
-      union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new])
+      union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::EditFile.new,
+                                 Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
 
       resolved = backend.spawn_policy(:researcher)
       cataloged = Lain::Role::Catalog.fetch(:researcher).spawn_policy

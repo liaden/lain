@@ -381,7 +381,8 @@ RSpec.describe Lain::Tools::Subagent do
       Dir.mktmpdir do |root|
         slots = Lain::Prompt::Slots.load(root:)
         role = Lain::Role::Catalog.fetch(:researcher)
-        read_union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new])
+        read_union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,
+                                        Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
         provider = mock(text_response("done"))
         tool = described_class.new(
           provider:, context_factory: -> { child_context }, toolset: read_union,

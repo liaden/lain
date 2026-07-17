@@ -25,7 +25,7 @@ module Lain
         Role.new(name: :reviewer_sre, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_security, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_dba, only: %i[read_file list_files bash]),
-        Role.new(name: :researcher, only: %i[read_file list_files]),
+        Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write])
       ].to_h { |role| [role.name, role] }.freeze
 

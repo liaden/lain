@@ -17,9 +17,8 @@ RSpec.describe Lain::Role do
   # The superset union a spawn attenuates FROM -- every tool any built-in role names.
   let(:union) do
     Lain::Toolset.new(
-      %i[read_file list_files glob grep edit_file write_file todo_write bash memory_write memory_read].map do |n|
-        tool(n)
-      end
+      %i[read_file list_files glob grep edit_file write_file todo_write bash memory_write memory_read
+         web_fetch web_search].map { |n| tool(n) }
     )
   end
 

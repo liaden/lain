@@ -352,11 +352,21 @@ class LainCLI < Thor
     end
 
     def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
-      base = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
-                                Lain::Tools::Grep.new, Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new,
-                                Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
-                                Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new])
+      base = Lain::Toolset.new(base_tools(recorder))
       Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
+    end
+
+    # The chat's capability floor -- the tier-1 structured tools plus tier-3
+    # bash -- before the subagent and the ask_human reply seam layer on. Lifted
+    # out of build_toolset so that method stays under AbcSize as the floor grows
+    # (CLAUDE.md: extract a collaborator, never loosen a Metrics cop). The union
+    # a subagent role attenuates FROM is exactly this list.
+    def base_tools(recorder)
+      [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
+       Lain::Tools::Grep.new, Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new,
+       Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
+       Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new,
+       Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new]
     end
 
     # The chat default: an attenuated read-only child (schema posture, depth 1).

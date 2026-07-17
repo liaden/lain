@@ -30,7 +30,7 @@ RSpec.describe "a spawned role's persona (PS-3)" do
     end.new
   end
 
-  let(:union) { Lain::Toolset.new(%i[read_file list_files bash].map { |n| tool(n) }) }
+  let(:union) { Lain::Toolset.new(%i[read_file list_files bash web_fetch web_search].map { |n| tool(n) }) }
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
@@ -122,11 +122,13 @@ RSpec.describe "a spawned role's persona (PS-3)" do
     end
   end
 
-  it "keeps the researcher read-only: schema posture renders exactly its only-set, no capability change" do
+  it "keeps the researcher tree-read-only: schema posture renders exactly its only-set (no edit/write)" do
     with_project do |slots|
       tools = spawn(slots, :researcher).tools
 
-      expect(tools.map { |t| t["name"] }).to match_array(%w[read_file list_files])
+      # The researcher holds read + egress capabilities (web_fetch/web_search
+      # are tier-1 structural, no tree mutation) but never edit_file/write_file.
+      expect(tools.map { |t| t["name"] }).to match_array(%w[read_file list_files web_fetch web_search])
     end
   end
 
