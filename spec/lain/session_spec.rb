@@ -31,6 +31,48 @@ RSpec.describe Lain::Session do
     end
   end
 
+  # The write-set mirrors the read-set's shape on purpose: same normalization,
+  # same accumulate-for-the-run lifetime. It is what scopes the workspace
+  # snapshot (Lain::Workspace::Snapshot) -- write-set only, the documented gap.
+  describe "the write-set" do
+    it "records a write and answers written? true for it, false for paths never written" do
+      session.record_write("/tmp/app.rb")
+
+      expect(session.written?("/tmp/app.rb")).to be(true)
+      expect(session.written?("/tmp/other.rb")).to be(false)
+    end
+
+    it "matches across spellings of the same path (expand_path normalizes both ends)" do
+      Dir.chdir("/tmp") do
+        session.record_write("./app.rb")
+
+        expect(session.written?("app.rb")).to be(true)
+        expect(session.written?("/tmp/app.rb")).to be(true)
+      end
+    end
+
+    it "stays independent of the read-set: a write is not a read, a read is not a write" do
+      session.record_write("/tmp/written.rb")
+      session.record_read("/tmp/read.rb")
+
+      expect(session.read?("/tmp/written.rb")).to be(false)
+      expect(session.written?("/tmp/read.rb")).to be(false)
+    end
+
+    it "exposes #writes as the sorted, normalized, frozen paths -- deterministic snapshot input" do
+      session.record_write("/tmp/b.rb")
+      Dir.chdir("/tmp") { session.record_write("./a.rb") }
+      session.record_write("/tmp/b.rb")
+
+      expect(session.writes).to eq(["/tmp/a.rb", "/tmp/b.rb"])
+      expect(session.writes).to be_frozen
+    end
+
+    it "has an empty write-set before any write lands" do
+      expect(session.writes).to eq([])
+    end
+  end
+
   describe "#reminders" do
     it "is empty before any todo_write lands" do
       expect(session.reminders).to eq([])
@@ -125,6 +167,12 @@ RSpec.describe Lain::Session do
       expect(null.read?("/tmp/app.rb")).to be(false)
     end
 
+    it "keeps the write-set duck a no-op: record_write records nothing, writes stays empty" do
+      expect { null.record_write("/tmp/app.rb") }.not_to raise_error
+      expect(null.written?("/tmp/app.rb")).to be(false)
+      expect(null.writes).to eq([])
+    end
+
     it "keeps write_todos a no-op that never raises" do
       expect { null.write_todos([Struct.new(:content, :status).new("a", "pending")]) }.not_to raise_error
       expect(null.reminders).to eq([])
@@ -158,6 +206,14 @@ RSpec.describe Lain::Session do
 
       expect(journaled.read?("/tmp/app.rb")).to be(true)
       expect(inner.read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "forwards the write-set to the wrapped Session, journaling nothing (persistence is W4's ticket)" do
+      journaled.record_write("/tmp/app.rb")
+
+      expect(journaled.written?("/tmp/app.rb")).to be(true)
+      expect(inner.written?("/tmp/app.rb")).to be(true)
+      expect(journaled.writes).to eq(["/tmp/app.rb"])
     end
 
     it "journals a SessionRead the FIRST time a path is read, with the expand_path-normalized path" do

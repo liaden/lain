@@ -62,8 +62,10 @@ module Lain
         # be silently mangled. The block's return value is used verbatim.
         File.write(path, contents.sub(input.old_string) { input.new_string })
         # A successful edit changed the file under this path -- the read-set
-        # entry is refreshed so a later edit_file call still sees it as read.
-        session_of(invocation).record_read(path)
+        # entry is refreshed so a later edit_file call still sees it as read,
+        # and the write-set records it as this session's snapshot scope
+        # ({Workspace::Snapshot}: write-set only, the documented bash gap).
+        session_of(invocation).record_read(path).record_write(path)
         Tool::Result.ok("replaced 1 occurrence of old_string in #{path}")
       rescue SystemCallError, IOError => e
         Tool::Result.error("could not edit #{path}: #{e.message}")

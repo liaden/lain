@@ -80,3 +80,7 @@ module Lain
     alias inspect to_s
   end
 end
+
+# Snapshot nests inside Workspace, so it loads after the class body -- this
+# file is the workspace subtree's index (see CLAUDE.md, Requires).
+require_relative "workspace/snapshot"

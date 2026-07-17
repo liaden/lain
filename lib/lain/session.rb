@@ -15,9 +15,13 @@ module Lain
   # or forking the Timeline can never resurrect (or lose) a todo list: there was
   # never a copy of it there to begin with, only here.
   #
-  # Three responsibilities today:
+  # Four responsibilities today:
   #   * a read-set, so an edit-before-read contract can ask "was this file read
   #     this session?" (see {Tool::Contracts});
+  #   * a write-set, the read-set's mirror for mutations: the paths structured
+  #     mutating tools wrote this session, which is exactly the scope of a
+  #     workspace snapshot ({Workspace::Snapshot} -- write-set only, the
+  #     documented gap for free-form bash);
   #   * a reminders channel -- empty until {Tools::TodoWrite} lands the run's
   #     todo list, then one rendered string -- that the Agent composes into the
   #     Workspace tail every render;
@@ -37,6 +41,7 @@ module Lain
     # checks), so {#reminders} never guards on a missing source.
     def initialize(memory: Memory::Recorder.new)
       @reads = Set.new
+      @writes = Set.new
       @todo_reminder = nil
       @memory = memory
       @manifest_root = nil
@@ -66,6 +71,30 @@ module Lain
     # @return [Boolean] whether `path` (in any spelling) was read this session
     def read?(path)
       @reads.include?(normalize(path))
+    end
+
+    # Record that `path` was written this session -- the read-set's mirror,
+    # same normalization, deliberately NOT implying a read: the read-set
+    # answers the edit-before-read contract, the write-set scopes the snapshot,
+    # and a tool that did both says both.
+    #
+    # @return [self]
+    def record_write(path)
+      @writes << normalize(path)
+      self
+    end
+
+    # @return [Boolean] whether `path` (in any spelling) was written this session
+    def written?(path)
+      @writes.include?(normalize(path))
+    end
+
+    # The write-set as sorted, normalized paths -- sorted so the snapshot body
+    # built over it cannot vary with the order tools happened to write.
+    #
+    # @return [Array<String>]
+    def writes
+      @writes.sort.freeze
     end
 
     # Replaces the ENTIRE todo list -- deterministic, no merge logic, so a
@@ -152,6 +181,21 @@ module Lain
       end
 
       # @return [self]
+      def record_write(_path)
+        self
+      end
+
+      # @return [false]
+      def written?(_path)
+        false
+      end
+
+      # @return [Array]
+      def writes
+        [].freeze
+      end
+
+      # @return [self]
       def write_todos(_todos)
         self
       end
@@ -208,6 +252,26 @@ module Lain
 
       # @return [Boolean]
       def read?(path) = @session.read?(path)
+
+      # The write-set forwards without journaling. The write's record is the
+      # :snapshot event {Workspace::Snapshot} lands in the Store -- which is
+      # IN-MEMORY, so that record lives only as long as the process, and a
+      # replayed session rebuilds with an empty write-set. Deliberate for W1:
+      # persistence (scribe wiring plus a journal shape for blob bytes) is
+      # W4's ticket, and a journal line here alone would be a half-copy that
+      # could name blobs no replay can fetch.
+      #
+      # @return [self]
+      def record_write(path)
+        @session.record_write(path)
+        self
+      end
+
+      # @return [Boolean]
+      def written?(path) = @session.written?(path)
+
+      # @return [Array<String>]
+      def writes = @session.writes
 
       # @return [self]
       def write_todos(todos)
