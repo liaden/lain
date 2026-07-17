@@ -57,10 +57,15 @@ module Lain
       { "tools" => tools, "system" => system }
     end
 
+    # to_s is the human-facing projection; inspect keeps the class-tagged,
+    # debug-oriented form -- the DegradedSet convention.
     def to_s
-      "#<Lain::Request #{model} msgs=#{messages.size} tools=#{tools.size} #{digest[0, 19]}...>"
+      "#{model} msgs=#{messages.size} tools=#{tools.size} #{digest[0, 19]}..."
     end
-    alias_method :inspect, :to_s
+
+    def inspect
+      "#<Lain::Request #{self}>"
+    end
   end
 
   # Reopened rather than folded into the `Data.define` block above: a `class`

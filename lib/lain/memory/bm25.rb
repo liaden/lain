@@ -60,10 +60,15 @@ module Lain
       end
       # rubocop:enable Naming/MethodParameterName
 
+      # to_s is the human-facing projection; inspect keeps the class-tagged,
+      # debug-oriented form -- the DegradedSet convention.
       def to_s
-        "#<Lain::Memory::Bm25 entries=#{@size}>"
+        "entries=#{@size}"
       end
-      alias inspect to_s
+
+      def inspect
+        "#<Lain::Memory::Bm25 #{self}>"
+      end
 
       private
 

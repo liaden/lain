@@ -206,4 +206,32 @@ RSpec.describe Lain::Ext::Timeline do
       expect(child.head.meta["spawned_from"]).to eq(parent.head_digest)
     end
   end
+
+  # to_s is the human-facing projection; inspect keeps the class-tagged,
+  # debug-oriented form -- the same convention Ruby's DegradedSet uses (see
+  # capability/degraded_set_spec.rb), now held on both sides of the FFI
+  # boundary.
+  describe "string conversions" do
+    it "renders an empty timeline's to_s untagged" do
+      expect(timeline.to_s).to eq("empty")
+    end
+
+    it "renders an empty timeline's inspect class-tagged" do
+      expect(timeline.inspect).to eq("#<Lain::Ext::Timeline empty>")
+    end
+
+    it "renders a non-empty timeline's to_s as a truncated digest and length, untagged" do
+      one = say(timeline, "a")
+      expect(one.to_s).to eq("#{one.head_digest[0, 19]}... (1)")
+    end
+
+    it "renders a non-empty timeline's inspect class-tagged" do
+      one = say(timeline, "a")
+      expect(one.inspect).to eq("#<Lain::Ext::Timeline #{one}>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(timeline.method(:to_s)).not_to eq(timeline.method(:inspect))
+    end
+  end
 end

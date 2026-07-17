@@ -128,4 +128,23 @@ RSpec.describe Lain::Memory::Bm25 do
       expect(rendered.last["content"].last["text"]).to include("aspirin-dosage")
     end
   end
+
+  # to_s is the human-facing projection; inspect keeps the class-tagged,
+  # debug-oriented form -- the DegradedSet convention (see
+  # capability/degraded_set_spec.rb).
+  describe "string conversions" do
+    subject(:bm25) { described_class.new(index: snapshot) }
+
+    it "renders to_s as the human entry count, untagged" do
+      expect(bm25.to_s).to eq("entries=3")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(bm25.inspect).to eq("#<Lain::Memory::Bm25 entries=3>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(bm25.method(:to_s)).not_to eq(bm25.method(:inspect))
+    end
+  end
 end

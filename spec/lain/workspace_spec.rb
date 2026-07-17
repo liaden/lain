@@ -105,4 +105,23 @@ RSpec.describe Lain::Workspace do
       expect(request_with(tagged).prefix_digests).to eq(request_with(already_stripped).prefix_digests)
     end
   end
+
+  # to_s is the human-facing projection; inspect keeps the class-tagged,
+  # debug-oriented form -- the DegradedSet convention (see
+  # capability/degraded_set_spec.rb).
+  describe "string conversions" do
+    subject(:workspace) { described_class.new(reminders: %w[a b]) }
+
+    it "renders to_s as the human reminder count, untagged" do
+      expect(workspace.to_s).to eq("reminders=2")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(workspace.inspect).to eq("#<Lain::Workspace reminders=2>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(workspace.method(:to_s)).not_to eq(workspace.method(:inspect))
+    end
+  end
 end

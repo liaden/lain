@@ -100,10 +100,15 @@ module Lain
       Canonical.normalize(map(&:to_schema))
     end
 
+    # to_s is the human-facing projection; inspect keeps the class-tagged,
+    # debug-oriented form -- the DegradedSet convention.
     def to_s
-      "#<Lain::Toolset #{names.join(", ")}>"
+      names.join(", ")
     end
-    alias inspect to_s
+
+    def inspect
+      "#<Lain::Toolset #{self}>"
+    end
 
     private
 

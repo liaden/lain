@@ -739,13 +739,16 @@ mod ffi {
             self.inner.root()
         }
 
+        // to_s is the human-facing projection; inspect keeps the class-tagged,
+        // debug-oriented form -- the same convention Ruby's DegradedSet uses.
         fn to_s(&self) -> String {
             let digest = self.inner.digest.as_str();
             let prefix = digest.get(..19).unwrap_or(digest);
-            format!(
-                "#<Lain::Ext::Turn {} {prefix}...>",
-                self.inner.role.as_str()
-            )
+            format!("{} {prefix}...", self.inner.role.as_str())
+        }
+
+        fn inspect(&self) -> String {
+            format!("#<Lain::Ext::Turn {}>", self.to_s())
         }
     }
 
@@ -1132,9 +1135,11 @@ mod ffi {
             }
         }
 
+        // to_s is the human-facing projection; inspect keeps the class-tagged,
+        // debug-oriented form -- the same convention Ruby's DegradedSet uses.
         fn to_s(ruby: &Ruby, rb_self: &Timeline) -> String {
             match &rb_self.head {
-                None => "#<Lain::Ext::Timeline empty>".to_string(),
+                None => "empty".to_string(),
                 Some(digest) => {
                     let text = digest.as_str();
                     let prefix = text.get(..19).unwrap_or(text);
@@ -1148,9 +1153,13 @@ mod ffi {
                         })
                         .map(|arcs| arcs.len().to_string())
                         .unwrap_or_else(|| "?".to_string());
-                    format!("#<Lain::Ext::Timeline {prefix}... ({length})>")
+                    format!("{prefix}... ({length})")
                 }
             }
+        }
+
+        fn inspect(ruby: &Ruby, rb_self: &Timeline) -> String {
+            format!("#<Lain::Ext::Timeline {}>", Self::to_s(ruby, rb_self))
         }
     }
 
@@ -1365,7 +1374,7 @@ mod ffi {
         turn.define_method("eql?", method!(<Turn as typed_data::IsEql>::is_eql, 1))?;
         turn.define_method("hash", method!(<Turn as typed_data::Hash>::hash, 0))?;
         turn.define_method("to_s", method!(Turn::to_s, 0))?;
-        turn.define_method("inspect", method!(Turn::to_s, 0))?;
+        turn.define_method("inspect", method!(Turn::inspect, 0))?;
 
         let store = ext.define_class("Store", ruby.class_object())?;
         store.define_error("MissingObject", lain_error)?;
@@ -1399,7 +1408,7 @@ mod ffi {
         timeline.define_method("eql?", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
         timeline.define_method("hash", method!(<Timeline as typed_data::Hash>::hash, 0))?;
         timeline.define_method("to_s", method!(Timeline::to_s, 0))?;
-        timeline.define_method("inspect", method!(Timeline::to_s, 0))?;
+        timeline.define_method("inspect", method!(Timeline::inspect, 0))?;
 
         Ok(())
     }

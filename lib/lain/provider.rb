@@ -67,10 +67,15 @@ module Lain
       raise NotImplementedError, "#{self.class} must implement #complete"
     end
 
+    # to_s is the human-facing projection; inspect keeps the class-tagged,
+    # debug-oriented form -- the DegradedSet convention.
     def to_s
-      "#<#{self.class} #{capabilities.sort.join(", ")}>"
+      capabilities.sort.join(", ")
     end
-    alias inspect to_s
+
+    def inspect
+      "#<#{self.class} #{self}>"
+    end
   end
 end
 

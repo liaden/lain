@@ -44,6 +44,26 @@ RSpec.describe Lain::Provider do
       expect(limited.require!(:streaming)).to be(true)
     end
   end
+
+  # to_s is the human-facing capability list; inspect keeps the class-tagged,
+  # debug-oriented form -- the DegradedSet convention (see
+  # capability/degraded_set_spec.rb). Uses Provider::Mock because the abstract
+  # base raises on #capabilities.
+  describe "string conversions" do
+    subject(:provider) { Lain::Provider::Mock.new(capabilities: %i[thinking streaming]) }
+
+    it "renders to_s as the sorted, joined capability list, untagged" do
+      expect(provider.to_s).to eq("streaming, thinking")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(provider.inspect).to eq("#<Lain::Provider::Mock streaming, thinking>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(provider.method(:to_s)).not_to eq(provider.method(:inspect))
+    end
+  end
 end
 
 RSpec.describe Lain::Provider::Mock do

@@ -104,4 +104,24 @@ RSpec.describe Lain::Ext::Turn do
                      unequal: -> { described_class.new(role: :user, content: text("bye")) },
                      non_member: -> { described_class.new(role: :user, content: text("hi")).digest }
   end
+
+  # to_s is the human-facing projection; inspect keeps the class-tagged,
+  # debug-oriented form -- the same convention Ruby's DegradedSet uses (see
+  # capability/degraded_set_spec.rb), now held on both sides of the FFI
+  # boundary.
+  describe "string conversions" do
+    subject(:turn) { described_class.new(role: :user, content: text("hi")) }
+
+    it "renders to_s as role and a truncated digest, untagged" do
+      expect(turn.to_s).to eq("user #{turn.digest[0, 19]}...")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(turn.inspect).to eq("#<Lain::Ext::Turn #{turn}>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(turn.method(:to_s)).not_to eq(turn.method(:inspect))
+    end
+  end
 end

@@ -71,6 +71,25 @@ RSpec.describe Lain::Request do
     end
   end
 
+  # to_s is the human-facing projection; inspect keeps the class-tagged,
+  # debug-oriented form -- the DegradedSet convention (see
+  # capability/degraded_set_spec.rb).
+  describe "string conversions" do
+    subject(:req) { request }
+
+    it "renders to_s as the human projection, untagged" do
+      expect(req.to_s).to eq("#{req.model} msgs=#{req.messages.size} tools=#{req.tools.size} #{req.digest[0, 19]}...")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(req.inspect).to eq("#<Lain::Request #{req}>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(req.method(:to_s)).not_to eq(req.method(:inspect))
+    end
+  end
+
   describe "cache breakpoints are provider-neutral" do
     # A block carries `"cache" => true`; rendering that as cache_control is the
     # Provider's job, and a provider that cannot must say so via #capabilities.

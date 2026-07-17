@@ -83,4 +83,21 @@ RSpec.describe Lain::Toolset do
       expect(full.to_schema.first).to include("name" => "bash", "strict" => true)
     end
   end
+
+  # to_s is the human-facing tool list; inspect keeps the class-tagged,
+  # debug-oriented form -- the DegradedSet convention (see
+  # capability/degraded_set_spec.rb).
+  describe "string conversions" do
+    it "renders to_s as the joined tool names, untagged" do
+      expect(full.to_s).to eq("bash, grep, read_file")
+    end
+
+    it "keeps inspect class-tagged for debugging" do
+      expect(full.inspect).to eq("#<Lain::Toolset bash, grep, read_file>")
+    end
+
+    it "does not alias to_s and inspect" do
+      expect(full.method(:to_s)).not_to eq(full.method(:inspect))
+    end
+  end
 end

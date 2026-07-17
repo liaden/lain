@@ -84,10 +84,15 @@ module Lain
       end
     end
 
+    # to_s is the human-facing projection; inspect keeps the class-tagged,
+    # debug-oriented form -- the DegradedSet convention.
     def to_s
-      "#<Lain::Workspace reminders=#{reminders.size}>"
+      "reminders=#{reminders.size}"
     end
-    alias inspect to_s
+
+    def inspect
+      "#<Lain::Workspace #{self}>"
+    end
   end
 end
 
