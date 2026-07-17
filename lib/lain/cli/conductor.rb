@@ -43,23 +43,26 @@ module Lain
       # The one factory the exe calls: a conductor over a fresh {Signals}
       # installer it also owns, so the exe carries neither the installer nor its
       # lifecycle (see {#guard}).
-      def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT)
-        new(tty:, chronicle:, signals: Signals.new, grace:)
+      def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null)
+        new(tty:, chronicle:, signals: Signals.new, grace:, supervisor:)
       end
 
+      # `supervisor:` answers `#drain(within:)` with an Enumerable of
+      # {Shutdown}'s `#settle` drain duck -- in production the OM-6
+      # {Lain::Supervisor}, whose bounded view settles the fleet within the
+      # window; {Supervisor::Null} (nothing to drain) by default.
       def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
-                     budget: Agent::Budget.new,
+                     budget: Agent::Budget.new, supervisor: Supervisor::Null,
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, tick: DEFAULT_TICK)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
         @grace = grace
         @budget = budget
+        @supervisor = supervisor
         @clock = clock
-        @timeline = nil
-        @closed = false
-        @reply_outstanding = false
         @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @reply_outstanding })
+        seed_ask_state
       end
 
       # Supervise one ask. `timeline` is a thunk to the agent's live Timeline --
@@ -171,6 +174,16 @@ module Lain
 
       private
 
+      # The conversation's mutable state, apart from the injected collaborators
+      # above it -- the Agent `seed_run_state` split. The ticker's suppressed
+      # thunk reads @reply_outstanding at tick time, so seeding after its
+      # construction is safe by construction.
+      def seed_ask_state
+        @timeline = nil
+        @closed = false
+        @reply_outstanding = false
+      end
+
       # The break-able read: route prompt-time signals at the breaker, read, and
       # ALWAYS undo the routing + dispose the breaker. No rescue here on purpose --
       # a Break (during the read OR during this ensure's dispose) surfaces to
@@ -189,11 +202,16 @@ module Lain
       # clear lands on the next tick -- an up-to-@tick (1s) latency, accepted as
       # the price of one cadence for both the render and the clear.
       #
-      # actors: is also left at Shutdown's default (none) -- deliberately: there
-      # is no actor registry to hand it yet. OM-6 is the follow-up that wires
-      # one in; until then `#drain` settles only the run task.
+      # actors: is the injected supervisor's BOUNDED drain view (OM-6, the
+      # follow-up the old note here promised): a graceful `#drain` settles the
+      # fleet after the run task, so wait_responses means the fleet's
+      # in-flight work too -- capped at the same grace window the countdown
+      # uses, because an unbounded fleet settle would wedge the coordinator
+      # fiber with the sigquit escape hatch queued unread behind it. A settle
+      # that hits the cap is journaled (drain_timed_out), never silent.
       def build_shutdown(run)
-        Shutdown.new(run_task: run, closer: self, budget: @budget, clock: @clock, grace: @grace)
+        Shutdown.new(run_task: run, closer: self, budget: @budget, clock: @clock, grace: @grace,
+                     actors: @supervisor.drain(within: @grace))
       end
 
       # Route signals at the coordinator, then spawn it and the countdown ticker

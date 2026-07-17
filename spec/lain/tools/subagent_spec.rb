@@ -563,4 +563,90 @@ RSpec.describe Lain::Tools::Subagent do
       expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
     end
   end
+
+  # ---- W3: the OM-6 Supervisor unrefuses the model-dispatched :actor ---------
+  #
+  # The T23 refusal reasoning stands for a BARE dispatch: Agent#ask's per-call
+  # Sync owns any fiber a tool dispatch spawns, so a perform-launched actor
+  # would park as ask's own child and wedge the loop. A running Supervisor is
+  # the missing reactor above the Agent -- perform adopts the launch onto ITS
+  # task, so the fiber outlives the ask and the dispatch returns the handle.
+  describe "a model-dispatched :actor" do
+    let(:actor_log) { Lain::Tools::Subagent::Log.new }
+
+    def actor_mode_tool(*responses, supervisor:)
+      described_class.new(
+        provider: mock(*responses), context_factory: -> { child_context },
+        toolset: union, policy: spawn_policy, parent:,
+        mode: :actor, log: actor_log, supervisor:
+      )
+    end
+
+    it "launches under a running Supervisor: the spawn lands, the handle returns, no refusal" do
+      supervisor = Lain::Supervisor.new
+      Sync do |task|
+        supervisor.run(task)
+        tool = actor_mode_tool(text_response("actor ready"), supervisor:)
+
+        result = tool.call({ "prompt" => "go" }, invocation)
+
+        expect(result).to be_ok
+        spawn = actor_log.to_a.find { |event| event.kind == :spawn }
+        expect(spawn).not_to be_nil
+        expect(result.content).to include(spawn.digest)
+        expect(supervisor.map(&:address)).to eq([spawn.digest])
+        expect(supervisor.map(&:role)).to eq(["subagent"])
+        supervisor.stop
+      end
+    end
+
+    it "does not wedge the parent's ask: the loop settles while the actor persists" do
+      supervisor = Lain::Supervisor.new
+      Sync do |task|
+        supervisor.run(task)
+        tool = actor_mode_tool(text_response("actor ready"), supervisor:)
+        parent_agent = Lain::Agent.new(
+          provider: mock(tool_response(["a1", "subagent", { "prompt" => "go" }]), text_response("parent continues")),
+          toolset: Lain::Toolset.new([tool]),
+          context: Lain::Context.new(model: "parent", max_tokens: 256),
+          timeline: Lain::Timeline.empty(store:)
+        )
+
+        response = parent_agent.ask("spawn an actor")
+
+        expect(response.text).to eq("parent continues")
+        actor = supervisor.first.actor
+        expect(actor.settle).not_to be_dead
+        supervisor.stop
+      end
+    end
+
+    # AC: no supervisor still refuses loudly -- today's message, no event, no
+    # Store touch. The default is Supervisor::Null, so an unwired tool behaves
+    # byte-identically to the pre-W3 refusal.
+    it "still refuses with today's message when no supervisor is wired" do
+      tool = described_class.new(
+        provider: mock(text_response("unused")), context_factory: -> { child_context },
+        toolset: union, policy: spawn_policy, parent:, mode: :actor, log: actor_log
+      )
+      before = store.size
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to match(/OM-6|supervisor|launch_actor/)
+      expect(actor_log.to_a).to be_empty
+      expect(store.size).to eq(before)
+    end
+
+    it "refuses the same way under a supervisor that is not running" do
+      stopped = Lain::Supervisor.new
+      tool = actor_mode_tool(text_response("unused"), supervisor: stopped)
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to match(/supervisor/)
+    end
+  end
 end

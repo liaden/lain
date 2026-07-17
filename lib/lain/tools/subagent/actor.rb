@@ -71,7 +71,10 @@ module Lain
         # for a non-yielding prefix -- a synchronously-raising provider has
         # already set `@failure` by the time launch returns.
         def launch(prompt)
-          @spawn = @lineage.spawn(@parent)
+          # "launched" marks the actor path only: a one-shot's :spawn keeps its
+          # pre-W3 bytes (Lineage#spawn's own comment), so ADDRESSES change
+          # only where the lifecycle marker exists to be read.
+          @spawn = @lineage.spawn(@parent, lifecycle: "launched")
           @address = @spawn.digest
           @parent_correlation = @lineage.correlation_of(@parent)
           @task = Async::Task.current.async { run(prompt) }
@@ -132,7 +135,7 @@ module Lain
           return @farewell if @stopped
 
           @stopped = true
-          @farewell = reply("actor stopped")
+          @farewell = reply("actor stopped", lifecycle: "stopped")
           @task.stop
           @task.wait
           @farewell
@@ -172,17 +175,19 @@ module Lain
 
         # The initial turn, on the actor's own fiber: the child Agent runs to
         # settle over its fresh-root Timeline, and its answer rides back to the
-        # parent as a message.
+        # parent as a message -- marked "settled", the transition it IS.
         def process(prompt)
           response = @agent.ask(prompt)
-          reply(response.text)
+          reply(response.text, lifecycle: "settled")
         end
 
         # actor -> parent: a :message addressed to the parent's correlation,
         # naming the spawn and the child's head among its causal parents.
-        def reply(text)
+        # `lifecycle` rides through to the body (Lineage#note's discriminator);
+        # only the transitions carry one -- a tell stays bare.
+        def reply(text, lifecycle: nil)
           @lineage.note(@parent, from: @address, to: @parent_correlation, text:,
-                                 causal_parents: [@address, @agent.timeline.head_digest].compact)
+                                 causal_parents: [@address, @agent.timeline.head_digest].compact, lifecycle:)
         end
       end
     end

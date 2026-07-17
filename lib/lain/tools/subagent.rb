@@ -19,17 +19,21 @@ module Lain
     #
     # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
     # time -- provider, a child-Context factory, the union toolset it attenuates
-    # from, the spawn {Tool::SpawnPolicy}, a journal, a Budget, and a spawn-depth
-    # ceiling. The dispatch duck stays the Session (the `context:` a tool
-    # receives), which this tool does not read: everything it needs to spawn was
-    # injected, so the ToolRunner and the Session interface are untouched.
-    # `parent:` is a live handle to the parent Timeline (a Timeline or a
-    # `-> Timeline` thunk, since the toolset is built before the Agent) -- the one
-    # collaborator the render chain cannot supply, because H is the parent's head
-    # at the instant of the call. The shared Store rides ON that handle
-    # (`parent.store`): H, F, and both events live in one content-addressed
-    # forest, so deriving it from the parent is one source of truth rather than a
-    # separately-injected reference that could silently desync.
+    # from, the spawn {Tool::SpawnPolicy}, a journal, a Budget, a spawn-depth
+    # ceiling, and (for `mode: :actor`) the {Supervisor} whose reactor task a
+    # model-dispatched actor launches under. The dispatch duck stays the Session
+    # (the `context:` a tool receives), which this tool does not read: everything
+    # it needs to spawn was injected, so the ToolRunner and the Session interface
+    # are untouched. `parent:` is a live handle to the parent Timeline (a
+    # Timeline or a `-> Timeline` thunk, since the toolset is built before the
+    # Agent) -- the one collaborator the render chain cannot supply, because H is
+    # the parent's head at the instant of the call. The shared Store rides ON
+    # that handle (`parent.store`): H, F, and both events live in one
+    # content-addressed forest, so deriving it from the parent is one source of
+    # truth rather than a separately-injected reference that could silently
+    # desync. The spawn wiring itself -- what a child IS -- lives in
+    # {ChildBuilder}; this class decides WHEN one may spawn (depth, mode,
+    # supervisor presence).
     #
     # == The depth ceiling
     #
@@ -38,7 +42,7 @@ module Lain
     # result), emitting no event and touching no Store. The ceiling is
     # TRANSITIVE by construction: when a child's union is built, every Subagent
     # reachable in it is REPLACED by a copy whose ceiling is
-    # `min(its own, this one - 1)` (see {#child_union}) -- decrementing so the
+    # `min(its own, this one - 1)` (see {ChildBuilder}) -- decrementing so the
     # chain terminates, `min` so a descendant's own tighter ceiling is never
     # RAISED by the copy (that would be capability escalation). No Budget
     # change: the ceiling is a property of the tool, not of the loop.
@@ -70,9 +74,9 @@ module Lain
       # inside a single tool dispatch -- no interleaving writer can exist.
       # Returning the records along the call path instead is not cheap today:
       # {Tool::Result} content is pinned to String/Array wire blocks. The actor
-      # mode (OM-3) must NOT inherit this shape -- concurrent children would
-      # race these ivars, so the actor card should carry its records on events
-      # (its mailbox projection), not on tool state.
+      # mode (OM-3) does NOT inherit this shape -- concurrent children would
+      # race these ivars, so an actor's record rides its events (its mailbox
+      # projection and the journaled lifecycle), never tool state.
       attr_reader :name, :last_spawn, :last_message, :last_child
 
       # Two lifecycle modes over the same spawn machinery (OM-2/OM-3): `:one_shot`
@@ -84,20 +88,18 @@ module Lain
       # `observer` is Lineage's outward slot (T13), forwarded verbatim: the
       # session scribe can only attach at THIS constructor, the one seam the exe
       # wires, so an unforwardable observer would be silent record loss one
-      # level up.
+      # level up. `supervisor` is the OM-6 reactor a model-dispatched actor
+      # launches under; {Supervisor::Null} (not running) keeps the refusal.
       def initialize(provider:, context_factory:, toolset:, policy:, parent:,
                      journal: Channel::Null.instance, budget: Agent::Budget.new,
                      max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null,
-                     observer: Event::ChainWriter::Null.new)
+                     observer: Event::ChainWriter::Null.new, supervisor: Supervisor::Null)
         super()
-        @provider = provider
-        @context_factory = context_factory
-        @toolset = toolset
-        @policy = policy
+        @builder = ChildBuilder.new(provider:, context_factory:, toolset:, policy:, journal:, budget:)
         @parent = parent
         @journal = journal
-        @budget = budget
         @observer = observer
+        @supervisor = supervisor
         seed_config(max_depth, name, mode, log)
       end
 
@@ -120,28 +122,66 @@ module Lain
 
       # Launch a long-lived {Actor} over a freshly built child, and return the
       # handle -- the orchestration seam a supervisor uses to `tell`/`stop` it
-      # and read its Timeline. Programmatic ONLY: the fiber spawns on the
-      # current task, so the caller must hold a reactor that outlives the
-      # parent's asks (an orchestration Sync/Async above the Agent). {#perform}
-      # never routes here -- a tool-dispatched actor is refused (see there).
+      # and read its Timeline. The fiber spawns on the current task, so the
+      # caller must hold a reactor that outlives the parent's asks -- either an
+      # orchestration Sync/Async above the Agent (programmatic use) or the
+      # {Supervisor} task {#perform} adopts this launch onto.
       def launch_actor(prompt, parent: parent_timeline)
         # Per launch, mirroring #perform: AC4's floor note has no lifecycle
         # exemption, so an actor-mode sibling under the floor is reported too.
-        @policy.prefix.journal_floor(@journal)
+        policy.prefix.journal_floor(@journal)
         Actor.new(agent: build_child(parent), lineage:, parent:, journal: @journal).launch(prompt)
+      end
+
+      # A nested copy of this tool, for a child's union: same collaborators
+      # ({ChildBuilder#config} re-injects them verbatim), but the parent handle
+      # points at the CHILD (the grandchild's lineage names the child's head,
+      # not this parent's) and the ceiling is capped at `ceiling` -- never
+      # raised past this tool's own, so a tool wired to never spawn
+      # (max_depth 0) stays that way whatever the spawner had left. Public only
+      # for {ChildBuilder}, which builds the child's union -- it is not a
+      # Subagent, so `protected` can no longer say "only the spawn machinery".
+      def descend(parent:, ceiling:)
+        self.class.new(
+          **@builder.config, parent:,
+                             # The observer and supervisor descend with the copy: a grandchild's
+                             # events must reach the same scribe (or nested spawns silently vanish
+                             # from the session record) and its actors the same reactor.
+                             max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log,
+                             observer: @observer, supervisor: @supervisor
+        )
       end
 
       protected
 
-      # A model-dispatched `:actor` is REFUSED, never launched (T23 panel #1):
-      # Agent#ask's per-call Sync owns any fiber a tool dispatch spawns, so a
-      # perform-launched actor would park as ask's own child and structured
-      # concurrency would never let ask return -- the loop wedges, outer
-      # reactor or not. Until the OM-6 supervisor provides an orchestration
-      # reactor above the Agent, the actor seam is programmatic only
-      # ({#launch_actor}); like the depth cap, the refusal emits no event and
-      # touches no Store.
-      #
+      # A model-dispatched `:actor` is refused UNLESS a running {Supervisor} is
+      # wired (T23 panel #1, unrefused by OM-6): Agent#ask's per-call Sync owns
+      # any fiber a tool dispatch spawns, so a bare perform-launched actor
+      # would park as ask's own child and structured concurrency would never
+      # let ask return -- the loop wedges, outer reactor or not. The
+      # Supervisor's reactor task is the fiber home that outlives the ask, so
+      # {#adopt_actor} launches there; without one, the refusal (like the depth
+      # cap) emits no event and touches no Store.
+      def perform(input, _invocation)
+        return depth_exceeded if @max_depth <= 0
+        return adopt_actor(input.prompt) if @mode == :actor
+
+        spawn_one_shot(input.prompt)
+      end
+
+      private
+
+      # The adopted launch: the Supervisor runs {#launch_actor} under its own
+      # reactor task, so the fiber persists past this dispatch, and the
+      # tool_result carries the handle -- the actor's address (its :spawn
+      # digest), the stable name a caller tells it by.
+      def adopt_actor(prompt)
+        return actor_refused unless @supervisor.running?
+
+        actor = @supervisor.adopt(role: @name) { launch_actor(prompt) }
+        Tool::Result.ok("actor launched: #{actor.address}")
+      end
+
       # The one-shot path is re-entrant by construction (5-1.4): the spawn's
       # records ride LOCALS, never the `@last_*` ivars, across `run_child`'s IO
       # yield -- so a sibling fan-out task resuming mid-flight cannot make
@@ -149,40 +189,18 @@ module Lain
       # the end, together (#remember), a single atomic burst with no yield
       # between the three, so the observability projection stays mutually
       # consistent under concurrency and exact under a one-shot call.
-      def perform(input, _invocation)
-        return depth_exceeded if @max_depth <= 0
-        return actor_refused if @mode == :actor
-
+      def spawn_one_shot(prompt)
         # Per spawn, not per tool: the floor note (see PrefixStrategy::
         # SiblingTemplate#journal_floor) lands beside each :spawn it warns
         # about, so a fan-out's record shows which spawns ran un-cacheable.
-        @policy.prefix.journal_floor(@journal)
+        policy.prefix.journal_floor(@journal)
         parent = parent_timeline
         spawn = lineage.spawn(parent)
-        child, response = run_child(input.prompt, parent)
+        child, response = run_child(prompt, parent)
         message = lineage.message(parent, spawn, child, response)
         remember(spawn, child, message)
         Tool::Result.ok(response.text)
       end
-
-      # A nested copy of this tool, for a child's union: same collaborators, but
-      # the parent handle points at the CHILD (the grandchild's lineage names the
-      # child's head, not this parent's) and the ceiling is capped at `ceiling`
-      # -- never raised past this tool's own, so a tool wired to never spawn
-      # (max_depth 0) stays that way whatever the spawner had left. Protected:
-      # only another Subagent, building its child's union, may ask for it.
-      def descend(parent:, ceiling:)
-        self.class.new(
-          provider: @provider, context_factory: @context_factory, toolset: @toolset,
-          policy: @policy, parent:, journal: @journal, budget: @budget,
-          # The observer descends with the copy: a grandchild's :spawn/:message
-          # events must reach the same scribe, or nested spawns silently vanish
-          # from the session record -- the failure class this seam closes.
-          max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log, observer: @observer
-        )
-      end
-
-      private
 
       # The observability write, kept apart from #perform so the spawn path reads
       # as pure locals: this is the ONE place the `@last_*` ivars are set, all at
@@ -193,84 +211,39 @@ module Lain
         @last_message = message
       end
 
-      # A fresh child Agent over the base Timeline the prefix strategy chose,
-      # rendering the toolset the posture chose, enforced by the handler the
-      # posture chose. `ask` seeds the prompt as the child's first user turn and
-      # drives its loop to settle -- fresh starts that turn as a root, inherit
-      # starts it on the parent's head (O(1) fork).
+      # `ask` seeds the prompt as the child's first user turn and drives its
+      # loop to settle -- fresh starts that turn as a root, inherit starts it
+      # on the parent's head (O(1) fork).
       def run_child(prompt, parent)
         child = build_child(parent)
         response = child.ask(prompt)
         [child.timeline, response]
       end
 
-      # `child` is late-bound through the thunk EXACTLY as the exe wires this
-      # tool itself: the union must exist before the Agent, but a grandchild's
-      # lineage must name the child's LIVE head at its own spawn instant. The
-      # `tap` is forced: the obvious `child = spawn_agent(...); child` trips
-      # Style/RedundantAssignment, whose "correction" would delete the very
-      # assignment the thunk's binding depends on -- the Timeline#commit story
-      # again, so the code is shaped to give the cop nothing to break.
-      def build_child(parent)
-        child = nil
-        union = child_union(-> { child.timeline })
-        spawn_agent(parent, union, @policy.attenuate(union)).tap { |agent| child = agent }
-      end
+      def build_child(parent) = @builder.build(parent, ceiling: @max_depth - 1)
 
-      # The child's union: the injected one, with every Subagent in it replaced
-      # by a {#descend}ed copy -- the transitive-ceiling fix (T19 panel). Handing
-      # the SAME instances down would let a nested spawn keep this tool's own
-      # undecremented ceiling, and recursion would never terminate via the cap.
-      # The copy's schema bytes are identical (same name/description/input), so
-      # the rendered tools block -- and with it the cache prefix -- is unchanged.
-      def child_union(parent_handle)
-        ceiling = @max_depth - 1
-        Toolset.new(@toolset.map do |tool|
-          tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, ceiling:) : tool
-        end)
-      end
-
-      # A fresh {Session} per spawn -- never {Session::Null} -- so a
-      # write-capable child (read_file + edit_file in its `only`-set) can
-      # satisfy EditFile's read-before-write contract against its OWN
-      # read-set. Built here, not memoized on `self`: a Subagent instance is
-      # reused across sibling spawns (T19's re-entrancy contract), so a
-      # per-tool ivar would leak one sibling's reads into the next. `Session.new`
-      # never sees the parent's Session -- this tool was never handed a
-      # reference to it -- so the child's read-set starts empty by construction.
-      # The prefix strategy shapes the factory's product (`sibling_template`
-      # appends its shared template as the marked-by-Context system tail; the
-      # other arms pass it through), so template threading rides the SAME
-      # injected-factory seam the exe already wires. The journal rides along
-      # so a strategy that rewrites the factory's system (a stripped caller
-      # mark) can say so in the record.
-      def spawn_agent(parent, union, allowed)
-        Agent.new(
-          provider: @provider, context: @policy.prefix.child_context(@context_factory.call, journal: @journal),
-          toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
-          timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
-          session: Session.new, budget: @budget, journal: @journal
-        )
-      end
-
-      # `schema` renders the attenuated set, so a plain executor over it suffices;
-      # `handler_union` renders the shared union, so the RefusingHandler enforces
-      # the `only`-set the model can now see but must not use. Both dispatch
-      # against the DESCENDED union, never `@toolset`, so a permitted nested
-      # subagent runs at its decremented ceiling.
-      def child_handler(union, allowed)
-        return Effect::Handler::Live.new(toolset: allowed) unless @policy.posture.refuses_over_union?
-
-        RefusingHandler.new(allowed: allowed.names, journal: @journal,
-                            inner: Effect::Handler::Live.new(toolset: union))
-      end
+      def policy = @builder.policy
 
       # The spawn's event record, delegated: {Lineage} writes the :spawn and
       # :message events (see that class for the causal-edge and correlation-
       # join reasoning). Memoized here, not built in #initialize, only to keep
       # the wiring point within its Metrics budget -- Lineage is pure over the
-      # frozen @policy, so late construction changes nothing.
-      def lineage = @lineage ||= Lineage.new(policy: @policy, log: @log, observer: @observer)
+      # frozen policy, so late construction changes nothing.
+      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer)
+
+      # An actor's lifecycle rides the journal (OM-6 AC): every event {Lineage}
+      # writes -- the :spawn at launch, the settle reply, tells, the farewell --
+      # is promoted to a {Telemetry::Message}, the same flat record the session
+      # scribe writes, whose kind/digest/to/causal_parents shape is exactly
+      # what {StatusFeed}'s fleet field consumes. One-shot mode keeps the plain
+      # observer: its records already ride the tool_result and the scribe, and
+      # its journal contents are pinned by existing specs.
+      def lineage_observer = @mode == :actor ? method(:journal_lifecycle) : @observer
+
+      def journal_lifecycle(event)
+        @journal << Telemetry::Message.from_event(event)
+        @observer.call(event)
+      end
 
       # The config axis, apart from the injected collaborators (the Agent
       # `seed_run_state` split). Mode fails loudly here -- a mistyped mode must
@@ -295,6 +268,106 @@ module Lain
       # `-> { agent.timeline }` that reads the head at the instant of the call).
       def parent_timeline
         @parent.respond_to?(:call) ? @parent.call : @parent
+      end
+    end
+
+    # Reopened rather than nested mid-body -- the shutdown.rb idiom: the spawn
+    # wiring is its own responsibility (the extraction the Metrics trip named),
+    # and the split keeps each class body within Metrics/ClassLength instead of
+    # loosening it.
+    class Subagent < Tool
+      # What a child IS, given the injected collaborators: the union it renders,
+      # the Agent over it, the handler enforcing the posture. {Subagent} decides
+      # WHEN one may spawn (depth, mode, supervisor presence); this builds it.
+      # Parent-agnostic by construction -- `parent` arrives per {#build}, never
+      # at initialize -- so one builder serves every spawn and every descended
+      # copy ({#config}) without carrying spawn-specific state.
+      class ChildBuilder
+        attr_reader :policy
+
+        def initialize(provider:, context_factory:, toolset:, policy:, journal:, budget:)
+          @provider = provider
+          @context_factory = context_factory
+          @toolset = toolset
+          @policy = policy
+          @journal = journal
+          @budget = budget
+        end
+
+        # The constructor kwargs a descended copy re-injects ({Subagent#descend}):
+        # spawn wiring is shared config, so every copy gets it verbatim.
+        def config
+          { provider: @provider, context_factory: @context_factory, toolset: @toolset,
+            policy: @policy, journal: @journal, budget: @budget }
+        end
+
+        # A fresh child Agent over the base Timeline the prefix strategy chose,
+        # rendering the toolset the posture chose, enforced by the handler the
+        # posture chose. `child` is late-bound through the thunk EXACTLY as the
+        # exe wires the tool itself: the union must exist before the Agent, but
+        # a grandchild's lineage must name the child's LIVE head at its own
+        # spawn instant. The `tap` is forced: the obvious
+        # `child = spawn_agent(...); child` trips Style/RedundantAssignment,
+        # whose "correction" would delete the very assignment the thunk's
+        # binding depends on -- the Timeline#commit story again, so the code is
+        # shaped to give the cop nothing to break.
+        def build(parent, ceiling:)
+          child = nil
+          union = child_union(-> { child.timeline }, ceiling)
+          spawn_agent(parent, union, @policy.attenuate(union)).tap { |agent| child = agent }
+        end
+
+        private
+
+        # The child's union: the injected one, with every Subagent in it
+        # replaced by a descended copy -- the transitive-ceiling fix (T19
+        # panel). Handing the SAME instances down would let a nested spawn keep
+        # its constructing ceiling, and recursion would never terminate via the
+        # cap. The copy's schema bytes are identical (same name/description/
+        # input), so the rendered tools block -- and with it the cache prefix
+        # -- is unchanged.
+        def child_union(parent_handle, ceiling)
+          Toolset.new(@toolset.map do |tool|
+            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, ceiling:) : tool
+          end)
+        end
+
+        # A fresh {Session} per spawn -- never {Session::Null} -- so a
+        # write-capable child (read_file + edit_file in its `only`-set) can
+        # satisfy EditFile's read-before-write contract against its OWN
+        # read-set. Built here, not memoized: a builder is reused across
+        # sibling spawns (T19's re-entrancy contract), so a memoized Session
+        # would leak one sibling's reads into the next. `Session.new` never
+        # sees the parent's Session -- this builder was never handed a
+        # reference to it -- so the child's read-set starts empty by
+        # construction. The prefix strategy shapes the factory's product
+        # (`sibling_template` appends its shared template as the
+        # marked-by-Context system tail; the other arms pass it through), so
+        # template threading rides the SAME injected-factory seam the exe
+        # already wires. The journal rides along so a strategy that rewrites
+        # the factory's system (a stripped caller mark) can say so in the
+        # record.
+        def spawn_agent(parent, union, allowed)
+          Agent.new(
+            provider: @provider, context: @policy.prefix.child_context(@context_factory.call, journal: @journal),
+            toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
+            timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
+            session: Session.new, budget: @budget, journal: @journal
+          )
+        end
+
+        # `schema` renders the attenuated set, so a plain executor over it
+        # suffices; `handler_union` renders the shared union, so the
+        # RefusingHandler enforces the `only`-set the model can now see but
+        # must not use. Both dispatch against the DESCENDED union, never the
+        # injected toolset, so a permitted nested subagent runs at its
+        # decremented ceiling.
+        def child_handler(union, allowed)
+          return Effect::Handler::Live.new(toolset: allowed) unless @policy.posture.refuses_over_union?
+
+          RefusingHandler.new(allowed: allowed.names, journal: @journal,
+                              inner: Effect::Handler::Live.new(toolset: union))
+        end
       end
     end
   end
