@@ -1,6 +1,12 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+# Ruby 4 warns "IO::Buffer is experimental" on first use (the Journal's
+# fsync'd frames), straight onto the chat TTY -- interpreter noise smearing
+# the frontend's screen, not an output-discipline violation. Silencing global
+# Warning state is the EXE's call; the library must never do it for its host.
+Warning[:experimental] = false
+
 require "bundler/setup"
 require "thor"
 
