@@ -32,7 +32,8 @@ module Lain
   end
 end
 
-# The catalog reopens Skill (it constructs Skill.new instances at load time), so
-# it loads after the value above -- skill.rb is this subtree's index, the same
-# ordering role.rb uses for role/catalog.
+# The catalog and the invocation parser both reopen Skill, so they load after
+# the value above -- skill.rb is this subtree's index, the same ordering role.rb
+# uses for role/catalog.
 require_relative "skill/catalog"
+require_relative "skill/invocation"
