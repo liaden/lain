@@ -78,6 +78,26 @@ module Lain
             handler.call(chunk, *rest)
           end
         end
+
+        # {ErrorHandling#build_stream_error_response} prefers `status` -- the
+        # SEVERITY GUESS `parse_streaming_error` derives from the error body's
+        # shape (500, or 529 for "overloaded_error") -- over `env&.status`. That
+        # guess exists for an in-stream SSE `event: error`, where the response
+        # already returned 200 and no real status is available. But on a
+        # response FaradayHandlers#v2_on_data has already classified as FAILED
+        # (status != 200, known from the headers before any body byte streams
+        # in), the real status is sitting right there and is authoritative --
+        # yet the guess still won every time, so a genuine 400 got relabeled
+        # ServerError (500), which IS in the retry allowlist, and faraday-retry
+        # retried a request the sync path never would (RES1). `env&.status` is
+        # 200 for exactly the SSE-event case the guess is for, so overriding
+        # `status` only when a real non-2xx status is already known leaves that
+        # case untouched and forwards the rest to the shared implementation.
+        def build_stream_error_response(parsed_data, env, status)
+          known_status = env&.status
+          failed_status = known_status if known_status && !(200..299).cover?(known_status)
+          super(parsed_data, env, failed_status || status)
+        end
       end
 
       # Copies the raw HTTP response body -- `env.body` BEFORE the JSON middleware

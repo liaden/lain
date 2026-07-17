@@ -210,4 +210,73 @@ RSpec.describe Lain::Provider::AnthropicRaw do
       expect(retries.first.attempt).to eq(1)
     end
   end
+
+  # RES1: a streamed error must be classified by the REAL HTTP status --
+  # already known from the response headers, before any body byte streams in
+  # (see FaradayHandlers#v2_on_data) -- exactly as the sync path is. Left
+  # unfixed, `parse_streaming_error`'s body-shape guess (500, or 529 for
+  # "overloaded_error") wins over that known status, so a genuine 400 read as
+  # ServerError -- which IS in the retry allowlist -- and faraday-retry
+  # retried a request the sync path never would. Real transport + webmock,
+  # like the sync retry-journaling group above, because the bug lives in how
+  # Faraday's on_data/retry/error-middleware interplay resolves the status,
+  # not in anything a transport test double can observe.
+  describe "streamed error classification matches the sync path (RES1)" do
+    let(:channel) { RecordingChannel.new }
+
+    let(:success_sse) do
+      AnthropicSSE.body(Lain::Response.new(stop_reason: :end_turn, content: [{ "type" => "text", "text" => "ok" }]))
+    end
+
+    before do
+      allow_any_instance_of(Faraday::Retry::Middleware).to receive(:sleep)
+    end
+
+    it "raises the sync path's error class for a streamed 400, with no retry" do
+      error_body = JSON.generate("type" => "error",
+                                 "error" => { "type" => "invalid_request_error", "message" => "bad request" })
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 400, body: error_body, headers: { "Content-Type" => "application/json" })
+      provider = described_class.new(channel:, api_key: "test")
+
+      expect { provider.complete(request) }.to raise_error(described_class::APIStatusError) do |wrapped|
+        expect(wrapped.status).to eq(400)
+        expect(wrapped.cause).to be_a(Lain::Provider::HTTP::BadRequestError)
+      end
+      expect(channel.events.grep(Lain::Telemetry::ProviderRetry)).to be_empty
+    end
+
+    it "retries a streamed 429 under exactly the sync path's classification" do
+      error_body = JSON.generate("type" => "error", "error" => { "type" => "rate_limit_error", "message" => "x" })
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 429, body: error_body,
+                   headers: { "anthropic-ratelimit-tokens-reset" => "2", "Content-Type" => "application/json" })
+        .to_return(status: 200, body: success_sse, headers: { "Content-Type" => "text/event-stream" })
+      provider = described_class.new(channel:, api_key: "test")
+
+      response = provider.complete(request)
+
+      expect(response.content).to eq([{ "text" => "ok", "type" => "text" }])
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
+      expect(retries.size).to eq(1)
+      expect(retries.first.status).to eq(429)
+      expect(retries.first.reason).to eq("Lain::Provider::HTTP::RateLimitError")
+    end
+
+    it "retries a streamed 5xx under exactly the sync path's classification" do
+      error_body = JSON.generate("type" => "error", "error" => { "type" => "overloaded_error", "message" => "busy" })
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 529, body: error_body, headers: { "Content-Type" => "application/json" })
+        .to_return(status: 200, body: success_sse, headers: { "Content-Type" => "text/event-stream" })
+      provider = described_class.new(channel:, api_key: "test")
+
+      response = provider.complete(request)
+
+      expect(response.content).to eq([{ "text" => "ok", "type" => "text" }])
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
+      expect(retries.size).to eq(1)
+      expect(retries.first.status).to eq(529)
+      expect(retries.first.reason).to eq("Lain::Provider::HTTP::OverloadedError")
+    end
+  end
 end
