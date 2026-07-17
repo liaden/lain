@@ -508,30 +508,63 @@ class LainCLI < Thor
     def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
     # Routes one typed command through the repl phase. `:text`/`:agent` go in;
-    # the phase downstream runs the real dispatch and adds `:response` (nil on
-    # a rescued Lain::Error) on the way out -- the same in/out shape
+    # the phase downstream runs the real ask and adds `:response` (nil on a
+    # rescued Lain::Error) on the way out -- the same in/out shape
     # model_middleware uses for `:request`/`:response`.
+    #
+    # Delivery is dispatch's, not respond's: a middleware may SHORT-CIRCUIT --
+    # set `:response` and never call downstream -- and that answer still has to
+    # reach the terminal, so the one renderer is here at the boundary over
+    # `env.response`, spent exactly once whether the response came from the
+    # model turn or a middleware that skipped it. The boundary also rescues
+    # Lain::Error raised WITHIN THE CHAIN (a malformed skill invocation, say):
+    # render it and return, so `converse` loops to the next prompt instead of
+    # dying. An error from the ask itself is respond's own (it must journal the
+    # torn turns), so that path renders and returns nil here -- no double.
     def dispatch(text)
-      @middleware.call({ text:, agent: @agent }) do |env|
-        env.merge(response: respond(env.fetch(:text)))
+      env = @middleware.call({ text:, agent: @agent }) do |inner|
+        inner.merge(response: respond(inner.fetch(:text)))
       end
+      env.to_h.key?(:response) ? deliver(env.response) : render_missing_response
+    rescue Lain::Error => e
+      @tty.render_error(e.message)
     end
 
-    # Concurrent surfaces beside the ask: the {HumanReplies} reply fibers (`ask`
-    # parks inside ask_human#perform awaiting the reply, and the reply comes
-    # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
-    # depends on OM-0) and the approval watchers. Every surface `.stop` in the
-    # ensure is load-bearing: a parked one holds Sync open forever otherwise.
+    # The repl phase's out-key is `:response` (Env's per-phase contract): the
+    # downstream ask sets it, and a short-circuiting middleware MUST set it too.
+    # One that short-circuits WITHOUT it is a bug in that middleware, not a
+    # reason to kill the REPL: `env.response` (fetch) would raise KeyError --
+    # NOT a Lain::Error, so dispatch's rescue misses it and it escapes converse.
+    # Guard the contract loudly and RECOVERABLY -- name the breach to the
+    # terminal and let converse read the next prompt. A PRESENT `:response` of
+    # nil is not this case (an explicit-nil short-circuit renders nothing via
+    # deliver's own guard); absence is the bug, nil is a choice -- so never a
+    # silent nil deliver here.
+    def render_missing_response
+      @tty.render_error("repl middleware short-circuited without setting :response")
+    end
+
+    # The model turn, returned for {#dispatch} to deliver -- never rendered
+    # here, so a short-circuiting middleware's response and this one share the
+    # single boundary renderer. Concurrent surfaces beside the ask: the
+    # {HumanReplies} reply fibers (`ask` parks inside ask_human#perform awaiting
+    # the reply, and the reply comes from this same terminal -- a single-fiber
+    # ask-then-prompt deadlocks, OM-4 depends on OM-0) and the approval
+    # watchers. Every surface `.stop` in the ensure is load-bearing: a parked
+    # one holds Sync open forever otherwise. A torn ask is journaled and
+    # rendered right here (it owns the interrupted record), then returns nil so
+    # dispatch delivers nothing over it.
     def respond(text)
       Sync do |task|
         surfaces = [*@replies.surfaces(task), *approval_loop(task)]
-        deliver(@conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response)
+        @conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response
       ensure
         surfaces&.each { |surface| surface&.stop }
       end
     rescue Lain::Error => e
       record_interruption
       @tty.render_error(e.message)
+      nil
     end
 
     # Turns durable before the reply renders: the belt over the chronicle's
