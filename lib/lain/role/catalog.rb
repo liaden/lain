@@ -19,8 +19,8 @@ module Lain
       # Keyed by catalog name. Values are frozen {Role}s (deeply immutable Data),
       # so the catalog is a shareable constant, not a mutable registry.
       BUILT_INS = [
-        Role.new(name: :dev, only: %i[read_file list_files glob edit_file todo_write bash]),
-        Role.new(name: :test_engineer, only: %i[read_file list_files glob edit_file todo_write bash]),
+        Role.new(name: :dev, only: %i[read_file list_files glob grep edit_file todo_write bash]),
+        Role.new(name: :test_engineer, only: %i[read_file list_files glob grep edit_file todo_write bash]),
         Role.new(name: :reviewer_sre, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_security, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_dba, only: %i[read_file list_files bash]),

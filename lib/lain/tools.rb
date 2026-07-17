@@ -12,6 +12,7 @@ end
 require_relative "tools/read_file"
 require_relative "tools/list_files"
 require_relative "tools/glob"
+require_relative "tools/grep"
 require_relative "tools/memory_read"
 require_relative "tools/memory_write"
 require_relative "tools/edit_file"
