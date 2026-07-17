@@ -11,7 +11,7 @@ RSpec.describe Lain::Telemetry do
   # Lain::Telemetry.
   it "keeps every telemetry record under Lain::Telemetry, none under the reused Lain::Event name" do
     records = %i[ToolOutput Dropped ProviderRetry TurnUsage RequestSent
-                 RequestResent MemoryRoot CapabilityDegraded WriteRefused]
+                 RequestResent MemoryRoot CapabilityDegraded WriteRefused StreamStarted ObserverFailed]
     records.each do |record|
       expect(Lain::Telemetry.const_defined?(record, false)).to be(true)
       expect(Lain::Event.const_defined?(record, false)).to be(false)
@@ -29,6 +29,7 @@ RSpec.describe Lain::Telemetry do
       expect(Lain::Telemetry::Guards::RequestSent.new(stream: "yes")).to be_invalid
       expect(Lain::Telemetry::Guards::MemoryRoot.new(turn_digest: nil)).to be_invalid
       expect(Lain::Telemetry::Guards::WriteRefused.new(pattern: nil)).to be_invalid
+      expect(Lain::Telemetry::Guards::StreamStarted.new(digest: nil)).to be_invalid
     end
 
     it "raises ArgumentError naming the attribute AND echoing the value, never ActiveModel::ValidationError" do
@@ -47,7 +48,8 @@ RSpec.describe Lain::Telemetry do
         Lain::Telemetry::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}),
         Lain::Telemetry::RequestSent.new(digest: "d", payload: {}, stream: false, extra: {}),
         Lain::Telemetry::MemoryRoot.new(turn_digest: "d", root: nil),
-        Lain::Telemetry::WriteRefused.new(tool_use_id: "t", pattern: "p")
+        Lain::Telemetry::WriteRefused.new(tool_use_id: "t", pattern: "p"),
+        Lain::Telemetry::StreamStarted.new(digest: "d")
       ]
 
       valid.each do |event|
@@ -69,7 +71,8 @@ RSpec.describe Lain::Telemetry do
         "ProviderRetry" => "provider_retry", "TurnUsage" => "turn_usage",
         "RequestSent" => "request_sent", "RequestResent" => "request_resent",
         "MemoryRoot" => "memory_root",
-        "CapabilityDegraded" => "capability_degraded", "WriteRefused" => "write_refused"
+        "CapabilityDegraded" => "capability_degraded", "WriteRefused" => "write_refused",
+        "StreamStarted" => "stream_started", "ObserverFailed" => "observer_failed"
       }.each do |name, expected|
         hand_rolled = name.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
         expect(name.underscore).to eq(expected).and eq(hand_rolled)
@@ -432,6 +435,70 @@ RSpec.describe Lain::Telemetry do
       line = JSON.generate(bare.to_journal)
       expect(line).to include('"root":null')
       expect(JSON.parse(line)).to include("type" => "memory_root", "root" => nil)
+    end
+  end
+
+  # CE-5: the transient first-token scheduling signal. Not journaled as
+  # history -- see the "no Store event, no new kind" spec below -- but it is
+  # an ordinary {Journalable} Telemetry event like every other record here.
+  describe Lain::Telemetry::StreamStarted do
+    subject(:event) { described_class.new(digest: "blake3:req") }
+
+    it "carries the request digest whose response began streaming" do
+      expect(event.digest).to eq("blake3:req")
+    end
+
+    it "is a frozen value object with structural equality" do
+      twin = described_class.new(digest: "blake3:req")
+      expect(event).to eq(twin)
+      expect(event).to be_deeply_frozen
+      expect(event.hash).to eq(twin.hash)
+    end
+
+    it "is Ractor-shareable even when built from a mutable String" do
+      expect(described_class.new(digest: +"blake3:req")).to be_ractor_shareable
+    end
+
+    it "rejects a nil digest loudly -- there is no committed turn to name instead" do
+      expect { described_class.new(digest: nil) }
+        .to raise_error(ArgumentError, "digest must name the request whose response started, got nil")
+    end
+
+    it "journals as a stream_started record" do
+      expect(event.to_journal).to eq("type" => "stream_started", "digest" => "blake3:req")
+    end
+
+    # The KINDS set is the Store's closed enumeration of durable event kinds
+    # (:turn/:spawn/:message/:snapshot); StreamStarted is Channel/Telemetry
+    # only, so it must never appear there.
+    it "names no new Store kind -- the closed KINDS set is untouched" do
+      expect(Lain::Event::KINDS).not_to include(:stream_started)
+    end
+  end
+
+  # A raising `on_stream_started` observer must not cost #complete its
+  # response (see Provider::Anthropic/AnthropicRaw specs for that half); this
+  # is the loud, attributed record of the failure instead of a swallowed one.
+  describe Lain::Telemetry::ObserverFailed do
+    subject(:event) { described_class.new(hook: :stream_started, digest: "blake3:req", message: "boom") }
+
+    it "carries which observer failed, for which request, and the exception's own message" do
+      expect(event.hook).to eq(:stream_started)
+      expect(event.digest).to eq("blake3:req")
+      expect(event.message).to eq("boom")
+    end
+
+    it "is a frozen value object, Ractor-shareable even when built from mutable Strings" do
+      twin = described_class.new(hook: :stream_started, digest: +"blake3:req", message: +"boom")
+      expect(event).to eq(twin)
+      expect(event).to be_deeply_frozen
+      expect(event).to be_ractor_shareable
+    end
+
+    it "journals as an observer_failed record" do
+      expect(event.to_journal).to eq(
+        "type" => "observer_failed", "hook" => :stream_started, "digest" => "blake3:req", "message" => "boom"
+      )
     end
   end
 

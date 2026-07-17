@@ -27,6 +27,7 @@ module Lain
     # kwargs and the actual JSON body differ.
     class AnthropicRaw < Provider
       include AnthropicEncoding
+      include StreamStartedSignal
 
       DEFAULT_MODEL = "claude-opus-4-8"
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
@@ -88,13 +89,14 @@ module Lain
 
       # @param transport [#sync_post, #stream] injected in specs; a real
       #   {Transport} over the vendored connection otherwise.
-      # @param channel [Lain::Channel] where retry events are journaled
+      # @param channel [Lain::Channel] where retry and stream_started (CE-5) events land
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param spool [#open_frame] where the raw response bytes are teed; the Null
       #   spool by default, so no WAL file exists unless a session opts in
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      spool: Spool::Null.new, api_key: nil, api_base: nil)
         super()
+        @channel = channel
         @retries = RetryTap.new(spool:, channel:)
         @config = config || build_config(api_key:, api_base:)
         @transport = transport || Transport.new(@config, sink:)
@@ -104,9 +106,10 @@ module Lain
 
       # One round trip into a neutral Response. Streaming by default (Context
       # renders `stream: true`); both paths converge on the full block list and
-      # parsed tool inputs.
-      def complete(request)
-        build_response(dispatch(request))
+      # parsed tool inputs. `on_stream_started` is CE-5's signal -- see
+      # {StreamStartedSignal} -- never called on the non-streaming path.
+      def complete(request, on_stream_started: nil)
+        build_response(dispatch(request, on_stream_started))
       rescue Provider::HTTP::Error => e
         raise wrap_error(e)
       rescue Faraday::Error => e
@@ -154,15 +157,30 @@ module Lain
       # rotates THIS request's frame rather than concatenating two attempts into
       # one -- reentrant across parallel subagents sharing one Provider (see
       # {RetryTap}).
-      def dispatch(request)
+      def dispatch(request, on_stream_started)
         payload = wire_payload(request)
         frame = @retries.open_frame(request_digest: request.digest)
-        request.stream ? stream_dispatch(payload, frame) : sync_dispatch(payload, frame)
+        request.stream ? stream_dispatch(payload, frame, request, on_stream_started) : sync_dispatch(payload, frame)
       end
 
-      def stream_dispatch(payload, frame)
+      # CE-5: the FIRST data chunk the transport hands back is always the
+      # response's own first SSE event (`message_start`, ahead of any
+      # `content_block_start`), so signaling before handing it to the
+      # assembler is signaling before any content_block event -- no need to
+      # inspect `data["type"]` here. `signaled` covers the whole round trip,
+      # not just one attempt: a retry (see {RetryTap}) is still the SAME
+      # logical request, and a stagger scheduler awaiting `request.digest`
+      # wants exactly one signal for it, not one per attempt.
+      def stream_dispatch(payload, frame, request, on_stream_started)
         assembler = StreamAssembler.new
-        @transport.stream(payload, frame:) { |data| assembler.add(data) }
+        signaled = false
+        @transport.stream(payload, frame:) do |data|
+          unless signaled
+            signaled = true
+            emit_stream_started(request, on_stream_started)
+          end
+          assembler.add(data)
+        end
         assembler.result
       end
 

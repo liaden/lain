@@ -31,10 +31,19 @@ RSpec.describe Lain::Provider::Anthropic do
   # A doubled SDK client. `messages.create` returns the message directly;
   # `messages.stream` returns a single-pass stream whose `accumulated_message`
   # yields it. Injected so no unit test touches the network.
+  #
+  # `each_with_index` yields one stand-in event: CE-5 drives the ONE real pass
+  # through it before asking for `accumulated_message` (see
+  # Provider::Anthropic#stream_dispatch), so it has to yield at least once for
+  # the double to behave like a real stream that produced a response at all.
+  # The "over the wire (webmock)" group below re-proves the actual SDK
+  # contract end to end against a REAL MessageStream, which is what a stand-in
+  # single yield cannot.
   def client_returning(message, via: :stream)
     messages = instance_double("Anthropic::Resources::Messages")
     if via == :stream
       stream = instance_double("Anthropic::Streaming::MessageStream", accumulated_message: message)
+      allow(stream).to receive(:each_with_index).and_yield(:stand_in_event, 0)
       allow(messages).to receive(:stream).and_return(stream)
     else
       allow(messages).to receive(:create).and_return(message)
@@ -224,6 +233,65 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
+  # CE-5: the transient first-token scheduling signal (cache-economics.md).
+  # Unit-level ordering/observer coverage over the doubled client; the "over
+  # the wire" group below re-proves it against a REAL Anthropic::MessageStream.
+  describe "#complete CE-5 stream_started" do
+    let(:request) { Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }]) }
+
+    it "pushes exactly one attributed stream_started, and hands the digest to an observer, " \
+       "without the Channel needing to be that observer" do
+      channel = RecordingChannel.new
+      message = message_double(content: [text_block("hi")])
+      provider = described_class.new(client: client_returning(message), channel:)
+      observed = []
+
+      provider.complete(request, on_stream_started: ->(digest) { observed << digest })
+
+      started = channel.events.grep(Lain::Telemetry::StreamStarted)
+      expect(started.size).to eq(1)
+      expect(started.first.digest).to eq(request.digest)
+      expect(observed).to eq([request.digest])
+    end
+
+    # Review fix: a bad orchestration policy must not cost #complete its
+    # response. See the identical AnthropicRaw spec for the fuller comment.
+    it "still returns the response and still emits stream_started when the observer raises, " \
+       "surfacing the failure instead of swallowing it" do
+      channel = RecordingChannel.new
+      message = message_double(content: [text_block("hi")])
+      provider = described_class.new(client: client_returning(message), channel:)
+      raising = ->(_digest) { raise "boom from orchestration policy" }
+
+      response = provider.complete(request, on_stream_started: raising)
+
+      expect(response.content.first["text"]).to eq("hi")
+      started = channel.events.grep(Lain::Telemetry::StreamStarted)
+      expect(started.size).to eq(1)
+      expect(started.first.digest).to eq(request.digest)
+      failures = channel.events.grep(Lain::Telemetry::ObserverFailed)
+      expect(failures.size).to eq(1)
+      expect(failures.first.hook).to eq(:stream_started)
+      expect(failures.first.digest).to eq(request.digest)
+      expect(failures.first.message).to eq("boom from orchestration policy")
+    end
+
+    it "emits nothing on the non-streaming path" do
+      channel = RecordingChannel.new
+      message = message_double(content: [text_block("hi")])
+      client = client_returning(message, via: :create)
+      non_streaming = Lain::Request.new(model: "m", max_tokens: 1, stream: false,
+                                        messages: [{ role: "user", content: "hi" }])
+      provider = described_class.new(client:, channel:)
+      observed = []
+
+      provider.complete(non_streaming, on_stream_started: ->(digest) { observed << digest })
+
+      expect(channel.events.grep(Lain::Telemetry::StreamStarted)).to be_empty
+      expect(observed).to be_empty
+    end
+  end
+
   describe "#complete non-streaming path" do
     it "calls create, not stream, when the Request opts out of streaming" do
       message = message_double(content: [text_block("hi")])
@@ -322,6 +390,27 @@ RSpec.describe Lain::Provider::Anthropic do
         expect(captured).not_to have_key("system_")
         expect(captured.dig("system", 0, "cache_control")).to eq("type" => "ephemeral")
       end).to have_been_made
+      expect(response.tool_uses.first["input"]).to eq("path" => "lib/x.rb")
+      expect(response).to stop_with(:tool_use)
+    end
+
+    # CE-5, proved against the REAL Anthropic::Streaming::MessageStream: this
+    # is the empirical check that driving MessageStream#each ourselves (to see
+    # the first event) and THEN calling the public #accumulated_message does
+    # not double-consume the stream -- the SDK's `fused_enum` guard is what
+    # makes that safe (see Provider::Anthropic#stream_dispatch), and only a
+    # real MessageStream, not an instance_double, can actually exercise it.
+    it "still parses the full response correctly when CE-5 drives the first pass over the real stream" do
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 200, body: sse, headers: { "Content-Type" => "text/event-stream" })
+      channel = RecordingChannel.new
+      observed = []
+
+      provider = described_class.new(client: Anthropic::Client.new(api_key: "test"), channel:)
+      response = provider.complete(request, on_stream_started: ->(digest) { observed << digest })
+
+      expect(observed).to eq([request.digest])
+      expect(channel.events.grep(Lain::Telemetry::StreamStarted).size).to eq(1)
       expect(response.tool_uses.first["input"]).to eq("path" => "lib/x.rb")
       expect(response).to stop_with(:tool_use)
     end

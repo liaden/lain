@@ -127,6 +127,86 @@ RSpec.describe Lain::Provider::AnthropicRaw do
     end
   end
 
+  # CE-5: the transient first-token scheduling signal (cache-economics.md).
+  describe "#complete CE-5 stream_started" do
+    let(:channel) { RecordingChannel.new }
+    let(:canned) { Lain::Response.new(stop_reason: :end_turn, content: [{ "type" => "text", "text" => "hi" }]) }
+
+    it "emits exactly one stream_started on the Channel, attributed with the request digest, " \
+       "before any content_block event reaches the assembler" do
+      events = AnthropicSSE.events(canned)
+      recorded_events = channel.events # a true local, so the closure below sees it regardless of `self`
+      signaled_before_content_block = nil
+      transport = Class.new do
+        define_method(:stream) do |_payload, _headers = {}, **, &blk|
+          events.each do |event|
+            if event["type"] == "content_block_start" && signaled_before_content_block.nil?
+              signaled_before_content_block = recorded_events.any?(Lain::Telemetry::StreamStarted)
+            end
+            blk.call(event)
+          end
+        end
+      end.new
+      req = request
+      provider = described_class.new(transport:, channel:)
+
+      provider.complete(req)
+
+      started = channel.events.grep(Lain::Telemetry::StreamStarted)
+      expect(started.size).to eq(1)
+      expect(started.first.digest).to eq(req.digest)
+      expect(signaled_before_content_block).to be(true)
+    end
+
+    it "hands the digest to a per-request observer without touching the Channel" do
+      transport = transport_streaming(AnthropicSSE.events(canned))
+      provider = described_class.new(transport:, channel:)
+      req = request
+      observed = []
+
+      provider.complete(req, on_stream_started: ->(digest) { observed << digest })
+
+      expect(observed).to eq([req.digest])
+      expect(channel.events.grep(Lain::Telemetry::StreamStarted).size).to eq(1)
+    end
+
+    # Review fix: a bad orchestration policy must not cost #complete its
+    # response. The observer call sits outside the response path entirely --
+    # only its own failure is isolated, and it must be surfaced, not
+    # swallowed (see Lain::Telemetry::ObserverFailed).
+    it "still returns the response and still emits stream_started when the observer raises, " \
+       "surfacing the failure instead of swallowing it" do
+      transport = transport_streaming(AnthropicSSE.events(canned))
+      provider = described_class.new(transport:, channel:)
+      req = request
+      raising = ->(_digest) { raise "boom from orchestration policy" }
+
+      response = provider.complete(req, on_stream_started: raising)
+
+      expect(response.content).to eq(canned.content)
+      started = channel.events.grep(Lain::Telemetry::StreamStarted)
+      expect(started.size).to eq(1)
+      expect(started.first.digest).to eq(req.digest)
+      failures = channel.events.grep(Lain::Telemetry::ObserverFailed)
+      expect(failures.size).to eq(1)
+      expect(failures.first.hook).to eq(:stream_started)
+      expect(failures.first.digest).to eq(req.digest)
+      expect(failures.first.message).to eq("boom from orchestration policy")
+    end
+
+    it "emits nothing at all on the non-streaming path" do
+      transport = transport_sync({ "id" => "m", "model" => "m", "stop_reason" => "end_turn",
+                                   "content" => [{ "type" => "text", "text" => "hi" }], "usage" => {} })
+      provider = described_class.new(transport:, channel:)
+      observed = []
+
+      provider.complete(request(stream: false), on_stream_started: ->(digest) { observed << digest })
+
+      expect(channel.events.grep(Lain::Telemetry::StreamStarted)).to be_empty
+      expect(observed).to be_empty
+    end
+  end
+
   describe "#complete over the non-streaming path" do
     it "maps a create-shaped body into a Response, tool inputs already parsed" do
       body = { "id" => "msg_1", "model" => "claude-opus-4-8", "stop_reason" => "tool_use",

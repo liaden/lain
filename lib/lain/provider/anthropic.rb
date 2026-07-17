@@ -22,6 +22,7 @@ module Lain
     # identical: a Response whose `tool_use` inputs are parsed Hashes.
     class Anthropic < Provider
       include AnthropicEncoding
+      include StreamStartedSignal
 
       # A short prompt will not cache (Opus 4.8's minimum cacheable prefix is
       # 4096 tokens), but that is silent rather than an error, so the default is
@@ -61,9 +62,11 @@ module Lain
 
       # @param client [Anthropic::Client, nil] injected in specs; a real client
       #   reading ANTHROPIC_API_KEY from the environment otherwise.
-      def initialize(client: nil, **client_options)
+      # @param channel [Lain::Channel] where CE-5's stream_started event lands
+      def initialize(client: nil, channel: Channel::Null.instance, **client_options)
         super()
         @client = client || ::Anthropic::Client.new(**client_options)
+        @channel = channel
       end
 
       def capabilities = CAPABILITIES
@@ -74,9 +77,10 @@ module Lain
       # One round trip into a neutral Response. Streaming by default; both paths
       # converge on parsed tool inputs and the FULL block list (text, thinking,
       # tool_use), because dropping thinking or tool_use blocks corrupts the very
-      # next turn (correctness gate 1).
-      def complete(request)
-        build_response(dispatch(request))
+      # next turn (correctness gate 1). `on_stream_started` is CE-5's signal --
+      # see {StreamStartedSignal}.
+      def complete(request, on_stream_started: nil)
+        build_response(dispatch(request, on_stream_started))
       rescue ::Anthropic::Errors::APIStatusError => e
         raise APIStatusError.new(e.message, status: e.status)
       rescue ::Anthropic::Errors::Error => e
@@ -85,13 +89,30 @@ module Lain
 
       private
 
-      def dispatch(request)
+      def dispatch(request, on_stream_started)
         params = encode(request)
         return @client.messages.create(params) unless request.stream
 
-        # The stream is single-pass and `accumulated_message` drains it exactly
-        # once, mutating its snapshot in place; consume it once only.
-        @client.messages.stream(params).accumulated_message
+        stream_dispatch(@client.messages.stream(params), request, on_stream_started)
+      end
+
+      # The stream is single-pass: `MessageStream#each` drains the ONE
+      # memoized Enumerator `accumulated_message` also drains via its own
+      # `each {}` (see `MessageStream#until_done`), so this is that one pass,
+      # driven by us instead of by `accumulated_message` -- not a second one.
+      # The SDK's `fused_enum` guards its generator with a `fused` flag
+      # closed over the Enumerator itself, so calling `#each` again (inside
+      # `accumulated_message`, right after) is a documented-safe no-op that
+      # just returns the snapshot our pass already built, then applies
+      # `parse_content_blocks!` -- the ordinary, blessed way to finish. CE-5
+      # needs to see the moment the first event arrives (`message_start`,
+      # BEFORE any content_block event), and this is the only pass allowed,
+      # so it is also where the signal has to fire.
+      def stream_dispatch(stream, request, on_stream_started)
+        stream.each_with_index do |_event, index|
+          emit_stream_started(request, on_stream_started) if index.zero?
+        end
+        stream.accumulated_message
       end
 
       def build_response(message)
