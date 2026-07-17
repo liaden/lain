@@ -3,6 +3,8 @@
 RSpec.describe Lain::Context::MessageEnvelope do
   def block(type, text) = { "type" => type, "text" => text }
 
+  def workspace_block(text) = { "type" => "text", "text" => text, Lain::Workspace::WORKSPACE_MARKER => true }
+
   def message(role, *blocks) = { "role" => role, "content" => blocks }
 
   describe ".wrap" do
@@ -52,11 +54,22 @@ RSpec.describe Lain::Context::MessageEnvelope do
       expect(envelope.real_text_blocks.map { |b| b["text"] }).to eq(%w[a])
     end
 
-    it "drops <workspace>-tagged text blocks" do
+    it "drops blocks carrying the structural workspace marker" do
       envelope = described_class.wrap(
-        message("user", block("text", "a"), block("text", "#{Lain::Workspace::OPENING_TAG}todo</workspace>"))
+        message("user", block("text", "a"), workspace_block("#{Lain::Workspace::OPENING_TAG}todo</workspace>"))
       )
       expect(envelope.real_text_blocks.map { |b| b["text"] }).to eq(%w[a])
+    end
+
+    # R.2: the tag text alone used to be the provenance signal, so genuine
+    # user text that happened to start with it was swallowed from the query.
+    # Provenance is now the structural WORKSPACE_MARKER key, so this block --
+    # no marker, just text that happens to look like a tag -- is real query
+    # material and must survive.
+    it "keeps a block whose TEXT merely starts with the opening tag but carries no structural marker" do
+      literal_text = "#{Lain::Workspace::OPENING_TAG}not actually injected"
+      envelope = described_class.wrap(message("user", block("text", literal_text)))
+      expect(envelope.real_text_blocks.map { |b| b["text"] }).to eq([literal_text])
     end
   end
 
@@ -70,17 +83,30 @@ RSpec.describe Lain::Context::MessageEnvelope do
       envelope = described_class.wrap(message("user", { "type" => "tool_result", "content" => "x" }))
       expect(envelope.query_text).to be_nil
     end
+
+    # The Gherkin AC: a user message that literally starts with "<workspace>"
+    # must still feed the query -- provenance is the structural key, not a
+    # text prefix, so this is genuine query material, not an injected block.
+    it "feeds a literal '<workspace>'-prefixed user message into the query" do
+      envelope = described_class.wrap(message("user", block("text", "#{Lain::Workspace::OPENING_TAG} help")))
+      expect(envelope.query_text).to eq("#{Lain::Workspace::OPENING_TAG} help")
+    end
   end
 
   describe "#workspace_tagged?" do
-    it "is true for a block whose text leads with the opening tag" do
+    it "is true for a block carrying the structural workspace marker" do
       envelope = described_class.wrap(message("user"))
-      expect(envelope.workspace_tagged?(block("text", "#{Lain::Workspace::OPENING_TAG}x</workspace>"))).to be(true)
+      expect(envelope.workspace_tagged?(workspace_block("#{Lain::Workspace::OPENING_TAG}x</workspace>"))).to be(true)
     end
 
     it "is false for ordinary text" do
       envelope = described_class.wrap(message("user"))
       expect(envelope.workspace_tagged?(block("text", "ordinary"))).to be(false)
+    end
+
+    it "is false for a block whose text merely starts with the opening tag but carries no marker" do
+      envelope = described_class.wrap(message("user"))
+      expect(envelope.workspace_tagged?(block("text", "#{Lain::Workspace::OPENING_TAG}x</workspace>"))).to be(false)
     end
   end
 

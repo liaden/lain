@@ -16,9 +16,11 @@ RSpec.describe Lain::Workspace do
     expect(grown.reminders).to eq(["todo: ship M1"])
   end
 
-  it "renders reminders as tagged text blocks" do
+  it "renders reminders as tagged text blocks carrying the structural workspace marker" do
     blocks = described_class.new(reminders: ["remember"]).to_blocks
-    expect(blocks).to eq([{ "type" => "text", "text" => "<workspace>remember</workspace>" }])
+    expect(blocks).to eq(
+      [{ "type" => "text", "text" => "<workspace>remember</workspace>", described_class::WORKSPACE_MARKER => true }]
+    )
   end
 
   # The steady state (Agent renders `@workspace.with(*@session.reminders)`

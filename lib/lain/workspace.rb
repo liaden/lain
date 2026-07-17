@@ -25,14 +25,23 @@ module Lain
 
     BLOCK_TYPE = "text"
 
-    # The tags delimit injected workspace state so a reader -- human, model, or
-    # {Context::Recall}'s query-exclusion rule -- can tell it apart from genuine
-    # conversation. One constant, two call sites, so the writer and reader cannot
-    # drift. That Recall keys provenance off this literal prefix (rather than a
-    # structural block flag) is a known limitation tracked as R.2 in
-    # planning/remaining-work.md -- NOT resolved here.
+    # The tags delimit injected workspace state so a HUMAN OR MODEL reader can
+    # tell it apart from genuine conversation at a glance. One constant, two
+    # call sites, so the writer and reader cannot drift. Provenance itself
+    # (what {Context::Recall}'s query-exclusion rule keys off) no longer
+    # infers from this text -- see WORKSPACE_MARKER below (R.2, resolved).
     OPENING_TAG = "<workspace>"
     CLOSING_TAG = "</workspace>"
+
+    # The neutral, structural marker a block carries to say "I am injected
+    # workspace state, not conversation" -- exactly the same shape as
+    # {Provider::AnthropicEncoding::CACHE_MARKER}: never a wire field, always
+    # stripped before a payload is emitted (translate_block) or digested
+    # (Request#prefix_digests). Reading provenance off this key rather than
+    # off the visible tag text is what R.2 fixes: genuine user text that
+    # happens to start with "<workspace>" carries no such key and is real
+    # query material.
+    WORKSPACE_MARKER = "workspace"
 
     attr_reader :reminders
 
@@ -66,11 +75,12 @@ module Lain
     end
 
     # Rendered as ordinary text blocks. They are tagged so a reader (human or
-    # model) can tell injected state from conversation, and so a future Context
-    # can strip them back out when re-rendering under a different strategy.
+    # model) can tell injected state from conversation, and carry the
+    # structural WORKSPACE_MARKER so provenance survives even when the
+    # visible text does not (or is imitated by a genuine user message).
     def to_blocks
       reminders.map do |reminder|
-        { "type" => BLOCK_TYPE, "text" => "#{OPENING_TAG}#{reminder}#{CLOSING_TAG}" }
+        { "type" => BLOCK_TYPE, "text" => "#{OPENING_TAG}#{reminder}#{CLOSING_TAG}", WORKSPACE_MARKER => true }
       end
     end
 

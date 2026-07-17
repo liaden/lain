@@ -218,9 +218,16 @@ module Lain
       { "role" => message["role"], "content" => message["content"].first(block_index + 1) }
     end
 
+    # Strips both neutral markers that can ride a block: "cache" (a
+    # breakpoint slides across messages as a session grows -- see
+    # PREFIX_CHAIN_VERSION above) and "workspace" (Workspace::WORKSPACE_MARKER
+    # -- the reminder tail is re-rendered fresh every turn, so its presence or
+    # position must not read as a rewrite of the surrounding content either).
+    # Neither is a wire field; both are stripped the same way for the same
+    # reason.
     def strip_cache_markers(value)
       case value
-      when Hash then value.except("cache").transform_values { |v| strip_cache_markers(v) }
+      when Hash then value.except("cache", Workspace::WORKSPACE_MARKER).transform_values { |v| strip_cache_markers(v) }
       when Array then value.map { |v| strip_cache_markers(v) }
       else value
       end

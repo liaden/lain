@@ -9,12 +9,15 @@ module Lain
       # byte-identical with, so #encode IS the wire payload -- there is no later
       # `system_:`-to-`system` rewrite. The payload is rebuilt field by field
       # rather than transformed in place, and that reconstruction is what keeps
-      # the neutral cache marker off the wire: only known fields (a block's
-      # text, a tool's name/description/schema) are ever copied out, so
-      # `"cache" => true` -- which Ollama has no prompt cache to honor -- simply
-      # never has a field to land in. Surfacing that missing capability is the
-      # policy's job (`:degrade` journals it); the encoder's job is only to not
-      # leak the key.
+      # every neutral marker off the wire: only known fields (a block's text,
+      # a tool's name/description/schema) are ever copied out, so `"cache" =>
+      # true` -- which Ollama has no prompt cache to honor -- and
+      # `Workspace::WORKSPACE_MARKER` -- structural provenance, meaningful only
+      # to Lain's own Recall -- simply never have a field to land in. There is
+      # no `translate_block`-style strip here because there is nothing to
+      # strip FROM: `text_of` only ever reads `block["text"]`. Surfacing a
+      # missing capability (like prompt caching) is the policy's job
+      # (`:degrade` journals it); the encoder's job is only to not leak a key.
       module Encoding
         # Ollama's native wire carries no tool-call id. When a tool_result is
         # sent back it correlates to its call by `tool_name` alone, so the name

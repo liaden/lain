@@ -84,11 +84,14 @@ RSpec.describe Lain::Context::Recall do
     expect(recalled).not_to include("dose-value")
   end
 
-  it "excludes <workspace>-tagged text from the query, falling back past it" do
-    messages = [
-      message("user", text("what is the aspirin dosing?") + [{ "type" => "text",
-                                                               "text" => "<workspace>irrelevant</workspace>" }])
-    ]
+  # R.2: exclusion is keyed off the structural WORKSPACE_MARKER now, not the
+  # visible tag text -- so the fixture here must carry the marker to still
+  # demonstrate exclusion (a lookalike block with no marker is covered by
+  # spec/lain/context/message_envelope_spec.rb instead).
+  it "excludes workspace-marked blocks from the query, falling back past it" do
+    workspace_block = { "type" => "text", "text" => "<workspace>irrelevant</workspace>",
+                        Lain::Workspace::WORKSPACE_MARKER => true }
+    messages = [message("user", text("what is the aspirin dosing?") + [workspace_block])]
     combinator = described_class.new(index:, k: 3)
     recalled = combinator.call(messages).last["content"].last["text"]
     expect(recalled).to include("aspirin-dosage")

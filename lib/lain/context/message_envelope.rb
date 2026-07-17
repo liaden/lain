@@ -42,12 +42,13 @@ module Lain
         texts.join("\n") unless texts.empty?
       end
 
-      # Provenance is inferred from the block's leading tag, not a structural
-      # field -- an accepted tradeoff pending R.2 (structural provenance in
-      # planning/remaining-work.md). Do NOT fix R.2 here: genuine user text that
-      # literally starts with the tag is excluded too, and that is the known cost.
+      # Provenance is the block's structural marker (R.2, resolved), not its
+      # visible text -- mirrors how AnthropicEncoding keys a cache breakpoint
+      # off "cache" rather than off any wire-shaped hint. A genuine user
+      # message that happens to start with the literal "<workspace>" tag
+      # carries no WORKSPACE_MARKER and is real query material, not swallowed.
       def workspace_tagged?(block)
-        block["text"].to_s.start_with?(Workspace::OPENING_TAG)
+        block[Workspace::WORKSPACE_MARKER] == true
       end
 
       private

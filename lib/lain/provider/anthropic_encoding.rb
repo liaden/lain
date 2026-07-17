@@ -131,12 +131,17 @@ module Lain
 
       # Translate Lain's neutral cache marker into Anthropic's wire field and
       # strip the marker itself, which is not a wire field. A falsy marker is
-      # simply removed. Non-Hash blocks (a bare String) pass through untouched.
+      # simply removed. {Workspace::WORKSPACE_MARKER} is the same kind of
+      # neutral key -- structural provenance, never a wire field -- so it is
+      # always stripped too, independent of whether the block also carries a
+      # cache marker (CacheBreakpoints can mark the workspace tail's own last
+      # block). Non-Hash blocks (a bare String) pass through untouched.
       def translate_block(block)
-        return block unless block.is_a?(Hash) && block.key?(CACHE_MARKER)
+        return block unless block.is_a?(Hash)
+        return block unless block.key?(CACHE_MARKER) || block.key?(Workspace::WORKSPACE_MARKER)
 
         cached = block[CACHE_MARKER]
-        stripped = block.reject { |key, _| key == CACHE_MARKER }
+        stripped = block.except(CACHE_MARKER, Workspace::WORKSPACE_MARKER)
         cached ? stripped.merge("cache_control" => EPHEMERAL) : stripped
       end
     end
