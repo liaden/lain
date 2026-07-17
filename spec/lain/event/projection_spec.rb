@@ -184,10 +184,17 @@ RSpec.describe Lain::Event::Projection do
 
     # Panel fix #1: the walk must be iterative -- a long causal chain is a log
     # shape, not an error, and recursion turned 10,000 links into SystemStackError.
+    # N stays at 10,000: recursive impls only reliably overflow >= ~8k links.
+    # Only the root needs a real payload (the walk reads bodies solely at
+    # tool_result hits); the links are detached envelopes naming their payloads
+    # by literal digest, which costs one blake3 per link instead of three and
+    # keeps the fixture build from dwarfing the 14ms walk under test.
     it "walks a 10,000-link causal chain without exhausting the stack" do
       tool_result = { "type" => "tool_result", "tool_use_id" => "tu_deep", "content" => block("root") }
       log = [Lain::Event.turn(role: "user", content: [tool_result])]
-      9_999.times { |n| log << turn("link-#{n}", causal_parents: [log.last.digest]) }
+      9_999.times do |n|
+        log << Lain::Event.new(kind: :turn, payload_digest: "blake3:link-#{n}", causal_parents: [log.last.digest])
+      end
 
       expect(described_class.new(log).provenance(log.last)).to contain_exactly(tool_result)
     end
