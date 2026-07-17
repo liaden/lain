@@ -104,9 +104,10 @@ structure it realizes (the 4 kinds, `meet`/`diverge_at` over the DAG, the Rust p
 - **M4-1 — the Rust Timeline.** `[built]` (this session): `Canonical`/`Store`/`Turn`/`Timeline` ported
   to `ext/lain` as `frozen_shareable` `TypedData`, digests byte-identical to the Ruby reference, the
   same shared law groups passing against **both** impls.
-  **Planned:** `planning/specs/rust-findings-resolution.md` — resolve the 2026-07-15 `ext/lain`
+  **✅ Done:** `planning/specs/rust-findings-resolution.md` — resolved the 2026-07-15 `ext/lain`
   findings (loud walks on corrupt chains, idiomatic errors via thiserror, FFI naming/dedup,
-  Digest/Role domain types, edition 2024).
+  Digest/Role domain types, edition 2024). (Stale "Planned" marker fixed 2026-07-17 — the plan
+  doc itself has read `status: done` since before this chunk.)
 - **M4-2 — the Neovim frontend.** `[built]` (2026-07-15, `chunk-spine-agents-sweep-nvim.md`):
   journal-subscribing `Frontend::Neovim` skeleton, read-only `lain://timeline`/`workspace`/`diff`
   projections, and editable `lain://request` + `:LainResend` (a resend journals as
@@ -119,9 +120,11 @@ deterministic diff under another, and `Compare` reports distributions over `n` r
 compare mismatched capability-degraded sets). The remaining committed work — the key-gated **P**
 cleanup and the **M4-2/M5/M6** bands — is inventoried with acceptance criteria in
 [`planning/remaining-work.md`](planning/remaining-work.md); this ROADMAP layers the research- and
-TODO-driven `[exp]` ideas on top and sequences them. Suite: **1768 examples, 0 failures, 4 pending
-(the four Ruby↔Rust digest-parity examples parked pending the Event-spine re-port); `cargo test`
-79** (post chunk-spine-agents-sweep-nvim, 2026-07-15).
+TODO-driven `[exp]` ideas on top and sequences them. Suite: **2513 examples, 0 failures, 1
+pending** (a `:desktop`-tagged real-dunstify test, excluded by default — the four Ruby↔Rust
+digest-parity pendings were un-parked by S2's T25 re-port, zero incidental pendings remain);
+RuboCop clean at default metrics; `cargo test` **86/0** (post
+chunk-meet-supervision-fanout-interface, 2026-07-17).
 
 ---
 
@@ -169,10 +172,11 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 - **Fold-in:** add a **local-model provider arm** (ollama) to the provider axis `[exp]` — cheap,
   private meta-tasks (memory-save gating, query sanitization, prune-scoring, and local **autocomplete /
   interactive prompting**) that keep PHI off the wire (TODO 31–33). The **harness-variance experiment** can run as soon as this + M2 + M3a exist. These meta-tasks are now formalized as the
-  **oracle seam** — `planning/specs/oracles.md` (OR-1). **Planned:**
+  **oracle seam** — `planning/specs/oracles.md` (OR-1). **✅ Done:**
   `planning/specs/code-review-ollama-test-infra.md` — native-API `Provider::Ollama` (qwen3
   default, temp-0/seeded determinism arm), resolution of the 2026-07-14 code-review comments,
-  and the matcher/test-infrastructure upgrade.
+  and the matcher/test-infrastructure upgrade. (Stale "Planned" marker fixed 2026-07-17 — the
+  plan doc itself has read `status: done` since before this chunk.)
 
 ### M3c — the bench: algebra, seams, graders `[built]` — *the center of gravity*
 > **Committed core `[built]` (this session):** the combinators, all four phases, capability guarding,
@@ -258,9 +262,10 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 - `[planned]` (M4-2) Neovim frontend with the **editable `lain://request` buffer** (edit it,
   `:LainResend`, watch what changes).
 - **Fold-ins:**
-  - **The Workspace Timeline** (Ruby-first, could precede M4): a second content-addressed DAG of file
-    snapshots paired with the conversation DAG — independent rewind of files vs. conversation, and it
-    couples to `Handler::Approving` (cheap rollback makes `--yolo` safe) `[exp]`. From Cline.
+  - **The Workspace Timeline** — **✅ landed 2026-07-17** (write side `b2b1051`, restore `03ef086`):
+    a second content-addressed DAG of file snapshots (`:snapshot` events) paired with the
+    conversation DAG — independent rewind of files vs. conversation. From Cline. The
+    `Handler::Approving` coupling (cheap rollback makes `--yolo` safe) remains open, `[exp]`.
   - **Attention-following context** (TODO 17–21): the human's Neovim quickfix/marks/jump-history/
     registers as a live relevance signal (Aider-style ranking personalized to *live attention*).
     Editor state is **Workspace-shaped**: sent-not-stored, rendered after the last cache breakpoint
@@ -293,14 +298,18 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   on prompt slots (OM-5/PS-3). **Two cards deliberately stayed off main, awaiting a human
   decision** (see ROADMAP § Near-term sequence item 8): TL-3 (`meet`/`diverge_at` generalized
   over the causal DAG — the projection `causal_meets` vs a redefinition of `meet`) and TL-5
-  (the Rust re-port, blocked on TL-3). **Remaining M5 tail:** OM-6 supervision (needs the
-  Workspace Timeline), grader-from-Gherkin, the sibling-template prefix arm + `stream_started`
-  (CE-5); plus new follow-ups recorded in the plan doc — role→spawn glue (`Context#cache_marked`
-  always marks the *last* system block and `CacheBreakpoints` budgets one system slot, so a
-  seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an `Embedder`
-  model-id reader (so `Memory::Vector`'s `#why` can name the model, not just the class), and the
-  edge-grain provenance question for OM-1/OM-6 (today's parent→child `tool_result` link is
-  correlation-grain only, no causal edge).
+  (the Rust re-port, blocked on TL-3). **✅ Both ruled and landed 2026-07-17** — see item 10
+  below: TL-3 ruled enriched (a) (render meet byte-unchanged, set-valued `causal_meets`, new
+  `dominator_meet` checkpoint primitive); TL-5 landed as the T25 Rust re-port, un-parking all
+  four digest-parity pendings. **Remaining M5 tail:** grader-from-Gherkin; the edge-grain
+  provenance question for OM-1/OM-6 (today's parent→child `tool_result` link stays
+  correlation-grain only, no causal edge — the 2026-07-17 chunk left this open by design).
+- **✅ Landed 2026-07-17** (`planning/specs/chunk-meet-supervision-fanout-interface.md`): the
+  Workspace Timeline write side + OM-6 supervisor reactor (actors become model-dispatchable, a
+  queryable registry) with replay-restart (`bin/demo-supervision`); the sibling-template prefix
+  arm (CE-4) + `stream_started` and stagger scheduling (CE-5, `bin/demo-fanout`); role→spawn
+  glue (`Context#cache_marked` risk spent knowingly) and the `Embedder` model-id reader closed
+  as RES4/RES3.
 - **Fold-ins:**
   - **Event-sourced orchestration** (TODO 27–30): fibers (`Async` / socketry); the Store is the event
     log and mailboxes are projections over it; `ask_human` returns a **promise** (continue working,
@@ -308,20 +317,22 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     supervision = replay-to-checkpoint (the same machinery as M2 resume). A whole team's run is
     forkable/replayable — you can *substitute a model for the human* from recorded replies for offline
     evaluation. **Spec:** `planning/specs/orchestration-model.md`. `[exp]`
-  - **Supervision trees + checkpoint restart** (TODO 27 + 3): the orchestrator is a supervisor; a
-    crashed subagent restarts from its last content-addressed checkpoint (Workspace Timeline) `[exp]`.
+  - **Supervision trees + checkpoint restart** (TODO 27 + 3) — **✅ landed 2026-07-17** (`b315b60`
+    reactor, `fe9de76` replay-restart flagship, `bin/demo-supervision` ships): the orchestrator is
+    a supervisor; a crashed subagent restarts from its last content-addressed checkpoint
+    (Workspace Timeline).
   - **Meta-agents that study the harness** (TODO 94–100): the **court-clerk** (records memories from
     subagent timelines = the "dreams"/consolidation pattern, auditable because content-addressed) and
     the **friction-observer** (watches the Journal for harness friction, emits *experiment proposals*
     into the GEPA loop → a **self-improving harness**) `[exp]`.
-  - **Spawn prefix strategy as an axis** (CE-4): fresh-root | fork-the-parent | sibling-template is
-    a policy object at the spawn seam, **orthogonal to** the one-shot/actor lifecycle axis — the
-    current fresh-root rule becomes the default arm, not an architectural constant. Enables
-    **fork-worker** (the HN thread's unresolved argument, answerable only by a bench) and
-    **cache-sibling fan-out** (1 template write + N−1 reads; needs `stream_started` on the Channel
-    for stagger scheduling, CE-5). The **attenuation ↔ position-0 decision** (per-role schemas
-    forfeit sibling sharing; Handler-level enforcement over a union schema preserves it) must be
-    made before OM-5 code exists — see both specs' open questions. `[exp]`
+  - **Spawn prefix strategy as an axis** (CE-4 — **✅ landed 2026-07-17**, `5b077c9`): fresh-root |
+    fork-the-parent | sibling-template is a policy object at the spawn seam, **orthogonal to** the
+    one-shot/actor lifecycle axis — the sibling-template arm now ships alongside fresh-root/
+    inherit, preserving cache-sharing via `AttenuationPosture :handler_union`. Enables
+    **fork-worker** (the HN thread's unresolved argument, answerable only by a bench — still
+    open, `[exp]`) and **cache-sibling fan-out** (1 template write + N−1 reads via `stream_started`
+    on the Channel + stagger scheduling — CE-5 **✅ landed 2026-07-17**, `b2967b9`/`738f83e`,
+    `bin/demo-fanout` ships).
   - **Orchestration arms** (see `planning/orchestration-experiments.md`): single-thread ·
     orchestrator-worker · fork-worker · cache-sibling fan-out · dual-ledger (Magentic-One) · handoff ·
     LATS · MoA · adaptive router · shared-artifact (CRDT). Build the *comparison* before the fleet;
@@ -543,7 +554,10 @@ actual desktop configs, the verified RPC probe, and the fleshed-out designs live
   needed. Arrivals surface three ways, all from one notification middleware on the Channel: a dunst
   `notify-send` when the lain window is unfocused (an existing dotfile habit), a tmux status-line
   flag/count, and the queue itself rendered as `lain://inbox` (or a TTY view). Orchestrator
-  escalations (TODO 74–80) are inbox items with an urgency field, not interrupts.
+  escalations (TODO 74–80) are inbox items with an urgency field, not interrupts. **✅ The inbox
+  half landed 2026-07-17** (`d0a3960`): `lain://inbox` + `:LainReply`, the TTY `/inbox` drain
+  command, dunst arrival notifications (`d42cb44`), and the tmux status-line flag/count
+  (`9b9ecd2`). Orchestrator escalations with an urgency field remain `[exp]`.
 
 **Prompting-area autocomplete** `[exp]` (TODO 31)
 - The ollama meta-task arm (M3b fold-in) names "local autocomplete / interactive prompting" but not
@@ -569,14 +583,18 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
   global theme is untouched) with `monitor-bell` window flags; the TTY prompt shows a per-prompt
   snapshot (reline can't refresh mid-wait); an nvim lualine component reading `vim.g.lain_state` is
   optional enrichment, only visible when the editor pane is focused. Making cache economics
-  *visible at the moment of typing* is the point.
+  *visible at the moment of typing* is the point. **✅ Landed 2026-07-17**: `StatusFeed` + tee
+  (`86a2be0`), TTY prompt warmth (`66fd148`), `lain up` tmux HUD (`9b9ecd2`) — the nvim lualine
+  enrichment remains `[exp]`.
 - **Time-travel as editor motion**: in `lain://timeline`, cursor motion over a turn re-renders
   `lain://request`/`lain://diff` at that digest — scrubbing the session; `:LainFork` at the cursor
   opens a speculative branch. The human UI for `fork_and_try`/`rewind_to`/`diverge_at`; only a
   content-addressed timeline can do this.
 - **Approvals in editor idioms**: the pending tier-3 queue as a list buffer (`<CR>` approve, `dd`
   deny, visual-select batch) and `dunstify --action` approve/deny buttons on notifications — both
-  are views over `Handler::Approving`'s queue, no new authority.
+  are views over `Handler::Approving`'s queue, no new authority. **✅ Landed 2026-07-17**: the
+  queue behind `Handler::Gate` (`ab9a644`) and the dunstify approve/deny buttons (`d42cb44`); the
+  editor list-buffer view over the same queue remains `[exp]`.
 - **Human attention as a Journal stream** (opt-in): journal focus changes, idle gaps, and
   interventions as attributed interface events — the friction-observer correlates "human stepped
   in" with what the harness was doing, and replay reconstructs what the human was watching.
@@ -649,13 +667,15 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    the agent loop (5-0.2/5-0.3), `Tool::Subagent` one-shot + actor + within-turn concurrency
    (5-1.1–5-1.4), `ask_human` as a promise (OM-4), the role catalog on prompt slots (OM-5/PS-3),
    `Memory::Vector`/`Hybrid`/`Graph` + the gold-corpus sweep (`lain bench sweep -k 5`, 6-2.1–6-2.4),
-   and `Frontend::Neovim` (4-2.1–4-2.3). **Two cards await a human decision and stay off main:**
+   and `Frontend::Neovim` (4-2.1–4-2.3). **Two cards awaited a human decision and stayed off main:**
    TL-3 (`meet`/`diverge_at` generalized over the causal DAG — the projection `causal_meets` vs a
-   redefinition of `meet`) and TL-5 (the Rust re-port, blocked on TL-3). **Remaining M5 tail:**
+   redefinition of `meet`) and TL-5 (the Rust re-port, blocked on TL-3). **✅ Both ruled and
+   landed 2026-07-17** — see item 10 below. **Remaining M5 tail (as of 2026-07-15):**
    OM-6 supervision (needs the Workspace Timeline), grader-from-Gherkin, the sibling-template
    prefix arm + `stream_started` (CE-5); plus new follow-ups from the plan doc: role→spawn glue
    (a seam-marked role bulk risks a 5-mark Anthropic 400 — spend the mark knowingly), an
-   `Embedder` model-id reader, and the edge-grain provenance question for OM-1/OM-6.
+   `Embedder` model-id reader, and the edge-grain provenance question for OM-1/OM-6. **All but
+   the edge-grain provenance question landed 2026-07-17 too** — see item 10.
 9. **Landed (2026-07-16)** — the 2026-07-16 review's blocker + majors, XDG conformance
    (§ Interface & UX), durable chat sessions + `--resume` (incl. SIGKILL/power-loss via a
    response WAL with resume-time salvage), and graceful-exit signals with a grace countdown:
@@ -666,6 +686,19 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    interactive countdown at an idle prompt, provider field in the session header,
    always-AnthropicRaw-for-chat convergence, streamed-4xx retry coercion, live-429
    rate-limit-header confirmation.
+
+---
+
+10. **✅ Built (2026-07-17)** — `planning/specs/chunk-meet-supervision-fanout-interface.md`, all
+   22 task cards landed, one commit each: the TL-3 ruling (enriched (a): render meet unchanged ·
+   set-valued `causal_meets` · a new `dominator_meet` checkpoint primitive — research:
+   `planning/dominator-meet-research-2026-07.md`) + the T25 Rust re-port un-parking the four
+   digest-parity pendings; R.1–R.5 and the recorded residuals; the Workspace Timeline write side
+   + OM-6 supervision with replay-restart (`bin/demo-supervision`); CE-4 sibling-template + CE-5
+   `stream_started` + stagger (`bin/demo-fanout`); and the interface band (state feed + tmux HUD
+   via `lain up`, queue-backed approvals with dunstify actions, the `lain://inbox` surface,
+   buffer ergonomics). Record: the plan spec above and
+   `planning/dominator-meet-research-2026-07.md`.
 
 ---
 

@@ -7,10 +7,16 @@
 
 ## Status snapshot
 
-`main` @ `aa9bc5d` — **560 examples, 0 failures**, RuboCop clean at default metrics, `cargo test`
-6/6. Done: **M0, M1** (pre-session), **M1b, M2, M3a, M3b** (this session). **The vehicle (agent) is
-complete; the bench (the deliverable) is not.** Until M3c lands you can run the agent but cannot
-compare strategies — the project's entire point — so M3c is the highest-leverage remaining band.
+`main` — chunk `planning/specs/chunk-meet-supervision-fanout-interface.md` landed **complete**
+(all 22 task cards, one commit each): the TL-3 meet ruling + T25 Rust re-port, R.1–R.5 deferred
+findings + the recorded residuals, the Workspace Timeline write side with OM-6 supervision and
+replay-restart, CE-4/CE-5 cache-sibling fan-out, and the interface band (state feed, `lain up`
+HUD, queue-backed approvals with dunstify, `lain://inbox`). **2513 examples, 0 failures, 1
+pending** (a `:desktop`-tagged real-dunstify test, excluded by default), RuboCop clean at default
+metrics, `cargo test` **86/0**. Done: **M0–M3c, M4-1, M4-2, M5 core + supervision, M6 core** (see
+ROADMAP `## Status` for the full breakdown). What's left after this chunk is what remains
+below: **P** (provisional cleanup, needs a Console key), **R.6**/**R.8** (deliberately
+deferred/optional), and the M3c/M4/M5/M6 fold-in items still `[exp]`/`[planned]` in ROADMAP.
 
 **House rules every unit inherits** (from `CLAUDE.md`): no `next`/`break`/`redo`; never loosen a
 `Metrics/*` limit (extract a collaborator); internal requires live in `lain.rb`/unit indexes, never
@@ -43,7 +49,12 @@ merges, lead owns `lib/lain.rb`/gemspec/`Gemfile`/`.rubocop.yml`/`CLAUDE.md`/`sp
 Ten findings; seven fixed in the follow-up round (`28c6b80`..`f3a6480`). These three were
 deliberately deferred, not dropped:
 
-- **R.1 — Rolling-hash `prefix_digests` chain.** `Request#prefix_digests` recomputes a full
+- ✅ **R.1 — Rolling-hash `prefix_digests` chain (R.3 folded in).** *(Done 2026-07-17: `8851a25` —
+  `prefix_digests` is now a rolling hash `entry = H(prev_entry, canonical(message))`, gated by a
+  chain-version marker; `Bench::Rewrites` reads both formats. A frozen v1 corpus lives at
+  `spec/fixtures/sessions/rewrites_v1/`; variance fixtures regenerated to v2. R.3's double
+  normalization folded into the same commit — one `Canonical.normalize` pass per journaled
+  request.)* `Request#prefix_digests` recomputes a full
   `Canonical.digest` per marker with no reuse across overlapping prefixes, so per-turn journaling
   cost is O(turns²) per session. The real fix is redesigning the chain as a rolling hash
   (`entry = H(prev_entry, canonical(message))`) — that **changes recorded digest values**, so it
@@ -52,20 +63,27 @@ deliberately deferred, not dropped:
   and deliberately skipped in favor of doing this properly. **Acceptance:** journaling cost per
   turn is O(1) amortized in message count; `Rewrites` reads old and new journals; divergence
   localization unchanged.
-- **R.2 — Structural workspace provenance.** `Context::Recall` decides workspace-block provenance
+- ✅ **R.2 — Structural workspace provenance.** *(Done 2026-07-17: `6af5c72` — provenance is now
+  the structural `WORKSPACE_MARKER`, stripped before the wire exactly like `"cache"`; a user
+  message that literally starts with `<workspace>` feeds the recall query.)* `Context::Recall` decides workspace-block provenance
   by string-prefix matching on `Workspace::OPENING_TAG`, so genuine user text starting with the
   literal tag is silently excluded from recall queries. Replace with a structural
   `"workspace" => true` block key, stripped before the wire exactly like `"cache"` (touches
   Workspace render, the encoder's strip, and `Request#prefix_digests`' marker-stripping).
   **Acceptance:** a user message that literally starts with `<workspace>` still feeds the recall
   query; the wire payload carries no `"workspace"` key.
-- **R.3 — `RequestSent` double normalization.** `Middleware::JournalRequests` normalizes the
+- ✅ **R.3 — `RequestSent` double normalization.** *(Done 2026-07-17, folded into R.1's `8851a25`:
+  one `Canonical.normalize` pass per journaled request.)* `Middleware::JournalRequests` normalizes the
   payload and `Event::RequestSent.new` normalizes it again. Minor; fold into R.1's touching of
   that seam. **Acceptance:** one `Canonical.normalize` pass per journaled request.
 
 ## R — Deferred findings from the code-review/Ollama/test-infra plan (2026-07-14)
 
-- **R.4 — `to_s`/`inspect` split across value objects (Ruling 9 sweep theme).** Five value
+- ✅ **R.4 — `to_s`/`inspect` split across value objects (Ruling 9 sweep theme).** *(Done
+  2026-07-17: `d72fc24` — `Request`, `Toolset`, `Provider`, `Memory::Bm25`, `Workspace`, plus
+  Rust `Ext::Turn`/`Ext::Timeline`, each define a human-projection `to_s` and a `#<…>`
+  class-tagged `inspect` with no alias; interpolation audit stayed clean, no journaled/digested
+  bytes moved.)* Five value
   objects alias `inspect` to a debug-shaped `to_s` (`#<Lain::Foo …>`), conflating the two exactly
   the way DegradedSet did before T5 split them: **`Request`** (`request.rb`), **`Turn`**
   (`turn.rb`), **`Toolset`** (`toolset.rb`), **`Provider`** (`provider.rb`, inherited by every
@@ -81,7 +99,9 @@ deliberately deferred, not dropped:
   uniformly with the interpolation audit. **Acceptance:** each of the five defines `to_s` as a
   human projection and `inspect` as the `#<…>` debug form (no `alias inspect to_s`); no journaled
   or digested byte changes (the spine two verified against a recorded journal/cassette).
-- **R.5 — Ollama `:thinking` capability.** qwen3 emits `message.thinking` fragments under
+- ✅ **R.5 — Ollama `:thinking` capability.** *(Done 2026-07-17: `d6b96fe` — `think: true` wired
+  through `Request#extra`, `CAPABILITIES` declares `:thinking`, fragments map to the same
+  thinking content block the Anthropic path produces; non-think runs byte-unchanged.)* qwen3 emits `message.thinking` fragments under
   `think: true`; `Provider::Ollama` neither sends `think` nor declares `:thinking`, though T17's
   StreamAssembler already accumulates thinking fragments (forward-compatible). Wire the option
   through `Request#extra`, declare the capability, and map fragments to the thinking content
@@ -116,6 +136,9 @@ deliberately deferred, not dropped:
   at `Turn#initialize` and Ext `read_optional_digest`, byte-identical error. **Caveat:** breaks
   the pinned `parent: "blake3:abc"` fixtures in `rust/turn_spec.rb` (they must move to real
   digests in the same card). Low value now; take it only bundled with other constructor work.
+  *(Note 2026-07-17: those pinned fixtures did move to real digests, but as a side effect of
+  S2's T25 Rust re-port at `9cb930f`, not this card — R.8 itself is still undone/optional, its
+  constructor-shape-check scope untaken.)*
 
 ---
 
