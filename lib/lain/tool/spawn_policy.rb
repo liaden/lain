@@ -9,9 +9,10 @@ module Lain
     # load later (see the load-order manifest in `lain.rb`).
     #
     # * **Prefix strategy** decides whose render prefix the child's bytes share:
-    #   `fresh` (a new root over the shared Store -- `meet(child, parent)` empty)
-    #   or `inherit` (`parent.fork`, O(1), the child's head IS the parent's).
-    #   The `sibling-template` arm (CE-4) is deferred by the plan.
+    #   `fresh` (a new root over the shared Store -- `meet(child, parent)` empty),
+    #   `inherit` (`parent.fork`, O(1), the child's head IS the parent's), or
+    #   `sibling_template` (fresh isolation, but siblings share a byte-identical
+    #   template prefix WITH EACH OTHER -- CE-4's 1-write-N-1-reads arm).
     # * **Attenuation posture** decides how a smaller capability set is enforced:
     #   `schema` (the model sees only the allowed tools -- the default) or
     #   `handler_union` (the model sees the full union schema so sibling spawns
@@ -51,9 +52,12 @@ module Lain
         only.empty? ? union : union.only(*only)
       end
 
-      # Whose render prefix the child shares. A strategy answers one question:
-      # what Timeline does the child start from, given the parent and the shared
-      # Store.
+      # Whose render prefix the child shares. A strategy answers two questions:
+      # what Timeline does the child start from (given the parent and the shared
+      # Store), and how the child's Context is shaped before it renders --
+      # `child_context` and `journal_floor` are identity/no-op legs on every arm
+      # but `sibling_template`, kept on the duck so the spawn seam never asks a
+      # strategy what kind it is.
       module PrefixStrategy
         class Unknown < Error; end
 
@@ -67,6 +71,10 @@ module Lain
           def base_timeline(store:, **)
             Timeline.empty(store:)
           end
+
+          def child_context(context, **) = context
+
+          def journal_floor(_journal) = self
 
           def label = "fresh"
         end
@@ -82,10 +90,127 @@ module Lain
             parent.fork
           end
 
+          def child_context(context, **) = context
+
+          def journal_floor(_journal) = self
+
           def label = "inherit"
         end
 
-        REGISTRY = { fresh: Fresh, inherit: Inherit }.freeze
+        # CE-4's third arm: children are isolated like `fresh` -- a new root
+        # over the shared Store -- but share a byte-identical system prefix
+        # WITH EACH OTHER, so a fan-out pays one cache write and N-1 reads
+        # instead of N cold bootstraps. The template is the shared bulk (a
+        # role-invariant prelude, e.g. `Role#prelude_segments` position 0);
+        # everything per-child (the task, a role fill) belongs in messages,
+        # AFTER the template's breakpoint, never in system.
+        class SiblingTemplate
+          # Anthropic's minimum cacheable prefix (CLAUDE.md, verified): a
+          # prefix that ends under this many tokens silently does not cache,
+          # with no error -- which is why the floor is journaled here
+          # (#journal_floor), never inferred from a missing cache hit.
+          MINIMUM_CACHEABLE_TOKENS = 4096
+
+          # ~4 chars/token is a heuristic, not a tokenizer: the note below is
+          # advisory (a journal line, not a gate), and the strategy cannot see
+          # the tools bytes that share its prefix anyway, so a cheap estimate
+          # that errs toward reporting is the honest trade.
+          CHARS_PER_TOKEN = 4
+
+          # The journaled floor note ("template_below_floor" on the wire): the
+          # arm may still run under the floor -- the provider just won't cache
+          # it -- but it must never do so SILENTLY, because an un-cacheable
+          # sibling fan-out quietly pays N full prefills while looking like
+          # the 1-write-N-1-reads arm on the bench.
+          TemplateBelowFloor = Data.define(:strategy, :estimated_tokens, :floor) do
+            include Telemetry::Journalable
+          end
+
+          # A caller-placed cache marker discarded by {#child_context}
+          # ("system_mark_stripped" on the wire): the strategy overrides the
+          # factory's mark placement, and overriding caller intent silently
+          # would be a lie in the record -- `stripped` counts the discarded
+          # markers so a bench reader sees the prompt was rewritten, and why.
+          SystemMarkStripped = Data.define(:strategy, :stripped) do
+            include Telemetry::Journalable
+          end
+
+          def initialize(template: "")
+            @template = -template.to_s
+            freeze
+          end
+
+          # Isolation is half the arm's pitch: like Fresh, a new empty root
+          # over the shared Store, so `meet(child, parent)` stays bottom.
+          # `parent` is unused here but part of the uniform strategy duck.
+          def base_timeline(store:, **)
+            Timeline.empty(store:)
+          end
+
+          # The factory's Context with the template appended as the LAST
+          # system block, deliberately UNMARKED: {Context#cache_marked} marks
+          # the final system block unconditionally, so the template boundary
+          # and Context's own mark become the SAME mark. Pre-marking here
+          # would put a second marker in system, and {Context::CacheBreakpoints}
+          # budgets its message markers assuming system spends exactly one
+          # slot -- the extra mark can reach 5 on the wire, which Anthropic
+          # 400s (the recorded T24 risk). Corollary: the factory context's own
+          # system joins the shared prefix AHEAD of the template, so it must
+          # be sibling-invariant too -- which it is, riding one injected
+          # factory per spawn seam.
+          #
+          # The same cap is why caller-placed marks are STRIPPED from the
+          # factory's system rather than kept: alone, a last-block mark merges
+          # idempotently with Context's own, but the template demotes that
+          # block to non-last, so a surviving caller mark would sit beside the
+          # tail mark -- two system marks, five on the wire at full message
+          # budget. Under this arm the strategy owns ALL mark placement for
+          # the child; discarding caller intent is journaled, never silent.
+          def child_context(context, journal: Channel::Null.instance)
+            return context if @template.empty?
+
+            blocks, stripped = stripped_system(context.system)
+            journal << SystemMarkStripped.new(strategy: label, stripped:) if stripped.positive?
+            Context.new(
+              model: context.model, max_tokens: context.max_tokens,
+              system: blocks + [{ "type" => "text", "text" => @template }],
+              stream: context.stream, extra: context.extra
+            )
+          end
+
+          def journal_floor(journal)
+            return self unless below_floor?
+
+            journal << TemplateBelowFloor.new(strategy: label, estimated_tokens:, floor: MINIMUM_CACHEABLE_TOKENS)
+            self
+          end
+
+          def label = "sibling_template"
+
+          private
+
+          def below_floor? = estimated_tokens < MINIMUM_CACHEABLE_TOKENS
+
+          def estimated_tokens = @template.length / CHARS_PER_TOKEN
+
+          # Normalized blocks with every "cache" marker removed, plus the count
+          # removed (the number #child_context journals). The String-to-block
+          # normalization mirrors Context#system_blocks; it cannot delegate
+          # there because that method is rightly private to Context's own
+          # render path.
+          def stripped_system(system)
+            blocks = system_blocks(system)
+            [blocks.map { |block| block.except("cache") }, blocks.count { |block| block["cache"] }]
+          end
+
+          def system_blocks(system)
+            return [] if system.nil?
+
+            system.is_a?(String) ? [{ "type" => "text", "text" => system }] : system
+          end
+        end
+
+        REGISTRY = { fresh: Fresh, inherit: Inherit, sibling_template: SiblingTemplate }.freeze
         private_constant :REGISTRY
 
         # A name maps to a fresh instance; an already-built strategy passes

@@ -125,6 +125,9 @@ module Lain
       # parent's asks (an orchestration Sync/Async above the Agent). {#perform}
       # never routes here -- a tool-dispatched actor is refused (see there).
       def launch_actor(prompt, parent: parent_timeline)
+        # Per launch, mirroring #perform: AC4's floor note has no lifecycle
+        # exemption, so an actor-mode sibling under the floor is reported too.
+        @policy.prefix.journal_floor(@journal)
         Actor.new(agent: build_child(parent), lineage:, parent:, journal: @journal).launch(prompt)
       end
 
@@ -150,6 +153,10 @@ module Lain
         return depth_exceeded if @max_depth <= 0
         return actor_refused if @mode == :actor
 
+        # Per spawn, not per tool: the floor note (see PrefixStrategy::
+        # SiblingTemplate#journal_floor) lands beside each :spawn it warns
+        # about, so a fan-out's record shows which spawns ran un-cacheable.
+        @policy.prefix.journal_floor(@journal)
         parent = parent_timeline
         spawn = lineage.spawn(parent)
         child, response = run_child(input.prompt, parent)
@@ -231,11 +238,16 @@ module Lain
       # per-tool ivar would leak one sibling's reads into the next. `Session.new`
       # never sees the parent's Session -- this tool was never handed a
       # reference to it -- so the child's read-set starts empty by construction.
+      # The prefix strategy shapes the factory's product (`sibling_template`
+      # appends its shared template as the marked-by-Context system tail; the
+      # other arms pass it through), so template threading rides the SAME
+      # injected-factory seam the exe already wires. The journal rides along
+      # so a strategy that rewrites the factory's system (a stripped caller
+      # mark) can say so in the record.
       def spawn_agent(parent, union, allowed)
         Agent.new(
-          provider: @provider, context: @context_factory.call,
-          toolset: @policy.posture.rendered_toolset(union:, allowed:),
-          handler: child_handler(union, allowed),
+          provider: @provider, context: @policy.prefix.child_context(@context_factory.call, journal: @journal),
+          toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
           timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
           session: Session.new, budget: @budget, journal: @journal
         )

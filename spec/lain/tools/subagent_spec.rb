@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "tmpdir"
 
 RSpec.describe Lain::Tools::Subagent do
@@ -186,6 +187,177 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(tool.last_child.include?(parent.head_digest)).to be(true)
+    end
+  end
+
+  # ---- Scenario: the sibling-template prefix (CE-4 arm) ----------------------
+
+  describe "sibling-template prefix" do
+    let(:template) { "You are one of a set of sibling workers over one shared brief. " * 20 }
+
+    def sibling_template_policy(template, posture: :handler_union, only: %i[read_file])
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template:),
+        posture:, only:
+      )
+    end
+
+    def cache_marks(request)
+      system_marks = (request.system || []).select { |b| b["cache"] }
+      message_marks = request.messages.flat_map { |m| m["content"] }.select { |b| b.is_a?(Hash) && b["cache"] }
+      [system_marks, message_marks]
+    end
+
+    it "gives three siblings a byte-identical prefix through the template breakpoint, per-child content after it" do
+      provider = mock(text_response("one"), text_response("two"), text_response("three"))
+      tool = build_subagent(provider:, policy: sibling_template_policy(template))
+
+      %w[alpha beta gamma].each { |task| expect(tool.call({ "prompt" => task }, invocation)).to be_ok }
+
+      requests = provider.requests
+      expect(requests.size).to eq(3)
+
+      # The shared prefix (tools + system) is byte-identical across siblings...
+      expect(requests.map { |r| Lain::Canonical.dump(r.cache_prefix) }.uniq.size).to eq(1)
+
+      # ...so the digest chains share their head, and it sits at the system
+      # marker -- the template breakpoint.
+      heads = requests.map { |r| r.prefix_digests.first }
+      expect(heads.uniq.size).to eq(1)
+      expect(heads.first.first).to eq(Lain::Request::SYSTEM_PREFIX)
+
+      # Per-child content lands AFTER the breakpoint: each task is its own
+      # first user message, and the chains diverge there.
+      %w[alpha beta gamma].each_with_index do |task, index|
+        expect(requests[index].messages.first["content"].first["text"]).to eq(task)
+      end
+      expect(requests.map { |r| r.prefix_digests.last }.uniq.size).to eq(3)
+    end
+
+    # The T24 5-mark-400 pin: count ALL marks that reach the wire, across
+    # system AND messages. Exactly one system mark -- Context#cache_marked's,
+    # landing ON the template because the strategy leaves it as the last,
+    # unmarked block -- plus CacheBreakpoints' marks on messages. A second
+    # system mark would overrun Anthropic's 4-marker cap once CacheBreakpoints
+    # spends its 3-message budget.
+    it "sends exactly the intended marks: one on the template block, the rest CacheBreakpoints' own" do
+      provider = mock(text_response("done"))
+      tool = build_subagent(provider:, policy: sibling_template_policy(template))
+      tool.call({ "prompt" => "go" }, invocation)
+
+      system_marks, message_marks = cache_marks(provider.last_request)
+      expect(system_marks.size).to eq(1)
+      expect(system_marks.first["text"]).to eq(template)
+      expect(message_marks.size).to eq(1)
+    end
+
+    it "renders all three prefix strategies through the same Context seam" do
+      strategies = {
+        fresh: :fresh, inherit: :inherit,
+        sibling_template: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template:)
+      }
+
+      systems = strategies.transform_values do |prefix|
+        provider = mock(text_response("done"))
+        tool = build_subagent(provider:, policy: spawn_policy(prefix:))
+        expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(provider.last_request.model).to eq("child-model")
+        provider.last_request.system
+      end
+
+      # Same seam, one divergence: only the template arm reshapes system.
+      expect(systems[:fresh]).to be_nil
+      expect(systems[:inherit]).to be_nil
+      expect(systems[:sibling_template].last["text"]).to eq(template)
+    end
+
+    it "handler_union keeps sibling tool schemas byte-identical, refusing per child at the Handler" do
+      provider = mock(
+        text_response("first done"),
+        tool_response(["t1", "echo", { "text" => "x" }]),
+        text_response("second done")
+      )
+      journal = Lain::Channel.new
+      tool = build_subagent(provider:, policy: sibling_template_policy(template), journal:)
+
+      expect(tool.call({ "prompt" => "one" }, invocation)).to be_ok
+      expect(tool.call({ "prompt" => "two" }, invocation)).to be_ok
+
+      # Every sibling request carries the same union schema bytes (position-0
+      # sharing preserved)...
+      expect(provider.requests.map { |r| Lain::Canonical.dump(r.tools) }.uniq.size).to eq(1)
+      expect(provider.requests.first.tools.map { |t| t["name"] }).to eq(union.names)
+
+      # ...and the second child's disallowed echo was refused at the Handler.
+      refusal = tool.last_child.to_a.find do |turn|
+        turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" }
+      end
+      expect(refusal.content.first["is_error"]).to be(true)
+      expect(journal.drain.map { |event| event.to_journal["type"] }).to include("refused")
+    end
+
+    # The floor scenario: a template under the minimum cacheable prefix is
+    # REPORTED (a journaled note per spawn), never silently un-cacheable.
+    it "journals a template_below_floor note when the template sits under the floor" do
+      journal = Lain::Channel.new
+      tool = build_subagent(provider: mock(text_response("done")),
+                            policy: sibling_template_policy("tiny brief"), journal:)
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(journal.drain.map { |event| event.to_journal["type"] }).to include("template_below_floor")
+    end
+
+    # The strip rides the spawn seam's own journal: a factory that hands over a
+    # pre-marked system (the role_spec probe shape) gets exactly one wire mark
+    # -- on the template -- and the discarded caller mark lands in the record.
+    it "threads the strip note through the spawn seam when the factory context arrives pre-marked" do
+      marked_context = Lain::Context.new(
+        model: "child-model", max_tokens: 256,
+        system: [{ "type" => "text", "text" => "bulk", "cache" => true }]
+      )
+      journal = Lain::Channel.new
+      provider = mock(text_response("done"))
+      tool = described_class.new(
+        provider:, context_factory: -> { marked_context }, toolset: union,
+        policy: sibling_template_policy(template), parent:, journal:
+      )
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+
+      system_marks, = cache_marks(provider.last_request)
+      expect(system_marks.size).to eq(1)
+      expect(system_marks.first["text"]).to eq(template)
+      expect(journal.drain.map { |event| event.to_journal["type"] }).to include("system_mark_stripped")
+    end
+
+    it "journals no floor note when the template clears the minimum cacheable prefix" do
+      floor = Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate::MINIMUM_CACHEABLE_TOKENS *
+              Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate::CHARS_PER_TOKEN
+      journal = Lain::Channel.new
+      tool = build_subagent(provider: mock(text_response("done")),
+                            policy: sibling_template_policy("x" * floor), journal:)
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(journal.drain.map { |event| event.to_journal["type"] }).not_to include("template_below_floor")
+    end
+
+    # AC4 has no lifecycle exemption: an actor-mode sibling below the floor
+    # must be reported through #launch_actor's path exactly as a one-shot's is
+    # through #perform's -- silence here is the un-cacheable fan-out the note
+    # exists to expose.
+    it "journals the floor note on an actor-mode launch too" do
+      journal = Lain::Channel.new
+      tool = described_class.new(
+        provider: mock(text_response("actor done")), context_factory: -> { child_context },
+        toolset: union, policy: sibling_template_policy("tiny"), parent:, journal:,
+        mode: :actor, log: Lain::Tools::Subagent::Log.new
+      )
+      Sync do
+        actor = tool.launch_actor("go")
+        actor.settle
+        actor.stop
+      end
+
+      expect(journal.drain.map { |event| event.to_journal["type"] }).to include("template_below_floor")
     end
   end
 
