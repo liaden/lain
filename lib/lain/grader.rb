@@ -8,6 +8,10 @@ module Lain
   # window. Compare folds a Grade's `#score` into its distribution; speculative
   # branching argmaxes over it. The one non-negotiable is `#why`: a judgment you
   # cannot read the reason for is unusable, so both graders populate it.
+  #
+  # {Verified} is the one documented exception to the "same shape" rule: it
+  # decorates a finding-producing grader and filters findings through an injected
+  # refuter, so its subject is a set of findings rather than a single Grade.
   module Grader
     # A grader's verdict. `score` is a 0.0..1.0 Float, `pass` a boolean, and
     # `why` the human-readable reason -- always present, never blank. Frozen, so
@@ -29,3 +33,5 @@ require_relative "grader/fixture"
 require_relative "grader/recall"
 require_relative "grader/rubric"
 require_relative "grader/tool_call_index"
+require_relative "grader/refuter"
+require_relative "grader/verified"

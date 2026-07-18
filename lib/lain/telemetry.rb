@@ -76,6 +76,19 @@ module Lain
         attribute :pattern
         validates :pattern, presence: { message: "must name what matched, got nil" }
       end
+
+      # A grading verdict must name the finding it judged, say whether it
+      # survived as a real boolean (so `presence:` cannot silently reject
+      # `false`, the same reasoning as {RequestSent}'s `stream`), and explain
+      # itself.
+      class Verdict < Guard
+        attribute :digest
+        attribute :survived
+        attribute :why
+        validates :digest, presence: { message: "must name the finding it judged, got nil" }
+        validates :survived, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
+        validates :why, presence: { message: "must explain the verdict, got nil" }
+      end
     end
 
     # Genuine bytes emitted by a running tool, already attributed to the
@@ -341,6 +354,31 @@ module Lain
         Guards::WriteRefused.check!(pattern:)
 
         super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
+      end
+    end
+
+    # A finding's refutation verdict ({Grader::Verified}'s second pass): whether
+    # ONE raw finding from a finding-producing grader survived judgment by an
+    # injected {Grader::Refuter}. `digest` is the finding's OWN content address
+    # (`Canonical.digest(finding.to_s)`) rather than an id the finding does not
+    # carry the way a tool call carries a `tool_use_id` -- it is the join key a
+    # replay looks the verdict back up by. `survived` is the refuter's pass/
+    # fail (a continuous Rubric score alone is not a verdict -- see
+    # {Grader::Rubric}'s own "callers threshold #score" caveat -- so the
+    # refuter thresholds it before this record is built); `score` is the raw
+    # 0..1 confidence kept alongside for a reader who wants more than the
+    # boolean; `why` is the mandatory explanation.
+    #
+    # {Grader::Refuter::Recorded.from_journal} reads this record back keyed by
+    # `digest`, the same content-addressed replay {Effect::Handler::Recorded}
+    # does for `tool_use_id` -- deterministic filtering with no model call.
+    Verdict = Data.define(:digest, :survived, :score, :why) do
+      include Journalable
+
+      def initialize(digest:, survived:, score:, why:)
+        Guards::Verdict.check!(digest:, survived:, why:)
+
+        super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s)
       end
     end
   end
