@@ -45,6 +45,20 @@ module Lain
       # designed.
       CAPABILITIES = %i[streaming thinking].freeze
 
+      # CAC-2: :prompt_caching is honestly absent above, so this is a Null
+      # Object -- a no-caching profile rather than nil -- so a CAC-3/CAC-4
+      # scheduler reads `ttl`/`tiered_invalidation` the same way regardless of
+      # which provider it holds, with no `if provider.supports?(:prompt_caching)`
+      # guard first. `min_prefix_tokens` is Float::INFINITY (not nil) so a
+      # size comparison against it is always false rather than raising.
+      NO_CACHING_PROFILE = {
+        ttl: 0,
+        min_prefix_tokens: Float::INFINITY,
+        write_multiplier: 1.0,
+        read_multiplier: 1.0,
+        tiered_invalidation: false
+      }.freeze
+
       # Wraps a vendored transport error so nothing above the Provider rescues a
       # Provider::HTTP class. The original is preserved as `#cause`.
       class APIError < Lain::Error; end
@@ -71,6 +85,8 @@ module Lain
       end
 
       def capabilities = CAPABILITIES
+
+      def cache_profile = NO_CACHING_PROFILE
 
       # One round trip into a neutral Response. Streaming and non-streaming
       # converge on the same body Hash -- {StreamAssembler} reassembles the NDJSON

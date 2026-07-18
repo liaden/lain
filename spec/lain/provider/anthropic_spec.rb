@@ -65,6 +65,36 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
+  # CAC-2: cache-aware compaction needs to schedule around real cache
+  # mechanics rather than a hardcoded constant (planning/specs/cache-aware-
+  # compaction.md's per-model facts). Opus's numbers are fixed here rather
+  # than looked up per-model because this class does not track which model a
+  # Request names -- it is the Opus-family reference provider (DEFAULT_MODEL
+  # above), matching the class doc's existing "Opus 4.8's minimum cacheable
+  # prefix is 4096 tokens" claim.
+  describe "#cache_profile" do
+    it "reports Opus's 5-minute sliding TTL, 4096-token minimum prefix, and write/read multipliers" do
+      expect(provider.cache_profile).to eq(
+        ttl: 300, min_prefix_tokens: 4096, write_multiplier: 1.25, read_multiplier: 0.1, tiered_invalidation: true
+      )
+    end
+
+    # Pinned against the constant, not the bare literal, so a future edit to
+    # SpawnPolicy's floor cannot silently drift from what this provider
+    # reports -- same Anthropic wire fact, one source of truth.
+    it "sources min_prefix_tokens from SpawnPolicy's floor rather than a second literal" do
+      expect(provider.cache_profile[:min_prefix_tokens])
+        .to eq(Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate::MINIMUM_CACHEABLE_TOKENS)
+    end
+
+    it "is a frozen, Ractor-shareable value -- a fixed fact about the provider, not per-call state" do
+      profile = provider.cache_profile
+
+      expect(profile).to be_frozen
+      expect(Ractor.shareable?(profile)).to be(true)
+    end
+  end
+
   describe "#encode" do
     it "maps Request#system onto the SDK's trailing-underscore system_ keyword" do
       request = Lain::Request.new(model: "m", max_tokens: 1, system: "you are terse",

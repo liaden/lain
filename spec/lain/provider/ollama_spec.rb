@@ -39,6 +39,31 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # CAC-2: :prompt_caching is honestly absent from CAPABILITIES above, so
+  # #cache_profile reports a Null Object no-caching profile rather than nil --
+  # a CAC-3/CAC-4 caller reads `ttl`/`tiered_invalidation` the same way
+  # regardless of which provider it holds, no `if provider.supports?(...)`
+  # guard needed first.
+  describe "#cache_profile" do
+    it "reports a no-caching profile, honest with :prompt_caching's absence from CAPABILITIES" do
+      provider = described_class.new(transport: transport_sync({}))
+
+      expect(provider.cache_profile).to eq(
+        ttl: 0, min_prefix_tokens: Float::INFINITY, write_multiplier: 1.0, read_multiplier: 1.0,
+        tiered_invalidation: false
+      )
+    end
+
+    it "is a frozen, Ractor-shareable value" do
+      provider = described_class.new(transport: transport_sync({}))
+
+      profile = provider.cache_profile
+
+      expect(profile).to be_frozen
+      expect(Ractor.shareable?(profile)).to be(true)
+    end
+  end
+
   # AC 1: a tool-call round trip normalizes to the Lain contract.
   describe "#complete on a tool-call turn" do
     it "yields a tool_use block with Hash input, a synthesized id, and :tool_use despite done_reason stop" do

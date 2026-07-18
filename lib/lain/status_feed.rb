@@ -18,14 +18,19 @@ module Lain
   # Three fields, three sources, all JOURNALED -- never an in-process
   # registry:
   #
-  # * `cache_deadline` -- Anthropic's cache is a SLIDING window (default 5
-  #   min), refreshed on use, not a countdown: pushing the absolute deadline
-  #   (not a remaining-seconds count) is what lets a renderer tick locally
-  #   with zero RPC/poll chatter (the approved doc's explicit instruction).
-  #   Derived from a {Telemetry::TurnUsage}'s cache fields -- any turn that
-  #   actually read or wrote the cache slides the deadline forward; a turn
-  #   that shows no cache activity leaves the last deadline exactly where it
-  #   was, because the TTL it named has not been touched.
+  # * `cache_deadline` -- a provider's cache is a SLIDING window (default 5
+  #   min for Anthropic), refreshed on use, not a countdown: pushing the
+  #   absolute deadline (not a remaining-seconds count) is what lets a
+  #   renderer tick locally with zero RPC/poll chatter (the approved doc's
+  #   explicit instruction). The TTL itself comes from the injected
+  #   `cache_profile:` (CAC-2's `Provider#cache_profile` -- {ttl:,
+  #   min_prefix_tokens:, write_multiplier:, read_multiplier:,
+  #   tiered_invalidation:}, see {DEFAULT_CACHE_PROFILE} for the fallback),
+  #   never a hardcoded constant, so a swept provider arm each slides its own
+  #   real window. Derived from a {Telemetry::TurnUsage}'s cache fields --
+  #   any turn that actually read or wrote the cache slides the deadline
+  #   forward; a turn that shows no cache activity leaves the last deadline
+  #   exactly where it was, because the TTL it named has not been touched.
   # * `fleet` -- the digests of every DISTINCT `:spawn` event observed, keyed
   #   so a redelivered event (a journal replay) never grows a phantom second
   #   entry for one real spawn. W3's lifecycle events will later enrich this
@@ -55,12 +60,13 @@ module Lain
   # derive rather than an O(n) fold, so there is no reason to pay a
   # write+rename the state did not earn.
   class StatusFeed
-    # Anthropic's default sliding cache TTL (planning/interface-integration.md
-    # § 1 / planning/specs/cache-aware-compaction.md). Not read from a
-    # Provider capability yet -- CAC-2's `#cache_profile` is a later card;
-    # this constant is the honest placeholder until a provider-parameterized
-    # TTL exists.
-    CACHE_TTL_SECONDS = 300
+    # The TTL used when no caller injects a provider's own `#cache_profile`
+    # (CAC-2, planning/specs/cache-aware-compaction.md) -- Anthropic's default
+    # 5-minute sliding window (planning/interface-integration.md § 1). Kept
+    # here rather than reaching into `Provider::Anthropic::CACHE_PROFILE`
+    # because `lib/lain.rb` loads this file BEFORE `lib/lain/provider.rb`;
+    # depending forward on a not-yet-loaded unit would invert that order.
+    DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze
 
     # Either field nonzero means the cache was actually touched this turn
     # (written OR read) -- that is what "in use" means for a sliding TTL.
@@ -77,9 +83,13 @@ module Lain
     #   convention of living beside the project rather than under XDG state.
     # @param clock [#call] answers the current Time; injectable so a spec
     #   never races the real clock to compute a deadline.
-    def initialize(path: default_path, clock: -> { Time.now })
+    # @param cache_profile [Hash] a provider's `#cache_profile` (CAC-2) --
+    #   only `:ttl` is read here; defaults to {DEFAULT_CACHE_PROFILE} when the
+    #   caller has no specific provider to name.
+    def initialize(path: default_path, clock: -> { Time.now }, cache_profile: DEFAULT_CACHE_PROFILE)
       @path = path
       @clock = clock
+      @cache_profile = cache_profile
       @cache_deadline = nil
       # Insertion-ordered, keyed by digest: a Hash (not an Array) is what
       # makes a redelivered :spawn a no-op update instead of a second entry.
@@ -112,7 +122,7 @@ module Lain
       usage = event.usage
       return unless CACHE_ACTIVITY_FIELDS.any? { |field| usage[field].to_i.positive? }
 
-      @cache_deadline = (@clock.call + CACHE_TTL_SECONDS).utc.iso8601
+      @cache_deadline = (@clock.call + @cache_profile[:ttl]).utc.iso8601
     end
 
     def observe(event)

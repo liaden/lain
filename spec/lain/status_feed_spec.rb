@@ -54,7 +54,7 @@ RSpec.describe Lain::StatusFeed do
 
       feed << turn_usage(cache_read: 128)
 
-      expect(published["cache_deadline"]).to eq((now + described_class::CACHE_TTL_SECONDS).iso8601)
+      expect(published["cache_deadline"]).to eq((now + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
     end
 
     it "also slides on a cache WRITE (cache_creation_input_tokens), not only a read" do
@@ -63,7 +63,7 @@ RSpec.describe Lain::StatusFeed do
 
       feed << turn_usage(cache_creation: 4096)
 
-      expect(published["cache_deadline"]).to eq((now + described_class::CACHE_TTL_SECONDS).iso8601)
+      expect(published["cache_deadline"]).to eq((now + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
     end
 
     it "slides forward on a later warm turn rather than staying pinned to the first one" do
@@ -76,7 +76,20 @@ RSpec.describe Lain::StatusFeed do
       now = t2
       feed << turn_usage(cache_read: 10)
 
-      expect(published["cache_deadline"]).to eq((t2 + described_class::CACHE_TTL_SECONDS).iso8601)
+      expect(published["cache_deadline"]).to eq((t2 + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
+    end
+
+    # CAC-2: the scheduler must read a provider's actual cache mechanics, not
+    # a fixed guess -- Anthropic's TTL differs from a future OpenAI-compatible
+    # arm's, so pinning the ttl at 60 (not the 300s default) is what proves
+    # the injected profile is actually consulted rather than the constant.
+    it "derives the deadline from an injected cache_profile's ttl, not the hardcoded default" do
+      now = Time.utc(2026, 7, 17, 12, 0, 0)
+      feed = described_class.new(path:, clock: -> { now }, cache_profile: { ttl: 60 })
+
+      feed << turn_usage(cache_read: 10)
+
+      expect(published["cache_deadline"]).to eq((now + 60).iso8601)
     end
 
     it "leaves the deadline exactly where it was on a cache-cold turn -- sliding, not decaying" do
