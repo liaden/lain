@@ -32,6 +32,7 @@ produced in the precision pass. Each is linked from its ROADMAP bullet.
 | [`specs/memory-read-path.md`](specs/memory-read-path.md) | The 5-3.1/5-3.2 close-out: manifest reminders + `memory_read` wired into the live session, `Session::Loader` replaying per-turn memory roots (recall-as-of-turn-N at the bench), root-keyed Bm25 build cache. Panel-reviewed 2026-07-15. |
 | [`specs/chunk-meet-supervision-fanout-interface.md`](specs/chunk-meet-supervision-fanout-interface.md) | The 2026-07-17 chunk plan: TL-3 ruled (three operators; research in [`dominator-meet-research-2026-07.md`](dominator-meet-research-2026-07.md)) + T25 re-port, R.1–R.5 + residuals, Workspace Timeline + OM-6 supervision, CE-4/CE-5 fan-out, interface HUD/inbox/approvals. |
 | [`specs/plan-shaped-compaction.md`](specs/plan-shaped-compaction.md) | Compaction seams as explicit, author-editable plan content with size estimates; mostly-deterministic step-closure records; execution shape (linear+rewrite vs fork-per-step) as a swept policy; the seam EV decision, Journal-calibrated. |
+| [`specs/structural-code-search.md`](specs/structural-code-search.md) | **Shipped 2026-07-18.** ast-grep + tree-sitter structural search — two `ext/lain` bindings behind five read-only tools (`ast_search`, the `ast_dump`/`test_pattern` inspect pair, `code_outline`, `file_symbols`), catalog seeded from `ag_helpers`. The M6 *one Rust-implemented `Tool`*. Records the deferred role-catalog wiring + python `file_symbols` and the follow-ups. |
 
 Cross-cutting themes:
 

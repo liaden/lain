@@ -399,7 +399,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     the four middleware phases + the human-loop-as-blocking-Middleware. `[exp · parked]`
 
 ### M6 — Rust round two & the retrieval sweep `[planned]` (retrieval sweep `[built]` 2026-07-15)
-- Exec-boundary hardening, parallel tools, one Rust-implemented `Tool` remain `[planned]`.
+- Exec-boundary hardening and parallel tools remain `[planned]`; the **one Rust-implemented `Tool`**
+  shipped as structural code search (two Rust bindings + five tools) — see the landed note below.
   **✅ Landed 2026-07-15** (`planning/specs/chunk-spine-agents-sweep-nvim.md`): `Memory::Vector`
   (exact cosine in pure Ruby over an `Embedder` seam — `Embedder::Ollama`/`nomic-embed-text`,
   `Embedder::Static` for determinism; usearch declined by the five-rule binding test at bench
@@ -409,6 +410,20 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   Measured: vector .667, graph .438, bm25 = hybrid = manifest .333 — **hybrid did not beat
   vector** on this corpus (RRF dilution when one arm dominates), reported honestly rather than
   gamed; the corpus/fusion question is a follow-up, not a re-run.
+- **✅ Landed 2026-07-18** (`planning/specs/structural-code-search.md`): the **structural** retrieval
+  arm and M6's outstanding *one Rust-implemented `Tool`*. Two `ext/lain` bindings — `Ext::AstGrep`
+  (ast-grep metavariable matcher) and `Ext::TreeSitter` (raw tree-sitter queries), both stateless,
+  deeply-frozen, exact-pinned — behind five read-only tools: `ast_search` (structural code search),
+  the `ast_dump`/`test_pattern` inspect pair (the model self-corrects a silently under-matching
+  pattern), `code_outline`, and `file_symbols` (role-tagged symbol table from lain's own MIT
+  tree-sitter queries). Degrades identically across typed/untyped code — the dependable modality
+  where the graph layer (SCIP) is lossy. Pattern library seeded from `~/.zsh/ag_helpers`.
+  **Deferred:** the role-catalog `only`-set wiring (the tools live in `base_tools`; attenuated role
+  access is a follow-up because it must regenerate byte-identical prompt-cache tool-block specs), and
+  `file_symbols` for **python** (ruby/typescript/rust shipped). Follow-ups in the spec: `method_call`
+  over-report, paren-less `def`, grammar trim.
+- **Structural memory** vs. structural code *search* above: the former recalls by trajectory *shape*
+  (a fifth modality), the latter matches code by AST shape. Distinct.
 - **Fold-ins (grounded in `references/memory-and-retrieval.md`):**
   - Grade on **LongMemEval** abilities + **ConvoMem** abstention + **MemBench** capacity; the arms to
     beat are **Zep**'s and MemPalace's temporal KGs vs. Lain's content-addressed versioning on the
