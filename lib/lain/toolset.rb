@@ -117,3 +117,5 @@ module Lain
     end
   end
 end
+
+require_relative "toolset/disclosure"
