@@ -1,0 +1,97 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The skills chunk, runnable live against a mock provider (the plan's own
+# automatable-demo half: "a bin/demo-skills against the mock provider").
+# Exercises the two dispatch surfaces end-to-end over the REAL shipped catalog
+# (create-plan / execute-plan / critique):
+#
+#   1. in-line  `/create-plan args`   -> SkillDispatch rewrites env[:text] to the
+#      rendered scaffold + args; the ordinary turn runs on it (one timeline).
+#   2. unknown  `/nope`               -> a loud short-circuit response, no turn.
+#   3. role     `@researcher/create-plan args` -> a persona'd one-shot subagent
+#      runs and its answer folds to env[:response] WITHOUT moving the parent head
+#      (OM-2 out-of-band), and an unknown role refuses before any spawn.
+#
+# A dev/demo tool, not gem-shipped -- the same self-contained `require "lain"`
+# posture bin/demo-fanout and bin/demo-supervision use. Prints a pass/fail line
+# per property and exits nonzero if any fails, so it can gate a smoke run.
+
+require "bundler/setup"
+require "lain"
+require "async"
+
+results = []
+def check(results, label, passed)
+  results << passed
+  puts "  #{label.ljust(52)} #{passed ? "ok" : "FAIL"}"
+end
+
+# --- 1. in-line /create-plan expands into the turn text --------------------
+puts "\n/create-plan draft a widget  (in-line, one timeline)"
+inline_stack = Lain::CLI::ReplMiddleware.build(role_spawn: Object.new)
+downstream_text = nil
+inline_stack.call({ text: "/create-plan draft a widget", agent: :session }) do |env|
+  downstream_text = env[:text]
+  env.merge(response: :turn_ran)
+end
+check(results, "downstream saw the rendered scaffold", !downstream_text.nil?)
+check(results, "scaffold drives grounding-before-planning", downstream_text.to_s.downcase.include?("ground"))
+check(results, "args appended to the scaffold", downstream_text.to_s.include?("draft a widget"))
+
+# --- 2. unknown skill short-circuits, no model turn ------------------------
+puts "\n/nope  (unknown skill)"
+ran = false
+unknown = inline_stack.call({ text: "/nope", agent: :session }) do |env|
+  ran = true
+  env.merge(response: :turn_ran)
+end
+check(results, "no downstream turn spent", !ran)
+check(results, "loud response names the unknown skill", unknown[:response].text.to_s.include?("nope"))
+
+# --- 3. @role/skill folds a persona'd subagent, out-of-band ----------------
+puts "\n@researcher/create-plan draft it  (role-bound, OM-2)"
+store  = Lain::Store.new
+parent = Lain::Timeline.empty(store:)
+                       .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+                       .commit(role: :assistant, content: [{ "type" => "text", "text" => "yo" }])
+head_before = parent.head_digest
+
+union = Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new,
+                           Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new])
+provider = Lain::Provider::Mock.new(responses: [
+                                      Lain::Response.new(content: [{ "type" => "text", "text" => "PLAN: a widget" }],
+                                                         stop_reason: :end_turn)
+                                    ])
+seam = Lain::Skill::RoleSpawn.new(
+  provider:, context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
+  toolset: union, parent: -> { parent }, slots: Lain::Prompt::Slots.load,
+  journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null,
+  observer: Lain::Event::ChainWriter::Null.new
+)
+role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam)
+
+folded = nil
+parent_turn_ran = false
+Sync do
+  folded = role_stack.call({ text: "@researcher/create-plan draft it", agent: :session }) do |env|
+    parent_turn_ran = true
+    env.merge(response: :turn_ran)
+  end
+end
+check(results, "child answer folds to env[:response]", folded[:response].text == "PLAN: a widget")
+check(results, "no parent turn committed", !parent_turn_ran)
+check(results, "exactly one provider round trip", provider.requests.size == 1)
+check(results, "OM-2: parent head UNCHANGED", parent.head_digest == head_before)
+
+refused_before_spawn =
+  begin
+    Sync { role_stack.call({ text: "@nope/create-plan x", agent: :session }) { |env| env.merge(response: :t) } }
+    false
+  rescue Lain::Role::Catalog::Unknown
+    true
+  end
+check(results, "unknown role refused before any spawn", refused_before_spawn)
+
+puts "\n#{results.all? ? "ALL PASS" : "FAILURES PRESENT"} (#{results.count(&:itself)}/#{results.size})"
+exit(results.all? ? 0 : 1)
