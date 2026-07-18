@@ -53,3 +53,14 @@ indexmap = "2"
 # later card wires the raise sites to, so hand-rolling `impl Display` for two
 # enums is exactly what the derive replaces.
 thiserror = "2"
+# Structural (AST) code search. `ast-grep-core` parses an in-memory `&str` and
+# matches metavariable patterns against the CST with ZERO filesystem access, so
+# the matcher is pure data-structure work and lives in-process here -- only
+# recursive file-walking (the `ignore`-backed CLI path) is I/O-shaped and would
+# belong out of process. `ast-grep-language` supplies the ~26 bundled
+# tree-sitter grammars behind `SupportLang`. The core Rust API is explicitly
+# unstable across minors, so both are pinned EXACT (`=0.44.1`) and the whole
+# surface is wrapped behind `astgrep.rs` + locked by golden tests. (Trimming the
+# grammar set to the four languages we use is a filed follow-up, not this dep.)
+ast-grep-core = "=0.44.1"
+ast-grep-language = "=0.44.1"

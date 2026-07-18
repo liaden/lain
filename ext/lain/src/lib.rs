@@ -7,6 +7,7 @@
 
 use tracing_subscriber::EnvFilter;
 
+mod astgrep;
 mod bm25;
 mod canonical;
 mod dag;
@@ -372,7 +373,7 @@ mod ffi {
     /// `ext_error` (`Lain::Ext::<class>::<error>`, three segments) -- they
     /// differed only in path depth, and every real caller is one of exactly
     /// those two shapes.
-    fn lookup_error(ruby: &Ruby, path: &[&str], message: String) -> Error {
+    pub(crate) fn lookup_error(ruby: &Ruby, path: &[&str], message: String) -> Error {
         let (last, init) = path
             .split_last()
             .expect("lookup_error path must be non-empty");
@@ -1522,6 +1523,15 @@ mod ffi {
         bm25.define_error("DuplicateId", lain_error)?;
         bm25.define_singleton_method("build", function!(Bm25::build, 1))?;
         bm25.define_method("search", method!(Bm25::search, 2))?;
+
+        // Stateless structural search: no wrapped handle, so `AstGrep` is a bare
+        // class with two singleton methods and one named error. `BadPattern`
+        // subclasses `Lain::Error` like every other Ext error (see the Bm25 block
+        // for why no fallback). The FFI wrappers live in `astgrep::ffi`.
+        let astgrep = ext.define_class("AstGrep", ruby.class_object())?;
+        astgrep.define_error("BadPattern", lain_error)?;
+        astgrep.define_singleton_method("search", function!(crate::astgrep::ffi::search, 3))?;
+        astgrep.define_singleton_method("dump", function!(crate::astgrep::ffi::dump, 2))?;
 
         let turn = ext.define_class("Turn", ruby.class_object())?;
         turn.define_error("InvalidRole", lain_error)?;
