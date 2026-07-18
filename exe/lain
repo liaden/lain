@@ -353,7 +353,19 @@ class LainCLI < Thor
 
     def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
       base = Lain::Toolset.new(base_tools(recorder))
-      Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human])
+      Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human, run_skill])
+    end
+
+    # The in-agent composition primitive, main-agent-only: appended AFTER `base`
+    # (like ask_human), never inside base_tools, so the union a subagent role
+    # attenuates from does not carry it. It renders a skill's scaffold back to the
+    # SAME agent as a tool_result -- a continuation, not a spawn. The renderer is
+    # built over the same catalog + slots the repl's ReplMiddleware composes,
+    # loaded once from the project root.
+    def run_skill
+      renderer = Lain::Skill::Renderer.new(catalog: Lain::Skill::Catalog.load(root: Dir.pwd),
+                                           slots: Lain::Prompt::Slots.load(root: Dir.pwd))
+      Lain::Tools::RunSkill.new(renderer:)
     end
 
     # The chat's capability floor -- the tier-1 structured tools plus tier-3
