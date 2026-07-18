@@ -51,6 +51,7 @@ require_relative "lain/compare"
 require_relative "lain/bench"
 require_relative "lain/frontend"
 require_relative "lain/grader"
+require_relative "lain/structural"
 require_relative "lain/tools"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
