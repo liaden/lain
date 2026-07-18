@@ -20,6 +20,12 @@ module Lain
       def ask(inputs = {})
         @definition.answer(@predicate.call(inputs))
       end
+
+      # Uniform with {Model} so a journaling wrapper reads cost off either tier
+      # blind to which it holds. There is no model call here, so both are
+      # legitimately empty -- a nil model and zero-cost usage, not a gap.
+      def model = nil
+      def usage = {}
     end
   end
 end

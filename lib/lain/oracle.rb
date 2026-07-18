@@ -5,3 +5,4 @@
 require_relative "oracle/definition"
 require_relative "oracle/heuristic"
 require_relative "oracle/model"
+require_relative "oracle/recorded"
