@@ -787,5 +787,5 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
   guardrail stack, control-flow axis, Journal-native retrieval; Tier-1 → `specs/graders.md` + M3c/M5/M6
   fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`.
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
-  `oss-inspiration.md`, 14 papers in `papers/rst/`, reference impls in `repos/`.
+  `oss-inspiration.md`, 15 papers in `papers/rst/`, reference impls in `repos/`.
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.
