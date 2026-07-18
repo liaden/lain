@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "compaction/need"
+require_relative "compaction/cold"
 
 module Lain
   # WHETHER a compaction is warranted, kept apart from {Context::Compact}
