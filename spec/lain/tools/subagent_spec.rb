@@ -400,6 +400,37 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- T-D2: the public synchronous run-one-prompt -> result entry ----------
+  #
+  # A role-selecting seam ({Skill::RoleSpawn}) builds a one-shot Subagent per
+  # call and drives it DIRECTLY -- no model-facing {#call}/effect-handler
+  # dispatch, no actor launch. {#run} is that entry: one prompt to a single
+  # final {Tool::Result}, synchronously, over the same {#spawn_one_shot}
+  # machinery {#perform} uses (so its records land in @last_* just the same).
+  describe "the public #run entry (T-D2)" do
+    it "runs one prompt to a single final result without the effect handler or the actor path" do
+      tool = build_subagent(provider: mock(text_response("child answer")))
+      result = tool.run("go")
+
+      expect(result).to be_ok
+      expect(result.content).to eq("child answer")
+      expect(tool.last_child).not_to be_nil
+      expect(tool.last_message.kind).to eq(:message)
+    end
+
+    it "honors the depth ceiling exactly as #perform does: refuses at 0, spawning nothing" do
+      tool = build_subagent(provider: mock(text_response("unused")), max_depth: 0)
+      before = store.size
+
+      result = tool.run("go")
+
+      expect(result).to be_error
+      expect(result.content).to match(/depth/)
+      expect(tool.last_spawn).to be_nil
+      expect(store.size).to eq(before)
+    end
+  end
+
   # ---- Depth ceiling (escalation-trigger guard) -----------------------------
 
   describe "the spawn-depth ceiling" do

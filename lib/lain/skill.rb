@@ -37,3 +37,4 @@ end
 # uses for role/catalog.
 require_relative "skill/catalog"
 require_relative "skill/invocation"
+require_relative "skill/role_spawn"

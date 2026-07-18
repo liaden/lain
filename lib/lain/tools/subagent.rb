@@ -121,6 +121,22 @@ module Lain
       # `@last_*` observability ivars, across the child's IO yield point.
       def parallel_safe? = true
 
+      # Run one prompt to a single final result, synchronously, WITHOUT the
+      # model-facing {#call}/effect-handler dispatch or the actor launch: the
+      # direct entry a role-selecting seam ({Skill::RoleSpawn}) drives when it
+      # builds a one-shot Subagent per call and hands it a prompt. It rides the
+      # same {#spawn_one_shot} machinery {#perform} uses -- so its records land
+      # in @last_* identically -- and honors the depth ceiling the same way: at
+      # the floor it returns the same is_error result, emitting no event and
+      # touching no Store. One-shot only; the actor lifecycle needs the
+      # Supervisor reactor {#perform} adopts onto, which a synchronous caller
+      # here does not hold.
+      def run(prompt)
+        return depth_exceeded if @max_depth <= 0
+
+        spawn_one_shot(prompt)
+      end
+
       # Launch a long-lived {Actor} over a freshly built child, and return the
       # handle -- the orchestration seam a supervisor uses to `tell`/`stop` it
       # and read its Timeline. The fiber spawns on the current task, so the
