@@ -86,7 +86,7 @@ module Lain
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        matches = search(input.path, language, patterns).lazy.first(MAX_MATCHES + 1)
+        matches = deduplicate(search(input.path, language, patterns)).first(MAX_MATCHES + 1)
         Tool::Result.ok(RESULT_FORMATTER.call(matches, patterns:, path: input.path))
       rescue Structural::Matcher::BadPattern, Structural::Matcher::UnknownLanguage, Structural::Patterns::Unknown => e
         Tool::Result.error(e.message)
@@ -114,6 +114,18 @@ module Lain
 
         args = input.name ? { name: input.name } : {}
         Structural::Patterns.fetch(language, input.query.to_sym, **args)
+      end
+
+      # A multi-template query overlaps itself: a `method_call` runs a receiver
+      # form (`$RECV.save`) AND a bare form (`save`), and the bare form matches
+      # the `save` identifier INSIDE the receiver call too -- so a single call
+      # site would otherwise be reported twice, burning the cap. Collapse to one
+      # row per (file, line), grep-family granularity; first wins, and since the
+      # receiver template runs first, the kept row is the one carrying the RECV
+      # capture. Lazy + stateful so it composes with the MAX_MATCHES+1 cap.
+      def deduplicate(matches)
+        seen = Set.new
+        matches.lazy.select { |label, line, _text, _captures| seen.add?([label, line]) }
       end
 
       # An Enumerator, for the same reason as {Grep#search}: the MAX_MATCHES+1

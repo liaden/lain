@@ -71,13 +71,14 @@ RSpec.describe Lain::Tools::AstSearch do
     result = tool.call(query: "method_call", name: "save", language: "ruby", path: tmpdir)
 
     expect(result.ok?).to be(true)
-    # Line 3 (`record.save`) is found by BOTH templates -- the receiver form
-    # and the bare form, which per Structural::Patterns' own doc matches every
-    # identifier use of `save`, including the one inside a receiver call. Line
-    # 4 (bare `save`) is found once. Neither comment (line 1) nor string
-    # literal (line 2) counts -- structural matching, not text search.
+    # Line 3 (`record.save`) is matched by BOTH templates -- the receiver form
+    # AND the bare form (which also matches the `save` identifier inside the
+    # receiver call) -- but a call site is reported ONCE per line, so line 3
+    # appears exactly once. Line 4 (bare `save`) once. Neither comment (line 1)
+    # nor string literal (line 2) counts -- structural matching, not text search.
     matched_lines = result.content.lines.grep(/^foo\.rb:/).map { |line| line[/^foo\.rb:(\d+):/, 1].to_i }
-    expect(matched_lines.uniq.sort).to eq([3, 4])
+    expect(matched_lines.sort).to eq([3, 4])
+    expect(matched_lines).to eq(matched_lines.uniq) # no line double-reported
     expect(result.content).not_to include("foo.rb:1:")
     expect(result.content).not_to include("foo.rb:2:")
   end
