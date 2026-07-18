@@ -394,7 +394,8 @@ class LainCLI < Thor
        Lain::Tools::Grep.new, Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new,
        Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
        Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new,
-       Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new]
+       Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+       Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new]
     end
 
     # The chat default: an attenuated read-only child (schema posture, depth 1).
