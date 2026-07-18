@@ -36,17 +36,49 @@ module Lain
       # @param keep_last [Integer, nil] keep only the trailing N messages
       # @param predicate [#call(Hash) -> bool, nil] keep messages it returns
       #   true for, via a block
-      def initialize(keep_last: nil, &predicate)
+      # @param protected_patterns [ProtectedPatterns] spans that survive
+      #   regardless of keep_last:/predicate -- defaults to {ProtectedPatterns::NONE},
+      #   the no-op policy, so an unconfigured Prune behaves exactly as it
+      #   did before this parameter existed.
+      def initialize(keep_last: nil, protected_patterns: ProtectedPatterns::NONE, &predicate)
         Guards::Prune.check!(keep_last:, predicate:)
 
         super()
         @keep_last = keep_last
         @predicate = predicate
+        @protected_patterns = protected_patterns
         freeze
       end
 
       def call(messages)
-        @keep_last ? messages.last(@keep_last) : messages.select(&@predicate)
+        base = base_indices(messages)
+        return messages.values_at(*base) if @protected_patterns.none?
+
+        messages.values_at(*(base | protected_indices(messages)).sort)
+      end
+
+      private
+
+      # Survivorship must be tracked by POSITION, not by `Array#include?` on
+      # the Hash values themselves: two messages that happen to be
+      # value-equal (a repeated tool result, a duplicated turn) are NOT the
+      # same survivor, and `survivors.include?(message)` would spuriously
+      # resurrect an older, non-surviving twin of the true one whenever
+      # `protected_patterns:` is configured at all -- silently breaking
+      # `keep_last:`'s count guarantee even when no pattern matches.
+      def base_indices(messages)
+        return keep_last_indices(messages) if @keep_last
+
+        messages.each_index.select { |index| @predicate.call(messages[index]) }
+      end
+
+      def keep_last_indices(messages)
+        start = [messages.size - @keep_last, 0].max
+        (start...messages.size).to_a
+      end
+
+      def protected_indices(messages)
+        messages.each_index.select { |index| @protected_patterns.protects?(Canonical.dump(messages[index])) }
       end
     end
   end

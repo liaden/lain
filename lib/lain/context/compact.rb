@@ -32,11 +32,17 @@ module Lain
       #   gets summarized
       # @param keep_last [Integer] trailing messages that stay verbatim
       # @param summarizer [#call(Array<Hash>) -> String] pure, deterministic
-      def initialize(threshold:, keep_last:, summarizer:)
+      # @param protected_patterns [ProtectedPatterns] spans that survive the
+      #   summarization pass verbatim, riding ahead of the summary message --
+      #   defaults to {ProtectedPatterns::NONE}, the no-op policy, so an
+      #   unconfigured Compact behaves exactly as it did before this
+      #   parameter existed.
+      def initialize(threshold:, keep_last:, summarizer:, protected_patterns: ProtectedPatterns::NONE)
         super()
         @threshold = Integer(threshold)
         @keep_last = Integer(keep_last)
         @summarizer = summarizer
+        @protected_patterns = protected_patterns
         freeze
       end
 
@@ -47,9 +53,12 @@ module Lain
         return messages if Canonical.dump(dropped).bytesize < @threshold
 
         tail = messages.last(@keep_last)
+        protected_head, summarizable = dropped.partition do |message|
+          @protected_patterns.protects?(Canonical.dump(message))
+        end
         summary_message = { "role" => "assistant",
-                            "content" => [{ "type" => "text", "text" => @summarizer.call(dropped) }] }
-        [summary_message] + tail
+                            "content" => [{ "type" => "text", "text" => @summarizer.call(summarizable) }] }
+        protected_head + [summary_message] + tail
       end
     end
   end

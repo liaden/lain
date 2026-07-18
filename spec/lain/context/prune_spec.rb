@@ -61,4 +61,26 @@ RSpec.describe Lain::Context::Prune do
     composed = described_class.new(keep_last: 2) >> Lain::Context::Identity
     expect(composed.call(messages).size).to eq(2)
   end
+
+  describe "protected_patterns: (identity, not value equality, must gate survivorship)" do
+    # Regression: an EARLIER message that happens to be Hash-VALUE-equal to
+    # the true keep_last: survivor (a repeated "ok" tool result, a duplicated
+    # turn -- common in real transcripts) must NOT be spuriously resurrected
+    # just because `protected_patterns:` is configured. The pattern here
+    # matches nothing, so this is purely a survivorship-identity check.
+    it "keeps exactly the true survivor when an earlier message is value-equal to it" do
+      duplicate_content = text("same content")
+      messages = [
+        { "role" => "user", "content" => duplicate_content },
+        { "role" => "user", "content" => text("middle") },
+        { "role" => "user", "content" => duplicate_content }
+      ]
+      pattern_matching_nothing = Lain::Context::ProtectedPatterns.new(["this-matches-nothing"])
+
+      pruned = described_class.new(keep_last: 1, protected_patterns: pattern_matching_nothing).call(messages)
+
+      expect(pruned).to eq([messages.last])
+      expect(pruned.size).to eq(1)
+    end
+  end
 end

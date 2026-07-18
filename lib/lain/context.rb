@@ -1,12 +1,15 @@
 # frozen_string_literal: true
 
 require_relative "context/base"
+require_relative "context/protected_patterns"
 require_relative "context/cache_breakpoints"
 require_relative "context/message_envelope"
 require_relative "context/tail_injection"
 require_relative "context/reminder"
 require_relative "context/prune"
 require_relative "context/compact"
+require_relative "context/dedupe_tool_calls"
+require_relative "context/purge_failed_inputs"
 require_relative "context/recall"
 require_relative "context/mailbox"
 
