@@ -1,5 +1,13 @@
 # The agent-harness field, mid-2026 — what the HN scan is worth to us
 
+> **Folded in (2026-07-18):** Tier-1 #1 → `specs/graders.md` (GR-1..GR-3); Tier-1 #2 (guardrail
+> stack), #3 (control-flow-as-code axis), #4 (Journal-native lineage-ranked retrieval) → `[exp]`
+> fold-ins in `ROADMAP.md` (M3c/M5/M6) + axis-table rows. Tier-2/3 are tracked in `ROADMAP.md` as
+> `[exp · parked]` fold-ins under their milestones: DSL/GBNF + external-$ budget + DELEGATE-52 → M3c;
+> isolation/egress + summary-inheritance + DOWN/UP framing → M5; local-model fidelity / 26M / inference
+> overhead → M6; spatial replay overlay → M4. "Worlds not mocks" stays digest-only (a framing rename,
+> not roadmap-worthy).
+
 > Companion to [`hn-harness-overhead-2026-07.md`](hn-harness-overhead-2026-07.md), which already
 > mined one thread (48883275) into `specs/cache-economics.md` + `specs/oracles.md`. This doc covers
 > the **rest** of a broader scan (past 7 days + a 90-day expansion, ~30 threads). Source digests and

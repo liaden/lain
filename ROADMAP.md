@@ -251,6 +251,19 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     accuracy over N steps** on a **local 8B** (where the lift is visible), and a **per-phase toolset
     narrowing** guard (attenuation made dynamic mid-run). Shape, never safety — never reachable by a
     validator that sounds like a security control. `[exp]`
+  - **DSL / grammar-constrained tool interfaces** (HN scan #5): GBNF grammar-constrained decoding as
+    a local-model Provider variant (mask illegal tokens, no retry) vs post-hoc `Tool::Input`
+    validate+retry; the ast-grep catalog exposed as a DSL-shaped tool; a per-tool declared-effects
+    catalog (Jacquard effect rows = `Tool::Input` extended from shape to capability). Watch the
+    validator-green-but-non-functional trap — score a non-functional check, not just "it parses."
+    `[exp · parked]`
+  - **Per-effect external-$ budget + recursive subagent ceiling** (HN scan #7, the DN42 bankruptcy):
+    extend CE-6's cost model with a **tool-side external-cost** dimension (egress/instance $, invisible
+    to a token cap) and a **per-lineage spawn ceiling** that hard-stops mid-run before a bill lands.
+    `[exp · parked]`
+  - **DELEGATE-52-style corruption fixture** (HN scan Tier-3): a long-workflow document-edit fixture
+    (their naive `read_file`/`write_file` harness corrupted ~25% — *exactly what we vary*); A/B naive
+    vs structured edit tools, beside the "Hey" fixture. `[exp · parked]`
   - **Start the memory sweep with `Manifest`** the moment the bench exists — no index, cache-stable.
   - **Pluggable prompt slots** — named holes the user fills with **markdown partials** (Rails-view-
     partial model) for durable, rarely-changed **freeform system-prompt adjustment** and **per-role
@@ -295,6 +308,10 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     boundaries and **cache breakpoints annotated** (holes above the cache line = expensive to change;
     holes in the uncached tail = cheap), shown as a **diff against the base template**. Disclosing the
     harness, made visible — the inspection half of the prompt-slots arm. `[exp]`
+  - **Spatial "where did the agent work" replay overlay** (HN scan Tier-3, Mindwalk): the Workspace
+    Timeline already records which files each Effect touched — a spatial change-density overlay over
+    the codebase is a *query over existing data*, not new instrumentation; an off-track detector for
+    comparing orchestration tactics. See `planning/interface-integration.md`. `[exp · parked]`
 
 ### M5 — orchestration, memory, code mode `[planned]` (orchestration core `[built]` 2026-07-15)
 - `Tool::Subagent` (async, attenuated, supervised). `Tool::Todo`. `Memory` (content-addressed,
@@ -371,6 +388,15 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     orchestrator fans out to, and merges, whichever roles the task structure calls for. **Built-in
     catalog + `.lain/slots/role/<name>.md` overrides (PS-3); user-defined roles are a longer-term
     goal.** See `planning/specs/orchestration-model.md`. `[exp]`
+  - **Isolation as a swappable backend; egress as an observable Effect; credential brokering**
+    (HN scan #6): microVM / container / bwrap as a *compared* knob (not just an exec seam); every
+    allowed/denied network attempt an attributed Journal event; secrets stay host-side and proxied,
+    never entering the sandbox (fits "Workspace is sent, not stored", keeps digests credential-free).
+    Field lesson: the sandbox is the easy 10%, the policy engine + credential brokering the 90%.
+    `[exp · parked]`
+  - **Smaller parked arms** (HN scan Tier-3): **summary-inheritance** as a third CE-4 spawn-prefix
+    strategy (fresh-root / fork / summary); the **DOWN/UP-loop** framing (loopcraft) as a lens over
+    the four middleware phases + the human-loop-as-blocking-Middleware. `[exp · parked]`
 
 ### M6 — Rust round two & the retrieval sweep `[planned]` (retrieval sweep `[built]` 2026-07-15)
 - Exec-boundary hardening, parallel tools, one Rust-implemented `Tool` remain `[planned]`.
@@ -403,6 +429,12 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     record (substrate · form · lineage · authority) is an axis-set for the sweep; "storage ≠
     activation" is "capabilities not permissions" for memory. See
     `planning/hn-agent-landscape-2026-07.md` #4. `[exp]`
+  - **Local-model fidelity + tiny tool-callers** (HN scan Tier-3): treat chat-template / tool-call
+    fidelity as a *named measured variable* on the ollama arm (where small models silently break); a
+    **26M distilled tool-caller** as a candidate Provider variant ("tool-calling is
+    retrieval-and-assembly, not reasoning"); **in-process vs out-of-process inference overhead** as a
+    measured trade-off (LibArgus argues the opposite of our exec split for the inference hot loop).
+    `[exp · parked]`
 
 ---
 
