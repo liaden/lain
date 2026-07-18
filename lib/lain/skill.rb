@@ -38,3 +38,4 @@ end
 require_relative "skill/catalog"
 require_relative "skill/invocation"
 require_relative "skill/role_spawn"
+require_relative "skill/renderer"

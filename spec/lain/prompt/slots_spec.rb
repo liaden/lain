@@ -226,4 +226,70 @@ RSpec.describe Lain::Prompt::Slots do
       expect(digest_for.call("one")).not_to eq(digest_for.call("two"))
     end
   end
+
+  # The skill slot namespace is TWO-LEVEL, unlike the flat one-per-role region:
+  # a skill has many holes, so a user override lives at
+  # `.lain/slots/skill/<skill>/<hole>.md` over shipped hole defaults at
+  # `templates/skill/<skill>/<hole>.md`. `#render_skill` is the pure LEAF render
+  # of one hole; composing holes into a scaffold is the Skill::Renderer's job.
+  describe "#render_skill renders one skill hole through the locked binding" do
+    # A shipped skill dir (hole defaults) plus optional user overrides. The
+    # scaffold `skill.md` is the catalog's concern; render_skill only reads holes.
+    def with_skill_slots(shipped: {}, overrides: {})
+      Dir.mktmpdir do |root|
+        shipped_dir = File.join(root, "shipped")
+        shipped.each do |(skill, hole), body|
+          write_file(File.join(shipped_dir, skill, "#{hole}.md"), body)
+        end
+        overrides.each do |(skill, hole), body|
+          write_file(File.join(root, ".lain", "slots", "skill", skill, "#{hole}.md"), body)
+        end
+        yield described_class.load(root:, skill_shipped_dir: shipped_dir)
+      end
+    end
+
+    def write_file(path, body)
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, body)
+    end
+
+    it "injects the user override verbatim when present" do
+      with_skill_slots(
+        shipped: { %w[create-plan conventions] => "SHIPPED default" },
+        overrides: { %w[create-plan conventions] => "USER 42 conventions" }
+      ) do |slots|
+        expect(slots.render_skill("create-plan", "conventions")).to eq("USER 42 conventions")
+      end
+    end
+
+    it "falls back to the shipped default when no override exists" do
+      with_skill_slots(shipped: { %w[create-plan conventions] => "SHIPPED default" }) do |slots|
+        expect(slots.render_skill("create-plan", "conventions")).to eq("SHIPPED default")
+      end
+    end
+
+    it "renders byte-identically across repeated calls" do
+      with_skill_slots(shipped: { %w[create-plan conventions] => "steady" }) do |slots|
+        expect(slots.render_skill("create-plan", "conventions"))
+          .to eq(slots.render_skill("create-plan", "conventions"))
+      end
+    end
+
+    it "raises ImpureSlot for an impure reference in the hole" do
+      with_skill_slots(overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
+        expect { slots.render_skill("create-plan", "conventions") }
+          .to raise_error(Lain::Prompt::ImpureSlot, /Time/)
+      end
+    end
+
+    it "raises UnknownSlot loudly when a hole has neither override nor shipped default" do
+      with_skill_slots do |slots|
+        expect { slots.render_skill("create-plan", "ghost") }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+            expect(e.message).to include("ghost")
+            expect(e.message).to include("create-plan")
+          }
+      end
+    end
+  end
 end

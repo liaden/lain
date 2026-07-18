@@ -39,14 +39,30 @@ module Lain
       ROLE_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "role")
       private_constant :ROLE_TEMPLATE_DIR
 
+      # The skill slots (A2) live TWO levels down -- unlike the flat one-per-role
+      # region, a skill has many holes, so a hole is
+      # `.lain/slots/skill/<skill>/<hole>.md` over a shipped default at
+      # `templates/skill/<skill>/<hole>.md`. The shipped tree is directory-
+      # structured (`<skill>/skill.md` is the scaffold {Skill::Catalog} reads;
+      # its sibling `<hole>.md` files are the defaults this class fills).
+      SKILL_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "skill")
+      private_constant :SKILL_TEMPLATE_DIR
+
       class << self
         # Read the overrides under +root+/.lain/slots, validating every filename
         # against {KNOWN} (top-level) and the shipped role set (the `role/`
         # subdir). Session-fixed: this is the one disk read; #render works from
-        # the returned frozen snapshot.
-        def load(root: Dir.pwd)
+        # the returned frozen snapshot. `skill_shipped_dir` is injectable so a
+        # spec can point the shipped hole defaults at a fixture tree, exactly as
+        # {Skill::Catalog.load} injects its shipped scaffolds.
+        def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR)
           dir = File.join(root, SLOTS_DIR)
-          new(fills: read_fills(dir), role_fills: read_role_fills(File.join(dir, "role")))
+          new(
+            fills: read_fills(dir),
+            role_fills: read_role_fills(File.join(dir, "role")),
+            skill_slots: SkillSlots.new(fills: SkillSlots.read(File.join(dir, "skill")),
+                                        templates: SkillSlots.read(skill_shipped_dir))
+          )
         end
 
         # The shipped base template per known slot, read once and memoized. These
@@ -70,6 +86,13 @@ module Lain
         # underscores become hyphens, so `:test_engineer` resolves the file
         # `.lain/slots/role/test-engineer.md`.
         def role_slot_name(name) = name.to_s.tr("_", "-")
+
+        # The shipped skill-slot region: no project overrides, shipped hole
+        # defaults only. Read once, memoized -- the default a bare {Slots.new}
+        # (outside {.load}) renders against.
+        def shipped_skill_slots
+          @shipped_skill_slots ||= SkillSlots.new(fills: {}, templates: SkillSlots.read(SKILL_TEMPLATE_DIR))
+        end
 
         private
 
@@ -98,11 +121,13 @@ module Lain
       end
 
       def initialize(fills:, role_fills: {}, templates: self.class.shipped_templates,
-                     role_templates: self.class.shipped_role_templates)
+                     role_templates: self.class.shipped_role_templates,
+                     skill_slots: self.class.shipped_skill_slots)
         @fills = fills.transform_keys(&:to_s).freeze
         @role_fills = role_fills.transform_keys(&:to_s).freeze
         @templates = templates
         @role_templates = role_templates
+        @skill_slots = skill_slots
         freeze
       end
 
@@ -127,6 +152,20 @@ module Lain
           end
         end
         LockedBinding.new(resolve: method(:resolve)).render_template(source, "role/#{slot}")
+      end
+
+      # The rendered bytes of ONE skill hole (A2): the project override at
+      # `.lain/slots/skill/<skill>/<hole>.md` if present, else the shipped
+      # default. This is the pure LEAF render -- it renders a single hole and
+      # knows nothing of scaffolds, includes, or the catalog; {Skill::Renderer}
+      # composes these into a scaffold. Pure and session-fixed exactly like
+      # {#render_role}: two renders of one hole are byte-identical, and an impure
+      # override fails loudly here rather than resolving to a nondeterministic
+      # value. A hole with neither override nor shipped default is a loud
+      # {UnknownSlot}, never a silent empty fill.
+      def render_skill(skill, hole)
+        source = @skill_slots.source(skill, hole)
+        LockedBinding.new(resolve: method(:resolve)).render_template(source, "skill/#{skill}/#{hole}")
       end
 
       # The content address of each known slot's RENDERED bytes, keyed by slot

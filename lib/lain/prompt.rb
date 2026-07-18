@@ -23,4 +23,5 @@ end
 # Children reference the error classes above, so the module body loads first --
 # the effect/handler ordering pattern, not the context/combinator one.
 require_relative "prompt/locked_binding"
+require_relative "prompt/skill_slots"
 require_relative "prompt/slots"
