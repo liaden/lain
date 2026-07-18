@@ -13,13 +13,19 @@ module Lain
     # at session start (like {Backend#slots}) into frozen, session-fixed
     # instances, exactly as {Prompt::Slots.load} is. `root` is where both read
     # their `.lain/` overrides; it defaults to `Dir.pwd`, the project root the
-    # rest of the CLI already keys off, so the exe's call stays a single argless
-    # line.
+    # rest of the CLI already keys off, so the exe's call stays a single line.
+    #
+    # `role_spawn` is the {Skill::RoleSpawn} seam a `@role/skill` line folds
+    # through -- the exe's Wiring constructs it from the session's
+    # provider/toolset/parent/journal/supervisor and hands it in. It is REQUIRED,
+    # not defaulted: a defaulted Null would let a role-bound line silently degrade
+    # to a "not wired" message with no error at the wiring site, and the whole
+    # point of injecting it is that a real session always has one.
     module ReplMiddleware
-      def self.build(root: Dir.pwd)
+      def self.build(role_spawn:, root: Dir.pwd)
         catalog = Skill::Catalog.load(root:)
         renderer = Skill::Renderer.new(catalog:, slots: Prompt::Slots.load(root:))
-        Middleware::Stack.new([Middleware::SkillDispatch.new(catalog:, renderer:)])
+        Middleware::Stack.new([Middleware::SkillDispatch.new(catalog:, renderer:, role_spawn:)])
       end
     end
   end

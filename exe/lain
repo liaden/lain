@@ -239,7 +239,7 @@ class LainCLI < Thor
   def build_repl(tty:, agent:, wiring:)
     Repl.new(agent:, tty:, ask_human: wiring.ask_human, questions: wiring.questions,
              chronicle:, conductor: @conductor, approvals: wiring.approvals, notifier: wiring.notifier,
-             supervisor: wiring.supervisor, middleware: Lain::CLI::ReplMiddleware.build)
+             supervisor: wiring.supervisor, middleware: Lain::CLI::ReplMiddleware.build(role_spawn: wiring.role_spawn))
   end
 
   # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
@@ -274,7 +274,7 @@ class LainCLI < Thor
   # back the built Agent, and exposes @ask_human/@questions so #run_chat can
   # give the Repl the reply path this object wired.
   class Wiring
-    attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor
+    attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn
 
     def initialize(options:, chronicle:)
       @options = options
@@ -353,7 +353,23 @@ class LainCLI < Thor
 
     def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
       base = Lain::Toolset.new(base_tools(recorder))
+      @role_spawn = role_spawn_seam(base, backend:, parent:, journal:)
       Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human, run_skill])
+    end
+
+    # The repl-phase role-spawn seam (a @role/skill line folds a persona'd
+    # one-shot subagent through this). It attenuates from the SAME base union the
+    # research subagent does, over the same spooled provider, child context, live
+    # parent handle, journal, supervisor, and lineage observer -- the
+    # role/policy/persona are chosen PER CALL from the parsed role name and
+    # context mode, so one seam serves every role. `slots:` is the session's
+    # rendered-persona source (Backend#slots, loaded once).
+    def role_spawn_seam(base, backend:, parent:, journal:)
+      Lain::Skill::RoleSpawn.new(
+        provider: spooled_provider(backend), context_factory: -> { backend.context },
+        toolset: base, parent:, slots: backend.slots,
+        journal:, supervisor: @supervisor, observer: chronicle.observer
+      )
     end
 
     # The in-agent composition primitive, main-agent-only: appended AFTER `base`

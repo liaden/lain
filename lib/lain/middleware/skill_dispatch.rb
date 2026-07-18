@@ -15,7 +15,9 @@ module Lain
     #                                         REWRITE env[:text], run the turn
     #   unknown  (`/nope`)                  -> short-circuit: a loud env[:response]
     #                                         naming the known set, NO model turn
-    #   role-bound (`@role/skill`)          -> short-circuit (T-B3 seam, below)
+    #   role-bound (`@role/skill`)          -> fold a persona'd one-shot subagent's
+    #                                         final answer into env[:response] via
+    #                                         the {Skill::RoleSpawn} seam (T-B3)
     #   malformed (parse raises Malformed)  -> propagate; the dispatch boundary
     #                                         rescues Lain::Error and renders it
     #
@@ -31,9 +33,10 @@ module Lain
     # and loop to the next prompt -- rescuing it into a silent pass-through would
     # send the broken line to the model verbatim.
     class SkillDispatch < Base
-      def initialize(catalog:, renderer:)
+      def initialize(catalog:, renderer:, role_spawn:)
         @catalog = catalog
         @renderer = renderer
+        @role_spawn = role_spawn
         super()
         freeze
       end
@@ -63,14 +66,20 @@ module Lain
                       "unknown skill #{invocation.skill.inspect}, expected one of #{@catalog.names.inspect}")
       end
 
-      # T-B3 EXTENSION SEAM. B3 replaces this body with a real role-bound
-      # dispatch through {Skill::RoleSpawn} (fetch the role, spawn under its
-      # policy/persona in the chosen context mode). Until then a role-bound line
-      # must NOT reach the model verbatim, so it short-circuits loudly rather
-      # than falling through to `downstream`.
+      # T-B3. A role-bound line folds a persona'd one-shot subagent's final
+      # answer into env[:response]: the {Skill::RoleSpawn} seam fetches the role,
+      # spawns it under its policy/persona in the parsed context mode
+      # (`:inherit` for `@role/skill`, `:fresh` for `@role[/skill]`), and runs
+      # the rendered scaffold + args to a single result. Setting env[:response]
+      # short-circuits, so the B0 boundary renders the child's answer with ZERO
+      # parent turn -- the subagent's turns live attributed in the shared Store,
+      # never in the parent's rendered conversation (OM-2 out-of-band). An
+      # unknown role raises {Role::Catalog::Unknown} BEFORE any spawn (no
+      # tokens); it is a {Lain::Error}, so -- exactly like {Malformed} -- it
+      # propagates to the dispatch boundary, which renders it and loops.
       def report_role_bound(env, invocation)
-        short_circuit(env,
-                      "role-bound skill dispatch (@#{invocation.role}/#{invocation.skill}) is not yet available")
+        result = @role_spawn.call(invocation.role, invocation.context, expand(invocation))
+        short_circuit(env, result.content)
       end
 
       def short_circuit(env, message)
