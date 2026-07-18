@@ -35,6 +35,16 @@ module Lain
       # beside the encoder, because the limit is the encoder's concern.
       class TooManyCacheMarkers < Error; end
 
+      # `extra` can carry a raw `tool_choice` (the pre-existing escape-hatch
+      # forwarding path) AND a structured_output marker, which also wants to
+      # force tool_choice. #encode merges structured_fields BEFORE the
+      # generic extra forward, so an unchecked raw `tool_choice` would win
+      # silently -- the caller would see no error, just their forced
+      # structured answer quietly not being forced. Same shape as
+      # TooManyCacheMarkers: refuse at encode time with a named error rather
+      # than let one silently clobber the other.
+      class ConflictingToolChoice < Error; end
+
       # `cache_control` in Anthropic's only currently offered flavor. Named once
       # so the emitted marker is a single shared, frozen object.
       EPHEMERAL = { "type" => "ephemeral" }.freeze
@@ -43,6 +53,25 @@ module Lain
       # wire field, so it must be stripped from every emitted payload.
       CACHE_MARKER = "cache"
 
+      # T1: the neutral key a Request uses to carry a forced typed-answer
+      # format on #extra (see Ollama::Encoding::STRUCTURED_OUTPUT_KEY, the
+      # same string, defined separately -- these are two leaf files that
+      # carry no internal requires of each other). The value is
+      # `{"schema" => <json schema>, "tool" => <name>}`; Anthropic has no
+      # native "format" concept, so it reads only "tool" and forces
+      # tool_choice at that name instead -- the schema half is Ollama's.
+      # Never a wire field itself, so #encode must strip it the same way it
+      # strips CACHE_MARKER, or an unknown param would leak to the SDK.
+      STRUCTURED_OUTPUT_KEY = "structured_output"
+
+      # The pre-existing raw escape-hatch key a caller may already put on
+      # #extra to force tool_choice directly (see "forwards provider-specific
+      # params from #extra as symbol keys" in the spec). Named here only so
+      # #check_tool_choice_conflict! can detect it colliding with
+      # STRUCTURED_OUTPUT_KEY -- this module has no opinion on raw tool_choice
+      # otherwise, it just forwards it.
+      TOOL_CHOICE_KEY = "tool_choice"
+
       # The exact kwargs Hash the SDK would receive. Pure and deterministic: no
       # network, no clock, no ordering that depends on how the Request's Hashes
       # were built. `stream` is intentionally NOT a key here -- the SDK encodes
@@ -50,12 +79,42 @@ module Lain
       # payload carries it as a top-level field the caller adds later.
       def encode(request)
         check_cache_budget!(request)
+        check_tool_choice_conflict!(request.extra)
         # #extra is the provider-specific escape hatch (temperature, tool_choice,
         # ...); symbol keys so it lands on the SDK param model's named fields.
-        base_params(request).compact.merge(request.extra.transform_keys(&:to_sym))
+        # STRUCTURED_OUTPUT_KEY is neutral, not a wire field -- it is consulted
+        # for #structured_fields below, then excluded so it never rides along
+        # into the SDK params as an unrecognized key.
+        base_params(request).compact
+                            .merge(structured_fields(request.extra))
+                            .merge(request.extra.except(STRUCTURED_OUTPUT_KEY).transform_keys(&:to_sym))
       end
 
       private
+
+      # Both keys forcing tool_choice at once is not a merge order the
+      # caller chose deliberately -- it is two independent features writing
+      # to the same wire field. Refuse loudly rather than let #encode's merge
+      # order silently decide a winner.
+      def check_tool_choice_conflict!(extra)
+        return unless extra.key?(STRUCTURED_OUTPUT_KEY) && extra.key?(TOOL_CHOICE_KEY)
+
+        raise ConflictingToolChoice,
+              "extra carries both a raw #{TOOL_CHOICE_KEY.inspect} and a #{STRUCTURED_OUTPUT_KEY.inspect} " \
+              "marker, which also forces tool_choice -- remove one"
+      end
+
+      # A Request with no structured-answer format contributes nothing here,
+      # which is what keeps #encode byte-identical to before this feature
+      # existed. When present, Anthropic has no server-side schema-forcing
+      # concept (unlike Ollama's `format`), so the schema half is ignored and
+      # only the named tool is forced via tool_choice.
+      def structured_fields(extra)
+        format = extra[STRUCTURED_OUTPUT_KEY]
+        return {} unless format
+
+        { tool_choice: { type: "tool", name: format["tool"] } }
+      end
 
       def base_params(request)
         { model: request.model, max_tokens: request.max_tokens,

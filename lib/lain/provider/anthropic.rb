@@ -32,7 +32,11 @@ module Lain
       # Only what this provider can actually demonstrate. Notably absent:
       # server-side compaction and context editing live on the Beta message
       # family, which this class deliberately does not target.
-      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
+      # `structured_output` here means tool-FORCING (force one tool, its input schema
+      # is the answer shape) -- a weaker guarantee than Ollama's grammar-constrained
+      # decoding under the same capability name. Argument-schema conformance rides on
+      # the model unless `strict_tools` is also engaged.
+      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use structured_output].freeze
 
       # CAC-2: the facts a cache-aware scheduler needs, not a constant a
       # scheduler has to guess (planning/specs/cache-aware-compaction.md's

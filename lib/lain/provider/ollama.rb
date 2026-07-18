@@ -43,7 +43,10 @@ module Lain
       # capability in the one subsystem built to catch them, so the capability
       # policy's `:degrade` journals those gaps, which is the bench working as
       # designed.
-      CAPABILITIES = %i[streaming thinking].freeze
+      # `structured_output` here is grammar-CONSTRAINED decoding (the native `format`
+      # field) -- a stronger guarantee than Anthropic's tool-forcing under the same
+      # capability name. See Provider::Anthropic::CAPABILITIES.
+      CAPABILITIES = %i[streaming thinking structured_output].freeze
 
       # CAC-2: :prompt_caching is honestly absent above, so this is a Null
       # Object -- a no-caching profile rather than nil -- so a CAC-3/CAC-4

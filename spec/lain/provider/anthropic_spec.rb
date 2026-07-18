@@ -57,7 +57,8 @@ RSpec.describe Lain::Provider::Anthropic do
 
   describe "#capabilities" do
     it "claims exactly what it can demonstrate" do
-      expect(provider.capabilities).to eq(%i[streaming prompt_caching strict_tools thinking parallel_tool_use])
+      expect(provider.capabilities).to eq(%i[streaming prompt_caching strict_tools thinking parallel_tool_use
+                                             structured_output])
     end
 
     it "declares only capabilities the base class knows about" do

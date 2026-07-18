@@ -37,6 +37,16 @@ module Lain
         # top-level sibling of `stream`/`tools`, not a member of `options`.
         THINK_KEY = "think"
 
+        # T1: the neutral key a Request uses to carry a forced typed-answer
+        # format on #extra -- the same escape hatch THINK_KEY/SAMPLER_KEYS
+        # already ride, so a Request without it stays byte-identical to
+        # before this feature existed. The value is
+        # `{"schema" => <json schema>, "tool" => <name>}`; Ollama's native
+        # `format` field wants the schema alone (it has no tool-forcing
+        # concept), while Anthropic's encoder (AnthropicEncoding) reads
+        # "tool" instead to force tool_choice.
+        STRUCTURED_OUTPUT_KEY = "structured_output"
+
         # The exact `/api/chat` body. Pure and deterministic: no clock, no
         # ordering that depends on how the Request's Hashes were built. `stream`
         # carries `request.stream` (Request coerces it to a bool) -- Ollama's wire
@@ -55,13 +65,33 @@ module Lain
         # is present only when Request#extra asked for it -- a Request with no
         # think extra must produce byte-identical bytes to before R5.
         def optional_fields(request)
-          tools = encode_tools(request.tools)
-          options = encode_options(request.extra)
+          { tools: encode_tools(request.tools), options: encode_options(request.extra) }
+            .reject { |_key, value| value.empty? }
+            .merge(extra_flag_fields(request.extra))
+        end
+
+        # The optional fields that ride a single Request#extra flag rather
+        # than a collection: absent unless the Request actually asked for
+        # them, which is what keeps a plain Request byte-identical to before
+        # each of these existed (R5 for `think`, T1 for `format`).
+        def extra_flag_fields(extra)
           fields = {}
-          fields[:tools] = tools unless tools.empty?
-          fields[:options] = options unless options.empty?
-          fields[:think] = request.extra[THINK_KEY] if request.extra.key?(THINK_KEY)
+          fields[:think] = extra[THINK_KEY] if extra.key?(THINK_KEY)
+          format = structured_format(extra)
+          fields[:format] = format unless format.nil?
           fields
+        end
+
+        # Ollama's `format` wants the raw JSON schema, not a tool wrapper --
+        # the "tool" half of the neutral marker names which tool a
+        # tool-forcing backend (Anthropic) should force instead, and has
+        # nothing to do here. A nil marker (key absent, or present with a nil
+        # value) and a marker missing "schema" both resolve to nil here, and
+        # #extra_flag_fields treats nil as "omit the key" -- the real Ollama
+        # API rejects a literal `format: null`, so this must never emit one.
+        def structured_format(extra)
+          marker = extra[STRUCTURED_OUTPUT_KEY]
+          marker && marker["schema"]
         end
 
         def encode_messages(request)

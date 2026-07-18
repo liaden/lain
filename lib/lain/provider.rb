@@ -34,6 +34,7 @@ module Lain
       server_compaction
       server_context_editing
       server_tools
+      structured_output
     ].freeze
 
     # @return [Array<Symbol>] a subset of {CAPABILITIES}

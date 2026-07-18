@@ -65,6 +65,54 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
     end
   end
 
+  # T1: structured-answer format, expressed neutrally on Request#extra (the
+  # same escape hatch temperature/tool_choice-forwarding already uses) rather
+  # than a new Request field -- extra is already excluded from
+  # Request#cache_payload, so this never touches cache identity.
+  describe "structured-answer format" do
+    def request_with_structured_tool
+      tool = { name: "answer", description: "d", input_schema: { type: :object, properties: {}, required: [] } }
+      request(tools: [tool], extra: { "structured_output" => { "tool" => "answer" } })
+    end
+
+    it "forces tool_choice naming the structured-answer tool" do
+      encoded = encoder.encode(request_with_structured_tool)
+
+      expect(encoded[:tool_choice]).to eq(type: "tool", name: "answer")
+    end
+
+    it "does not leak the neutral structured_output marker itself onto the wire" do
+      encoded = encoder.encode(request_with_structured_tool)
+
+      expect(encoded).not_to have_key(:structured_output)
+    end
+
+    # THE CRITICAL AC: no structured format means no tool_choice, and every
+    # other field is exactly what today's plain encode already produces.
+    it "encodes byte-identically to today when no structured format is present" do
+      encoded = encoder.encode(request)
+
+      expect(encoded).not_to have_key(:tool_choice)
+      expect(encoded).to eq(model: "m", max_tokens: 64, messages: [{ "role" => "user", "content" => "hi" }])
+    end
+
+    # Review escalation trigger: extra can ALREADY carry a raw tool_choice
+    # (the pre-existing forwarding path exercised above by "forwards
+    # provider-specific params from #extra as symbol keys"). If a
+    # structured_output marker arrives alongside it, the generic extra merge
+    # running last would silently let the raw tool_choice win over the forced
+    # one -- a silent clobber, not a reconciliation. Fails loudly instead,
+    # matching the TooManyCacheMarkers precedent in this same file.
+    it "raises when extra carries both a raw tool_choice and a structured_output marker" do
+      tool = { name: "answer", description: "d", input_schema: { type: :object, properties: {}, required: [] } }
+      req = request(tools: [tool],
+                    extra: { "tool_choice" => { "type" => "any" }, "structured_output" => { "tool" => "answer" } })
+
+      expect { encoder.encode(req) }
+        .to raise_error(Lain::Provider::AnthropicEncoding::ConflictingToolChoice, /tool_choice/)
+    end
+  end
+
   # Anthropic accepts at most four cache_control breakpoints; the encoder is
   # the anti-corruption layer, so it refuses a fifth at encode time (a clear,
   # named error) rather than letting the wire 400.
