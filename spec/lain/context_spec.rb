@@ -32,6 +32,17 @@ RSpec.describe Lain::Workspace do
   end
 end
 
+# A pure ->(workspace) pipeline provider for T21's injection seam. Defined in a
+# module body so its `self` is this (Ractor-shareable) module, which is what
+# lets the lambda -- and thus a Context that stores it -- stay shareable. It
+# reproduces the class default (Reminder >> CacheBreakpoints) so an injected
+# render can be pinned byte-for-byte against the default one.
+module T21PipelineProviders
+  DEFAULT = Ractor.make_shareable(
+    ->(workspace) { Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new }
+  )
+end
+
 RSpec.describe Lain::Context do
   subject(:context) { described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
 
@@ -193,6 +204,109 @@ RSpec.describe Lain::Context do
     # pins "system" => "be terse"), so the reader must keep the caller's shape.
     it "keeps Context#system in the shape it was given" do
       expect(context.system).to eq("be terse")
+    end
+  end
+
+  # T21: the render pipeline is an INJECTED collaborator, not a fixed class
+  # method. A default Context (no pipeline:) must render byte-identically to the
+  # hardcoded Reminder >> CacheBreakpoints, so injection is a pure seam and not a
+  # behavior change. An injected combinator or ->(workspace) provider routes both
+  # #render and #requires, so declared capabilities cannot drift from behavior.
+  describe "render-pipeline injection" do
+    let(:workspace) { Lain::Workspace.new(reminders: ["todo: finish M1"]) }
+
+    # The seam's non-negotiable guard: constructing with the explicit default
+    # pipeline must reproduce the default render's bytes exactly, workspace and
+    # all -- proof the default path is a pure pass-through equal to the injected
+    # Reminder >> CacheBreakpoints.
+    it "renders byte-identically to the default when given the explicit default pipeline" do
+      injected = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse",
+                                     pipeline: T21PipelineProviders::DEFAULT)
+      expect(injected.render(timeline:, toolset:, workspace:))
+        .to have_same_digest_as(context.render(timeline:, toolset:, workspace:))
+    end
+
+    it "leaves the default Context's REQUIRES a static constant" do
+      expect(context.requires).to eq(described_class::REQUIRES)
+      expect(described_class::REQUIRES).to include(:prompt_caching)
+    end
+
+    it "routes render through an injected combinator instead of the default" do
+      injected = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse",
+                                     pipeline: Lain::Context::Identity)
+      request = injected.render(timeline:, toolset:, workspace:)
+      # Identity marks no cache breakpoint and appends no workspace tail, so the
+      # last message keeps its single original block, unmarked.
+      expect(request.messages.last["content"].last).not_to have_key("cache")
+      expect(request.messages.last["content"].map { |b| b["text"] }).to eq(["more"])
+    end
+
+    it "derives #requires from an injected combinator's #requires" do
+      injected = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                     pipeline: Lain::Context::Identity)
+      expect(injected.requires).to eq(Lain::Context::Identity.requires)
+      expect(injected.requires).not_to include(:prompt_caching)
+    end
+
+    it "derives #requires from an injected ->(workspace) provider's pipeline" do
+      injected = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                     pipeline: T21PipelineProviders::DEFAULT)
+      expect(injected.requires).to eq(described_class::REQUIRES)
+    end
+
+    # The no-injection path must derive #requires from the pipeline that
+    # ACTUALLY runs (self.class.pipeline), never shortcut to the base REQUIRES
+    # constant. A subclass overriding self.pipeline renders via #pipeline_for;
+    # #requires must agree, or Capability::Policy would degrade/raise for a
+    # capability the subclass's real pipeline never uses.
+    it "derives #requires from a self.pipeline-overriding subclass's own pipeline, not base REQUIRES" do
+      pruning = Class.new(described_class) do
+        def self.pipeline(_workspace) = Lain::Context::Prune.new(keep_last: 1)
+      end
+      ctx = pruning.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse")
+
+      expect(ctx.requires).to eq(pruning.pipeline(Lain::Workspace.empty).requires)
+      expect(ctx.requires).not_to eq(described_class::REQUIRES)
+    end
+
+    # Documented tradeoff, pinned so it is never silent: a RAW Combinator
+    # injected as `pipeline:` freezes the Workspace it was built with --
+    # #pipeline_for hands it back untouched, so the per-render Workspace is
+    # ignored. A stage needing the live Workspace must use the provider form.
+    it "pins the raw-Combinator stale-workspace trap: the build-time Workspace wins over the render one" do
+      raw = Lain::Context::Reminder.new(workspace: Lain::Workspace.new(reminders: ["BUILD-TIME"])) >>
+            Lain::Context::CacheBreakpoints.new
+      ctx = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse", pipeline: raw)
+
+      tail = ctx.render(timeline:, toolset:, workspace: Lain::Workspace.new(reminders: ["LIVE"]))
+                .messages.last["content"].map { |block| block["text"] }
+      expect(tail).to include("<workspace>BUILD-TIME</workspace>")
+      expect(tail).not_to include("<workspace>LIVE</workspace>")
+    end
+
+    # The escape hatch the trap above points at: the ->(workspace) provider
+    # form is rebuilt against each render's Workspace, so it tracks the live one.
+    it "the ->(workspace) provider form tracks the live per-render Workspace" do
+      ctx = described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse",
+                                pipeline: T21PipelineProviders::DEFAULT)
+      tail = ctx.render(timeline:, toolset:, workspace: Lain::Workspace.new(reminders: ["LIVE"]))
+                .messages.last["content"].map { |block| block["text"] }
+      expect(tail).to include("<workspace>LIVE</workspace>")
+    end
+
+    describe "purity and shareability with an injected pipeline" do
+      let(:injected) do
+        described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse",
+                            pipeline: Lain::Context::Identity)
+      end
+
+      it "renders identical bytes for identical inputs" do
+        expect(injected.render(timeline:, toolset:)).to have_same_digest_as(injected.render(timeline:, toolset:))
+      end
+
+      it "stays deeply frozen and Ractor-shareable" do
+        expect(injected).to be_ractor_shareable
+      end
     end
   end
 end

@@ -58,7 +58,7 @@ module Lain
     # prompt.
     REQUIRES = pipeline(Workspace.empty).requires
 
-    attr_reader :system, :model, :max_tokens, :stream, :extra
+    attr_reader :system, :model, :max_tokens, :stream, :extra, :requires
 
     # `extra` carries provider-specific sampler params (temperature, seed,
     # num_ctx). It rides through to Request#extra, which Request excludes from
@@ -66,16 +66,42 @@ module Lain
     # (identical inputs, identical bytes) WITHOUT letting a temperature change
     # read as a different prompt. Normalized (and thus deeply frozen) at
     # construction so the frozen Context holds no mutable reference.
-    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {})
+    #
+    # `pipeline` is the injected render strategy, duck-typed by shape: a
+    # Combinator (responds to `#requires`) is used as-is; anything else is
+    # treated as a pure `->(workspace)` provider and called per render for a
+    # Combinator (Reminder needs the live Workspace, which is why the provider
+    # form exists). Omitted, #render falls back to `self.class.pipeline(workspace)`,
+    # so a default Context -- and any subclass overriding `self.pipeline` --
+    # renders exactly its own default. It must be Ractor-shareable like every
+    # combinator; a bare lambda whose self is `main` is not, so a provider is
+    # built where self is shareable.
+    #
+    # WARNING: a raw Combinator injected here freezes whatever Workspace it was
+    # constructed with -- `#pipeline_for` hands it straight back and never sees
+    # the per-render Workspace. A stage that must read the LIVE Workspace (a
+    # Reminder over the caller's evolving reminders) MUST come from the
+    # `->(workspace)` provider form; a raw Combinator built around Workspace A
+    # will keep emitting A even under `render(workspace: B)`, silently defeating
+    # "Workspace is sent, not stored." The provider form closes over nothing and
+    # is rebuilt against each render's Workspace, so it has no such trap.
+    #
+    # `@requires` is derived from the effective pipeline for BOTH the injected
+    # and the fallback case -- never shortcut to the REQUIRES class constant, or
+    # a `self.pipeline`-overriding subclass would report the base class's
+    # capabilities for a pipeline that never uses them (drift #render doesn't
+    # have). The one extra `#pipeline_for` call here (per construction, not per
+    # render) is that guarantee's price.
+    def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil)
       @model = -model.to_s
       @max_tokens = Integer(max_tokens)
       @system = system && Canonical.normalize(system)
       @stream = stream
       @extra = Canonical.normalize(extra)
+      @pipeline = pipeline
+      @requires = pipeline_for(Workspace.empty).requires
       freeze
     end
-
-    def requires = REQUIRES
 
     # @return [Lain::Request] deterministic for identical inputs
     #
@@ -93,7 +119,7 @@ module Lain
         model:,
         system: cache_marked(system_blocks),
         tools: toolset.to_schema,
-        messages: self.class.pipeline(workspace).call(messages),
+        messages: pipeline_for(workspace).call(messages),
         max_tokens:,
         stream:,
         extra:
@@ -101,6 +127,20 @@ module Lain
     end
 
     private
+
+    # The render pipeline in effect for this workspace. With no injected
+    # collaborator this is exactly today's `self.class.pipeline(workspace)`, so
+    # a default Context (and any subclass overriding `self.pipeline`) is
+    # unchanged. An injected Combinator is used directly; an injected
+    # `->(workspace)` provider (no `#requires`, unlike a combinator) is asked for
+    # a combinator per render -- the same pure call the class default makes.
+    # #render and #requires both route through here, which is what keeps a
+    # declared capability from drifting from the behavior it names.
+    def pipeline_for(workspace)
+      return self.class.pipeline(workspace) if @pipeline.nil?
+
+      @pipeline.respond_to?(:requires) ? @pipeline : @pipeline.call(workspace)
+    end
 
     # The system prompt in Anthropic's block form, normalized ONCE. A String
     # prompt becomes a single text block; a caller who already passed blocks is
