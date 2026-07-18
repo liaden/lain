@@ -40,6 +40,7 @@ module Lain
 
       def total_tokens = usage.total_tokens
       def cache_hit_ratio = usage.cache_hit_ratio
+      def cache_write_tokens = usage.cache_creation_input_tokens
       def graded? = !score.nil?
     end
 
@@ -87,7 +88,9 @@ module Lain
       total_tokens: { label: "total tokens", reader: :total_tokens, fmt: ->(v) { format("%.1f", v) } },
       cache_hit_ratio: { label: "cache hit ratio", reader: :cache_hit_ratio, fmt: ->(v) { format("%.3f", v) } },
       cost: { label: "cost (USD)", reader: :cost, fmt: ->(v) { format("%.6f", v) } },
-      score: { label: "grader score", reader: :score, fmt: ->(v) { format("%.2f", v) } }
+      score: { label: "grader score", reader: :score, fmt: ->(v) { format("%.2f", v) } },
+      cache_write_tokens: { label: "cache write tokens", reader: :cache_write_tokens,
+                            fmt: ->(v) { format("%.1f", v) } }
     }.freeze
 
     # @param runs [Array<Run>] the runs to compare (n >= 2)

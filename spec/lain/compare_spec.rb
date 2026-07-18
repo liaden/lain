@@ -6,8 +6,9 @@
 # lie, not a result). Its report is a DX artifact: a scannable per-metric table,
 # never a wall of floats.
 RSpec.describe Lain::Compare do
-  def usage(input:, output:, cache_read: 0)
-    Lain::Usage.new(input_tokens: input, output_tokens: output, cache_read_input_tokens: cache_read)
+  def usage(input:, output:, cache_read: 0, cache_write: 0)
+    Lain::Usage.new(input_tokens: input, output_tokens: output, cache_read_input_tokens: cache_read,
+                    cache_creation_input_tokens: cache_write)
   end
 
   def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]))
@@ -69,6 +70,19 @@ RSpec.describe Lain::Compare do
       expect(dist.mean).to be_a(BigDecimal)
       expect(dist.mean).to eq(BigDecimal("0.0035"))
     end
+
+    it "aggregates cache-write tokens across runs" do
+      cache_write_runs = [
+        run("a", usage: usage(input: 10, output: 1, cache_write: 50), cost: "0.001"),
+        run("b", usage: usage(input: 10, output: 1, cache_write: 80), cost: "0.001"),
+        run("c", usage: usage(input: 10, output: 1, cache_write: 20), cost: "0.001")
+      ]
+      dist = described_class.new(cache_write_runs).distribution(:cache_write_tokens)
+      expect(dist.mean).to be_within(1e-9).of(50.0)
+      expect(dist.median).to eq(50.0)
+      expect(dist.min).to eq(20.0)
+      expect(dist.max).to eq(80.0)
+    end
   end
 
   # An Integer-valued metric must not floor: Integer#/ truncates, so the mean of
@@ -117,6 +131,20 @@ RSpec.describe Lain::Compare do
       end
       expect(report).to include("mean")
       expect(report).to include("median")
+    end
+
+    it "adds a cache-write column alongside the existing four, unchanged" do
+      ["total tokens", "cache hit", "cost", "score", "cache write"].each do |label|
+        expect(report.downcase).to include(label)
+      end
+    end
+
+    # Pins ORDER, not just presence: METRICS is a Hash, so a mid-hash insertion of a
+    # future metric between :score and :cache_write_tokens would satisfy every
+    # "includes the label" assertion above while silently reordering columns. This
+    # example is the one that would actually catch that regression.
+    it "places cache-write immediately after grader score, keeping the existing four in place" do
+      expect(described_class::METRICS.keys).to eq(%i[total_tokens cache_hit_ratio cost score cache_write_tokens])
     end
 
     it "states how many runs and which capabilities degraded" do
