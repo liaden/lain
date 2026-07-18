@@ -16,6 +16,7 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
 | Lab engineering blogs (Anthropic, Cognition, Chroma, Zed) | web | ✅ | design rationale never published as papers | WebFetch → hand-written `.md` |
 | Reference implementations (MemPalace, Aider, OpenHands, smolagents, goose, SWE-agent) | git | ✅ | working design ideas absent from READMEs | submodule → `repos/` |
 | ACL Anthology / conference PDFs | PDF | ⚠ some manual | peer-reviewed benchmarks | `pdf_to_rst.py` |
+| HN discussion (stories + comments) | Algolia API + web | ✅ | practitioner reactions, failure cases, cross-links to blogs/repos not otherwise surfaced | `hn.algolia.com/api/v1` → WebFetch → dated `.md` synthesis |
 
 ## Per-source detail
 
@@ -39,6 +40,22 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
   graph, and a query-sanitizer for prompt contamination — **none prominent in the README.** This
   channel is where introspection pays off; prioritize reading retrieval/context/memory cores.
 - **Priority:** primary. Done: MemPalace. To introspect: see `oss-inspiration.md`.
+
+### HN discussion survey (complementary, recurring)
+- **Access:** `https://hn.algolia.com/api/v1/search?query=…&tags=story&numericFilters=created_at_i>…,points>…`
+  for stories; `…/api/v1/items/<id>` for a full nested comment tree. Digest into a **dated** `.md`
+  (news ages), labelled ⚠️ LLM-generated. First run: `hn-agent-landscape-2026-07.md`.
+- **Unique data:** practitioner *reactions* — failure cases, benchmarking-methodology critiques, and
+  outbound links to lab blogs / repos / arXiv that never reach the HN front page. The comment
+  cross-links were higher-signal than several top-level stories (swyx's loopcraft taxonomy, zby's
+  agent-memory-systems reviews, the yoloAI/Gondolin isolation repos).
+- **Priority:** complementary; a periodic radar, not a canon. Treat as engineering evidence.
+- **Gotchas (verified the hard way):** (1) an unencoded `>` in `numericFilters` is a **shell
+  redirect** — URL-encode as `%3E`. (2) The Algolia item cache occasionally resolves a stale/ wrong
+  story for an ID — verify the returned `title` matches. (3) Comment links are stored as
+  **entity-encoded visible text** (`&#x2F;`), often **without an `http://` scheme** and with no
+  `href` — `html.unescape` the text *before* regexing, and match scheme-less domains, or you find
+  ~1 link where there are hundreds.
 
 ## Recommended acquisition order
 

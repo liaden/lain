@@ -45,6 +45,34 @@ Architecture/code-level design ideas from other OSS harnesses.
 
 **Useful for:** the Context-combinator catalog (M3c), a repo-map/graph-rank retrieval arm, the Tool/ACI design rubric, and the M5 concurrency model.
 
+### [hn-agent-landscape-2026-07.md](hn-agent-landscape-2026-07.md) ⚠️ LLM-generated
+A dated HN scan (past 7 days + 90-day expansion) of LLM/agent discussion, reduced to *what each
+thread gives Lain* — an experiment axis or external corroboration. Grouped by the SCOPE taxonomy;
+story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **Not a primary source.**
+
+**What's inside:**
+- **Cache-thrash is the real cost, not prompt size** (Claude Code 54× cache-write vs OpenCode) —
+  the highest-leverage bench experiment: a prefix-hash cache-thrash meter + a prefix-stability
+  property test, both nearly free given `Context#render` purity.
+- **The harness-variance A/B is the founding demo** (§10; grounded in `papers/rst/2605.23950`) —
+  hold model + task fixed, vary only the Middleware stack / compaction, report the score delta.
+  Comment-linked practitioner writeups (swyx's loopcraft, Fowler) echo it; the citable claim stays
+  the peer-reviewed paper already in the corpus, not the inaccessible OpenAI posts (dropped, §10).
+- **Guardrails as a Middleware monoid** (Forge: 8B 53%→99%) — each guardrail (validate, rescue-parse,
+  prereq-enforce, nudge-retry) wraps the Effect::Handler; the highest-value small-model/Ollama study.
+- **Transparent subagents beat encrypted ones** (Codex prompt-encryption contrast) — `spawned_from` +
+  Journal *are* the plaintext audit companion the community asked OpenAI for; motivates the
+  swappable-inheritance study.
+- **Memory over the Journal natively** (deja-vu, zby's four-field taxonomy) — validates BM25-first;
+  index turn *lineage/outcome*, not just text; a ready axis-set for the M6 sweep.
+- **Cost is external, too** (DN42 bankruptcy, prod-DB deletion) — Budget must model per-effect
+  tool-side cost + a recursive subagent ceiling; isolation is an engineering, not administrative,
+  control.
+
+**Useful for:** the §1 cache experiments, the harness-variance headline A/B (SCOPE Q1–Q2), the
+Effect/Middleware guardrail sweep, the model-migration A/B harness, the M6 retrieval axes, and
+`Agent::Budget` per-effect cost accounting. Comment-linked arXiv IDs are parked for SCOPE vetting.
+
 ---
 
 ## Reference implementations (`repos/`)
