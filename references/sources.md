@@ -22,8 +22,9 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
 
 ### arXiv (primary)
 - **Access:** `arxiv_download.sh <id...>` → LaTeX → RST in `papers/rst/`.
-- **Unique data:** the 12 papers below — orchestration, memory benchmarks, CodeAct, GEPA,
-  harness evaluation.
+- **Unique data:** the 15 papers below — orchestration (incl. AB-MCTS tree search), memory
+  benchmarks, CodeAct, GEPA, harness evaluation, context-file eval (AGENTS.md), constrained
+  prompting (the Guardrail-to-Handcuff inversion).
 - **Priority:** primary.
 
 ### Lab engineering writeups (complementary, high-signal)

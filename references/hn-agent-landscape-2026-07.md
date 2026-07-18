@@ -444,11 +444,20 @@ Extends `references/memory-and-retrieval.md`.
   substitution boundary at the Effect system and assert on the emitted Channel/Effect trace (the
   Journal *is* that trace).
 
-### Candidate arXiv papers surfaced in discussion (vet before acquiring into `papers/`)
-Mined from comment links; **not yet pulled** — each needs a relevance check against `SCOPE.md`
-before `scripts/arxiv_download.sh` adds it, to avoid corpus bloat:
-`2602.11988`, `2510.23513`, `2510.22251`, `2503.04412`, `2401.11817`, `2312.00990`, `2605.00225`,
-`2303.12712` (Sparks-of-AGI, likely out of scope). Vetting owed.
+### Candidate arXiv papers surfaced in discussion (vetted 2026-07-18)
+8 IDs mined from comment links, each checked against `SCOPE.md`.
+
+**Acquired** into `papers/rst/` (see `INDEX.md`):
+- `2602.11988` — **Evaluating AGENTS.md** — context files don't generally help, +20% cost → context axis.
+- `2503.04412` — **AB-MCTS (Wider or Deeper?)** — adaptive-branching tree search w/ external feedback → orchestration / LATS upgrade.
+- `2510.22251` — **The Prompting Inversion (Sculpting)** — constraints help weak models, hurt strong ones → guardrail / prompt-slots axis.
+
+**Rejected** (out of scope, kept here so they aren't re-vetted):
+- `2401.11817` — *Hallucination is Inevitable* — a general LLM-theory property, not a harness mechanism; the bench's answer (attested-context grader) needs no theory paper.
+- `2312.00990` — *Polynomial Functors* — a category-theory monograph; tangential comment link.
+- `2510.23513` — *Point Convergence of Nesterov's AGM* — math.OC; "AI-assisted" is anecdotal.
+- `2605.00225` — *Birdsong to Rumbles* — elephant-call bioacoustics; unrelated.
+- `2303.12712` — *Sparks of AGI (GPT-4)* — general-capabilities essay; SCOPE non-goal.
 
 ---
 

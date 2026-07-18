@@ -1,0 +1,324 @@
+.. rubric:: Abstract
+
+A widespread practice in software development is to tailor coding agents to repositories using context files, such as ``AGENTS.md``. Although this practice is strongly encouraged by agent developers, there is currently no rigorous investigation into whether such context files are actually effective for real-world tasks. In this work, we study this question and evaluate coding agents' task completion performance in two complementary settings: established SWE-bench tasks from popular repositories, with LLM-generated context files, and a novel collection of issues from repositories containing developer-committed context files.
+Surprisingly, we find that providing context files does not generally improve task success rates, while *increasing inference cost* by over 20% on average. This observation holds across different LLMs, coding agents, and for both LLM-generated and developer-committed context files. Specifically, we find that while instructions in the context files are well followed by coding agents, repository overviews, although popular and recommended by model providers, are not helpful. We conclude that while context files are useful for specifying non-standard coding practices, any attempts to improve performance should be rigorously evaluated before deployment.
+
+Introduction
+------------
+
+Coding agents are being rapidly adopted across the software engineering industry [aitw2025dashboard]_ [cursor]_, and providing like ``AGENTS.md``, a ``README`` specifically targeting agents, has become common practice. With various industry leaders [AGENTSMd2025]_ [UsingClaudeMdFiles]_ recommending this approach to adapt their agents to specific repositories, are now supported by most popular agent frameworks, and included in over 60'000 open-source repositories, as reported by [AGENTSMd2025]_.
+
+These typically contain a repository overview and information on relevant developer tooling, aiming to help coding agents to navigate a given repository more efficiently, run build and test commands correctly, adhere to style guides and design patterns, and ultimately to solve tasks to the user's satisfaction more frequently.
+To date, despite their widespread adoption, the impact of on the coding agent's ability to solve complex software engineering tasks has not been rigorously studied.
+This is due to two key challenges: i) because of their recent introduction, are not available for instances of prior benchmarks, and ii) popular, well-known repositories, typically used to create such benchmarks, are not representative of most codebases. As a result, a rigorous evaluation of real-world use requires a new, complementary benchmark that contains only issues from less popular repositories with developer-committed .
+
+""""
+
+This work: Benchmarking ' impact on resolving GitHub issues
+In this work, we investigate the effect of actively used on the resolution of real-world coding tasks.
+We evaluate agents both in popular and less-known repositories, and, importantly, with committed by repository developers.
+For this purpose, we construct a novel benchmark (<ref>, left), , comprising Python software engineering tasks, created specifically from real GitHub issues.
+The benchmark contains 138 unique instances, covering both bug-fixing and feature addition tasks across 12 recent and niche repositories, all featuring developer-committed . complements , which we leverage for the evaluation of automatically generated on popular repositories.
+We evaluate coding agents in three settings (<ref>, middle): without any , with automatically generated using agent-developer recommendations, and with the developer-committed .
+
+We observe that including does not significantly affect performance. However, *developer-committed* files outperform *LLM-generated* ones by a significant margin of 7% on average.
+These observations are robust across LLMs, agents, and prompts used to generate the .
+In a more detailed analysis of the agent traces, we observe that instructions in are well followed. This leads to increased exploration, testing, and reasoning by coding agents, and, as a result, increases costs by over 20%.
+We therefore suggest omitting LLM-generated for the time being, contrary to agent developers' recommendations, as they don't help improve performance.
+Human-written should only include instructions required for coding agents that are not already present in the ``README`` (specific conventions or non-functional requirements), and be rigorously evaluated before adoption.
+We hope our evaluation framework will aid agent and model developers to improve the helpfulness of LLM-generated .
+
+""""
+
+Key contributions Our key contributions are:
+
+0. * , a new benchmark for the impact of actively used on agents' ability to solve real-world software engineering tasks.
+
+    * An extensive evaluation of different coding agents on  and , showing that  don't significantly improve performance.
+
+    * A detailed investigation of agent traces, showing that  instructions are well followed, leading to more thorough testing and exploration by coding agents.
+
+Background and Related Work
+---------------------------
+
+""""
+
+Coding agents Coding agents are LLM-based systems designed for autonomous resolution of coding tasks [yang2024sweagent]_. Typically, they consist of a harness that allows an LLM to interact with its environment using specialized tools for, e.g., executing bash commands, conducting web searches, or reading, creating, or modifying files [wang2025openhands]_ [yang2024sweagent]_.
+
+Their impressive performance on repository-level coding tasks like SWE-bench [swebench]_ led to rapid adoption in the software engineering community [cursor]_ and the development of new agents by specialized companies [AiderAI]_ [wang2025openhands]_ and model providers [openaiCodex2026]_ [googleGeminiCli]_ [QwenLMQwen3Coder]_ [ClaudeCodeDocsOverview]_.
+Model providers now train their LLMs to use the tools exposed by their harnesses [QwenLMQwen3Coder]_, which can substantially improve coding ability relative to simpler harnesses [swebench-bash]_.
+
+""""
+
+As coding agents were more broadly adopted, a need arose to provide them with additional context about the codebases they were working with [WhyICreatedAgentsMd]_ [builderioImproveYourAICodeOutputWithAgentsMd]_.
+To this end, model and agent developers recommend including **, such as ``AGENTS.md`` or ``CLAUDE.md``, with codebases [OpenAIAgenticAIFoundation2025]_ [UsingClaudeMdFiles]_.
+Many agent harnesses even provide built-in commands to initialize such automatically using the coding agent itself, by providing a dedicated /init command in the agent interface [openaiCodex2026]_ [QwenLMQwen3Coder]_ [ClaudeCodeDocsOverview]_.
+At the time of writing, [AGENTSMd2025]_ report that over 60'000 public GitHub repositories include a .
+
+""""
+
+Evaluating
+Prior work collected and categorized the content of [chatlatanagulchai2025agentreadmesempiricalstudy]_ [mohsenimofidi2025contextengineeringaiagents]_, deriving mostly descriptive metrics about their content without investigating their effectiveness [githubHowToWriteAGreatAgentsMdLessons]_.
+While individual developers report anecdotal evidence of better alignment and solution capabilities when providing [builderioImproveYourAICodeOutputWithAgentsMd]_ [TheRiseOfAgentsMd2025]_, we are the first to investigate the impact of actively used on agent behavior and performance at scale.
+
+""""
+
+Repository-level evaluation
+Spearheaded by [swebench]_, evaluating coding agents on the autonomous resolution of real-world repository-level tasks quickly became the gold standard for assessing their capabilities.
+While initial work focuses on issue resolution [swebench]_, follow-up work proposed benchmarks on feature addition [li-etal-2025-fea]_ [du2025swedevevaluatingtrainingautonomous]_,
+unit test generation [mundler2024swt]_, function generation [liang2025languagemodelsreplaceprogrammers]_, code performance [he2025sweperflanguagemodelsoptimize]_, and security [chen2025secureagentbenchbenchmarkingsecurecode]_.
+Our work evaluates whether autonomous issue resolution and feature addition capabilities improve with actively used .
+
+Orthogonally, benchmarks have also been extended by mining more recent and more difficult problems [badertdinov2025swerebenchautomatedpipelinetask]_ [zhang2025swebenchgoeslive]_, as well as instances focusing on end-user applications [vergopoulos2025automatedbenchmarkgenerationrepositorylevel]_.
+We follow their approaches to mining novel task instances to obtain a set of tasks in repositories that feature .
+
+----
+
+In this section, we discuss the requirements for , a SWE-Bench-like benchmark that targets the evaluation of developer-provided , its generation process, and its statistics.
+
+Notation and Definitions
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+We first introduce the notation to describe codebases, their test suites, and changes to these codebases in the form of patches.
+Following the notation of [mundler2024swt]_, we denote a codebase, or repository, R after applying patch X as R ∘ X.
+Several patches can be applied sequentially, R ∘ X ∘ Y is the codebase R after applying a first patch X and then a second one Y.
+
+A *test suite* \dvT is a collection of tests that is used to validate the functionality of code in the repository.
+Executing a test suite \dvT on repository state R returns \myexec_R(\dvT) ∈ \textscpass, \textscfail, indicating either that all tests in the suite passed or that at least one test failed.
+An *issue* I is a task for autonomous completion by the coding agent, such as resolving a bug or implementing a requested feature.
+We denote quadruples of (I, R, \dvT, X^(*)) as *instances*, where the coding agent is tasked with predicting a patch \hatX given issue I and repository state R such that \myexec_R ∘ \hatX(\dvT) = \textscpass, and X^(*) is the golden patch for that instance.
+We define the *success rate* \dvS as the percentage of predicted patches \hatX_i for instances (I_i, R_i, \dvT_i, X^(*)_i) where \myexec_R_i ∘ \hatX_i(\dvT_i) = \textscpass.
+
+Generation of Instances
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+To construct , we use a five-stage construction process summarized below.
+We defer all the prompts used for this process to <ref>.
+
+""""
+
+Requirements
+We aim to evaluate the impact of both automatically generated and developer-written on the success rate of coding agents on real-world tasks and codebases.
+The primary source for real-world codebases is open-source projects and their publicly tracked and documented changes, so-called pull requests (PRs).
+In order to obtain developer-written , we need to source PRs from projects that adopted .
+This is challenging, because were only formalized in August 2025, and have not been frequently used before.
+Further, the adoption of is not uniform across the industry: even at the time of writing, many repositories do not include .
+
+""""
+
+Finding repositories
+We first use GitHub search to build a list of potential candidate repositories to extract instances from.
+Specifically, we select codebases that contain a such as ``AGENTS.md`` or ``CLAUDE.md`` at the root directory. Next, we filter down to those using Python as the main language and featuring a test suite. Finally, we filter for projects with many publicly documented changes, requiring at least 400 PRs.
+This criterion allows us to select codebases from which we can extract at least 10 instances after our rigorous post-processing.
+
+""""
+
+Filtering pull requests
+Given a repository, we filter PRs to retain those that are most likely to generate high-quality instances using a combination of rule-based checks and an LLM agent.
+We only keep PRs that satisfy the following two criteria: they should reference at least one issue, and they should modify at least one Python file.
+Further, we filter for PRs that are assessed by the agent to introduce deterministic, testable behaviors that are suitable for -like regression tests.
+We notice that, because the use of is a recently emerging trend, most repositories containing are niche.
+These niche repositories have less strict rules regarding pull requests, and thus most PRs may not include specific tests.
+To enable building instances from these more niche repositories, we therefore do not require PRs to edit unit tests that validate the code changes but instead generate new ones (see below), in contrast to , which focused on large and popular repositories and requires PRs to contain unit tests.
+
+""""
+
+Environment Set-Up
+For every PR and corresponding repository state, we set up an execution environment such that its test suite can be run, using a coding agent.
+Specifically, we ask the agent to produce a small script that i) sets up the execution environment, ii) runs the test suite and iii) stores the results as a machine-readable dictionary at the root of the repository.
+We only keep PRs where the resulting dictionary contains at least one passing test, which corresponds to 87% of the filtered instances.
+
+""""
+
+Task Descriptions
+Many of the smaller repositories we used to source do not enforce strict requirements on the quality of PR and issue descriptions. As a result, many issues are too imprecise and underspecified to solve the task in a testable manner (in some cases, the PR body is empty).
+Further, some PRs implement new features, which would require detailed descriptions about expected behavior and interfaces.
+We therefore use a third LLM agent to produce a standardized and detailed task description I based on the PR description, associated issues if available, and the original patch X^(*).
+This standardized task description is divided into 6 sections: description, steps to reproduce, expected behavior, observed behavior, specification, and additional information.
+Importantly, we instruct the agent not to leak the solution in the generated task description, and to provide precise specifications.
+We inspected all generated instances, and found them to have high quality; none of them leaked the solution, whereas they showed sufficient specificity to correctly solve the given task.
+
+""""
+
+Generating Unit Tests
+As most collected PRs do not modify or add unit tests that we could use to check the correctness of a given implementation, we use an LLM agent to generate such unit tests.
+We provide the agent with the standardized task description I, the test files modified by the PR, if available, the original code changes X^(*) made by the PR, and the base state of the repository R.
+We then ask it to generate tests that pass for any implementation that resolves the described task. We verify that the added tests fail on R and pass on R ∘ X^(*).
+Finally, we manually review the generated tests and improve those overfitted to the reference implementation, resulting in newly generated tests \mathcalT_i^(X).
+We further determine all tests of the repository test suite \mathcalT_i^(R) that pass on the patched code, i.e., the maximal set \mathcalT_i^(R*) \subseteq \mathcalT_i^(R), such that \myexec_R_i ∘ X_i^(*)(\mathcalT_i^(R*)) = \textscpass, and obtain the final test set \mathcalT_i = \mathcalT^(X)_i \uplus \mathcalT^(R*)_i.
+These tests achieve an average coverage of 75% of the modified code (<ref>).
+
+""""
+
+Evaluation
+We thus obtain instances i, each consisting of a task description I_i, a codebase R_i, golden patch X^(*)_i, and a set of tests \mathcalT_i.
+During evaluation, we first set up the environment before prompting the coding agent with the task description I_i, retrieving the predicted patch \hatX_i, and measuring \myexec_R_i ∘ \hatX_i(\mathcalT_i).
+
+""""
+
+Overview of
+Using this process, we obtained 138 instances from a total of 5694 PRs from 12 repositories that meet our criteria, using with as the agent.
+We visualize the distribution over repositories in <ref> and show key statistics of in <ref>. In comparison to , our dataset is both more evenly distributed over repositories and has otherwise similar statistics.
+We validate the quality of the instances in <ref>. Concretely, we find that the developer-provided from are significantly different from LLM-generated ones and thus likely to be human-written or edited. Additionally, we apply the LLM-aided task refinement to , showing that this process results in well-specified descriptions and tests, resulting in a fairer benchmark than the unrefined .
+
+Experimental Evaluation
+-----------------------
+
+In this section, we investigate the effect of both LLM-generated and developer-provided on coding agent performance across models and agent harnesses.
+
+Experimental Setup
+~~~~~~~~~~~~~~~~~~
+
+We describe the experimental setup below, deferring further details to <ref>.
+
+""""
+
+Coding Agents
+We consider four coding agents, paired with suitable models: [ClaudeCodeDocsOverview]_ with  [sonnet45]_, [openaiCodex2026]_ with and [singh2025openaigpt5card]_, and  [QwenLMQwen3Coder]_ with  [qwen3]_.
+For , we use the default settings and set the temperature of to 0.
+Similarly, for , we also use the default settings and set the temperature of and to 0.
+For , we enable chat compression upon reaching 60% of the total context limit (set to 256K tokens), restrict shell outputs to 2000 tokens, and set the temperature of to 0.7 with top-p sampling at 0.8. We deploy locally using vLLM [vllm]_. We sample completions for each agent once.
+For all agents, the is fed into their context, either by writing it to ``AGENTS.md`` for and , or to ``CLAUDE.md`` for .
+
+""""
+
+Datasets
+We use the Lite split of [swebench]_, which consists of 300 tasks sourced from GitHub issues across 11 popular Python repositories, none containing developer-provided , and our novel , consisting of 138 instances from 12 repositories, all containing developer-provided (see <ref>).
+
+""""
+
+Settings
+We consider three settings:
+
+| t]l@p-16mm@ | No is available, i.e., we remove developer-provided files for . |
+| | An LLM-generated is available. We use the recommended initialization command and model for each agent individually to generate the using the pre-patch repository state R. |
+| | A developer-provided is available. We use the of the pre-patch repository state R. Only available for . |
+
+""""
+
+Metrics
+The main metric for agent performance is success rate (<ref>), i.e., the portion of instances for which the agent produces a patch that leads to all tests passing.
+We additionally consider the number of *steps* the agent requires to complete a task.
+Each step is one interaction with the environment, e.g., calling a shell tool or modifying a file.
+Finally, we report the total *cost* of LLM inference required to complete a task.
+For , we estimate the cost from the average OpenRouter API price.
+We report the statistical significance of changes in these metrics in <ref>.
+
+Main Results: Context Files Don't Improve Performance but Increase Cost
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+""""
+
+LLM-generated increase cost and don't improve performance
+LLM-generated cause performance drops in 5 out of 8 settings across and (see <ref>).
+Specifically, the average resolution rate is reduced by 0.5% and 2% on average on and , respectively.
+With p-values of 87% and 37% (see <ref>) under a two-sided test, this indicates that they have no significant effect on performance.
+Meanwhile, they increase the # steps in every setting, on average by 2.45 and 3.92, respectively, leading to a significant (p-value < 0.001%) cost increase of 20% and 23% on average, respectively (see <ref>).
+
+""""
+
+Developer-provided increase cost and outperform LLM-generated ones
+Developer-provided improve agent performance by 2.4% on average (p = 21%), significantly outperforming LLM-generated ones (p=3.8%) (see <ref>). Despite not being agent-specific, they improve performance for all agents but (see <ref> right).
+However, developer-provided also increase the average number of steps and the cost, on average by 3.34 steps and at most 19%, respectively.
+
+Understanding Behavioral Changes Induced by Context Files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In this section, we investigate why do not affect performance meaningfully while increasing costs.
+We find that, while instructions provided in are well followed, explaining the increase in cost, they do not provide effective repository overviews.
+
+""""
+
+ do not provide effective overviews
+One recommendation for is to include a codebase overview [AGENTSMd2025]_.
+Across the 12 developer-provided in , 8 include a dedicated codebase overview, with 4 explicitly enumerating and describing the directories and subdirectories in the repository.
+Similarly, both the and generation prompts explicitly instruct the agent to include an overview section, while the prompt advocates for a high-level overview only and warns against listing components that are easily discoverable.
+We use as a judge to assess which of the LLM-generated contain codebase overviews.
+Surprisingly, 100% of -generated are flagged for overviews, and 95% and 99% are flagged for and , respectively. Only has significantly fewer overviews (36%).
+
+To assess the usefulness of these overviews, we measure how quickly agents discover files relevant to the described issue I.
+In particular, we measure the average number of steps before the coding agent interacts with any file modified in the original PR patch X^(*).
+We exclude the 3% of instances in which the agent never interacts with any file modified in X^(*).
+Both on and , and for all agents, the do not meaningfully reduce this metric, while increasing the number of required steps significantly for , as shown in <ref>.
+
+Inspecting the traces of manually, we observe that the significant increase in the required number of steps is due to it (i) issuing multiple commands to find the and (ii) reading them (multiple times) despite them being already included in the agent's context. Interestingly, we only observed this behavior if were present at all.
+We conclude that are not effective at providing a repository overview.
+
+""""
+
+ lead to more testing, exploration, and specialized tool use
+Many contain recommendations on how to interact with the repository when solving issues.
+To inspect whether agents follow these, we analyze the type and frequency of tool calls in agent traces.
+For tools included in the agentic framework (Read, Write, or Todo), we simply record the name of the tool being called.
+For shell commands, we use an LLM-as-a-judge approach (using GPT-OSS-120B) to extract the executed commands (``uv``, ``pytest``, ``cat``) and to categorize the intent of the tool call (install dependencies, run tests, read files).
+We build these categories iteratively, starting with an empty set, and allowing the judge to create new categories as needed (see <ref>).
+
+In <ref>, we show the increase in average tool use when including LLM-generated (bright green) or developer-provided (dark green) . Negative values imply a decrease in tool use. We find that, across all models, when are present, the coding agents run more tests.
+They also tend to navigate the repository more: they search more files (``grep``), read more files, and write more files.
+Lastly, adding causes agents to use more repository-specific tooling (``uv`` and ``repo_tool``).
+In <ref> (<ref>), we perform a similar analysis using the intent of the tool call, and our conclusion is the same: lead to more testing and exploration.
+
+With respect to recommendations to use specific tools, we find that agents generally abide by them.
+For instance, ``uv`` is used 1.6 times per instance on average when mentioned in the , compared to fewer than 0.01 times when it is not mentioned, and repository-specific tools are used 2.5 times per instance on average when mentioned, compared to fewer than 0.05 times when they are not mentioned.
+In particular, this result implies that the absence of improvements when using is not due to a lack of instruction-following capabilities.
+We defer a more in-depth analysis to <ref>.
+
+""""
+
+Following requires more thinking
+We hypothesize that these additional instructions make the task harder.
+We analyze the average number of reasoning tokens used by and , as their adaptive reasoning [adaptive_reasoning]_ allows them to use more reasoning tokens for tasks that they deem harder.
+<ref> shows the paired relative change compared to the no- baseline: LLM-generated increase the average number of reasoning tokens by 22% for and 10% for on (respectively 14% and 10% on ), and developer-provided increase it by 20% for and 2% for .
+
+Ablations
+~~~~~~~~~
+
+To investigate whether the poor performance of LLM-generated context files stems from a lack of model capabilities or bad prompts, we analyze differences between the generated by different models and the impact of the prompt used to create the .
+
+""""
+
+Stronger models don't generate better
+We compare generated with + and + against self-generated ones when used by and .
+While performance improves on (2% on average), it worsens on (3% on average), showing that stronger models do not necessarily generate superior .
+
+""""
+
+No difference between the specific prompts
+We compare generated using the prompts of and across all agents and models in <ref>.
+Surprisingly, performs better with generated using the prompt, while both and perform better on with the prompt but worse on .
+Overall, neither the prompt that matches the underlying agent nor a specific prompt performs consistently best, indicating that sensitivity to good prompts is overall small.
+
+""""
+
+Neither length nor specific instruction categories have a strong effect on performance
+In <ref>, we show that the length of has no significant impact on our results, that removing specific categories from LLM-generated does not change the results, and that contamination with task-specific knowledge cannot explain why do not improve performance.
+
+Limitations and Future Work
+---------------------------
+
+""""
+
+Programming languages
+The current evaluation is focused on Python. Since this is a language that is widely represented in the training data, detailed knowledge about tooling, dependencies, and other repository specifics might be present in the models' parametric knowledge, nullifying the effect of . Future work may investigate the effect of on more niche programming languages and toolchains that are less represented in the training data [cassano2022multiplescalableextensibleapproach]_ [pmlr-v202-orlanski23a]_.
+
+""""
+
+ beyond task resolution In this work, we evaluate the impact of  on task resolution rate. However, other aspects of coding agent performance, such as code efficiency [he2025sweperflanguagemodelsoptimize]_ and security [chen2025secureagentbenchbenchmarkingsecurecode]_, would be interesting directions for future work. Security, specifically, was found to be sensitive to prompt changes in prior work [baxbench]_.
+
+""""
+
+Improving generation Another interesting avenue opened by this work is how to improve the automatic generation of *useful* . Several related works in the direction of planning and continuous learning from prior tasks may be applicable to this task [suzgun2025dynamiccheatsheettesttimelearning]_ [zhang2025agenticcontextengineeringevolving]_ [cheng2025evocurrselfevolvingcurriculumbehavior]_. By tackling this challenge, future agents could gain a long-term capability at meaningful self-improvement.
+Our work may serve as a baseline for how to rigorously evaluate automatically generated .
+
+Conclusion
+----------
+
+We evaluate the impact of on coding agent performance for four common coding agents on and the novel , built from recent GitHub issues and less popular repositories containing developer-written .
+We find that all consistently increase the cost and number of steps required to complete tasks.
+LLM-generated have a marginal negative effect on task success rates, while developer-written ones provide a marginal performance gain, neither statistically significant.
+
+Our trace analyses show that instructions in are generally followed and lead to more testing and broader exploration; however, they do not function as effective repository overviews.
+Overall, our results suggest that don't improve coding agent performance, and should only contain specific additional instructions beyond what is already available in the codebase.
+This highlights a concrete gap between current agent-developer recommendations and observed outcomes, and motivates future work on principled ways to automatically generate concise, task-relevant guidance for coding agents.
+
+plainnat
