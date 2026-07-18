@@ -28,3 +28,4 @@ end
 require_relative "grader/fixture"
 require_relative "grader/recall"
 require_relative "grader/rubric"
+require_relative "grader/tool_call_index"
