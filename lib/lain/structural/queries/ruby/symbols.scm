@@ -19,6 +19,10 @@
 (method name: (identifier) @definition.method)
 (singleton_method name: (identifier) @definition.method)
 
+; A constant assignment (`MAX = 5`, `Config = Struct.new(...)`). The left side is
+; a `constant` node, distinct from the `identifier` of a local assignment.
+(assignment left: (constant) @definition.constant)
+
 ; A method call with an explicit receiver method name. A bare identifier is NOT
 ; captured as a reference: at this grammar level a local read and a paren-less
 ; call are indistinguishable, so binding it would flood definitions' own names.

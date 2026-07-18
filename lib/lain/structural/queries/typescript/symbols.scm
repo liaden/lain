@@ -10,14 +10,21 @@
 ; A namespace is an `internal_module` node (`namespace NS { ... }`).
 (internal_module name: (identifier) @definition.namespace)
 
-; A class, an abstract class, and an interface.
+; A class, an abstract class, an interface, and an enum (nominal types, all
+; "class"-shaped for this table).
 (class_declaration name: (type_identifier) @definition.class)
 (abstract_class_declaration name: (type_identifier) @definition.class)
 (interface_declaration name: (type_identifier) @definition.interface)
+(enum_declaration name: (identifier) @definition.class)
 
-; A top-level function and a class/object method.
+; A top-level function, a class/object method, and a `const f = (...) => ...`
+; (or `= function () {}`) binding -- arrow/function-expression consts are how a
+; large share of TS functions are actually declared, so the name node is bound
+; through the variable_declarator.
 (function_declaration name: (identifier) @definition.function)
 (method_definition name: (property_identifier) @definition.method)
+(variable_declarator name: (identifier) @definition.function value: (arrow_function))
+(variable_declarator name: (identifier) @definition.function value: (function_expression))
 
 ; A type alias (`type Id = string`).
 (type_alias_declaration name: (type_identifier) @definition.type)

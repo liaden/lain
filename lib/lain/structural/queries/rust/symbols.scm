@@ -22,6 +22,11 @@
 ; no method-vs-function node distinction, only a nesting one we do not walk here.
 (function_item name: (identifier) @definition.function)
 
+; A body-less signature -- a trait-required method or an `extern` fn declaration
+; (`fn required(&self);`) -- is a `function_signature_item`, a different node than
+; `function_item`, so it needs its own pattern or trait APIs go unlisted.
+(function_signature_item name: (identifier) @definition.function)
+
 ; A bare call (`helper(...)`) and a macro invocation (`println!(...)`). A method
 ; call (`x.method(...)`) or path call (`Type::assoc(...)`) has a non-identifier
 ; callee, so it is left to a later, receiver-aware pattern.

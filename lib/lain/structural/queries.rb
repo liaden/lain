@@ -24,6 +24,12 @@ module Lain
       # it lands here rather than silently returning nothing.
       class Unsupported < Error; end
 
+      # A SUPPORTED language whose authored `.scm` is somehow absent -- a
+      # packaging bug, not a user error. Raised (naming the query file) rather
+      # than letting a bare `Errno::ENOENT` be misattributed downstream as a
+      # failure to read the user's OWN source file.
+      class Missing < Error; end
+
       # The languages lain ships an authored symbols query for. Python is
       # deferred (a follow-up), so it is intentionally absent -- fetch(:python)
       # must raise, not guess.
@@ -43,7 +49,10 @@ module Lain
                              "#{SUPPORTED_LANGUAGES.inspect} (python is deferred)"
         end
 
-        File.read(path_for(language))
+        path = path_for(language)
+        raise Missing, "authored query file missing: #{path}" unless File.exist?(path)
+
+        File.read(path)
       end
 
       # The on-disk location of +language+'s authored query, resolved relative to

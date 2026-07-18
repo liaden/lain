@@ -14,6 +14,8 @@ RSpec.describe Lain::Structural::Queries do
     let(:source) do
       <<~RUBY
         module Geometry
+          PI = 3.14159
+
           # class NotReal
           class Circle
             def area
@@ -48,6 +50,10 @@ RSpec.describe Lain::Structural::Queries do
       expect(pairs).to include(["definition.method", "unit"])
     end
 
+    it "captures a constant assignment as a constant definition" do
+      expect(roles_and_names(:ruby, source)).to include(["definition.constant", "PI"])
+    end
+
     it "captures at least one call reference" do
       expect(roles_and_names(:ruby, source)).to include(["definition.method", "area"])
         .and include(["reference.call", "compute"])
@@ -66,6 +72,7 @@ RSpec.describe Lain::Structural::Queries do
         // class NotReal
         namespace Shapes {
           export interface Drawable { draw(): void; }
+          export enum Kind { Round }
 
           export class Circle {
             render() {
@@ -77,6 +84,7 @@ RSpec.describe Lain::Structural::Queries do
             return new Circle();
           }
 
+          export const scale = (n: number) => n * 2;
           export type Id = string;
         }
       TS
@@ -95,6 +103,8 @@ RSpec.describe Lain::Structural::Queries do
       expect(pairs).to include(["definition.function", "make"])
       expect(pairs).to include(["definition.method", "render"])
       expect(pairs).to include(["definition.type", "Id"])
+      expect(pairs).to include(["definition.class", "Kind"])      # an enum is a nominal type
+      expect(pairs).to include(["definition.function", "scale"])  # a `const f = (...) => ...` binding
     end
 
     it "captures at least one call reference" do
@@ -134,10 +144,11 @@ RSpec.describe Lain::Structural::Queries do
         .not_to raise_error
     end
 
-    it "captures fn definitions with the function role" do
+    it "captures fn definitions with the function role, including a body-less trait signature" do
       pairs = roles_and_names(:rust, source)
       expect(pairs).to include(["definition.function", "origin"])
       expect(pairs).to include(["definition.function", "helper"])
+      expect(pairs).to include(["definition.function", "draw"]) # trait-required `fn draw(&self);`
     end
 
     it "captures struct and enum as class definitions" do

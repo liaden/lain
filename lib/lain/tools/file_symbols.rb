@@ -52,7 +52,7 @@ module Lain
         language = input.language.downcase.to_sym
         source = File.read(path)
         Tool::Result.ok(render(occurrences(source, language)))
-      rescue Structural::Queries::Unsupported, Ext::TreeSitter::BadQuery => e
+      rescue Structural::Queries::Unsupported, Structural::Queries::Missing, Ext::TreeSitter::BadQuery => e
         Tool::Result.error(e.message)
       rescue SystemCallError, IOError => e
         Tool::Result.error("could not read #{path}: #{e.message}")
