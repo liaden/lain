@@ -356,19 +356,8 @@ mod tests {
 #[cfg(not(test))]
 pub mod ffi {
     use super::{Capture, Match, SearchError, dump as pure_dump, search as pure_search};
-    use crate::ffi::lookup_error;
+    use crate::ffi::{frozen_str, int, lookup_error};
     use magnus::{Error, RArray, RString, Ruby, Value, prelude::*};
-
-    fn frozen_str(ruby: &Ruby, text: &str) -> Value {
-        let string = ruby.str_new(text);
-        string.freeze();
-        string.as_value()
-    }
-
-    fn int(ruby: &Ruby, n: usize) -> Value {
-        // Byte offsets and line numbers of an in-memory source string fit i64.
-        ruby.integer_from_i64(n as i64).as_value()
-    }
 
     /// `Lain::Ext::AstGrep.search(src, lang, pattern)` -> a frozen Array of
     /// frozen match Hashes `{ "start", "end", "line", "captures" }`, where

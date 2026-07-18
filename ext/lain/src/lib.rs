@@ -558,11 +558,19 @@ mod ffi {
 
     /// A frozen Ruby String. Digests, roles, and reconstructed content strings
     /// are all frozen so a reconstructed `content`/`meta` tree is deeply
-    /// immutable, matching the Ruby `Turn`.
-    fn frozen_str(ruby: &Ruby, text: &str) -> Value {
+    /// immutable, matching the Ruby `Turn`. Shared with the `astgrep`/`treesitter`
+    /// bindings, whose per-call result Hashes are frozen the same way -- this is
+    /// generic Ruby-value glue, not `Turn`-specific, so it lives here once.
+    pub(crate) fn frozen_str(ruby: &Ruby, text: &str) -> Value {
         let string = ruby.str_new(text);
         string.freeze();
         string.as_value()
+    }
+
+    /// A Ruby Integer from a `usize`. Byte offsets and line/column numbers of an
+    /// in-memory source string fit i64. Shared with the structural bindings.
+    pub(crate) fn int(ruby: &Ruby, n: usize) -> Value {
+        ruby.integer_from_i64(n as i64).as_value()
     }
 
     /// Rebuild a Ruby value from a [`Canon`], deeply frozen. Called on demand

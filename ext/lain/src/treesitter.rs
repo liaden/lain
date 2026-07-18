@@ -125,10 +125,14 @@ pub fn query(src: &str, lang: &str, query_src: &str) -> Result<Vec<Capture>, Que
             out.push(Capture {
                 name: names[capture.index as usize].to_string(),
                 // A captured node always lies on a char boundary of its own
-                // source, so `utf8_text` cannot fail here; an empty fallback
-                // keeps the (unreachable) error out of the hot path rather than
-                // propagating a Result through the whole walk.
-                text: node.utf8_text(src_bytes).unwrap_or_default().to_string(),
+                // `&str` source, so `utf8_text` cannot fail -- but if that
+                // invariant ever broke it must fail LOUD (magnus turns the panic
+                // into a Ruby exception), not silently return an empty capture,
+                // per the crate's no-silent-corner rule.
+                text: node
+                    .utf8_text(src_bytes)
+                    .expect("captured node lies on a char boundary of its own source")
+                    .to_string(),
                 start: range.start,
                 end: range.end,
             });
@@ -257,19 +261,8 @@ mod tests {
 #[cfg(not(test))]
 pub mod ffi {
     use super::{Capture, QueryFailure, query as pure_query};
-    use crate::ffi::lookup_error;
+    use crate::ffi::{frozen_str, int, lookup_error};
     use magnus::{Error, RArray, Ruby, Value, prelude::*};
-
-    fn frozen_str(ruby: &Ruby, text: &str) -> Value {
-        let string = ruby.str_new(text);
-        string.freeze();
-        string.as_value()
-    }
-
-    fn int(ruby: &Ruby, n: usize) -> Value {
-        // Byte offsets of an in-memory source string fit i64.
-        ruby.integer_from_i64(n as i64).as_value()
-    }
 
     /// `Lain::Ext::TreeSitter.query(src, lang, query)` -> a frozen Array of
     /// frozen capture Hashes `{ "name", "text", "start", "end" }`, one per
