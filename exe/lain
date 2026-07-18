@@ -238,8 +238,8 @@ class LainCLI < Thor
   # accessors are Wiring's own seams; reading them here is the exe's job).
   def build_repl(tty:, agent:, wiring:)
     Repl.new(agent:, tty:, ask_human: wiring.ask_human, questions: wiring.questions,
-             chronicle:, conductor: @conductor, approvals: wiring.approvals,
-             notifier: wiring.notifier, supervisor: wiring.supervisor)
+             chronicle:, conductor: @conductor, approvals: wiring.approvals, notifier: wiring.notifier,
+             supervisor: wiring.supervisor, middleware: Lain::CLI::ReplMiddleware.build)
   end
 
   # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
