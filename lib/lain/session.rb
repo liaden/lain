@@ -43,6 +43,8 @@ module Lain
       @reads = Set.new
       @writes = Set.new
       @todo_reminder = nil
+      @todo_items = []
+      @plan_step_completed = false
       @memory = memory
       @manifest_root = nil
       @manifest_reminders = [].freeze
@@ -111,8 +113,35 @@ module Lain
     # @return [self]
     def write_todos(todos)
       list = todos.to_a
+      @plan_step_completed = completed_count(list) > completed_count(@todo_items)
+      @todo_items = list
       @todo_reminder = list.empty? ? nil : render_todos(list).freeze
       self
+    end
+
+    # Whether the MOST RECENT {#write_todos} call raised the count of
+    # `"completed"` items -- the plan-step-completion Need signal
+    # ({Compaction::Need::PlanStepCompletion}). `write_todos` replaces the
+    # whole list every call and keeps no history of its own (see that
+    # method's header), so detecting a rise needs the PRIOR structured list
+    # to compare against; {#write_todos} keeps that list (see `@todo_items`)
+    # for exactly this comparison. It is retained the same way the
+    # read-/write-sets are: in memory, for this run only, never appended to
+    # the Timeline and never resurrected on rewind.
+    #
+    # Count-based rather than content-keyed on purpose: content is not a
+    # stable identity for a todo (two items can share the same wording), so
+    # diffing "which content is now completed that wasn't" can mask a real
+    # transition when duplicate content is present. A rising COUNT is
+    # immune to duplicates and to reordering, and it directly expresses the
+    # thing this signal means: "a plan step got completed" -- true whether
+    # that step just flipped to completed or arrived already-done (a brand
+    # new item, or the very first write, landing pre-completed still raises
+    # the count, and still fires).
+    #
+    # @return [Boolean]
+    def plan_step_completed?
+      @plan_step_completed
     end
 
     # State the Agent renders into the Workspace tail each turn: the todo
@@ -164,6 +193,10 @@ module Lain
       "Current todo list:\n#{lines.join("\n")}"
     end
 
+    def completed_count(list)
+      list.count { |todo| todo.status == "completed" }
+    end
+
     # The no-op Session, mirroring {Channel::Null} and {Sink::Null}: it satisfies
     # the same duck so a tool handed a context can always `record_read`/`read?`/
     # `write_todos` without an `if session` guard. Records nothing, reads back
@@ -198,6 +231,11 @@ module Lain
       # @return [self]
       def write_todos(_todos)
         self
+      end
+
+      # @return [false]
+      def plan_step_completed?
+        false
       end
 
       # @return [Array]
@@ -279,6 +317,9 @@ module Lain
         @journal << Telemetry::TodoSnapshot.from(todos)
         self
       end
+
+      # @return [Boolean]
+      def plan_step_completed? = @session.plan_step_completed?
 
       # @return [Array<String>]
       def reminders = @session.reminders

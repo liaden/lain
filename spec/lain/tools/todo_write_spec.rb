@@ -84,6 +84,110 @@ RSpec.describe Lain::Tools::TodoWrite do
     end
   end
 
+  # Scenario: A completed todo raises the need flag
+  #
+  # The seam T16 adds: Session cannot detect a status TRANSITION from an
+  # overwrite alone (write_todos replaces the whole list, keeping no prior
+  # state -- see Session#write_todos), so it now retains the prior
+  # structured list IN MEMORY ONLY to compare against, exactly like the
+  # existing read-/write-sets. That extra state is never appended to the
+  # Timeline and never journaled beyond the existing whole-list
+  # TodoSnapshot, so it cannot resurrect a todo on rewind -- it dies with
+  # the Session, same as always.
+  describe "the plan-step-completion signal" do
+    let(:session) { Lain::Session.new }
+
+    it "is false before any todo_write lands" do
+      expect(session.plan_step_completed?).to be(false)
+    end
+
+    it "stays false while nothing transitions to completed" do
+      tool.call({ todos: [{ content: "a", status: "pending" }] }, invocation_with(session))
+      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(false)
+    end
+
+    it "raises when a subsequent write flips one item to completed" do
+      tool.call({ todos: [{ content: "a", status: "in_progress" }, { content: "b", status: "pending" }] },
+                invocation_with(session))
+
+      tool.call({ todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] },
+                invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(true)
+    end
+
+    it "does not re-raise on a later write that merely repeats the same completed item" do
+      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+      tool.call({ todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] },
+                invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(false)
+    end
+
+    # Content-keyed matching masks a transition when two todos share wording:
+    # both "dup" items are the SAME string, so a set of completed content
+    # cannot tell "dup" (still in_progress) from "dup" (now completed) apart
+    # -- a false negative the reviewer reproduced. The signal is COUNT-based
+    # instead: it fires when the number of completed items goes up, which is
+    # robust to duplicate content and to reordering.
+    it "fires on a duplicate-content transition that a content-keyed diff would mask" do
+      tool.call({ todos: [{ content: "dup", status: "in_progress" }, { content: "dup", status: "completed" }] },
+                invocation_with(session))
+
+      tool.call({ todos: [{ content: "dup", status: "completed" }, { content: "dup", status: "completed" }] },
+                invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(true)
+    end
+
+    # Any increase in completed-count is a compaction-worthy plan-step signal
+    # -- decided explicitly rather than left as an open question: a step
+    # closing (whether newly completed or born already-done) is the seam
+    # `cache-aware-compaction.md` names, so both fire.
+    it "fires on the very first write when it already contains a completed item (count 0 -> 1)" do
+      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(true)
+    end
+
+    it "fires when a later write adds a brand-new item that is already completed (count increases)" do
+      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+
+      tool.call({ todos: [{ content: "a", status: "in_progress" }, { content: "b", status: "completed" }] },
+                invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(true)
+    end
+
+    it "does not re-raise on an idempotent re-write of an already-completed list (count unchanged)" do
+      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+
+      expect(session.plan_step_completed?).to be(false)
+    end
+
+    it "feeds Compaction::Need, raising its need flag" do
+      tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
+      tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
+
+      need = Lain::Compaction::Need.new(byte_threshold: 1_000_000, window_tokens: 1_000_000)
+      result = need.check(plan_step_completed: session.plan_step_completed?)
+
+      expect(result.needed?).to be(true)
+      expect(result.signals).to include(:plan_step_completion)
+    end
+
+    it "does not raise on the Session::Null context" do
+      invocation = invocation_with(Lain::Session::Null.instance)
+
+      expect { tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation) }.not_to raise_error
+      expect(Lain::Session::Null.instance.plan_step_completed?).to be(false)
+    end
+  end
+
   describe "rejecting a malformed status" do
     let(:session) { Lain::Session.new }
 
