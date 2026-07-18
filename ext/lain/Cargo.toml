@@ -64,3 +64,8 @@ thiserror = "2"
 # grammar set to the four languages we use is a filed follow-up, not this dep.)
 ast-grep-core = "=0.44.1"
 ast-grep-language = "=0.44.1"
+# tree-sitter query engine (Query/QueryCursor) for the raw-query tool. The
+# grammars are reused from ast-grep-language via SupportLang::get_ts_language()
+# -- NO separate grammar deps. Pinned EXACT to the version ast-grep-language
+# already resolves (=0.26.11) so the Language ABI matches its bundled grammars.
+tree-sitter = "=0.26.11"

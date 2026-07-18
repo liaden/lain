@@ -13,6 +13,7 @@ mod canonical;
 mod dag;
 mod digest;
 mod event;
+mod treesitter;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
 /// directive string (e.g. `"info"`, `"debug"`, `"lain=trace,warn"`).
@@ -1532,6 +1533,14 @@ mod ffi {
         astgrep.define_error("BadPattern", lain_error)?;
         astgrep.define_singleton_method("search", function!(crate::astgrep::ffi::search, 3))?;
         astgrep.define_singleton_method("dump", function!(crate::astgrep::ffi::dump, 2))?;
+
+        // Stateless RAW tree-sitter query, the low-level twin of AstGrep: same
+        // bare-class-plus-singleton shape, one named error. `BadQuery`
+        // subclasses `Lain::Error` (see the Bm25 block for why no fallback).
+        // The FFI wrapper lives in `treesitter::ffi`.
+        let treesitter = ext.define_class("TreeSitter", ruby.class_object())?;
+        treesitter.define_error("BadQuery", lain_error)?;
+        treesitter.define_singleton_method("query", function!(crate::treesitter::ffi::query, 3))?;
 
         let turn = ext.define_class("Turn", ruby.class_object())?;
         turn.define_error("InvalidRole", lain_error)?;
