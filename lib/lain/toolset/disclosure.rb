@@ -22,3 +22,4 @@ end
 
 # Subclasses reopen Toolset::Disclosure, so they load after the class body above.
 require_relative "disclosure/upfront"
+require_relative "disclosure/deferred"

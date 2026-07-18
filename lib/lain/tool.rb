@@ -62,6 +62,22 @@ module Lain
       raise NotImplemented, "#{self.class} must define #description"
     end
 
+    # The upfront-catalog-safe projection of {#description}: its first line
+    # only. This is the SINGLE source both halves of deferred disclosure
+    # (T13) share -- {Toolset::Disclosure::Deferred} renders it, and
+    # {Tools::ToolSearch} both renders AND matches queries against it. A
+    # search that matched the fuller `#description` while only ever
+    # rendering this truncation would let a caller binary-search substrings
+    # to infer text the catalog never shows; routing both through the same
+    # method is what makes "search never discloses more than the catalog
+    # would" a structural guarantee instead of two copies of a truncation
+    # rule that could drift. Descriptions built by string concatenation (the
+    # house style -- see AskHuman) have no embedded newline, so this is a
+    # no-op for every tool that exists today.
+    def one_line_description
+      description.to_s.lines.first.to_s.strip
+    end
+
     # The {Tool::Input} class for this tool, or nil when it declares a raw schema.
     def input_model
       self.class.input_model
