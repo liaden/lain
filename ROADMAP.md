@@ -44,12 +44,12 @@ milestone exists to make an axis swappable and measured.
 | Axis | Arms to compare | Primary metric |
 |---|---|---|
 | **Context** | prune / compact / recall placement / IVM combinators / cache-aware compaction / breakpoint placement | grader score vs. tokens; cache-hit; **cache-write** |
-| **Tool design (ACI)** | terse vs. verbose vs. guardrailed feedback; tier 1/2/3 | correct-call rate; recovery-from-error |
+| **Tool design (ACI)** | terse vs. verbose vs. guardrailed feedback; tier 1/2/3; **tolerant/repair · prereq-enforced · phase-narrowed** | correct-call rate; recovery-from-error; **compounding accuracy over N steps** |
 | **Tool disclosure** | upfront-JSON vs. deferred/searchable vs. code-API | tokens; correct-call rate |
 | **Prompt slots** | base template vs. user-filled holes (persona · domain framing · output contract) | correct-call rate; grader; cache-hit |
 | **Provider / model** | Anthropic vs. OpenAI-compatible vs. local (ollama) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`) | grader score; cost; latency |
-| **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** | grader; tokens (~15× risk); cache-write; context-loss events |
-| **Memory / retrieval** | Manifest · BM25 · Hybrid · Vector · Graph · temporal-KG · content-addressed versioning · structural | recall@k; tokens on recall; abstention |
+| **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** · **control-flow-as-code (coded FSM vs prompt-ReAct)** | grader; tokens (~15× risk); cache-write; context-loss events; **loop-depth / no-progress** |
+| **Memory / retrieval** | Manifest · BM25 · Hybrid · Vector · Graph · temporal-KG · content-addressed versioning · structural · **lineage/outcome-ranked (Journal-native)** | recall@k; tokens on recall; abstention |
 | **Merge strategy** (concurrent edits) | git 3-way vs. CRDT auto-converge | final grader score; conflict/thrash |
 
 **The bench's first experiment is on itself:** the 2026 literature ("the harness, not the model,
@@ -238,6 +238,19 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     deliverable. `[exp]`
   - **Attested-context combinator** + a grader that verifies every fact traces to a `tool_result`
     digest (hallucination becomes structurally detectable) `[exp]`.
+  - **Behavioral & verification graders** (HN scan, `planning/hn-agent-landscape-2026-07.md` #1): a
+    **two-pass verification wrapper** (a refutation pass filters false positives — a generic decorator
+    over any rubric grader, reusable bench-wide), a **tool-steering detector** (declared
+    description vs observed selection frequency), and a **frustration/repair grader** that walks a
+    behavioral signal back through the DAG to the turn that caused it (attribution only our
+    content-addressed lineage can do). All offline over the Journal, all `DryReplay`-substitutable.
+    **Spec:** `planning/specs/graders.md`. `[exp]`
+  - **Tool-call repair + guardrail stack** (HN 48883275 §4 + Forge id=48192383): the repair middleware
+    (`tolerant` / `tolerant-and-tattling`) composed as a *sequence* — validate → rescue-parse →
+    **prereq/step-enforce** → nudge-retry — each a `Middleware` in the monoid; scored by **compounding
+    accuracy over N steps** on a **local 8B** (where the lift is visible), and a **per-phase toolset
+    narrowing** guard (attenuation made dynamic mid-run). Shape, never safety — never reachable by a
+    validator that sounds like a security control. `[exp]`
   - **Start the memory sweep with `Manifest`** the moment the bench exists — no index, cache-stable.
   - **Pluggable prompt slots** — named holes the user fills with **markdown partials** (Rails-view-
     partial model) for durable, rarely-changed **freeform system-prompt adjustment** and **per-role
@@ -341,6 +354,12 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **Code mode subsumes bash pipelines**, and **handles to out-of-context data** let the agent
     orchestrate computations over corpora it never loads (the medical-corpus unlock; smolagents'
     `PythonExecutor` ABC + state-dict-with-subagents-as-callables is the reference) `[exp]`.
+  - **Control-flow-as-code vs prompt-driven loop as an axis** (HN scan #3, "Agents need control flow,
+    not more prompts" + loopcraft): a coded state machine vs a prompt-driven ReAct loop over the
+    **same Toolset** — measures how much loop reliability is control-flow vs prompt with tools held
+    fixed (Lain owns the loop, so this is a first-class swept axis, not a hack). Emits per-iteration
+    loop-depth / repeated-tool / no-progress Journal events. See
+    `planning/hn-agent-landscape-2026-07.md` #3 + `orchestration-experiments.md`. `[exp]`
   - **git-for-its-mind** tools (`fork_and_try`, `rewind_to`, `diff_branches`) `[exp]`; the
     **self-crystallizing toolset** (promote successful code-mode fragments to versioned capabilities,
     TODO 104) `[exp]`.
@@ -376,6 +395,14 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **git-blame as attested, causal context** (TODO 22–26): code carries its commit lineage; git log
     as a procedural-memory corpus; **commit summaries pre-computed and keyed by SHA** as a lazy,
     expand-on-demand context artifact for the planner/debugger `[exp]`.
+  - **Journal-native retrieval, ranked by lineage/outcome** (HN scan #4: deja-vu + zby's four-field
+    taxonomy): index the Journal itself as the memory corpus (the turns we already own,
+    content-addressed), with **index-time secret redaction**; rank hits by **successful `spawned_from`
+    lineage/outcome**, not just lexical score, so an abandoned branch's close text loses to a
+    proven turn — a hybrid BM25+lineage arm no flat verbatim index can express. zby's four-field
+    record (substrate · form · lineage · authority) is an axis-set for the sweep; "storage ≠
+    activation" is "capabilities not permissions" for memory. See
+    `planning/hn-agent-landscape-2026-07.md` #4. `[exp]`
 
 ---
 
@@ -709,8 +736,9 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
   `planning/remaining-work.md`.
 - **Exploratory ideas:** `planning/` — `research-scan-2026-07.md` (survey + prioritization),
   `hn-harness-overhead-2026-07.md` (the field's cache/overhead argument, Tier-1 items folded into
-  `specs/cache-economics.md`), `orchestration-experiments.md`, `first-class-concepts.md`,
-  `crdt-exploration.md`.
+  `specs/cache-economics.md`), `hn-agent-landscape-2026-07.md` (broader HN scan — graders,
+  guardrail stack, control-flow axis, Journal-native retrieval; Tier-1 → `specs/graders.md` + M3c/M5/M6
+  fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`.
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
   `oss-inspiration.md`, 14 papers in `papers/rst/`, reference impls in `repos/`.
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.
