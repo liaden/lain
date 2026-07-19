@@ -50,8 +50,11 @@ module Lain
 
       # Null Object for the injectable predicate seam: never flags anything,
       # so bare construction needs no guard and today's default cannot be
-      # confused with a real opinion. Swap in an ollama-backed classifier
-      # (OR-1) later without this middleware changing shape.
+      # confused with a real opinion. {Oracle::MemorySave::Gate} (T4/OR-3) is
+      # the real arm this seam exists for -- a heuristic-tier oracle judging
+      # "worth remembering?", collapsed to this seam's one bit -- and a
+      # future ollama-backed classifier (OR-1) drops in the same way, all
+      # without this middleware changing shape.
       class NullOracle
         def secret?(_input) = false
 

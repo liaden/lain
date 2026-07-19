@@ -154,6 +154,34 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     end
   end
 
+  describe "the memory-save oracle wired through the seam (T4)" do
+    it "refuses through the SAME seam a plain oracle does, for a write the regex never catches" do
+      gate = Lain::Oracle::MemorySave::Gate.new
+      guarded = described_class.new(journal:, oracle: gate)
+      opaque = ("a".."z").cycle.first(40).join
+
+      env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => opaque }),
+                        middleware: guarded)
+
+      expect(called).to be(false)
+      expect(env.fetch(:result).error?).to be(true)
+      expect(journal.events.size).to eq(1)
+      expect(journal.events.first.pattern).to eq(described_class::ORACLE_MATCH)
+    end
+
+    it "lets a write both the regex and the oracle judge safe proceed" do
+      gate = Lain::Oracle::MemorySave::Gate.new
+      guarded = described_class.new(journal:, oracle: gate)
+      benign = tool_call(input: { "id" => "dosage", "description" => "Adult dosage", "body" => "500mg twice daily" })
+
+      env, called = run(benign, middleware: guarded)
+
+      expect(called).to be(true)
+      expect(env.fetch(:result).error?).to be(false)
+      expect(journal.events).to be_empty
+    end
+  end
+
   describe "in an Agent's tool phase" do
     it "keeps the real recorder untouched: the refused write never lands in the Memory::Index" do
       recorder = Lain::Memory::Recorder.new
