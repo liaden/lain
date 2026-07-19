@@ -112,4 +112,5 @@ end
 # Arm::Run, so they load once the class exists (the children-after-the-class-body
 # order effect/handler.rb uses).
 require_relative "arm/single_thread"
+require_relative "arm/adaptive_router"
 require_relative "arm/driver"
