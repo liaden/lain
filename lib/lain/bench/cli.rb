@@ -55,6 +55,18 @@ module Lain
       def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
       # rubocop:enable Naming/MethodParameterName
 
+      # The B12 arms sweep: the three orchestration arms (single-thread control,
+      # orchestrator-worker, dual-ledger) over the ArmTasks suite, replayed
+      # offline through committed recordings -- no provider, no money, no network,
+      # byte-identical across runs, like {#sweep_report}. The paths are explicit
+      # (no lib->spec fixture coupling): the exe subcommand passes the committed
+      # fixture locations.
+      #
+      # @return [String] the Compare-style report; never printed here
+      def arm_sweep_report(tasks_path:, recordings_path:)
+        ArmSweep.new(tasks_path:, recordings_path:).report
+      end
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.

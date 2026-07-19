@@ -1,0 +1,211 @@
+# Recorded arm trajectories for the B12 arm sweep (chunk-orchestration-arms-
+# isolation). Each key is a task id from spec/fixtures/arms/tasks.yml; the sweep
+# joins prompts, categories, and Grader::Fixtures from THAT suite and replays
+# these recordings through Provider::Mock so the real arms run offline, zero
+# network, byte-deterministic.
+#
+# `whole` is what a LINEAR arm (single-thread, dual-ledger) is handed when it
+# asks the task prompt: the mock's assistant text plus the token `usage` that
+# turn is priced at. The assistant text encodes the files the run produced as
+# `FILE <path> ... END` blocks; the sweep parses those into the Trajectory that
+# ArmTasks' gold Grader::Fixture scores.
+#
+# `subtasks` is the orchestrator-worker decomposition: one worker per entry,
+# each asked its own `prompt` and answering its own recorded text. A PROCEDURAL
+# task that is genuinely coupled (rename-method-and-callsite) is where the
+# decomposition HURTS -- worker B, updating the call site with no shared
+# context, cannot know the new name, so its recorded text still says the OLD
+# one. That divergence from the coordinated control is the pre-registered
+# boundary the fixtures are built to discriminate: single-thread coordinates it
+# right; the fanned-out arm loses it. A task with no `subtasks` is asked whole
+# by every arm (a single-file edit has no independent slices to hand out).
+#
+# Worker prompts are prefixed "Worker" on purpose: the replay provider matches
+# a rendered prompt to its recording by longest committed substring, and the
+# prefix guarantees a subtask key is never itself a substring of a whole-task
+# prompt.
+recordings:
+  # --- procedural (single-thread-friendly) ---------------------------------
+  rename-method-and-callsite:
+    whole:
+      text: |-
+        FILE lib/widget.rb
+        def normalize
+        end
+        END
+        FILE app/main.rb
+        Widget.new.normalize(42)
+        END
+      usage: { input: 96, output: 44 }
+    subtasks:
+      - prompt: "Worker A: rename frobnicate to normalize in lib/widget.rb"
+        text: |-
+          FILE lib/widget.rb
+          def normalize
+          end
+          END
+        usage: { input: 44, output: 18 }
+      - prompt: "Worker B: update the one call site in app/main.rb"
+        text: |-
+          FILE app/main.rb
+          Widget.new.frobnicate(42)
+          END
+        usage: { input: 44, output: 18 }
+
+  fix-off-by-one-loop:
+    whole:
+      text: |-
+        FILE lib/calc.rb
+        items.each_index { |i| total += items[i] if i < items.length }
+        END
+      usage: { input: 72, output: 30 }
+
+  extract-shared-helper:
+    whole:
+      text: |-
+        FILE lib/report.rb
+        def format_row(cells) = cells.join(" | ")
+        END
+      usage: { input: 78, output: 34 }
+
+  add-validation-after-existing:
+    whole:
+      text: |-
+        FILE lib/pipeline.rb
+        validate_shape
+        def validate_ownership(record) = record.owner == current_user
+        END
+      usage: { input: 80, output: 36 }
+
+  # --- parallel (genuinely independent) ------------------------------------
+  fix-three-unrelated-typos:
+    whole:
+      text: |-
+        FILE lib/a.rb
+        def receive(msg) = msg
+        END
+        FILE lib/b.rb
+        def separate(a, b) = [a, b]
+        END
+        FILE lib/c.rb
+        def occurred? = true
+        END
+      usage: { input: 90, output: 42 }
+    subtasks:
+      - prompt: "Worker: fix the typo in lib/a.rb (recieve -> receive)"
+        text: |-
+          FILE lib/a.rb
+          def receive(msg) = msg
+          END
+        usage: { input: 34, output: 14 }
+      - prompt: "Worker: fix the typo in lib/b.rb (seperate -> separate)"
+        text: |-
+          FILE lib/b.rb
+          def separate(a, b) = [a, b]
+          END
+        usage: { input: 34, output: 14 }
+      - prompt: "Worker: fix the typo in lib/c.rb (occured -> occurred)"
+        text: |-
+          FILE lib/c.rb
+          def occurred? = true
+          END
+        usage: { input: 34, output: 14 }
+
+  add-license-headers:
+    whole:
+      text: |-
+        FILE lib/x.rb
+        # Copyright 2026 Lain Labs
+        END
+        FILE lib/y.rb
+        # Copyright 2026 Lain Labs
+        END
+        FILE lib/z.rb
+        # Copyright 2026 Lain Labs
+        END
+      usage: { input: 88, output: 40 }
+    subtasks:
+      - prompt: "Worker: add the license header to lib/x.rb"
+        text: |-
+          FILE lib/x.rb
+          # Copyright 2026 Lain Labs
+          END
+        usage: { input: 32, output: 12 }
+      - prompt: "Worker: add the license header to lib/y.rb"
+        text: |-
+          FILE lib/y.rb
+          # Copyright 2026 Lain Labs
+          END
+        usage: { input: 32, output: 12 }
+      - prompt: "Worker: add the license header to lib/z.rb"
+        text: |-
+          FILE lib/z.rb
+          # Copyright 2026 Lain Labs
+          END
+        usage: { input: 32, output: 12 }
+
+  implement-three-independent-utils:
+    whole:
+      text: |-
+        FILE lib/utils/slugify.rb
+        def slugify(s) = s.downcase.tr(" ", "-")
+        END
+        FILE lib/utils/truncate.rb
+        def truncate(s, n) = s[0, n]
+        END
+        FILE lib/utils/titleize.rb
+        def titleize(s) = s.capitalize
+        END
+      usage: { input: 100, output: 48 }
+    subtasks:
+      - prompt: "Worker: implement lib/utils/slugify.rb"
+        text: |-
+          FILE lib/utils/slugify.rb
+          def slugify(s) = s.downcase.tr(" ", "-")
+          END
+        usage: { input: 38, output: 16 }
+      - prompt: "Worker: implement lib/utils/truncate.rb"
+        text: |-
+          FILE lib/utils/truncate.rb
+          def truncate(s, n) = s[0, n]
+          END
+        usage: { input: 38, output: 16 }
+      - prompt: "Worker: implement lib/utils/titleize.rb"
+        text: |-
+          FILE lib/utils/titleize.rb
+          def titleize(s) = s.capitalize
+          END
+        usage: { input: 38, output: 16 }
+
+  bump-version-across-configs:
+    whole:
+      text: |-
+        FILE config/a.yml
+        version: 2.1.0
+        END
+        FILE config/b.yml
+        version: 2.1.0
+        END
+        FILE config/c.yml
+        version: 2.1.0
+        END
+      usage: { input: 82, output: 38 }
+    subtasks:
+      - prompt: "Worker: bump the version in config/a.yml"
+        text: |-
+          FILE config/a.yml
+          version: 2.1.0
+          END
+        usage: { input: 30, output: 12 }
+      - prompt: "Worker: bump the version in config/b.yml"
+        text: |-
+          FILE config/b.yml
+          version: 2.1.0
+          END
+        usage: { input: 30, output: 12 }
+      - prompt: "Worker: bump the version in config/c.yml"
+        text: |-
+          FILE config/c.yml
+          version: 2.1.0
+          END
+        usage: { input: 30, output: 12 }

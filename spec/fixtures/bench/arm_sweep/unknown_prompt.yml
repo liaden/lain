@@ -1,0 +1,16 @@
+# A recording whose `whole` answer is keyed under a prompt the arm never asks
+# (the explicit `prompt:` override deliberately differs from the task's real
+# prompt). When single-thread asks the actual task prompt, the replay provider
+# finds no committed recording that matches and raises MalformedRecording rather
+# than silently returning an empty answer and fabricating a wrong-guess score --
+# the same fail-loud DisclosureSweep's KeyError-into-fabricated-score guard has.
+recordings:
+  rename-method-and-callsite:
+    whole:
+      prompt: "a prompt the arm will never be asked"
+      text: |-
+        FILE lib/widget.rb
+        def normalize
+        end
+        END
+      usage: { input: 40, output: 18 }

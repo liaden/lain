@@ -1,0 +1,13 @@
+# A stall scenario for the B12 arm sweep: the mock's whole-task answer is a
+# non-progressing NON-answer -- no FILE blocks, so the produced Trajectory is
+# empty and the ArmTasks gold grader never passes. A linear arm just scores
+# zero; the DUAL-LEDGER arm, driving its outer loop, reads no progress (the note
+# repeats verbatim every step), tops its stall counter, and fires a journaled
+# `replan` on the shared LoopMachine. That replan is what the sweep counts by
+# TEE-ing the dual-ledger journal, and this fixture is what proves the count is
+# real rather than always zero.
+recordings:
+  rename-method-and-callsite:
+    whole:
+      text: "Still analysing how the rename couples to the call site; no edits yet."
+      usage: { input: 40, output: 14 }
