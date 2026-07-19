@@ -1,0 +1,8 @@
+# A deliberately broken fixture: one task missing `prompt` entirely.
+# Exercises Bench::ArmTasks::MalformedTask -- a malformed fixture task is a
+# bug in the fixture to raise on, never a task to silently skip.
+tasks:
+  - id: no_prompt
+    category: procedural
+    gold_files:
+      lib/foo.rb: "def foo"

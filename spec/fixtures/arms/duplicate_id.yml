@@ -1,0 +1,15 @@
+# A deliberately broken fixture: two tasks share the same `id`. Exercises
+# Bench::ArmTasks::MalformedTask -- previously this loaded silently and
+# `.find`-by-id landed on only the FIRST of the two, a landmine for anything
+# that uses ids as unique keys (review panel fix round, item 4).
+tasks:
+  - id: same-id
+    category: procedural
+    prompt: "first"
+    gold_files:
+      lib/a.rb: "one"
+  - id: same-id
+    category: parallel
+    prompt: "second"
+    gold_files:
+      lib/b.rb: "two"

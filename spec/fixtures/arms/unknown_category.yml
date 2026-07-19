@@ -1,0 +1,11 @@
+# A deliberately broken fixture: one task naming a category outside
+# Bench::ArmTasks::CATEGORIES (only :procedural and :parallel are the
+# pre-registered boundary this suite spans). Exercises
+# Bench::ArmTasks::MalformedTask -- an unrecognized category is a bug in the
+# fixture to raise on, never a task to silently miscategorize.
+tasks:
+  - id: bad_category
+    category: fan_out
+    prompt: "This task names a category that isn't procedural or parallel."
+    gold_files:
+      lib/foo.rb: "def foo"

@@ -1,0 +1,4 @@
+# A deliberately broken fixture: no top-level `tasks:` key at all.
+# Exercises Bench::ArmTasks::MalformedTask -- previously this raised a bare
+# KeyError with no fixture path attached (review panel fix round, item 1).
+not_tasks: []

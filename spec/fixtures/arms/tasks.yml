@@ -1,0 +1,121 @@
+# A small, graded coding-task suite (B0, chunk-orchestration-arms-isolation)
+# spanning the pre-registered "procedural vs genuinely-parallel" boundary
+# orchestration-experiments.md draws from "In-Context Prompting Obsoletes
+# Agent Orchestration for Procedural Tasks": a single agent wins when the
+# task is procedural and there is no genuine parallelism; orchestration
+# keeps the edge only for genuinely independent subtasks. Feeds
+# Bench::ArmSweep (B12) later, which runs each real arm over these prompts
+# and grades its produced files against `gold_files` here.
+#
+# `category: procedural` tasks carry a real ORDERING dependency -- a later
+# edit needs an earlier one's outcome (the renamed method's new name, the
+# extracted helper's signature, the earlier validation step already having
+# run), so a single agent working sequentially is the natural fit and there
+# is nothing independent to hand a second worker.
+#
+# `category: parallel` tasks are genuinely INDEPENDENT -- each file's edit
+# needs zero context from any other file's edit, so N workers with no
+# shared state could do them concurrently with no coordination cost.
+#
+# `gold_files` is `path => gold`, where `gold` is either a bare String --
+# shorthand for "the final content at this path must CONTAIN this substring"
+# -- or a structured spec composing more than one check against the same
+# path: `contains` (the default, spelled out), `excludes` (the content must
+# NOT contain this -- rules out a "fix" pasted in next to the still-present
+# bug), and `starts_with` (anchors a check to the top of the file, so a
+# string true ANYWHERE, e.g. buried mid-file as noise, does not pass). Every
+# declared check is a HARD assertion (Grader::Fixture), scored against a
+# Trajectory (path => content) standing in for the files an arm's real run
+# produced -- deterministic, no model in the loop. None of these tasks needs
+# a live judgment call, so none is `:live`-tagged.
+#
+# `fix-off-by-one-loop` and `add-license-headers` use the structured form
+# (review panel fix round, item 3): a bare `contains` check cannot rule out a
+# no-op that leaves the bug's own text in place next to the "fix", or an
+# unanchored paste of the right string in the wrong position -- exactly the
+# two adversarial trajectories the panel's probes constructed.
+tasks:
+  - id: rename-method-and-callsite
+    category: procedural
+    prompt: >-
+      In lib/widget.rb, rename the method `frobnicate` to `normalize`, and
+      update its one call site in app/main.rb to match.
+    gold_files:
+      lib/widget.rb: "def normalize"
+      app/main.rb: "normalize("
+
+  - id: fix-off-by-one-loop
+    category: procedural
+    prompt: >-
+      lib/calc.rb has an off-by-one bug: its loop reads one element past the
+      end of `items`. Fix the bound so the loop stops at the last valid
+      index.
+    gold_files:
+      lib/calc.rb:
+        contains: "i < items.length"
+        excludes: "i <= items.length"
+
+  - id: extract-shared-helper
+    category: procedural
+    prompt: >-
+      lib/report.rb duplicates the same formatting logic in two methods.
+      Extract it into a shared private method `format_row` and call it from
+      both.
+    gold_files:
+      lib/report.rb: "def format_row"
+
+  - id: add-validation-after-existing
+    category: procedural
+    prompt: >-
+      lib/pipeline.rb runs `validate_shape` before persisting. Add a new
+      `validate_ownership` step that must run AFTER `validate_shape`, since
+      it depends on the shape check already having passed.
+    gold_files:
+      lib/pipeline.rb: "def validate_ownership"
+
+  - id: fix-three-unrelated-typos
+    category: parallel
+    prompt: >-
+      Three unrelated one-line typos, each in its own file with no shared
+      context: lib/a.rb ("recieve" -> "receive"), lib/b.rb ("seperate" ->
+      "separate"), lib/c.rb ("occured" -> "occurred").
+    gold_files:
+      lib/a.rb: "receive"
+      lib/b.rb: "separate"
+      lib/c.rb: "occurred"
+
+  - id: add-license-headers
+    category: parallel
+    prompt: >-
+      Add the one-line header `# Copyright 2026 Lain Labs` to the top of
+      three independent files: lib/x.rb, lib/y.rb, lib/z.rb. Each file is
+      unrelated to the others.
+    gold_files:
+      lib/x.rb:
+        starts_with: "# Copyright 2026 Lain Labs"
+      lib/y.rb:
+        starts_with: "# Copyright 2026 Lain Labs"
+      lib/z.rb:
+        starts_with: "# Copyright 2026 Lain Labs"
+
+  - id: implement-three-independent-utils
+    category: parallel
+    prompt: >-
+      Implement three independent utility functions with no shared
+      dependencies: lib/utils/slugify.rb (`def slugify`),
+      lib/utils/truncate.rb (`def truncate`), lib/utils/titleize.rb
+      (`def titleize`).
+    gold_files:
+      lib/utils/slugify.rb: "def slugify"
+      lib/utils/truncate.rb: "def truncate"
+      lib/utils/titleize.rb: "def titleize"
+
+  - id: bump-version-across-configs
+    category: parallel
+    prompt: >-
+      Bump the version string to "2.1.0" in three independent config files:
+      config/a.yml, config/b.yml, config/c.yml.
+    gold_files:
+      config/a.yml: "2.1.0"
+      config/b.yml: "2.1.0"
+      config/c.yml: "2.1.0"

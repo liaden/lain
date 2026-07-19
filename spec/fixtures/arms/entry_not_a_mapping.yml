@@ -1,0 +1,6 @@
+# A deliberately broken fixture: one task entry YAML-parses to a bare
+# String, not a mapping. Exercises Bench::ArmTasks::MalformedTask --
+# previously this raised NoMethodError (String has no #fetch) instead of a
+# named, located error (review panel fix round, item 2).
+tasks:
+  - "just a string, not a hash"
