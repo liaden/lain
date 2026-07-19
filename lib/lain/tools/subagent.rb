@@ -137,6 +137,49 @@ module Lain
         spawn_one_shot(prompt)
       end
 
+      # Fan `prompts` out as sibling children, staggered (CE-5): sibling 1 is
+      # dispatched alone and the rest release the instant its first token
+      # arrives, so N cache-siblings pay one template WRITE and N-1 READs
+      # instead of N cold prefills. Each dispatch unit is exactly the duck
+      # {Stagger} gates on -- `#call(on_stream_started:)` -- and the observer it
+      # threads is what {Agent#ask} forwards down the child's provider round
+      # trip, so the stagger gate opens on the CHILD's real stream-start (not a
+      # simulated one). The releases -- `:stream_started` or the `:degraded`
+      # safety valve for a child that never streams -- land in this tool's
+      # journal. Returns one {Tool::Result} per prompt, in `prompts`' order; an
+      # empty fan-out spawns nothing.
+      #
+      # This is the programmatic sibling-template arm (bin/demo-fanout's live
+      # equivalent), distinct from the model-dispatched {#perform}: the model
+      # fanning several `subagent` calls out in one turn is the {Agent::ToolRunner}
+      # gather path, ungated; this is the gated, orchestrator-driven fan-out.
+      #
+      # ECONOMIC PRECONDITION: staggering only pays under a `SiblingTemplate`
+      # prefix policy, where the siblings share a byte-identical cache prefix so
+      # sibling 1's write turns the rest into reads (CE-5). Under `:fresh` or
+      # `:inherit` the siblings share no writable prefix, so gating on sibling
+      # 1's first token buys nothing and merely serializes that first token's
+      # latency ahead of the rest -- a pure loss. The caller owns the policy, so
+      # this is a usage contract, not a guard here: fan a NON-template arm out
+      # concurrently (the {Agent::ToolRunner} gather shape) rather than through
+      # this method.
+      #
+      # Each dispatch unit is shaped after {Stagger}'s duck -- a lambda answering
+      # `#call(on_stream_started:)` that spawns one child and forwards the
+      # observer down its loop. The depth ceiling is honored per unit exactly as
+      # {#run}/{#perform} honor it: a fan-out at the floor refuses each sibling
+      # (and, firing no stream-start, releases the rest on the degrade path)
+      # rather than escalating past the cap.
+      #
+      # @param prompts [Array<String>]
+      # @return [Array<Tool::Result>]
+      def fan_out(prompts)
+        units = prompts.map do |prompt|
+          ->(on_stream_started:) { @max_depth <= 0 ? depth_exceeded : spawn_one_shot(prompt, on_stream_started:) }
+        end
+        Stagger.new(journal: @journal).call(units)
+      end
+
       # Launch a long-lived {Actor} over a freshly built child, and return the
       # handle -- the orchestration seam a supervisor uses to `tell`/`stop` it
       # and read its Timeline. The fiber spawns on the current task, so the
@@ -206,14 +249,14 @@ module Lain
       # the end, together (#remember), a single atomic burst with no yield
       # between the three, so the observability projection stays mutually
       # consistent under concurrency and exact under a one-shot call.
-      def spawn_one_shot(prompt)
+      def spawn_one_shot(prompt, on_stream_started: nil)
         # Per spawn, not per tool: the floor note (see PrefixStrategy::
         # SiblingTemplate#journal_floor) lands beside each :spawn it warns
         # about, so a fan-out's record shows which spawns ran un-cacheable.
         policy.prefix.journal_floor(@journal)
         parent = parent_timeline
         spawn = lineage.spawn(parent)
-        child, response = run_child(prompt, parent)
+        child, response = run_child(prompt, parent, on_stream_started:)
         message = lineage.message(parent, spawn, child, response)
         remember(spawn, child, message)
         Tool::Result.ok(response.text)
@@ -231,9 +274,9 @@ module Lain
       # `ask` seeds the prompt as the child's first user turn and drives its
       # loop to settle -- fresh starts that turn as a root, inherit starts it
       # on the parent's head (O(1) fork).
-      def run_child(prompt, parent)
+      def run_child(prompt, parent, on_stream_started: nil)
         child = build_child(parent)
-        response = child.ask(prompt)
+        response = child.ask(prompt, on_stream_started:)
         [child.timeline, response]
       end
 

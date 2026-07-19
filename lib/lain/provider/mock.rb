@@ -14,27 +14,49 @@ module Lain
     # lacks `:prompt_caching` and assert the degradation is recorded rather than
     # silently ignored.
     class Mock < Provider
+      # Reused, not re-implemented: the live backends' first-token signal shares
+      # ONE definition of when it fires and how a raising observer is isolated
+      # (caught and journaled as {Telemetry::ObserverFailed}, never allowed to
+      # cost #complete a response it already has). Mock firing the signal any
+      # other way would let a test double diverge from the contract it exists to
+      # stand in for.
+      include StreamStartedSignal
+
       attr_reader :requests, :capabilities
 
       # @param responses [Array<Lain::Response>] returned in order; the last one
       #   repeats once exhausted, so a loop that over-runs is visible as a
       #   repeated turn rather than a confusing nil.
       # @param capabilities [Array<Symbol>]
-      def initialize(responses: [], capabilities: CAPABILITIES.dup)
+      # @param channel [Lain::Channel] where {StreamStartedSignal} pushes the
+      #   {Telemetry::StreamStarted} and any {Telemetry::ObserverFailed}; the
+      #   Null channel by default, so an unwired Mock is byte-identical to before.
+      def initialize(responses: [], capabilities: CAPABILITIES.dup, channel: Channel::Null.instance)
         super()
         @responses = Array(responses)
         @capabilities = capabilities.map(&:to_sym).freeze
         @requests = []
+        @channel = channel
       end
 
       def encode(request)
         request.cache_payload
       end
 
-      def complete(request)
+      # `on_stream_started` is CE-5's first-token signal (see
+      # {StreamStartedSignal}). Mock fires it under the SAME two conditions the
+      # live backends do -- an observer is wired AND `request.stream` is set --
+      # so a fan-out driven through Mock exercises {Tools::Subagent::Stagger}'s
+      # stream-start release, and a non-streaming request degrades exactly as a
+      # provider that never signals. The fire routes through
+      # {StreamStartedSignal#emit_stream_started}, so a raising observer is
+      # isolated (journaled, not propagated) identically to live. When no
+      # observer is wired the call is byte-identical to before.
+      def complete(request, on_stream_started: nil)
         @requests << request
         raise Error, "Provider::Mock ran out of responses after #{@requests.size} calls" if @responses.empty?
 
+        emit_stream_started(request, on_stream_started) if on_stream_started && request.stream
         @responses.size > 1 ? @responses.shift : @responses.first
       end
 

@@ -2,6 +2,7 @@
 
 require "async"
 require "tmpdir"
+require "timeout"
 
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
@@ -631,6 +632,82 @@ RSpec.describe Lain::Tools::Subagent do
     it "defaults to no observer, every existing path byte-identical" do
       tool = build_subagent(provider: mock(text_response("done")))
       expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+    end
+  end
+
+  # ---- B9: the staggered sibling fan-out (CE-5) -----------------------------
+  #
+  # The plumb this card adds: a REAL fan-out of sibling-template children
+  # through {Stagger}, each child's {Agent} forwarding `on_stream_started` down
+  # its own provider round trip. Sibling 1 dispatches alone; the provider's
+  # first-token signal ({Provider::Mock}'s here, gated on `request.stream` just
+  # as the live backends gate it) opens the gate and the rest release -- one
+  # writable template prefix, N-1 byte-identical reuses. The stagger releases
+  # land in the journal. The stagger POLICY in isolation is proven in
+  # spec/lain/tools/subagent/stagger_spec.rb; these prove the wiring reaches it
+  # THROUGH the provider signal.
+  describe "the staggered sibling fan-out (B9)" do
+    let(:template) { "You are one of a set of sibling workers over one shared brief. " * 20 }
+
+    def sibling_template_policy(template)
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template:),
+        posture: :handler_union, only: %i[read_file]
+      )
+    end
+
+    it "spawns each prompt as a sibling child, returning one final result per prompt in order" do
+      provider = mock(text_response("a"), text_response("b"), text_response("c"))
+      tool = build_subagent(provider:, policy: sibling_template_policy(template))
+
+      results = tool.fan_out(%w[alpha beta gamma])
+
+      expect(results.map(&:content)).to eq(%w[a b c])
+      expect(results).to all(be_ok)
+    end
+
+    it "returns [] for an empty fan-out, spawning nothing" do
+      tool = build_subagent(provider: mock(text_response("unused")))
+      before = store.size
+
+      expect(tool.fan_out([])).to eq([])
+      expect(store.size).to eq(before)
+    end
+
+    # AC1 (Gherkin): sibling 1 begins streaming -> the rest release, journaled.
+    it "releases the rest on sibling 1's stream-start, journaling the stagger with reason :stream_started" do
+      journal = Lain::Channel.new
+      provider = mock(text_response("a"), text_response("b"), text_response("c"))
+      tool = build_subagent(provider:, policy: sibling_template_policy(template), journal:)
+
+      tool.fan_out(%w[alpha beta gamma])
+
+      events = journal.drain
+      dispatched = events.grep(Lain::Tools::Subagent::Stagger::Dispatched)
+      released = events.grep(Lain::Tools::Subagent::Stagger::Released)
+      expect(dispatched.map(&:index)).to contain_exactly(0, 1, 2)
+      expect(released.map(&:reason)).to eq([:stream_started])
+    end
+
+    # AC2 (Gherkin): the first never streams -> the rest release on the degrade
+    # path, journaled. A non-streaming child context is the honest analogue of a
+    # provider that never signals: Mock gates its signal on `request.stream`, so
+    # the whole fan-out falls through to Stagger's :degraded release rather than
+    # hanging.
+    it "degrades safely, releasing the rest journaled :degraded, when the first child never streams" do
+      journal = Lain::Channel.new
+      provider = mock(text_response("a"), text_response("b"))
+      tool = described_class.new(
+        provider:, context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256, stream: false) },
+        toolset: union, policy: sibling_template_policy(template), parent:, journal:
+      )
+
+      results = nil
+      expect { Timeout.timeout(2) { results = tool.fan_out(%w[alpha beta]) } }.not_to raise_error
+
+      expect(results.map(&:content)).to eq(%w[a b])
+      released = journal.drain.grep(Lain::Tools::Subagent::Stagger::Released)
+      expect(released.map(&:reason)).to eq([:degraded])
     end
   end
 

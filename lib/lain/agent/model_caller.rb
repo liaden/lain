@@ -18,12 +18,30 @@ module Lain
         @middleware = middleware
       end
 
+      # `on_stream_started` is CE-5's first-token observer (see
+      # {Provider::StreamStartedSignal}) -- an orchestration hook the stagger
+      # scheduler awaits, NOT request data, so it rides the method arg and never
+      # enters the middleware env. It defaults to nil and is INERT then: the
+      # provider is called with no second argument at all, byte-identically to
+      # before, so a provider whose `#complete` takes only a request (Bedrock,
+      # Ollama, the default fan-out path) is untouched. Only a wired observer
+      # forwards the kwarg, and only providers that accept it are ever handed it.
+      #
       # @param request [Lain::Request]
+      # @param on_stream_started [#call, nil]
       # @return [Lain::Response]
-      def call(request)
+      def call(request, on_stream_started: nil)
         @middleware.call({ request: }) do |inner|
-          inner.merge(response: @provider.complete(inner.fetch(:request)))
+          inner.merge(response: complete(inner.fetch(:request), on_stream_started))
         end.response
+      end
+
+      private
+
+      def complete(request, on_stream_started)
+        return @provider.complete(request) if on_stream_started.nil?
+
+        @provider.complete(request, on_stream_started:)
       end
     end
   end
