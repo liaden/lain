@@ -14,6 +14,7 @@ stateDiagram-v2
   awaiting_tools : awaiting_tools
   done : done
   failed : failed
+  stalled : stalled
   awaiting_approval : awaiting_approval
   awaiting_user --> awaiting_model : dispatch
   awaiting_model --> awaiting_model : dispatch
@@ -23,6 +24,7 @@ stateDiagram-v2
   awaiting_tools --> awaiting_user : reopen
   done --> awaiting_user : reopen
   failed --> awaiting_user : reopen
+  stalled --> awaiting_user : reopen
   awaiting_approval --> awaiting_user : reopen
   awaiting_model --> awaiting_tools : tool_use
   awaiting_model --> awaiting_model : pause_turn
@@ -31,4 +33,6 @@ stateDiagram-v2
   awaiting_model --> failed : max_tokens
   awaiting_model --> failed : refusal
   awaiting_model --> failed : unknown
+  awaiting_model --> stalled : stall
+  stalled --> awaiting_model : replan
 ```

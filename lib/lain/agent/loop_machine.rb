@@ -57,10 +57,21 @@ module Lain
         event(:refusal) { transition awaiting_model: :failed }
         event(:unknown) { transition awaiting_model: :failed }
 
+        # The dual-ledger outer loop's stall->replan pair (B11). Purely ADDITIVE:
+        # both move to or from the new `:stalled` state, so no move that was
+        # legal before becomes illegal, and neither lands in `:failed` (so the
+        # FAILURE_REASONS totality is untouched). `stall` parks the loop when
+        # progress dries up; `replan` resumes it after the plan is rewritten.
+        # Wired for {Arm::DualLedger}'s {Planner}, harmless on the {Agent}'s own
+        # machine, which never fires them.
+        event(:stall) { transition awaiting_model: :stalled }
+        event(:replan) { transition stalled: :awaiting_model }
+
         state :awaiting_user, value: :awaiting_user
         state :awaiting_model, value: :awaiting_model
         state :awaiting_tools, value: :awaiting_tools
         state :awaiting_approval, value: :awaiting_approval
+        state :stalled, value: :stalled
         state :done, value: :done
         state :failed, value: :failed
       end

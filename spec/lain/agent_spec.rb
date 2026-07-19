@@ -326,9 +326,13 @@ RSpec.describe Lain::Agent do
     end
 
     it "exposes every declared state" do
+      # :stalled is B11's additive dual-ledger state (see LoopMachine); the
+      # transition-legality gates (agent_state_machine_spec's StopReason
+      # totality + FAILURE_REASONS) are untouched -- this is a state-set snapshot
+      # that grows with an authorized addition, like the generated diagram.
       expect(described_class::STATES)
         .to contain_exactly(:awaiting_user, :awaiting_model, :awaiting_tools,
-                            :awaiting_approval, :done, :failed)
+                            :awaiting_approval, :stalled, :done, :failed)
     end
   end
 

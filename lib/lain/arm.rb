@@ -111,6 +111,8 @@ end
 # After the class body: the concrete arm and the driver both reference Arm and
 # Arm::Run, so they load once the class exists (the children-after-the-class-body
 # order effect/handler.rb uses).
+require_relative "arm/ledger_state"
 require_relative "arm/single_thread"
 require_relative "arm/adaptive_router"
+require_relative "arm/dual_ledger"
 require_relative "arm/driver"
