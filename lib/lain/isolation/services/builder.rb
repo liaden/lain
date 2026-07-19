@@ -14,7 +14,7 @@ module Lain
       class Builder
         # The DSL verbs, which ARE the stable user surface. Named here so an
         # unknown verb's error can list them.
-        VERBS = %i[postgres redis].freeze
+        VERBS = %i[postgres redis compose].freeze
 
         # An unrecognized service verb in `.lain/services.rb`. The DSL is a stable
         # surface, so a typo fails LOUDLY and named rather than as a bare
@@ -22,9 +22,11 @@ module Lain
         # evaluator that raises it.
         class Unknown < Error; end
 
-        # A second declaration of a service already declared: it would silently
-        # clobber the first's injected URL in the lease, so -- consistent with the
-        # loud-failure premise -- it refuses.
+        # A second declaration that would silently clobber a first in the lease --
+        # either the SAME service kind ({#name}) declared twice, or two DIFFERENT
+        # services (say a `postgres` and a `compose`) naming the SAME `env_var`,
+        # whose URLs collide when a backend merges them into one WorkerEnv. Both
+        # refuse loudly, consistent with the loud-failure premise.
         class Duplicate < Error; end
 
         # Evaluate `source` (read from `path`) and return the ordered
@@ -44,6 +46,7 @@ module Lain
 
         def postgres(**) = declare(Services::Postgres.new(**))
         def redis(**) = declare(Services::Redis.new(**))
+        def compose(**) = declare(Services::Compose.new(**))
 
         # An unknown top-level call in the DSL is a typo'd service verb; name it
         # and list what IS known rather than surfacing a bare NoMethodError.
@@ -57,13 +60,35 @@ module Lain
         private
 
         def declare(service)
-          if @declarations.any? { |existing| existing.name == service.name }
-            raise Duplicate, "duplicate #{service.name} service in .lain/services.rb; " \
-                             "declare each service at most once"
-          end
-
+          refuse_duplicate_name(service)
+          refuse_duplicate_env_var(service)
           @declarations << service
           service
+        end
+
+        def refuse_duplicate_name(service)
+          return unless @declarations.any? { |existing| existing.name == service.name }
+
+          raise Duplicate, "duplicate #{service.name} service in .lain/services.rb; " \
+                           "declare each service at most once"
+        end
+
+        # Every service that injects a var into the lease answers `env_var`
+        # (postgres' DATABASE_URL, redis' REDIS_URL, compose's declared var). Two
+        # declarations sharing one -- even across DIFFERENT service kinds whose
+        # {#name}s differ -- would silently clobber in the merge, so the second
+        # refuses loudly and names both culprits.
+        def refuse_duplicate_env_var(service)
+          return unless service.respond_to?(:env_var)
+
+          clash = @declarations.find do |existing|
+            existing.respond_to?(:env_var) && existing.env_var == service.env_var
+          end
+          return unless clash
+
+          raise Duplicate, "duplicate env var #{service.env_var.inspect} in .lain/services.rb " \
+                           "(declared by both #{clash.name} and #{service.name}); a second " \
+                           "declaration would silently clobber the first's injected URL"
         end
       end
     end

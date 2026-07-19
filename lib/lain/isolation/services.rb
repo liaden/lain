@@ -44,4 +44,5 @@ end
 
 require_relative "services/postgres"
 require_relative "services/redis"
+require_relative "services/compose"
 require_relative "services/builder"
