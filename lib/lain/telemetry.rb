@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/string/inflections"
+require "bigdecimal"
 
 module Lain
   # Structured events that flow through a {Lain::Channel}.
@@ -694,6 +695,99 @@ module Lain
           usage: Canonical.normalize(usage),
           wall_clock: wall_clock.to_f
         )
+      end
+    end
+  end
+
+  # T20's one record (CAC-6), reopening Telemetry a sixth time for the same
+  # reason every block above does (CLAUDE.md: a tripped Metrics/ModuleLength
+  # names a missing seam; here the seam is "the compaction scheduler's full
+  # accounting, not the per-turn/per-request telemetry stream"). Emitted from
+  # {Compaction::Scheduler}'s existing `if decision.compact?` guard in
+  # `#pipeline` -- REPLACING the lighter `CompactionScheduled` record that
+  # guard used to build (`reason`/`tier` alone). There is one record at that
+  # call site, not two synchronized ones: extending what was already there,
+  # not adding a second, independently-guarded emission path.
+  module Telemetry
+    module Guards
+      # A compaction record must name what fired it and land on one of the
+      # three cache states the scheduler's policy actually reaches.
+      class Compaction < Guard
+        attribute :trigger
+        attribute :cache_state
+        validates :trigger, presence: { message: "must name the Need signal(s) that fired, got none" }
+        validates :cache_state, inclusion: { in: %i[warm cold forced],
+                                             message: "must be one of warm/cold/forced, got %<value>s" }
+      end
+    end
+
+    # Every compaction's full accounting (CAC-6): WHY it fired (`trigger`,
+    # the {Compaction::Need} signals that were live) and WHAT cache state the
+    # scheduler read (`cache_state`), so {Compare} can attribute a cost delta
+    # to the scheduling policy rather than to the summarizer itself.
+    #
+    # `cache_state` is closed over `:warm`/`:cold`/`:forced`, but a compacting
+    # decision only ever reaches `:cold` or `:forced` here: an unforced warm
+    # decision always DEFERS (see {Compaction::Scheduler#evaluate}) and never
+    # reaches a journal at all. `:warm` completes the enum for a reader who
+    # expects the full CAC-6 vocabulary; it is not a value this scheduler
+    # emits today.
+    #
+    # `tokens_before`/`tokens_after` are the SAME canonical-byte-length proxy
+    # {Compaction::Need::TokenThreshold} and {Context::Compact} already use in
+    # place of a real tokenizer (see either's header for why a deterministic
+    # proxy is the only property needed here) -- one consistent unit across
+    # the compaction subsystem, not a second, incompatible one.
+    #
+    # `cost_saved`/`cost_spent` are ESTIMATES, not payments: unlike
+    # {TurnUsage}, no model call happens inside a compaction -- `Compact`'s
+    # summarizer is a pure, already-injected, deterministic function (see its
+    # own header) -- so there is no real {Lain::Usage} to price against.
+    # `cost_saved` prices the token delta at the model's plain input rate:
+    # what continuing to resend the dropped tokens every subsequent turn
+    # would have cost. `cost_spent` prices `tokens_after` at the
+    # cache_creation rate ONLY when `cache_state` is `:forced` -- rewriting
+    # the message tier while the cache was still warm is exactly what forces
+    # that write -- and is zero on `:cold`, matching {Compaction::Scheduler}'s
+    # own "a cold cache runs the compaction for free" rationale. Both are
+    # zero, DOCUMENTED the way {Salvaged}'s zero-cost gap is, when the
+    # scheduler carries no `model` to price with: an unpriced scheduler is a
+    # legitimate configuration today (nothing downstream reads cost from it
+    # yet), not a caller error worth raising over.
+    #
+    # Held as fixed-point decimal STRINGS, not `BigDecimal`: `Canonical.normalize`
+    # deliberately does not support `BigDecimal` (it has no canonical wire
+    # form), and every `Data` field here must already be an immutable, JSON-safe
+    # value to keep this record `Ractor.shareable?` -- the same "canonical wire
+    # form" idiom {RequestSent}'s `payload` and {TurnUsage}'s `usage` already
+    # use for anything that is not natively JSON-safe.
+    Compaction = Data.define(:trigger, :cache_state, :tokens_before, :tokens_after, :cost_saved, :cost_spent) do
+      include Journalable
+
+      def initialize(trigger:, cache_state:, tokens_before:, tokens_after:, cost_saved:, cost_spent:)
+        trigger = Array(trigger).map(&:to_sym).freeze
+        cache_state = cache_state.to_sym
+        Guards::Compaction.check!(trigger:, cache_state:)
+        super(trigger:, cache_state:, tokens_before: Integer(tokens_before), tokens_after: Integer(tokens_after),
+              cost_saved: decimal(cost_saved), cost_spent: decimal(cost_spent))
+      end
+
+      # The cost delta {Compare} attributes to the scheduling policy:
+      # positive means the compaction paid for itself, negative means it cost
+      # more than it saved (a forced-warm rewrite on a small delta, say).
+      #
+      # @return [BigDecimal]
+      def cost_delta
+        BigDecimal(cost_saved) - BigDecimal(cost_spent)
+      end
+
+      private
+
+      # Fixed-point ("F") rather than BigDecimal's default `to_s`, which
+      # emits scientific notation (`"0.12345e-2"`) that is technically valid
+      # JSON but unreadable in an NDJSON line meant for a human to scan.
+      def decimal(value)
+        (value.is_a?(BigDecimal) ? value : BigDecimal(value.to_s)).to_s("F").freeze
       end
     end
   end

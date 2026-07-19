@@ -108,24 +108,26 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
 
     it "crossing the hard cap while warm runs the compaction and notes forced-warm, message-tier only" do
-      pipeline = scheduler(hard_cap: 100).pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:)
+      pipeline = scheduler(hard_cap: 100).pipeline(need: need(:token_threshold), cold: false, history_size: 100,
+                                                   base:, messages: history)
 
       result = rendered(pipeline, history)
 
       expect(result.size).to be < history.size
       expect(result).to include(a_hash_including("content" => [a_hash_including("text" => "SUMMARY")]))
       expect(records).to contain_exactly(
-        a_hash_including("type" => "compaction_scheduled", "reason" => "forced_warm", "tier" => "message")
+        a_hash_including("type" => "compaction", "trigger" => ["token_threshold"], "cache_state" => "forced")
       )
     end
 
     it "runs a needed compaction for free while the cache is cold" do
-      pipeline = scheduler.pipeline(need: need(:token_threshold), cold: true, history_size: 10, base:)
+      pipeline = scheduler.pipeline(need: need(:token_threshold), cold: true, history_size: 10,
+                                    base:, messages: history)
 
       result = rendered(pipeline, history)
 
       expect(result.size).to be < history.size
-      expect(records.map { |r| r["reason"] }).to eq(["cold_free"])
+      expect(records.map { |r| r["cache_state"] }).to eq(["cold"])
     end
 
     it "leaves the injected base pipeline unmutated across a compacting decision (renders stay pure)" do
