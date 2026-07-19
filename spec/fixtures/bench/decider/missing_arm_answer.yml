@@ -1,0 +1,27 @@
+# A deliberately broken fixture (T6 review): the `haiku` arm block is
+# present but carries no `answer` at all. Exercises
+# Bench::DeciderSweep::MalformedCase -- a malformed NESTED field must raise
+# the same named-and-located error a missing top-level field gets, never a
+# bare, case-less KeyError surfacing later at replay time (the same
+# reasoning Bench::DisclosureSweep::MalformedTask documents).
+stale_after_turns: 5
+main_model: "claude-sonnet-4-5"
+base_conversation: []
+cases:
+  - id: haiku_missing_answer
+    age_turns: 3
+    content: "A case whose haiku arm forgot its answer."
+    gold_stale: false
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
+    haiku:
+      model: "claude-haiku-4-5"
+      usage: { input_tokens: 10, output_tokens: 5 }
+    inline:
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
+    model_self_directed:
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }

@@ -1,0 +1,126 @@
+# Synthetic-only fixture for Bench::DeciderSweep (T6, OR-4): one prune-scoring
+# decision point ("is this span stale?", T4's Oracle::PruneScoring), scored
+# across five arms -- heuristic, ollama, haiku, inline, model_self_directed --
+# with committed RECORDED answers standing in for each live call (the same
+# "committed answer replaces a live call" shape spec/fixtures/bench/disclosure
+# uses for its own arms). No PHI, no real patient data.
+#
+# `stale_after_turns` mirrors the heuristic tier's own threshold
+# (Oracle::PruneScoring.heuristic). `main_model` is the model `inline` and
+# `model_self_directed` are billed under -- they are not a cheap tier, they
+# ARE the main model, asked inside its own conversation.
+#
+# `base_conversation` is the synthetic "run under study" -- the ALREADY-CACHED
+# prefix `inline`/`model_self_directed` score their decision INSIDE. That is
+# exactly why those two arms carry a nonzero cache-write per case below while
+# heuristic/ollama/haiku do not: their prompts are one-shot and far below
+# Anthropic's 4096-token cache floor (CLAUDE.md's Known Traps), so a fresh
+# out-of-band call never triggers a cache write at all. This is the sweep's
+# headline finding, not an artifact to average away.
+#
+# Two axes of deliberate variation:
+#
+# 1. Correctness: `aged-but-active-allergy` is the trap case -- old enough
+#    (age_turns: 6) to cross the heuristic's age-only threshold, but still
+#    governing every order since, so its GOLD verdict is "not stale". The
+#    heuristic gets it wrong (age alone says stale); every content-reading
+#    arm gets it right. This is the "when does a cheap gating model beat a
+#    regex" story oracles.md asks the sweep to answer.
+# 2. Wall-clock: ollama and haiku carry a `wall_clock` value per case --
+#    real numbers from the live run that produced this recording, replayed
+#    as history. heuristic/inline/model_self_directed have never been
+#    live-timed by this sweep and carry none -- see DeciderSweep's
+#    wall-clock section, which reads ABSENT rather than fabricating one.
+stale_after_turns: 5
+main_model: "claude-sonnet-4-5"
+
+base_conversation:
+  - role: user
+    text: "Walk me through this patient's cardiology history and flag anything active."
+  - role: assistant
+    text: "Reviewing the chart now -- vitals, imaging, and medication history."
+
+cases:
+  - id: recent-vitals
+    age_turns: 2
+    content: "Vitals note: BP 118/76, HR 72, taken this morning during rounds."
+    gold_stale: false
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: false, reason: "referenced two turns ago, still live" }
+      usage: { input_tokens: 58, output_tokens: 14 }
+      wall_clock: 0.21
+    haiku:
+      model: "claude-haiku-4-5"
+      answer: { stale: false, reason: "recent vitals, keep" }
+      usage: { input_tokens: 54, output_tokens: 11 }
+      wall_clock: 0.74
+    inline:
+      answer: { stale: false, reason: "recent vitals, keep" }
+      usage: { input_tokens: 240, output_tokens: 9, cache_read_input_tokens: 5200, cache_creation_input_tokens: 88 }
+    model_self_directed:
+      answer: { stale: false, reason: "recent vitals, keep" }
+      usage: { input_tokens: 310, output_tokens: 24, cache_read_input_tokens: 5200, cache_creation_input_tokens: 146 }
+
+  - id: old-imaging-summarized
+    age_turns: 9
+    content: "Chest X-ray ordered 9 turns ago; findings already folded into the summary note above."
+    gold_stale: true
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: true, reason: "superseded by the summary, safe to drop" }
+      usage: { input_tokens: 61, output_tokens: 13 }
+      wall_clock: 0.19
+    haiku:
+      model: "claude-haiku-4-5"
+      answer: { stale: true, reason: "already summarized, prune" }
+      usage: { input_tokens: 57, output_tokens: 10 }
+      wall_clock: 0.68
+    inline:
+      answer: { stale: true, reason: "already summarized, prune" }
+      usage: { input_tokens: 245, output_tokens: 8, cache_read_input_tokens: 5320, cache_creation_input_tokens: 91 }
+    model_self_directed:
+      answer: { stale: true, reason: "already summarized, prune" }
+      usage: { input_tokens: 318, output_tokens: 20, cache_read_input_tokens: 5320, cache_creation_input_tokens: 150 }
+
+  - id: aged-but-active-allergy
+    age_turns: 6
+    content: "Allergy flag: severe penicillin reaction, noted 6 turns ago and still governing every order since."
+    gold_stale: false
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: false, reason: "an active safety flag, never stale regardless of age" }
+      usage: { input_tokens: 66, output_tokens: 17 }
+      wall_clock: 0.24
+    haiku:
+      model: "claude-haiku-4-5"
+      answer: { stale: false, reason: "governs every subsequent order, keep" }
+      usage: { input_tokens: 60, output_tokens: 13 }
+      wall_clock: 0.79
+    inline:
+      answer: { stale: false, reason: "governs every subsequent order, keep" }
+      usage: { input_tokens: 252, output_tokens: 11, cache_read_input_tokens: 5440, cache_creation_input_tokens: 94 }
+    model_self_directed:
+      answer: { stale: false, reason: "governs every subsequent order, keep" }
+      usage: { input_tokens: 322, output_tokens: 26, cache_read_input_tokens: 5440, cache_creation_input_tokens: 152 }
+
+  - id: truly-stale-smalltalk
+    age_turns: 12
+    content: "Small talk about the weather from 12 turns ago, never referenced again."
+    gold_stale: true
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: true, reason: "never referenced again, safe to drop" }
+      usage: { input_tokens: 55, output_tokens: 10 }
+      wall_clock: 0.18
+    haiku:
+      model: "claude-haiku-4-5"
+      answer: { stale: true, reason: "irrelevant small talk, prune" }
+      usage: { input_tokens: 51, output_tokens: 9 }
+      wall_clock: 0.66
+    inline:
+      answer: { stale: true, reason: "irrelevant small talk, prune" }
+      usage: { input_tokens: 238, output_tokens: 7, cache_read_input_tokens: 5560, cache_creation_input_tokens: 85 }
+    model_self_directed:
+      answer: { stale: true, reason: "irrelevant small talk, prune" }
+      usage: { input_tokens: 305, output_tokens: 19, cache_read_input_tokens: 5560, cache_creation_input_tokens: 141 }

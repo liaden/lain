@@ -1,0 +1,25 @@
+# A deliberately broken fixture (T6 review): one case missing `gold_stale`
+# entirely. Exercises Bench::DeciderSweep::MalformedCase -- a malformed
+# fixture case is a bug in the fixture to raise on, never a case to silently
+# skip.
+stale_after_turns: 5
+main_model: "claude-sonnet-4-5"
+base_conversation: []
+cases:
+  - id: no_gold_stale
+    age_turns: 3
+    content: "A case that forgot to name its gold verdict."
+    ollama:
+      model: "qwen2.5:7b-instruct"
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
+    haiku:
+      model: "claude-haiku-4-5"
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
+    inline:
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
+    model_self_directed:
+      answer: { stale: false, reason: "n/a" }
+      usage: { input_tokens: 10, output_tokens: 5 }
