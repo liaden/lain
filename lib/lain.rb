@@ -55,6 +55,7 @@ require_relative "lain/bench"
 require_relative "lain/frontend"
 require_relative "lain/grader"
 require_relative "lain/structural"
+require_relative "lain/isolation"
 require_relative "lain/arm"
 require_relative "lain/tools"
 
