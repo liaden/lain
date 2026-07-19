@@ -58,6 +58,18 @@ RSpec.describe Lain::Tools::Grep do
     expect(result.content).to include("#{path}:2:")
   end
 
+  # Byte-identical label under the default WorkerEnv: a RELATIVE single-file
+  # target labels its matches with the path exactly as the model spelled it
+  # ("README.md:1:"), not the WorkerEnv-resolved absolute path -- probe
+  # tmp/b1-probes/grep_label.rb.
+  it "labels a relative single-file target with the verbatim path, not the resolved absolute" do
+    write("README.md", "hello world\n")
+
+    result = Dir.chdir(tmpdir) { tool.call(pattern: "hello", path: "README.md") }
+
+    expect(result.content).to eq("README.md:1:hello world")
+  end
+
   it "returns an ok, empty result when nothing matches -- not an error" do
     write("foo.rb", "nothing interesting here\n")
 

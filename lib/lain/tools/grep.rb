@@ -46,21 +46,30 @@ module Lain
 
       protected
 
-      def perform(input, _invocation)
-        problem = problem_with(input.path)
+      def perform(input, invocation)
+        path = resolved_path(input, invocation)
+        problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
         regex = build_regex(input)
         # One more than the cap is all that is ever pulled off the lazy
         # walk -- enough to know whether the result was capped, without
         # reading a single byte past what the cap needs.
-        matches = search(input.path, regex).lazy.first(MAX_MATCHES + 1)
+        matches = search(path, input.path, regex).lazy.first(MAX_MATCHES + 1)
         Tool::Result.ok(format_matches(matches))
       rescue RegexpError => e
         Tool::Result.error("invalid pattern #{input.pattern.inspect}: #{e.message}")
       end
 
       private
+
+      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+      # under the default, so byte-identical to the pre-WorkerEnv raw path); an
+      # absolute path is honored as given. This is the FILESYSTEM locator; the
+      # match LABELS keep the model's original spelling (see {#search}).
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+      end
 
       def problem_with(path)
         return "no such file or directory: #{path}" unless File.exist?(path)
@@ -76,11 +85,17 @@ module Lain
       # An Enumerator so the MAX_MATCHES+1 cap above can stop walking the
       # filesystem the moment it has enough, rather than scanning every file
       # under `path` before throwing most of the result away.
-      def search(path, regex)
+      #
+      # `path` is the resolved filesystem locator; `display` is the model's
+      # original spelling. A DIRECTORY target labels each hit by its path
+      # relative to the walked root; a SINGLE-FILE target labels its hits with
+      # `display` verbatim -- so a relative `README.md` stays `README.md:1:`
+      # rather than leaking the WorkerEnv-resolved absolute path.
+      def search(path, display, regex)
         root = path if File.directory?(path)
         Enumerator.new do |yielder|
           files_under(path).each do |file|
-            label = root ? file.delete_prefix("#{root}/") : file
+            label = root ? file.delete_prefix("#{root}/") : display
             each_matching_line(file, regex) { |line_no, line| yielder << [label, line_no, line] }
           end
         end

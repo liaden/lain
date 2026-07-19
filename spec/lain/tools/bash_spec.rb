@@ -108,4 +108,77 @@ RSpec.describe Lain::Tools::Bash do
     bare = Lain::Tool::Invocation.new(tool_use_id: "tu_1")
     expect { tool.call({ command: "echo quiet" }, bare) }.not_to raise_error
   end
+
+  # The WorkerEnv the Session lends: the default is byte-identical to today
+  # (process ENV + Dir.pwd), an injected one isolates env and cwd.
+  describe "worker env (session-lent env and cwd)" do
+    def invocation_with(session)
+      Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel:)
+    end
+
+    it "inherits the process env under the default WorkerEnv" do
+      ENV["LAIN_WE_PROBE"] = "from_process"
+      result = tool.call({ command: "echo $LAIN_WE_PROBE" }, invocation_with(Lain::Session.new))
+      expect(result.content).to include("from_process")
+    ensure
+      ENV.delete("LAIN_WE_PROBE")
+    end
+
+    it "exposes an injected env var to the command" do
+      env = ENV.to_h.merge("DATABASE_URL" => "postgres://sandbox/db")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env:))
+      result = tool.call({ command: "echo $DATABASE_URL" }, invocation_with(session))
+      expect(result.content).to include("postgres://sandbox/db")
+    end
+
+    it "runs in the WorkerEnv cwd when the input names none" do
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "marker.txt"), "here")
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: ENV.to_h))
+        result = tool.call({ command: "ls" }, invocation_with(session))
+        expect(result.content).to include("marker.txt")
+      end
+    end
+
+    it "resolves a relative input cwd against the WorkerEnv cwd" do
+      Dir.mktmpdir do |dir|
+        Dir.mkdir(File.join(dir, "sub"))
+        File.write(File.join(dir, "sub", "inner.txt"), "x")
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: ENV.to_h))
+        result = tool.call({ command: "ls", cwd: "sub" }, invocation_with(session))
+        expect(result.content).to include("inner.txt")
+      end
+    end
+
+    # WorkerEnv is an OVERRIDE, not confinement (B3's foundation): mixlib applies
+    # `environment:` per-key onto the child's already-inherited ENV and never
+    # clears it, so a host var the injected env omits still reaches the command.
+    # This pins that true behavior -- probe tmp/b1-probes/env_semantics.rb.
+    it "leaks a host env var the injected WorkerEnv omits (additive override, not confinement)" do
+      ENV["LAIN_HOST_ONLY"] = "leaked"
+      curated = { "DATABASE_URL" => "postgres://sandbox" } # deliberately omits LAIN_HOST_ONLY
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: curated))
+
+      result = tool.call({ command: "echo host=[$LAIN_HOST_ONLY]" }, invocation_with(session))
+
+      expect(result.content).to include("host=[leaked]")
+    ensure
+      ENV.delete("LAIN_HOST_ONLY")
+    end
+
+    # The sanctioned scrub: an explicit nil VALUE (not an absent key) removes a
+    # var, because mixlib's child does `ENV[k] = nil`, and Ruby's `ENV[k] = nil`
+    # deletes. WorkerEnv preserves the nil marker through make_shareable.
+    it "scrubs a host env var mapped to nil in the injected WorkerEnv" do
+      ENV["LAIN_SCRUB_ME"] = "leaked"
+      scrubbed = ENV.to_h.merge("LAIN_SCRUB_ME" => nil)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: scrubbed))
+
+      result = tool.call({ command: "echo host=[$LAIN_SCRUB_ME]" }, invocation_with(session))
+
+      expect(result.content).to include("host=[]")
+    ensure
+      ENV.delete("LAIN_SCRUB_ME")
+    end
+  end
 end

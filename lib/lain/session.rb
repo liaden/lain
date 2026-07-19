@@ -39,7 +39,20 @@ module Lain
     # `memory:` defaults to a fresh, empty {Memory::Recorder} -- an empty
     # holder satisfying the same duck as the real one (Null Object over nil
     # checks), so {#reminders} never guards on a missing source.
-    def initialize(memory: Memory::Recorder.new)
+    # `worker_env:` defaults to {WorkerEnv.default} -- the live `Dir.pwd` and a
+    # snapshot of `ENV` -- so a run that injects no isolation resolves paths and
+    # shells out exactly as it did before WorkerEnv existed. An overriding
+    # strategy passes a WorkerEnv here, and the tools read it off the context
+    # they already receive.
+    #
+    # SNAPSHOT-AT-CONSTRUCTION: a real Session captures `ENV` (and `Dir.pwd`)
+    # ONCE, when it is built. The byte-identical-default claim therefore holds
+    # only absent a mid-run ENV mutation of an EXISTING var: mutate `ENV["X"]`
+    # after this Session exists and the child sees the snapshot's value, not the
+    # live one. (An ADDED var still reaches the child regardless -- the parent's
+    # live ENV is inherited too; see {WorkerEnv}'s additive-override note.)
+    # {Session::Null} sidesteps this by recomputing {WorkerEnv.default} per call.
+    def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default)
       @reads = Set.new
       @writes = Set.new
       @todo_reminder = nil
@@ -48,7 +61,14 @@ module Lain
       @memory = memory
       @manifest_root = nil
       @manifest_reminders = [].freeze
+      @worker_env = worker_env
     end
+
+    # The host-side execution context a tool resolves paths and env against --
+    # sent to tools via {Tool::Invocation#context}, never onto the Timeline.
+    #
+    # @return [WorkerEnv]
+    attr_reader :worker_env
 
     # The read-set's path identity, public so {Session::Journaled} can ask
     # "which path did that read just normalize to?" without reaching into a
@@ -243,6 +263,14 @@ module Lain
         [].freeze
       end
 
+      # The default host context, recomputed each call so a bare (context-less)
+      # tool still resolves against the LIVE `Dir.pwd` -- the one shared frozen
+      # Null instance cannot capture a working directory that may change under
+      # it, so it defers to {WorkerEnv.default} every time.
+      #
+      # @return [WorkerEnv]
+      def worker_env = WorkerEnv.default
+
       INSTANCE = new.freeze
 
       # @return [Null] the shared instance
@@ -323,6 +351,11 @@ module Lain
 
       # @return [Array<String>]
       def reminders = @session.reminders
+
+      # @return [WorkerEnv] the wrapped session's host context, forwarded
+      #   untouched -- WorkerEnv is sent-not-stored, so there is nothing to
+      #   journal.
+      def worker_env = @session.worker_env
     end
   end
 end

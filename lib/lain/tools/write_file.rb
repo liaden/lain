@@ -36,7 +36,9 @@ module Lain
       # scheduled, so this is sound for the one-call-at-a-time model this
       # harness runs today, not in general against a concurrent writer.
       requires("path exists and was never read this session") do |input, invocation|
-        !File.exist?(input.path) || session_of(invocation).read?(input.path)
+        session = session_of(invocation)
+        path = File.expand_path(input.path, session.worker_env.cwd)
+        !File.exist?(path) || session.read?(path)
       end
 
       def name = "write_file"
@@ -52,14 +54,18 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = input.path
+        session = session_of(invocation)
+        # The RESOLVED path (a relative one lands under the WorkerEnv cwd, Dir.pwd
+        # by default) is what is written and recorded, so the contract above and
+        # this write agree on the same file.
+        path = File.expand_path(input.path, session.worker_env.cwd)
         File.write(path, input.content)
         # A successful write means the session now KNOWS this file's
         # contents -- recording the read lets a following write_file or
         # edit_file call see it as read, exactly as a real read_file would.
         # The write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
         # only, the documented bash gap).
-        session_of(invocation).record_read(path).record_write(path)
+        session.record_read(path).record_write(path)
         Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
       rescue SystemCallError, IOError => e
         Tool::Result.error("could not write #{path}: #{e.message}")

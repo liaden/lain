@@ -300,7 +300,7 @@ class LainCLI < Thor
     # identity under --no-journal.
     def run_state(resumed)
       recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
-      session = resumed ? resumed.session : Lain::Session.new(memory: recorder)
+      session = resumed ? resumed.session : Lain::Session.new(memory: recorder, worker_env: Lain::WorkerEnv.default)
       chronicle.wrap_memory(recorder)
       [recorder, chronicle.wrap_session(session)]
     end

@@ -29,7 +29,13 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = input.path
+        session = session_of(invocation)
+        # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+        # under the default, so byte-identical to a raw File.read); the RESOLVED
+        # absolute path is what both the read and the read-set see, so the
+        # edit-before-write contract matches on the same file regardless of how
+        # the model spelled it.
+        path = File.expand_path(input.path, session.worker_env.cwd)
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
@@ -37,7 +43,7 @@ module Lain
         # The read-set is the point of tier 1 reads: a later edit-before-write
         # contract asks the session whether this file was read. Only a SUCCESSFUL
         # read counts -- a missing or unreadable path taught the model nothing.
-        session_of(invocation).record_read(path)
+        session.record_read(path)
         Tool::Result.ok(contents)
       rescue SystemCallError, IOError => e
         Tool::Result.error("could not read #{path}: #{e.message}")

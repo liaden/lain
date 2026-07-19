@@ -33,7 +33,7 @@ module Lain
       # (the coerced Tool::Input, not a Hash) is what {Tool#call} hands
       # contracts: see tool.rb:117-119.
       requires("path was never read this session") do |input, invocation|
-        session_of(invocation).read?(input.path)
+        session_of(invocation).read?(resolved_path(input, invocation))
       end
 
       def name = "edit_file"
@@ -50,7 +50,7 @@ module Lain
       protected
 
       def perform(input, invocation)
-        path = input.path
+        path = resolved_path(input, invocation)
         contents = File.read(path)
         occurrences = occurrences_of(input.old_string, contents)
         return Tool::Result.error(ambiguity_message(occurrences, path)) unless occurrences == 1
@@ -72,6 +72,15 @@ module Lain
       end
 
       private
+
+      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+      # under the default, so byte-identical to the pre-WorkerEnv raw path); the
+      # RESOLVED absolute path is what the read-before-write contract, the read,
+      # the write, and the read-set all agree on, whatever spelling the model
+      # sent.
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+      end
 
       # `String#scan` counts non-overlapping matches, which would call "aa" in
       # "aaa" unique and edit on a false premise; walking `index` forward by one

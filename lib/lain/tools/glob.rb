@@ -36,8 +36,12 @@ module Lain
 
       protected
 
-      def perform(input, _invocation)
-        Tool::Result.ok(matches(input.path || ".", input.pattern).join("\n"))
+      def perform(input, invocation)
+        # The base resolves against the session's WorkerEnv cwd -- `Dir.pwd`
+        # under the default, so `Dir.glob(base: Dir.pwd)` returns the same
+        # base-relative paths as the pre-WorkerEnv `base: "."` did.
+        base = File.expand_path(input.path || ".", session_of(invocation).worker_env.cwd)
+        Tool::Result.ok(matches(base, input.pattern).join("\n"))
       end
 
       private

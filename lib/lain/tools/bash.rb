@@ -76,13 +76,24 @@ module Lain
       private
 
       def build_shell_out(input, invocation)
+        worker_env = session_of(invocation).worker_env
         @shell_out_factory.call(
           input.command,
-          cwd: input.cwd,
+          cwd: resolved_cwd(input, worker_env),
+          environment: worker_env.env,
           timeout: input.timeout || DEFAULT_TIMEOUT,
           live_stdout: output_sink(invocation, :stdout),
           live_stderr: output_sink(invocation, :stderr)
         )
+      end
+
+      # A model-supplied `cwd` resolves against the WorkerEnv's cwd -- a relative
+      # one lands under it, an absolute one is honored as given (File.expand_path
+      # ignores the base for an absolute path); absent, the WorkerEnv's cwd is
+      # the working directory. Under the default WorkerEnv (`Dir.pwd`) this is
+      # byte-identical to passing the raw `input.cwd` through, nil included.
+      def resolved_cwd(input, worker_env)
+        input.cwd ? File.expand_path(input.cwd, worker_env.cwd) : worker_env.cwd
       end
 
       # Bytes are attributed to their tool_use_id AT THE SOURCE, as they are

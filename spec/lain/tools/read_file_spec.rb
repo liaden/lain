@@ -102,4 +102,36 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(result).to eq(Lain::Tool::Result.ok("contents"))
     end
   end
+
+  describe "resolving relative paths against the session WorkerEnv" do
+    def invocation_with(session)
+      Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+    end
+
+    it "resolves a relative path against Dir.pwd under the default WorkerEnv" do
+      write("rel.txt", "relative-default")
+      Dir.chdir(tmpdir) do
+        result = tool.call({ path: "rel.txt" }, invocation_with(Lain::Session.new))
+        expect(result).to eq(Lain::Tool::Result.ok("relative-default"))
+      end
+    end
+
+    it "resolves a relative path under an injected WorkerEnv cwd" do
+      write("rel.txt", "under-sandbox")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: ENV.to_h))
+
+      result = tool.call({ path: "rel.txt" }, invocation_with(session))
+
+      expect(result).to eq(Lain::Tool::Result.ok("under-sandbox"))
+    end
+
+    it "records the RESOLVED path so a later read-before-write contract still matches" do
+      write("rel.txt", "x")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: ENV.to_h))
+
+      tool.call({ path: "rel.txt" }, invocation_with(session))
+
+      expect(session.read?(File.join(tmpdir, "rel.txt"))).to be(true)
+    end
+  end
 end
