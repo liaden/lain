@@ -25,3 +25,4 @@ end
 require_relative "isolation/lease"
 require_relative "isolation/null"
 require_relative "isolation/worktree"
+require_relative "isolation/journal"
