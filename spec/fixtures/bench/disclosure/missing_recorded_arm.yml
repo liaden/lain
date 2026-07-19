@@ -1,0 +1,18 @@
+# A deliberately broken fixture (T14 review): one task whose `recorded`
+# names a pick for `upfront` but omits `deferred` entirely. Exercises
+# Bench::DisclosureSweep::MalformedTask -- a task missing a per-arm recorded
+# pick must raise at load time, never silently score that arm via a swallowed
+# KeyError (Grader::Fixture#evaluate's `rescue StandardError` would otherwise
+# turn the KeyError into an ordinary FAILED criterion: a fabricated wrong
+# guess indistinguishable from a real one).
+tasks:
+  - id: no_deferred_pick
+    query: "This task never recorded what deferred actually called."
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+      - name: unit_converter
+        description: Converts a value between metric and imperial units.
+    gold_tool: dosing_lookup
+    recorded:
+      upfront: dosing_lookup

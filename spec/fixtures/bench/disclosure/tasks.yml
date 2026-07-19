@@ -1,0 +1,103 @@
+# Synthetic-only fixture for Bench::DisclosureSweep (T14). No PHI, no real
+# patient data -- same synthetic-drug-name style as lib/lain/bench/corpus/
+# retrieval_corpus.yml.
+#
+# Each task names a small tool catalog, the GOLD (correct) tool for the task's
+# query, and a RECORDED pick per disclosure arm -- what a prior run actually
+# called under that arm, standing in for a live model call (Bench::Sweep's
+# Embeddings fixture is the same "committed answer" shape, for the vector
+# arm). The sweep never re-decides these; it only scores them against gold.
+#
+# Two axes of deliberate variation, on purpose:
+#
+# 1. Correct-call rate: upfront (full schema for every tool, every time) gets
+#    every pick right here, while deferred (name + one-line description
+#    upfront, full schema fetched later) gets two wrong -- a catalog blurb is
+#    a lossier signal than a full schema, so a real agent guessing from it
+#    alone sometimes reaches for the wrong tool. Deferred should cost fewer
+#    upfront tokens AND score a lower correct-call rate, and the report
+#    should show both, not just the one that favors the arm.
+# 2. Token spread: tasks carry DIFFERENT tool counts (2 to 5) and, for two
+#    tasks with the same count, different description lengths -- so the
+#    per-arm tokens distribution has a real min/median/mean/max spread rather
+#    than five identical catalogs collapsing it to a single point. "As
+#    distributions" (the AC's own words) has to mean something.
+tasks:
+  - id: dosing_child
+    query: "What's the correct amoxicillin dose for a 20kg child?"
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+      - name: symptom_checker
+        description: Checks a list of symptoms for possible causes.
+      - name: unit_converter
+        description: Converts a value between metric and imperial units.
+    gold_tool: dosing_lookup
+    recorded:
+      upfront: dosing_lookup
+      deferred: dosing_lookup
+
+  - id: symptom_fever_rash
+    query: "Patient has fever and a rash -- what could be causing it?"
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+      - name: symptom_checker
+        description: Checks a list of symptoms for possible causes.
+      - name: unit_converter
+        description: Converts a value between metric and imperial units.
+      - name: drug_interaction_checker
+        description: Checks whether two drugs interact.
+    gold_tool: symptom_checker
+    recorded:
+      upfront: symptom_checker
+      deferred: symptom_checker
+
+  - id: convert_mg_to_grains
+    query: "Convert 325 mg to grains."
+    tools:
+      - name: unit_converter
+        description: Converts a value between metric and imperial units.
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+    gold_tool: unit_converter
+    recorded:
+      upfront: unit_converter
+      deferred: dosing_lookup
+
+  - id: interaction_check
+    query: "Does ibuprofen interact with warfarin, and is either safe for someone with a penicillin allergy?"
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+      - name: symptom_checker
+        description: Checks a list of symptoms for possible causes.
+      - name: unit_converter
+        description: Converts a value between metric and imperial units.
+      - name: drug_interaction_checker
+        description: Checks whether two drugs interact.
+      - name: allergy_checker
+        description: Checks whether a drug is contraindicated by a listed allergy.
+    gold_tool: drug_interaction_checker
+    recorded:
+      upfront: drug_interaction_checker
+      deferred: drug_interaction_checker
+
+  - id: ambiguous_dose_unit
+    query: "How many mg is 5 grains of aspirin, and is that a safe dose?"
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+      - name: symptom_checker
+        description: Checks a list of symptoms for possible causes.
+      - name: unit_converter
+        description: >-
+          Converts a value between metric and imperial units, including
+          grains, milligrams, micrograms, millilitres, and ounces across the
+          common formulary unit families used in dosing guidance.
+      - name: drug_interaction_checker
+        description: Checks whether two drugs interact.
+    gold_tool: unit_converter
+    recorded:
+      upfront: unit_converter
+      deferred: symptom_checker

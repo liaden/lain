@@ -1,0 +1,12 @@
+# A deliberately broken fixture (T14): one task missing `gold_tool` entirely.
+# Exercises Bench::DisclosureSweep::MalformedTask -- a malformed fixture task
+# is a bug in the fixture to raise on, never a task to silently skip.
+tasks:
+  - id: no_gold_tool
+    query: "This task forgot to name its gold tool."
+    tools:
+      - name: dosing_lookup
+        description: Looks up dosing guidance for a drug and patient weight.
+    recorded:
+      upfront: dosing_lookup
+      deferred: dosing_lookup

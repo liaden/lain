@@ -1,0 +1,14 @@
+# A deliberately broken fixture (T14 review): one task whose tool catalog
+# has an entry missing `description`. Exercises Bench::DisclosureSweep::MalformedTask
+# -- a malformed NESTED tool entry must raise the same named-and-located error
+# as a malformed top-level field, never a bare task-less KeyError surfacing
+# later at token- or score-time.
+tasks:
+  - id: tool_missing_description
+    query: "One of this task's tools forgot its description."
+    tools:
+      - name: dosing_lookup
+    gold_tool: dosing_lookup
+    recorded:
+      upfront: dosing_lookup
+      deferred: dosing_lookup
