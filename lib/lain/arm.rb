@@ -50,15 +50,20 @@ module Lain
     #
     # REACHABILITY CONTRACT (load-bearing for fan-out arms). `#usage`/`#cost`/
     # `#compare_run` fold the Ledger over the UNIQUE turns REACHABLE from
-    # `timeline`'s head -- that is the repo's whole content-addressed accounting
-    # model ({Ledger}), not an accident here. So `timeline` MUST reach every turn
-    # the arm paid for, or its totals undercount. A single-thread run trivially
-    # satisfies this (one linear head reaches the whole run). A FAN-OUT arm must
-    # fold its worker heads INTO the returned head -- exactly what B8's
-    # multi-parent synthesis {Event} does (`Timeline#meet`) -- so the returned
-    # head reaches every worker turn. Returning a Run over one worker's head while
-    # the other workers' turns hang off unreachable heads prices those workers at
-    # zero, silently. `arm_spec` pins this: unreachable turns are not priced.
+    # `timeline`'s head, and {Ledger} walks RENDER ancestry only (first-parent,
+    # {Timeline#ancestors}) -- causal edges are NOT priced. So the arm's TOTALS
+    # must be made correct one of two ways. (a) RENDER-REACHABILITY: every paid
+    # turn sits on the returned head's first-parent chain, which a single-thread
+    # run gets for free (one linear head reaches the whole run). (b) LABELED
+    # RE-ATTRIBUTION: a paid turn that is NOT render-reachable (a fan-out worker's
+    # fresh-root turns) has its usage re-keyed onto a reachable digest, each moved
+    # record marked `reattributed: true` and `attributed_from: <the worker head>`
+    # so the record stays honest and per-worker spend is recoverable. B8's
+    # synthesis is (b): the multi-parent {Event} it commits NAMES every worker
+    # head causally (`commit(causal_parents:)`), while the workers' tokens
+    # re-attribute onto the reachable synthesis turn. Returning a Run whose totals
+    # silently omit a paid worker -- neither reachable nor re-attributed -- prices
+    # that worker at zero. `arm_spec` pins that unreachable turns are not priced.
     Run = Data.define(:arm, :timeline, :grade, :elapsed, :ledger) do
       # @return [Compare::Run] this trajectory priced and graded, in Compare's
       #   vocabulary
@@ -115,4 +120,6 @@ require_relative "arm/ledger_state"
 require_relative "arm/single_thread"
 require_relative "arm/adaptive_router"
 require_relative "arm/dual_ledger"
+require_relative "arm/synthesis"
+require_relative "arm/orchestrator_worker"
 require_relative "arm/driver"
