@@ -482,6 +482,160 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
+  # ---- Scenario: isolation lease lifecycle (B5) ------------------------------
+  #
+  # A worker leases an isolated WorkerEnv on adopt, its tools run under that
+  # leased cwd/env, and the lease is released on #stop. The default backend is
+  # the shared-process Null, so a supervisor with no isolation wired is
+  # unchanged; a recording backend here proves the acquire/release flow and the
+  # WorkerEnv reaching the child's tools.
+
+  describe "isolation lease lifecycle" do
+    # RecordingIsolation is the Isolation duck: it hands out real
+    # {Isolation::Lease}s over a fixed WorkerEnv and records every acquire and
+    # release by worker key, so a spec asserts the lifecycle without a git
+    # checkout (the real Worktree backend is B2's, tested there). EnvProbe's
+    # child tool records the WorkerEnv its Session lends it -- the honest "the
+    # worker's tools ran under its leased WorkerEnv" assertion.
+    before do
+      stub_const("RecordingIsolation", Class.new do
+        attr_reader :acquired, :released
+
+        def initialize(env)
+          @env = env
+          @acquired = []
+          @released = []
+        end
+
+        def acquire(worker_id)
+          @acquired << worker_id
+          recorder = self
+          Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
+        end
+      end)
+
+      stub_const("EnvProbe", Class.new(Lain::Tool) do
+        define_method(:initialize) do |sink|
+          super()
+          @sink = sink
+        end
+        def name = "env_probe"
+        def description = "records the worker env its session lends it"
+        def input_schema = { type: :object, properties: {}, required: [] }
+
+        def perform(_input, invocation)
+          @sink << session_of(invocation).worker_env
+          Lain::Tool::Result.ok("probed")
+        end
+      end)
+    end
+
+    # The child's first turn calls the probe, then settles.
+    def probing_actor_tool(collector)
+      Lain::Tools::Subagent.new(
+        provider: Lain::Provider::Mock.new(responses: [tool_response(%w[p env_probe] << {}), text_response("done")]),
+        context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
+        toolset: Lain::Toolset.new([EnvProbe.new(collector)]),
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+        parent: parent_timeline, journal: Lain::Channel::Null.instance, mode: :actor, log:
+      )
+    end
+
+    let(:leased_env) { Lain::WorkerEnv.new(cwd: "/leased/checkout", env: { "DATABASE_URL" => "postgres://worker" }) }
+
+    it "acquires a lease on adopt, runs the worker's tools under its WorkerEnv, and releases on stop" do
+      backend = RecordingIsolation.new(leased_env)
+      seen = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: backend).run(task)
+        tool = probing_actor_tool(seen)
+
+        actor = supervisor.adopt(role: "worker") { |worker_env| tool.launch_actor("go", worker_env:) }
+        actor.settle
+
+        expect(backend.acquired.size).to eq(1)      # a lease was acquired on adopt
+        expect(seen).to eq([leased_env])            # the child's tool ran under it
+        expect(backend.released).to be_empty        # not released while alive
+        supervisor.stop
+      end
+      expect(backend.released.size).to eq(1)        # released on teardown
+    end
+
+    it "releases a distinct lease per adopted worker on stop" do
+      backend = RecordingIsolation.new(leased_env)
+      Sync do |task|
+        supervisor = described_class.new(isolation: backend).run(task)
+        supervisor.adopt(role: "a") { actor_tool(text_response("ok")).launch_actor("go") }.settle
+        supervisor.adopt(role: "b") { actor_tool(text_response("ok")).launch_actor("go") }.settle
+
+        expect(backend.acquired.size).to eq(2)
+        expect(backend.acquired.uniq.size).to eq(2) # distinct worker keys, so worktree paths never collide
+        supervisor.stop
+      end
+      expect(backend.released.size).to eq(2)
+    end
+
+    # The escalation trigger's other half: a launch that raises AFTER the lease
+    # was acquired must not leak the provisioned resource.
+    it "releases the lease when the launch fails, leaking nothing" do
+      backend = RecordingIsolation.new(leased_env)
+      Sync do |task|
+        supervisor = described_class.new(isolation: backend).run(task)
+
+        expect { supervisor.adopt(role: "doomed") { raise Lain::Error, "launch blew up" } }
+          .to raise_error(Lain::Error, /blew up/)
+
+        expect(backend.acquired.size).to eq(1)
+        expect(backend.released.size).to eq(1)      # reclaimed on the failed adoption
+        expect(supervisor.to_a).to be_empty         # nothing registered
+        supervisor.stop
+      end
+    end
+
+    # The cancellation window (panel fix): a lease acquired, then the adopted
+    # task CANCELLED mid-launch. Async::Stop is an Exception, not a
+    # StandardError, so a `rescue StandardError` would miss it and strand an
+    # orphan worktree invisible to #stop -- the reclaim must ride `ensure`.
+    it "releases the lease when the adopted task is cancelled after acquire, registering nothing" do
+      backend = RecordingIsolation.new(leased_env)
+      Sync do |task|
+        supervisor = described_class.new(isolation: backend).run(task)
+        acquired = Async::Queue.new
+        adopter = task.async do
+          supervisor.adopt(role: "cancelled") do |_worker_env|
+            acquired.enqueue(:go)    # the lease is provably acquired; we are now IN launch
+            Async::Queue.new.dequeue # park forever -- only cancellation ends this
+          end
+        rescue Async::Stop
+          # the adopted task was cancelled mid-launch; adopt's own await re-raises
+          # it here, and this task exits cleanly so adopter.wait does not re-raise.
+        end
+        acquired.dequeue             # provably past the acquire, inside the launch
+        supervisor.stop              # cancels the in-flight adopted task mid-launch
+        adopter.wait
+
+        expect(backend.acquired.size).to eq(1)
+        expect(backend.released.size).to eq(1) # reclaimed on cancellation, not stranded
+        expect(supervisor.to_a).to be_empty # nothing registered
+      end
+    end
+
+    # The default backend is the shared-process Null: release is a no-op, so one
+    # worker's exit never tears down state a still-running sibling shares.
+    it "defaults to the Null backend -- the child runs under the process WorkerEnv, release is a no-op" do
+      seen = []
+      Sync do |task|
+        supervisor = described_class.new.run(task) # no isolation wired
+        tool = probing_actor_tool(seen)
+
+        supervisor.adopt(role: "worker") { |worker_env| tool.launch_actor("go", worker_env:) }.settle
+
+        expect(seen.first.cwd).to eq(Dir.pwd) # WorkerEnv.default, exactly as before the seam
+        expect { supervisor.stop }.not_to raise_error
+      end
+    end
+  end
+
   # ---- The no-supervisor default -------------------------------------------
 
   describe Lain::Supervisor::Null do

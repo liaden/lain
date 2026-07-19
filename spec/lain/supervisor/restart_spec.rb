@@ -318,6 +318,81 @@ RSpec.describe Lain::Supervisor::Restart do
     end
   end
 
+  # ---- Scenario: restart re-acquires an equivalent lease (B5) ----------------
+  #
+  # The killed worker's lease died with its process; the restart RE-ACQUIRES a
+  # fresh one via the supervisor's isolation backend and hands its WorkerEnv to
+  # the revive block, so the revived worker runs under an equivalent isolated
+  # environment. Released on the supervisor's #stop, like any adoption.
+
+  # RecordingIsolation is the Isolation duck: real {Isolation::Lease}s over a
+  # fixed WorkerEnv, recording every acquire/release by worker key.
+  before do
+    stub_const("RecordingIsolation", Class.new do
+      attr_reader :acquired, :released
+
+      def initialize(env)
+        @env = env
+        @acquired = []
+        @released = []
+      end
+
+      def acquire(worker_id)
+        @acquired << worker_id
+        recorder = self
+        Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
+      end
+    end)
+  end
+
+  let(:leased_env) { Lain::WorkerEnv.new(cwd: File.join(dir, "worker-checkout"), env: { "REDIS_URL" => "redis://1" }) }
+
+  it "re-acquires a fresh equivalent lease and the revived worker runs under it" do
+    backend = RecordingIsolation.new(leased_env)
+    seen = nil
+    provider = Lain::Provider::Mock.new(responses: life_responses)
+
+    Sync do |task|
+      record_killed_actor(task, provider:)
+      supervisor = Lain::Supervisor.new(isolation: backend).run(task)
+
+      Lain::Supervisor::Restart.new(entries: record_io.string.each_line, supervisor:,
+                                    journal: restart_journal, root: dir)
+                               .call(role: "researcher") do |recording, worker_env|
+        seen = worker_env
+        Lain::Agent.new(provider: revive_provider, toolset:, context:,
+                        timeline: recording.timeline, session: Lain::Session.new(worker_env:))
+      end
+
+      expect(backend.acquired.size).to eq(1)   # re-acquired on Restart#call
+      expect(seen).to eq(leased_env)           # the revived worker's Session runs under it
+      expect(supervisor.map(&:role)).to eq(["researcher"])
+      supervisor.stop
+    end
+
+    expect(backend.released.size).to eq(1)     # released on teardown, like any adoption
+  end
+
+  # The escalation trigger: adding a side effect (re-acquire) to the pure-replay
+  # restart path must fail the restart LOUDLY, never revive a worker with a
+  # shared/leaked environment.
+  it "fails the restart loudly when the lease cannot be re-acquired, reviving nothing" do
+    failing = Class.new do
+      def acquire(_worker_id) = raise(Lain::Error, "no isolation available")
+    end.new
+    provider = Lain::Provider::Mock.new(responses: life_responses)
+
+    Sync do |task|
+      record_killed_actor(task, provider:)
+      supervisor = Lain::Supervisor.new(isolation: failing).run(task)
+
+      expect { restart_over(record_io.string.each_line, supervisor:) }
+        .to raise_error(Lain::Error, /no isolation/)
+      expect(supervisor.to_a).to be_empty # no worker revived on a failed acquire
+      supervisor.stop
+    end
+  end
+
   describe Lain::Supervisor::Restart::Revived do
     let(:agent) do
       Lain::Agent.new(provider: revive_provider, toolset:, context:, timeline: parent_timeline)

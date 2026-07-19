@@ -36,14 +36,24 @@ module Lain
 
     # @param journal [#<<] where a bounded {Drain}'s timeout record lands;
     #   the Null channel by default.
-    def initialize(journal: Channel::Null.instance)
+    # @param isolation [#acquire] the isolation backend each adoption leases a
+    #   {WorkerEnv} from; the shared-process {Isolation::Null} by default, whose
+    #   lease is {WorkerEnv.default} and whose release is a no-op -- so a
+    #   supervisor with no isolation wired behaves byte-identically to before
+    #   the lease seam existed (Null Object, no `if isolation` anywhere).
+    def initialize(journal: Channel::Null.instance, isolation: Isolation::Null.new)
       @journal = journal
+      @isolation = isolation
       # An Array, not an address-keyed Hash: an address is the :spawn event's
       # CONTENT digest, and two spawns of the same arm from the same head
       # legitimately share one -- the registry records ADOPTIONS, in adoption
       # order, so a colliding address must not silently drop a live actor.
       @registry = []
       @task = nil
+      # A per-supervisor monotonic counter so each adoption gets a distinct
+      # worker id even when two share a role -- a Worktree backend keys its
+      # checkout path on this, and two live leases at one path is a refusal.
+      @worker_seq = 0
     end
 
     # Spawn the long-lived reactor task under `task` and park it. The park is
@@ -77,15 +87,26 @@ module Lain
     # of -- invisible to the HUD, skipped by the drain, torn down by {#stop}
     # without a farewell (review fix 2).
     #
+    # A lease is acquired FIRST, inside the adopted task, and its {WorkerEnv} is
+    # handed to the launch block so the actor's child runs its tools under the
+    # leased cwd/env. The block may ignore it (a non-isolation launch is a
+    # zero-arg block, and a Proc drops the extra arg) -- that is the byte-
+    # identical default path. The lease rides the {Registration}, released on
+    # {#stop}. A launch that raises OR is cancelled after the acquire releases
+    # the lease before unwinding, so a refused adoption leaks no resource.
+    #
     # @param role [String] what this actor is for -- the registry's label
+    # @param worker_id [Object] the isolation key; a distinct per-adoption id by
+    #   default, so same-role workers never collide on one leased path
+    # @yieldparam worker_env [WorkerEnv] the leased cwd/env the child runs under
     # @yieldreturn [Tools::Subagent::Actor] the launched actor
     # @return [Tools::Subagent::Actor]
-    def adopt(role:, &launch)
+    def adopt(role:, worker_id: nil, &launch)
       raise NotRunning, "no reactor task is running; #run this supervisor under an orchestration reactor first" unless
         running?
 
       @task.async do
-        launch.call.tap { |actor| @registry << Registration.new(role:, actor:) }
+        register(role, @isolation.acquire(worker_id || next_worker_id(role)), launch)
       end.wait
     end
 
@@ -116,10 +137,38 @@ module Lain
     def stop
       return self unless running?
 
-      each { |registration| registration.actor.stop }
+      each do |registration|
+        registration.actor.stop
+        registration.release
+      end
       @task.stop
       @task.wait
       self
+    end
+
+    private
+
+    def next_worker_id(role)
+      @worker_seq += 1
+      "#{role}-#{@worker_seq}"
+    end
+
+    # The registration append rides INSIDE the adopted task (review fix 2), and
+    # so does the lease it carries. `registered` guards the reclaim: any exit
+    # that did NOT reach a live registration -- a launch that raised, OR the
+    # adopted task CANCELLED after the acquire (Async::Stop is an Exception, not
+    # a StandardError, so a `rescue StandardError` would miss it and strand an
+    # orphan worktree invisible to #stop) -- releases the lease on the way out.
+    # `ensure` is the only exit that runs on cancellation too, so it is the one
+    # place the reclaim cannot be skipped.
+    def register(role, lease, launch)
+      registered = false
+      actor = launch.call(lease.worker_env)
+      @registry << Registration.new(role:, actor:, lease:)
+      registered = true
+      actor
+    ensure
+      lease.release unless registered
     end
   end
 
@@ -127,13 +176,23 @@ module Lain
   # these is its own responsibility, and the split keeps every class body
   # within Metrics/ClassLength instead of loosening it.
   class Supervisor
-    # One registry row: the role the adoption named, and the live actor it
-    # holds. State is DERIVED from the actor's own predicates on every read --
-    # a stored status field would go stale the moment a fiber failed.
-    Registration = Data.define(:role, :actor) do
+    # One registry row: the role the adoption named, the live actor it holds,
+    # and the isolation {Isolation::Lease} that actor runs under. State is
+    # DERIVED from the actor's own predicates on every read -- a stored status
+    # field would go stale the moment a fiber failed.
+    Registration = Data.define(:role, :actor, :lease) do
       def address = actor.address
 
       def head_digest = actor.timeline.head_digest
+
+      # Reclaim the worker's leased environment. A no-op on the shared-process
+      # {Isolation::Null} lease (its on_release does nothing), so releasing one
+      # worker's lease never tears down state a still-running sibling shares;
+      # a Worktree lease removes exactly this worker's own checkout. The
+      # crashed-worker case is spec'd apart: a restart acquires a FRESH lease
+      # under a new worker_id, so a dead registration's lease is reclaimed here
+      # at #stop, never force-reaped under a successor that never held it.
+      def release = lease.release
 
       # :running covers parked-and-serviceable; :failed is dead-but-not-stopped
       # ({Tools::Subagent::Actor#dead?}'s distinction); :stopped wins over

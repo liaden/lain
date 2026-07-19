@@ -186,11 +186,11 @@ module Lain
       # caller must hold a reactor that outlives the parent's asks -- either an
       # orchestration Sync/Async above the Agent (programmatic use) or the
       # {Supervisor} task {#perform} adopts this launch onto.
-      def launch_actor(prompt, parent: parent_timeline)
+      def launch_actor(prompt, parent: parent_timeline, worker_env: WorkerEnv.default)
         # Per launch, mirroring #perform: AC4's floor note has no lifecycle
         # exemption, so an actor-mode sibling under the floor is reported too.
         policy.prefix.journal_floor(@journal)
-        Actor.new(agent: build_child(parent), lineage:, parent:, journal: @journal).launch(prompt)
+        Actor.new(agent: build_child(parent, worker_env), lineage:, parent:, journal: @journal).launch(prompt)
       end
 
       # A nested copy of this tool, for a child's union: same collaborators
@@ -238,7 +238,9 @@ module Lain
       def adopt_actor(prompt)
         return actor_refused unless @supervisor.running?
 
-        actor = @supervisor.adopt(role: @name) { launch_actor(prompt) }
+        # The supervisor acquires this worker's isolation lease and hands its
+        # WorkerEnv down, so the actor's child resolves cwd/env against it.
+        actor = @supervisor.adopt(role: @name) { |worker_env| launch_actor(prompt, worker_env:) }
         Tool::Result.ok("actor launched: #{actor.address}")
       end
 
@@ -275,12 +277,12 @@ module Lain
       # loop to settle -- fresh starts that turn as a root, inherit starts it
       # on the parent's head (O(1) fork).
       def run_child(prompt, parent, on_stream_started: nil)
-        child = build_child(parent)
+        child = build_child(parent, WorkerEnv.default)
         response = child.ask(prompt, on_stream_started:)
         [child.timeline, response]
       end
 
-      def build_child(parent) = @builder.build(parent, ceiling: @max_depth - 1)
+      def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
 
       def policy = @builder.policy
 
@@ -374,10 +376,10 @@ module Lain
         # whose "correction" would delete the very assignment the thunk's
         # binding depends on -- the Timeline#commit story again, so the code is
         # shaped to give the cop nothing to break.
-        def build(parent, ceiling:)
+        def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
           union = child_union(-> { child.timeline }, ceiling)
-          spawn_agent(parent, union, @policy.attenuate(union)).tap { |agent| child = agent }
+          spawn_agent(parent, union, @policy.attenuate(union), worker_env).tap { |agent| child = agent }
         end
 
         private
@@ -410,12 +412,12 @@ module Lain
         # already wires. The journal rides along so a strategy that rewrites
         # the factory's system (a stripped caller mark) can say so in the
         # record.
-        def spawn_agent(parent, union, allowed)
+        def spawn_agent(parent, union, allowed, worker_env)
           Agent.new(
             provider: @provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
             timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
-            session: Session.new, budget: @budget, journal: @journal
+            session: Session.new(worker_env:), budget: @budget, journal: @journal
           )
         end
 

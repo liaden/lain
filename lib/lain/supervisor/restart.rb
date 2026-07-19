@@ -85,8 +85,18 @@ module Lain
       # stand at the replayed head ({Diverged}); seed it with
       # `recording.timeline`.
       #
+      # A fresh isolation lease is RE-ACQUIRED here (via {Supervisor#adopt}), so
+      # a restarted worker regains an equivalent isolated environment rather
+      # than inheriting the dead worker's abandoned one. The block receives that
+      # lease's {WorkerEnv} as its second yield arg -- seed the revived Agent's
+      # Session with it so the worker's tools run under the new lease. A block
+      # that ignores it (the shared-process default) is unchanged. A failed
+      # re-acquire raises out of {Supervisor#adopt}, failing the restart LOUDLY
+      # before any worker is revived -- never a worker on a leaked environment.
+      #
       # @param role [String] the registry label the new adoption records
       # @yieldparam recording [Bench::Session::Recording]
+      # @yieldparam worker_env [WorkerEnv] the re-acquired lease's cwd/env
       # @yieldreturn [Agent] an agent seeded with the replayed timeline
       # @return [Result]
       # @raise [Bench::Session::Corrupt, Diverged, Workspace::Restore::Dirty]
@@ -181,9 +191,19 @@ module Lain
       # runs INSIDE the adopted task, before {Supervisor#adopt}'s registration
       # append -- so a diverged revival raises out of the adoption and
       # registers nothing.
+      # RETENTION: the fresh lease this revival acquires is reclaimed at the
+      # supervisor's #stop, NOT at the next restart. A restart is a NEW adoption
+      # under a NEW worker_id (the supervisor allocates one per adoption), so
+      # B2's same-id reap never fires across restarts -- N crash-restarts leave
+      # N stale worktrees standing until #stop. This is deliberate: the dead
+      # registration is honest HISTORY of the first life (see the Restart class
+      # doc's "Identity" note), so its lease is not force-reclaimed under a
+      # successor that never held it; #stop reclaims the whole fleet at once.
       def adopt(role, recording, revive)
         head = recording.timeline.head_digest
-        @supervisor.adopt(role:) { Revived.new(agent: at_head!(revive.call(recording), head), address: head) }
+        @supervisor.adopt(role:) do |worker_env|
+          Revived.new(agent: at_head!(revive.call(recording, worker_env), head), address: head)
+        end
       end
 
       def at_head!(agent, head)
