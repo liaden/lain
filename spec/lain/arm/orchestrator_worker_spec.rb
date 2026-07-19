@@ -3,7 +3,7 @@
 # A fake isolation backend for AC2: it leases a distinct WorkerEnv (its own cwd)
 # per worker and records every acquire/release, standing in for the real
 # Isolation unit (a sibling card) over B1's WorkerEnv.
-class FakeIsolationBackend
+class FakeWorkerIsolation
   Lease = Struct.new(:worker_env, :log) do
     def release = log << worker_env
   end
@@ -103,7 +103,7 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
   # the seam wires it onto the worker's Session -- so worker tools resolve paths
   # and shell out under the lease, not the shared process environment.
   describe "the injected isolation backend leases per worker" do
-    let(:backend) { FakeIsolationBackend.new }
+    let(:backend) { FakeWorkerIsolation.new }
 
     it "acquires a distinct lease per worker and releases each" do
       described_class.new(name: "ow").run(task, spawn_seam: worker_seam, grader:, isolation: backend)
