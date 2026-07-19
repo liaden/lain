@@ -2,6 +2,7 @@
 
 require_relative "compaction/need"
 require_relative "compaction/cold"
+require_relative "compaction/scheduler"
 
 module Lain
   # WHETHER a compaction is warranted, kept apart from {Context::Compact}
