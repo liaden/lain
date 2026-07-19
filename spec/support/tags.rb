@@ -87,6 +87,22 @@ RSpec.configure do |config|
   end
 end
 
+# :services specs provision REAL Postgres/Redis for the DB-index isolation
+# strategy (spec/lain/isolation/db_index_spec.rb). They cost no money and touch
+# no network -- they shell out to createdb/dropdb/redis-cli against a local
+# server -- but they need that server running, so they are opt-in like :nvim,
+# run only with LAIN_SERVICES=1. When opted in but the CLI tools are absent, an
+# example SKIPS (never fails): a missing server is an environment gap, not a
+# lain regression. Kept separate from :integration precisely because it needs no
+# ANTHROPIC_API_KEY.
+#
+#     LAIN_SERVICES=1 bundle exec rspec spec/lain/isolation/db_index_spec.rb
+SERVICES_ENABLED = ENV["LAIN_SERVICES"] == "1"
+
+RSpec.configure do |config|
+  config.filter_run_excluding(:services) unless SERVICES_ENABLED
+end
+
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
     NetworkAccess.permit { example.run }
