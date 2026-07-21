@@ -11,6 +11,7 @@ PATH
       faraday-net_http (~> 3.4)
       faraday-retry (~> 2.4)
       mixlib-shellout (~> 3.4)
+      msgpack (~> 1.8)
       neovim (~> 0.10)
       pastel (~> 0.8)
       rb_sys (~> 0.9.91)

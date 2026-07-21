@@ -82,6 +82,11 @@ Gem::Specification.new do |spec|
   # and live_stdout/live_stderr streaming for the `bash` tool. It is not a sandbox --
   # isolation arrives later via the out-of-process Rust exec boundary.
   spec.add_dependency "mixlib-shellout", "~> 3.4"
+  # Wire format for Core::Client, the msgpack-RPC client to the lain-core exec
+  # daemon. Already in the bundle transitively (neovim, bootsnap) -- declared
+  # because Core requires it directly; a transitive dep is one upstream refactor
+  # away from vanishing.
+  spec.add_dependency "msgpack", "~> 1.8"
   # msgpack-RPC client for Frontend::Neovim (4-2). Runtime, not dev: the frontend
   # ships in the gem and attaches to a running `nvim --listen` socket.
   spec.add_dependency "neovim", "~> 0.10"
