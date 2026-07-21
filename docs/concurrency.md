@@ -432,3 +432,67 @@ missing `Response`, not by rescuing); interrupting a task that already settled i
 no-op, so the watchdog need not race the run to the finish line; and without the `ensure`, a
 run that finishes in 50ms still holds the reactor open for the watchdog's full timer — `Sync`
 returns only when every child task is done.
+
+## 2026-07-21 — parallel tools: the invariant set (E1–E3)
+
+This is the fan-out 5-0.3 deferred: tool dispatch now runs as parallel `Async::Task`s at the
+`Agent::ToolRunner` boundary — the seam 5-0.2 recommended as `task.async { handler.call(...) }`,
+landed as `task.async { result_block(...) }` (the middleware chain, the handler, and the wire
+shaping together) — and the handler chain underneath stays plain, synchronous Ruby. What follows
+records the invariant set that makes the fan-out sound, because each piece is a claim that
+could silently rot — so each is pinned as a spec, and each spec was proven to bite by breaking
+its invariant locally and watching it fail before restoring.
+
+**What makes a tool `parallel_safe?`.** It is a per-tool opt-in declaration (`Tool#parallel_safe?`,
+default false), never an inference. The audit criterion for a true answer: *reads only, no
+Session write-set mutation, no process-global state*. The tier-1 structured reads (`read_file`,
+`glob`, `grep`, the AST tools, `memory_read`, …) and `subagent` pass it; everything else —
+model-controlled command strings (`bash`), write-set mutators (`edit_file`, `write_file`,
+`todo_write`, `memory_write`), and anything not yet audited — answers false and runs alone. The
+partition is pinned exhaustively by `spec/lain/tools/parallel_safety_spec.rb`: the true-set and
+false-set together must equal the shipped toolset exactly, so a future tool must choose
+deliberately or fail by name.
+
+**The fiber-only safety model.** No lock guards any of this. Safety rests entirely on
+cooperative scheduling: a fiber yields only at an IO boundary the scheduler controls, so any
+check-then-mutate pair with no yield point between check and mutate is atomic *by construction*,
+not by mutex. Two claims carry the whole design, and each is now a spec:
+
+- `Session::Journaled#record_read` is check-then-mutate (`read?`, then the Set insert, then a
+  conditional journal write). The check and the mutate are pure Ruby with no IO, so two gathered
+  fibers reading the same path cannot both see "first" — the read-set holds the path once and
+  exactly one `session_read` journals. Pinned by `spec/lain/session_concurrency_spec.rb`, proven
+  to bite by temporarily inserting a `sleep` (a scheduler yield) between check and mutate: both
+  fibers then journaled the same path, and the spec failed for exactly that reason.
+- `Approval::Queue`'s `@parked` is a plain Array whose mutations (`<<` on admit, `delete` on
+  settle) are straight-line Ruby; every park happens on an Async primitive *between* those
+  mutations, never inside one. So N concurrently gated fibers admit N independent pendings, each
+  decidable on its own terms (one approved, one timed out — distinct verdicts, distinct journal
+  records). Pinned by `spec/lain/approval/queue_concurrency_spec.rb`, proven to bite by
+  temporarily rewriting the push as read-yield-write: the classic lost update dropped one of two
+  concurrent pendings from the parked list, and the spec failed for exactly that reason.
+
+The corollary is an escalation rule, stated in both files' WHY comments: **if either spec can
+ever only pass by adding a new lock, the no-yield claim has failed** and the diagnosis belongs
+to a human, not to a patch. (The existing `Store`/`Journal` `Monitor`s are the deliberate
+holdovers this document already defends above — they are not evidence of failure.)
+
+**Barrier semantics, and the rejected alternative.** A mixed turn partitions into maximal
+*contiguous* runs of parallel-safe tools; each safe run gathers concurrently, and each unsafe
+tool is a barrier that runs alone — strictly after everything before it, strictly before
+everything after it. Execution order therefore never diverges from the wire order the model
+saw. The tempting alternative — gather the safe *subset* first, run the unsafe remainder after —
+was rejected, in the WHY comment on `Agent::ToolRunner#run` (`lib/lain/agent/tool_runner.rb`),
+as "a silent causal lie the moment an unsafe tool writes what a later safe tool reads": the
+model emitted `[safe, unsafe, safe]` believing it executes in that order, and subset-first would
+let the trailing safe tool observe pre-barrier state while claiming post-barrier position.
+`spec/lain/agent/tool_runner_spec.rb` pins both halves — the overlap within a safe run and the
+sequential-equivalence of observation across a barrier.
+
+**The `Dir.pwd` hazard.** A tool's working directory is *per-tool state*, carried by
+`WorkerEnv#cwd` on the session a tool reads through its invocation — it is read for path
+resolution, never `chdir`'d. `Dir.chdir` mutates the one process-global cwd, which under
+gathered dispatch would race every concurrently-resolving path in every sibling fiber; it is
+exactly the "process-global state" the audit criterion excludes. `bash`'s `cd` runs inside the
+subprocess only, and `spec/lain/tools/parallel_safety_spec.rb` pins that the harness's
+`Dir.pwd` is unchanged after a `cd`-issuing tool call.

@@ -306,7 +306,10 @@ module Lain
       # between the `read?` check and the Set mutation (both pure Ruby, no
       # IO), and the journal write -- the only place a fiber COULD yield --
       # runs after the mutation, so two fibers reading the same path cannot
-      # both see "first".
+      # both see "first". This claim carries ToolRunner's gathered dispatch
+      # (docs/concurrency.md, "parallel tools") and is pinned by
+      # spec/lain/session_concurrency_spec.rb; if that spec can only pass by
+      # adding a lock here, the claim has failed -- escalate, don't patch.
       #
       # @return [self]
       def record_read(path)

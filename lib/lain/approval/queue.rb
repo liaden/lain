@@ -105,6 +105,15 @@ module Lain
         @timeout = timeout
         @clock = clock
         @arrivals = Async::Queue.new
+        # A plain Array with no lock, on purpose: every @parked mutation (the
+        # `<<` in #admit, the `delete` in #settle's ensure) is straight-line
+        # Ruby with no yield point, and a fiber only interleaves at an IO
+        # yield -- the parks in #call/#dequeue sit BETWEEN mutations, never
+        # inside one. So N gated fibers admit N independent pendings
+        # (docs/concurrency.md, "parallel tools"), pinned by
+        # spec/lain/approval/queue_concurrency_spec.rb; if that spec can only
+        # pass by adding a lock here, the claim has failed -- escalate,
+        # don't patch.
         @parked = []
       end
 
