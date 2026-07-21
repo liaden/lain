@@ -182,6 +182,62 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     end
   end
 
+  describe "the secret guard covers the second writer and names it" do
+    it "refuses an improvement_write whose note contains an AKIA credential, naming improvement_write" do
+      secret = "AKIA#{"A" * 16}"
+      env, called = run(tool_call(name: "improvement_write", input: { "note" => secret, "kind" => "bug" }))
+
+      expect(called).to be(false)
+      expect(env.fetch(:result).error?).to be(true)
+      expect(env.fetch(:result).content).to include("improvement_write refused")
+      expect(env.fetch(:result).content).not_to include(secret)
+
+      refusal = journal.events.first
+      expect(refusal).to be_a(Lain::Telemetry::WriteRefused)
+      expect(refusal.pattern).to eq("aws access key id")
+    end
+
+    it "produces the SAME telemetry shape a memory_write refusal produces -- only the message names differ" do
+      secret = "AKIA#{"A" * 16}"
+
+      memory_journal = RecordingChannel.new
+      memory_guard = described_class.new(journal: memory_journal)
+      run(tool_call(name: "memory_write", input: { "id" => "x", "description" => "y", "body" => secret }),
+          middleware: memory_guard)
+
+      improvement_journal = RecordingChannel.new
+      improvement_guard = described_class.new(journal: improvement_journal)
+      run(tool_call(name: "improvement_write", input: { "note" => secret, "kind" => "bug" }),
+          middleware: improvement_guard)
+
+      memory_refusal = memory_journal.events.first
+      improvement_refusal = improvement_journal.events.first
+
+      expect(improvement_refusal.to_journal.keys).to eq(memory_refusal.to_journal.keys)
+      expect(improvement_refusal.pattern).to eq(memory_refusal.pattern)
+    end
+
+    it "leaves memory_write refusals unchanged: same message text, same pattern" do
+      secret = "AKIA#{"A" * 16}"
+      env, called = run(tool_call(name: "memory_write", input: { "id" => "x", "description" => "y", "body" => secret }))
+
+      expect(called).to be(false)
+      expect(env.fetch(:result).content).to eq(
+        "memory_write refused: input matches a aws access key id pattern; nothing was written."
+      )
+    end
+
+    it "lets a benign improvement_write proceed, with nothing journaled" do
+      benign = tool_call(name: "improvement_write",
+                         input: { "note" => "bash timeout is too aggressive", "kind" => "knob" })
+      env, called = run(benign)
+
+      expect(called).to be(true)
+      expect(env.fetch(:result).error?).to be(false)
+      expect(journal.events).to be_empty
+    end
+  end
+
   describe "in an Agent's tool phase" do
     it "keeps the real recorder untouched: the refused write never lands in the Memory::Index" do
       recorder = Lain::Memory::Recorder.new

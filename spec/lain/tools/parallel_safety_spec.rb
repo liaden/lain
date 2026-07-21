@@ -52,10 +52,16 @@ module ParallelSafetySpecSupport
   # command string (bash, and core_exec -- C3's approval-gated tier-3
   # comparison arm over the lain-core boundary, constructed explicitly rather
   # than shipped in base_tools), a Session write-set mutation (edit_file,
-  # write_file, todo_write, memory_write), or a capability this card's audit
-  # never examined (run_skill, ask_human, the web tools, tool_search) -- none
-  # opted in without a deliberate audit of its own.
-  FALSE_TOOLS = %w[bash core_exec edit_file write_file todo_write memory_write
+  # write_file, todo_write, memory_write), M2's `improvement_write` (NOT a
+  # Session write-set mutation -- it never touches Session at all -- but a
+  # durable, ORDERED cross-process append via {Improvement::Sink}: concurrent
+  # dispatch could interleave two `sink.append` calls' underlying `write(2)`s
+  # in whatever order the scheduler happens to run them, which is exactly the
+  # ordering a model-visible sequence of notes should not depend on), or a
+  # capability this card's audit never examined (run_skill, ask_human, the
+  # web tools, tool_search) -- none opted in without a deliberate audit of
+  # its own.
+  FALSE_TOOLS = %w[bash core_exec edit_file write_file todo_write memory_write improvement_write
                    run_skill ask_human web_fetch web_search tool_search].freeze
 
   def self.build_subagent
@@ -101,6 +107,9 @@ module ParallelSafetySpecSupport
     "write_file" => -> { Lain::Tools::WriteFile.new },
     "todo_write" => -> { Lain::Tools::TodoWrite.new },
     "memory_write" => -> { Lain::Tools::MemoryWrite.new(recorder: Lain::Memory::Recorder.new) },
+    "improvement_write" => lambda {
+      Lain::Tools::ImprovementWrite.new(sink: Lain::Improvement::Sink.new(paths: Lain::Paths.new, session: "test"))
+    },
     "run_skill" => -> { build_run_skill },
     "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },

@@ -2,15 +2,16 @@
 
 module Lain
   module Middleware
-    # Refuses a `memory_write` whose input looks like a secret, before the
-    # write ever reaches the recorder.
+    # Refuses a `memory_write` or `improvement_write` whose input looks like a
+    # secret, before the write ever reaches its recorder/sink.
     #
     # This has to sit in the TOOL phase, at the `ToolRunner#dispatch` seam
     # (env is `{effect:, context:}`, the outcome rides `env[:result]`), because
     # that is the only point with the authority to withhold the call entirely.
-    # Once a credential is inside a Memory::Item it is indexed and readable by
-    # every future `memory_read` -- there is no un-indexing it, so the check
-    # has to run BEFORE the recorder, not clean up after it.
+    # Once a credential is inside a Memory::Item (or an Improvement) it is
+    # indexed/durable and readable by every future read -- there is no
+    # un-indexing it, so the check has to run BEFORE the write, not clean up
+    # after it.
     #
     # Matching is deterministic and textual: API-key shapes, PEM blocks,
     # obvious credential assignments. PHI heuristics are explicitly out of
@@ -19,15 +20,23 @@ module Lain
     # future ollama classifier (OR-1) tomorrow, without this class changing
     # shape.
     #
-    # Only `memory_write` is guarded. A `bash` or `read_file` effect whose
-    # input independently looks secret-ish passes through untouched -- this is
-    # a write-refusal control, not a general secret scanner, and scanning
-    # tools that were never going to persist anything is scope creep the card
-    # does not ask for. Guarding is exact string equality on "memory_write":
-    # a tool that writes memory under any other name is unguarded by design,
-    # accepted until a second memory writer actually exists.
+    # Only the tools named in {GUARDED_TOOLS} are guarded. A `bash` or
+    # `read_file` effect whose input independently looks secret-ish passes
+    # through untouched -- this is a write-refusal control, not a general
+    # secret scanner, and scanning tools that were never going to persist
+    # anything is scope creep the card does not ask for. Guarding is exact
+    # membership in that Set: a tool that persists content under any other
+    # name is unguarded by design, until it earns a place in the Set.
+    #
+    # {GUARDED_TOOLS} started as a single hardcoded name (`memory_write`);
+    # M2 generalized it to a Set when `improvement_write` became a second
+    # writer with the same secret-leak exposure. The refusal MESSAGE names
+    # whichever tool was actually refused (`effect.name`, not a hardcoded
+    # string), but the journaled {Telemetry::WriteRefused} shape -- what a
+    # replay reader keys on -- is untouched: still just `tool_use_id` and
+    # `pattern`, with no tool name added to the record.
     class RefuseSecretWrites < Base
-      GUARDED_TOOL = "memory_write"
+      GUARDED_TOOLS = Set["memory_write", "improvement_write"].freeze
 
       # name => pattern. The NAME is what gets journaled and put in the
       # model-facing error; the bytes that matched never are -- see
@@ -76,7 +85,7 @@ module Lain
 
       def call(env, &app)
         effect = env.fetch(:effect)
-        return downstream(env, &app) unless effect.name == GUARDED_TOOL
+        return downstream(env, &app) unless GUARDED_TOOLS.include?(effect.name)
 
         pattern = matched_pattern(effect.input)
         return downstream(env, &app) unless pattern || @oracle.secret?(effect.input)
@@ -105,11 +114,14 @@ module Lain
 
       # Withholds the call entirely: `app` (the downstream handler that would
       # actually perform the write) is never invoked, so `env[:result]` is
-      # produced without the tool ever running.
+      # produced without the tool ever running. The message names the tool
+      # actually refused (`effect.name`) so a model juggling both writers
+      # learns which call to retry differently -- "memory_write refused"
+      # read after an improvement_write call would be a lie.
       def refuse(env, effect, pattern)
         @journal << Telemetry::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern:)
         env.merge(result: Tool::Result.error(
-          "memory_write refused: input matches a #{pattern} pattern; nothing was written."
+          "#{effect.name} refused: input matches a #{pattern} pattern; nothing was written."
         ))
       end
     end

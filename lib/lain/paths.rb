@@ -65,6 +65,17 @@ module Lain
       ensure_dir(File.join(state_home, "sessions", project))
     end
 
+    # M6's cross-project harness-improver sink (M2): ONE file, not
+    # partitioned by project_hash the way {#sessions_dir} is -- a dogfood
+    # note about lain ITSELF is worth keeping across every project lain has
+    # ever run in, unlike a session's own turn history. Same
+    # ensure-dir-on-demand shape as {#sessions_dir}, since {Improvement::Sink}
+    # opens this path directly, per append, with no separate mkdir step of
+    # its own.
+    def improvements_path
+      File.join(ensure_dir(state_home), "improvements.ndjson")
+    end
+
     private
 
     def xdg_dir(var, fallback)
