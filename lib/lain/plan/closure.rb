@@ -7,7 +7,9 @@ module Lain
     # content-addressed sources, so nothing in it is a fresh claim a replay
     # could not reproduce:
     #
-    # * step id/title/status/criteria_digest come from the {Plan::Step};
+    # * step id/title/status/size/criteria_digest come from the {Plan::Step}
+    #   (the S/M/L `size` class is P5's calibration key -- no journaled record
+    #   carried it before this, so "calibrate from the Journal alone" needs it);
     # * pass/score/why come from the chunk's {Grader::Grade};
     # * files + blob digests come from the {Workspace::Snapshot} event in force
     #   at the seam ({Event::Projection#workspace_at}) -- carried with the
@@ -39,7 +41,7 @@ module Lain
     # lies about what the chunk actually spanned. Callers pass ABSOLUTE indices.
     class ChunkRangeOutOfBounds < Error; end
 
-    Closure = Data.define(:step_id, :title, :status, :criteria_digest,
+    Closure = Data.define(:step_id, :title, :status, :size, :criteria_digest,
                           :passed, :score, :why,
                           :files, :snapshot_scope,
                           :elided_digests, :error_digests, :notes_for_future_steps) do
@@ -55,7 +57,8 @@ module Lain
       #   before any snapshot landed (files empty, scope note still carried)
       def self.build(step:, timeline:, chunk_range:, grade:, snapshot:)
         turns = chunk_turns(timeline, chunk_range)
-        new(step_id: step.id, title: step.title, status: step.status, criteria_digest: step.criteria_digest,
+        new(step_id: step.id, title: step.title, status: step.status, size: step.size,
+            criteria_digest: step.criteria_digest,
             passed: grade.pass?, score: grade.score, why: grade.why,
             files: snapshot_files(snapshot), snapshot_scope: snapshot_scope(snapshot),
             elided_digests: turns.map(&:digest),
@@ -128,10 +131,10 @@ module Lain
       end
       private_class_method :error_blocks
 
-      def initialize(step_id:, title:, status:, criteria_digest:, passed:, score:, why:,
+      def initialize(step_id:, title:, status:, size:, criteria_digest:, passed:, score:, why:,
                      files:, snapshot_scope:, elided_digests:, error_digests:, notes_for_future_steps:)
         super(
-          step_id: interned(step_id), title: interned(title), status: interned(status),
+          step_id: interned(step_id), title: interned(title), status: interned(status), size: interned(size),
           criteria_digest: interned(criteria_digest),
           passed: passed ? true : false, score: score.to_f, why: interned(why),
           files: Canonical.normalize(files), snapshot_scope: interned(snapshot_scope),
@@ -149,7 +152,7 @@ module Lain
       # @return [String] the closure's content address
       def record(store:, plan_digest:, journal: Channel::Null::INSTANCE)
         store.put(self)
-        journal << Telemetry::ClosureRecord.new(closure_digest: digest, step_id:, plan_digest:,
+        journal << Telemetry::ClosureRecord.new(closure_digest: digest, step_id:, plan_digest:, size:,
                                                 chunk_turn_digests: elided_digests)
         digest
       end
@@ -160,7 +163,8 @@ module Lain
 
       # Plain-hash wire form for {Canonical}; String keys, sorted downstream.
       def canonical
-        { "step_id" => step_id, "title" => title, "status" => status, "criteria_digest" => criteria_digest,
+        { "step_id" => step_id, "title" => title, "status" => status, "size" => size,
+          "criteria_digest" => criteria_digest,
           "passed" => passed, "score" => score, "why" => why,
           "files" => files, "snapshot_scope" => snapshot_scope,
           "elided_digests" => elided_digests, "error_digests" => error_digests,

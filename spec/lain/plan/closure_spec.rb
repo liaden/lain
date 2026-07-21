@@ -48,6 +48,7 @@ RSpec.describe Lain::Plan::Closure do
       expect(closure.step_id).to eq("P2")
       expect(closure.title).to eq("close a chunk")
       expect(closure.status).to eq("done")
+      expect(closure.size).to eq("M")
       expect(closure.passed).to be(true)
       expect(closure.score).to eq(1.0)
       expect(closure.files).to eq(snapshot.body.fetch("files"))
@@ -56,6 +57,14 @@ RSpec.describe Lain::Plan::Closure do
 
       digest = timeline.store.put(closure)
       expect(timeline.store.fetch(digest)).to eq(closure)
+    end
+
+    it "derives the S/M/L size class from the step (P5 calibrates over it from the Journal)" do
+      large = Lain::Plan::Step.new(id: "P9", title: "big one", size: "L", status: "done")
+
+      closure = described_class.build(step: large, timeline:, chunk_range: (0..2), grade:, snapshot:)
+
+      expect(closure.size).to eq("L")
     end
 
     it "carries the snapshot's write-set-only scope note verbatim (never implying full coverage)" do
@@ -139,6 +148,7 @@ RSpec.describe Lain::Plan::Closure do
       expect(pointer.closure_digest).to eq(closure.digest)
       expect(pointer.step_id).to eq("P2")
       expect(pointer.plan_digest).to eq("blake3:plan")
+      expect(pointer.size).to eq("M")
       expect(pointer.chunk_turn_digests).to eq(closure.elided_digests)
     end
 
@@ -159,23 +169,33 @@ RSpec.describe Lain::Plan::Closure do
       expect(records.map { |record| record.fetch("closure_digest") })
         .to contain_exactly(first.digest, second.digest)
       expect(records.map { |record| record.fetch("step_id") }).to contain_exactly("P2", "P2")
+      expect(records.map { |record| record.fetch("size") }).to contain_exactly("M", "M")
       records.each { |record| expect(record.fetch("plan_digest")).to eq("blake3:plan") }
     end
   end
 
   describe Lain::Telemetry::ClosureRecord do
-    it "is Ractor-shareable and journals under the closure_record type" do
+    it "is Ractor-shareable and journals under the closure_record type, carrying the size class" do
       record = described_class.new(closure_digest: +"blake3:c", step_id: +"P2", plan_digest: +"blake3:p",
-                                   chunk_turn_digests: [+"blake3:t1", +"blake3:t2"])
+                                   size: +"M", chunk_turn_digests: [+"blake3:t1", +"blake3:t2"])
 
       expect(Ractor.shareable?(record)).to be(true)
       expect(record.to_journal.fetch("type")).to eq("closure_record")
+      expect(record.to_journal.fetch("size")).to eq("M")
     end
 
     it "raises loudly when the closure digest it points at is missing" do
       expect do
-        described_class.new(closure_digest: nil, step_id: "P2", plan_digest: "blake3:p", chunk_turn_digests: [])
+        described_class.new(closure_digest: nil, step_id: "P2", plan_digest: "blake3:p", size: "M",
+                            chunk_turn_digests: [])
       end.to raise_error(ArgumentError, /closure_digest/)
+    end
+
+    it "raises loudly when the size class is missing (P5's calibration key)" do
+      expect do
+        described_class.new(closure_digest: "blake3:c", step_id: "P2", plan_digest: "blake3:p", size: nil,
+                            chunk_turn_digests: [])
+      end.to raise_error(ArgumentError, /size/)
     end
   end
 end
