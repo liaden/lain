@@ -22,7 +22,7 @@ module Lain
       # stand in for.
       include StreamStartedSignal
 
-      attr_reader :requests, :capabilities
+      attr_reader :requests, :capabilities, :cache_profile
 
       # @param responses [Array<Lain::Response>] returned in order; the last one
       #   repeats once exhausted, so a loop that over-runs is visible as a
@@ -31,12 +31,19 @@ module Lain
       # @param channel [Lain::Channel] where {StreamStartedSignal} pushes the
       #   {Telemetry::StreamStarted} and any {Telemetry::ObserverFailed}; the
       #   Null channel by default, so an unwired Mock is byte-identical to before.
-      def initialize(responses: [], capabilities: CAPABILITIES.dup, channel: Channel::Null.instance)
+      # @param cache_profile [Lain::CacheProfile] defaults to NO_CACHING --
+      #   never Anthropic's numbers by accident, since a spec that forgot to
+      #   inject one should see an honest "nothing caches", not a silently
+      #   warm cache. A scheduler spec (CAC-3/4) that wants warm-cache
+      #   behavior injects {CacheProfile::ANTHROPIC} explicitly.
+      def initialize(responses: [], capabilities: CAPABILITIES.dup, channel: Channel::Null.instance,
+                     cache_profile: CacheProfile::NO_CACHING)
         super()
         @responses = Array(responses)
         @capabilities = capabilities.map(&:to_sym).freeze
         @requests = []
         @channel = channel
+        @cache_profile = cache_profile
       end
 
       def encode(request)

@@ -104,6 +104,10 @@ module Lain
 
       def capabilities = CAPABILITIES
 
+      # Same wire, same cache economics as the SDK oracle -- the dry
+      # differential proves #encode is byte-identical, so this must not drift.
+      def cache_profile = CacheProfile::ANTHROPIC
+
       # One round trip into a neutral Response. Streaming by default (Context
       # renders `stream: true`); both paths converge on the full block list and
       # parsed tool inputs. `on_stream_started` is CE-5's signal -- see

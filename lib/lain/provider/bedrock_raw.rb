@@ -85,6 +85,10 @@ module Lain
 
       def capabilities = CAPABILITIES
 
+      # Mantle speaks the plain Anthropic Messages API -- same cache
+      # economics as the direct oracle.
+      def cache_profile = CacheProfile::ANTHROPIC
+
       # One round trip into a neutral Response. Streaming by default (Context
       # renders `stream: true`); both paths converge on the full block list and
       # parsed tool inputs.

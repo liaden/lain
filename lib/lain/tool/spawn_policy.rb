@@ -105,11 +105,15 @@ module Lain
         # everything per-child (the task, a role fill) belongs in messages,
         # AFTER the template's breakpoint, never in system.
         class SiblingTemplate
-          # Anthropic's minimum cacheable prefix (CLAUDE.md, verified): a
-          # prefix that ends under this many tokens silently does not cache,
-          # with no error -- which is why the floor is journaled here
-          # (#journal_floor), never inferred from a missing cache hit.
-          MINIMUM_CACHEABLE_TOKENS = 4096
+          # Relocated to {Lain::CacheProfile} (CAC-2/F1): the neutral home
+          # shared by every provider's `#cache_profile`, re-exported here so
+          # this class's own #below_floor?/#journal_floor and existing specs
+          # keep resolving unchanged. Anthropic's minimum cacheable prefix
+          # (CLAUDE.md, verified): a prefix that ends under this many tokens
+          # silently does not cache, with no error -- which is why the floor
+          # is journaled here (#journal_floor), never inferred from a missing
+          # cache hit.
+          MINIMUM_CACHEABLE_TOKENS = CacheProfile::MINIMUM_CACHEABLE_TOKENS
 
           # ~4 chars/token is a heuristic, not a tokenizer: the note below is
           # advisory (a journal line, not a gate), and the strategy cannot see

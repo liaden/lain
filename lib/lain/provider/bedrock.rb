@@ -55,6 +55,10 @@ module Lain
 
       def capabilities = CAPABILITIES
 
+      # Mantle speaks the plain Anthropic Messages API -- same cache
+      # economics as the direct oracle.
+      def cache_profile = CacheProfile::ANTHROPIC
+
       # #encode is supplied by {AnthropicEncoding}, shared with the other
       # Anthropic-shaped backends so they cannot drift apart on the wire.
 

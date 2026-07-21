@@ -38,31 +38,6 @@ module Lain
       # the model unless `strict_tools` is also engaged.
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use structured_output].freeze
 
-      # CAC-2: the facts a cache-aware scheduler needs, not a constant a
-      # scheduler has to guess (planning/specs/cache-aware-compaction.md's
-      # per-model facts). Fixed rather than looked up per-model because this
-      # class does not track which model a Request names -- it is the
-      # Opus-family reference provider (see DEFAULT_MODEL above, and the
-      # class doc's existing "Opus 4.8's minimum cacheable prefix is 4096
-      # tokens" claim). A frozen Hash of immutable values needs no extra work
-      # to stay Ractor.shareable?.
-      #
-      # `min_prefix_tokens` REFERENCES SpawnPolicy's constant rather than
-      # repeating the literal 4096 -- same Anthropic wire fact, so one source
-      # of truth (`lib/lain.rb` loads `lain/tool` before `lain/provider`, so
-      # the constant is already resolved by the time this file loads). It is
-      # an interim borrow: this is an Anthropic wire fact, not a Tool-shaped
-      # one, and belongs in a neutral shared home eventually (tracked as a
-      # follow-up), but referencing the existing constant is better than a
-      # second literal that can silently drift from it.
-      CACHE_PROFILE = {
-        ttl: 300,
-        min_prefix_tokens: Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate::MINIMUM_CACHEABLE_TOKENS,
-        write_multiplier: 1.25,
-        read_multiplier: 0.1,
-        tiered_invalidation: true
-      }.freeze
-
       # Wraps every `Anthropic::Errors::*` so nothing above the Provider ever
       # rescues an SDK class. The original is preserved as `#cause` (Ruby sets it
       # automatically when we re-raise inside the rescue), so a caller that wants
@@ -100,7 +75,11 @@ module Lain
 
       def capabilities = CAPABILITIES
 
-      def cache_profile = CACHE_PROFILE
+      # The oracle's cache economics -- every other Anthropic-shaped backend
+      # (AnthropicRaw, Bedrock, BedrockRaw) answers with this exact object,
+      # promoted off what used to be a per-provider `CACHE_PROFILE` Hash
+      # constant here (CAC-2/F1) into {Lain::CacheProfile}, the neutral home.
+      def cache_profile = CacheProfile::ANTHROPIC
 
       # #encode is supplied by {AnthropicEncoding}, shared verbatim with
       # {AnthropicRaw} so the two backends cannot drift apart on the wire.

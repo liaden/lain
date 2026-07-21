@@ -9,6 +9,7 @@
 require_relative "lain/version"
 require_relative "lain/error"
 require_relative "lain/paths"
+require_relative "lain/cache_profile"
 require_relative "lain/canonical"
 require_relative "lain/content_addressed"
 require_relative "lain/prompt"

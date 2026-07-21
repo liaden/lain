@@ -46,6 +46,15 @@ module Lain
       capabilities.include?(capability)
     end
 
+    # This provider's prompt-cache economics -- see {CacheProfile}. Abstract
+    # like {#capabilities}: a scheduler (cache-aware compaction, CAC-3/4)
+    # reads real numbers off it rather than a hardcoded constant, and a
+    # provider that has not declared its own must fail loudly, not silently
+    # hand back Anthropic's or nil.
+    def cache_profile
+      raise NotImplementedError, "#{self.class} must declare #cache_profile"
+    end
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)
