@@ -140,6 +140,12 @@ class LainCLI < Thor
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report_for(selector) }
 
+  desc "improvements", "Cross-project dogfood notes accumulated via the improvement_write tool"
+  method_option :project, type: :string,
+                          desc: "Filter to one project: a 12-hex-char hash, or a path resolved the same way"
+  method_option :kind, type: :string, desc: "Filter to one kind: knob, bug, missing-feature, or doc"
+  def improvements = render { Lain::CLI::Improvements.new.report(project: options[:project], kind: options[:kind]) }
+
   desc "consolidate SESSION", "Court-clerk pass: distill a session's completed subagent lineages into memory"
   method_option :dry_run, type: :boolean, default: false, desc: "Report what would be clerked, no spawn, no API key"
   method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
