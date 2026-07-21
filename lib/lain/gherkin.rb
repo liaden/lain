@@ -282,3 +282,4 @@ end
 # the module body above -- gherkin.rb becomes this subtree's index the same way
 # skill.rb is skill/catalog.rb's.
 require_relative "gherkin/test_generation"
+require_relative "gherkin/approval"
