@@ -3,5 +3,5 @@
 # in the ext/ directory.
 
 [workspace]
-members = ["./ext/lain"]
+members = ["./ext/lain", "./crates/lain-core"]
 resolver = "2"

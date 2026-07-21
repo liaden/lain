@@ -1,0 +1,47 @@
+[package]
+name = "lain-core"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joel Johnson <johnson.joel.b@gmail.com>"]
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "lain-core"
+path = "src/main.rs"
+
+[dependencies]
+# The async runtime the exec boundary exists for: net (UnixListener/UnixStream),
+# process (tokio::process::Command with kill_on_drop), time (server-side
+# timeout), sync (the per-connection response mpsc), io-util (read_to_end on
+# child pipes), signal (SIGTERM/SIGINT shut the runtime down so kill_on_drop
+# fires -- an unhandled fatal signal would orphan in-flight children).
+# Out-of-process by the placement rule -- an async runtime never runs inside a
+# magnus FFI call (ext/lain/CLAUDE.md).
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "process", "time", "sync", "io-util", "signal"] }
+# `codec::{Decoder, Encoder}` + `Framed`: incremental decode over the socket.
+# msgpack is self-delimiting, so there is no framing to invent -- the Decoder
+# just retries `rmpv::decode::read_value` until the buffer holds a whole value.
+tokio-util = { version = "0.7", features = ["codec"] }
+# `StreamExt`/`SinkExt` + `Framed::split`, so one task reads frames while
+# another writes responses (the out-of-order completion contract).
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+# Dynamically-typed msgpack values. The wire shape is the 4-element msgpack-RPC
+# array the Neovim client already speaks; `Value` keeps the envelope handling
+# schema-free and gives `Value::Binary` for subprocess bytes (bin, not str).
+rmpv = "1.3"
+# `BytesMut`/`Buf`/`BufMut` for the codec's receive buffer (tokio-util's codec
+# API is written in terms of it).
+bytes = "1.12"
+# Diagnostics. NEVER stdout/stderr -- the crate root denies both; the writer is
+# a file path given by argv, /dev/null when absent (the Journal-interleaving
+# wound stays closed).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+# Idiomatic std::error::Error + Display derives for the request/param/exec
+# error enums; their Display text is the RPC error string a client sees.
+thiserror = "2"
+
+[dev-dependencies]
+# Tempdir-scoped test sockets and scratch files, auto-cleaned.
+tempfile = "3"
