@@ -63,6 +63,7 @@ require_relative "lain/structural"
 require_relative "lain/isolation"
 require_relative "lain/arm"
 require_relative "lain/tools"
+require_relative "lain/consolidation"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
 require "lain/lain"
