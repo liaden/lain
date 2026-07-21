@@ -151,9 +151,14 @@ class LainCLI < Thor
   method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
   method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
   method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per clerk turn"
-  def consolidate(selector)
-    render { Lain::CLI::Consolidate.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
-  end
+  def consolidate(selector) = render { Lain::CLI::Consolidate.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
+
+  desc "improve SESSION", "Harness-improver pass: record what would make lain itself better, into the dogfood queue"
+  method_option :dry_run, type: :boolean, default: false, desc: "Report what would spawn, no provider, no API key"
+  method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
+  method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
+  method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per improver turn"
+  def improve(selector) = render { Lain::CLI::Improve.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
 
   desc "up", "Create/attach the lain tmux session (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
