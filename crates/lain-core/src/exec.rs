@@ -13,6 +13,7 @@ use rmpv::Value;
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 /// One decoded `exec` request. `env` preserves wire order and the nil marker:
@@ -164,9 +165,12 @@ pub(crate) async fn run_with_base_env(
     let mut child = spawn(&params, base_env)?;
     // Drain both pipes concurrently with the wait: a child that fills one
     // pipe's buffer would otherwise deadlock against our own wait.
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
+    let (exited, exit_seen) = watch::channel(false);
+    let stdout = drain(child.stdout.take(), exit_seen.clone());
+    let stderr = drain(child.stderr.take(), exit_seen);
     let (status, timed_out) = wait_with_timeout(&mut child, params.timeout_ms).await?;
+    // Capture ends HERE, at direct-child exit -- see the drain doc for why.
+    let _ = exited.send(true);
     Ok(Outcome {
         stdout: stdout.await.unwrap_or_default(),
         stderr: stderr.await.unwrap_or_default(),
@@ -185,6 +189,10 @@ fn spawn(params: &ExecParams, base_env: HashMap<OsString, OsString>) -> Result<C
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Its own process group (pgid == pid), the scope ShellOut gets from
+        // Process.setsid: a timeout kill must take the whole tree, not just
+        // the direct child (mixlib-shellout unix.rb kills child_pgid).
+        .process_group(0)
         // Belt to the timeout's braces: a dropped handle (connection death,
         // handler panic) must not orphan a running child.
         .kill_on_drop(true);
@@ -194,16 +202,72 @@ fn spawn(params: &ExecParams, base_env: HashMap<OsString, OsString>) -> Result<C
     command.spawn().map_err(ExecError::Spawn)
 }
 
-fn drain(pipe: Option<impl AsyncReadExt + Unpin + Send + 'static>) -> JoinHandle<Vec<u8>> {
+const READ_CHUNK: usize = 8192;
+
+/// How much a post-exit sweep may collect before stopping regardless. The
+/// sweep normally ends at the first not-ready read; this bound exists so a
+/// grandchild writing full-tilt into an always-ready pipe cannot extend it
+/// forever. Deliberately stricter than mixlib's final pass, which is
+/// EAGAIN-bounded but not byte-bounded; unreachable for direct-child bytes
+/// (default pipe capacity is half this cap, and the live drain runs while
+/// the child does).
+const SWEEP_LIMIT: usize = 128 * 1024;
+
+/// Reads the pipe while the direct child lives, then sweeps what is already
+/// buffered and STOPS -- capture ends at direct-child exit, not at pipe EOF.
+/// WHY: matching ShellOut's capture lifetime is the differential contract
+/// (mixlib reads until the direct child is reaped, then does one final
+/// `attempt_buffer_read`). Drain-to-EOF was rejected because a backgrounded
+/// grandchild inherits the write end, which extends capture arbitrarily and
+/// holds the RPC reply hostage until the orphan exits (C3 probes:
+/// `(sleep 0.5; echo late) & echo early` captured the late bytes, and a
+/// timed-out reply waited the full 5s of a surviving `sleep 5 &`).
+fn drain(
+    pipe: Option<impl AsyncReadExt + Unpin + Send + 'static>,
+    mut exited: watch::Receiver<bool>,
+) -> JoinHandle<Vec<u8>> {
     tokio::spawn(async move {
         let mut bytes = Vec::new();
-        if let Some(mut pipe) = pipe {
-            // A mid-stream read error keeps the bytes read so far: partial
-            // output beats no output when the child dies messily.
-            let _ = pipe.read_to_end(&mut bytes).await;
+        let Some(mut pipe) = pipe else {
+            return bytes;
+        };
+        let mut chunk = vec![0u8; READ_CHUNK];
+        let mut open = true;
+        while open && !*exited.borrow() {
+            tokio::select! {
+                // A mid-stream read error keeps the bytes read so far:
+                // partial output beats no output when the child dies messily.
+                read = pipe.read(&mut chunk) => match read {
+                    Ok(0) | Err(_) => open = false,
+                    Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                },
+                _ = exited.changed() => {}
+            }
+        }
+        if open {
+            sweep_buffered(&mut pipe, &mut bytes).await;
         }
         bytes
     })
+}
+
+/// The final read after direct-child exit: bytes the child wrote before dying
+/// are already in the kernel pipe buffer and return instantly; the first
+/// not-ready read means only a grandchild's open write end remains, and that
+/// is exactly where capture stops. `Duration::ZERO` still polls the read once
+/// before the deadline, so ready data is never dropped.
+async fn sweep_buffered(pipe: &mut (impl AsyncReadExt + Unpin), bytes: &mut Vec<u8>) {
+    let mut chunk = vec![0u8; READ_CHUNK];
+    let mut swept = 0;
+    while swept < SWEEP_LIMIT {
+        match tokio::time::timeout(Duration::ZERO, pipe.read(&mut chunk)).await {
+            Ok(Ok(n)) if n > 0 => {
+                bytes.extend_from_slice(&chunk[..n]);
+                swept += n;
+            }
+            _ => return,
+        }
+    }
 }
 
 /// Timeout is server-side: at `timeout_ms` the child is killed
@@ -236,11 +300,33 @@ async fn settle_after_elapsed(child: &mut Child) -> Result<(ExitStatus, bool), E
     if let Ok(Some(status)) = child.try_wait() {
         return Ok((status, false));
     }
-    // start_kill errs only when the child already exited in the race
-    // window; either way the wait below reaps it.
-    let _ = child.start_kill();
+    kill_group(child);
     let status = child.wait().await.map_err(ExecError::Wait)?;
     Ok((status, status.signal() == Some(SIGKILL)))
+}
+
+/// Kill-on-timeout has ShellOut's SCOPE: the whole process group, so no
+/// grandchild survives or is orphaned by a timeout (mixlib kills
+/// `child_pgid`; ours is straight SIGKILL rather than mixlib's TERM-3s-KILL
+/// grace, keeping `timed_out` == "died to OUR SIGKILL" decidable). The child
+/// was spawned as its own group leader, so pgid == pid. On the non-timeout
+/// path there is deliberately NO group kill -- a backgrounded grandchild
+/// outliving a successful command is legal shell behavior, and mixlib leaves
+/// it too (unix.rb `reap`: grandchildren "will have been adopted by init so
+/// we can't reap them even if we wanted to (we don't)").
+fn kill_group(child: &mut Child) {
+    let group = child
+        .id()
+        .and_then(|pid| i32::try_from(pid).ok())
+        .map(nix::unistd::Pid::from_raw);
+    let killed = group.is_some_and(|pgid| {
+        nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGKILL).is_ok()
+    });
+    if !killed {
+        // Group already gone (or the child exited in the race window): fall
+        // back to the direct child so the wait after us still settles.
+        let _ = child.start_kill();
+    }
 }
 
 /// The exit code when there is one; the shell convention 128+signal when the
@@ -462,6 +548,109 @@ mod tests {
         assert!(
             !std::path::Path::new(&format!("/proc/{pid}")).exists(),
             "killed and reaped"
+        );
+    }
+
+    /// Gone from /proc, or a zombie awaiting init's reap -- no longer running.
+    fn dead_or_zombie(pid: u32) -> bool {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Err(_) => true,
+            Ok(stat) => stat
+                .rsplit(") ")
+                .next()
+                .is_some_and(|rest| rest.starts_with('Z')),
+        }
+    }
+
+    async fn wait_until(deadline_ms: u64, mut probe: impl FnMut() -> bool) -> bool {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(deadline_ms);
+        loop {
+            if probe() {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_ends_at_direct_child_exit_not_at_grandchild_eof() {
+        // C3 differential, symptom 1: ShellOut captures "early\n" -- capture
+        // ends when the DIRECT child exits. A backgrounded grandchild's later
+        // bytes are not part of the command's output.
+        let outcome = run_direct(
+            params(sh("(sleep 0.5; echo late) & echo early")),
+            std::env::vars_os().collect(),
+        )
+        .await;
+        assert_eq!(0, outcome.exit_status);
+        assert!(!outcome.timed_out);
+        assert_eq!(
+            b"early\n".to_vec(),
+            outcome.stdout,
+            "bytes a grandchild writes after the direct child exits are not captured"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_reply_is_not_held_hostage_by_a_surviving_grandchild() {
+        // C3 differential, symptom 2: bash replies in ~0.02s; draining the
+        // pipes to EOF held the reply for the orphan's full 3s sleep.
+        let started = std::time::Instant::now();
+        let outcome = run_direct(
+            params(sh("echo started; sleep 3 &")),
+            std::env::vars_os().collect(),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        assert_eq!(b"started\n".to_vec(), outcome.stdout);
+        assert_eq!(0, outcome.exit_status);
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "reply held for {elapsed:?} by a grandchild that outlives the command"
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_the_whole_process_group_not_just_the_direct_child() {
+        // C3 differential, symptom 3: mixlib kills child_pgid so grandchildren
+        // die with the timeout; killing only the direct child orphans them.
+        // The grandchild drops its pipe ends so this pins kill SCOPE alone,
+        // independent of the capture-lifetime symptoms.
+        let scratch = tempfile::tempdir().expect("scratch dir");
+        let gcfile = scratch.path().join("grandchild");
+        let script = format!(
+            "sleep 30 >/dev/null 2>&1 & echo $! > {}; wait",
+            gcfile.display()
+        );
+        let mut timed = params(sh(&script));
+        timed.timeout_ms = Some(200);
+        let started = std::time::Instant::now();
+        let outcome = run_direct(timed, std::env::vars_os().collect()).await;
+        let elapsed = started.elapsed();
+        assert!(outcome.timed_out, "we killed it");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "timed-out reply held for {elapsed:?}"
+        );
+        let grandchild: u32 = std::fs::read_to_string(&gcfile)
+            .expect("grandchild pidfile")
+            .trim()
+            .parse()
+            .expect("grandchild pid");
+        let gone = wait_until(1000, || dead_or_zombie(grandchild)).await;
+        if !gone {
+            // Do not leak a 30s sleep on a red run.
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &grandchild.to_string()])
+                .status();
+        }
+        assert!(
+            gone,
+            "the grandchild survived the timeout kill -- the kill must have \
+             ShellOut's process-group scope"
         );
     }
 

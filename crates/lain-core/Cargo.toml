@@ -41,6 +41,11 @@ tracing-subscriber = { version = "0.3", features = ["fmt"] }
 # Idiomatic std::error::Error + Display derives for the request/param/exec
 # error enums; their Display text is the RPC error string a client sees.
 thiserror = "2"
+# `killpg` for the timeout kill: the child is spawned as its own process-group
+# leader (ShellOut's setsid scope) and the timeout must kill the whole group.
+# Mature-crate-over-unsafe per house rule -- this crate forbids unsafe, and
+# libc's kill(2) wrapper would need an unsafe block; nix abstracts it safely.
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 [dev-dependencies]
 # Tempdir-scoped test sockets and scratch files, auto-cleaned.
