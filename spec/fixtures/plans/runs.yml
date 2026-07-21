@@ -1,0 +1,66 @@
+# Scripted runs for the shape x density plan sweep (PC-6). Everything here is
+# deterministic: `gold` is the per-file grader target (ArmTasks-style substring
+# checks), and each run scripts, per step, the file its agent produced and the
+# content it wrote. No provider is consulted -- the sweep renders each turn to
+# measure the CONTEXT it would have resent (the token proxy) and counts prefix
+# rewrites over the mainline, so tokens and cache-writes come from the real
+# render while the produced work product comes from these scripts.
+#
+# The produced files (and therefore the grader score) depend ONLY on the run,
+# never on the arm: compaction shape changes what a turn COSTS, not what the
+# agent wrote. So the grader column is arm-invariant by construction (an honest
+# "no shape corrupted the output"), and the token / cache-write columns carry
+# the shape signal. `run bravo` writes a wrong `s3`, so its score is < 1 -- that
+# is what makes the grader distribution non-degenerate across runs.
+
+gold:
+  "lib/parser.rb": "def parse_flags"
+  "lib/handler.rb": "class Handler"
+  "lib/cli.rb": "register_subcommand"
+  "README.md": "## Usage"
+
+runs:
+  - id: alpha
+    steps:
+      s1:
+        file: "lib/parser.rb"
+        content: "def parse_flags(argv)\n  argv.map { |arg| arg.delete_prefix(\"--\") }\nend"
+      s2:
+        file: "lib/handler.rb"
+        content: "class Handler\n  def call(flags)\n    flags.each { |flag| dispatch(flag) }\n  end\nend"
+      s3:
+        file: "lib/cli.rb"
+        content: "register_subcommand :run, Handler.new"
+      s4:
+        file: "README.md"
+        content: "## Usage\n\nRun `lain run --flag value` to dispatch the handler."
+
+  - id: bravo
+    steps:
+      s1:
+        file: "lib/parser.rb"
+        content: "def parse_flags(argv)\n  argv\nend"
+      s2:
+        file: "lib/handler.rb"
+        content: "class Handler\n  def call(flags); flags.each { dispatch(_1) }; end\nend"
+      s3:
+        file: "lib/cli.rb"
+        content: "# TODO: wire the subcommand up before shipping"
+      s4:
+        file: "README.md"
+        content: "## Usage\n\nDocs pending."
+
+  - id: charlie
+    steps:
+      s1:
+        file: "lib/parser.rb"
+        content: "def parse_flags(argv)\n  argv.each_with_object({}) do |arg, acc|\n    key, value = arg.delete_prefix(\"--\").split(\"=\", 2)\n    acc[key.to_sym] = value\n  end\nend"
+      s2:
+        file: "lib/handler.rb"
+        content: "class Handler\n  def initialize(registry) = @registry = registry\n\n  def call(flags)\n    flags.each { |flag| @registry.fetch(flag).call }\n  end\nend"
+      s3:
+        file: "lib/cli.rb"
+        content: "register_subcommand :run, Handler.new(REGISTRY)"
+      s4:
+        file: "README.md"
+        content: "## Usage\n\nRun `lain run --flag=value`; each flag resolves through the registry and dispatches its handler."

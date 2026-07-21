@@ -67,6 +67,17 @@ module Lain
         ArmSweep.new(tasks_path:, recordings_path:).report
       end
 
+      # The PC-6 shape x density plan sweep: six arms (linear/fork x
+      # every/thinned/none) over one fixed plan and its scripted runs, replayed
+      # offline -- no provider, no money, no network, byte-identical across runs,
+      # like {#arm_sweep_report}. The paths are explicit (no lib->spec fixture
+      # coupling): the exe subcommand passes the committed fixture locations.
+      #
+      # @return [String] the Compare-style report; never printed here
+      def plan_sweep_report(plan_path:, runs_path:)
+        PlanSweep.new(plan_path:, runs_path:).report
+      end
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.

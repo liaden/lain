@@ -73,6 +73,15 @@ class LainCLI < Thor
       raise Thor::Error, e.message
     end
 
+    desc "plan-sweep", "Shape x density sweep over a fixture plan's scripted runs -- offline, deterministic"
+    method_option :plan, type: :string, required: true, desc: "the fixture plan markdown (P1 format, seams visible)"
+    method_option :runs, type: :string, required: true, desc: "the scripted runs YAML"
+    def plan_sweep
+      say Lain::Bench::CLI.new.plan_sweep_report(plan_path: options[:plan], runs_path: options[:runs])
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
+
     desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
     method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
                       aliases: "-k", desc: "retrieval depth (recall@k)"
