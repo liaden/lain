@@ -81,7 +81,7 @@ module Lain
         @session = session
         @socket = socket
         @state_path = state_path
-        @chat_command = chat_command
+        @chat_command = chat_command || default_chat_command
         @status_interval = status_interval
         @shell_out_factory = shell_out_factory
         @warnings = []
@@ -145,6 +145,16 @@ module Lain
       # The one query that TOLERATES a nonzero exit: "no such session" is the
       # expected, non-error answer that drives #call into #create_session.
       def session_exists? = run("has-session", "-t", @session).exitstatus.zero?
+
+      # tmux's new-session does not source an interactive shell's chruby (see
+      # CLAUDE.md's toolchain note), so the chat window's own command
+      # re-exports the PATH fix before re-invoking the launching binary's
+      # `chat` subcommand. Computed per instance, never a constant:
+      # $PROGRAM_NAME must be read when the exe runs (under rspec it is not
+      # the lain binary).
+      def default_chat_command
+        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
+      end
 
       def create_session = act(*new_session_args)
 

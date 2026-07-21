@@ -135,11 +135,10 @@ class LainCLI < Thor
   end
 
   desc "sessions", "List this project's recorded sessions (newest first)"
-  def sessions
-    say Lain::CLI::Sessions.new.listing
-  rescue Lain::Error => e
-    raise Thor::Error, e.message
-  end
+  def sessions = render { Lain::CLI::Sessions.new.listing }
+
+  desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
+  def friction(selector) = render { Lain::CLI::Friction.new.report_for(selector) }
 
   desc "up", "Create/attach the lain tmux session (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
@@ -151,8 +150,8 @@ class LainCLI < Thor
     # attached tmux client" -- Up#attach_command turns that into the right
     # verb (switch-client vs. attach); see its doc comment for why the
     # branch has to happen before exec, and the cross-server known gap.
-    plan = Lain::CLI::Up.new(session: options[:session], socket: options[:socket],
-                             chat_command: chat_launch_command).launch_plan(nested: ENV.key?("TMUX"))
+    plan = Lain::CLI::Up.new(session: options[:session], socket: options[:socket])
+                        .launch_plan(nested: ENV.key?("TMUX"))
     plan.messages.each { |line| say(line) }
     # exec REPLACES this process, so nothing after this line ever runs --
     # flush stdout first: `say`'s writes above are not guaranteed flushed
@@ -166,11 +165,13 @@ class LainCLI < Thor
 
   private
 
-  # tmux's new-session does not source an interactive shell's chruby (see
-  # CLAUDE.md's toolchain note), so the chat window's own command re-exports
-  # the PATH fix before re-invoking this SAME binary's `chat` subcommand.
-  def chat_launch_command
-    "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
+  # The one command-body shape every read-only report command shares: say the
+  # String the block returns, mapping Lain::Error onto Thor's exit contract
+  # (a clean message, never a raw backtrace).
+  def render(&block)
+    say block.call
+  rescue Lain::Error => e
+    raise Thor::Error, e.message
   end
 
   # Assemble the run's collaborators over the now-open chronicle and hand off
@@ -182,44 +183,6 @@ class LainCLI < Thor
     agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
     resumed&.notices&.each { |notice| say notice }
     run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:, wiring:)
-  end
-
-  # The live-view tee: telemetry, spawn, and Q/A message records fan onto the
-  # session journal (durable, first) and every live-view sink. I1's StatusFeed
-  # is always a sink here so `.lain/state.json` publishes for the tmux HUD (the
-  # primary renderer -- `lain up`'s chat window carries no --nvim); the nvim
-  # Channel joins it when an editor is attached.
-  #
-  # --nvim: the editor may drop view events but never block the agent; the
-  # NDJSON record sees everything. The frontend's own journal: is the RAW
-  # Journal, not the tee -- a resend is recorded once, never re-fanned onto
-  # the views (the frontend pushes the resent event there itself). The tee
-  # itself is Lain::CLI::JournalTee (lib/lain/cli/journal_tee.rb) -- quitting
-  # nvim closes @nvim_channel, and the tee survives the resulting
-  # ClosedQueueError so the journal leg keeps landing.
-  #
-  # #wrap_tee shares the CHRONICLE's own journal (built in #open_chronicle,
-  # which now runs first) rather than opening a second one: the old order
-  # opened nvim's journal here, then open_chronicle opened its OWN journal
-  # microseconds later, and when the two `Journal.open` calls straddled a
-  # second tick they named different files -- telemetry silently split from
-  # the session record it belonged in. Chronicle::Null#wrap_tee preserves the
-  # OLD behavior for --no-journal + --nvim, where there is no session journal
-  # to share. wrap_tee takes ONE sink slot, so several sinks fold through a
-  # Null-journal JournalTee (a pure fan-out -- the same generalized tee, I1)
-  # before that slot.
-  # The I1 state feed ({cache_deadline, fleet, inbox_count} → `.lain/state.json`)
-  # is always a sink; the nvim Channel joins it when an editor is attached.
-  def setup_live_views
-    @nvim_channel = Lain::Channel::DropOldest.new if options[:nvim]
-    @nvim_journal = chronicle.wrap_tee(live_view_sink([@nvim_channel, Lain::StatusFeed.new].compact))
-  end
-
-  # One sink passes straight through; several fold into a Null-journal
-  # JournalTee (a pure fan-out that swallows a closed nvim Channel per sink,
-  # so the state feed still lands) before wrap_tee's single slot.
-  def live_view_sink(sinks)
-    sinks.one? ? sinks.first : Lain::CLI::JournalTee.new(Lain::Channel::Null.instance, *sinks)
   end
 
   # The ask_human reply path (@ask_human / @questions) is owned by Wiring, the
@@ -243,20 +206,18 @@ class LainCLI < Thor
   end
 
   # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
-  def nvim_views
-    @nvim_channel && { channel: @nvim_channel, socket_path: options[:nvim], journal: @nvim_journal }
-  end
+  def nvim_views = @live_views&.views
 
   # The session record opens FIRST (per --journal), then --nvim views tee
-  # onto IT (see #setup_nvim_views) -- inverted from the old "nvim first"
-  # order, which is what let two independent Journal.open calls straddle a
-  # second tick and split telemetry from the session file it belonged in.
+  # onto IT (LiveViews) -- inverted from the old "nvim first" order, which is
+  # what let two independent Journal.open calls straddle a second tick and
+  # split telemetry from the session file it belonged in.
   def open_chronicle
     @chronicle = Lain::CLI::Chronicle.for(enabled: options[:journal])
     # A live-view tee is built for --nvim (its Channel) OR --journal (the state
     # feed publishes for the tmux HUD). Pure --no-journal --no-nvim opens none,
     # so a headless run stays byte-identical -- no tee, no state feed.
-    setup_live_views if options[:nvim] || options[:journal]
+    @live_views = LiveViews.new(options:, chronicle:) if options[:nvim] || options[:journal]
   end
 
   # The session record's lifecycle collaborator (journal, scribe, observer,
@@ -265,6 +226,54 @@ class LainCLI < Thor
   # without running #chat) records nothing and checks nothing for nil; #chat
   # replaces it per the --journal flag before any wiring runs.
   def chronicle = @chronicle ||= Lain::CLI::Chronicle::Null.new
+
+  # The live-view tee, lifted out of the Thor class the way Wiring was (the
+  # Metrics trip said so: extract, do not loosen): telemetry, spawn, and Q/A
+  # message records fan onto the session journal (durable, first) and every
+  # live-view sink. I1's StatusFeed is always a sink so `.lain/state.json`
+  # publishes for the tmux HUD (the primary renderer -- `lain up`'s chat
+  # window carries no --nvim); the nvim Channel joins it when an editor is
+  # attached.
+  #
+  # --nvim: the editor may drop view events but never block the agent; the
+  # NDJSON record sees everything. The frontend's own journal: is the RAW
+  # Journal, not the tee -- a resend is recorded once, never re-fanned onto
+  # the views (the frontend pushes the resent event there itself). The tee
+  # itself is Lain::CLI::JournalTee -- quitting nvim closes the Channel, and
+  # the tee survives the resulting ClosedQueueError so the journal leg keeps
+  # landing.
+  #
+  # #wrap_tee shares the CHRONICLE's own journal (built in #open_chronicle,
+  # which runs first) rather than opening a second one: the old order opened
+  # nvim's journal here, then open_chronicle opened its OWN journal
+  # microseconds later, and when the two `Journal.open` calls straddled a
+  # second tick they named different files -- telemetry silently split from
+  # the session record it belonged in. Chronicle::Null#wrap_tee preserves the
+  # OLD behavior for --no-journal + --nvim, where there is no session journal
+  # to share.
+  class LiveViews
+    def initialize(options:, chronicle:)
+      @options = options
+      @channel = Lain::Channel::DropOldest.new if options[:nvim]
+      @journal = chronicle.wrap_tee(sink([@channel, Lain::StatusFeed.new].compact))
+    end
+
+    attr_reader :journal
+
+    # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
+    def views
+      @channel && { channel: @channel, socket_path: @options[:nvim], journal: @journal }
+    end
+
+    private
+
+    # One sink passes straight through; several fold into a Null-journal
+    # JournalTee (a pure fan-out that swallows a closed nvim Channel per sink,
+    # so the state feed still lands) before wrap_tee's single slot.
+    def sink(sinks)
+      sinks.one? ? sinks.first : Lain::CLI::JournalTee.new(Lain::Channel::Null.instance, *sinks)
+    end
+  end
 
   # The chat-assembly responsibility, lifted out of the Thor class the way Repl
   # was: assembling a chat's Agent -- its toolset, subagent, approval gate,

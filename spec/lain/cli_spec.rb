@@ -197,7 +197,7 @@ RSpec.describe LainCLI do
           instance.send(:open_chronicle)
 
           chronicle = instance.send(:chronicle)
-          nvim_journal = instance.instance_variable_get(:@nvim_journal)
+          nvim_journal = instance.instance_variable_get(:@live_views).journal
 
           expect(nvim_journal).to be(chronicle.instance_variable_get(:@journal))
           chronicle.close
@@ -268,7 +268,7 @@ RSpec.describe LainCLI do
           instance = cli(journal: false)
           instance.send(:open_chronicle)
 
-          expect(instance.instance_variable_get(:@nvim_journal)).to be_nil
+          expect(instance.instance_variable_get(:@live_views)).to be_nil
           expect(File.exist?(File.join(dir, ".lain", "state.json"))).to be(false)
         end
       end
@@ -281,7 +281,7 @@ RSpec.describe LainCLI do
           instance.send(:open_chronicle)
 
           expect(instance.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
-          nvim_journal = instance.instance_variable_get(:@nvim_journal)
+          nvim_journal = instance.instance_variable_get(:@live_views).journal
           expect(nvim_journal).to be_a(Lain::Journal)
 
           session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
@@ -296,7 +296,7 @@ RSpec.describe LainCLI do
       instance = cli(journal: false)
       instance.send(:open_chronicle)
 
-      expect(instance.instance_variable_get(:@nvim_journal)).to be_nil
+      expect(instance.instance_variable_get(:@live_views)).to be_nil
     end
   end
 
