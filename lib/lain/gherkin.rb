@@ -276,3 +276,9 @@ module Lain
     end
   end
 end
+
+# G3: TestGeneration reopens nothing (it is a plain sibling class, not a Gherkin
+# reopen), but it depends on Criteria/Scenario existing first, so it loads after
+# the module body above -- gherkin.rb becomes this subtree's index the same way
+# skill.rb is skill/catalog.rb's.
+require_relative "gherkin/test_generation"
