@@ -17,6 +17,13 @@ module Lain
 
     # A slot fill that renders itself, caught before it overflows the stack.
     class CircularSlot < Error; end
+
+    # A resolver handed a non-String slot value -- ERB.new only accepts a
+    # String template, so anything else (an Integer digest, a byte count)
+    # otherwise crashed opaquely inside ERB, naming neither the slot nor the
+    # value. No coercion: a caller stringifies deliberately (loud failure
+    # doctrine), never LockedBinding on its behalf.
+    class NonStringSlot < Error; end
   end
 end
 

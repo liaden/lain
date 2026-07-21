@@ -53,6 +53,11 @@ module Lain
       private
 
       def evaluate(source, label)
+        unless source.is_a?(String)
+          raise NonStringSlot, "slot #{label.inspect} resolved to #{source.class}, not String " \
+                               "(#{source.inspect}); callers stringify slot values deliberately"
+        end
+
         template = ERB.new(source, trim_mode: "-")
         Purity.check!(template.src, label)
         template.result(clean_binding)
