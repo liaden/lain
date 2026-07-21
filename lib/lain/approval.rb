@@ -12,3 +12,4 @@ module Lain
 end
 
 require_relative "approval/queue"
+require_relative "approval/auto_surface"
