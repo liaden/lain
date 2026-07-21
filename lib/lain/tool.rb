@@ -103,9 +103,11 @@ module Lain
     end
 
     # Whether this tool is safe to run concurrently with others. Defaults to
-    # false: nothing here executes in parallel yet (the concurrency model is
-    # deliberately deferred), and opting a tool *in* to future concurrency is a
-    # claim about its side effects that must be made deliberately, not inherited.
+    # false: {Agent::ToolRunner#gather} fans a turn of parallel_safe? tools out
+    # as sibling fibers, and opting a tool *in* is a claim about its side
+    # effects (no Session write-set mutation, no process-global state) that
+    # must be made deliberately, not inherited. The full-toolset partition is
+    # pinned in spec/lain/tools/parallel_safety_spec.rb.
     def parallel_safe?
       false
     end

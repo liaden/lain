@@ -78,6 +78,12 @@ module Lain
           "an ok, explicit result, not an error."
       end
 
+      # Audited: reads the filesystem (Dir.glob, File.read) and runs each
+      # match through a fresh, per-call Structural::Matcher -- documented
+      # stateless (astgrep.rs: "Every call is STATELESS", no ext-side index
+      # handle). No Session touched, no process-global state.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, _invocation)

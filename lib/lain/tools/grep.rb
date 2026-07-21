@@ -44,6 +44,11 @@ module Lain
           "result, not an error."
       end
 
+      # Audited: reads Session#worker_env.cwd to resolve `path`, then only
+      # walks the filesystem (Dir.glob, File.foreach) -- no Session write, no
+      # chdir, no shared state across calls.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, invocation)

@@ -31,6 +31,11 @@ module Lain
           "parses to a different one."
       end
 
+      # Audited: parses the given `code` String in-memory via a fresh, per-call
+      # Structural::Matcher -- documented stateless (astgrep.rs: "Every call is
+      # STATELESS"), no filesystem, no Session, no process-global state.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, _invocation)

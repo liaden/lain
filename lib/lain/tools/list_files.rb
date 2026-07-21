@@ -24,6 +24,11 @@ module Lain
           "directory, or cannot be read."
       end
 
+      # Audited: reads the filesystem only (Dir.glob, File.exist?/directory?/
+      # readable?), touches no Session, and never chdirs -- no process-global
+      # state.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, _invocation)

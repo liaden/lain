@@ -26,6 +26,12 @@ module Lain
           "cannot be read."
       end
 
+      # Audited: this tool only reads the filesystem and appends to the
+      # Session's read-set (Session::Journaled#record_read is documented
+      # fiber-safe, no yield between its check and its mutate -- session.rb).
+      # No process-global state: WorkerEnv#cwd is read, never chdir'd.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, invocation)

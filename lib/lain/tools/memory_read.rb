@@ -32,6 +32,11 @@ module Lain
           "result if no item has that id."
       end
 
+      # Audited: `@index` is a frozen Memory::Index snapshot injected at
+      # construction -- #fetch only walks its own frozen content-addressed
+      # chain. No Session touched, no process-global state, nothing mutated.
+      def parallel_safe? = true
+
       protected
 
       # Rescuing UnknownId beats a #key? pre-check, which would walk the

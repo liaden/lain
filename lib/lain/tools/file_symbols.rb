@@ -42,6 +42,12 @@ module Lain
           "directory, cannot be read, or the language is unsupported."
       end
 
+      # Audited: reads one file (File.read) and runs it through
+      # Ext::TreeSitter.query -- documented stateless (treesitter.rs: "Every
+      # call is STATELESS", no ext-side index handle to keep). No Session
+      # touched, no process-global state.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, _invocation)

@@ -34,6 +34,12 @@ module Lain
           "order. No matches is not an error -- the result is simply empty."
       end
 
+      # Audited: reads Session#worker_env.cwd (a value read, not a mutation)
+      # to resolve `base`, then only calls Dir.glob. No Session write, no
+      # chdir -- Dir.glob's `base:` kwarg resolves without touching
+      # process-global Dir.pwd.
+      def parallel_safe? = true
+
       protected
 
       def perform(input, invocation)
