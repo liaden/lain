@@ -1,0 +1,3 @@
+{"type":"session","context_class":"Lain::Context","model":"claude-sonnet-4-6","max_tokens":1024,"system":"be terse","stream":true,"extra":{},"head":"d-t2","tools":[{"name":"read_file","description":"Read a file by path."},{"name":"grep","description":"Search file contents for a pattern."}],"reminders":[]}
+{"type":"turn","digest":"d-t1","role":"user","content":[{"type":"text","text":"what does this project do"}],"parent":null,"meta":{}}
+{"type":"turn","digest":"d-t2","role":"assistant","content":[{"type":"text","text":"it is an agent harness study bench"}],"parent":"d-t1","meta":{}}
