@@ -1,0 +1,9 @@
+# frozen_string_literal: true
+
+# A minimal, never-installed Gemfile: its only job is to make this directory
+# match Grader::TestHarness's rspec detection probe (a Gemfile beside a spec/
+# directory). The suite runs under plain `rspec` with the host's bundler context
+# scrubbed, so this lockless Gemfile is never resolved.
+source "https://rubygems.org"
+
+gem "rspec"
