@@ -24,10 +24,25 @@ module Lain
         @toolset = toolset
       end
 
-      # @return [Array<Hash>] one tool_result block per tool_use, in order
+      # @return [Array<Hash>] one tool_result block per tool_use, in wire order
+      #
+      # Barrier semantics: the turn splits into maximal CONTIGUOUS runs of
+      # parallel-safe tools; each safe run gathers concurrently, and each
+      # unsafe tool is a barrier that runs alone -- strictly after everything
+      # before it, strictly before everything after it. Execution order
+      # therefore never diverges from wire order: [safe, unsafe, safe] runs
+      # exactly as #sequential would (a run of one gains nothing), while
+      # [safe, safe, unsafe, safe] overlaps only the leading pair. The
+      # rejected alternative -- gather the safe SUBSET first, the unsafe
+      # remainder after -- reorders execution against the wire order the
+      # model saw: a silent causal lie the moment an unsafe tool writes what
+      # a later safe tool reads.
       def run(response, context:)
         uses = response.tool_uses
-        gatherable?(uses) ? gather(uses, context) : sequential(uses, context)
+        safety = safety_by_name(uses)
+        contiguous_runs(uses, safety).flat_map do |run|
+          gatherable?(run, safety) ? gather(run, context) : sequential(run, context)
+        end
       end
 
       # One user-turn delivery (I6, ruled): the tool_result blocks PLUS the
@@ -55,10 +70,36 @@ module Lain
                 .flat_map(&:take_answered_questions)
       end
 
+      # The safety decision's single owner: one handler-chain lookup per
+      # distinct tool name per turn, computed HERE and consulted (via `fetch`,
+      # so an unlisted name fails loudly) by BOTH {#contiguous_runs} and
+      # {#gatherable?} -- no re-lookup per neighbour comparison, and no second
+      # derivation that could silently disagree with the partition and
+      # downgrade a safe run to sequential. Names the chain does not hold (a
+      # Mock handler, an unknown tool) map to false: never parallel-safe.
+      # Per-TURN on purpose, never per-runner: deferred disclosure can add
+      # tools mid-session, so a name's answer is only stable within one turn.
+      #
+      # @return [Hash{String => Boolean}]
+      def safety_by_name(uses)
+        uses.map { |tool_use| tool_use.fetch("name") }.uniq
+            .to_h { |name| [name, @handler.tool_named(name)&.parallel_safe? || false] }
+      end
+
+      # `chunk_while` is exactly this partition: a chunk extends only while
+      # both neighbours are parallel-safe, so every unsafe tool -- adjacent to
+      # nothing it may run beside -- falls out as its own singleton run, the
+      # barrier {#run} dispatches alone. {#run} always passes the turn's one
+      # precomputed map; the default only serves a direct diagnostic caller.
+      def contiguous_runs(uses, safety = safety_by_name(uses))
+        uses.chunk_while { |left, right| safety.fetch(left.fetch("name")) && safety.fetch(right.fetch("name")) }
+      end
+
       # The default, order-preserving map: each tool_use resolved before the next.
       # Load-bearing for tools that make no parallelism claim -- gate 2 is an
       # ordering over the RETURNED blocks, and a sequential map trivially honours
-      # it. Everything that is not a whole turn of parallel_safe? tools stays here.
+      # it. Every run that is not a multi-tool stretch of parallel_safe? tools
+      # lands here.
       def sequential(uses, context)
         uses.map { |tool_use| result_block(tool_use, context) }
       end
@@ -78,19 +119,15 @@ module Lain
         end
       end
 
-      # Concurrency is opted into per tool AND only for a whole turn of them: a
-      # single unsafe tool_use keeps the entire turn sequential, so a tool that
-      # made no parallelism claim is never run alongside another. One tool_use has
-      # nothing to gather, so it stays sequential too.
-      def gatherable?(uses)
-        uses.size > 1 && uses.all? { |tool_use| parallel_safe?(tool_use) }
-      end
-
-      # Resolve the named tool against the same chain the dispatch will run
-      # against ({Effect::Handler#tool_named}); a name the chain does not hold
-      # (a Mock handler, an unknown tool) is treated as not parallel-safe.
-      def parallel_safe?(tool_use)
-        @handler.tool_named(tool_use.fetch("name"))&.parallel_safe? || false
+      # Concurrency is opted into per tool AND only within one contiguous run
+      # of them: {#contiguous_runs} isolates every unsafe tool in a singleton
+      # run, so a tool that made no parallelism claim is never dispatched
+      # alongside another. One tool_use has nothing to gather, so a run of one
+      # stays sequential too. The all? is the gate's own definition, not dead
+      # weight -- and it reads the SAME {#safety_by_name} map the partition
+      # chunked by, so the two can never disagree.
+      def gatherable?(uses, safety)
+        uses.size > 1 && uses.all? { |tool_use| safety.fetch(tool_use.fetch("name")) }
       end
 
       def result_block(tool_use, context)

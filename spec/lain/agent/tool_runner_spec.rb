@@ -1,5 +1,52 @@
 # frozen_string_literal: true
 
+require "async"
+
+# E2's fixtures, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module ToolRunnerSpecSupport
+  # Null gate: announcing entry goes nowhere and release never parks, so an
+  # ungated probe runs straight through -- no probe ever guards on nil.
+  class OpenGate
+    def enqueue(_value) = nil
+    def dequeue = nil
+  end
+
+  # Logs "#{name}:enter" / "#{name}:resolve" around its own dispatch into one
+  # shared list, so overlap and barrier ordering are assertions over a single
+  # ordered log, never over a clock. Given entered/release queues it also
+  # announces entry and parks until released -- the deterministic barrier
+  # idiom from spec/lain/tools/parallel_safety_spec.rb. `body` is the
+  # observable side effect (the shared-state write/read probes); its return
+  # value becomes the result content.
+  class ProbeTool < Lain::Tool
+    def initialize(name:, safe:, log:, entered: OpenGate.new, release: OpenGate.new, body: nil)
+      super()
+      @tool_name = name
+      @safe = safe
+      @log = log
+      @entered = entered
+      @release = release
+      @body = body || -> { @tool_name }
+    end
+
+    def name = @tool_name
+    def description = "test double: logs dispatch boundaries around an optional gate"
+    def input_schema = { type: :object, properties: {} }
+    def parallel_safe? = @safe
+
+    protected
+
+    def perform(_input, _context)
+      @log << "#{@tool_name}:enter"
+      @entered.enqueue(@tool_name)
+      @release.dequeue
+      value = @body.call
+      @log << "#{@tool_name}:resolve"
+      Lain::Tool::Result.ok(value)
+    end
+  end
+end
+
 # ToolRunner turns an assistant turn's tool_use blocks into the tool_result
 # blocks that answer them. These close the spec-less gap on the collaborator
 # directly, rather than only through agent_spec.
@@ -141,6 +188,122 @@ RSpec.describe Lain::Agent::ToolRunner do
                                 .delivery(tool_response(["tu_1", "echo", {}]), context: nil)
 
       expect(delivery.fetch(:causal_parents)).to eq([])
+    end
+  end
+
+  # E2: barrier semantics for mixed turns. The turn partitions into maximal
+  # CONTIGUOUS runs of parallel-safe tools; each safe run gathers
+  # concurrently, and each unsafe tool is a barrier that runs alone --
+  # strictly after everything before it, strictly before everything after --
+  # so execution order never diverges from the wire order the model saw.
+  describe "barrier semantics over contiguous runs" do
+    def probe(name, safe:, log:, **options)
+      ToolRunnerSpecSupport::ProbeTool.new(name:, safe:, log:, **options)
+    end
+
+    def runner_for(*tools)
+      described_class.new(handler: Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new(tools)))
+    end
+
+    it "overlaps a leading safe run, runs the barrier alone after it, then the trailing safe tool" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      log = []
+      runner = runner_for(
+        probe("safe_a", safe: true, log:, entered:, release:),
+        probe("safe_b", safe: true, log:, entered:, release:),
+        probe("unsafe_c", safe: false, log:, entered:, release:),
+        probe("safe_d", safe: true, log:, entered:, release:)
+      )
+      response = tool_response(["tu_1", "safe_a", {}], ["tu_2", "safe_b", {}],
+                               ["tu_3", "unsafe_c", {}], ["tu_4", "safe_d", {}])
+
+      Sync do |task|
+        run = task.async { runner.run(response, context: nil) }
+
+        # Both leading safe tools are provably mid-dispatch before either
+        # resolves. The timeout is a failure bound, never a synchronization:
+        # a sequential dispatch parks safe_a on `release` and never enters
+        # safe_b, and without the bound that failure would hang, not report.
+        overlap = task.with_timeout(1) { [entered.dequeue, entered.dequeue] }
+        expect(overlap).to contain_exactly("safe_a", "safe_b")
+        release.enqueue(:go)
+        release.enqueue(:go)
+
+        # The barrier enters only once BOTH safe results have resolved. The
+        # include() guard first: on a regression it fails with a readable
+        # diff, where a bare index comparison would raise Integer-vs-nil.
+        expect(task.with_timeout(1) { entered.dequeue }).to eq("unsafe_c")
+        expect(log).to include("safe_a:resolve", "safe_b:resolve", "unsafe_c:enter")
+        barrier_entered = log.index("unsafe_c:enter")
+        expect(barrier_entered).to be > log.index("safe_a:resolve")
+        expect(barrier_entered).to be > log.index("safe_b:resolve")
+        release.enqueue(:go)
+
+        # ...and the trailing safe tool only once the barrier has.
+        expect(task.with_timeout(1) { entered.dequeue }).to eq("safe_d")
+        expect(log).to include("unsafe_c:resolve", "safe_d:enter")
+        expect(log.index("safe_d:enter")).to be > log.index("unsafe_c:resolve")
+        release.enqueue(:go)
+
+        blocks = run.wait
+        expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2 tu_3 tu_4])
+        expect(blocks.map { |block| block["content"] }).to eq(%w[safe_a safe_b unsafe_c safe_d])
+      ensure
+        run&.stop
+      end
+    end
+
+    # The pin against the rejected alternative (gather the safe SUBSET first,
+    # unsafe remainder after): reordering execution against wire order would
+    # run safe_reader BEFORE the barrier's write and observe "safe-wrote" --
+    # a silent causal lie. Barrier semantics must observe exactly what full
+    # sequential would.
+    it "lets a trailing safe tool observe the barrier's write, exactly as sequential would" do
+      state = { value: "initial" }
+      log = []
+      runner = runner_for(
+        probe("safe_writer", safe: true, log:, body: -> { state[:value] = "safe-wrote" }),
+        probe("unsafe_writer", safe: false, log:, body: -> { state[:value] = "barrier-wrote" }),
+        probe("safe_reader", safe: true, log:, body: -> { state[:value] })
+      )
+      response = tool_response(["tu_1", "safe_writer", {}], ["tu_2", "unsafe_writer", {}],
+                               ["tu_3", "safe_reader", {}])
+
+      blocks = runner.run(response, context: nil)
+
+      expect(blocks.map { |block| block["content"] }).to eq(%w[safe-wrote barrier-wrote barrier-wrote])
+      # Runs of one gain nothing: this schedule is exactly the sequential one.
+      expect(log).to eq(%w[safe_writer:enter safe_writer:resolve
+                           unsafe_writer:enter unsafe_writer:resolve
+                           safe_reader:enter safe_reader:resolve])
+    end
+
+    it "runs a single-tool turn strictly sequentially" do
+      log = []
+      runner = runner_for(probe("safe_only", safe: true, log:))
+
+      blocks = runner.run(tool_response(["tu_1", "safe_only", {}]), context: nil)
+
+      expect(log).to eq(%w[safe_only:enter safe_only:resolve])
+      expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1])
+    end
+
+    it "runs an all-unsafe turn strictly sequentially in wire order" do
+      log = []
+      runner = runner_for(
+        probe("unsafe_a", safe: false, log:),
+        probe("unsafe_b", safe: false, log:),
+        probe("unsafe_c", safe: false, log:)
+      )
+      response = tool_response(["tu_1", "unsafe_a", {}], ["tu_2", "unsafe_b", {}],
+                               ["tu_3", "unsafe_c", {}])
+
+      blocks = runner.run(response, context: nil)
+
+      expect(log).to eq(%w[unsafe_a:enter unsafe_a:resolve unsafe_b:enter unsafe_b:resolve
+                           unsafe_c:enter unsafe_c:resolve])
+      expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2 tu_3])
     end
   end
 end
