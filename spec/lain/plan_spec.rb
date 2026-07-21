@@ -41,6 +41,13 @@ RSpec.describe Lain::Plan::Document do
       expect(done.status).to eq("done")
     end
 
+    it "answers #failed? by its status" do
+      step = described_class.new(id: "x", title: "t", size: "S")
+
+      expect(step).not_to be_failed
+      expect(step.with_status("failed")).to be_failed
+    end
+
     # S1: the markdown round-trip must be total -- every constructible Step must
     # either round-trip digest-identically OR be refused loudly at construction.
     # These are the shapes the round-trip probe found that the line-oriented,

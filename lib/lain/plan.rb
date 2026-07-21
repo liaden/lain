@@ -6,3 +6,4 @@
 # so Document's module body can reopen the same Plan module cleanly.
 require_relative "plan/step"
 require_relative "plan/document"
+require_relative "plan/closure"

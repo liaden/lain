@@ -47,6 +47,10 @@ module Lain
         self.class.new(id:, title:, size:, status:, criteria_digest:)
       end
 
+      def failed?
+        status == "failed"
+      end
+
       # Plain-hash wire form for {Canonical}; String keys, sorted downstream. The
       # criteria_digest key is always present (nil when unset) so the shape is
       # stable across steps.
