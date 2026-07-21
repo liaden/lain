@@ -34,6 +34,12 @@ Integration specs hit the real API and cost money. They run only with **both**:
 LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 ```
 
+`:core` specs need the compiled lain-core daemon (excluded by default, like `:integration`):
+
+```bash
+bundle exec rake core:build && bundle exec rspec --tag core
+```
+
 ## RuboCop
 
 Use `rubocop -a`. Do **not** reach for `-A` without reading the diff.

@@ -103,6 +103,28 @@ RSpec.configure do |config|
   config.filter_run_excluding(:services) unless SERVICES_ENABLED
 end
 
+# :core specs drive the REAL compiled lain-core daemon over its Unix socket
+# (spec/lain/core/client_spec.rb). They cost no money and touch no network, but
+# they need the compiled binary, so they are excluded by default. Unlike the
+# env-gated tags above, the way in is the tag itself: a command-line `--tag core`
+# takes priority over this config-level exclusion (rspec-core 3.13, verified),
+# so no LAIN_* variable is needed:
+#
+#     bundle exec rake core:build && bundle exec rspec --tag core
+#
+# When opted in but the binary is absent, an example SKIPS (never fails),
+# mirroring :nvim: a missing build artifact is an environment gap, not a lain
+# regression -- and the skip message names the rake task that fills it.
+RSpec.configure do |config|
+  config.filter_run_excluding(:core)
+
+  config.before(:each, :core) do
+    unless File.executable?(Lain::Core::Child::BINARY)
+      skip("lain-core binary not built -- run `bundle exec rake core:build` to run :core specs")
+    end
+  end
+end
+
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
     NetworkAccess.permit { example.run }
