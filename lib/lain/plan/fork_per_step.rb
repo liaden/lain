@@ -33,8 +33,16 @@ module Lain
 
       # @param mainline [Timeline] the store-backed mainline every fork branches
       #   from; the {Runner}'s run starts from this same Timeline
-      def initialize(mainline:)
+      # @param journal [#<<] where a reopen's {Telemetry::SupersessionRecord}
+      #   lands; the Null channel by default, so a non-journaling caller needs no
+      #   guard and a run that never reopens journals nothing
+      # @param plan_digest [String, nil] the plan these steps belong to, carried
+      #   into the supersession pointer's join key -- required only to journal a
+      #   reopen, so nil is legal until one actually happens
+      def initialize(mainline:, journal: Channel::Null.instance, plan_digest: nil)
         @mainline = mainline
+        @journal = journal
+        @plan_digest = plan_digest
         @closed = {}
         @supersessions = []
       end
@@ -66,13 +74,17 @@ module Lain
         supersession = Supersession.new(step_id: closure.step_id,
                                         superseded: @closed.fetch(closure.step_id),
                                         superseding: closure.digest)
-        # Store-borne ONLY for now. P2's {Closure#record} pointer precedent says
-        # a reopen must be journal-discoverable too (a later session reading
-        # NDJSON alone must find the succession), but the Journalable/Telemetry
-        # edit that carries it lands in a SEQUENCED follow-on -- P4 owns this
-        # wave's telemetry.rb edit and is in flight. The pointer addendum lands
-        # after P4, in its own worktree; the record is in .handback-P3.md.
+        # Store-borne AND journal-pointed, the same pairing {Closure#record}
+        # makes: the frozen sibling goes into the content-addressed Store, then a
+        # {Telemetry::SupersessionRecord} names its address (plus both closures)
+        # so a later session recovers the reopen from the Journal alone, the
+        # Store having died with its process.
         @mainline.store.put(supersession)
+        @journal << Telemetry::SupersessionRecord.new(
+          supersession_digest: supersession.digest, step_id: closure.step_id,
+          superseded_digest: supersession.superseded, superseding_digest: supersession.superseding,
+          plan_digest: @plan_digest
+        )
         @supersessions << supersession
       end
 

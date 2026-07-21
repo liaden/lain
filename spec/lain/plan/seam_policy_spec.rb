@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 # PC-3: two execution SHAPES behind one continuation contract. A seam policy
 # answers `at_seam(state:, closure:) -> Continuation`, where a Continuation names
 # the mainline to continue on (as a head digest, so the value stays
@@ -159,24 +161,32 @@ RSpec.describe "Lain::Plan seam policies" do
   end
 
   describe "Scenario: reopening supersedes by reference" do
+    # A fresh fork closing an already-closed step. Returns [policy, first,
+    # reopened] so both the in-Store assertions and the NDJSON read-back share
+    # one setup. The policy journals its supersession pointer into `journal`.
+    def reopen(store, journal)
+      policy = Lain::Plan::ForkPerStep.new(mainline: Lain::Timeline.empty(store:), journal:,
+                                           plan_digest: document.digest)
+      first = close_step(policy, store, "done", Lain::Grader::Grade.new(score: 1.0, why: "closed"))
+      reopened = close_step(policy, store, "failed", Lain::Grader::Grade.new(score: 0.0, pass: false, why: "reopened"))
+      [policy, first, reopened]
+    end
+
+    # Build+record a one-turn chunk's Closure for step s1 at `status`, then drive
+    # it through the policy's seam, returning the closure.
+    def close_step(policy, store, status, grade)
+      step = Lain::Plan::Step.new(id: "s1", title: "a step", size: "S").with_status(status)
+      timeline = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "work" }])
+      closure = Lain::Plan::Closure.build(step:, timeline:, chunk_range: (0...1), grade:, snapshot: nil)
+      closure.record(store:, plan_digest: document.digest)
+      state = Lain::Plan::Continuation.new(head_digest: policy.mainline.head_digest, pipeline: SeamPolicyFixtures::DEFAULT)
+      policy.at_seam(state:, closure:)
+      closure
+    end
+
     it "names the superseded closure's digest and leaves the old record unchanged in the Store" do
       store = Lain::Store.new
-      policy = fork_policy(store)
-      timeline = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "work" }])
-      step = Lain::Plan::Step.new(id: "s1", title: "a step", size: "S")
-
-      first = Lain::Plan::Closure.build(step: step.with_status("done"), timeline:, chunk_range: (0...1),
-                                        grade: Lain::Grader::Grade.new(score: 1.0, why: "closed"), snapshot: nil)
-      first.record(store:, plan_digest: document.digest)
-      policy.at_seam(state: Lain::Plan::Continuation.new(head_digest: timeline.head_digest, pipeline: SeamPolicyFixtures::DEFAULT),
-                     closure: first)
-
-      reopened_grade = Lain::Grader::Grade.new(score: 0.0, pass: false, why: "reopened")
-      reopened = Lain::Plan::Closure.build(step: step.with_status("failed"), timeline:, chunk_range: (0...1),
-                                           grade: reopened_grade, snapshot: nil)
-      reopened.record(store:, plan_digest: document.digest)
-      reopen_state = Lain::Plan::Continuation.new(head_digest: policy.mainline.head_digest, pipeline: SeamPolicyFixtures::DEFAULT)
-      policy.at_seam(state: reopen_state, closure: reopened)
+      policy, first, reopened = reopen(store, Lain::Channel::Null.instance)
 
       expect(policy.supersessions.size).to eq(1)
       supersession = policy.supersessions.first
@@ -184,6 +194,40 @@ RSpec.describe "Lain::Plan seam policies" do
       expect(supersession.superseding).to eq(reopened.digest)
       expect(store.fetch(first.digest)).to eq(first)
       expect(first.digest).not_to eq(reopened.digest)
+    end
+
+    it "is discoverable from the NDJSON alone: the pointer recovers both closure digests" do
+      io = StringIO.new
+      store = Lain::Store.new
+      _policy, first, reopened = reopen(store, Lain::Journal.new(io:))
+
+      records = Lain::Journal.records(io.string.each_line, type: "supersession_record").to_a
+
+      expect(records.size).to eq(1)
+      record = records.first
+      expect(record.fetch("step_id")).to eq("s1")
+      expect(record.fetch("superseded_digest")).to eq(first.digest)
+      expect(record.fetch("superseding_digest")).to eq(reopened.digest)
+      expect(record.fetch("plan_digest")).to eq(document.digest)
+      # the pointer addresses the Store sibling, so a reader recovers it too
+      expect(store.fetch(record.fetch("supersession_digest")).superseding).to eq(reopened.digest)
+    end
+  end
+
+  describe Lain::Telemetry::SupersessionRecord do
+    it "is Ractor-shareable and journals under the supersession_record type" do
+      record = described_class.new(supersession_digest: +"blake3:s", step_id: +"s1", superseded_digest: +"blake3:a",
+                                   superseding_digest: +"blake3:b", plan_digest: +"blake3:p")
+
+      expect(Ractor.shareable?(record)).to be(true)
+      expect(record.to_journal.fetch("type")).to eq("supersession_record")
+    end
+
+    it "raises loudly when a digest it points at is missing" do
+      expect do
+        described_class.new(supersession_digest: nil, step_id: "s1", superseded_digest: "blake3:a",
+                            superseding_digest: "blake3:b", plan_digest: "blake3:p")
+      end.to raise_error(ArgumentError, /supersession_digest.*supersession in the Store/)
     end
   end
 
