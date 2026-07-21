@@ -121,9 +121,9 @@ class LainCLI < Thor
   # stays the thin flag-parse-and-bracket it is meant to be.
   def chat
     backend = Backend.new(options)
-    resumed = options[:resume] && Lain::CLI::Resume.new.call(selector: options[:resume], model: backend.context.model)
+    resumed = resumed_run(backend)
     open_chronicle
-    run_conversation(backend:, resumed:)
+    converse(backend:, resumed:)
   rescue Lain::Error => e
     raise Thor::Error, e.message
   ensure
@@ -131,7 +131,7 @@ class LainCLI < Thor
     # conductor: its close is guarded, so a signal that already closed the
     # session (:interrupted / :grace_expired) makes this a no-op, and a plain quit
     # closes :exit. Falls back to the chronicle if chat raised before wiring.
-    (@conductor || chronicle).close(reason: :exit)
+    (@wiring&.conductor || chronicle).close(reason: :exit)
   end
 
   desc "sessions", "List this project's recorded sessions (newest first)"
@@ -139,6 +139,15 @@ class LainCLI < Thor
 
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report_for(selector) }
+
+  desc "consolidate SESSION", "Court-clerk pass: distill a session's completed subagent lineages into memory"
+  method_option :dry_run, type: :boolean, default: false, desc: "Report what would be clerked, no spawn, no API key"
+  method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
+  method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
+  method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per clerk turn"
+  def consolidate(selector)
+    render { Lain::CLI::Consolidate.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
+  end
 
   desc "up", "Create/attach the lain tmux session (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
@@ -174,35 +183,19 @@ class LainCLI < Thor
     raise Thor::Error, e.message
   end
 
-  # Assemble the run's collaborators over the now-open chronicle and hand off
-  # to the frontend.
-  def run_conversation(backend:, resumed:)
-    channel = Lain::Channel.new
-    wiring = Wiring.new(options:, chronicle:)
-    recorder, session = wiring.run_state(resumed)
-    agent = wiring.wire_agent(channel:, recorder:, session:, backend:, resumed:)
-    resumed&.notices&.each { |notice| say notice }
-    run_chat(tty: Lain::Frontend::TTY.new(channel:), agent:, session:, wiring:)
+  # Resolved BEFORE open_chronicle (see #chat) so a resume refusal raises
+  # before any journal file is opened -- a refusal never orphans a fresh
+  # journal. A bare --resume arrives as "" (newest); absent as nil.
+  def resumed_run(backend)
+    options[:resume] && Lain::CLI::Resume.new.call(selector: options[:resume], model: backend.context.model)
   end
 
-  # The ask_human reply path (@ask_human / @questions) is owned by Wiring, the
-  # collaborator that wired the toolset those two ivars belong to; the Repl
-  # reads them off it here rather than through exe-instance state. The
-  # conductor guards the whole conversation: traps installed around it, every
-  # ask supervised through the shutdown coordinator.
-  def run_chat(tty:, agent:, session:, wiring:)
-    @conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: options[:grace], supervisor: wiring.supervisor)
-    repl = build_repl(tty:, agent:, wiring:)
-    @conductor.guard { repl.run(nvim: nvim_views, store: agent.timeline.store, session:) }
-  end
-
-  # The Repl over the run's collaborators -- lifted from #run_chat so that
-  # thin method stays the conductor-open/guard bracket it reads as (the wiring
-  # accessors are Wiring's own seams; reading them here is the exe's job).
-  def build_repl(tty:, agent:, wiring:)
-    Repl.new(agent:, tty:, ask_human: wiring.ask_human, questions: wiring.questions,
-             chronicle:, conductor: @conductor, approvals: wiring.approvals, notifier: wiring.notifier,
-             supervisor: wiring.supervisor, middleware: Lain::CLI::ReplMiddleware.build(role_spawn: wiring.role_spawn))
+  # The wiring half of #chat, split out so chat stays the flag-parse-and-close
+  # bracket it reads as; @wiring is exe state because chat's ensure closes its
+  # conductor.
+  def converse(backend:, resumed:)
+    @wiring = Wiring.new(options:, chronicle:)
+    @wiring.run(backend:, resumed:, nvim: nvim_views) { |notice| say notice }
   end
 
   # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
@@ -283,11 +276,27 @@ class LainCLI < Thor
   # back the built Agent, and exposes @ask_human/@questions so #run_chat can
   # give the Repl the reply path this object wired.
   class Wiring
-    attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn
+    attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn, :conductor
 
     def initialize(options:, chronicle:)
       @options = options
       @chronicle = chronicle
+    end
+
+    # Assemble the run's collaborators over the now-open chronicle and hand off
+    # to the frontend. The conductor guards the whole conversation: traps
+    # installed around it, every ask supervised through the shutdown
+    # coordinator. @conductor is set BEFORE the repl blocks, so the exe's
+    # ensure can close it even when the repl raises mid-run; the block is the
+    # exe's `say`, the one output seam this class is lent.
+    def run(backend:, resumed:, nvim:, &notice)
+      channel = Lain::Channel.new
+      recorder, session = run_state(resumed)
+      agent = wire_agent(channel:, recorder:, session:, backend:, resumed:)
+      resumed&.notices&.each(&notice)
+      tty = Lain::Frontend::TTY.new(channel:)
+      @conductor = Lain::CLI::Conductor.open(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
+      @conductor.guard { build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:) }
     end
 
     # The subagent tool reads the live parent head at spawn time, so the Agent is
@@ -335,9 +344,7 @@ class LainCLI < Thor
     # A resumed chat opens its NEW journal chained to the old one; a fresh chat
     # passes nothing, and the scribe writes an unchained header. Derived from
     # the Resume result so the exe never assembles the wire-format hashes.
-    def resume_start(resumed)
-      resumed ? { resumed_from: resumed.resumed_from, written: resumed.written } : {}
-    end
+    def resume_start(resumed) = resumed ? { resumed_from: resumed.resumed_from, written: resumed.written } : {}
 
     # The replier fiber (see Repl#answer_loop) parks on @questions and answers
     # through @ask_human -- Wiring-instance state because the reply path and the
@@ -399,13 +406,11 @@ class LainCLI < Thor
     # (CLAUDE.md: extract a collaborator, never loosen a Metrics cop). The union
     # a subagent role attenuates FROM is exactly this list.
     def base_tools(recorder)
-      [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,
-       Lain::Tools::Grep.new, Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new,
-       Lain::Tools::TodoWrite.new, Lain::Tools::MemoryWrite.new(recorder:),
-       Lain::Tools::MemoryRead.new(index: recorder), Lain::Tools::Bash.new,
-       Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
-       Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new,
-       Lain::Tools::AstSearch.new, Lain::Tools::CodeOutline.new,
+      [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
+       Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
+       Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
+       Lain::Tools::Bash.new, Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new, Lain::Tools::AstDump.new,
+       Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new, Lain::Tools::CodeOutline.new,
        Lain::Tools::FileSymbols.new]
     end
 
@@ -472,6 +477,15 @@ class LainCLI < Thor
 
     def approval_journal
       chronicle.telemetry_kwargs.fetch(:journal) { Lain::Journal.new(io: File.open(File::NULL, "ab")) }
+    end
+
+    # The Repl over the run's collaborators -- the accessors are this class's
+    # own seams (it wired the toolset @ask_human/@questions belong to), so the
+    # Repl reads them here rather than through exe-instance state.
+    def build_repl(tty:, agent:)
+      Repl.new(agent:, tty:, ask_human:, questions:,
+               chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
+               supervisor:, middleware: Lain::CLI::ReplMiddleware.build(role_spawn:))
     end
   end
 
