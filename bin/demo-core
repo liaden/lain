@@ -1,0 +1,102 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The C3 flagship demo, end-to-end against the REAL lain-core daemon
+# (`bundle exec rake core:build` first): the same commands run through
+# Tools::Bash (in-process Mixlib::ShellOut) and Tools::CoreExec (out-of-process
+# msgpack-RPC) side by side, byte-compared -- the differential -- then the
+# daemon is SIGKILLed mid-command to show boundary death arriving as a loud,
+# named Tool::Result.error, never a hang. Exits 0 iff every case matches
+# byte-for-byte and the kill was loud. Not gem-shipped: a manual driver, so
+# stdout is its surface (bin/demo-supervision's posture).
+
+require "bundler/setup"
+require "async"
+require "fileutils"
+require "tmpdir"
+# The leaf alone cannot load: leaf files carry no internal requires (see
+# CLAUDE.md), so constants resolve only through the lain.rb manifest.
+require "lain"
+
+# One daemon, three differential cases, one kill -- an object so each act
+# stays a small named method rather than one long script body.
+class DemoCore
+  PROBE_VAR = "LAIN_DEMO_CORE_PROBE"
+
+  # The three case shapes C3's differential pins: plain text (with cwd and a
+  # nonzero exit), non-UTF-8 bytes (the msgpack bin contract), and the
+  # explicit-nil env scrub (nil removes the key, never empty-string).
+  def cases
+    {
+      "text + cwd + exit status" => "pwd -P; echo err >&2; exit 3",
+      "non-UTF-8 bytes" => "printf '\\377\\000\\376'; printf '\\375' >&2",
+      "nil-scrubbed env" => "echo \"${#{PROBE_VAR}-absent}\""
+    }
+  end
+
+  def initialize(runtime_dir:, workdir:)
+    @paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime_dir })
+    @worker_env = Lain::WorkerEnv.new(cwd: workdir, env: { PROBE_VAR => nil })
+    @bash = Lain::Tools::Bash.new
+    @verdicts = []
+  end
+
+  def run
+    # Set BEFORE the daemon spawns so BOTH children inherit it -- "absent" in
+    # the scrub case can then only mean the explicit-nil removal worked.
+    ENV[PROBE_VAR] = "sekrit"
+    Sync do
+      @client = Lain::Core::Client.start(paths: @paths)
+      puts "[boot]    lain-core pid #{@client.pid} on #{@paths.runtime_dir}"
+      differential
+      loud_kill
+    end
+    verdict
+  end
+
+  private
+
+  def core = Lain::Tools::CoreExec.new(client: @client)
+  def invocation = Lain::Tool::Invocation.new(context: Lain::Session.new(worker_env: @worker_env))
+
+  def differential
+    cases.each do |label, command|
+      bash_result = @bash.call({ command: }, invocation)
+      core_result = core.call({ command: }, invocation)
+      compare(label, command, bash_result, core_result)
+    end
+  end
+
+  def compare(label, command, bash_result, core_result)
+    match = bash_result.content.b == core_result.content.b && bash_result.error? == core_result.error?
+    @verdicts << match
+    puts "[case]    #{label}: `#{command}`"
+    puts "  bash: #{bash_result.content.inspect}"
+    puts "  core: #{core_result.content.inspect}"
+    puts "  => #{match ? "MATCH (byte-for-byte)" : "DIVERGE"}"
+  end
+
+  # The daemon dies mid-command: the in-flight call must come back promptly as
+  # an error RESULT naming Core::Died -- returned, not raised, never a hang.
+  def loud_kill
+    in_flight = Async { core.call({ command: "sleep 30" }, invocation) }
+    Process.kill("KILL", @client.pid)
+    puts "[kill]    SIGKILL sent to lain-core mid-`sleep 30`"
+    @death = in_flight.wait
+    puts "[death]   error result: #{@death.content}"
+    @client.stop
+  end
+
+  def verdict
+    abort "[FAIL] differential diverged" unless @verdicts.all?
+    abort "[FAIL] boundary death was not a loud error result" unless death_loud?
+    puts "[ok] #{@verdicts.size} cases byte-identical across the boundary; " \
+         "daemon death surfaced as an error naming Core::Died"
+  end
+
+  def death_loud? = @death.error? && @death.content.include?("Lain::Core::Died")
+end
+
+Dir.mktmpdir("lain-demo-core") do |runtime_dir|
+  Dir.mktmpdir("lain-demo-core-cwd") { |workdir| DemoCore.new(runtime_dir:, workdir:).run }
+end

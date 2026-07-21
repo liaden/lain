@@ -39,5 +39,15 @@ module Lain
     def initialize(cwd:, env:)
       super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h))
     end
+
+    # The ONE cwd-resolution rule both exec arms share (Tools::Bash in
+    # process, Tools::CoreExec across the boundary), extracted so the two
+    # transports cannot drift apart on it: a model-supplied path resolves
+    # against this cwd -- a relative one lands under it, an absolute one is
+    # honored as given (File.expand_path ignores the base for an absolute
+    # path) -- and absent a path, this cwd is the working directory.
+    def resolve(path)
+      path ? File.expand_path(path, cwd) : cwd
+    end
   end
 end

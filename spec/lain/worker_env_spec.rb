@@ -25,6 +25,19 @@ RSpec.describe Lain::WorkerEnv do
     end
   end
 
+  # The ONE cwd-resolution rule both exec arms (Tools::Bash, Tools::CoreExec)
+  # share -- extracted here so the two transports cannot drift apart on it
+  # (C3 panel fix 3).
+  describe "#resolve" do
+    subject(:worker_env) { described_class.new(cwd: "/work", env: {}) }
+
+    it "resolves a relative path under its cwd, honors an absolute one, defaults to its cwd" do
+      expect(worker_env.resolve("sub/dir")).to eq("/work/sub/dir")
+      expect(worker_env.resolve("/abs")).to eq("/abs")
+      expect(worker_env.resolve(nil)).to eq("/work")
+    end
+  end
+
   describe "as a deeply frozen value object" do
     subject(:worker_env) { described_class.new(cwd: "/work", env: { "A" => "1" }) }
 

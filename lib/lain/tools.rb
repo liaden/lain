@@ -19,6 +19,8 @@ require_relative "tools/edit_file"
 require_relative "tools/write_file"
 require_relative "tools/todo_write"
 require_relative "tools/bash"
+# After bash: CoreExec shares Bash::Input at class-body load.
+require_relative "tools/core_exec"
 require_relative "tools/subagent"
 require_relative "tools/ask_human"
 require_relative "tools/tool_search"

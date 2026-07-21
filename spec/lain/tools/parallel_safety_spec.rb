@@ -49,11 +49,13 @@ module ParallelSafetySpecSupport
   # Every OTHER tool the toolset actually ships (exe/lain's `base_tools` plus
   # the subagent/ask_human/run_skill layered on top, and tool_search, which
   # {Toolset::Disclosure::Deferred} constructs separately): a model-controlled
-  # command string (bash), a Session write-set mutation (edit_file,
+  # command string (bash, and core_exec -- C3's approval-gated tier-3
+  # comparison arm over the lain-core boundary, constructed explicitly rather
+  # than shipped in base_tools), a Session write-set mutation (edit_file,
   # write_file, todo_write, memory_write), or a capability this card's audit
   # never examined (run_skill, ask_human, the web tools, tool_search) -- none
   # opted in without a deliberate audit of its own.
-  FALSE_TOOLS = %w[bash edit_file write_file todo_write memory_write
+  FALSE_TOOLS = %w[bash core_exec edit_file write_file todo_write memory_write
                    run_skill ask_human web_fetch web_search tool_search].freeze
 
   def self.build_subagent
@@ -92,6 +94,9 @@ module ParallelSafetySpecSupport
     "file_symbols" => -> { Lain::Tools::FileSymbols.new },
     "subagent" => -> { build_subagent },
     "bash" => -> { Lain::Tools::Bash.new },
+    # Construction-only: the partition asks #parallel_safe?, never #perform,
+    # and a nil client fails loudly if that ever changes.
+    "core_exec" => -> { Lain::Tools::CoreExec.new(client: nil) },
     "edit_file" => -> { Lain::Tools::EditFile.new },
     "write_file" => -> { Lain::Tools::WriteFile.new },
     "todo_write" => -> { Lain::Tools::TodoWrite.new },

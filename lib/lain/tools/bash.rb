@@ -37,6 +37,16 @@ module Lain
 
       input_model Input
 
+      # The one output template BOTH exec arms render through -- {Bash} from
+      # mixlib's captures, {CoreExec} from the daemon reply's bin fields --
+      # shared so the differential's byte-identity cannot drift out from
+      # under its specs (C3 panel fix 3).
+      def self.render_output(exit_status:, stdout:, stderr:)
+        "exit status: #{exit_status}\n" \
+          "--- stdout ---\n#{stdout}" \
+          "--- stderr ---\n#{stderr}"
+      end
+
       # The subprocess machinery is injected as a factory, not constructed
       # inline: specs substitute a ShellOut whose TERM->KILL grace is short
       # (mixlib-shellout hardcodes `sleep 3` in reap_errant_child, with no
@@ -75,25 +85,19 @@ module Lain
 
       private
 
+      # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
+      # {CoreExec}. Under the default WorkerEnv (`Dir.pwd`) it is
+      # byte-identical to passing the raw `input.cwd` through, nil included.
       def build_shell_out(input, invocation)
         worker_env = session_of(invocation).worker_env
         @shell_out_factory.call(
           input.command,
-          cwd: resolved_cwd(input, worker_env),
+          cwd: worker_env.resolve(input.cwd),
           environment: worker_env.env,
           timeout: input.timeout || DEFAULT_TIMEOUT,
           live_stdout: output_sink(invocation, :stdout),
           live_stderr: output_sink(invocation, :stderr)
         )
-      end
-
-      # A model-supplied `cwd` resolves against the WorkerEnv's cwd -- a relative
-      # one lands under it, an absolute one is honored as given (File.expand_path
-      # ignores the base for an absolute path); absent, the WorkerEnv's cwd is
-      # the working directory. Under the default WorkerEnv (`Dir.pwd`) this is
-      # byte-identical to passing the raw `input.cwd` through, nil included.
-      def resolved_cwd(input, worker_env)
-        input.cwd ? File.expand_path(input.cwd, worker_env.cwd) : worker_env.cwd
       end
 
       # Bytes are attributed to their tool_use_id AT THE SOURCE, as they are
@@ -105,9 +109,8 @@ module Lain
       end
 
       def format_output(shell_out)
-        "exit status: #{shell_out.exitstatus}\n" \
-          "--- stdout ---\n#{shell_out.stdout}" \
-          "--- stderr ---\n#{shell_out.stderr}"
+        self.class.render_output(exit_status: shell_out.exitstatus,
+                                 stdout: shell_out.stdout, stderr: shell_out.stderr)
       end
     end
   end
