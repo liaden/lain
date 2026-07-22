@@ -1,3 +1,8 @@
+# commit-msg is not a default stage, so it only installs when named here. Anyone
+# cloning fresh gets both hook types from a single `pre-commit install`; an
+# existing checkout needs one `pre-commit install` re-run to pick up commit-msg.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -70,3 +75,12 @@ repos:
         language: system
         types_or: [ruby, rust]
         pass_filenames: false
+
+      # Deterministic commit-message lint (no gem load, no network, no AI): the
+      # mechanical parts of the git-commit-narrative standard. Runs at commit-msg
+      # so it sees the final message; pass_filenames hands it COMMIT_EDITMSG.
+      - id: lint-commit-msg
+        name: lint commit message
+        entry: bin/lint-commit-msg
+        language: script
+        stages: [commit-msg]
