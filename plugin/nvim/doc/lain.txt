@@ -213,6 +213,27 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainVersion`. In
 `lain://inbox`, `r` and <CR> prompt for and submit a reply.
 
+6.5 FOLDS                                                         *lain-folds*
+
+The record-shaped views -- `lain://timeline` (one fold per turn),
+`lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one
+fold per pending question) -- set window-local expr folds when first shown:
+older records start closed and the newest open. That default applies once, at
+display; renders never re-fold, so turns you open (|za|/|zo|) and |zR| stick
+while the session streams -- at most lain re-opens the newest record after a
+render. Because a turn or question is often a single line, lain sets
+'foldminlines' to 0, so single-line records render |hl-Folded| at rest -- the
+fold summary line (the record's own first line, plus a hidden-line count when
+there is one) is what you see, not blank collapse markers. Fold boundaries are
+exactly the |]]|/|[[| record boundaries. When the window moves on to another
+buffer, your previous fold options are restored. `lain://request`,
+`lain://diff`, and `lain://workspace` are left to your own fold config.
+
+Set `vim.g.lain_fold = false` to opt out (it also un-installs live,
+mid-session); set `vim.g.lain_foldlevel` >= 1 to keep every record open at
+rest; and for per-render control define an autocmd on `User LainRender` -- it
+fires after lain's fold upkeep, so whatever it opens or closes wins.
+
 ==============================================================================
 7. WITHOUT THE PLUGIN                                      *lain-zero-install*
 
