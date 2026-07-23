@@ -4,17 +4,7 @@
 # own #listing) verbatim -- no re-derivation here, matching /status's "one
 # definition, read twice" shape.
 RSpec.describe Lain::CLI::Command::Sessions do
-  def env_with(sessions:)
-    Lain::CLI::Command::Env.new(
-      status: Lain::CLI::Command::Env::NullStatus, sessions:,
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
-      replies: double("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: double("agent"),
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch, chronicle: Lain::CLI::Chronicle::Null.new,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
-  end
+  def env_with(sessions:) = build_command_env(sessions:)
 
   let(:command) { described_class.new }
   let(:sessions) { instance_double(Lain::CLI::Sessions) }

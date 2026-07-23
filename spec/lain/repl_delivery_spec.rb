@@ -75,16 +75,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # test; the T9 panel-fix examples below hand in a registry of their own.
   # T9 made `replies:` injectable, so the old @replies ivar-poke is gone.
   def command_surface(registry)
-    env = Lain::CLI::Command::Env.new(
-      status: Lain::CLI::Command::Env::NullStatus, sessions: spy("sessions"),
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
-      replies:, fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: spy("tmux_surface"), agent:,
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
-      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
-    registry.bind(env)
+    registry.bind(build_command_env(replies:, agent:))
   end
 
   def build_repl(middleware:, registry: Lain::CLI::Command::Registry.new)

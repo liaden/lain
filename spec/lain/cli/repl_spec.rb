@@ -34,7 +34,8 @@ RSpec.describe Lain::CLI::Repl do
       Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new(input),
                               history_path: File.join(dir, "history"))
     end
-    wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:)
+    wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:,
+                                   status_feed: instance_double(Lain::StatusFeed))
     wiring.run(backend:, resumed: nil, nvim: nil)
     wiring.conductor.close(reason: :exit)
     output.string

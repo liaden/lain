@@ -37,16 +37,8 @@ RSpec.describe Lain::CLI::Command::Inbox do
   let(:replies) { Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human:, questions:) }
   let(:command) { described_class.new }
 
-  def env_with(replies:, status: Lain::CLI::Command::Env::NullStatus)
-    Lain::CLI::Command::Env.new(
-      status:, sessions: instance_double(Lain::CLI::Sessions),
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
-      replies:, fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: double("agent"),
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch, chronicle: Lain::CLI::Chronicle::Null.new,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
+  def env_with(replies:, status: instance_double(Lain::StatusFeed))
+    build_command_env(replies:, status:)
   end
 
   it "runs the same drain UX HumanReplies exposes for human> -- TTY renders it, the command adds nothing" do

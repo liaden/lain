@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::Command::Approve do
     expect(approve.call("", env_over([]))).to include("no pending approvals")
   end
 
-  it "degrades to the same empty drain over NullApprovals (a --yolo session)" do
-    expect(approve.call("", env_over(Lain::CLI::Command::Env::NullApprovals))).to include("no pending approvals")
+  it "degrades to the same empty drain over YoloApprovals (a --yolo session)" do
+    expect(approve.call("", env_over(Lain::CLI::Command::Env::YoloApprovals))).to include("no pending approvals")
   end
 end

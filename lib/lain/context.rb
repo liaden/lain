@@ -12,6 +12,7 @@ require_relative "context/dedupe_tool_calls"
 require_relative "context/purge_failed_inputs"
 require_relative "context/recall"
 require_relative "context/mailbox"
+require_relative "context/static_model"
 require_relative "context/model_switch"
 
 module Lain
@@ -61,13 +62,13 @@ module Lain
 
     attr_reader :system, :max_tokens, :stream, :extra, :requires
 
-    # The model in force NOW. A plain model answers itself; a delegating slot
-    # ({ModelSwitch}, duck-typed by `#current` the way #pipeline_for ducks on
-    # `#requires`) is read through, so #render -- and every header/serializer
-    # reading `context.model` -- sees the model a `/model` flip put in force,
-    # at read time. The slot is the one deliberate, journaled impurity here;
-    # a String-modeled Context renders exactly as before.
-    def model = @model.respond_to?(:current) ? @model.current : @model
+    # The model in force NOW. A fixed model wears a {StaticModel}; a live
+    # `/model` slot is a {ModelSwitch} -- BOTH answer `#current`, so #render
+    # (and every header/serializer reading `context.model`) reads the model in
+    # force through one message, at read time. The switch is the one deliberate,
+    # journaled impurity here; a StaticModel-wrapped Context renders exactly as
+    # the old bare-String path did.
+    def model = @model.current
 
     # `extra` carries provider-specific sampler params (temperature, seed,
     # num_ctx). It rides through to Request#extra, which Request excludes from
@@ -102,10 +103,11 @@ module Lain
     # have). The one extra `#pipeline_for` call here (per construction, not per
     # render) is that guarantee's price.
     def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil)
-      # A delegating slot is stored AS the slot (never flattened to its current
-      # value, which would fix the model at construction -- the very seam
-      # /model exists to escape); anything else is the usual interned String.
-      @model = model.respond_to?(:current) ? model : -model.to_s
+      # A delegating slot ({ModelSwitch}) is stored AS the slot (never flattened
+      # to its current value, which would fix the model at construction -- the
+      # very seam /model exists to escape); a plain model is wrapped in a frozen
+      # {StaticModel}, its immutable sibling, so both answer #current.
+      @model = model.respond_to?(:current) ? model : StaticModel.new(model)
       @max_tokens = Integer(max_tokens)
       @system = system && Canonical.normalize(system)
       @stream = stream

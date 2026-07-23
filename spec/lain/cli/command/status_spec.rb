@@ -16,17 +16,7 @@ RSpec.describe Lain::CLI::Command::Status do
 
   def feed_path = File.join(@dir, "state.json")
 
-  def env_with(status:)
-    Lain::CLI::Command::Env.new(
-      status:, sessions: instance_double(Lain::CLI::Sessions),
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
-      replies: double("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: double("agent"),
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch, chronicle: Lain::CLI::Chronicle::Null.new,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
-  end
+  def env_with(status:) = build_command_env(status:)
 
   def spawn_event(id) = Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
 

@@ -8,10 +8,10 @@ module Lain
       # own responsibility (the Metrics trip said so: extract, do not loosen):
       #
       # * the frozen, nil-free {Env} every command reads, built ONCE from the
-      #   collaborators Wiring wired -- readers whose collaborator has not
-      #   landed carry a named Null placeholder (status -> the /status card,
-      #   fork_point -> T3), and --yolo wires no approval queue, so the
-      #   queue-shaped {Env::NullApprovals} keeps that reader nil-free;
+      #   collaborators Wiring wired -- every reader but one is a required
+      #   collaborator (a mis-wire is a loud ArgumentError here, never a
+      #   fail-open Null), and --yolo wires no approval queue, so the
+      #   queue-shaped {Env::YoloApprovals} keeps that ONE reader nil-free;
       # * the shipped command {Registry}, bound over that Env ({#commands});
       # * the skill middleware ({#middleware}) over the SAME catalog snapshot
       #   the registry's /help lists, so listing and dispatch can never drift.
@@ -20,12 +20,14 @@ module Lain
       # register line in {#registry}, and -- when it needs a new Env reader --
       # one line in the {Env} assembly here.
       class Surface
-        # `chronicle:` is required, not defaulted -- the same reasoning as
-        # Repl's: a defaulted Null here would let a mis-wired session lose
-        # /rewind's rewound record silently (or hand /fork a session with no
-        # record behind it), failing only later, far from the bug.
-        def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, approvals: nil, root: Dir.pwd,
-                       status_feed: Env::NullStatus, policy_switch: nil, model_switch: nil, approval_prompt: nil,
+        # `chronicle:`, `status_feed:`, `policy_switch:`, `model_switch:`, and
+        # `role_spawn:` are all required, not defaulted -- each is always wired
+        # in the live path, so a defaulted Null here would only mask a mis-wire
+        # (a permissive policy_switch/model_switch would even fail OPEN: a
+        # silently disconnected gate). A forgotten keyword must be a loud
+        # ArgumentError at construction, not a quiet degrade far from the bug.
+        def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
+                       model_switch:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
                        goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
@@ -54,19 +56,19 @@ module Lain
 
         private
 
-        # The one Env assembly, its optional readers falling back to their
-        # named Nulls -- extracted so initialize stays the plain seeding it
-        # reads as (the Metrics trip said so: extract, do not loosen).
+        # The one Env assembly -- extracted so initialize stays the plain
+        # seeding it reads as (the Metrics trip said so: extract, do not
+        # loosen). Every reader is a required live collaborator; only
+        # `approvals` falls back, to the genuine {Env::YoloApprovals} Null when
+        # --yolo wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:, policy_switch:,
                          model_switch:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
-            approvals: approvals || Env::NullApprovals, supervisor:,
+            approvals: approvals || Env::YoloApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            policy_switch: policy_switch || Env::NullPolicySwitch,
-            model_switch: model_switch || Env::NullModelSwitch,
-            role_spawn: @role_spawn
+            policy_switch:, model_switch:, role_spawn: @role_spawn
           )
         end
 

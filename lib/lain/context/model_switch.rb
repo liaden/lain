@@ -39,7 +39,7 @@ module Lain
       def switch(model, surface:)
         from = @current
         @current = -model.to_s
-        @journal.record({ "type" => "model_switch", "from" => from, "to" => @current, "surface" => surface.to_s })
+        @journal.record(Telemetry::ModelSwitch.new(from:, to: @current, surface:))
         @current
       end
     end

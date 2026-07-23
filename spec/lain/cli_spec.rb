@@ -19,7 +19,7 @@ RSpec.describe LainCLI do
   # plain options hash and the Null chronicle -- the same records-nothing duct
   # a directly-constructed CLI instance used to get from #chronicle.
   def wiring(chronicle: Lain::CLI::Chronicle::Null.new, **options)
-    Lain::CLI::Wiring.new(options:, chronicle:)
+    Lain::CLI::Wiring.new(options:, chronicle:, status_feed: instance_double(Lain::StatusFeed))
   end
 
   describe LainCLI::Backend, "#provider" do

@@ -16,20 +16,24 @@ RSpec.describe Lain::CLI::Command::Surface do
   end
 
   let(:role_spawn) { spy("role_spawn") }
+  let(:status_feed) { instance_double(Lain::StatusFeed) }
+  let(:policy_switch) { instance_double(Lain::Approval::PolicySwitch) }
+  let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
 
   def build_surface(root, approvals: nil)
     described_class.new(agent: spy("agent"), replies: spy("replies"),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
-                        chronicle: Lain::CLI::Chronicle::Null.new)
+                        chronicle: Lain::CLI::Chronicle::Null.new,
+                        status_feed:, policy_switch:, model_switch:)
   end
 
-  it "assembles the frozen nil-free Env from the wired collaborators and the Null placeholders" do
+  it "assembles the frozen nil-free Env from the wired collaborators, YoloApprovals for the empty queue" do
     with_project do |root|
       env = build_surface(root).env
 
       expect(env).to be_frozen
-      expect(env.approvals).to be(Lain::CLI::Command::Env::NullApprovals)
-      expect(env.status).to be(Lain::CLI::Command::Env::NullStatus)
+      expect(env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
+      expect(env.status).to be(status_feed)
       expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
     end
   end

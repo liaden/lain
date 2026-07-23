@@ -39,8 +39,7 @@ module Lain
       def switch(policy, surface:)
         from = policy_name(@current)
         @current = policy
-        @journal.record({ "type" => "policy_switch", "from" => from,
-                          "to" => policy_name(policy), "surface" => surface.to_s })
+        @journal.record(Telemetry::PolicySwitch.new(from:, to: policy_name(policy), surface:))
         policy
       end
 

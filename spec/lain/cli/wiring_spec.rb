@@ -25,7 +25,10 @@ RSpec.describe Lain::CLI::Wiring do
   let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
   let(:channel) { Lain::Channel.new }
   let(:chronicle) { Lain::CLI::Chronicle::Null.new }
-  let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:) }
+  # status_feed: is required, not defaulted (the Null placeholder is gone); the
+  # direct-Wiring path only threads it into the Command::Env's status reader.
+  let(:status_feed) { instance_double(Lain::StatusFeed) }
+  let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
 
   def wire_agent
     recorder, session = wiring.run_state(nil)
@@ -57,7 +60,7 @@ RSpec.describe Lain::CLI::Wiring do
     # T12 AC1: --auto-approve constructs the surface over the SAME role_spawn
     # seam a `@role/skill` line folds through.
     it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
-      wiring = described_class.new(options: { grace: 5, auto_approve: true }, chronicle:)
+      wiring = described_class.new(options: { grace: 5, auto_approve: true }, chronicle:, status_feed:)
       recorder, session = wiring.run_state(nil)
       wiring.wire_agent(channel:, recorder:, session:, backend:)
 
@@ -85,7 +88,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     def run_wiring(input: "quit\n", options: { grace: 5 })
       Dir.mktmpdir do |dir|
-        wiring = described_class.new(options:, chronicle:,
+        wiring = described_class.new(options:, chronicle:, status_feed:,
                                      tty_factory: tty_factory(input, dir), conductor_opener:)
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
@@ -110,7 +113,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.supervisor).to be(wiring.supervisor)
       expect(env.replies).to be_a(Lain::CLI::HumanReplies)
       expect(env.agent).to be_a(Lain::Agent)
-      expect(env.status).to be(Lain::CLI::Command::Env::NullStatus)
+      expect(env.status).to be(status_feed)
       expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
       expect(env.chronicle).to be(chronicle)
     end
@@ -131,10 +134,10 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.agent.context.model).to eq("probe-model-x")
     end
 
-    it "wires the queue-shaped NullApprovals under --yolo, so the env reader stays nil-free" do
+    it "wires the queue-shaped YoloApprovals under --yolo, so the env reader stays nil-free" do
       wiring = run_wiring(options: { grace: 5, yolo: true })
 
-      expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::NullApprovals)
+      expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
     end
   end
 end

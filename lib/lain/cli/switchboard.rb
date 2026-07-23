@@ -49,7 +49,7 @@ module Lain
 
       # This board's contribution to the {Command::Surface}: the two switches,
       # plus /approve's inline drain prompt over the SAME conductor-routed
-      # reader the Repl's watch surface uses (see Repl#approval_surface's WHY).
+      # reader the Repl's watch surface uses (see Repl::ApprovalSurfaces#approval_surface's WHY).
       def surface_kwargs(conductor:, tty:)
         { policy_switch:, model_switch:, approval_prompt: prompt(conductor:, tty:) }
       end

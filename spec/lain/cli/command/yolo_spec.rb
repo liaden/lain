@@ -80,7 +80,7 @@ RSpec.describe Lain::CLI::Command::Yolo do
 
     it "refuses loudly when no queue was ever wired (a --yolo session)" do
       bare = instance_double(Lain::CLI::Command::Env, policy_switch: switch,
-                                                      approvals: Lain::CLI::Command::Env::NullApprovals)
+                                                      approvals: Lain::CLI::Command::Env::YoloApprovals)
 
       expect { yolo.call("off", bare) }.to raise_error(Lain::Error, /queue/)
     end

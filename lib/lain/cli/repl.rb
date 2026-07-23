@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "repl/approval_surfaces"
+
 module Lain
   module CLI
     # One conversation: reads lines at `you>`, consults the command registry
@@ -39,24 +41,10 @@ module Lain
         @replies = replies
         @commands = commands
         @goal_driver = goal_driver
-        watch_approvals(approvals, notifier, auto_surface)
-      end
-
-      # WHY the reader routes through the conductor: a bare `@input.gets` in
-      # the surface fiber races answer_loop's Reline read for the one stdin,
-      # escapes the conductor's countdown-ticker suppression (read_reply
-      # exists precisely so the ticker's render + key-read pause while a
-      # human types), and -- being a thread-blocking, non-scheduler read --
-      # freezes the whole reactor, so the queue's fail-closed timer could
-      # NEVER fire while the prompt sat unanswered. read_reply parks the
-      # fiber instead: prompts serialize with ask_human replies, and an
-      # unattended prompt still times out to denial. Memoized lazily (not an
-      # initialize assignment) so construction stays the plain collaborator
-      # seeding it reads as.
-      def approval_surface
-        @approval_surface ||= Lain::Frontend::ApprovalPolicy.new(
-          reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }
-        )
+        # The approval-watching surfaces are their own collaborator now (the
+        # TTY prompt, dunst, and the opt-in auto surface over one queue); Repl
+        # asks it to `watch` and never touches the individual surfaces.
+        @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, tty:, conductor:)
       end
 
       # No next/break: the loop exit is text's own truthiness, reassigned each
@@ -100,15 +88,6 @@ module Lain
       end
 
       private
-
-      # The three approval_loop watchers over one queue, set together: split
-      # out of #initialize so it stays under the method-length cop now that a
-      # third (T12's opt-in auto surface) joins the TTY prompt and dunst.
-      def watch_approvals(approvals, notifier, auto_surface)
-        @approvals = approvals
-        @notifier = notifier
-        @auto_surface = auto_surface
-      end
 
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
@@ -217,7 +196,7 @@ module Lain
       # dispatch delivers nothing over it.
       def respond(text)
         Sync do |task|
-          surfaces = [*@replies.surfaces(task), *approval_loop(task)]
+          surfaces = [*@replies.surfaces(task), *@surfaces.watch(task)]
           @conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response
         ensure
           surfaces&.each { |surface| surface&.stop }
@@ -242,18 +221,6 @@ module Lain
       def record_interruption
         @chronicle.catch_up(@agent.timeline)
         @chronicle.interrupted(head: @agent.timeline.head_digest)
-      end
-
-      # Two (or three, under --auto-approve) surfaces now watch the SAME queue
-      # -- the TTY prompt, dunst, and the opt-in auto surface -- first answer
-      # wins (Pending's own doctrine). Nil under --yolo (no queue), so no watch
-      # fiber spawns at all; the notifier is Null with no dunstify; @auto_surface
-      # is nil without --auto-approve, so the splat adds nothing and the human
-      # surfaces are unchanged from before T12.
-      def approval_loop(task)
-        @approvals && [task.async { approval_surface.watch(@approvals) },
-                       task.async { @notifier.watch(@approvals) },
-                       *(@auto_surface && task.async { @auto_surface.watch(@approvals) })]
       end
 
       def farewell?(text)

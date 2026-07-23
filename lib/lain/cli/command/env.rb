@@ -9,9 +9,9 @@ module Lain
       # reaches into the Repl (or anything else) for state, and a later command
       # card that needs a new reader adds it here plus one line in Wiring.
       #
-      # Nil-free by contract: every reader answers a real collaborator or a
-      # named Null standing in for one (Null Object over nil checks), and a nil
-      # is refused loudly at assembly -- no command ever writes `if env.thing`.
+      # Nil-free by contract: every reader answers a real collaborator (or the
+      # one genuine Null Object, {YoloApprovals}), and a nil is refused loudly
+      # at assembly -- no command ever writes `if env.thing`.
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
                         :policy_switch, :model_switch, :chronicle, :role_spawn) do
@@ -30,36 +30,15 @@ module Lain
       class Env
         # --yolo wires no {Approval::Queue}; this answers the queue's read duck
         # with nothing parked, so an approvals-reading command degrades to an
-        # honest empty listing instead of a nil guard. A module, like
-        # {Supervisor::Null}: there is no per-instance state.
-        module NullApprovals
+        # honest empty listing instead of a nil guard. A GENUINE Null Object --
+        # the domain reason it is empty is "under --yolo nothing queues", which
+        # the name says. A module, like {Supervisor::Null}: no per-instance
+        # state. Every OTHER Env reader is always wired live, so none needs a
+        # Null -- they are required kwargs, and a mis-wire is a loud
+        # ArgumentError at assembly, not a fail-open placeholder.
+        module YoloApprovals
           def self.each(&block) = [].each(&block)
         end
-
-        # The status-feed reader lands with the /status card (a one-line Wiring
-        # diff swaps this out); until then the reader is nil-free through this
-        # named placeholder, and a premature send fails loudly BY NAME.
-        module NullStatus; end
-
-        # The default fork-point stand-in for Env constructions that wire no
-        # live one (specs, headless assemblies); the chat Surface passes a real
-        # {ForkPoint}. Same loud-by-name contract as {NullStatus}.
-        module NullForkPoint; end
-
-        # A wiring that flips no gate (specs, headless assemblies) leaves the
-        # T14 policy switch out; a premature send fails loudly BY NAME, the
-        # {NullStatus} contract. Wiring always passes the real switch.
-        module NullPolicySwitch; end
-
-        # Same contract as {NullPolicySwitch}, for /model's render-time slot.
-        module NullModelSwitch; end
-
-        # The role-spawn seam reader lands with the /meta card (T23), which
-        # drives {Skill::RoleSpawn} to generate a harness. A wiring that spawns
-        # no roles (specs, headless assemblies) leaves it out; a premature send
-        # fails loudly BY NAME, the {NullStatus} contract. The chat Surface
-        # passes the live seam it already holds.
-        module NullRoleSpawn; end
       end
     end
   end

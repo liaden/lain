@@ -84,14 +84,15 @@ class LainCLI < Thor
   # Thor::Error, message to stderr, nonzero exit, no backtrace. Anything else
   # (a bare ArgumentError included) is a bug and keeps its backtrace.
   class Bench < Thor
+    # The SAME Thor-boundary home the outer class uses: `render` says the
+    # block's String and maps Lain::Error onto Thor's contract, so each
+    # report subcommand is one line with no repeated rescue.
+    include Boundary
+
     def self.exit_on_failure? = true
 
     desc "variance DIR_OR_FILES...", "Report determinism/divergence/distribution across recorded sessions"
-    def variance(*sources)
-      say Lain::Bench::CLI.new.variance_report(sources)
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
-    end
+    def variance(*sources) = render { Lain::Bench::CLI.new.variance_report(sources) }
 
     desc "record TASKFILE", "Record N live runs of a task file (one prompt per line) -- spends real API money"
     method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),
@@ -123,20 +124,12 @@ class LainCLI < Thor
     desc "plan-sweep", "Shape x density sweep over a fixture plan's scripted runs -- offline, deterministic"
     method_option :plan, type: :string, required: true, desc: "the fixture plan markdown (P1 format, seams visible)"
     method_option :runs, type: :string, required: true, desc: "the scripted runs YAML"
-    def plan_sweep
-      say Lain::Bench::CLI.new.plan_sweep_report(plan_path: options[:plan], runs_path: options[:runs])
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
-    end
+    def plan_sweep = render { Lain::Bench::CLI.new.plan_sweep_report(plan_path: options[:plan], runs_path: options[:runs]) }
 
     desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
     method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
                       aliases: "-k", desc: "retrieval depth (recall@k)"
-    def sweep
-      say Lain::Bench::CLI.new.sweep_report(k: options[:k])
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
-    end
+    def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k]) }
   end
 
   desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record, sweep)"

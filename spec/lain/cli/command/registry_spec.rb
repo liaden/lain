@@ -17,22 +17,7 @@ RSpec.describe Lain::CLI::Command::Registry do
   let(:log) { [] }
   let(:probe) { probe_class.new("help", log) }
   let(:registry) { described_class.new([probe]) }
-  let(:env) do
-    Lain::CLI::Command::Env.new(
-      status: Lain::CLI::Command::Env::NullStatus,
-      sessions: instance_double(Lain::CLI::Sessions),
-      approvals: Lain::CLI::Command::Env::NullApprovals,
-      supervisor: Lain::Supervisor::Null,
-      replies: double("replies"),
-      fork_point: instance_double(Lain::CLI::ForkPoint),
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface),
-      agent: double("agent"),
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
-      chronicle: Lain::CLI::Chronicle::Null.new,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
-  end
+  let(:env) { build_command_env }
 
   describe "#dispatch" do
     it "runs a registered command with the parsed args and the shared env" do
@@ -143,12 +128,13 @@ end
 
 RSpec.describe Lain::CLI::Command::Env do
   def readers
-    { status: described_class::NullStatus, sessions: double("sessions"),
-      approvals: described_class::NullApprovals, supervisor: Lain::Supervisor::Null,
-      replies: double("replies"), fork_point: described_class::NullForkPoint,
+    { status: instance_double(Lain::StatusFeed), sessions: double("sessions"),
+      approvals: described_class::YoloApprovals, supervisor: Lain::Supervisor::Null,
+      replies: double("replies"), fork_point: instance_double(Lain::CLI::ForkPoint),
       tmux_surface: double("tmux_surface"), agent: double("agent"),
-      policy_switch: described_class::NullPolicySwitch, model_switch: described_class::NullModelSwitch,
-      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: described_class::NullRoleSpawn }
+      policy_switch: instance_double(Lain::Approval::PolicySwitch),
+      model_switch: instance_double(Lain::Context::ModelSwitch),
+      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
   end
 
   it "is a frozen value over the twelve readers" do
@@ -166,6 +152,6 @@ RSpec.describe Lain::CLI::Command::Env do
   end
 
   it "answers the approval queue's read duck with nothing parked under --yolo" do
-    expect(described_class::NullApprovals.each.to_a).to eq([])
+    expect(described_class::YoloApprovals.each.to_a).to eq([])
   end
 end

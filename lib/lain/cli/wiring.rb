@@ -25,7 +25,7 @@ module Lain
       # from the T1 panel note): the exe takes the real defaults; a spec hands
       # in a StringIO-backed TTY factory or a recording opener and drives #run
       # itself -- no send(:build_repl), no instance_variable_set.
-      def initialize(options:, chronicle:, status_feed: Command::Env::NullStatus,
+      def initialize(options:, chronicle:, status_feed:,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
         @options = options
@@ -127,7 +127,7 @@ module Lain
         @role_spawn = role_spawn_seam(base, backend:, parent:, journal:)
         # T12: opt-in third approval surface, over the SAME role_spawn seam a
         # `@role/skill` line folds through -- nil without --auto-approve, so
-        # Repl's approval_loop wires nothing extra by default.
+        # the Repl's ApprovalSurfaces wires nothing extra by default.
         @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if @options[:auto_approve])
         Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human, run_skill])
       end

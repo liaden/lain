@@ -26,15 +26,7 @@ RSpec.describe Lain::CLI::Command::Btw do
   end
 
   def env_with(chronicle:, agent:, supervisor: Lain::Supervisor::Null)
-    Lain::CLI::Command::Env.new(
-      status: Lain::CLI::Command::Env::NullStatus, sessions: spy("sessions"),
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor:,
-      replies: spy("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface:, agent:, chronicle:,
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
+    build_command_env(chronicle:, agent:, supervisor:, tmux_surface:)
   end
 
   let(:env) { env_with(chronicle:, agent:) }
@@ -157,15 +149,7 @@ RSpec.describe Lain::CLI::Command::Keep do
   end
 
   def env_with(chronicle:, supervisor: Lain::Supervisor::Null)
-    Lain::CLI::Command::Env.new(
-      status: Lain::CLI::Command::Env::NullStatus, sessions: spy("sessions"),
-      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor:,
-      replies: spy("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: spy("tmux_surface"), agent: spy("agent"), chronicle:,
-      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
-      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
-    )
+    build_command_env(chronicle:, supervisor:)
   end
 
   describe "promotion from the Repl's quiescent point" do
@@ -221,7 +205,10 @@ RSpec.describe "the /btw and /keep registration (T17 wiring)" do
     Dir.mktmpdir do |root|
       surface = Lain::CLI::Command::Surface.new(
         agent: spy("agent"), replies: spy("replies"), supervisor: Lain::Supervisor::Null,
-        role_spawn: spy("role_spawn"), root:, chronicle: Lain::CLI::Chronicle::Null.new
+        role_spawn: spy("role_spawn"), root:, chronicle: Lain::CLI::Chronicle::Null.new,
+        status_feed: instance_double(Lain::StatusFeed),
+        policy_switch: instance_double(Lain::Approval::PolicySwitch),
+        model_switch: instance_double(Lain::Context::ModelSwitch)
       )
 
       # A Null chronicle refuses loudly (no journal_path) -- but the REFUSAL
