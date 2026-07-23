@@ -76,11 +76,12 @@ module Lain
       LaunchPlan = Data.define(:messages, :argv)
 
       def initialize(session: DEFAULT_SESSION, socket: nil, state_path: default_state_path,
-                     chat_command: nil, status_interval: DEFAULT_STATUS_INTERVAL,
+                     chat_command: nil, chat_args: [], status_interval: DEFAULT_STATUS_INTERVAL,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @session = session
         @socket = socket
         @state_path = state_path
+        @chat_args = chat_args
         @chat_command = chat_command || default_chat_command
         @status_interval = status_interval
         @shell_out_factory = shell_out_factory
@@ -151,9 +152,14 @@ module Lain
       # re-exports the PATH fix before re-invoking the launching binary's
       # `chat` subcommand. Computed per instance, never a constant:
       # $PROGRAM_NAME must be read when the exe runs (under rspec it is not
-      # the lain binary).
+      # the lain binary). `@chat_args` is the exe's `-- ARGS` trailing
+      # capture -- already `chat`'s own flags to validate, never Up's, so
+      # this only Shellwords-escapes each one before it lands in a string
+      # tmux hands to ITS OWN `$SHELL -c` (the class comment's shell-boundary
+      # note); Up never parses or knows the flag names.
       def default_chat_command
-        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
+        base = "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
+        @chat_args.empty? ? base : "#{base} #{Shellwords.join(@chat_args)}"
       end
 
       def create_session = act(*new_session_args)

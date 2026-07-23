@@ -3,6 +3,7 @@
 require "tmpdir"
 require "json"
 require "open3"
+require "shellwords"
 
 # I2: `lain up` -- create/attach the "lain" tmux session, session-scoped so the
 # global theme is untouched, with a status-right HUD (warmth/fleet/inbox) read
@@ -106,6 +107,20 @@ RSpec.describe Lain::CLI::Up do
       up.call
 
       expect(tmux("show-window-options", "-t", "#{session}:chat", "monitor-bell")).to eq("monitor-bell on")
+    end
+
+    it "threads -- chat args into the spawned window's command, each argument shell-escaped" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      chat_args = ["--model", "claude-fable-5", "--no-journal"]
+
+      described_class.new(session:, socket:, state_path:, chat_args:).call
+
+      # `#{pane_start_command}` is tmux's OWN format-string syntax, not Ruby
+      # interpolation -- single-quoted so it reaches tmux byte-for-byte.
+      # rubocop:disable Lint/InterpolationCheck
+      pane_command = tmux("list-panes", "-t", "#{session}:chat", "-F", '#{pane_start_command}')
+      # rubocop:enable Lint/InterpolationCheck
+      expect(pane_command).to include("chat --model claude-fable-5 --no-journal")
     end
 
     it "attaches instead of duplicating on a second call" do
@@ -228,6 +243,60 @@ RSpec.describe Lain::CLI::Up do
 
       expect(attach_plan.argv).to eq(%w[tmux attach -t lain])
       expect(switch_plan.argv).to eq(%w[tmux switch-client -t lain])
+    end
+  end
+
+  # T11: `lain up -- ARGS` threads the trailing chat flags into the spawned
+  # window's command. `chat` validates its own flags -- Up never parses
+  # `chat_args`, only Shellwords-escapes each element, so these examples
+  # assert on the composed STRING, never on flag semantics.
+  describe "-- chat args pass-through" do
+    let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
+
+    def capture_new_session_command(chat_args:)
+      calls = []
+      spy = lambda do |*args|
+        calls << args
+        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+      end
+
+      described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call
+
+      calls.find { |args| args.include?("new-session") }.last
+    end
+
+    it "shell-escapes every chat arg onto the default chat command" do
+      command = capture_new_session_command(chat_args: ["--model", "claude-fable-5", "--no-journal"])
+
+      expect(command).to eq(
+        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat " \
+        "--model claude-fable-5 --no-journal"
+      )
+    end
+
+    it "leaves the chat command untouched when no chat args are given" do
+      command = capture_new_session_command(chat_args: [])
+
+      expect(command).to eq("export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat")
+    end
+
+    it "keeps a hostile chat arg inert -- it reaches chat as one literal argument, never shell syntax" do
+      Dir.mktmpdir do |marker|
+        hostile = "; touch #{marker}/pwned $(touch #{marker}/pwned2)"
+
+        command = capture_new_session_command(chat_args: [hostile])
+        Open3.capture3("sh", "-c", command)
+
+        expect(Dir.children(marker)).to be_empty
+      end
+    end
+
+    it "shell-escapes a hostile arg as a single Shellwords-escaped token" do
+      hostile = "; rm -rf /"
+
+      command = capture_new_session_command(chat_args: [hostile])
+
+      expect(command).to end_with(Shellwords.escape(hostile))
     end
   end
 
