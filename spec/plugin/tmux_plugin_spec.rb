@@ -49,8 +49,8 @@ RSpec.describe "plugin/tmux" do
       Open3.capture3(env, status_script, @dir)
     end
 
-    it "embeds Up::JQ_FILTER verbatim, so the plugin and `lain up` render one HUD" do
-      expect(File.read(status_script)).to include(Lain::CLI::Up::JQ_FILTER)
+    it "embeds Up::Hud::JQ_FILTER verbatim, so the plugin and `lain up` render one HUD" do
+      expect(File.read(status_script)).to include(Lain::CLI::Up::Hud::JQ_FILTER)
       expect(File.executable?(status_script)).to be true
     end
 

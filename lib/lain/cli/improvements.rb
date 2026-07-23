@@ -16,7 +16,8 @@ module Lain
       # order.
       KIND_ORDER = Improvement::KINDS
 
-      # {Paths#project_hash} is `sha256(expand_path)[0,12]` -- always exactly
+      # {Paths#project_hash} is `sha256(realpath)[0,12]` (lexical expansion
+      # only when the path does not exist to resolve) -- always exactly
       # 12 lowercase hex characters. A `--project` value that shape IS a
       # hash; anything else is a path this process resolves the same way
       # {Paths#project_hash} would for a live session in that repo.

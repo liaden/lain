@@ -25,8 +25,8 @@ module Lain
     # `state_path`/`chat_command` against a shell we control. The ONE place a
     # shell reappears is deliberate: the `#(...)` job tmux embeds in
     # `status-right` is interpreted by tmux's OWN `$SHELL -c` at render time,
-    # so THAT string (built in #jq_status_right/#fallback_status_right) is
-    # Shellwords-escaped for a POSIX shell, not for ours.
+    # so THAT string (composed by {Up::Hud}) is Shellwords-escaped for a POSIX
+    # shell, not for ours.
     class Up
       # tmux missing outright, or any tmux invocation that fails for a reason
       # other than "no session yet" (has-session's own expected nonzero) --
@@ -38,21 +38,6 @@ module Lain
       DEFAULT_SESSION = "lain"
       CHAT_WINDOW = "chat"
       DEFAULT_STATUS_INTERVAL = 5
-
-      # jq does the whole warm/fleet/inbox derivation in one process, matching
-      # the approved design's "#(jq …) on a status-interval" (planning/
-      # interface-integration.md § 1). A single-quoted heredoc: jq's OWN
-      # string interpolation is `\(...)`, which must reach jq's parser
-      # byte-for-byte -- Ruby's `\(` means nothing, so an interpolating
-      # heredoc would risk a mangled filter for no gain. Verified against a
-      # real tmux 3.8 (nested parens and all) via an attached PTY: tmux's own
-      # `#()` job-boundary parser counts nesting correctly, so this is not
-      # the tmux-3.7-only risk it might look like at a glance.
-      JQ_FILTER = <<~'JQ'.strip
-        if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
-        then "🔥" else "❄" end as $warmth
-        | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)"
-      JQ
 
       # `created` tells the caller whether a fresh session was just built (so
       # it can say so before attaching) or one was already running (so a
@@ -81,20 +66,26 @@ module Lain
       # re-exports the PATH fix and re-invokes the LAUNCHING binary --
       # composed per call, never a constant, because $PROGRAM_NAME must be
       # read when the exe runs (under rspec it is not the lain binary).
-      # Callers: `lain up`'s chat window and /fork's sibling window.
+      # Callers: `lain up`'s chat window, its cockpit panes, and /fork's window.
       def self.pane_command(*argv)
         "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
       end
 
+      # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil
+      # is off, "" (a bare --nvim) derives the plugin's deterministic socket,
+      # a non-empty String is an explicit socket path used verbatim. `cwd:`
+      # and `paths:` feed {Cockpit}, which owns the socket/pane planning.
       def initialize(session: DEFAULT_SESSION, socket: nil, state_path: default_state_path,
                      chat_command: nil, chat_args: [], status_interval: DEFAULT_STATUS_INTERVAL,
+                     nvim: nil, cwd: Dir.pwd, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @session = session
         @socket = socket
-        @state_path = state_path
+        @hud = Hud.new(state_path:)
         @chat_args = chat_args
         @chat_command = chat_command || default_chat_command
         @status_interval = status_interval
+        @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
         @shell_out_factory = shell_out_factory
         @warnings = []
       end
@@ -104,7 +95,7 @@ module Lain
       #   never a bare Errno/Mixlib exception past this boundary.
       def call
         created = !session_exists?
-        create_session if created
+        created ? create_session : warn_unsplit_reattach
         configure_session
         Report.new(session: @session, created:, warnings: @warnings.dup)
       end
@@ -166,15 +157,59 @@ module Lain
       # names.
       def default_chat_command = self.class.pane_command("chat", *@chat_args)
 
-      def create_session = act(*new_session_args)
+      def create_session
+        cockpit_wanted? ? create_cockpit_session : act(*new_session_args)
+      end
 
       def new_session_args
         args = ["new-session", "-d", "-s", @session, "-n", CHAT_WINDOW]
         @chat_command ? args + [@chat_command] : args
       end
 
+      # T19's degrade AC: --nvim without an nvim binary is TODAY's single chat
+      # pane plus a named warning -- mirroring the jq fallback's "degraded is
+      # never silent" rule, and probed only on the create path (a reattaching
+      # `up --nvim` changes nothing, so it has nothing to warn about).
+      def cockpit_wanted?
+        return false unless @cockpit.requested?
+        return true if binary_present?("nvim")
+
+        @warnings << "nvim not found on PATH -- --nvim ignored, spawning the plain chat window " \
+                     "(install neovim for the editor cockpit)"
+        false
+      end
+
+      # Reattaching with --nvim: #create_session never ran, so the cockpit
+      # could not have been built THIS run. A chat window that is still
+      # un-split means the request is being ignored -- degraded is never
+      # silent (the jq and missing-nvim fallbacks' rule), so the warning
+      # names the ways out. A window already carrying two panes IS the
+      # cockpit, reattaching to it is the ordinary case, nothing to say.
+      def warn_unsplit_reattach
+        return unless @cockpit.requested? && chat_window_unsplit?
+
+        @warnings << "session '#{@session}' already exists without the nvim pane -- reattaching as-is " \
+                     "(kill the session and re-run `lain up --nvim` for the cockpit, or attach plain)"
+      end
+
+      # list-panes answers one line per live pane; the cockpit means two.
+      def chat_window_unsplit?
+        run("list-panes", "-t", "#{@session}:#{CHAT_WINDOW}").stdout.lines.size < 2
+      end
+
+      # The cockpit split, per {Cockpit}'s plan: both panes pinned to ONE cwd
+      # (tmux -c) and handed ONE socket, so the convention cannot silently
+      # diverge between the editor and the chat that attaches to it.
+      def create_cockpit_session
+        act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cockpit.cwd, @cockpit.nvim_pane_command)
+        act("split-window", "-h", "-t", "#{@session}:#{CHAT_WINDOW}", "-c", @cockpit.cwd,
+            self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
+      end
+
       def configure_session
-        set_option("status-right", status_right_value)
+        status_right, warning = @hud.status_right(jq_present: binary_present?("jq"))
+        @warnings << warning if warning
+        set_option("status-right", status_right)
         set_option("status-interval", @status_interval.to_s)
         act("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "monitor-bell", "on")
       end
@@ -201,38 +236,8 @@ module Lain
 
       def socket_flag = @socket ? ["-L", @socket] : []
 
-      def status_right_value
-        jq_present? ? jq_status_right : fallback_status_right
-      end
-
-      # `2>/dev/null` alone swallows every jq failure, not just a missing
-      # binary -- the ordinary fresh-`up` window (before StatusFeed's first
-      # publish, `state.json` not written yet) makes jq exit nonzero with
-      # empty stdout, which rendered as a LITERALLY BLANK status-right
-      # (reproduced live via an attached PTY capture, the same technique the
-      # class comment already used to verify the jq/tmux job parsing). The
-      # `|| echo` combinator is the same never-silent fallback
-      # #fallback_status_right uses for the no-jq case, mirrored onto the jq
-      # job itself so both branches share the one guarantee: the HUD shows
-      # something real or an honest "no state yet", never blank.
-      def jq_status_right
-        "#(jq -r '#{JQ_FILTER}' #{escaped_state_path} 2>/dev/null || echo 'lain: no state yet')"
-      end
-
-      # jq missing cannot mean a blank HUD -- a demo machine's whole point is
-      # showing the state. So this both warns namedly (the Report the exe
-      # `say`s) AND still shows something real: raw `state.json`, or an
-      # honest "no state yet" when even that file is absent, never silence.
-      def fallback_status_right
-        @warnings << "jq not found on PATH -- status-right falls back to raw state.json " \
-                     "(install jq for the formatted warmth/fleet/inbox HUD)"
-        "#(cat #{escaped_state_path} 2>/dev/null || echo 'lain: no state yet')"
-      end
-
-      def escaped_state_path = Shellwords.escape(@state_path)
-
-      def jq_present?
-        @shell_out_factory.call("jq", "--version").tap(&:run_command).exitstatus.zero?
+      def binary_present?(binary)
+        @shell_out_factory.call(binary, "--version").tap(&:run_command).exitstatus.zero?
       rescue Errno::ENOENT
         false
       end
@@ -244,3 +249,8 @@ module Lain
     end
   end
 end
+
+# Both reopen the Up class body above, so they load after it (the same
+# load-order note effect/handler.rb's children carry).
+require_relative "up/cockpit"
+require_relative "up/hud"

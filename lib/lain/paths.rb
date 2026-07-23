@@ -154,9 +154,15 @@ module Lain
     end
 
     # The same recipe DEBUGGING_NVIM.md:17 uses for the nvim socket path, so a
-    # project resolves to one identifier everywhere: `sha256(expand_path)[0,12]`.
+    # project resolves to one identifier everywhere: `sha256(realpath)[0,12]`.
+    # Kernel-resolved, not merely expanded: nvim's getcwd() and Ruby's Dir.pwd
+    # BOTH resolve symlinks, so a symlinked path ARGUMENT (--project <symlink>)
+    # hashed lexically would name a different socket/session id than the editor
+    # serves (T10's hash_agreement probe). Isolation keys WORKER IDS through
+    # here too -- strings naming no real path -- so an unresolvable argument
+    # falls back to the lexical expansion instead of raising.
     def project_hash(dir = Dir.pwd)
-      Digest::SHA256.hexdigest(File.expand_path(dir))[0, 12]
+      Digest::SHA256.hexdigest(resolved(dir))[0, 12]
     end
 
     # The one XDG path this harness actually writes durable state into, so it is
@@ -179,6 +185,15 @@ module Lain
     end
 
     private
+
+    # Expansion first (`~`, relative segments), THEN kernel resolution, so the
+    # fallback hashes the same lexical form realpath would have started from.
+    def resolved(dir)
+      expanded = File.expand_path(dir)
+      File.realpath(expanded)
+    rescue SystemCallError
+      expanded
+    end
 
     def xdg_dir(var, fallback)
       File.join(present(@env[var]) || File.join(home, fallback), "lain")

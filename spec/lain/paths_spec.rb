@@ -90,6 +90,33 @@ RSpec.describe Lain::Paths do
         Dir.chdir(tmp) { expect(paths.project_hash).to eq(paths.project_hash(tmp)) }
       end
     end
+
+    # T10's hash_agreement probe, pinned: nvim's getcwd() and Ruby's Dir.pwd
+    # are both KERNEL-resolved, so a symlinked path ARGUMENT (--project
+    # <symlink>) must hash post-resolution too, or it names a different
+    # socket/session id than the editor actually serves.
+    it "hashes a symlinked directory identically to its kernel-resolved target" do
+      require "digest"
+      Dir.mktmpdir do |real|
+        link = "#{real}-link"
+        File.symlink(real, link)
+
+        expect(paths.project_hash(link)).to eq(paths.project_hash(real))
+        expect(paths.project_hash(link)).to eq(Digest::SHA256.hexdigest(File.realpath(real))[0, 12])
+      ensure
+        File.unlink(link) if File.symlink?(link)
+      end
+    end
+
+    # Isolation (Worktree/Compose/DbIndex) keys WORKER IDS through this method
+    # -- strings that name no real path -- so an unresolvable argument falls
+    # back to plain lexical expansion instead of raising.
+    it "falls back to lexical expansion for a path that does not exist" do
+      require "digest"
+      expected = Digest::SHA256.hexdigest(File.expand_path("no/such/worker-7"))[0, 12]
+
+      expect(paths.project_hash("no/such/worker-7")).to eq(expected)
+    end
   end
 
   describe "#sessions_dir" do

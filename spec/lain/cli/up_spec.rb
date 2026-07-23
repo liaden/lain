@@ -20,11 +20,13 @@ require "shellwords"
 #
 # A Mixlib::ShellOut double satisfying the one duck #run exercises:
 # #run_command (a no-op -- the real one blocks until the child exits; this
-# object is already "done" the instant it's built) and #exitstatus/#stderr.
-# Defined at the top level (not inside RSpec.describe) so it is a plain
-# constant, not one assigned inside a block.
-FakeShellOut = Struct.new(:exitstatus, :stderr) do
+# object is already "done" the instant it's built) and #exitstatus/#stderr/
+# #stdout (nil-safe: most examples never set it). Defined at the top level
+# (not inside RSpec.describe) so it is a plain constant, not one assigned
+# inside a block.
+FakeShellOut = Struct.new(:exitstatus, :stderr, :stdout) do
   def run_command = self
+  def stdout = self[:stdout] || ""
 end
 
 RSpec.describe Lain::CLI::Up do
@@ -161,6 +163,45 @@ RSpec.describe Lain::CLI::Up do
         expect(session_count).to eq(1)
         expect(plan.messages).to eq(["created tmux session '#{session}'"])
         expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
+      end
+    end
+
+    # The whole-cockpit AC against a live tmux AND a live nvim (:nvim-gated,
+    # LAIN_NVIM=1): two panes, one shared socket string, and -- the escalation
+    # trigger's check -- one shared cwd, asserted from tmux's own
+    # pane_current_path rather than assumed from default-path behavior.
+    describe "--nvim cockpit", :nvim do
+      it "splits the chat window into an nvim pane and a chat pane sharing one socket and one cwd" do
+        write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+        Dir.mktmpdir do |runtime|
+          Dir.mktmpdir do |project|
+            paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+            expected_socket = File.join(paths.runtime_dir, "nvim-#{paths.project_hash(project)}.sock")
+            # The chat pane's command re-execs $PROGRAM_NAME (rspec here) and
+            # dies quickly; remain-on-exit pins the dead pane so the two-pane
+            # assertion cannot race its collapse. Server-wide (-g) is fine on
+            # this scratch -L server, but it needs a session to exist first.
+            system("tmux", "-L", socket, "new-session", "-d", "-s", "keeper", "-x", "80", "-y", "24")
+            system("tmux", "-L", socket, "set-option", "-g", "remain-on-exit", "on")
+
+            described_class.new(session:, socket:, state_path:, nvim: "", cwd: project, paths:,
+                                chat_args: ["--no-journal"]).call
+
+            # `#{...}` here is tmux's format-string syntax, not Ruby
+            # interpolation -- single-quoted so it reaches tmux byte-for-byte.
+            # rubocop:disable Lint/InterpolationCheck
+            panes = tmux("list-panes", "-t", "#{session}:chat", "-F",
+                         '#{pane_start_command}@@#{pane_current_path}').lines.map(&:strip)
+            # rubocop:enable Lint/InterpolationCheck
+            expect(panes.size).to eq(2)
+            commands = panes.map { |pane| pane.split("@@").first }
+            expect(commands.find { |cmd| cmd.include?("--listen") }).to include("nvim --listen #{expected_socket}")
+            expect(commands.find { |cmd| cmd.include?("chat") })
+              .to include("chat --nvim #{expected_socket} --no-journal")
+            cwds = panes.map { |pane| pane.split("@@").last }
+            expect(cwds.uniq.map { |dir| File.realpath(dir) }).to eq([File.realpath(project)])
+          end
+        end
       end
     end
   end
@@ -308,6 +349,135 @@ RSpec.describe Lain::CLI::Up do
       command = capture_new_session_command(chat_args: [hostile])
 
       expect(command).to end_with(Shellwords.escape(hostile))
+    end
+  end
+
+  # T19: `lain up --nvim` splits the chat window into a cockpit -- one pane
+  # `nvim --listen <socket>`, one pane `lain chat --nvim <socket> ...` -- with
+  # the socket computed ONCE, in Ruby, and handed to both panes explicitly, so
+  # agreement is by construction rather than by each side re-deriving it. All
+  # fake-factory: command COMPOSITION runs on every machine; the live cockpit
+  # example sits with the real-tmux group, :nvim-gated.
+  describe "--nvim cockpit composition" do
+    let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
+    let(:cwd) { "/some/project" }
+
+    # `binaries` marks non-tmux probes present (0) or absent (ENOENT); tmux
+    # itself always answers, with has-session missing so #call creates.
+    def cockpit_up(calls, nvim:, binaries: {}, chat_args: [], paths: Lain::Paths.new(env: {}))
+      spy = lambda do |*args|
+        calls << args
+        raise Errno::ENOENT, "no such file - #{args.first}" if binaries.fetch(args.first, true) == false
+
+        FakeShellOut.new(args.first == "tmux" && args[1] == "has-session" ? 1 : 0, "")
+      end
+      described_class.new(session: "lain", state_path:, nvim:, cwd:, paths:, chat_args:, shell_out_factory: spy)
+    end
+
+    def new_session_call(calls) = calls.find { |args| args.include?("new-session") }
+    def split_call(calls) = calls.find { |args| args.include?("split-window") }
+
+    it "derives the plugin's deterministic socket and threads it into both panes" do
+      Dir.mktmpdir do |runtime|
+        calls = []
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+        socket = File.join(paths.runtime_dir, "nvim-#{paths.project_hash(cwd)}.sock")
+
+        cockpit_up(calls, nvim: "", paths:).call
+
+        expect(new_session_call(calls).last)
+          .to eq(Shellwords.join(["nvim", "--listen", socket, "-c", "if exists(':LainStart') | LainStart | endif"]))
+        expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
+      end
+    end
+
+    it "creates the derived socket's directory, private to the user, so nvim --listen can bind" do
+      Dir.mktmpdir do |runtime|
+        calls = []
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+
+        cockpit_up(calls, nvim: "", paths:).call
+
+        dir = paths.runtime_dir
+        expect(File.directory?(dir)).to be(true)
+        expect(File.stat(dir).mode & 0o777).to eq(0o700)
+      end
+    end
+
+    it "hands an explicit --nvim SOCKET to both panes untouched" do
+      calls = []
+
+      cockpit_up(calls, nvim: "/x/explicit.sock").call
+
+      expect(new_session_call(calls).last).to include("--listen /x/explicit.sock")
+      expect(split_call(calls).last).to include("chat --nvim /x/explicit.sock")
+    end
+
+    it "orders the chat pane's flags as --nvim SOCKET first, then the -- passthrough args" do
+      calls = []
+
+      cockpit_up(calls, nvim: "/x/explicit.sock", chat_args: ["--model", "claude-fable-5"]).call
+
+      expect(split_call(calls).last).to end_with("chat --nvim /x/explicit.sock --model claude-fable-5")
+    end
+
+    # The escalation trigger's same-cwd guarantee: both panes are pinned to
+    # the SAME directory with tmux's own -c, never left to default-path
+    # inheritance -- the socket hash and the panes' cwd cannot diverge.
+    it "pins both panes to the same cwd via -c" do
+      calls = []
+
+      cockpit_up(calls, nvim: "/x/explicit.sock").call
+
+      expect(new_session_call(calls).each_cons(2)).to include(["-c", cwd])
+      expect(split_call(calls).each_cons(2)).to include(["-c", cwd])
+    end
+
+    it "degrades to the single chat pane, warning namedly, when nvim is missing" do
+      calls = []
+
+      report = cockpit_up(calls, nvim: "", binaries: { "nvim" => false }).call
+
+      expect(split_call(calls)).to be_nil
+      expect(new_session_call(calls).last).not_to include("--nvim")
+      expect(new_session_call(calls).last).to include("chat")
+      expect(report.warnings.join).to match(/nvim not found on PATH/)
+    end
+
+    # T19 panel fix: reattaching with --nvim cannot build the cockpit (the
+    # session is already there), and a still-un-split chat window means the
+    # request is being ignored -- degraded is never silent, so it warns
+    # namedly. A window already carrying the cockpit's two panes has nothing
+    # to warn about.
+    def reattaching_up(calls, pane_lines:)
+      spy = lambda do |*args|
+        calls << args
+        # has-session hits (the session already exists); list-panes answers
+        # one line per live pane, the probe #call reads on the reattach path.
+        FakeShellOut.new(0, "", args[1] == "list-panes" ? pane_lines : "")
+      end
+      described_class.new(session: "lain", state_path:, nvim: "", cwd:,
+                          paths: Lain::Paths.new(env: {}), shell_out_factory: spy)
+    end
+
+    it "leaves an already-running session alone, warning that the un-split window has no cockpit" do
+      calls = []
+
+      report = reattaching_up(calls, pane_lines: "0: bash\n").call
+
+      expect(report.created).to be(false)
+      expect(new_session_call(calls)).to be_nil
+      expect(split_call(calls)).to be_nil
+      expect(report.warnings.join).to match(/already exists without the nvim pane/)
+    end
+
+    it "does not warn on reattach when the existing window already carries the cockpit's two panes" do
+      calls = []
+
+      report = reattaching_up(calls, pane_lines: "0: nvim\n1: chat\n").call
+
+      expect(report.created).to be(false)
+      expect(report.warnings).to be_empty
     end
   end
 

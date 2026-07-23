@@ -46,7 +46,7 @@ module Lain
       Placement = Data.define(:kind, :target, :degraded, :reason)
 
       # tmux's OWN `#{...}` format-string syntax (`man tmux` FORMATS), not
-      # Ruby interpolation -- the identical trap {Up::JQ_FILTER}'s comment
+      # Ruby interpolation -- the identical trap {Up::Hud::JQ_FILTER}'s comment
       # documents for jq's `\(...)`. Named constants (rather than inline
       # literals) so the `rubocop:disable` covers exactly these two strings,
       # nowhere else.
