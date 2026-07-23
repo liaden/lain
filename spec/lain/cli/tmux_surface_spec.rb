@@ -55,6 +55,20 @@ RSpec.describe Lain::CLI::TmuxSurface do
       expect(tmux_windows).to include("probe")
     end
 
+    it "renames a real window in place through an exact-match target (T20's done marker)" do
+      surface.window(command: "sleep 60", name: "probe", target_session: "lain")
+
+      surface.rename_window(target: "lain:=probe", name: "probe [done]")
+
+      expect(tmux_windows).to include("probe [done]")
+      expect(tmux_windows).not_to include("probe")
+    end
+
+    it "raises TmuxUnavailable from #rename_window when the target window no longer exists" do
+      expect { surface.rename_window(target: "lain:=never-opened", name: "gone [done]") }
+        .to raise_error(described_class::TmuxUnavailable, /rename-window failed/)
+    end
+
     it "opens a real detached session" do
       placement = surface.session(name: "forked", command: "sleep 60")
 

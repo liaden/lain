@@ -98,6 +98,22 @@ module Lain
         Placement.new(kind: :popup, target: title, degraded: false, reason: nil)
       end
 
+      # Retitle an existing window -- T20's done marker on a fleet window.
+      # Not a Placement: nothing opens, an existing surface is renamed in
+      # place. Same {#act} discipline, so a target that no longer exists (the
+      # human already closed the window) raises {TmuxUnavailable} and the
+      # CALLER decides whether that is fatal -- {FleetWindows} treats it as
+      # already-done.
+      #
+      # @param target [String] a tmux target-window; "=name" pins an exact
+      #   window-name match (tmux's own `=` syntax, else it prefix-matches)
+      # @param name [String] the window's new name
+      # @return [self]
+      def rename_window(target:, name:)
+        act("rename-window", "-t", target, name)
+        self
+      end
+
       # @param name [String] the new session's name
       # @param command [String, nil] shell command for its initial window
       # @return [Placement]

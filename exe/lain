@@ -171,6 +171,9 @@ class LainCLI < Thor
                                      "the human hasn't yet -- opt-in, races the human/dunst surfaces"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
+  method_option :windows, type: :boolean, default: false,
+                          desc: "Open a tmux window running lain watch per subagent spawn " \
+                                "(needs $TMUX and the session journal; incompatible with --no-journal)"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
   default_task :chat

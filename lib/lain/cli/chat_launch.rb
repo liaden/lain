@@ -39,6 +39,7 @@ module Lain
       # journal. A bare --resume arrives as "" (newest); absent as nil (a plain
       # new session).
       def call(&notice)
+        refuse_windows_without_journal!
         backend = Backend.new(@options)
         resumed = resumed_run(backend)
         open_chronicle
@@ -50,6 +51,10 @@ module Lain
         # quit closes :exit. Falls back to the chronicle if the run raised before
         # wiring existed.
         (@wiring&.conductor || chronicle).close(reason: :exit)
+        # Last-resort release of a held capped-overflow notice: the closers land
+        # in the RAW journal, not the tee, so a failure path may never cross the
+        # fleet sink's boundary recognition -- this teardown drain guarantees it.
+        @live_views&.fleet&.drain_pending
       end
 
       # The session record opens FIRST (per --journal), then --nvim views tee
@@ -80,6 +85,16 @@ module Lain
       def chronicle = @chronicle ||= Chronicle::Null.new
 
       private
+
+      # --windows observes the live-view tee, which --no-journal never builds;
+      # refuse loudly up front rather than opening a chat whose flag is silently
+      # dead (T20).
+      def refuse_windows_without_journal!
+        return unless @options[:windows] && !@options[:journal]
+
+        raise Lain::Error, "--windows needs the session journal: the fleet sink observes " \
+                           "the live-view tee, which --no-journal disables"
+      end
 
       # Resolved BEFORE open_chronicle (see #call) so a resume/fork refusal
       # raises before any journal file is opened -- a refusal never orphans a

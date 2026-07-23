@@ -34,10 +34,16 @@ module Lain
       def initialize(options:, chronicle:, status_feed:)
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]
-        @journal = chronicle.wrap_tee(sink([@channel, status_feed].compact))
+        # The FleetWindows sink is built BEFORE the tee (it goes IN it), then
+        # pointed AT the tee's own journal so its capped-overflow notice lands
+        # on the same record stream -- Null under no --windows, so no window
+        # machinery constructs unless the flag is set (and $TMUX present).
+        @fleet = FleetWindows.for(options)
+        @journal = chronicle.wrap_tee(sink([@channel, status_feed, @fleet].compact))
+        @fleet.notice = @journal
       end
 
-      attr_reader :journal
+      attr_reader :journal, :fleet
 
       # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
       def views
