@@ -232,3 +232,35 @@ RSpec.describe Lain::CLI::ChatLaunch do
     resolver
   end
 end
+
+RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
+  # --fork routes through Resume#fork (read-only parent, T3) and, like
+  # --resume, must refuse BEFORE any journal opens; --btw threads to
+  # Chronicle.for so the journal is born ephemeral.
+  it "routes --fork through the resolver's fork method, winning over --resume" do
+    forked = ->(**kwargs) { kwargs }
+    resolver = Object.new
+    resolver.define_singleton_method(:fork) { |selector:, model:| forked.call(selector:, model:) }
+    chronicle_factory = spy("chronicle_factory")
+
+    instance = described_class.new({ fork: "@abc123", resume: "ignored", journal: false,
+                                     provider: "ollama", model: nil, max_tokens: 16 },
+                                   resume_factory: -> { resolver },
+                                   chronicle_factory:,
+                                   wiring_factory: ->(**) { raise Lain::Error, "stop here" })
+
+    expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "stop here")
+    expect(chronicle_factory).to have_received(:call).with(hash_including(btw: false))
+  end
+
+  it "threads --btw into Chronicle.for as btw: true" do
+    chronicle_factory = spy("chronicle_factory")
+    instance = described_class.new({ journal: true, btw: true },
+                                   chronicle_factory:,
+                                   wiring_factory: ->(**) { raise Lain::Error, "stop here" },
+                                   live_views_factory: ->(**) {})
+
+    expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "stop here")
+    expect(chronicle_factory).to have_received(:call).with(enabled: true, btw: true)
+  end
+end

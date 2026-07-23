@@ -55,7 +55,7 @@ module Lain
       # what let two independent Journal.open calls straddle a second tick and
       # split telemetry from the session file it belonged in.
       def open_chronicle
-        @chronicle = @chronicle_factory.call(enabled: @options[:journal])
+        @chronicle = @chronicle_factory.call(enabled: @options[:journal], btw: @options[:btw] || false)
         # A live-view tee is built for --nvim (its Channel) OR --journal (the state
         # feed publishes for the tmux HUD). Pure --no-journal --no-nvim opens none,
         # so a headless run stays byte-identical -- no tee, no state feed.
@@ -70,10 +70,14 @@ module Lain
 
       private
 
-      # Resolved BEFORE open_chronicle (see #call) so a resume refusal raises
-      # before any journal file is opened -- a refusal never orphans a fresh
-      # journal. A bare --resume arrives as "" (newest); absent as nil.
+      # Resolved BEFORE open_chronicle (see #call) so a resume/fork refusal
+      # raises before any journal file is opened -- a refusal never orphans a
+      # fresh journal. A bare --resume arrives as "" (newest); absent as nil.
+      # --fork opens the parent read-only (never salvages it) and wins over
+      # --resume when both are given.
       def resumed_run(backend)
+        return @resume_factory.call.fork(selector: @options[:fork], model: backend.context.model) if @options[:fork]
+
         @options[:resume] && @resume_factory.call.call(selector: @options[:resume], model: backend.context.model)
       end
 

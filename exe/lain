@@ -126,6 +126,10 @@ class LainCLI < Thor
   method_option :resume, type: :string, banner: "[SESSION]", lazy_default: "",
                          desc: "Resume a recorded session: bare --resume picks the newest; or a " \
                                "filename/prefix under this project's session dir"
+  method_option :fork, type: :string, banner: "SESSION@DIGEST",
+                       desc: "Fork a recorded session at <session>@<digest-prefix>; the parent is opened read-only"
+  method_option :btw, type: :boolean, default: false,
+                      desc: "Ephemeral session (<ts>-<pid>.btw.ndjson), reaped on clean exit unless promoted"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
@@ -143,7 +147,8 @@ class LainCLI < Thor
   end
 
   desc "sessions", "List this project's recorded sessions (newest first)"
-  def sessions = render { Lain::CLI::Sessions.new.listing }
+  method_option :all, type: :boolean, default: false, desc: "Include ephemeral (--btw) sessions"
+  def sessions = render { Lain::CLI::Sessions.new.listing(all: options[:all]) }
 
   desc "watch SELECTOR", "Read-only live tail of one actor's lineage (SELECTOR = spawn digest prefix)"
   method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"
@@ -181,10 +186,8 @@ class LainCLI < Thor
   def improve(selector) = render { Lain::CLI::Improve.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
 
   desc "up [-- CHAT_FLAGS...]", "Create/attach the lain tmux session (chat window + status HUD)"
-  method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
-                          desc: "tmux session name"
-  method_option :socket, type: :string,
-                         desc: "tmux socket (-L); default tmux socket when unset"
+  method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION, desc: "tmux session name"
+  method_option :socket, type: :string, desc: "tmux socket (-L); default tmux socket when unset"
   def up(*chat_args)
     # ENV.key?("TMUX") is THIS shell's own answer to "am I already an
     # attached tmux client" -- Up#attach_command turns that into the right
@@ -212,8 +215,7 @@ class LainCLI < Thor
   def chat_flags!(chat_args)
     return chat_args if chat_args.empty? || self.class.double_dash?
 
-    raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`, " \
-                       "e.g. `lain up -- --model <id>`"
+    raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`"
   end
 
   # The one command-body shape every read-only report command shares: say the
