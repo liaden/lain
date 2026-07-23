@@ -274,12 +274,4 @@ RSpec.describe Lain::CLI::Backend do
       expect(payload[:options]).to eq(temperature: 0)
     end
   end
-
-  def with_env(vars)
-    saved = vars.keys.to_h { |k| [k, ENV.fetch(k, :__unset__)] }
-    vars.each { |k, v| ENV[k] = v }
-    yield
-  ensure
-    saved.each { |k, v| v == :__unset__ ? ENV.delete(k) : (ENV[k] = v) }
-  end
 end

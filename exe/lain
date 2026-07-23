@@ -121,26 +121,14 @@ class LainCLI < Thor
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
   default_task :chat
 
-  # The lifecycle bracket: resolve --resume, open the journal, run the
-  # conversation, always close. Resume is resolved BEFORE open_chronicle so a
-  # refusal (nothing to resume, an ambiguous selector, a mid-tool head) raises
-  # before any journal file is opened -- a refusal never orphans a fresh
-  # journal. A bare --resume arrives as "" (newest); absent as nil (a plain new
-  # session). The assemble-and-run body is #run_conversation so this method
-  # stays the thin flag-parse-and-bracket it is meant to be.
+  # The lifecycle bracket (resolve --resume, open the journal, run the
+  # conversation, always close -- refusal-before-journal ordering included)
+  # lives in Lain::CLI::ChatLaunch, where it carries specs; this method stays
+  # the flag-parse + error-mapping shell, `say` the one output seam lent in.
   def chat
-    backend = Backend.new(options)
-    resumed = resumed_run(backend)
-    open_chronicle
-    converse(backend:, resumed:)
+    Lain::CLI::ChatLaunch.new(options).call { |notice| say notice }
   rescue Lain::Error => e
     raise Thor::Error, e.message
-  ensure
-    # Graceful close anchors the head; a hard kill skips this. Routed through the
-    # conductor: its close is guarded, so a signal that already closed the
-    # session (:interrupted / :grace_expired) makes this a no-op, and a plain quit
-    # closes :exit. Falls back to the chronicle if chat raised before wiring.
-    (@wiring&.conductor || chronicle).close(reason: :exit)
   end
 
   desc "sessions", "List this project's recorded sessions (newest first)"
@@ -202,43 +190,6 @@ class LainCLI < Thor
   rescue Lain::Error => e
     raise Thor::Error, e.message
   end
-
-  # Resolved BEFORE open_chronicle (see #chat) so a resume refusal raises
-  # before any journal file is opened -- a refusal never orphans a fresh
-  # journal. A bare --resume arrives as "" (newest); absent as nil.
-  def resumed_run(backend)
-    options[:resume] && Lain::CLI::Resume.new.call(selector: options[:resume], model: backend.context.model)
-  end
-
-  # The wiring half of #chat, split out so chat stays the flag-parse-and-close
-  # bracket it reads as; @wiring is exe state because chat's ensure closes its
-  # conductor.
-  def converse(backend:, resumed:)
-    @wiring = Lain::CLI::Wiring.new(options:, chronicle:)
-    @wiring.run(backend:, resumed:, nvim: nvim_views) { |notice| say notice }
-  end
-
-  # The --nvim wiring bits the Repl builds its Neovim frontend from, or nil.
-  def nvim_views = @live_views&.views
-
-  # The session record opens FIRST (per --journal), then --nvim views tee
-  # onto IT (LiveViews) -- inverted from the old "nvim first" order, which is
-  # what let two independent Journal.open calls straddle a second tick and
-  # split telemetry from the session file it belonged in.
-  def open_chronicle
-    @chronicle = Lain::CLI::Chronicle.for(enabled: options[:journal])
-    # A live-view tee is built for --nvim (its Channel) OR --journal (the state
-    # feed publishes for the tmux HUD). Pure --no-journal --no-nvim opens none,
-    # so a headless run stays byte-identical -- no tee, no state feed.
-    @live_views = Lain::CLI::LiveViews.new(options:, chronicle:) if options[:nvim] || options[:journal]
-  end
-
-  # The session record's lifecycle collaborator (journal, scribe, observer,
-  # per-iteration durability -- see Lain::CLI::Chronicle). Defaults to the Null
-  # duck so a directly-constructed instance (cli_spec drives the private seams
-  # without running #chat) records nothing and checks nothing for nil; #chat
-  # replaces it per the --journal flag before any wiring runs.
-  def chronicle = @chronicle ||= Lain::CLI::Chronicle::Null.new
 end
 
 # Guarded so a spec can `load` this file to reach the Thor class itself

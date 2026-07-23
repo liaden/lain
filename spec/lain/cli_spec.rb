@@ -7,13 +7,6 @@
 load File.expand_path("../../exe/lain", __dir__)
 
 RSpec.describe LainCLI do
-  # Thor applies method_option defaults only during `.start`; constructing the
-  # class directly does not, so each example passes the full options hash the
-  # method under test reads. Thor wraps it with indifferent access.
-  def cli(**options)
-    described_class.new([], options)
-  end
-
   let(:toolset) { Lain::Toolset.new }
   let(:channel) { Lain::Channel.new }
 
@@ -141,162 +134,15 @@ RSpec.describe LainCLI do
   end
 
   # T13: the session-record lifecycle lives in Lain::CLI::Chronicle (see its
-  # spec); the exe only wires it. A directly-constructed CLI instance still
-  # memoizes the Null chronicle (its #chronicle reader), and Wiring drives the
-  # assembly seams over that same Null duck, so build_toolset/build_agent
-  # record nothing and need no chronicle setup here.
+  # spec); the chat bracket that opens/closes it lives in Lain::CLI::ChatLaunch
+  # (see chat_launch_spec, where the Null default and the --nvim/--journal
+  # wiring examples moved). Wiring drives the assembly seams over the Null
+  # duck, so build_toolset/build_agent record nothing here.
   describe "the chronicle seam" do
-    it "defaults a bare instance to the Null chronicle" do
-      expect(cli.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
-    end
-
     it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
       agent = wiring.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
                                         backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
       expect(agent.instance_variable_get(:@turn_middleware).to_a).to eq([])
-    end
-  end
-
-  # The two-journal split: setup_nvim_views used to open its OWN
-  # Lain::Journal.open at Journal.default_path, microseconds before
-  # open_chronicle opened a SECOND one at the same default path -- almost
-  # always the same second-granularity filename by ACCIDENT. When the two
-  # calls straddle a second tick, telemetry (request_sent/turn_usage/
-  # memory_root) fans through the tee into the NVIM journal while the scribe
-  # writes turns into the OTHER file: the durable session record silently
-  # loses salvage, bills zero, and skips memory verification. The fix is ONE
-  # Journal, opened by the Chronicle; --nvim's tee wraps THAT journal rather
-  # than opening its own.
-  describe "the --nvim + --journal wiring (one journal, not two)" do
-    def context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16)
-
-    it "opens Journal.default_path exactly once for --journal + --nvim, even across a split-second clock tick" do
-      Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
-          calls = 0
-          allow(Lain::Journal).to receive(:default_path).and_wrap_original do |original, **kwargs|
-            calls += 1
-            # Simulates the split second: each call would name a DIFFERENT
-            # file if more than one were ever made.
-            original.call(**kwargs).sub(/\.ndjson\z/, "-take#{calls}.ndjson")
-          end
-
-          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
-          instance.send(:open_chronicle)
-
-          expect(calls).to eq(1)
-          instance.send(:chronicle).close
-        end
-      end
-    end
-
-    it "makes the nvim tee's journal leg the SAME object the scribe writes turns into" do
-      Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
-          instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
-          instance.send(:open_chronicle)
-
-          chronicle = instance.send(:chronicle)
-          nvim_journal = instance.instance_variable_get(:@live_views).journal
-
-          expect(nvim_journal).to be(chronicle.instance_variable_get(:@journal))
-          chronicle.close
-        end
-      end
-    end
-
-    # Dir.chdir into the tmpdir so the I1 StatusFeed sink (now always on the
-    # live-view tee, so `.lain/state.json` publishes for the tmux HUD) writes
-    # its state file under the temp tree rather than the repo. The journal path
-    # keys off XDG_STATE_HOME, not cwd, so the chdir is invisible to it.
-    it "lands telemetry (request_sent/turn_usage/memory_root) in the SAME file the scribe writes turns into" do
-      Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
-          Dir.chdir(dir) do
-            instance = cli(journal: true, nvim: "/tmp/lain-cli-spec.sock")
-            instance.send(:open_chronicle)
-
-            chronicle = instance.send(:chronicle)
-            chronicle.start(context:, toolset: Lain::Toolset.new)
-            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
-              digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
-            )
-            chronicle.close
-
-            session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
-            expect(session_files.size).to eq(1)
-
-            types = File.readlines(session_files.first).map { |line| JSON.parse(line).fetch("type") }
-            expect(types).to include("session", "turn_usage")
-          end
-        end
-      end
-    end
-
-    # I1 wiring: the state feed is a live-view tee sink even without --nvim, so
-    # `.lain/state.json` publishes for the tmux HUD (`lain up`'s chat window
-    # carries no --nvim). A turn that touched the cache slides the deadline; a
-    # journal-only run still fans telemetry through the tee to the state feed.
-    it "publishes .lain/state.json when telemetry flows, under --journal even with no --nvim" do
-      Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
-          Dir.chdir(dir) do
-            instance = cli(journal: true)
-            instance.send(:open_chronicle)
-
-            chronicle = instance.send(:chronicle)
-            chronicle.start(context:, toolset: Lain::Toolset.new)
-            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
-              digest: "blake3:t1", model: nil, stop_reason: :end_turn,
-              usage: { "cache_read_input_tokens" => 10 }
-            )
-            chronicle.close
-
-            state = JSON.parse(File.read(File.join(dir, ".lain", "state.json")))
-            expect(state).to include("cache_deadline", "fleet", "inbox_count")
-            expect(state["cache_deadline"]).not_to be_nil
-          end
-        end
-      end
-    end
-
-    # Pure --no-journal --no-nvim opens no tee at all, so a headless-ish run
-    # stays byte-identical: no state feed, no state.json written.
-    it "opens no live-view tee (and no state.json) under --no-journal --no-nvim" do
-      Dir.mktmpdir do |dir|
-        Dir.chdir(dir) do
-          instance = cli(journal: false)
-          instance.send(:open_chronicle)
-
-          expect(instance.instance_variable_get(:@live_views)).to be_nil
-          expect(File.exist?(File.join(dir, ".lain", "state.json"))).to be(false)
-        end
-      end
-    end
-
-    it "still gives nvim its OWN real journal under --no-journal (Null chronicle has no journal to share)" do
-      Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
-          instance = cli(journal: false, nvim: "/tmp/lain-cli-spec.sock")
-          instance.send(:open_chronicle)
-
-          expect(instance.send(:chronicle)).to be_a(Lain::CLI::Chronicle::Null)
-          nvim_journal = instance.instance_variable_get(:@live_views).journal
-          expect(nvim_journal).to be_a(Lain::Journal)
-
-          session_files = Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))
-          expect(session_files.size).to eq(1) # nvim's own, not the (nonexistent) session record
-
-          nvim_journal.close
-        end
-      end
-    end
-
-    it "opens no journal at all without --nvim" do
-      instance = cli(journal: false)
-      instance.send(:open_chronicle)
-
-      expect(instance.instance_variable_get(:@live_views)).to be_nil
     end
   end
 
@@ -331,13 +177,5 @@ RSpec.describe LainCLI do
       payload = Lain::Provider::Ollama.new.encode(request)
       expect(payload[:options]).to eq(temperature: 0)
     end
-  end
-
-  def with_env(vars)
-    saved = vars.keys.to_h { |k| [k, ENV.fetch(k, :__unset__)] }
-    vars.each { |k, v| ENV[k] = v }
-    yield
-  ensure
-    saved.each { |k, v| v == :__unset__ ? ENV.delete(k) : (ENV[k] = v) }
   end
 end
