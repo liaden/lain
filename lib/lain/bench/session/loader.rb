@@ -87,7 +87,7 @@ module Lain
         # Memoized because {#on_chain?} needs the fold to have run and every
         # caller may ask more than once; the rebuild is pure, so this is
         # caching, not state.
-        def timeline = @timeline ||= anchor.verify(build_chain)
+        def timeline = @timeline ||= anchor.verify(chain_fold.timeline)
 
         # T3: fold membership -- true for any digest VERIFIED while rebuilding
         # this file's chain: the resumed base's own ancestors plus every turn
@@ -98,8 +98,7 @@ module Lain
         # forked above it loadable. Every member re-committed to its recorded
         # content address, so membership never vouches for unverified bytes.
         def on_chain?(digest)
-          timeline
-          @members.include?(digest)
+          chain_fold.member?(digest)
         end
 
         # @return [Store] the ONE store this file (and, in a resume chain,
@@ -159,33 +158,18 @@ module Lain
           Workspace.new(reminders: header.fetch("reminders"))
         end
 
-        # The base is either a fresh empty Timeline (no resume chain) or the
-        # prior file's own verified head (a resume chain) -- either way built
-        # on the ONE shared {#store}, so a `message` record on either side of
-        # the file boundary can name a causal_parent that crosses it.
-        def build_chain
-          base = resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
-          @members = Set.new(base.ancestor_digests)
-          of_type(TURN_TYPE).each_with_index.inject(base) do |acc, (record, i)|
-            verified_turn(acc.commit(role: record.fetch("role"), content: record.fetch("content"),
-                                     meta: record.fetch("meta", {})),
-                          record, i)
-          end
-        end
-
-        # Verification and membership are ONE step by design: a digest joins
-        # `@members` exactly when its record re-commits to its content
-        # address, so {#on_chain?} can never answer true for bytes the fold
-        # did not prove.
-        def verified_turn(chain, record, index)
-          recorded = record.fetch("digest")
-          unless chain.head_digest == recorded
-            raise Corrupt, "turn record #{index} (#{record.fetch("role")}) recorded as #{recorded} " \
-                           "re-commits to #{chain.head_digest}; its content no longer matches its content address"
-          end
-
-          @members.add(chain.head_digest)
-          chain
+        # {ChainFold} owns the file-order turn+rewound fold and the member
+        # set it proves (see its class comment); the base is either a fresh
+        # empty Timeline (no resume chain) or the prior file's own verified
+        # head -- either way built on the ONE shared {#store}, so a `message`
+        # record on either side of the file boundary can name a causal_parent
+        # that crosses it. Memoized because {#timeline} and {#on_chain?} must
+        # consult the SAME fold.
+        def chain_fold
+          @chain_fold ||= ChainFold.new(
+            records: @records,
+            base: resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
+          )
         end
 
         # {Anchor} owns the open/closed classification and the verify-or-raise

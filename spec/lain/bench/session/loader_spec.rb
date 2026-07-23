@@ -290,6 +290,200 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
     end
 
+    # T15: a `rewound` record ({from:, to:}) is a fold-position move, folded
+    # in FILE order beside the turn records -- the fold checks out `to` and
+    # subsequent turns verify as extending it. The turns above the rewind stay
+    # in the Store and in fold membership, which is what keeps a child forked
+    # above the rewind loadable (the T3 panel's probe_rewind_membership,
+    # proven end-to-end below).
+    describe "a rewound session stays loadable" do
+      let(:store) { Lain::Store.new }
+      let(:full) do
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: text("q1"))
+                      .commit(role: :assistant, content: text("a1"))
+                      .commit(role: :user, content: text("q2"))
+                      .commit(role: :assistant, content: text("a2"))
+      end
+      let(:target) { full.rewind(2) }
+      let(:retried) do
+        target.commit(role: :user, content: text("q2, take two"))
+              .commit(role: :assistant, content: text("a2, take two"))
+      end
+
+      def turn_records(chain) = chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+
+      def rewound_records(to: target.head_digest, from: full.head_digest, tail: retried.to_a.last(2))
+        roundtrip([open_header] + turn_records(full) +
+                  [Lain::SessionRecord.rewound(from:, to:)] +
+                  tail.map { |turn| Lain::SessionRecord.turn(turn) })
+      end
+
+      it "folds turn AND rewound records in file order, resuming at the post-rewind head" do
+        loaded = described_class.new(rewound_records).recording
+
+        expect(loaded.timeline.head_digest).to eq(retried.head_digest)
+        expect(loaded.timeline.to_a.map(&:digest)).to eq(retried.to_a.map(&:digest))
+      end
+
+      it "keeps the pre-rewind head reachable: in the Store, and vouched by fold membership" do
+        loader = described_class.new(rewound_records)
+
+        expect(loader.timeline.store.key?(full.head_digest)).to be(true)
+        expect(loader.on_chain?(full.head_digest)).to be(true)
+      end
+
+      it "folds an identical-content retry: the same digest re-recorded after the rewound record" do
+        records = roundtrip([open_header] + turn_records(full) +
+                            [Lain::SessionRecord.rewound(from: full.head_digest, to: full.rewind(1).head_digest),
+                             Lain::SessionRecord.turn(full.head)])
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.timeline.head_digest).to eq(full.head_digest)
+      end
+
+      it "folds a rewind to the empty session (to: nil), fresh turns extending from the root" do
+        fresh = Lain::Timeline.empty(store:).commit(role: :user, content: text("clean slate"))
+        records = roundtrip([open_header] + turn_records(full) +
+                            [Lain::SessionRecord.rewound(from: full.head_digest, to: nil),
+                             Lain::SessionRecord.turn(fresh.head)])
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.timeline.head_digest).to eq(fresh.head_digest)
+      end
+
+      it "verifies a closed rewound session against the post-rewind anchor" do
+        closed = Lain::Telemetry::SessionClosed.new(head: retried.head_digest, reason: :exit).to_journal
+        records = rewound_records + roundtrip([closed])
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.open?).to be(false)
+        expect(loaded.timeline.head_digest).to eq(retried.head_digest)
+      end
+
+      it "raises Corrupt when a rewound record's `from` disagrees with the fold position, naming both" do
+        wrong = "blake3:#{"0" * 64}"
+
+        expect { described_class.new(rewound_records(from: wrong)).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error| expect(error.message).to include(wrong, full.head_digest) }
+      end
+
+      it "raises Corrupt when a rewound record's target was never verified on this chain" do
+        unverified = "blake3:#{"f" * 64}"
+
+        expect { described_class.new(rewound_records(to: unverified, tail: [])).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /#{Regexp.escape(unverified)}/)
+      end
+
+      # T15 panel (Linus): rewind, continue, rewind deeper -- the fold lands
+      # on the final head and BOTH abandoned branches stay vouched, because
+      # children forked above either rewind depend on it.
+      it "folds two rewound records, every abandoned branch still vouched" do
+        t1 = full.rewind(3)
+        branch = target.commit(role: :user, content: text("q2 take two"))
+                       .commit(role: :assistant, content: text("a2 take two"))
+        final = t1.commit(role: :assistant, content: text("a1 rewrite"))
+        loader = described_class.new(
+          roundtrip([open_header] + turn_records(full) +
+                    [Lain::SessionRecord.rewound(from: full.head_digest, to: target.head_digest)] +
+                    branch.to_a.last(2).map { |turn| Lain::SessionRecord.turn(turn) } +
+                    [Lain::SessionRecord.rewound(from: branch.head_digest, to: t1.head_digest),
+                     Lain::SessionRecord.turn(final.head)])
+        )
+
+        expect(loader.timeline.head_digest).to eq(final.head_digest)
+        expect(loader.on_chain?(full.head_digest)).to be(true)
+        expect(loader.on_chain?(branch.head_digest)).to be(true)
+        expect(loader.timeline.store.key?(full.head_digest)).to be(true)
+      end
+
+      # T15 panel (Jeremy): the record's edge semantics, pinned.
+      it "folds a first-record rewound ({from: nil, to: nil}) to the empty session" do
+        fresh = Lain::Timeline.empty(store:).commit(role: :user, content: text("clean"))
+        records = roundtrip([open_header, Lain::SessionRecord.rewound(from: nil, to: nil),
+                             Lain::SessionRecord.turn(fresh.head)])
+
+        expect(described_class.new(records).recording.timeline.head_digest).to eq(fresh.head_digest)
+      end
+
+      it "refuses a first-record rewound naming a digest this file never verified" do
+        records = roundtrip([open_header, Lain::SessionRecord.rewound(from: nil, to: full.head_digest)])
+
+        expect { described_class.new(records).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /never\s+verified/m)
+      end
+
+      it "folds a no-op rewound (to == from == head) without moving anything" do
+        records = roundtrip([open_header] + turn_records(full) +
+                            [Lain::SessionRecord.rewound(from: full.head_digest, to: full.head_digest)])
+
+        expect(described_class.new(records).recording.timeline.head_digest).to eq(full.head_digest)
+      end
+
+      it "refuses a rewound SPLICED mid-file whose from is a verified turn that is not the fold head" do
+        records = roundtrip([open_header] + turn_records(full))
+        spliced = records[0..2] +
+                  roundtrip([Lain::SessionRecord.rewound(from: full.rewind(3).head_digest, to: nil)]) +
+                  records[3..]
+
+        expect { described_class.new(spliced).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /fold order has been disturbed/)
+      end
+
+      it "refuses a rewound whose target is only verified LATER in the file (forward reference)" do
+        t1_record, *rest = roundtrip(turn_records(full))
+        forward = roundtrip([Lain::SessionRecord.rewound(from: full.rewind(3).head_digest,
+                                                         to: full.head_digest)])
+
+        expect { described_class.new([open_header, t1_record, *forward, *rest]).recording }
+          .to raise_error(Lain::Bench::Session::Corrupt, /never\s+verified/m)
+      end
+
+      # T15 panel finding 4, recorded as contract: the Loader ACCEPTS a
+      # forward "rewound" (a redo onto a branch the fold already verified)
+      # that the Scribe refuses to WRITE, because its skip-set pruned the
+      # target. Read-tolerance and write-strictness deliberately differ --
+      # verification stays sound either way (the target was proven) -- and
+      # this example is where that asymmetry is pinned; ChainFold's
+      # verified_target comment names it on the lib side.
+      it "accepts a forward 'rewound' (redo) that the Scribe would refuse to write" do
+        retry_turn = target.commit(role: :user, content: text("take two"))
+        records = roundtrip([open_header] + turn_records(full) +
+                            [Lain::SessionRecord.rewound(from: full.head_digest, to: target.head_digest),
+                             Lain::SessionRecord.turn(retry_turn.head),
+                             Lain::SessionRecord.rewound(from: retry_turn.head_digest, to: full.head_digest)])
+
+        expect(described_class.new(records).recording.timeline.head_digest).to eq(full.head_digest)
+      end
+
+      # The T3 panel's probe_rewind_membership, end-to-end with the real fold:
+      # parent forks child at F, parent rewinds BELOW F and keeps going --
+      # the child must stay loadable, and the parent by its own fold too.
+      it "keeps a child forked above the rewind loadable after the parent rewinds below the fork point" do
+        fork_point = full.rewind(2) # F
+        below = full.rewind(3)
+        parent_records = roundtrip([open_header] + turn_records(full) +
+                                   [Lain::SessionRecord.rewound(from: full.head_digest, to: below.head_digest),
+                                    Lain::SessionRecord.turn(
+                                      below.commit(role: :assistant, content: text("a1 prime")).head
+                                    )])
+        child = fork_point.commit(role: :assistant, content: text("child continuation"))
+        child_records = roundtrip(
+          [open_header(resumed_from: { "file" => "a.ndjson", "head" => fork_point.head_digest }),
+           Lain::SessionRecord.turn(child.head)]
+        )
+        resolver = ->(basename) { basename == "a.ndjson" ? parent_records : raise("unexpected #{basename}") }
+
+        loaded = described_class.new(child_records, resolve: resolver).recording
+
+        expect(loaded.timeline.head_digest).to eq(child.head_digest)
+        expect(described_class.new(parent_records).recording.timeline.head.content).to eq(text("a1 prime"))
+      end
+    end
+
     describe "message records rejoin the Store" do
       let(:chain) { Lain::Timeline.empty(store: Lain::Store.new).commit(role: :user, content: text("ask me")) }
       let(:writer) { Lain::Event::ChainWriter.new }

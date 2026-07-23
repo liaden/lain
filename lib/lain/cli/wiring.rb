@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "wiring/base_tools"
+
 module Lain
   module CLI
     # The chat-assembly responsibility, lifted out of the Thor class the way Repl
@@ -117,7 +119,7 @@ module Lain
       end
 
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
-        base = Lain::Toolset.new(base_tools(recorder))
+        base = Lain::Toolset.new(BaseTools.build(recorder))
         @role_spawn = role_spawn_seam(base, backend:, parent:, journal:)
         # T12: opt-in third approval surface, over the SAME role_spawn seam a
         # `@role/skill` line folds through -- nil without --auto-approve, so
@@ -155,20 +157,6 @@ module Lain
       # built over the same catalog + slots the repl's ReplMiddleware composes,
       # loaded once from the project root.
       def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer)
-
-      # The chat's capability floor -- the tier-1 structured tools plus tier-3
-      # bash -- before the subagent and the ask_human reply seam layer on. Lifted
-      # out of build_toolset so that method stays under AbcSize as the floor grows
-      # (CLAUDE.md: extract a collaborator, never loosen a Metrics cop). The union
-      # a subagent role attenuates FROM is exactly this list.
-      def base_tools(recorder)
-        [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
-         Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
-         Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
-         Lain::Tools::Bash.new, Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new, Lain::Tools::AstDump.new,
-         Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new, Lain::Tools::CodeOutline.new,
-         Lain::Tools::FileSymbols.new]
-      end
 
       # The chat default: an attenuated read-only child (schema posture, depth 1).
       # The observer routes its :spawn/:message lineage events into the session
@@ -238,6 +226,7 @@ module Lain
       def build_repl(tty:, agent:)
         replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
         @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:,
+                                                chronicle: @chronicle,
                                                 **@switchboard.surface_kwargs(conductor: @conductor, tty:))
         Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,

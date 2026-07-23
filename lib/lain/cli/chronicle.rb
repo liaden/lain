@@ -31,6 +31,7 @@ module Lain
         def turn_middleware(_timeline) = Middleware::Stack.new
         def telemetry_kwargs = Chronicle.telemetry_kwargs(@tee)
         def catch_up(_timeline) = self
+        def rewound(**) = self
         def interrupted(**) = self
         def close(**) = self
 
@@ -253,6 +254,12 @@ module Lain
 
       def catch_up(timeline)
         scribe.catch_up(timeline)
+        self
+      end
+
+      # T15: announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
+      def rewound(to:)
+        scribe.rewound(to:)
         self
       end
 

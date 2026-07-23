@@ -17,9 +17,11 @@ module Lain
     # == Finding the target
     #
     # The candidate is the session's LAST `request_sent` record, but only when
-    # no `turn_usage` follows it anywhere in the file: a `turn_usage` present
-    # is proof the round trip already committed normally (the atom above), so
-    # there is nothing to salvage -- {Nothing}, a clean no-op.
+    # nothing SUPERSEDES it later in the file: a `turn_usage` after it is
+    # proof the round trip already committed normally (the atom above), and a
+    # `rewound` record after it (T15) is the user explicitly abandoning that
+    # branch -- committing the "recovered" response onto the post-rewind head
+    # would silently reverse the rewind. Either way: {Nothing}, a clean no-op.
     #
     # == Frame selection, per the retry ruling
     #
@@ -62,7 +64,11 @@ module Lain
     class Salvage
       REQUEST_SENT_TYPE = "request_sent"
       TURN_USAGE_TYPE = "turn_usage"
-      RELEVANT_TYPES = [REQUEST_SENT_TYPE, TURN_USAGE_TYPE].freeze
+      # Record types that, appearing AFTER a request_sent, prove its round
+      # trip is settled history rather than a salvage target (see "Finding
+      # the target" above).
+      SUPERSEDING_TYPES = [TURN_USAGE_TYPE, REWOUND_TYPE].freeze
+      RELEVANT_TYPES = [REQUEST_SENT_TYPE, *SUPERSEDING_TYPES].freeze
 
       # Nothing needed recovering. A Null Object (CLAUDE.md's `Sink::Null`
       # idiom) so a caller never has to branch on "did anything happen"
@@ -151,23 +157,24 @@ module Lain
         "#{@corruptions.size} corrupt region(s) in the response log were skipped during salvage"
       end
 
-      # The last `request_sent` with no `turn_usage` anywhere after it in the
+      # The last `request_sent` with nothing superseding it after it in the
       # file -- {Agent#commit_and_account}'s atomic commit-then-journal means a
-      # `turn_usage` on record is proof of a normal commit, full stop.
+      # `turn_usage` on record is proof of a normal commit, and a `rewound`
+      # on record is proof the user moved the head away on purpose.
       def unanswered_request_digest
         last_sent = relevant_records.reverse_each.find { |record, _i| record["type"].to_s == REQUEST_SENT_TYPE }
         return nil if last_sent.nil?
 
         record, index = last_sent
-        answered_after?(index) ? nil : record.fetch("digest")
+        superseded_after?(index) ? nil : record.fetch("digest")
       end
 
       def relevant_records
         @records.each_with_index.select { |record, _i| RELEVANT_TYPES.include?(record["type"].to_s) }
       end
 
-      def answered_after?(index)
-        relevant_records.any? { |record, i| i > index && record["type"].to_s == TURN_USAGE_TYPE }
+      def superseded_after?(index)
+        relevant_records.any? { |record, i| i > index && SUPERSEDING_TYPES.include?(record["type"].to_s) }
       end
 
       def recover(digest, frame)

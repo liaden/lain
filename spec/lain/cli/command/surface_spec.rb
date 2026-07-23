@@ -19,7 +19,8 @@ RSpec.describe Lain::CLI::Command::Surface do
 
   def build_surface(root, approvals: nil)
     described_class.new(agent: spy("agent"), replies: spy("replies"),
-                        supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:)
+                        supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
+                        chronicle: Lain::CLI::Chronicle::Null.new)
   end
 
   it "assembles the frozen nil-free Env from the wired collaborators and the Null placeholders" do
@@ -38,7 +39,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       surface = build_surface(root)
 
       listing = surface.commands.dispatch("/help") { raise "fallthrough must not run" }
-      expect(listing).to include("/help", "/quit", "/greet")
+      expect(listing).to include("/help", "/quit", "/rewind", "/greet")
       expect(surface.commands.dispatch("/quit") { raise "fallthrough must not run" }).to eq(:quit)
     end
   end

@@ -169,6 +169,95 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
+  # T15: {Scribe#rewound} is the ONE sanctioned backward move -- it announces
+  # the rewind as an additive `rewound` record, so the {Diverged} raise above
+  # keeps guarding every divergence that was NOT announced through it.
+  describe "#rewound -- the announced backward move" do
+    it "appends rewound {from:, to:} and moves the append point so post-rewind turns extend the target" do
+      scribe.catch_up(timeline)
+      target = timeline.rewind(2)
+
+      scribe.rewound(to: target.head_digest)
+      retried = target.commit(role: :user, content: text("try again"))
+      scribe.catch_up(retried)
+
+      expect(of_type("rewound"))
+        .to contain_exactly(a_hash_including("type" => "rewound", "from" => timeline.head_digest,
+                                             "to" => target.head_digest))
+      expect(of_type("turn").last.fetch("digest")).to eq(retried.head_digest)
+      expect(journal_io).to be_valid_ndjson
+    end
+
+    # The parent-hole this seam closes: a rewind-and-retry that re-commits
+    # IDENTICAL content yields an identical digest, which the skip-set would
+    # swallow -- the record would then jump from the rewound checkout straight
+    # to a turn whose parent record never re-landed. Pruning the skip-set
+    # above the target makes the re-made turn a fresh append in file order.
+    it "prunes the skip-set above the target: an identical re-commit re-lands after the rewound record" do
+      scribe.catch_up(timeline)
+
+      scribe.rewound(to: timeline.rewind(1).head_digest)
+      scribe.catch_up(timeline)
+
+      expect(of_type("turn").size).to eq(5)
+      expect(of_type("turn").last.fetch("digest")).to eq(timeline.head_digest)
+      expect(records.map { |record| record.fetch("type") }).to eq(%w[session turn turn turn turn rewound turn])
+    end
+
+    it "anchors a graceful close at the post-rewind head" do
+      scribe.catch_up(timeline)
+      target = timeline.rewind(2)
+
+      scribe.rewound(to: target.head_digest)
+      scribe.close(reason: :exit)
+
+      expect(of_type("session_closed").first).to include("head" => target.head_digest)
+    end
+
+    it "rewinds to the empty session with to: nil, the whole chain re-recordable" do
+      scribe.catch_up(timeline)
+
+      scribe.rewound(to: nil)
+      scribe.catch_up(timeline)
+
+      expect(of_type("rewound").first).to include("from" => timeline.head_digest, "to" => nil)
+      expect(of_type("turn").size).to eq(8)
+    end
+
+    # T15 panel (Aaron): the prune, end to end through Scribe -> Loader,
+    # twice over -- the same digest must re-land after EACH rewound record,
+    # and the file must fold.
+    it "double rewind with identical re-commits: the digest re-lands after each rewound and the file folds" do
+      scribe.catch_up(timeline)
+      scribe.rewound(to: timeline.rewind(1).head_digest)
+      scribe.catch_up(timeline)
+      scribe.rewound(to: timeline.rewind(1).head_digest)
+      scribe.catch_up(timeline)
+
+      expect(of_type("turn").count { |record| record["digest"] == timeline.head_digest }).to eq(3)
+      loaded = Lain::Bench::Session::Loader.new(records).recording
+      expect(loaded.timeline.head_digest).to eq(timeline.head_digest)
+    end
+
+    it "refuses a target never written to this record, the file unchanged" do
+      scribe.catch_up(timeline)
+      before = journal_io.string.dup
+
+      expect { scribe.rewound(to: "blake3:#{"f" * 64}") }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /never/)
+      expect(journal_io.string).to eq(before)
+    end
+
+    it "keeps refusing an UNANNOUNCED divergence after a legitimate rewound -- the announce is per move" do
+      scribe.catch_up(timeline)
+      scribe.rewound(to: timeline.rewind(1).head_digest)
+      diverged = timeline.rewind(3).commit(role: :user, content: text("other path"))
+
+      expect { scribe.catch_up(diverged) }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /does not extend the written chain/)
+    end
+  end
+
   describe "a run that a stop beat" do
     it "marks run_interrupted anchored at the last committed turn" do
       scribe.catch_up(timeline)

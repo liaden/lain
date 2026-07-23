@@ -20,7 +20,11 @@ module Lain
       # register line in {#registry}, and -- when it needs a new Env reader --
       # one line in the {Env} assembly here.
       class Surface
-        def initialize(agent:, replies:, supervisor:, role_spawn:, approvals: nil, root: Dir.pwd,
+        # `chronicle:` is required, not defaulted -- the same reasoning as
+        # Repl's: a defaulted Null here would let a mis-wired session lose
+        # /rewind's rewound record silently, failing only at the next
+        # catch_up, far from the bug.
+        def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, approvals: nil, root: Dir.pwd,
                        policy_switch: nil, model_switch: nil, approval_prompt: nil)
           @role_spawn = role_spawn
           @root = root
@@ -28,7 +32,7 @@ module Lain
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
-          @env = assemble_env(agent:, replies:, supervisor:, approvals:, policy_switch:, model_switch:)
+          @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, policy_switch:, model_switch:)
         end
 
         attr_reader :env
@@ -50,12 +54,12 @@ module Lain
         # The one Env assembly, its optional readers falling back to their
         # named Nulls -- extracted so initialize stays the plain seeding it
         # reads as (the Metrics trip said so: extract, do not loosen).
-        def assemble_env(agent:, replies:, supervisor:, approvals:, policy_switch:, model_switch:)
+        def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, policy_switch:, model_switch:)
           Env.new(
             status: Env::NullStatus, sessions: Sessions.new,
             approvals: approvals || Env::NullApprovals, supervisor:,
             replies:, fork_point: Env::NullForkPoint,
-            tmux_surface: TmuxSurface.new, agent:,
+            tmux_surface: TmuxSurface.new, agent:, chronicle:,
             policy_switch: policy_switch || Env::NullPolicySwitch,
             model_switch: model_switch || Env::NullModelSwitch
           )
@@ -65,7 +69,7 @@ module Lain
         # command a later card registers here appears in its listing with no
         # edit of its own.
         def registry
-          @registry ||= Registry.new([Quit.new]).tap do |registry|
+          @registry ||= Registry.new([Quit.new, Rewind.new]).tap do |registry|
             registry.register(Help.new(registry:, catalog: @catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Yolo.new)

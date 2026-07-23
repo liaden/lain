@@ -30,6 +30,7 @@ module Lain
   module SessionRecord
     HEADER_TYPE = "session"
     TURN_TYPE = "turn"
+    REWOUND_TYPE = "rewound"
 
     module_function
 
@@ -55,6 +56,16 @@ module Lain
     def turn(turn)
       { "type" => TURN_TYPE, "digest" => turn.digest, "role" => turn.role,
         "content" => turn.content, "parent" => turn.parent, "meta" => turn.meta }
+    end
+
+    # T15: the render head moved BACKWARD -- the one record that changes the
+    # fold position instead of extending it. Both digests are already recorded
+    # (`to: nil` is the empty session), so a loader folding in file order
+    # checks out `to` and verifies later turns as extending it, while the
+    # turns above `from` stay reachable in the Store. Additive: an old
+    # reader's `of_type` narrowing skips it by construction.
+    def rewound(from:, to:)
+      { "type" => REWOUND_TYPE, "from" => from, "to" => to }
     end
   end
 end

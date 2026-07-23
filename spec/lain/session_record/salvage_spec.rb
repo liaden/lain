@@ -210,4 +210,30 @@ RSpec.describe Lain::SessionRecord::Salvage do
       expect(outcome.request_digest).to eq("d1")
     end
   end
+
+  # T15 fix round (panel: Aaron): an unanswered request_sent followed by a
+  # `rewound` record is a response the user EXPLICITLY abandoned -- salvage
+  # committing it onto the post-rewind head would silently reverse the
+  # rewind, with a session_closed anchor on top.
+  describe "a rewound record supersedes the candidate" do
+    def rewound = JSON.parse(JSON.generate(Lain::SessionRecord.rewound(from: "blake3:#{"a" * 64}", to: nil)))
+
+    it "does not resurrect a rewound-away response: a rewound AFTER the request_sent yields Nothing" do
+      spool(canned)
+
+      outcome = described_class.new(entries: [request_sent(anthropic_request.digest), rewound],
+                                    frames:, timeline:).call
+
+      expect(outcome).to be(described_class::Nothing)
+    end
+
+    it "still salvages a request_sent issued AFTER the rewind -- only a LATER rewound invalidates" do
+      digest = spool(canned)
+
+      outcome = described_class.new(entries: [rewound, request_sent(digest)], frames:, timeline:).call
+
+      expect(outcome).to be_recovered
+      expect(outcome.request_digest).to eq(digest)
+    end
+  end
 end

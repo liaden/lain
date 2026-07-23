@@ -88,6 +88,27 @@ module Lain
         self
       end
 
+      # T15: the ONE sanctioned backward move. Announces a rewind as its own
+      # `rewound` record, then retreats the append point so the next
+      # {#catch_up} extends from `to` -- the {Diverged} raise keeps guarding
+      # every divergence NOT announced through here. The skip-set above the
+      # target is pruned, not kept: a rewind-and-retry that re-commits
+      # identical content yields an identical digest, which the skip-set
+      # would otherwise swallow -- the re-made turn would never re-land after
+      # the rewound record, leaving a parent-hole in the file order a loader
+      # folds. Checked BEFORE anything lands, like {#catch_up}.
+      #
+      # @param to [String, nil] a turn digest this record already wrote
+      #   (nil rewinds to the empty session)
+      # @return [self]
+      # @raise [Diverged] for a target never written; nothing is written
+      def rewound(to:)
+        written_target!(to)
+        @journal << SessionRecord.rewound(from: @head, to:)
+        retreat_to(to)
+        self
+      end
+
       # Graceful close: anchor the final head and the reason. `head:` defaults to
       # the last head {#catch_up} saw, so a caller that caught up first need not
       # repeat it.
@@ -122,6 +143,22 @@ module Lain
 
         raise Diverged, "timeline #{timeline.head_digest.inspect} does not extend the written chain " \
                         "(last-written head #{@head.inspect}); the session record appends, never rewrites"
+      end
+
+      def written_target!(to)
+        return if to.nil? || @written.include?(to)
+
+        raise Diverged, "rewind target #{to.inspect} was never written to this record; " \
+                        "a rewound record can only name a recorded turn"
+      end
+
+      # Insertion order IS chain order here: {#catch_up} appends root-to-head
+      # and only ever extends, and the resumed seed arrives the same way -- so
+      # slicing the Set at the target prunes exactly the turns above it.
+      def retreat_to(to)
+        kept = @written.to_a
+        @written = Set.new(to.nil? ? [] : kept[..kept.index(to)])
+        @head = to
       end
     end
   end

@@ -144,7 +144,9 @@ module Lain
       # A command's String rides the same Response shape SkillDispatch's
       # short-circuit uses, so render_response stays the single delivery
       # renderer for model turns, skill short-circuits, and commands alike. No
-      # catch_up: a command never touches the Timeline.
+      # catch_up HERE: a command that moves the Timeline (T15's /rewind)
+      # journals its own move through the chronicle before returning, so this
+      # boundary owes the record nothing.
       def deliver_text(text)
         @tty.render_response(Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn))
         nil
