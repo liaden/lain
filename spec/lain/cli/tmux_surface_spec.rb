@@ -1,0 +1,171 @@
+# frozen_string_literal: true
+
+require "open3"
+
+# T2: TmuxSurface -- one object opening windows, popups, and detached
+# sessions. Two kinds of examples, mirroring up_spec.rb:
+#
+# * "against a real tmux server" shells out to an ACTUAL tmux on a scratch
+#   socket (`-L tmux-surface-spec-...`), never Joel's real session. It skips
+#   outright (never fails) when no tmux binary is on PATH -- the same inline
+#   guard up_spec.rb uses for :nvim/:integration-style environment gaps.
+# * "degrading loudly" / detection-branch examples inject a FAKE
+#   shell_out_factory, so the control-mode / old-tmux / no-tmux scenarios run
+#   on every machine regardless of what tmux (if any) is actually installed.
+#
+# A Mixlib::ShellOut double satisfying the one duck TmuxSurface exercises:
+# #run_command (a no-op), #exitstatus/#stderr/#stdout. Named distinctly from
+# up_spec.rb's FakeShellOut (which has no #stdout) so the two top-level
+# constants never collide when the suite loads both files.
+FakeTmuxShellOut = Struct.new(:exitstatus, :stdout, :stderr) do
+  def run_command = self
+end
+
+# tmux's OWN `#{...}` format-string syntax, not Ruby interpolation -- see
+# TmuxSurface::COMMAND_LIST_NAME_FORMAT's comment for the identical trap.
+WINDOW_NAME_FORMAT = '#{window_name}' # rubocop:disable Lint/InterpolationCheck
+SESSION_NAME_FORMAT = '#{session_name}' # rubocop:disable Lint/InterpolationCheck
+
+RSpec.describe Lain::CLI::TmuxSurface do
+  def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
+
+  describe "against a real tmux server" do
+    before { skip("tmux not found on PATH") unless tmux_present? }
+
+    let(:socket) { "tmux-surface-spec-#{Process.pid}-#{object_id}" }
+    let(:surface) { described_class.new(socket:) }
+
+    around do |example|
+      system("tmux", "-L", socket, "new-session", "-d", "-s", "lain", out: File::NULL, err: File::NULL)
+      example.run
+    ensure
+      system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+    end
+
+    def tmux_windows
+      Open3.capture2("tmux", "-L", socket, "list-windows", "-t", "lain", "-F",
+                     WINDOW_NAME_FORMAT).first.lines.map(&:strip)
+    end
+
+    it "opens a real window" do
+      placement = surface.window(command: "sleep 60", name: "probe", target_session: "lain")
+
+      expect(placement).to eq(described_class::Placement.new(kind: :window, target: "probe", degraded: false,
+                                                             reason: nil))
+      expect(tmux_windows).to include("probe")
+    end
+
+    it "opens a real detached session" do
+      placement = surface.session(name: "forked", command: "sleep 60")
+
+      expect(placement).to eq(described_class::Placement.new(kind: :session, target: "forked", degraded: false,
+                                                             reason: nil))
+      sessions = Open3.capture2("tmux", "-L", socket, "list-sessions", "-F",
+                                SESSION_NAME_FORMAT).first.lines.map(&:strip)
+      expect(sessions).to include("forked")
+    end
+
+    it "does NOT degrade a popup on this real (modern, no client attached) tmux -- it genuinely " \
+       "attempts display-popup and hits tmux's own client-less refusal, proving the non-degraded " \
+       "path really talks to display-popup rather than silently falling back to a window" do
+      # No client is ever attached in this spec (no PTY here) -- ambiguous
+      # "no client at all" resolves to "not control mode" (the class
+      # comment's documented default), and this tmux build ships
+      # display-popup, so #popup must NOT degrade. Without an attached
+      # client, real tmux then refuses the popup itself ("no current
+      # client") -- a DIFFERENT failure than a degrade would produce (a
+      # degrade never touches display-popup at all, so it could not surface
+      # this message).
+      expect { surface.popup(command: "sleep 60", title: "probe", target_session: "lain") }
+        .to raise_error(described_class::TmuxUnavailable, /no current client/)
+    end
+
+    it "raises TmuxUnavailable with a remedy, and executes nothing, when tmux itself cannot spawn a server" do
+      broken_socket_surface = described_class.new(
+        shell_out_factory: lambda do |*args|
+          FakeTmuxShellOut.new(args.include?("new-window") ? 1 : 0, "", "error connecting to socket")
+        end
+      )
+
+      expect { broken_socket_surface.window(command: "echo hi") }
+        .to raise_error(described_class::TmuxUnavailable, /error connecting to socket/)
+    end
+  end
+
+  describe "popup degrade detection (FakeTmuxShellOut)" do
+    # Everything TmuxSurface might shell out to for one #popup call, keyed
+    # on the ONE command name each branch cares about -- list-commands
+    # (popup support), list-clients (control mode), and anything else
+    # (display-popup itself, or #popup's degrade path calling #window)
+    # which always just succeeds.
+    def factory_for(control_mode:, popup_supported:)
+      responses = {
+        "list-commands" => FakeTmuxShellOut.new(0, popup_supported ? "display-popup\nnew-window\n" : "new-window\n",
+                                                ""),
+        "list-clients" => FakeTmuxShellOut.new(0, control_mode ? "1\n0\n" : "0\n0\n", "")
+      }
+      ->(*args) { responses.find { |command, _| args.include?(command) }&.last || FakeTmuxShellOut.new(0, "", "") }
+    end
+
+    it "degrades to a window and names control_mode when an attached client reports control mode" do
+      surface = described_class.new(shell_out_factory: factory_for(control_mode: true, popup_supported: true))
+
+      placement = surface.popup(command: "lain chat --btw", title: "btw")
+
+      expect(placement.kind).to eq(:window)
+      expect(placement.degraded).to be true
+      expect(placement.reason).to eq("control_mode")
+      expect(placement.target).to eq("btw")
+    end
+
+    it "degrades to a window and names old_tmux when the server predates display-popup" do
+      surface = described_class.new(shell_out_factory: factory_for(control_mode: false, popup_supported: false))
+
+      placement = surface.popup(command: "lain chat --btw", title: "btw")
+
+      expect(placement.kind).to eq(:window)
+      expect(placement.degraded).to be true
+      expect(placement.reason).to eq("old_tmux")
+    end
+
+    it "does not degrade when popup is supported and no client is in control mode" do
+      surface = described_class.new(shell_out_factory: factory_for(control_mode: false, popup_supported: true))
+
+      placement = surface.popup(command: "lain chat --btw", title: "btw")
+
+      expect(placement.kind).to eq(:popup)
+      expect(placement.degraded).to be false
+      expect(placement.reason).to be_nil
+    end
+  end
+
+  describe "no tmux, loud degrade" do
+    def no_tmux_factory = ->(*_args) { raise Errno::ENOENT, "no such file or directory - tmux" }
+
+    it "raises TmuxUnavailable with the remedy, and executes nothing, for #window" do
+      surface = described_class.new(shell_out_factory: no_tmux_factory)
+
+      expect { surface.window(command: "echo hi") }
+        .to raise_error(described_class::TmuxUnavailable, /tmux not found on PATH/)
+    end
+
+    it "raises TmuxUnavailable with the remedy, and executes nothing, for #popup " \
+       "(detection itself is the first shell-out, so nothing downstream ever runs)" do
+      surface = described_class.new(shell_out_factory: no_tmux_factory)
+
+      expect { surface.popup(command: "echo hi") }
+        .to raise_error(described_class::TmuxUnavailable, /tmux not found on PATH/)
+    end
+
+    it "raises TmuxUnavailable with the remedy, and executes nothing, for #session" do
+      surface = described_class.new(shell_out_factory: no_tmux_factory)
+
+      expect { surface.session(name: "forked") }
+        .to raise_error(described_class::TmuxUnavailable, /tmux not found on PATH/)
+    end
+
+    it "is the same exception Up raises, so one rescue clause covers both" do
+      expect(described_class::TmuxUnavailable).to equal(Lain::CLI::Up::TmuxUnavailable)
+    end
+  end
+end
