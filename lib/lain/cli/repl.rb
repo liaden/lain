@@ -2,11 +2,12 @@
 
 module Lain
   module CLI
-    # One conversation: reads commands at `you>`, routes each through the repl
-    # phase, hosts the fleet's reactor for the conversation's life, and delegates
-    # the ask_human reply surfaces to {HumanReplies}. Extracted from the Thor
-    # class because a conversation is its own responsibility (and the Metrics
-    # trip said so -- extract, do not loosen).
+    # One conversation: reads lines at `you>`, consults the command registry
+    # first (T9), routes everything else through the repl phase, hosts the
+    # fleet's reactor for the conversation's life, and delegates the ask_human
+    # reply surfaces to {HumanReplies}. Extracted from the Thor class because a
+    # conversation is its own responsibility (and the Metrics trip said so --
+    # extract, do not loosen).
     class Repl
       # `chronicle:` is required, not defaulted -- the same reasoning as
       # build_agent's `session:`: a defaulted Null here would let a caller
@@ -17,7 +18,15 @@ module Lain
       # surface watching the SAME approval queue the TTY prompt does (first
       # answer wins); Null when no dunstify, so the second watch fiber is inert.
       # `supervisor:` is the OM-6 fleet reactor #run hosts across asks.
-      def initialize(agent:, tty:, ask_human:, questions:, chronicle:, conductor:, approvals: nil,
+      # `commands:` is the T9 command surface -- a {Command::Registry::Bound},
+      # the registry curried over the one frozen {Command::Env} Wiring
+      # assembled -- consulted BEFORE the middleware phase, so a registered
+      # `/word` never costs a model turn. `replies:` is the {HumanReplies}
+      # drain Wiring wired over this same tty/conductor pair (injected, not
+      # constructed here, so the Env's replies reader and this collaborator are
+      # one object). Both required: a defaulted Null would let a mis-wired
+      # session silently lose its command or reply surface.
+      def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new)
         @agent = agent
@@ -28,8 +37,8 @@ module Lain
         @approvals = approvals
         @notifier = notifier
         @supervisor = supervisor
-        @replies = HumanReplies.new(tty:, conductor:, ask_human:, questions:)
-        @approval_surface = approval_surface
+        @replies = replies
+        @commands = commands
       end
 
       # WHY the reader routes through the conductor: a bare `@input.gets` in
@@ -40,9 +49,11 @@ module Lain
       # freezes the whole reactor, so the queue's fail-closed timer could
       # NEVER fire while the prompt sat unanswered. read_reply parks the
       # fiber instead: prompts serialize with ask_human replies, and an
-      # unattended prompt still times out to denial.
+      # unattended prompt still times out to denial. Memoized lazily (not an
+      # initialize assignment) so construction stays the plain collaborator
+      # seeding it reads as.
       def approval_surface
-        Lain::Frontend::ApprovalPolicy.new(
+        @approval_surface ||= Lain::Frontend::ApprovalPolicy.new(
           reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }
         )
       end
@@ -52,10 +63,7 @@ module Lain
       # through the conductor so an idle-prompt signal breaks out cleanly.
       def converse
         text = @conductor.read_prompt(@tty, "you> ")
-        while continue?(text)
-          dispatch(text)
-          text = @conductor.closed? ? nil : @conductor.read_prompt(@tty, "you> ")
-        end
+        text = next_text(dispatch(text)) while continue?(text)
       end
 
       # Run the conversation inside the terminal frontend, nested inside the optional
@@ -84,27 +92,75 @@ module Lain
 
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
-      # Routes one typed command through the repl phase. `:text`/`:agent` go in;
-      # the phase downstream runs the real ask and adds `:response` (nil on a
-      # rescued Lain::Error) on the way out -- the same in/out shape
+      # :quit -- the /quit command's action -- ends the conversation through
+      # the SAME exit a bare "quit" takes: a nil text fails continue? exactly
+      # as a farewell does, so run's ensures fire identically on both paths.
+      def next_text(action)
+        return if action == :quit || @conductor.closed?
+
+        @conductor.read_prompt(@tty, "you> ")
+      end
+
+      # Routes one typed line: the command registry FIRST (T9) -- a registered
+      # `/word` runs lib-side with zero model turns and hands back rendered
+      # text or a Repl action -- and everything else falls through to the
+      # middleware phase unchanged. The boundary rescues Lain::Error raised
+      # WITHIN EITHER PATH (a malformed invocation from the registry's parse or
+      # the skill middleware's alike): render it and return, so `converse`
+      # loops to the next prompt instead of dying.
+      def dispatch(text)
+        settle_command(@commands.dispatch(text) { middleware_turn(text) })
+      rescue Lain::Error => e
+        @tty.render_error(e.message)
+        # Explicit: dispatch's return is #converse's ACTION position, and
+        # render_error's own return value must never leak into it.
+        nil
+      end
+
+      # A command's contract ({Command::Registry}): rendered TEXT -- a String,
+      # delivered through the same boundary renderer a model turn uses, because
+      # commands return text and never print -- or a Repl ACTION (:quit today),
+      # handed up for #converse to act on. The middleware fallthrough settles
+      # its own delivery and returns nil. Anything else is that command's bug;
+      # name the breach loudly and RECOVERABLY, the render_missing_response
+      # discipline.
+      def settle_command(outcome)
+        return outcome if outcome.nil? || outcome == :quit
+        return deliver_text(outcome) if outcome.is_a?(String)
+
+        @tty.render_error("command returned neither rendered text nor a Repl action: #{outcome.inspect}")
+        # Explicit nil, as in dispatch's rescue: never render_error's return.
+        nil
+      end
+
+      # A command's String rides the same Response shape SkillDispatch's
+      # short-circuit uses, so render_response stays the single delivery
+      # renderer for model turns, skill short-circuits, and commands alike. No
+      # catch_up: a command never touches the Timeline.
+      def deliver_text(text)
+        @tty.render_response(Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn))
+        nil
+      end
+
+      # The middleware phase for a line no command claimed. `:text`/`:agent` go
+      # in; the phase downstream runs the real ask and adds `:response` (nil on
+      # a rescued Lain::Error) on the way out -- the same in/out shape
       # model_middleware uses for `:request`/`:response`.
       #
-      # Delivery is dispatch's, not respond's: a middleware may SHORT-CIRCUIT --
-      # set `:response` and never call downstream -- and that answer still has to
-      # reach the terminal, so the one renderer is here at the boundary over
+      # Delivery is this boundary's, not respond's: a middleware may
+      # SHORT-CIRCUIT -- set `:response` and never call downstream -- and that
+      # answer still has to reach the terminal, so the one renderer is here over
       # `env.response`, spent exactly once whether the response came from the
-      # model turn or a middleware that skipped it. The boundary also rescues
-      # Lain::Error raised WITHIN THE CHAIN (a malformed skill invocation, say):
-      # render it and return, so `converse` loops to the next prompt instead of
-      # dying. An error from the ask itself is respond's own (it must journal the
-      # torn turns), so that path renders and returns nil here -- no double.
-      def dispatch(text)
+      # model turn or a middleware that skipped it. An error from the ask itself
+      # is respond's own (it must journal the torn turns), so that path renders
+      # and returns nil here -- no double. Returns nil ALWAYS, so only a
+      # command can hand #converse an action.
+      def middleware_turn(text)
         env = @middleware.call({ text:, agent: @agent }) do |inner|
           inner.merge(response: respond(inner.fetch(:text)))
         end
         env.to_h.key?(:response) ? deliver(env.response) : render_missing_response
-      rescue Lain::Error => e
-        @tty.render_error(e.message)
+        nil
       end
 
       # The repl phase's out-key is `:response` (Env's per-phase contract): the
@@ -164,7 +220,7 @@ module Lain
       # first answer wins (Pending's own doctrine). Nil under --yolo (no queue),
       # so neither watch fiber spawns; the notifier is Null with no dunstify.
       def approval_loop(task)
-        @approvals && [task.async { @approval_surface.watch(@approvals) },
+        @approvals && [task.async { approval_surface.watch(@approvals) },
                        task.async { @notifier.watch(@approvals) }]
       end
 

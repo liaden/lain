@@ -12,9 +12,20 @@ module Lain
     class Wiring
       attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn, :conductor
 
-      def initialize(options:, chronicle:)
+      # The frozen {Command::Env} the run's {Command::Surface} assembled once.
+      def command_env = @command_surface.env
+
+      # `tty_factory:`/`conductor_opener:` are #run's construction seams (T9,
+      # from the T1 panel note): the exe takes the real defaults; a spec hands
+      # in a StringIO-backed TTY factory or a recording opener and drives #run
+      # itself -- no send(:build_repl), no instance_variable_set.
+      def initialize(options:, chronicle:,
+                     tty_factory: Lain::Frontend::TTY.public_method(:new),
+                     conductor_opener: Lain::CLI::Conductor.public_method(:open))
         @options = options
         @chronicle = chronicle
+        @tty_factory = tty_factory
+        @conductor_opener = conductor_opener
       end
 
       # Assemble the run's collaborators over the now-open chronicle and hand off
@@ -28,8 +39,8 @@ module Lain
         recorder, session = run_state(resumed)
         agent = wire_agent(channel:, recorder:, session:, backend:, resumed:)
         resumed&.notices&.each(&notice)
-        tty = Lain::Frontend::TTY.new(channel:)
-        @conductor = Lain::CLI::Conductor.open(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
+        tty = @tty_factory.call(channel:)
+        @conductor = @conductor_opener.call(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
         @conductor.guard { build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:) }
       end
 
@@ -115,11 +126,18 @@ module Lain
       # context mode, so one seam serves every role. `slots:` is the session's
       # rendered-persona source (Backend#slots, loaded once).
       def role_spawn_seam(base, backend:, parent:, journal:)
-        Lain::Skill::RoleSpawn.new(
-          provider: spooled_provider(backend), context_factory: -> { backend.context },
-          toolset: base, parent:, slots: backend.slots,
-          journal:, supervisor: @supervisor, observer: chronicle.observer
-        )
+        Lain::Skill::RoleSpawn.new(toolset: base, slots: backend.slots,
+                                   **child_seam_kwargs(backend, parent:, journal:))
+      end
+
+      # The collaborators BOTH child seams (role spawn above, the research
+      # subagent below) attenuate over -- the same spooled provider, child
+      # context, live parent handle, journal, supervisor, and lineage observer.
+      # One helper, so the sentence "over the same seams" is code, not a
+      # comment that can drift.
+      def child_seam_kwargs(backend, parent:, journal:)
+        { provider: spooled_provider(backend), context_factory: -> { backend.context },
+          parent:, journal:, supervisor: @supervisor, observer: chronicle.observer }
       end
 
       # The in-agent composition primitive, main-agent-only: appended AFTER `base`
@@ -128,11 +146,7 @@ module Lain
       # SAME agent as a tool_result -- a continuation, not a spawn. The renderer is
       # built over the same catalog + slots the repl's ReplMiddleware composes,
       # loaded once from the project root.
-      def run_skill
-        renderer = Lain::Skill::Renderer.new(catalog: Lain::Skill::Catalog.load(root: Dir.pwd),
-                                             slots: Lain::Prompt::Slots.load(root: Dir.pwd))
-        Lain::Tools::RunSkill.new(renderer:)
-      end
+      def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer)
 
       # The chat's capability floor -- the tier-1 structured tools plus tier-3
       # bash -- before the subagent and the ask_human reply seam layer on. Lifted
@@ -152,11 +166,8 @@ module Lain
       # The observer routes its :spawn/:message lineage events into the session
       # record, exactly as ask_human's Q/A goes.
       def research_subagent(base, backend:, parent:, journal:)
-        Lain::Tools::Subagent.new(
-          provider: spooled_provider(backend), context_factory: -> { backend.context }, toolset: base,
-          policy: backend.spawn_policy(:researcher),
-          parent:, journal:, max_depth: 1, observer: chronicle.observer, supervisor: @supervisor
-        )
+        Lain::Tools::Subagent.new(toolset: base, policy: backend.spawn_policy(:researcher), max_depth: 1,
+                                  **child_seam_kwargs(backend, parent:, journal:))
       end
 
       # Gate and Live share ONE Toolset (the single-map invariant the plan
@@ -215,11 +226,16 @@ module Lain
 
       # The Repl over the run's collaborators -- the accessors are this class's
       # own seams (it wired the toolset @ask_human/@questions belong to), so the
-      # Repl reads them here rather than through exe-instance state.
+      # Repl reads them here rather than through exe-instance state. The
+      # {HumanReplies} drain is built HERE (not inside Repl) so the Env's
+      # replies reader and the Repl's collaborator are one object; everything a
+      # typed line dispatches through -- command registry, frozen Env, skill
+      # middleware, one shared catalog -- is {Command::Surface}'s (T9).
       def build_repl(tty:, agent:)
-        Repl.new(agent:, tty:, ask_human:, questions:,
-                 chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
-                 supervisor:, middleware: Lain::CLI::ReplMiddleware.build(role_spawn:))
+        replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
+        @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:)
+        Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
+                 supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands)
       end
     end
   end

@@ -74,6 +74,21 @@ RSpec.describe Lain::CLI::ReplMiddleware do
       end
     end
 
+    it "dispatches over an injected catalog -- the same snapshot Wiring hands /help (T9)" do
+      with_project do |root|
+        catalog = Lain::Skill::Catalog.load(root:)
+        stack = described_class.build(root:, catalog:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+
+        seen = nil
+        stack.call({ text: "/greet warmly", agent: :the_agent }) do |env|
+          seen = env
+          env.merge(response: "ran")
+        end
+
+        expect(seen.fetch(:text)).to start_with("# Greet")
+      end
+    end
+
     it "threads the role-spawn seam through so a role-bound line reaches it" do
       with_project do |root|
         fake = ReplMiddlewareStubRoleSpawn.new

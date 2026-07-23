@@ -70,13 +70,34 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # surfaces this hands back, and an empty set keeps the Sync from parking.
   let(:replies) { spy("replies", surfaces: []) }
 
-  def build_repl(middleware:)
-    repl = Lain::CLI::Repl.new(
-      agent:, tty:, chronicle: spy("chronicle"),
-      conductor:, middleware:, ask_human: nil, questions: nil
+  # An EMPTY command registry (by default) bound over a doubles-only Env:
+  # every line falls through to the middleware phase, which is the seam under
+  # test; the T9 panel-fix examples below hand in a registry of their own.
+  # T9 made `replies:` injectable, so the old @replies ivar-poke is gone.
+  def command_surface(registry)
+    env = Lain::CLI::Command::Env.new(
+      status: Lain::CLI::Command::Env::NullStatus, sessions: spy("sessions"),
+      approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
+      replies:, fork_point: Lain::CLI::Command::Env::NullForkPoint,
+      tmux_surface: spy("tmux_surface"), agent:
     )
-    repl.instance_variable_set(:@replies, replies)
-    repl
+    registry.bind(env)
+  end
+
+  def build_repl(middleware:, registry: Lain::CLI::Command::Registry.new)
+    Lain::CLI::Repl.new(
+      agent:, tty:, replies:, commands: command_surface(registry),
+      chronicle: spy("chronicle"), conductor:, middleware:
+    )
+  end
+
+  # A registered command whose call is the given block -- the probe shape.
+  def command(name, &body)
+    Struct.new(:name, :body) do
+      def usage = "/#{name} -- probe"
+
+      def call(args, env) = body.call(args, env)
+    end.new(name, body)
   end
 
   def dispatch(repl, text = "hi") = repl.__send__(:dispatch, text)
@@ -106,6 +127,31 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     expect { dispatch(repl) }.not_to raise_error # the loop lives to see the next prompt
 
     expect(tty).to have_received(:render_error).with("malformed skill").twice
+    expect(tty).not_to have_received(:render_response)
+    expect(agent).not_to have_received(:ask)
+  end
+
+  it "recovers a command raising a NON-Lain error: attributed render, loop survives, no action leaks (P7b)" do
+    boom = command("boom") { raise "plain RuntimeError" }
+    repl = build_repl(middleware: Lain::Middleware::Stack.new,
+                      registry: Lain::CLI::Command::Registry.new([boom]))
+
+    expect(dispatch(repl, "/boom")).to be_nil # nil in the action position, never render_error's return
+    expect { dispatch(repl, "/boom") }.not_to raise_error # the loop lives to see the next prompt
+
+    expect(tty).to have_received(:render_error).with("command /boom failed: plain RuntimeError").twice
+    expect(agent).not_to have_received(:ask)
+  end
+
+  it "recovers a command returning garbage: named breach, loop survives, no action leaks (P7b)" do
+    garbage = command("garbage") { Object.new }
+    repl = build_repl(middleware: Lain::Middleware::Stack.new,
+                      registry: Lain::CLI::Command::Registry.new([garbage]))
+
+    expect(dispatch(repl, "/garbage")).to be_nil
+    expect { dispatch(repl, "/garbage") }.not_to raise_error
+
+    expect(tty).to have_received(:render_error).with(a_string_including("neither rendered text")).twice
     expect(tty).not_to have_received(:render_response)
     expect(agent).not_to have_received(:ask)
   end

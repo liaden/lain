@@ -49,14 +49,59 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  describe "#build_repl" do
-    it "constructs a Lain::CLI::Repl from the wired seams" do
-      agent = wire_agent
-      tty = instance_double(Lain::Frontend::TTY)
-      conductor = Lain::CLI::Conductor.open(tty:, chronicle:, grace: 5, supervisor: wiring.supervisor)
-      wiring.instance_variable_set(:@conductor, conductor)
+  describe "#run" do
+    require "stringio"
+    require "tmpdir"
 
-      expect(wiring.send(:build_repl, tty:, agent:)).to be_a(Lain::CLI::Repl)
+    # The T9 injection seams: a spec assembles and runs the whole conversation
+    # through #run's own path -- no send(:build_repl), no instance_variable_set
+    # -- by handing in a StringIO-backed TTY factory and a recording conductor
+    # opener instead of the real-terminal defaults.
+    let(:opened) { [] }
+    let(:conductor_opener) { ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { |c| opened << c } } }
+
+    def tty_factory(input, dir)
+      lambda do |channel:|
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new(input),
+                                history_path: File.join(dir, "history"))
+      end
+    end
+
+    def run_wiring(input: "quit\n", options: { grace: 5 })
+      Dir.mktmpdir do |dir|
+        wiring = described_class.new(options:, chronicle:,
+                                     tty_factory: tty_factory(input, dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+        wiring
+      end
+    end
+
+    it "threads the injected tty/conductor seams -- the conductor the opener built is the one exposed" do
+      wiring = run_wiring
+
+      expect(opened).to eq([wiring.conductor])
+    end
+
+    it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired" do
+      wiring = run_wiring
+      env = wiring.command_env
+
+      expect(env).to be_frozen
+      expect(env.sessions).to be_a(Lain::CLI::Sessions)
+      expect(env.tmux_surface).to be_a(Lain::CLI::TmuxSurface)
+      expect(env.approvals).to be(wiring.approvals)
+      expect(env.supervisor).to be(wiring.supervisor)
+      expect(env.replies).to be_a(Lain::CLI::HumanReplies)
+      expect(env.agent).to be_a(Lain::Agent)
+      expect(env.status).to be(Lain::CLI::Command::Env::NullStatus)
+      expect(env.fork_point).to be(Lain::CLI::Command::Env::NullForkPoint)
+    end
+
+    it "wires the queue-shaped NullApprovals under --yolo, so the env reader stays nil-free" do
+      wiring = run_wiring(options: { grace: 5, yolo: true })
+
+      expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::NullApprovals)
     end
   end
 end
