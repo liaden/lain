@@ -362,15 +362,18 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # 4-2.3 provenance (T16 panel fix #1). A hand-edited resend from the editor
-  # must journal DISTINGUISHABLY from a real dispatch: JournalRequests documents
-  # "a request_sent with no following turn_usage is how a failure reads", and a
-  # resend never dispatches, so recording it as a plain request_sent would
-  # fabricate one failed dispatch per hand-edit. The stamp is the record TYPE
-  # itself -- an inheriting event with its own journal discriminator -- rather
-  # than a marker in `extra`, because `extra` is documented as exactly what
-  # Request.new needs to rebuild the request, and a provenance flag there would
-  # ride onto the wire on any rebuild-and-dispatch.
+  # 4-2.3 provenance (T16 panel fix #1; dispatch reading superseded by T18). A
+  # hand-edited resend must journal DISTINGUISHABLY from a real dispatch:
+  # JournalRequests documents "a request_sent with no following turn_usage is
+  # how a failure reads", and this record is the EDIT's projection, never the
+  # wire's, so recording it as a plain request_sent would fabricate one failed
+  # dispatch per hand-edit. The stamp is the record TYPE itself -- an
+  # inheriting event with its own journal discriminator -- rather than a marker
+  # in `extra`, because `extra` is documented as exactly what Request.new needs
+  # to rebuild the request, and a provenance flag there would ride onto the
+  # wire on any rebuild-and-dispatch. Whether the edit then ALSO dispatched
+  # (T18's ResendBridge) is a following resend_dispatched marker plus the
+  # dispatch's own ordinary request_sent/turn_usage pair -- see below.
   describe Lain::Telemetry::RequestResent do
     subject(:event) { described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {}) }
 
@@ -392,6 +395,31 @@ RSpec.describe Lain::Telemetry do
       entries = io.string.lines
       expect(Lain::Journal.records(entries, type: "request_sent").map { |r| r.fetch("digest") }.to_a).to eq(["real"])
       expect(Lain::Journal.records(entries, type: "request_resent").map { |r| r.fetch("digest") }.to_a).to eq(["d"])
+    end
+  end
+
+  # T18's dispatch marker: the record TYPE that says a hand-edited resend was
+  # handed to the loop for dispatch. Emitted by CLI::ResendBridge attempt-first
+  # (before Agent#run), so a dispatch the wire then failed still reads as
+  # attempted; `digest` is the edited request's content address -- the join key
+  # onto BOTH the request_resent projection and the ordinary request_sent the
+  # wire path journals when the loop actually sends it.
+  describe Lain::Telemetry::ResendDispatched do
+    subject(:event) { described_class.new(digest: "blake3:edited") }
+
+    it "journals under its own discriminator, carrying the join-key digest" do
+      expect(event.journal_type).to eq("resend_dispatched")
+      expect(event.to_journal).to eq("type" => "resend_dispatched", "digest" => "blake3:edited")
+    end
+
+    it "must name the resent request it dispatched" do
+      expect { described_class.new(digest: nil) }
+        .to raise_error(ArgumentError, /must name the resent request it dispatched, got nil/)
+    end
+
+    it "is deeply frozen and Ractor-shareable" do
+      expect(event).to be_deeply_frozen
+      expect(event).to be_ractor_shareable
     end
   end
 

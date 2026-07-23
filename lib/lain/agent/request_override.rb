@@ -51,7 +51,11 @@ module Lain
       # Consume-on-success: hand the round trip its Request -- the queued edit
       # exactly once, else `render.call` -- and if the round trip does NOT
       # return (a provider raise, a budget stop), put an unsent edit back so a
-      # retry sends R again. The tap clears the restore obligation only once
+      # retry sends R again. This contract is at-least-once-SEND, exactly-once-
+      # COMMIT: a post-provider middleware raise after a successful wire send
+      # still restores R, so a retry re-sends it -- T18's bridge builds its
+      # refusal/no-auto-retry UX on exactly that (see {CLI::ResendBridge}).
+      # The tap clears the restore obligation only once
       # the response is in hand; `ensure` catches every non-local exit without
       # a `rescue Exception`. The render and the round trip both run OUTSIDE
       # the lock -- only the take and the restore synchronize.

@@ -84,7 +84,12 @@ module Lain
       # the child chat /btw opens with its --prompt question, threaded to
       # converse so the very first read is the side-question, not the terminal.
       def run(nvim:, store:, session:, first_prompt: nil)
-        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, **nvim)
+        # T18: the bridge over the agent's own override slot, sharing the nvim
+        # views' journal so the resend_dispatched marker lands beside the
+        # request_resent projection it promotes.
+        bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
+                                          journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
+        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge, **nvim)
         @replies.bind_editor(frontend&.command_inbox)
         Sync do |task|
           @supervisor.run(task)

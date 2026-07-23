@@ -15,12 +15,16 @@ module Lain
       # own render handle it with no special case (the shape {Bench::DryReplay}
       # already leans on -- a request is DATA, re-renderable and diffable).
       #
-      # Non-destructive by construction. A resend NEVER commits to the Timeline
-      # and never reaches into the Agent -- the frontend holds no commit path at
-      # all. That is a stronger statement than "speculative fork, not rewrite":
-      # `Timeline#fork` is O(1) and returns the same value, and nothing here can
-      # move a head, so the original head stays reachable no matter how many
-      # resends fire.
+      # THIS class is non-destructive by construction: it never commits to the
+      # Timeline and never reaches into the Agent -- the frontend holds no
+      # commit path at all, so nothing HERE can move a head no matter how many
+      # resends fire. Whether the resent request then also DISPATCHES is the
+      # injected bridge's business, one level up (T18): {Neovim}'s resend
+      # worker offers the rebuilt Request to {CLI::ResendBridge} AFTER this
+      # class journals the projection, and that dispatch commits through the
+      # Agent like any turn -- onto a rewound head whose dropped turn stays
+      # reachable in the Store, a speculative fork, never a rewrite. Unbridged
+      # (plain --nvim), a resend remains the pure projection it always was.
       #
       # Threading. {#updates} runs on the frontend's drain thread (turning an
       # agent RequestSent into the editable buffer and remembering it as the
@@ -84,6 +88,22 @@ module Lain
           resent = build(lines, @mutex.synchronize { @baseline })
           @journal << resent if resent
           resent
+        end
+
+        # {#build}'s inverse, for T18's dispatch offer: a {Telemetry::RequestResent}
+        # this class produced becomes a live {Request} again, by the proven
+        # rebuild idiom ({Bench::Session::RequestReplay}) -- the payload keys
+        # are exactly Request.new's content keywords, with the digest-excluded
+        # transport fields carried alongside. It lives HERE because the
+        # record's shape is this class's knowledge; it RAISES on a payload that
+        # parses as JSON but is not request-shaped, and the caller decides what
+        # a raise means (the bridge folds it into a refusal notice; the
+        # {Unbridged} default never calls this at all).
+        # @param resent [Telemetry::RequestResent]
+        # @return [Lain::Request]
+        def rebuild(resent)
+          Request.new(stream: resent.stream, extra: resent.extra,
+                      **resent.payload.transform_keys(&:to_sym))
         end
 
         private

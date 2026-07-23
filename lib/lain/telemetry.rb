@@ -248,18 +248,29 @@ module Lain
       end
     end
 
-    # A hand-edited request resent from the editor (4-2.3), never dispatched to
-    # a provider. The same shape as {RequestSent} -- and it IS one, by
-    # inheritance, so every projection that diffs or renders requests treats it
-    # identically -- under its OWN journal discriminator ("request_resent",
-    # derived from the class name like every {Journalable}). The distinct type
-    # is the provenance stamp: {Middleware::JournalRequests} documents that "a
-    # request_sent with no following turn_usage is how a failure reads", and a
-    # resend never dispatches, so recording it as a plain request_sent would
-    # fabricate one failed real dispatch per hand-edit. The stamp lives in the
-    # TYPE rather than in `extra` because `extra` is exactly what Request.new
-    # needs to rebuild the request -- a marker there would ride onto the wire
-    # on any rebuild-and-dispatch.
+    # A hand-edited request resent from the editor (4-2.3): the EDIT's
+    # projection record, never the wire's. The same shape as {RequestSent} --
+    # and it IS one, by inheritance, so every projection that diffs or renders
+    # requests treats it identically -- under its OWN journal discriminator
+    # ("request_resent", derived from the class name like every {Journalable}).
+    # The distinct type is the provenance stamp: {Middleware::JournalRequests}
+    # documents that "a request_sent with no following turn_usage is how a
+    # failure reads", and recording a hand-edit as a plain request_sent would
+    # fabricate one failed real dispatch per edit. The stamp lives in the TYPE
+    # rather than in `extra` because `extra` is exactly what Request.new needs
+    # to rebuild the request -- a marker there would ride onto the wire on any
+    # rebuild-and-dispatch.
+    #
+    # Since T18, a resend CAN go on to dispatch: {CLI::ResendBridge} journals a
+    # {ResendDispatched} marker (attempt-first) and runs the edit through the
+    # loop, whose wire path then journals its own ORDINARY request_sent/
+    # turn_usage pair -- the loop saw an ordinary Request, and the join key
+    # across all three records is the digest. Provenance stays in record TYPES
+    # throughout. An UNBRIDGED resend (plain --nvim, no agent wired) still
+    # never dispatches: this record alone, with no marker following, is how
+    # that pure projection reads -- and the failure reading above survives
+    # intact, because a dispatched override always leaves a real request_sent
+    # for its turn_usage (or its absence) to say how the wire fared.
     class RequestResent < RequestSent
     end
 
@@ -1171,6 +1182,45 @@ module Lain
       # `to_s`, the same readable-NDJSON reason {Compaction#decimal} carries.
       def decimal(value)
         (value.is_a?(BigDecimal) ? value : BigDecimal(value.to_s)).to_s("F").freeze
+      end
+    end
+  end
+
+  # T18's dispatch marker (M4-2), reopening Telemetry once more for the same
+  # missing-seam reason every block above does (CLAUDE.md: a tripped
+  # Metrics/ModuleLength names a missing seam; here the seam is "the resend
+  # bridge's provenance stream, not the per-turn/per-request telemetry
+  # stream"). Emitted by {CLI::ResendBridge}, never by the frontend -- the
+  # projection half of a resend already journals as {RequestResent}, and this
+  # marker is what says the OTHER half happened.
+  module Telemetry
+    module Guards
+      # A dispatch marker must name the resent request it dispatched.
+      class ResendDispatched < Guard
+        attribute :digest
+        validates :digest, presence: { message: "must name the resent request it dispatched, got nil" }
+      end
+    end
+
+    # A hand-edited resend was handed to the loop for dispatch: T18's
+    # provenance stamp, in the record TYPE like {RequestResent}'s own (never in
+    # `extra`, which rides onto the wire on any rebuild-and-dispatch). Written
+    # by {CLI::ResendBridge} BETWEEN staging the {Agent::RequestOverride} slot
+    # and {Agent#run} -- attempt-first, the same record-before-dispatch posture
+    # {Middleware::JournalRequests} takes -- so a dispatch whose wire call then
+    # raised still reads as attempted. `digest` is the edited request's content
+    # address, the join key onto BOTH the {RequestResent} projection it
+    # promotes and the ordinary {RequestSent} the wire path journals when the
+    # loop actually sends it; a marker with no request_sent after it reads as
+    # a dispatch that died before the wire, exactly the way a request_sent
+    # with no turn_usage reads as a wire call that died before payment.
+    ResendDispatched = Data.define(:digest) do
+      include Journalable
+
+      def initialize(digest:)
+        Guards::ResendDispatched.check!(digest:)
+
+        super(digest: digest.dup.freeze)
       end
     end
   end

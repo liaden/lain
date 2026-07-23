@@ -5,7 +5,9 @@ module Lain
     # The Neovim frontend: a second surface on the same {Lain::Channel} the {TTY}
     # drains. The agent knows about neither frontend -- it only pushes attributed
     # {Lain::Telemetry} onto the Channel, and nothing here ever reaches back into
-    # the agent.
+    # the agent. (T18's resend dispatch does not breach that: the frontend offers
+    # a rebuilt Request to an INJECTED bridge duck, and only that CLI-owned
+    # object -- {CLI::ResendBridge} -- touches the Agent it was built over.)
     #
     # Shape mirrors {TTY}: a background thread drains the injected Channel. The
     # twist is that rendering touches nvim, and the neovim gem's session may be
@@ -26,6 +28,17 @@ module Lain
       #   every lain:// buffer, lain://workspace in the runtime's buffer set,
       #   and the six documented lain* syntax groups.
       PROTOCOL = "3"
+
+      # Seconds teardown waits on the resend worker before giving up the join
+      # (S3). Since T18 a bridged offer holds that worker for a whole model
+      # round trip, so a bare `join` at teardown is UNBOUNDED -- a wedged or
+      # slow provider would strand the editor's exit. The inbox is already
+      # closed by the time the join runs, so the worker exits the instant its
+      # in-flight offer returns; this bound only caps how long teardown blocks
+      # for that return, and a timed-out worker exits on its own once the round
+      # trip settles (its post-teardown render/pop meets a closed queue and is
+      # swallowed, never a wedge -- see {#resend_loop}).
+      TEARDOWN_GRACE = 5
 
       # One of the three background threads (the RPC thread, the drain, or the
       # resend worker -- see {#reraise_recorded_failure}) died and {#run}'s
@@ -54,10 +67,14 @@ module Lain
       # @param journal [#<<] where a resent request is recorded (4-2.3), the same
       #   duck the Agent's accounting/journal middleware write to; the Null
       #   channel by default, so an un-wired frontend records resends nowhere.
+      # @param resend_bridge [#offer] T18's dispatch seam: the resend worker
+      #   offers each rebuilt Request here after journaling the projection.
+      #   {Unbridged} by default, so plain --nvim keeps the pure
+      #   projection-only resend.
       # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
-                     journal: Channel::Null.instance,
+                     journal: Channel::Null.instance, resend_bridge: Unbridged,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
         @buffers = Buffers.new(store:, session:)
@@ -75,6 +92,7 @@ module Lain
         @rpc = RpcThread.new(socket_path:, version:, protocol:, render_capacity:,
                              on_death: -> { @channel.close unless @channel.closed? },
                              on_resend: ->(lines) { post_resend(lines) })
+        @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge, request_buffer: @request_buffer)
       end
 
       # Commands the editor invoked, enqueue-and-acked by the RpcThread, for an
@@ -154,12 +172,15 @@ module Lain
         @channel.close unless @channel.closed?
         @resend_inbox.close
         join_deferring_failure(drainer) { |e| @drain_failure ||= e }
-        join_deferring_failure(resender) { |e| @resend_failure ||= e }
+        # Bounded (S3): the resend worker may be inside a bridged round trip,
+        # so its join is capped -- teardown returns even if the wire is slow,
+        # and the worker exits itself once the offer settles.
+        join_deferring_failure(resender, timeout: TEARDOWN_GRACE) { |e| @resend_failure ||= e }
         @rpc.stop
       end
 
-      def join_deferring_failure(thread)
-        thread&.join
+      def join_deferring_failure(thread, timeout: nil)
+        thread&.join(timeout)
       rescue StandardError => e
         yield e
       end
@@ -176,19 +197,22 @@ module Lain
         @drain_failure = record_worker_death(e)
       end
 
-      # The resend worker (4-2.3): a synthetic PRODUCER, not a renderer. It turns
-      # each edited-buffer hand-off into a fresh RequestResent -- journaled by
-      # {RequestBuffer#resend} and pushed onto the SAME Channel an agent request
-      # rides, so the drainer diffs and re-renders it with no special case. It
-      # must be a thread of its own, and NOT the RPC thread: the RPC thread drains
-      # the render queue, so if it blocked pushing onto a full Channel the drainer
-      # (blocked posting to a full render queue) would deadlock it. This worker
-      # blocks on neither the render queue nor the RPC thread, so its Channel push
-      # always drains.
+      # The resend worker (4-2.3, dispatch since T18): a synthetic PRODUCER, not
+      # a renderer. It turns each edited-buffer hand-off into a fresh
+      # RequestResent -- journaled by {RequestBuffer#resend} and pushed onto the
+      # SAME Channel an agent request rides, so the drainer diffs and re-renders
+      # it with no special case -- and THEN offers the rebuilt Request to the
+      # injected bridge ({#deliver_resend}), which is where an edit stops being
+      # a projection and reaches the provider. It must be a thread of its own,
+      # and NOT the RPC thread: the RPC thread drains the render queue, so if it
+      # blocked pushing onto a full Channel the drainer (blocked posting to a
+      # full render queue) would deadlock it -- and since T18 a bridged offer
+      # can hold this thread for a whole model round trip, which the RPC thread
+      # could never afford. This worker blocks on neither the render queue nor
+      # the RPC thread, so its Channel push always drains.
       def resend_loop
         while (lines = @resend_inbox.pop)
-          resent = @request_buffer.resend(lines)
-          @channel.push(resent) if resent
+          @resender.deliver(@request_buffer.resend(lines))
         end
       rescue ClosedQueueError
         # Teardown closed the Channel out from under an in-flight resend; a
@@ -254,6 +278,8 @@ module Lain
   end
 end
 
+require_relative "neovim/unbridged"
+require_relative "neovim/resender"
 require_relative "neovim/inbox_view"
 require_relative "neovim/buffers"
 require_relative "neovim/journal_view"

@@ -195,10 +195,17 @@ module Lain
         Lain::Agent.new(provider: spooled_provider(backend, channel:), toolset:,
                         context: board.graft(backend.context),
                         handler: gate, session:, timeline:,
-                        tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
+                        request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
+                        tool_middleware: guarded_tools,
                         turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
                         **chronicle.telemetry_kwargs).tap { |built| agent = built }
       end
+
+      # The tool phase's one guard: {Middleware::RefuseSecretWrites}. Named
+      # rather than inlined so #build_agent's keyword bag reads as wiring, not
+      # as stack construction (and stays under Metrics/AbcSize with T18's
+      # request_override slot in the same call).
+      def guarded_tools = Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new])
 
       # Both provider construction sites tee their round trips into the
       # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real
