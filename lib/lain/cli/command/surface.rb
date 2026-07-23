@@ -25,14 +25,15 @@ module Lain
         # /rewind's rewound record silently (or hand /fork a session with no
         # record behind it), failing only later, far from the bug.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, approvals: nil, root: Dir.pwd,
-                       policy_switch: nil, model_switch: nil, approval_prompt: nil)
+                       status_feed: Env::NullStatus, policy_switch: nil, model_switch: nil, approval_prompt: nil)
           @role_spawn = role_spawn
           @root = root
           @catalog = Skill::Catalog.load(root:)
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
-          @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, policy_switch:, model_switch:)
+          @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
+                              policy_switch:, model_switch:)
         end
 
         attr_reader :env
@@ -54,9 +55,10 @@ module Lain
         # The one Env assembly, its optional readers falling back to their
         # named Nulls -- extracted so initialize stays the plain seeding it
         # reads as (the Metrics trip said so: extract, do not loosen).
-        def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, policy_switch:, model_switch:)
+        def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:, policy_switch:,
+                         model_switch:)
           Env.new(
-            status: Env::NullStatus, sessions: Sessions.new,
+            status: status_feed, sessions: Lain::CLI::Sessions.new,
             approvals: approvals || Env::NullApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
@@ -69,7 +71,8 @@ module Lain
         # command a later card registers here appears in its listing with no
         # edit of its own.
         def registry
-          @registry ||= Registry.new([Quit.new, Rewind.new, Fork.new]).tap do |registry|
+          @registry ||= Registry.new([Quit.new, Rewind.new, Fork.new,
+                                      Status.new, Sessions.new, Inbox.new]).tap do |registry|
             registry.register(Help.new(registry:, catalog: @catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Yolo.new)

@@ -185,6 +185,15 @@ RSpec.describe Lain::StatusFeed do
     # causal_parents is lineage, never consumption: "Consumption counts :turn
     # edges ONLY". So the human answering does NOT retire their own question;
     # only a LATER :turn (an assistant commit whose folded mailbox names Q) does.
+    #
+    # T13 investigated retiring on this A instead (the live over-count this
+    # card's escalation trigger names -- see the class doc's T13 note for why
+    # the underlying :turn Event genuinely never reaches this sink in
+    # production) and reverted it: {Frontend::Neovim::InboxView}'s parity
+    # spec pins this class and the nvim inbox view to agreeing at every step
+    # on exactly this rule, and a correct fix needs a live Store this class
+    # cannot see at its (pre-Agent) construction point -- escalated in the
+    # T13 hand-back rather than fixed by breaking that parity.
     it "an AskHuman-shaped reply does not retire the question by itself; only a later :turn's causal_parents does" do
       feed = described_class.new(path:)
       asker = "orchestrator"
@@ -202,6 +211,17 @@ RSpec.describe Lain::StatusFeed do
 
       feed << turn_event(causal_parents: [question.digest]) # the assistant commit that actually folds Q in
       expect(published["inbox_count"]).to eq(0)
+    end
+  end
+
+  describe "state (public reader, T13)" do
+    it "answers the SAME derivation #<< publishes, without touching the file -- Command::Env's live seam" do
+      feed = described_class.new(path:)
+
+      feed << spawn_event("a")
+      feed << message_event("q1", to: "human")
+
+      expect(feed.state).to eq(published)
     end
   end
 

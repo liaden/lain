@@ -48,7 +48,30 @@ module Lain
   #   {Tools::AskHuman#reply} answer (a `:message`, however it cites the
   #   question) does NOT retire the question by itself; see
   #   spec/lain/status_feed_spec.rb's "inbox_count" examples for the pinned
-  #   before/after.
+  #   before/after, and {Frontend::Neovim::InboxView}'s parity spec, which
+  #   holds this class and the nvim `lain://inbox` view to the SAME rule.
+  #
+  #   T13 KNOWN GAP (escalated, not fixed here -- see the card's hand-back):
+  #   in a live chat, `inbox_count` never actually decrements, because the
+  #   `:turn` Event `#observe_turn` waits for never reaches this sink.
+  #   `SessionRecord::Scribe#catch_up` appends committed turns straight to
+  #   the session JOURNAL, never to the `message_journal`/tee this class
+  #   rides (see its own doc: "turn records never route -- they are record
+  #   data, not live-view telemetry"). {Frontend::Neovim::InboxView} solves
+  #   the SAME problem correctly by consuming the `Telemetry::TurnUsage`
+  #   that DOES reach a tee and resolving its head's causal chain against a
+  #   live `Store` -- but that view is constructed AFTER the session's
+  #   Store exists (`Repl#run`, deep inside `Wiring#run`), while this class
+  #   is constructed BEFORE it (`ChatLaunch#open_chronicle`, per the T9
+  #   panel's binding amendment: it must be in the tee's sink list at
+  #   `wrap_tee` time, which runs before `Wiring` exists at all). Porting
+  #   InboxView's fix here needs a Store made available AFTER that point --
+  #   a late-bound thunk/box `ChatLaunch`/`Wiring` would populate once the
+  #   Agent exists -- which is a real construction-order design change to
+  #   two orchestrator-owned files, not a StatusFeed-local one. Left as the
+  #   documented follow-up rather than fixed via a mechanism (retiring on
+  #   the human's own reply) that would break the InboxView parity spec
+  #   above.
   #
   # Recognizing an event is duck-typed (`#usage`, `#kind`), not a class check:
   # a caller can feed this a real {Telemetry::TurnUsage}/{Event} or any object
@@ -146,9 +169,12 @@ module Lain
     end
 
     # A :turn's causal_parents are the ONLY thing that retires a pending
-    # message (Projection#pending's documented rule) -- a :message's own
-    # causal_parents (how {Tools::AskHuman#reply}'s answer cites the
-    # question) are lineage, never consumption, so they are not read here.
+    # message (Projection#pending's documented rule, and InboxView's parity
+    # spec) -- a :message's own causal_parents (how {Tools::AskHuman#reply}'s
+    # answer cites the question) are lineage, never consumption, so they are
+    # not read here. See the class doc's T13 note: in a live chat, no such
+    # :turn Event ever actually reaches this sink -- a known, escalated gap,
+    # not something this method should route around unilaterally.
     def observe_turn(event)
       event.causal_parents.each do |digest|
         @consumed << digest
@@ -156,9 +182,21 @@ module Lain
       end
     end
 
+    public
+
+    # The derived struct {#publish_if_changed} compares before writing --
+    # `{"cache_deadline"=>, "fleet"=>, "inbox_count"=>}` -- exposed (T13) so
+    # a live in-process reader (Command::Env's `status`, the `/status`
+    # command) reads the SAME derivation the JSON file publishes, without
+    # touching `.lain/state.json` (absent under --no-journal, where a
+    # headless run's StatusFeed is still live and answerable).
+    #
+    # @return [Hash] string-keyed, JSON-shaped
     def state
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @pending.size }
     end
+
+    private
 
     # Atomic replace: the new bytes land in a sibling file on the SAME
     # directory (so the rename is a same-filesystem, single-inode-swap

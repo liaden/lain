@@ -20,12 +20,14 @@ module Lain
                      resume_factory: -> { Resume.new },
                      chronicle_factory: Chronicle.public_method(:for),
                      live_views_factory: LiveViews.public_method(:new),
-                     wiring_factory: Wiring.public_method(:new))
+                     wiring_factory: Wiring.public_method(:new),
+                     status_feed_factory: -> { Lain::StatusFeed.new })
         @options = options
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
         @live_views_factory = live_views_factory
         @wiring_factory = wiring_factory
+        @status_feed_factory = status_feed_factory
       end
 
       attr_reader :wiring, :live_views
@@ -59,8 +61,17 @@ module Lain
         # A live-view tee is built for --nvim (its Channel) OR --journal (the state
         # feed publishes for the tmux HUD). Pure --no-journal --no-nvim opens none,
         # so a headless run stays byte-identical -- no tee, no state feed.
-        @live_views = @live_views_factory.call(options: @options, chronicle:) if @options[:nvim] || @options[:journal]
+        return unless @options[:nvim] || @options[:journal]
+
+        @live_views = @live_views_factory.call(options: @options, chronicle:, status_feed:)
       end
+
+      # The ONE StatusFeed for the run, constructed on first read (here, in
+      # open_chronicle, so it can sit in the tee's sink list) and threaded
+      # unchanged into Wiring's Command::Env -- so /status reads the same live
+      # instance the tee feeds. Exists even for a headless run (--no-journal
+      # --no-nvim builds no tee), so /status still answers its honest zeros.
+      def status_feed = @status_feed ||= @status_feed_factory.call
 
       # The session record's lifecycle collaborator (journal, scribe, observer,
       # per-iteration durability -- see {Chronicle}). Defaults to the Null duck
@@ -88,7 +99,7 @@ module Lain
       # bracket it reads as; @wiring is instance state because the ensure closes
       # its conductor.
       def converse(backend:, resumed:, &notice)
-        @wiring = @wiring_factory.call(options: @options, chronicle:)
+        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

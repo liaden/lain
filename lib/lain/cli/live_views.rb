@@ -27,10 +27,14 @@ module Lain
     # OLD behavior for --no-journal + --nvim, where there is no session journal
     # to share.
     class LiveViews
-      def initialize(options:, chronicle:)
+      # `status_feed:` is REQUIRED, not defaulted: a caller that forgets it
+      # would silently get an event-blind /status (the T9 panel's exact trap).
+      # ChatLaunch constructs the ONE feed and threads it here AND into Wiring,
+      # so the tee's sink and the command's reader are the same live instance.
+      def initialize(options:, chronicle:, status_feed:)
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]
-        @journal = chronicle.wrap_tee(sink([@channel, Lain::StatusFeed.new].compact))
+        @journal = chronicle.wrap_tee(sink([@channel, status_feed].compact))
       end
 
       attr_reader :journal

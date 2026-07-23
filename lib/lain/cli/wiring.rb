@@ -25,11 +25,12 @@ module Lain
       # from the T1 panel note): the exe takes the real defaults; a spec hands
       # in a StringIO-backed TTY factory or a recording opener and drives #run
       # itself -- no send(:build_repl), no instance_variable_set.
-      def initialize(options:, chronicle:,
+      def initialize(options:, chronicle:, status_feed: Command::Env::NullStatus,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
         @options = options
         @chronicle = chronicle
+        @status_feed = status_feed
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
       end
@@ -226,7 +227,7 @@ module Lain
       def build_repl(tty:, agent:)
         replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
         @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:,
-                                                chronicle: @chronicle,
+                                                chronicle: @chronicle, status_feed: @status_feed,
                                                 **@switchboard.surface_kwargs(conductor: @conductor, tty:))
         Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
