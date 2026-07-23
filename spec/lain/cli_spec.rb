@@ -22,11 +22,11 @@ RSpec.describe LainCLI do
   def backend(**options) = LainCLI::Backend.new(options)
 
   # The chat-assembly seams (build_toolset/build_agent) moved off the Thor
-  # class into LainCLI::Wiring, so they are exercised on a Wiring built with a
+  # class into Lain::CLI::Wiring, so they are exercised on a Wiring built with a
   # plain options hash and the Null chronicle -- the same records-nothing duct
   # a directly-constructed CLI instance used to get from #chronicle.
   def wiring(chronicle: Lain::CLI::Chronicle::Null.new, **options)
-    LainCLI::Wiring.new(options:, chronicle:)
+    Lain::CLI::Wiring.new(options:, chronicle:)
   end
 
   describe LainCLI::Backend, "#provider" do

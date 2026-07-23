@@ -1,17 +1,15 @@
 # frozen_string_literal: true
 
-# exe/lain is a script, not a lib file: it ends in `LainCLI.start(ARGV)`,
-# guarded by `$PROGRAM_NAME == __FILE__` so this `load` defines the class
-# WITHOUT parsing rspec's ARGV or touching the network (the cli_spec.rb
-# precedent). Unlike repl_middleware_spec, which mirrors the SHAPE of the
+# Unlike repl_middleware_spec, which mirrors the SHAPE of the
 # stack, this drives the REAL Repl#dispatch/#respond/#deliver seam: B0 makes
 # `dispatch` OWN delivery so a short-circuiting repl-phase middleware (one that
 # sets `env[:response]` without calling downstream) actually renders, and so a
 # Lain::Error raised in the middleware chain renders instead of crashing the
 # loop. The two async collaborators respond leans on -- the conductor's
 # supervise and the ask_human reply surfaces -- are the only doubles: the rest
-# is the shipped control flow.
-load File.expand_path("../../exe/lain", __dir__)
+# is the shipped control flow. (T1 moved Repl out of exe/lain into
+# Lain::CLI::Repl, so this no longer `load`s the exe -- `require "lain"`
+# already defines the class under test.)
 
 RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary rescue" do
   # A repl-phase middleware that answers the command itself: it sets
@@ -73,7 +71,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   let(:replies) { spy("replies", surfaces: []) }
 
   def build_repl(middleware:)
-    repl = LainCLI::Repl.new(
+    repl = Lain::CLI::Repl.new(
       agent:, tty:, chronicle: spy("chronicle"),
       conductor:, middleware:, ask_human: nil, questions: nil
     )
