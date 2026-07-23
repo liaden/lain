@@ -16,10 +16,20 @@ module Lain
       # reads a path itself, only what {Loader} was handed (the escalation
       # trigger this card was built around).
       #
-      # Resuming from a never-closed (open) predecessor is allowed: B's
-      # recorded `resumed_from` head retroactively re-anchors A's otherwise
-      # unverified tail, since any A-side truncation changes A's rebuilt head
-      # and then disagrees with what B recorded at resume time.
+      # The seam's integrity property is fold MEMBERSHIP, not head equality
+      # (T3): `resumed_from.head` may be ANY digest the prior file's own fold
+      # verified -- a turn recorded in that file at any fold position, or an
+      # ancestor the file itself chained from -- because a fork legitimately
+      # chains to a head the parent recorded but did not end on, and a parent
+      # that later rewinds below a fork point must not render children forked
+      # above it unloadable. Every candidate digest re-committed to its
+      # content address during that fold, so membership vouches for exactly
+      # the bytes head equality used to (a tampered prefix still refuses);
+      # what it deliberately does NOT promise is that the prior file's tail
+      # ABOVE the recorded head survived -- a closed predecessor's own
+      # `session_closed` anchor covers that, an open one accepts the same
+      # torn-tail limit {SessionRecord} states. Resuming from a never-closed
+      # (open) predecessor is therefore still allowed.
       class ResumeChain
         # Wraps the caller's resolve duck with the basenames already on the
         # walk, so a cyclic `resumed_from` chain (A->A, A->B->A) refuses as
@@ -88,21 +98,26 @@ module Lain
           @store ||= present? ? prior_loader.store : Store.new
         end
 
-        # The prior file's own rebuilt Timeline, verified against the head
-        # THIS header recorded at resume time. The prior file's own anchor
-        # already verified its own prefix (inside `prior_loader.timeline`);
-        # this checks the SEAM between the two files.
+        # The prior file's own rebuilt Timeline, checked out at the head THIS
+        # header recorded at resume time. The prior file's own anchor already
+        # verified its own prefix (inside `prior_loader.timeline`); this
+        # checks the SEAM between the two files -- and the check is fold
+        # membership ({Loader#on_chain?}), not head equality: the checkout
+        # itself verifies nothing, so it happens only for a digest the fold
+        # proved (see the class comment).
         #
         # @return [Timeline]
-        # @raise [Corrupt] when the recorded resumed_from head disagrees with
-        #   what the prior file actually rebuilds to
+        # @raise [Corrupt] when the recorded resumed_from head was never
+        #   verified on the prior file's chain
         def prior_timeline
           expected = @resumed_from.fetch("head")
           rebuilt = prior_loader.timeline
           return rebuilt if rebuilt.head_digest == expected
+          return rebuilt.checkout(expected) if prior_loader.on_chain?(expected)
 
           raise Corrupt, "resumed_from names head #{expected.inspect} for #{@resumed_from.fetch("file").inspect} " \
-                         "but it actually rebuilds to #{rebuilt.head_digest.inspect}; the resume chain is broken"
+                         "but that file rebuilds to #{rebuilt.head_digest.inspect} and never recorded that " \
+                         "digest on its chain; the resume chain is broken"
         end
 
         # @return [Array<Event>] the prior file's own already-verified

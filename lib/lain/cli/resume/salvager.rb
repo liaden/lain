@@ -11,6 +11,12 @@ module Lain
       # file would still count toward Resume's own line total, since the cop
       # measures the class NODE, not the file.
       #
+      # T3's fork-mode invariant: a fork NEVER constructs a Salvager. Only
+      # {Resume#salvage}, on the resume path proper, builds one; {Resume#fork}
+      # holds nothing but read-only `File.foreach` enumerators, because the
+      # close anchor {#close!} appends would corrupt a LIVE parent's chain for
+      # every future reader. spec/lain/cli/resume_spec.rb pins the invariant.
+      #
       # {#close!} retroactively closes the crashed file -- the recovered turn,
       # the salvage record, and a `session_closed` anchor naming its head --
       # turning an open (SIGKILLed) file into an ordinary closed one.
@@ -78,8 +84,20 @@ module Lain
         end
 
         # {Paths.wal_for} is the one naming authority; {CLI::Chronicle#spool}
-        # writes to the same derivation on the session's own path.
-        def wal_path = Paths.wal_for(@path)
+        # writes to the same derivation on the session's own path. One
+        # fallback (T3 fix round): a crash BETWEEN promotion's two renames
+        # (WAL first) leaves a still-marked `.btw.ndjson` whose wal already
+        # wears the promoted name -- the derived path is then absent and the
+        # paid-for frames would sit unreachable, with nothing ever triggering
+        # the promotion retry. Salvage of a marked journal therefore falls
+        # back to the promoted sibling basename when its own is missing.
+        def wal_path
+          derived = Paths.wal_for(@path)
+          return derived if File.exist?(derived) || !Paths.ephemeral?(@path)
+
+          promoted = Paths.wal_for(Paths.promoted_for(@path))
+          File.exist?(promoted) ? promoted : derived
+        end
       end
     end
   end

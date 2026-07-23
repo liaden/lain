@@ -130,6 +130,40 @@ RSpec.describe Lain::CLI::Resume do
               expect(error.message).to include("nope", paths.sessions_dir)
             }
     end
+
+    # T3 fix round: the selector's bare/prefix view must agree with `lain
+    # sessions` -- an ephemeral scratch file is not silently the "newest"
+    # session, and a fork/resume must not manufacture the accepted-edge
+    # resumed_from against a name promotion will later break. The EXACT
+    # filename stays selectable: salvaging a crashed --btw session.
+    context "with an ephemeral (--btw) scratch session newest in the directory" do
+      let(:scratch) { chain("scratchy") }
+      before { write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(scratch)) }
+
+      it "bare --resume picks the newest DURABLE session, mirroring `lain sessions`" do
+        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+      end
+
+      it "a prefix matches only durable sessions, refusing namedly" do
+        expect { resume.call(selector: "20260303") }
+          .to raise_error(described_class::Refusal, /20260303/)
+      end
+
+      it "the exact .btw filename still resumes -- a crashed scratch session stays salvageable" do
+        result = resume.call(selector: "20260303T000000-9.btw.ndjson")
+
+        expect(result.file).to eq("20260303T000000-9.btw.ndjson")
+        expect(result.timeline.head_digest).to eq(scratch.head_digest)
+      end
+    end
+
+    it "refuses a bare --resume when only ephemerals exist, naming the directory" do
+      Dir.children(paths.sessions_dir).each { |name| File.delete(File.join(paths.sessions_dir, name)) }
+      write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(chain("scratchy")))
+
+      expect { resume.call }
+        .to raise_error(described_class::Refusal) { |error| expect(error.message).to include(paths.sessions_dir) }
+    end
   end
 
   it "refuses namedly when there is nothing to resume" do
@@ -354,6 +388,42 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # T3 fix round (probe 4a): a crash BETWEEN promotion's two renames leaves
+    # {x.btw.ndjson, x.wal} -- the derived x.btw.wal no longer exists, so a
+    # naive salvage would find NOTHING and the paid-for frames would sit
+    # unreachable with nothing ever triggering the healing retry. Salvage
+    # falls back to the promoted sibling basename.
+    describe "salvage of a half-promoted ephemeral (crash between the renames)" do
+      it "finds the frames through the promoted wal name and recovers the response" do
+        name = "20260101T000000-1.btw.ndjson"
+        request = in_flight_request
+        write_crashed_session(name, request)
+        write_complete_frame(name, request, canned_response)
+        # The pinned crash window: the wal leg of promote! completed, the
+        # journal leg did not.
+        File.rename(wal_path_for(name),
+                    Lain::Paths.wal_for(File.join(paths.sessions_dir, "20260101T000000-1.ndjson")))
+
+        result = resume.call(selector: name)
+
+        expect(result.open?).to be(false)
+        expect(result.timeline.head.content).to eq(canned_response.content)
+        expect(result.notices.join).to include("recovered", request.digest)
+      end
+
+      it "still reads the marked wal when no promotion ever started" do
+        name = "20260101T000000-1.btw.ndjson"
+        request = in_flight_request
+        write_crashed_session(name, request)
+        write_complete_frame(name, request, canned_response)
+
+        result = resume.call(selector: name)
+
+        expect(result.open?).to be(false)
+        expect(result.timeline.head.content).to eq(canned_response.content)
+      end
+    end
+
     describe "an incomplete frame" do
       it "surfaces provenance and leaves the session open, the file untouched" do
         request = in_flight_request
@@ -428,6 +498,136 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  # T3: fork mode. `--fork "<session>@<digest-prefix>"` starts a NEW run at an
+  # arbitrary recorded head of the parent. Read-only by construction: the fork
+  # path never salvages and never opens a writable handle on the parent, so a
+  # LIVE parent's journal stays exactly as its owner is writing it.
+  describe "fork mode (T3)" do
+    let(:three) { chain("first", "ack", "second") }
+    let(:ancestor) { three.to_a[1].digest }
+
+    def prefix_for(digest) = digest.delete_prefix("blake3:")[0, 12]
+
+    def parent_path(name = "20260101T000000-1.ndjson") = File.join(paths.sessions_dir, name)
+
+    describe "from a CLOSED session at an ancestor head" do
+      before { write_closed("20260101T000000-1.ndjson", three) }
+
+      it "checks out the fork point as the new head and chains resumed_from {file, A}" do
+        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+
+        expect(result.timeline.head_digest).to eq(ancestor)
+        expect(result.timeline.to_a.map(&:digest)).to eq(three.to_a.map(&:digest).first(2))
+        expect(result.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => ancestor)
+        expect(result.written).to eq(three.to_a.map(&:digest).first(2))
+      end
+
+      it "forks from the final head too, when the selector names it" do
+        result = resume.fork(selector: "20260101@#{prefix_for(three.head_digest)}")
+
+        expect(result.timeline.head_digest).to eq(three.head_digest)
+      end
+
+      it "leaves the parent journal byte-identical" do
+        before_bytes = File.binread(parent_path)
+
+        resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+
+        expect(File.binread(parent_path)).to eq(before_bytes)
+      end
+
+      it "the forked run writes a new journal the Loader reads back as one verified chain from A" do
+        result = resume.fork(selector: "20260101@#{prefix_for(ancestor)}")
+        journal_io = StringIO.new
+        chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
+        chronicle.start(context: recorded_context, toolset:,
+                        resumed_from: result.resumed_from, written: result.written)
+        provider = Lain::Provider::Mock.new(responses: [text_response("forked answer")])
+        agent = Lain::Agent.new(provider:, toolset:, context: recorded_context, timeline: result.timeline)
+        agent.ask("a different second question")
+        chronicle.catch_up(agent.timeline)
+
+        new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        expect(new_records.find { |record| record["type"] == "session" }["resumed_from"])
+          .to eq("file" => "20260101T000000-1.ndjson", "head" => ancestor)
+
+        resolver = ->(basename) { basename == result.file ? File.foreach(parent_path(result.file)) : nil }
+        loaded = Lain::Bench::Session::Loader.new(new_records, resolve: resolver).recording
+        expect(loaded.timeline.to_a.map(&:digest)).to eq(agent.timeline.to_a.map(&:digest))
+        expect(loaded.timeline.to_a.map(&:digest)).not_to include(three.head_digest)
+      end
+    end
+
+    describe "from a LIVE (open) session whose owner is still appending" do
+      let(:two) { chain("hi", "hello") }
+      before { write_session("20260101T000000-1.ndjson", [open_header] + turn_records(two)) }
+
+      it "never constructs a Salvager and appends nothing to the parent" do
+        expect(described_class::Salvager).not_to receive(:new)
+        before_bytes = File.binread(parent_path)
+
+        result = resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}")
+
+        expect(result.timeline.head_digest).to eq(two.head_digest)
+        expect(File.binread(parent_path)).to eq(before_bytes)
+        expect(Dir.children(paths.sessions_dir)).to eq(["20260101T000000-1.ndjson"])
+      end
+
+      it "keeps the parent loadable through its subsequent appends and close" do
+        resume.fork(selector: "20260101@#{prefix_for(two.head_digest)}")
+
+        extended = two.commit(role: :user, content: text("owner kept going"))
+        File.open(parent_path, "a") do |file|
+          file.puts(JSON.generate(Lain::SessionRecord.turn(extended.head)))
+          file.puts(JSON.generate(closed_record(extended.head_digest)))
+        end
+
+        loaded = Lain::Bench::Session::Loader.new(File.foreach(parent_path)).recording
+        expect(loaded.open?).to be(false)
+        expect(loaded.timeline.head_digest).to eq(extended.head_digest)
+      end
+    end
+
+    # The card's hard trigger, unchanged in fork mode: a fork point that is an
+    # assistant tool_use turn still awaiting its results refuses with the SAME
+    # re-ask shape -- never an auto-picked neighboring head.
+    it "refuses a fork point that is a mid-tool head, verbatim" do
+      mid_tool = Lain::Timeline.empty(store: Lain::Store.new)
+                               .commit(role: :user, content: text("echo hi"))
+                               .commit(role: :assistant,
+                                       content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                   "input" => { "text" => "hi" } }])
+      write_closed("20260101T000000-1.ndjson", mid_tool)
+
+      expect { resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}") }
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.message).to include("20260101T000000-1.ndjson", "tool", "re-ask")
+        end
+    end
+
+    # T3 fix round (probe 5d): the TOCTOU between ForkPoint's read and this
+    # path's own Loader re-open -- a reap or rename can win that race, and a
+    # raw Errno::ENOENT must not escape to the exe.
+    it "maps the parent vanishing between resolution and load to a named Refusal" do
+      write_closed("20260101T000000-1.ndjson", three)
+      gone = File.join(paths.sessions_dir, "20260199T000000-1.ndjson")
+      point = Lain::CLI::ForkPoint::Point.new(path: gone, digest: three.head_digest)
+      allow(Lain::CLI::ForkPoint).to receive(:new).and_return(instance_double(Lain::CLI::ForkPoint, call: point))
+
+      expect { resume.fork(selector: "whatever@abcd") }
+        .to raise_error(described_class::Refusal, /20260199T000000-1\.ndjson/)
+    end
+
+    it "maps a corrupt parent to the same named Refusal resume gives" do
+      records = [open_header] + turn_records(three)
+      tampered = records[1].merge("content" => text("tampered"))
+      write_session("20260101T000000-1.ndjson", [records[0], tampered, *records[2..]])
+
+      expect { resume.fork(selector: "20260101@#{prefix_for(three.to_a[0].digest)}") }
+        .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
+    end
+  end
+
   describe "the model-mismatch notice (LOUD, then continue with the flags)" do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
 
@@ -494,16 +694,18 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     # Panel fix round (finding 2): the run-state walk carries its OWN cycle
-    # guard -- driven here at the seam directly, so its safety is proven
-    # independent of the Loader having refused the cycle first (an ordering
-    # invariant a reorder of rebuild's statements would silently break).
+    # guard -- driven here at the seam directly (now {Resume::ChainWalk}, the
+    # T3 extraction), so its safety is proven independent of the Loader having
+    # refused the cycle first (an ordering invariant a reorder of rebuild's
+    # statements would silently break).
     it "refuses a cyclic chain in the run-state walk itself, never a SystemStackError" do
       a = open_header(resumed_from: { "file" => "20260102T000000-1.ndjson", "head" => "blake3:#{"1" * 64}" })
       b = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson", "head" => "blake3:#{"2" * 64}" })
       write_session("20260101T000000-1.ndjson", [a])
       write_session("20260102T000000-1.ndjson", [b])
 
-      expect { resume.send(:chain_paths, File.join(paths.sessions_dir, "20260101T000000-1.ndjson")) }
+      walk = described_class::ChainWalk.new(dir: paths.sessions_dir)
+      expect { walk.paths(File.join(paths.sessions_dir, "20260101T000000-1.ndjson")) }
         .to raise_error(described_class::Refusal) do |error|
           expect(error.message).to include("20260101T000000-1.ndjson", "cycle")
         end

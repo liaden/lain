@@ -80,12 +80,27 @@ module Lain
           Telemetry::SlotFills.new(digests: record.fetch("digests"), fills: record.fetch("fills"))
         end
 
-        # {#timeline}, {#store}, and {#messages} are public rather than
-        # private: a resume chain's {ResumeChain} calls all three on the
-        # PRIOR file's own Loader (a separate instance, and a separate
-        # class), so none of the three can hide behind this instance's own
-        # `self`.
-        def timeline = anchor.verify(build_chain)
+        # {#timeline}, {#store}, {#messages}, and {#on_chain?} are public
+        # rather than private: a resume chain's {ResumeChain} calls all four
+        # on the PRIOR file's own Loader (a separate instance, and a separate
+        # class), so none of them can hide behind this instance's own `self`.
+        # Memoized because {#on_chain?} needs the fold to have run and every
+        # caller may ask more than once; the rebuild is pure, so this is
+        # caching, not state.
+        def timeline = @timeline ||= anchor.verify(build_chain)
+
+        # T3: fold membership -- true for any digest VERIFIED while rebuilding
+        # this file's chain: the resumed base's own ancestors plus every turn
+        # record folded here, at its fold position. This set (not ancestry of
+        # the final head, and not head equality) is what a chained
+        # `resumed_from.head` is checked against ({ResumeChain#prior_timeline}),
+        # so a parent that later rewinds below a fork point keeps children
+        # forked above it loadable. Every member re-committed to its recorded
+        # content address, so membership never vouches for unverified bytes.
+        def on_chain?(digest)
+          timeline
+          @members.include?(digest)
+        end
 
         # @return [Store] the ONE store this file (and, in a resume chain,
         #   every prior one) rebuilds into -- see {ResumeChain}.
@@ -106,33 +121,24 @@ module Lain
         end
 
         def header
-          @header ||= sole_header
+          @header ||= sole(HEADER_TYPE, "#{HEADER_TYPE.inspect} header records in one journal; " \
+                                        "the format is one run, one journal, one file") ||
+                      raise(Corrupt, "no #{HEADER_TYPE.inspect} header record to rebuild a context from")
         end
 
-        # First-wins over several headers would make "which run is this?" an
-        # accident of file order; the format is one run, one journal, one file.
-        def sole_header
-          headers = of_type(HEADER_TYPE)
-          raise Corrupt, "no #{HEADER_TYPE.inspect} header record to rebuild a context from" if headers.empty?
-
-          unless headers.size == 1
-            raise Corrupt, "#{headers.size} #{HEADER_TYPE.inspect} header records in one journal; " \
-                           "the format is one run, one journal, one file"
-          end
-
-          headers.first
-        end
-
-        # Same discipline as {#sole_header}: fills are session-fixed, so a
-        # second record would make "which fills?" an accident of file order.
-        # Nil (no record at all) is fine -- an older journal simply predates
-        # the attribution.
         def sole_slot_fills
-          records = of_type("slot_fills")
+          sole("slot_fills", "\"slot_fills\" records in one journal; fills are session-fixed, one record pins them")
+        end
+
+        # Session-fixed records: several would make "which one?" an accident
+        # of file order, so at most one loads. None at all is the caller's
+        # call -- {#header} refuses it, {#slot_fills} defaults it (an older
+        # journal simply predates the attribution).
+        def sole(type, complaint)
+          records = of_type(type)
           return records.first if records.size <= 1
 
-          raise Corrupt, "#{records.size} \"slot_fills\" records in one journal; " \
-                         "fills are session-fixed, one record pins them"
+          raise Corrupt, "#{records.size} #{complaint}"
         end
 
         # The recorded transport fields, handed to the injected factory (default:
@@ -159,6 +165,7 @@ module Lain
         # the file boundary can name a causal_parent that crosses it.
         def build_chain
           base = resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
+          @members = Set.new(base.ancestor_digests)
           of_type(TURN_TYPE).each_with_index.inject(base) do |acc, (record, i)|
             verified_turn(acc.commit(role: record.fetch("role"), content: record.fetch("content"),
                                      meta: record.fetch("meta", {})),
@@ -166,12 +173,19 @@ module Lain
           end
         end
 
+        # Verification and membership are ONE step by design: a digest joins
+        # `@members` exactly when its record re-commits to its content
+        # address, so {#on_chain?} can never answer true for bytes the fold
+        # did not prove.
         def verified_turn(chain, record, index)
           recorded = record.fetch("digest")
-          return chain if chain.head_digest == recorded
+          unless chain.head_digest == recorded
+            raise Corrupt, "turn record #{index} (#{record.fetch("role")}) recorded as #{recorded} " \
+                           "re-commits to #{chain.head_digest}; its content no longer matches its content address"
+          end
 
-          raise Corrupt, "turn record #{index} (#{record.fetch("role")}) recorded as #{recorded} " \
-                         "re-commits to #{chain.head_digest}; its content no longer matches its content address"
+          @members.add(chain.head_digest)
+          chain
         end
 
         # {Anchor} owns the open/closed classification and the verify-or-raise

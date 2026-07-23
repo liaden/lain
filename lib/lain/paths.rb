@@ -36,6 +36,108 @@ module Lain
       File.join(File.dirname(ndjson_path), "#{stem}.wal")
     end
 
+    # The ephemeral (--btw) session convention, T3. The session header is
+    # write-once, so ephemerality cannot be a header field -- it lives in the
+    # FILENAME instead: `<ts>-<pid>.btw.ndjson`. {wal_for} strips only the
+    # final extension, so the derived wal (`<ts>-<pid>.btw.wal`) carries the
+    # mark too and the pair travels together. All three transforms are pure
+    # naming, class methods like {wal_for}; ArgumentError (not a refusal) on a
+    # mismarked path because a wrong mark here is a caller bug, never user
+    # input.
+    BTW_MARK = ".btw.ndjson"
+
+    def self.ephemeral?(path) = File.basename(path).end_with?(BTW_MARK)
+
+    def self.ephemeral_for(ndjson_path)
+      raise ArgumentError, "#{ndjson_path} already carries the .btw mark" if ephemeral?(ndjson_path)
+      raise ArgumentError, "#{ndjson_path} is not an .ndjson path to mark .btw" unless ndjson_path.end_with?(".ndjson")
+
+      "#{ndjson_path.delete_suffix(".ndjson")}#{BTW_MARK}"
+    end
+
+    def self.promoted_for(path)
+      raise ArgumentError, "#{path} carries no .btw mark to strip" unless ephemeral?(path)
+
+      "#{path.delete_suffix(BTW_MARK)}.ndjson"
+    end
+
+    # One ephemeral session's lifecycle: {#promote!} keeps it, {#reap!} drops
+    # it. Both are pure filesystem renames/deletes over the pair {Paths} names
+    # -- the record itself is never rewritten, which is what keeps the
+    # write-once header honest and the owning appender's fd valid across a
+    # promotion (rename does not disturb an open fd). A crash simply runs
+    # neither, so both files survive for salvage.
+    class Ephemeral
+      # A promotion target that already exists. POSIX `rename` silently
+      # replaces its target, so without this guard a promotion could destroy
+      # an unrelated durable session's record -- refused loudly instead, and
+      # BEFORE any rename runs, so a refused promotion changes nothing.
+      class Collision < Error
+        def initialize(target)
+          super("promotion would overwrite #{target}, which already exists; refusing to destroy a record")
+        end
+      end
+
+      # @param path [String] the `.btw.ndjson` journal path
+      # @param filesystem [#rename, #exist?, #delete] injectable so a spec can
+      #   pin the rename ORDER and simulate a crash between the two renames
+      def initialize(path, filesystem: File)
+        raise ArgumentError, "#{path} carries no .btw mark; only an ephemeral session promotes or reaps" \
+          unless Paths.ephemeral?(path)
+
+        @path = path
+        @filesystem = filesystem
+      end
+
+      # WAL FIRST, then journal. The crash window between the two then leaves
+      # `<stem>.btw.ndjson` + `<stem>.wal`: the journal still wears the mark,
+      # so the half-promoted state is visibly unfinished and a re-run of this
+      # method completes it (the wal leg is skipped once done). The reverse
+      # order's window would leave a promoted `<stem>.ndjson` whose recorded
+      # frames sit in a `.btw.wal` basename {Paths.wal_for} no longer derives
+      # -- a normal-looking session that silently lost its salvage pair.
+      #
+      # Both {Collision} guards fire before ANY rename runs (a refused
+      # promotion must not itself manufacture the half-promoted state): the
+      # journal-target guard first, then the wal leg's own guard immediately
+      # before the wal rename -- the first rename there is.
+      #
+      # @return [String] the promoted journal path
+      # @raise [Collision] when either target name already exists
+      def promote!
+        promoted = Paths.promoted_for(@path)
+        clobber!(promoted)
+        promote_wal!(promoted)
+        @filesystem.rename(@path, promoted)
+        promoted
+      end
+
+      # WAL first here too: dying mid-reap then leaves a journal with no wal
+      # (salvage finds no frames -- an ordinary state), never an orphan wal no
+      # journal names. The wal may not exist at all -- it opens lazily, on the
+      # first spooled frame.
+      def reap!
+        [Paths.wal_for(@path), @path].each { |file| @filesystem.delete(file) if @filesystem.exist?(file) }
+      end
+
+      private
+
+      # Skipped entirely when the marked wal is absent -- the never-spooled
+      # lazy case AND the crash-window retry, where the wal already wears the
+      # promoted name and only the journal leg remains.
+      def promote_wal!(promoted)
+        wal = Paths.wal_for(@path)
+        return unless @filesystem.exist?(wal)
+
+        clobber!(Paths.wal_for(promoted))
+        @filesystem.rename(wal, Paths.wal_for(promoted))
+      end
+
+      def clobber!(target)
+        raise Collision, target if @filesystem.exist?(target)
+      end
+    end
+
     def initialize(env: ENV)
       @env = env
     end

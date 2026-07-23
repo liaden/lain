@@ -53,6 +53,39 @@ module Lain
         def spool = Provider::Spool::Null.new
       end
 
+      # The chronicle-owned spool indirection (T3). Providers are constructed
+      # with the spool ONCE, before any promotion can happen, so the object
+      # they hold must survive a mid-session rename. Two cases, split by
+      # whether the wal file exists when {Chronicle#promote!} relocates:
+      #
+      # - bytes already on disk: {Paths::Ephemeral} renamed the file and the
+      #   inner {Provider::ResponseWal}'s open append fd tracks the inode --
+      #   the SAME inner keeps writing, nothing to do.
+      # - no wal yet (the lazy never-spooled case): the inner would create
+      #   its file at the STALE marked path on the first frame, so it is
+      #   swapped for a fresh one at the promoted path -- it never opened
+      #   anything, so nothing is lost.
+      #
+      # Recorded limitation: a frame OPEN across the promotion in the no-wal
+      # case still holds the old inner and would land marked; promotion is a
+      # user action between round trips, so the window is not wired to occur.
+      class RelocatableSpool
+        def initialize(path)
+          @path = path
+          @wal = Provider::ResponseWal.new(path)
+        end
+
+        def open_frame(request_digest:) = @wal.open_frame(request_digest:)
+
+        def close = @wal.close
+
+        def relocate(path)
+          @wal = Provider::ResponseWal.new(path) unless File.exist?(path)
+          @path = path
+          self
+        end
+      end
+
       class << self
         # The one factory the exe calls: a recording Chronicle over a
         # Paths-based fsync journal when journaling is on, the {Null} duck
@@ -62,7 +95,13 @@ module Lain
         # than a second one opened independently (the split-second bug this
         # seam exists to close: two `Journal.open` calls landing on
         # different filenames when they straddle a clock tick).
-        def for(enabled:, paths: Paths.new)
+        #
+        # `btw:` (T3) marks the session ephemeral: the SAME default path
+        # wearing the `.btw` mark ({Paths.ephemeral_for}), so the wal
+        # derivation and the whole record format are untouched -- ephemerality
+        # is the filename, reaped by {#close} on a clean exit unless
+        # {#promote!} ran first.
+        def for(enabled:, btw: false, paths: Paths.new)
           return Null.new unless enabled
 
           # Computed here, not left to Journal.open's own default, so THIS path
@@ -70,6 +109,7 @@ module Lain
           # journal and the spool must never be able to name different
           # sessions.
           path = Journal.default_path(paths:)
+          path = Paths.ephemeral_for(path) if btw
           new(journal: Journal.open(path, fsync: true), journal_path: path)
         end
 
@@ -129,8 +169,28 @@ module Lain
       # gap this card owes: salvage keys off `request_sent`, so subagent frames
       # simply cannot be salvage targets today, and T18 should not assume every
       # frame in the file is matchable.
+      #
+      # Answers a {RelocatableSpool} (T3): providers hold this ONE object for
+      # the whole run, so {#promote!} can retarget a not-yet-created wal
+      # without changing the duck they were constructed with.
       def spool
-        @spool ||= Provider::ResponseWal.new(wal_path)
+        @spool ||= RelocatableSpool.new(wal_path)
+      end
+
+      # T3: promote this session's ephemeral record in place -- the
+      # {Paths::Ephemeral} renames (WAL first), then the chronicle's OWN paths
+      # retarget, because it is the live holder of both: the journal fd
+      # survives the rename untouched (append mode, same inode), and the
+      # spool must not lazily create a wal at the stale marked path on its
+      # first frame (the {RelocatableSpool} seam).
+      #
+      # @return [String] the promoted journal path
+      def promote!
+        raise ArgumentError, "no journal path to promote (an injected-io chronicle has no file)" if @journal_path.nil?
+
+        @journal_path = Paths::Ephemeral.new(@journal_path).promote!
+        @spool&.relocate(wal_path)
+        @journal_path
       end
 
       # Write the OPEN header, pinning exactly what the Agent renders with.
@@ -213,10 +273,23 @@ module Lain
         @scribe&.close(reason:)
         @spool&.close
         @journal.close
+        reap_ephemeral if reason == :exit
         self
       end
 
       private
+
+      # T3: an UNPROMOTED ephemeral reaps on the one clean close (`:exit`) --
+      # a promoted session's path no longer wears the mark, so it survives by
+      # the same test. Every other reason (`:interrupted`, `:grace_expired`,
+      # `:salvaged`) leaves the pair on disk for salvage, as does a hard kill,
+      # where no close runs at all. After `@journal.close`, so the fd is gone
+      # before the unlink.
+      def reap_ephemeral
+        return if @journal_path.nil? || !Paths.ephemeral?(@journal_path)
+
+        Paths::Ephemeral.new(@journal_path).reap!
+      end
 
       def scribe
         @scribe or raise NotStarted, "the chronicle has not started: no toolset was pinned, so there " \

@@ -90,6 +90,48 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
+    # T3: ephemerality lives in the FILENAME (<ts>-<pid>.btw.ndjson), so the
+    # listing's default view is the durable record only; --all is the honest
+    # escape hatch, and promotion (a rename) moves a file between the two
+    # views with no record rewritten.
+    context "with an ephemeral (--btw) session beside a durable one" do
+      let(:durable) { chain("one", "two") }
+      let(:scratch) { chain("three") }
+
+      before do
+        write_session("20260101T000000-1.ndjson",
+                      [header(started_at: "2026-01-01T00:00:00.000000Z")] +
+                      durable.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
+                      [closed_record(durable.head_digest)])
+        write_session("20260102T000000-9.btw.ndjson",
+                      [header(started_at: "2026-01-02T00:00:00.000000Z")] +
+                      scratch.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
+      end
+
+      it "hides the ephemeral by default" do
+        expect(sessions.listing).to include("20260101T000000-1.ndjson")
+        expect(sessions.listing).not_to include(".btw.ndjson")
+      end
+
+      it "lists it under all:" do
+        expect(sessions.listing(all: true))
+          .to include("20260101T000000-1.ndjson", "20260102T000000-9.btw.ndjson")
+      end
+
+      it "hides an ephemeral-only directory into the honest empty state by default" do
+        File.delete(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"))
+
+        expect(sessions.listing).to include("no sessions")
+      end
+
+      it "lists a promoted session in the default view -- promotion is just the rename" do
+        Lain::Paths::Ephemeral.new(File.join(paths.sessions_dir, "20260102T000000-9.btw.ndjson")).promote!
+
+        expect(sessions.listing).to include("20260102T000000-9.ndjson")
+        expect(sessions.listing).not_to include(".btw.ndjson")
+      end
+    end
+
     it "answers an honest empty-state line naming the directory" do
       expect(sessions.listing).to include("no sessions", paths.sessions_dir)
     end

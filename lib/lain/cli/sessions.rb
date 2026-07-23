@@ -13,10 +13,13 @@ module Lain
         @paths = paths
       end
 
+      # @param all [Boolean] include ephemeral (`.btw.ndjson`) sessions; the
+      #   default view is the durable record only (T3) -- promotion is a
+      #   rename, so a kept session simply starts matching
       # @return [String] one line per session, newest first; or the honest
       #   empty state naming the directory searched
-      def listing
-        names = session_names
+      def listing(all: false)
+        names = session_names(all:)
         return "no sessions recorded under #{dir}" if names.empty?
 
         names.reverse.map { |name| Row.for(name:, path: File.join(dir, name)).to_s }.join("\n")
@@ -28,8 +31,8 @@ module Lain
 
       # Bench::CLI's discovery idiom: Dir.children (never glob-parsed), sorted
       # -- the filenames are UTC-timestamped, so lexicographic IS chronological.
-      def session_names
-        Dir.children(dir).select { |name| name.end_with?(".ndjson") }.sort
+      def session_names(all:)
+        Dir.children(dir).select { |name| name.end_with?(".ndjson") && (all || !Paths.ephemeral?(name)) }.sort
       end
 
       # One file's derived line. A separate object because deriving a row --

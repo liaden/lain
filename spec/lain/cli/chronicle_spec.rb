@@ -119,6 +119,122 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
+  # T3 fix round: the ephemeral (--btw) lifecycle end-to-end through the
+  # Chronicle. `.for(btw: true)` journals to the marked filename; a clean
+  # `:exit` close reaps an UNPROMOTED ephemeral (journal + wal); every other
+  # close reason leaves both for salvage, as does a hard kill (no code runs).
+  # Promotion is exposed ON the chronicle because the chronicle owns the live
+  # paths: it renames via {Lain::Paths::Ephemeral} AND retargets its own wal
+  # derivation, so a lazily-opened first frame after promotion cannot
+  # re-create the stale marked `.btw.wal`.
+  describe "an ephemeral (--btw) chronicle" do
+    around do |example|
+      Dir.mktmpdir { |dir| @state_home = dir and example.run }
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+
+    def globbed(pattern) = Dir.glob(File.join(@state_home, "lain", "sessions", "**", pattern))
+
+    def spool_frame(spool, digest: "blake3:abc")
+      frame = spool.open_frame(request_digest: digest)
+      frame.append("raw response bytes")
+      frame.close(complete: true)
+    end
+
+    it ".for(btw: true) journals to <ts>-<pid>.btw.ndjson" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+
+      names = globbed("*.btw.ndjson").map { |path| File.basename(path) }
+      expect(names.size).to eq(1)
+      expect(names.first).to match(/\A\d{8}T\d{6}-\d+\.btw\.ndjson\z/)
+      opened.close(reason: :interrupted)
+    end
+
+    it "reaps journal and wal on a clean :exit close while unpromoted" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+      spool_frame(opened.spool)
+      expect(globbed("*.btw.wal").size).to eq(1)
+
+      opened.close(reason: :exit)
+
+      expect(globbed("*").select { |entry| File.file?(entry) }).to be_empty
+    end
+
+    it "leaves both files on any non-:exit close -- the crash-adjacent paths keep their salvage pair" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+      spool_frame(opened.spool)
+
+      opened.close(reason: :interrupted)
+
+      expect(globbed("*.btw.ndjson").size).to eq(1)
+      expect(globbed("*.btw.wal").size).to eq(1)
+    end
+
+    it "#promote! renames the pair, and the :exit close then keeps it" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+      spool_frame(opened.spool)
+
+      promoted = opened.promote!
+      opened.close(reason: :exit)
+
+      expect(File.exist?(promoted)).to be(true)
+      expect(globbed("*.btw.*")).to be_empty
+      expect(globbed("*.wal").map { |path| File.basename(path) })
+        .to eq([File.basename(Lain::Paths.wal_for(promoted))])
+    end
+
+    it "keeps recording through the same journal fd after #promote! -- turns land in the promoted file" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+
+      promoted = opened.promote!
+      opened.catch_up(timeline)
+      opened.close(reason: :exit)
+
+      types = File.foreach(promoted).map { |line| JSON.parse(line)["type"] }
+      expect(types.first).to eq("session")
+      expect(types).to include("turn", "session_closed")
+    end
+
+    # The reviewer's trap: the spool memoizes BEFORE promotion, and the wal
+    # opens lazily on the first frame -- a naive path capture would re-create
+    # the stale marked `.btw.wal` after the rename.
+    it "a first wal frame spooled AFTER #promote! lands at the promoted path" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+      spool = opened.spool
+      expect(globbed("*.wal")).to be_empty
+
+      opened.promote!
+      spool_frame(spool)
+
+      expect(globbed("*.btw.wal")).to be_empty
+      expect(globbed("*.wal").size).to eq(1)
+      opened.close(reason: :interrupted)
+    end
+
+    it "frames spooled BEFORE promotion survive it, and later frames append to the same renamed wal" do
+      opened = described_class.for(enabled: true, btw: true, paths:)
+      opened.start(context:, toolset:)
+      spool = opened.spool
+      spool_frame(spool, digest: "blake3:before")
+
+      opened.promote!
+      spool_frame(spool, digest: "blake3:after")
+      opened.close(reason: :interrupted)
+
+      wals = globbed("*.wal")
+      expect(wals.size).to eq(1)
+      digests = Lain::Provider::ResponseWal.new(wals.first).frames.map(&:request_digest)
+      expect(digests).to eq(%w[blake3:before blake3:after])
+    end
+  end
+
   describe "two-phase start" do
     it "writes no header at construction; #start writes the OPEN header pinning the toolset" do
       chronicle

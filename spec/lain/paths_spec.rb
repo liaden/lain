@@ -131,6 +131,199 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  # T3: the ephemeral (--btw) session convention. The header is write-once, so
+  # ephemerality lives in the FILENAME: <ts>-<pid>.btw.ndjson. Promotion is a
+  # File.rename of WAL then journal (same directory), which keeps the owning
+  # appender's fd valid; a clean unpromoted exit reaps both files; a crash
+  # leaves both for salvage (nothing to spec: no code runs).
+  describe "the ephemeral (--btw) filename convention" do
+    describe ".ephemeral_for / .ephemeral? / .promoted_for" do
+      it "marks a session path by inserting .btw before .ndjson" do
+        expect(described_class.ephemeral_for("/s/20260101T000000-1.ndjson"))
+          .to eq("/s/20260101T000000-1.btw.ndjson")
+      end
+
+      it "recognizes the mark" do
+        expect(described_class.ephemeral?("/s/20260101T000000-1.btw.ndjson")).to be(true)
+        expect(described_class.ephemeral?("/s/20260101T000000-1.ndjson")).to be(false)
+      end
+
+      it "strips the mark for promotion" do
+        expect(described_class.promoted_for("/s/20260101T000000-1.btw.ndjson"))
+          .to eq("/s/20260101T000000-1.ndjson")
+      end
+
+      it "refuses to promote a name that carries no mark, loudly" do
+        expect { described_class.promoted_for("/s/20260101T000000-1.ndjson") }
+          .to raise_error(ArgumentError, /btw/)
+      end
+
+      it "refuses to double-mark, loudly" do
+        expect { described_class.ephemeral_for("/s/a.btw.ndjson") }.to raise_error(ArgumentError, /btw/)
+      end
+
+      it "derives a wal that carries the mark, so the pair travels together" do
+        expect(described_class.wal_for("/s/a.btw.ndjson")).to eq("/s/a.btw.wal")
+      end
+    end
+
+    describe Lain::Paths::Ephemeral do
+      around do |example|
+        Dir.mktmpdir { |dir| @dir = dir and example.run }
+      end
+
+      let(:journal_path) { File.join(@dir, "20260101T000000-1.btw.ndjson") }
+      let(:wal_path) { File.join(@dir, "20260101T000000-1.btw.wal") }
+      let(:header_bytes) { "{\"type\":\"session\"}\n" }
+
+      before do
+        File.write(journal_path, header_bytes)
+        File.write(wal_path, "frame-bytes")
+      end
+
+      def recording_fs(log)
+        fs = Object.new
+        fs.define_singleton_method(:rename) { |from, to| log << [from, to] and File.rename(from, to) }
+        fs.define_singleton_method(:exist?) { |path| File.exist?(path) }
+        fs.define_singleton_method(:delete) { |path| File.delete(path) }
+        fs
+      end
+
+      it "refuses a non-ephemeral path, loudly" do
+        expect { described_class.new(File.join(@dir, "a.ndjson")) }.to raise_error(ArgumentError, /btw/)
+      end
+
+      describe "#promote!" do
+        it "renames the WAL FIRST, then the journal, in the same directory" do
+          log = []
+
+          promoted = described_class.new(journal_path, filesystem: recording_fs(log)).promote!
+
+          expect(log).to eq([[wal_path, File.join(@dir, "20260101T000000-1.wal")],
+                             [journal_path, promoted]])
+          expect(promoted).to eq(File.join(@dir, "20260101T000000-1.ndjson"))
+          expect(File.exist?(journal_path)).to be(false)
+          expect(File.exist?(wal_path)).to be(false)
+        end
+
+        it "leaves the header bytes untouched -- identity moved, record did not" do
+          promoted = described_class.new(journal_path).promote!
+
+          expect(File.binread(promoted)).to eq(header_bytes)
+          expect(File.binread(Lain::Paths.wal_for(promoted))).to eq("frame-bytes")
+        end
+
+        it "keeps the owning appender's fd valid across the rename" do
+          promoted = File.open(journal_path, "ab") do |handle|
+            described_class.new(journal_path).promote!.tap { handle.write("{\"type\":\"turn\"}\n") }
+          end
+
+          expect(File.binread(promoted)).to eq("#{header_bytes}{\"type\":\"turn\"}\n")
+        end
+
+        it "promotes a journal that never spooled a WAL (the .wal opens lazily)" do
+          File.delete(wal_path)
+
+          promoted = described_class.new(journal_path).promote!
+
+          expect(File.exist?(promoted)).to be(true)
+          expect(File.exist?(File.join(@dir, "20260101T000000-1.wal"))).to be(false)
+        end
+
+        # The pinned crash window: dying between the two renames must leave an
+        # ephemeral-NAMED journal (visibly half-done, retryable) -- never a
+        # promoted .ndjson whose recorded frames sit in a wal basename that no
+        # longer matches Paths.wal_for.
+        it "a crash between the renames leaves the .btw journal, never a wal-less promoted name" do
+          crashing = Object.new
+          crashing.define_singleton_method(:exist?) { |path| File.exist?(path) }
+          crashing.define_singleton_method(:rename) do |from, to|
+            raise "power loss" if to.end_with?(".ndjson")
+
+            File.rename(from, to)
+          end
+
+          expect { described_class.new(journal_path, filesystem: crashing).promote! }.to raise_error(/power loss/)
+
+          expect(File.exist?(journal_path)).to be(true)
+          expect(File.exist?(File.join(@dir, "20260101T000000-1.ndjson"))).to be(false)
+          expect(File.exist?(File.join(@dir, "20260101T000000-1.wal"))).to be(true)
+
+          # ... and the retry completes: the wal leg is already done, so only
+          # the journal rename remains.
+          promoted = described_class.new(journal_path).promote!
+          expect(File.exist?(promoted)).to be(true)
+          expect(File.exist?(File.join(@dir, "20260101T000000-1.wal"))).to be(true)
+        end
+      end
+
+      # T3 fix round (probe 4d): POSIX File.rename silently replaces its
+      # target -- promotion onto names an unrelated durable session already
+      # owns would DESTROY that record. One exist? guard each, both checked
+      # before any rename runs, so a refused promotion changes nothing.
+      describe "#promote! collision guards" do
+        let(:durable_journal) { File.join(@dir, "20260101T000000-1.ndjson") }
+        let(:durable_wal) { File.join(@dir, "20260101T000000-1.wal") }
+
+        it "refuses to promote onto an existing journal, destroying nothing" do
+          File.write(durable_journal, "UNRELATED DURABLE RECORD")
+
+          expect { described_class.new(journal_path).promote! }
+            .to raise_error(Lain::Paths::Ephemeral::Collision, /20260101T000000-1\.ndjson/)
+
+          expect(File.read(durable_journal)).to eq("UNRELATED DURABLE RECORD")
+          expect(File.exist?(journal_path)).to be(true)
+          expect(File.exist?(wal_path)).to be(true)
+        end
+
+        it "refuses to promote onto an existing wal, before any rename runs" do
+          File.write(durable_wal, "DURABLE FRAMES")
+
+          expect { described_class.new(journal_path).promote! }
+            .to raise_error(Lain::Paths::Ephemeral::Collision, /20260101T000000-1\.wal/)
+
+          expect(File.read(durable_wal)).to eq("DURABLE FRAMES")
+          expect(File.exist?(journal_path)).to be(true)
+          expect(File.exist?(wal_path)).to be(true)
+        end
+
+        it "raises loudly on a double promotion (probe 4c) -- the promoted pair already owns the names" do
+          described_class.new(journal_path).promote!
+
+          expect { described_class.new(journal_path).promote! }
+            .to raise_error(Lain::Paths::Ephemeral::Collision)
+        end
+      end
+
+      it "reap! after promote! is a silent no-op -- a stale reap cannot touch the promoted record (probe 4e)" do
+        ephemeral = described_class.new(journal_path)
+        promoted = ephemeral.promote!
+
+        ephemeral.reap!
+
+        expect(File.exist?(promoted)).to be(true)
+        expect(File.exist?(Lain::Paths.wal_for(promoted))).to be(true)
+      end
+
+      describe "#reap!" do
+        it "deletes journal and WAL on a clean unpromoted exit" do
+          described_class.new(journal_path).reap!
+
+          expect(File.exist?(journal_path)).to be(false)
+          expect(File.exist?(wal_path)).to be(false)
+        end
+
+        it "tolerates the lazily-absent wal" do
+          File.delete(wal_path)
+
+          described_class.new(journal_path).reap!
+
+          expect(File.exist?(journal_path)).to be(false)
+        end
+      end
+    end
+  end
+
   describe "an unwritable target refuses namedly" do
     it "raises Lain::Paths::Unwritable naming the path" do
       Dir.mktmpdir do |tmp|

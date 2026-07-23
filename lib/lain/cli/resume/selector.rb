@@ -20,10 +20,7 @@ module Lain
         # @return [String] the chosen file's full path
         # @raise [Refusal]
         def call(selector)
-          names = session_names
-          raise Refusal, "no sessions to resume under #{@dir}" if names.empty?
-
-          File.join(@dir, chosen(names, selector.to_s))
+          File.join(@dir, chosen(selector.to_s))
         end
 
         private
@@ -36,11 +33,25 @@ module Lain
           Dir.children(@dir).select { |name| name.end_with?(".ndjson") }.sort
         end
 
-        def chosen(names, selector)
-          return names.last if selector.empty?
-          return selector if names.include?(selector)
+        # The bare pick and prefix matching see only the durable record --
+        # the same default view `lain sessions` lists (T3 fix round), so
+        # resume/fork never silently land on a scratch file the listing
+        # hides, nor record a `resumed_from` naming a `.btw` file promotion
+        # later renames. The EXACT filename stays selectable above: salvaging
+        # a crashed --btw session is deliberate, not an accident of sorting.
+        def durable_names
+          session_names.reject { |name| Paths.ephemeral?(name) }
+        end
 
-          matched(names, selector)
+        def chosen(selector)
+          return newest if selector.empty?
+          return selector if session_names.include?(selector)
+
+          matched(durable_names, selector)
+        end
+
+        def newest
+          durable_names.last or raise Refusal, "no sessions to resume under #{@dir}"
         end
 
         def matched(names, selector)

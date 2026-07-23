@@ -49,6 +49,34 @@ module Lain
         rebuild(Selector.new(dir:).call(selector), model, provider)
       end
 
+      # T3 fork mode: `--fork "<session>@<digest-prefix>"` via {ForkPoint} --
+      # the new run starts at that recorded turn instead of the parent's final
+      # head. READ-ONLY BY CONSTRUCTION: this path holds only `File.foreach`
+      # enumerators and has no salvage step, so a {Salvager} (whose #close!
+      # appends a close anchor) is never constructed against the parent --
+      # forking a LIVE session must leave its owner's journal exactly as the
+      # owner is writing it. The checkout is pointer movement, not
+      # verification; the verification is the load's re-commit fold, which
+      # proved every digest {ForkPoint} can resolve.
+      #
+      # @param selector [String] `<session>@<digest-prefix>`
+      # @return [Result] whose `resumed_from` names `{file, fork digest}`
+      # @raise [Refusal]
+      def fork(selector:, model: nil, provider: nil)
+        point = ForkPoint.new(dir:).call(selector)
+        recording = load_recording(point.path)
+        forked = recording.timeline.checkout(point.digest)
+        refuse_mid_tool!(point.path, forked)
+        fork_result(point, recording, forked, model, provider)
+      rescue Bench::Session::Corrupt => e
+        raise fork_refusal(point, e.message)
+      rescue Errno::ENOENT
+        # The TOCTOU between ForkPoint's read and this load (probe 5d): a
+        # reap or rename can win that race; refuse namedly, never a raw errno.
+        raise fork_refusal(point, "it vanished before it could be loaded " \
+                                  "(reaped or renamed underneath the fork); list and retry")
+      end
+
       private
 
       def dir = @dir ||= @paths.sessions_dir
@@ -67,9 +95,8 @@ module Lain
         recording = load_recording(path)
         outcome = salvage(path, recording)
         recording = load_recording(path) if outcome.recovered?
-        refuse_mid_tool!(path, recording)
-        result(path, recording, SessionRecord::Replay.new(chain_entries(path)), outcome,
-               MismatchNotices.new(recording:, path:).call(model:, provider:))
+        refuse_mid_tool!(path, recording.timeline)
+        resumed_result(path, recording, outcome, model, provider)
       rescue Bench::Session::Corrupt => e
         # Corrupt's own message names digests and reasons; only this layer
         # still holds the path (Bench::CLI#load_session's precedent).
@@ -85,6 +112,36 @@ module Lain
 
       def load_recording(path)
         Bench::Session::Loader.new(File.foreach(path), resolve: resolver).recording
+      end
+
+      # Both entry paths end in the same Result assembly; named so {#rebuild}
+      # and {#fork} read as their sequence of decisions, not their plumbing.
+      # The difference is exactly the timeline and the notices: resume ends on
+      # the rebuilt head with the salvage/open notices, a fork on the checked-
+      # out fork point with the mismatch notices alone.
+      def resumed_result(path, recording, outcome, model, provider)
+        mismatched = mismatches(path, recording, model, provider)
+        result(path, recording.timeline, replay(path),
+               open: recording.open?, notices: notices(path, recording, outcome, mismatched))
+      end
+
+      def fork_result(point, recording, forked, model, provider)
+        result(point.path, forked, replay(point.path),
+               open: recording.open?, notices: mismatches(point.path, recording, model, provider))
+      end
+
+      def fork_refusal(point, reason)
+        Refusal.new("cannot fork #{File.basename(point.path)}: #{reason}")
+      end
+
+      # Run-state and memory replay are chain-wide (the Loader folds only the
+      # Timeline and message events across `resumed_from`, its stated limit),
+      # so the entries come from {ChainWalk} -- every file of the chain,
+      # oldest first.
+      def replay(path) = SessionRecord::Replay.new(ChainWalk.new(dir:).entries(path))
+
+      def mismatches(path, recording, model, provider)
+        MismatchNotices.new(recording:, path:).call(model:, provider:)
       end
 
       # Salvage only ever runs against an open session: a gracefully closed
@@ -104,11 +161,12 @@ module Lain
 
       # `recording.memory` (file-scoped -- T14's stated Loader limit) is
       # deliberately unused: the recorder must cover the WHOLE chain, so it is
-      # `replay.memory` over the chain's concatenated records instead.
-      def result(path, recording, replay, outcome, mismatches)
-        Result.new(file: File.basename(path), timeline: recording.timeline,
-                   session: replay.session, recorder: replay.memory,
-                   open: recording.open?, notices: notices(path, recording, outcome, mismatches))
+      # `replay.memory` over the chain's concatenated records instead. The
+      # timeline rides separately from the recording because fork mode's is a
+      # checkout below the rebuilt head.
+      def result(path, timeline, replay, open:, notices:)
+        Result.new(file: File.basename(path), timeline:,
+                   session: replay.session, recorder: replay.memory, open:, notices:)
       end
 
       # The Loader's injected filesystem duck (its contract is handed-records,
@@ -127,9 +185,11 @@ module Lain
       # awaiting its tool results refuses with the re-ask shape rather than
       # resuming into a request the API must reject. A settled head --
       # assistant text, or tool_results already committed (then the head is
-      # the user-role results turn) -- resumes fine.
-      def refuse_mid_tool!(path, recording)
-        head = recording.timeline.head
+      # the user-role results turn) -- resumes fine. Takes the timeline (not
+      # the recording) so fork mode's checked-out head faces the SAME refusal
+      # verbatim -- a fork point mid-tool never auto-picks a neighboring head.
+      def refuse_mid_tool!(path, timeline)
+        head = timeline.head
         return if head.nil? || !pending_tool_use?(head)
 
         raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
@@ -140,38 +200,6 @@ module Lain
       def pending_tool_use?(head)
         head.role == "assistant" &&
           head.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
-      end
-
-      # Run-state and memory replay chain-wide, oldest first: the Loader folds
-      # only the Timeline and message events across `resumed_from` (its stated
-      # limit), but a resumed session's reads, todos, and memory writes live
-      # in EVERY file of the chain.
-      def chain_entries(path)
-        chain_paths(path).flat_map { |file| File.foreach(file).to_a }
-      end
-
-      # Carries its OWN visited-set guard (ResumeChain::GuardedResolver's
-      # idiom) rather than trusting that {#rebuild} ran the Loader -- which
-      # also refuses cycles -- first: that would be an ordering invariant a
-      # reorder of rebuild's statements silently breaks, reintroducing the
-      # SystemStackError the guard exists to prevent (panel fix round).
-      def chain_paths(path, visited = [])
-        basename = File.basename(path)
-        revisit!(basename, visited)
-        prior = prior_basename(path)
-        prior.nil? ? [path] : chain_paths(File.join(dir, prior), visited + [basename]) + [path]
-      end
-
-      def prior_basename(path)
-        Journal.records(File.foreach(path), type: SessionRecord::HEADER_TYPE)
-               .first&.dig("resumed_from", "file")
-      end
-
-      def revisit!(basename, visited)
-        return unless visited.include?(basename)
-
-        raise Refusal, "resumed_from revisits #{basename.inspect} " \
-                       "(walk: #{[*visited, basename].join(" -> ")}); a resume chain must not cycle"
       end
 
       # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the
@@ -194,11 +222,13 @@ module Lain
   end
 end
 
-# Salvager, Selector, and MismatchNotices reopen Resume to nest themselves
-# (see Salvager's own class comment for why separate files rather than a
-# separate cop-loosening): #salvage, #call, and #call send them messages, so
-# they read as the dependent units even though all three resolve at runtime,
-# the same ordering note {Bench::Session}'s own require block makes.
+# Salvager, Selector, MismatchNotices, and ChainWalk reopen Resume to nest
+# themselves (see Salvager's own class comment for why separate files rather
+# than a separate cop-loosening): #salvage, #call, #call, and #replay send
+# them messages, so they read as the dependent units even though all four
+# resolve at runtime, the same ordering note {Bench::Session}'s own require
+# block makes.
 require_relative "resume/salvager"
 require_relative "resume/selector"
 require_relative "resume/mismatch_notices"
+require_relative "resume/chain_walk"
