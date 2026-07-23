@@ -114,6 +114,22 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.fork_point).to be(Lain::CLI::Command::Env::NullForkPoint)
     end
 
+    # The load-bearing identity AC1/AC3 stand on (T14 panel probe 7): a dropped
+    # surface_kwargs would leave these readers on their Nulls and silently
+    # disconnect /yolo from the Gate and /model from the Agent's Context.
+    it "hands the Env the SAME switches the Gate and the Agent's context hold" do
+      wiring = run_wiring
+      env = wiring.command_env
+
+      expect(env.policy_switch).to be_a(Lain::Approval::PolicySwitch)
+      expect(env.policy_switch.current).to be(wiring.approvals)
+
+      expect(env.model_switch).to be_a(Lain::Context::ModelSwitch)
+      expect(env.agent.context.model).to eq(env.model_switch.current)
+      env.model_switch.switch("probe-model-x", surface: "probe")
+      expect(env.agent.context.model).to eq("probe-model-x")
+    end
+
     it "wires the queue-shaped NullApprovals under --yolo, so the env reader stays nil-free" do
       wiring = run_wiring(options: { grace: 5, yolo: true })
 

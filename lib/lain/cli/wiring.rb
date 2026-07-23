@@ -10,7 +10,11 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     class Wiring
-      attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn, :conductor, :auto_surface
+      attr_reader :ask_human, :questions, :notifier, :supervisor, :role_spawn, :conductor, :auto_surface
+
+      # The parked-approval queue, nil under --yolo -- the {Switchboard}'s now,
+      # kept as a Wiring accessor because the Repl and exe read it here.
+      def approvals = @switchboard&.approvals
 
       # The frozen {Command::Env} the run's {Command::Surface} assembled once.
       def command_env = @command_surface.env
@@ -78,9 +82,8 @@ module Lain
         @supervisor = Lain::Supervisor.new(journal: channel)
         @ask_human = notifying_ask_human(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
-        @auto_surface = build_auto_surface
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
-        agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline)
+        build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline)
       end
 
       private
@@ -116,6 +119,10 @@ module Lain
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
         base = Lain::Toolset.new(base_tools(recorder))
         @role_spawn = role_spawn_seam(base, backend:, parent:, journal:)
+        # T12: opt-in third approval surface, over the SAME role_spawn seam a
+        # `@role/skill` line folds through -- nil without --auto-approve, so
+        # Repl's approval_loop wires nothing extra by default.
+        @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if @options[:auto_approve])
         Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human, run_skill])
       end
 
@@ -189,11 +196,12 @@ module Lain
       # subagent's parent handle uses. `timeline:` seeds a resumed chat's Agent
       # with the chain-verified Timeline (nil = Agent's fresh default).
       def build_agent(toolset:, channel:, session:, backend:, timeline: nil)
-        live = Lain::Effect::Handler::Live.new(toolset:, channel:)
-        gate = Lain::Effect::Handler::Gate.new(policy: approval_policy, inner: live)
+        board = switchboard(backend)
+        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset:, channel:))
 
         agent = nil
-        Lain::Agent.new(provider: spooled_provider(backend, channel:), toolset:, context: backend.context,
+        Lain::Agent.new(provider: spooled_provider(backend, channel:), toolset:,
+                        context: board.graft(backend.context),
                         handler: gate, session:, timeline:,
                         tool_middleware: Lain::Middleware::Stack.new([Lain::Middleware::RefuseSecretWrites.new]),
                         turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
@@ -210,23 +218,15 @@ module Lain
         backend.provider(spool: chronicle.spool, channel:)
       end
 
-      # I4: the queue replaces the inline y/N prompt as Gate's policy -- the
-      # gated fiber parks on it, and the TTY surface answers from its own Repl
-      # fiber. --yolo stays ApproveAll (never a queue); DenyAll stays Gate's
-      # own no-frontend default. Under --no-journal, decisions journal to the
-      # null device: the operator declined the record, not the gate.
-      def approval_policy
-        return Lain::Effect::Handler::Gate::ApproveAll.new if options[:yolo]
-
-        @approvals = Lain::Approval::Queue.new(journal: approval_journal)
+      # I4/T14: the {Switchboard} owns Gate's policy now -- the queue (or
+      # ApproveAll under --yolo) behind the ONE PolicySwitch /yolo flips; Gate
+      # itself stays construction-fixed. It resolves its own journal from the
+      # chronicle (the null device under --no-journal). Memoized where
+      # build_agent first needs it, so the direct build_agent seam the specs
+      # drive assembles it too.
+      def switchboard(backend)
+        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model)
       end
-
-      def approval_journal = chronicle.telemetry_kwargs.fetch(:journal) { Lain::Journal.new(io: File.open(File::NULL, "ab")) }
-
-      # T12: opt-in third approval surface, over the SAME role_spawn seam a
-      # `@role/skill` line folds through -- nil under no --auto-approve, so
-      # Repl's approval_loop wires nothing extra by default.
-      def build_auto_surface = options[:auto_approve] ? Lain::Approval::AutoSurface.new(role_spawn:) : nil
 
       # The Repl over the run's collaborators -- the accessors are this class's
       # own seams (it wired the toolset @ask_human/@questions belong to), so the
@@ -237,7 +237,8 @@ module Lain
       # middleware, one shared catalog -- is {Command::Surface}'s (T9).
       def build_repl(tty:, agent:)
         replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
-        @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:)
+        @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:,
+                                                **@switchboard.surface_kwargs(conductor: @conductor, tty:))
         Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
                  auto_surface:)

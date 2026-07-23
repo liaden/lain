@@ -13,7 +13,8 @@ module Lain
       # named Null standing in for one (Null Object over nil checks), and a nil
       # is refused loudly at assembly -- no command ever writes `if env.thing`.
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
-                        :replies, :fork_point, :tmux_surface, :agent) do
+                        :replies, :fork_point, :tmux_surface, :agent,
+                        :policy_switch, :model_switch) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \
@@ -42,6 +43,14 @@ module Lain
 
         # T3's fork-point seam has not landed; same contract as {NullStatus}.
         module NullForkPoint; end
+
+        # A wiring that flips no gate (specs, headless assemblies) leaves the
+        # T14 policy switch out; a premature send fails loudly BY NAME, the
+        # {NullStatus} contract. Wiring always passes the real switch.
+        module NullPolicySwitch; end
+
+        # Same contract as {NullPolicySwitch}, for /model's render-time slot.
+        module NullModelSwitch; end
       end
     end
   end

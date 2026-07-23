@@ -79,7 +79,9 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
       status: Lain::CLI::Command::Env::NullStatus, sessions: spy("sessions"),
       approvals: Lain::CLI::Command::Env::NullApprovals, supervisor: Lain::Supervisor::Null,
       replies:, fork_point: Lain::CLI::Command::Env::NullForkPoint,
-      tmux_surface: spy("tmux_surface"), agent:
+      tmux_surface: spy("tmux_surface"), agent:,
+      policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
+      model_switch: Lain::CLI::Command::Env::NullModelSwitch
     )
     registry.bind(env)
   end

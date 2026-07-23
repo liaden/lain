@@ -12,6 +12,7 @@ require_relative "context/dedupe_tool_calls"
 require_relative "context/purge_failed_inputs"
 require_relative "context/recall"
 require_relative "context/mailbox"
+require_relative "context/model_switch"
 
 module Lain
   # The seam. A pure function from (Timeline, Toolset, Workspace) to a Request.
@@ -58,7 +59,15 @@ module Lain
     # prompt.
     REQUIRES = pipeline(Workspace.empty).requires
 
-    attr_reader :system, :model, :max_tokens, :stream, :extra, :requires
+    attr_reader :system, :max_tokens, :stream, :extra, :requires
+
+    # The model in force NOW. A plain model answers itself; a delegating slot
+    # ({ModelSwitch}, duck-typed by `#current` the way #pipeline_for ducks on
+    # `#requires`) is read through, so #render -- and every header/serializer
+    # reading `context.model` -- sees the model a `/model` flip put in force,
+    # at read time. The slot is the one deliberate, journaled impurity here;
+    # a String-modeled Context renders exactly as before.
+    def model = @model.respond_to?(:current) ? @model.current : @model
 
     # `extra` carries provider-specific sampler params (temperature, seed,
     # num_ctx). It rides through to Request#extra, which Request excludes from
@@ -93,7 +102,10 @@ module Lain
     # have). The one extra `#pipeline_for` call here (per construction, not per
     # render) is that guarantee's price.
     def initialize(model:, max_tokens:, system: nil, stream: true, extra: {}, pipeline: nil)
-      @model = -model.to_s
+      # A delegating slot is stored AS the slot (never flattened to its current
+      # value, which would fix the model at construction -- the very seam
+      # /model exists to escape); anything else is the usual interned String.
+      @model = model.respond_to?(:current) ? model : -model.to_s
       @max_tokens = Integer(max_tokens)
       @system = system && Canonical.normalize(system)
       @stream = stream
@@ -101,6 +113,14 @@ module Lain
       @pipeline = pipeline
       @requires = pipeline_for(Workspace.empty).requires
       freeze
+    end
+
+    # This Context rebuilt around `model` (typically a {ModelSwitch}), keeping
+    # system/max_tokens/stream/extra/pipeline -- how Wiring grafts the live
+    # slot onto the Context a Backend already assembled, without Backend
+    # learning about slots. A copy, because Context is frozen by design.
+    def with_model(model)
+      self.class.new(model:, max_tokens:, system:, stream:, extra:, pipeline: @pipeline)
     end
 
     # @return [Lain::Request] deterministic for identical inputs

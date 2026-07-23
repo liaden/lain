@@ -13,3 +13,4 @@ end
 
 require_relative "approval/queue"
 require_relative "approval/auto_surface"
+require_relative "approval/policy_switch"
