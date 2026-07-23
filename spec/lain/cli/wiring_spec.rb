@@ -47,6 +47,22 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.supervisor).to be_a(Lain::Supervisor)
       expect(wiring.approvals).to be_a(Lain::Approval::Queue)
     end
+
+    # T12 AC1: no --auto-approve, no third surface -- unchanged wiring.
+    it "wires no auto surface without --auto-approve" do
+      wire_agent
+      expect(wiring.auto_surface).to be_nil
+    end
+
+    # T12 AC1: --auto-approve constructs the surface over the SAME role_spawn
+    # seam a `@role/skill` line folds through.
+    it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
+      wiring = described_class.new(options: { grace: 5, auto_approve: true }, chronicle:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(wiring.auto_surface).to be_a(Lain::Approval::AutoSurface)
+    end
   end
 
   describe "#run" do

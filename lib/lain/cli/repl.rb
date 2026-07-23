@@ -28,17 +28,16 @@ module Lain
       # session silently lose its command or reply surface.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
-                     middleware: Lain::Middleware::Stack.new)
+                     middleware: Lain::Middleware::Stack.new, auto_surface: nil)
         @agent = agent
         @tty = tty
         @middleware = middleware
         @chronicle = chronicle
         @conductor = conductor
-        @approvals = approvals
-        @notifier = notifier
         @supervisor = supervisor
         @replies = replies
         @commands = commands
+        watch_approvals(approvals, notifier, auto_surface)
       end
 
       # WHY the reader routes through the conductor: a bare `@input.gets` in
@@ -89,6 +88,15 @@ module Lain
       end
 
       private
+
+      # The three approval_loop watchers over one queue, set together: split
+      # out of #initialize so it stays under the method-length cop now that a
+      # third (T12's opt-in auto surface) joins the TTY prompt and dunst.
+      def watch_approvals(approvals, notifier, auto_surface)
+        @approvals = approvals
+        @notifier = notifier
+        @auto_surface = auto_surface
+      end
 
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
@@ -216,12 +224,16 @@ module Lain
         @chronicle.interrupted(head: @agent.timeline.head_digest)
       end
 
-      # Two surfaces now watch the SAME queue -- the TTY prompt and dunst --
-      # first answer wins (Pending's own doctrine). Nil under --yolo (no queue),
-      # so neither watch fiber spawns; the notifier is Null with no dunstify.
+      # Two (or three, under --auto-approve) surfaces now watch the SAME queue
+      # -- the TTY prompt, dunst, and the opt-in auto surface -- first answer
+      # wins (Pending's own doctrine). Nil under --yolo (no queue), so no watch
+      # fiber spawns at all; the notifier is Null with no dunstify; @auto_surface
+      # is nil without --auto-approve, so the splat adds nothing and the human
+      # surfaces are unchanged from before T12.
       def approval_loop(task)
         @approvals && [task.async { approval_surface.watch(@approvals) },
-                       task.async { @notifier.watch(@approvals) }]
+                       task.async { @notifier.watch(@approvals) },
+                       *(@auto_surface && task.async { @auto_surface.watch(@approvals) })]
       end
 
       def farewell?(text)

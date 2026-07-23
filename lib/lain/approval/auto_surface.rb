@@ -2,6 +2,8 @@
 
 require "async"
 
+require_relative "auto_surface/pruning"
+
 module Lain
   module Approval
     # A meta-agent standing in for the human at {Approval::Queue}'s second
@@ -46,9 +48,13 @@ module Lain
       #   seam ({Skill::RoleSpawn}); injected, so the surface depends on the
       #   message, not on how the child is assembled.
       # @param poll_interval [Numeric] seconds between sweeps of the parked set.
-      def initialize(role_spawn:, poll_interval: DEFAULT_POLL_INTERVAL)
+      # @param pruning [#call] releases `@adjudicated` entries for pendings
+      #   that have since settled ({Pruning}); injected so the seen-set's
+      #   own eviction policy carries its own spec.
+      def initialize(role_spawn:, poll_interval: DEFAULT_POLL_INTERVAL, pruning: Pruning.new)
         @role_spawn = role_spawn
         @poll_interval = poll_interval
+        @pruning = pruning
         # Identity-keyed (Pending is a plain object, so `eql?`/`hash` are
         # identity): a pending gets ONE adjudication, so a defer is not re-asked
         # on every poll until the clock denies it.
@@ -68,8 +74,11 @@ module Lain
       # surface has not already seen. The parked snapshot is collected with NO
       # IO yield (the block only reads flags), so the enumeration cannot mutate
       # under a concurrent park/settle; the spawn -- which yields -- happens
-      # afterwards, over the materialized array.
+      # afterwards, over the materialized array. Pruned first, every sweep: a
+      # settled pending's `@adjudicated` entry is released before it can pile
+      # up over a long watch (the seen-set-growth doctrine {Pruning} carries).
       def sweep(queue)
+        @pruning.call(@adjudicated)
         queue.reject { |pending| pending.decided? || @adjudicated.key?(pending) }
              .each { |pending| adjudicate(pending) }
       end

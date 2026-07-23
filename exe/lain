@@ -17,6 +17,42 @@ require "lain"
 # lib/ is (see CLAUDE.md), so nothing here decides anything -- Effect::Handler::Gate,
 # Tool, and TTY already carry the logic and already carry the specs.
 class LainCLI < Thor
+  # The Thor-boundary conventions every command shares: map the lib's own
+  # errors (all Lain::Error) onto Thor's exit contract -- clean message to
+  # stderr, nonzero exit, no backtrace -- and police trailing argv. One named
+  # home rather than a copy per command.
+  module Boundary
+    # The one command-body shape every read-only report command shares: say
+    # the String the block returns, mapping Lain::Error onto Thor's contract.
+    def render(&block)
+      say block.call
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
+
+    # For commands that OWN their exit status (watch): pass the block's
+    # integer through exit, with the same Lain::Error mapping; Ctrl-C ends a
+    # tail of a SIGKILL'd (never-closed) session -- clean exit, no backtrace.
+    def exit_status(&block)
+      exit block.call
+    rescue Interrupt
+      exit 0
+    rescue Lain::Error => e
+      raise Thor::Error, e.message
+    end
+
+    # `up` forwards trailing args to the chat window ONLY when the invocation
+    # carried a `--` separator (see LainCLI.start); a bare `lain up typo`
+    # stays a loud error, never silent pass-through to chat.
+    def chat_flags!(chat_args)
+      return chat_args if chat_args.empty? || self.class.double_dash?
+
+      raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`"
+    end
+  end
+
+  include Boundary
+
   # Turns the chat flags into the two collaborators the Agent needs a CHOICE
   # about -- which Provider backend, and the Context carrying the model and the
   # sampler params (temperature/seed) that ride Request#extra. A plain object,
@@ -130,6 +166,9 @@ class LainCLI < Thor
                        desc: "Fork a recorded session at <session>@<digest-prefix>; the parent is opened read-only"
   method_option :btw, type: :boolean, default: false,
                       desc: "Ephemeral session (<ts>-<pid>.btw.ndjson), reaped on clean exit unless promoted"
+  method_option :auto_approve, type: :boolean, default: false,
+                               desc: "Wire a third approval surface: an auto_approver role judges pendings " \
+                                     "the human hasn't yet -- opt-in, races the human/dunst surfaces"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
@@ -152,15 +191,7 @@ class LainCLI < Thor
 
   desc "watch SELECTOR", "Read-only live tail of one actor's lineage (SELECTOR = spawn digest prefix)"
   method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"
-  def watch(selector)
-    exit Lain::CLI::Watch.new(selector:, path: options[:session], sink: $stdout).run
-  rescue Interrupt
-    # Ctrl-C is how a tail of a SIGKILL'd (never-closed) session ends -- a
-    # clean exit, not a backtrace.
-    exit 0
-  rescue Lain::Error => e
-    raise Thor::Error, e.message
-  end
+  def watch(selector) = exit_status { Lain::CLI::Watch.new(selector:, path: options[:session], sink: $stdout).run }
 
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report_for(selector) }
@@ -203,26 +234,6 @@ class LainCLI < Thor
     # exec has taken over).
     $stdout.flush
     Kernel.exec(*plan.argv)
-  rescue Lain::Error => e
-    raise Thor::Error, e.message
-  end
-
-  private
-
-  # `up` forwards trailing args to the chat window ONLY when the invocation
-  # carried a `--` separator (see .start); a bare `lain up typo` stays a loud
-  # error, never silent pass-through to chat.
-  def chat_flags!(chat_args)
-    return chat_args if chat_args.empty? || self.class.double_dash?
-
-    raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`"
-  end
-
-  # The one command-body shape every read-only report command shares: say the
-  # String the block returns, mapping Lain::Error onto Thor's exit contract
-  # (a clean message, never a raw backtrace).
-  def render(&block)
-    say block.call
   rescue Lain::Error => e
     raise Thor::Error, e.message
   end

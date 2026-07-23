@@ -196,6 +196,28 @@ RSpec.describe Lain::Approval::AutoSurface do
     expect(spawn.calls.size).to eq(1)
   end
 
+  # AC2 (seen-set growth): sweep delegates eviction to the injected pruning
+  # seam every pass, over the SAME @adjudicated hash it just grew -- the
+  # release itself is {Pruning}'s own spec (pruning_spec.rb); this pins only
+  # that AutoSurface actually calls the seam it was handed, each sweep.
+  it "prunes the seen-set through the injected pruning seam, once per sweep" do
+    spawn = AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("DEFER") }
+    queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+    pruning = instance_double(Lain::Approval::AutoSurface::Pruning)
+    allow(pruning).to receive(:call)
+
+    Sync do |task|
+      gated = task.async { queue.call(effect, nil) }
+      task.with_timeout(1) { queue.dequeue }
+      surface = described_class.new(role_spawn: spawn, pruning:)
+      surface.sweep(queue)
+      surface.sweep(queue)
+      gated.wait
+    end
+
+    expect(pruning).to have_received(:call).twice
+  end
+
   # Fix #3: a pending decided by a sibling surface DURING a sweep (after the
   # parked snapshot was collected, before its turn to adjudicate) skips the
   # wasted spawn -- the `decided?` guard at the top of adjudicate.

@@ -10,7 +10,7 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     class Wiring
-      attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn, :conductor
+      attr_reader :ask_human, :questions, :approvals, :notifier, :supervisor, :role_spawn, :conductor, :auto_surface
 
       # The frozen {Command::Env} the run's {Command::Surface} assembled once.
       def command_env = @command_surface.env
@@ -78,6 +78,7 @@ module Lain
         @supervisor = Lain::Supervisor.new(journal: channel)
         @ask_human = notifying_ask_human(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
+        @auto_surface = build_auto_surface
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
         agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline)
       end
@@ -220,9 +221,12 @@ module Lain
         @approvals = Lain::Approval::Queue.new(journal: approval_journal)
       end
 
-      def approval_journal
-        chronicle.telemetry_kwargs.fetch(:journal) { Lain::Journal.new(io: File.open(File::NULL, "ab")) }
-      end
+      def approval_journal = chronicle.telemetry_kwargs.fetch(:journal) { Lain::Journal.new(io: File.open(File::NULL, "ab")) }
+
+      # T12: opt-in third approval surface, over the SAME role_spawn seam a
+      # `@role/skill` line folds through -- nil under no --auto-approve, so
+      # Repl's approval_loop wires nothing extra by default.
+      def build_auto_surface = options[:auto_approve] ? Lain::Approval::AutoSurface.new(role_spawn:) : nil
 
       # The Repl over the run's collaborators -- the accessors are this class's
       # own seams (it wired the toolset @ask_human/@questions belong to), so the
@@ -235,7 +239,8 @@ module Lain
         replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
         @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:)
         Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
-                 supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands)
+                 supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
+                 auto_surface:)
       end
     end
   end
