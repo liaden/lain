@@ -8,6 +8,7 @@ require_relative "agent/accounting"
 require_relative "agent/budget"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
+require_relative "agent/request_override"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
 
@@ -35,15 +36,16 @@ module Lain
 
     # The diagnostic each failing stop_reason records. A lookup table, not control
     # flow: every StopReason whose event transitions to :failed has an entry.
-    FAILURE_REASONS = {
-      StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
-      StopReason::REFUSAL => "model refused to continue",
-      StopReason::UNKNOWN => "unrecognized stop_reason from provider"
-    }.freeze
+    FAILURE_REASONS = { StopReason::MAX_TOKENS => "model hit max_tokens before finishing",
+                        StopReason::REFUSAL => "model refused to continue",
+                        StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
     private_constant :FAILURE_REASONS
 
+    # `request_override` is public on purpose: it is T18's access path -- the
+    # ResendBridge queues an edited Request through this reader rather than
+    # threading its own handle through construction.
     attr_reader :timeline, :toolset, :context, :workspace, :session,
-                :iterations, :failure_reason, :budget
+                :iterations, :failure_reason, :budget, :request_override
 
     # {Accounting} owns the run's token roll-up; the Agent just exposes it.
     delegate :usage, to: :@accounting
@@ -68,11 +70,9 @@ module Lain
     #   yet the full run record.
     def initialize(provider:, toolset:, context:,
                    handler: Effect::Handler::Live.new(toolset:),
-                   timeline: nil,
-                   workspace: Workspace.empty,
-                   session: Session.new,
-                   mailbox: Context::Mailbox::Null,
-                   budget: Budget.new,
+                   timeline: nil, workspace: Workspace.empty,
+                   session: Session.new, mailbox: Context::Mailbox::Null,
+                   budget: Budget.new, request_override: RequestOverride::None,
                    journal: Channel::Null.instance,
                    snapshot_writer: Workspace::Snapshot.new,
                    transition_listener: TransitionListener::Null,
@@ -87,7 +87,7 @@ module Lain
       @mailbox = mailbox
       @budget = budget
       @turn_middleware = turn_middleware
-      wire_callers(provider:, model_middleware:, handler:, tool_middleware:)
+      wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:)
       seed_run_state(transition_listener, journal, session, snapshot_writer)
     end
 
@@ -157,11 +157,13 @@ module Lain
       end
     end
 
-    # The two middleware-wrapped callers the loop drives -- the provider round
-    # trip and tool dispatch, each behind its own {Middleware::Stack}. Grouped
+    # The dispatch wiring the loop drives -- the provider round trip and tool
+    # dispatch, each behind its own {Middleware::Stack}, plus the one-shot
+    # {RequestOverride} slot #call_model consults before rendering. Grouped
     # out of #initialize so the constructor reads as the wiring seam its own
     # comment describes rather than growing a line per collaborator.
-    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:)
+    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:)
+      @request_override = request_override
       @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
       @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware, toolset: @toolset)
     end
@@ -219,8 +221,7 @@ module Lain
         # exactly the messages this turn's prompt contained, by construction. A
         # message that arrived during the round trip is NOT in the snapshot and
         # stays pending for the next turn's capture (see #step).
-        @timeline = @timeline.commit(role: :assistant, content: response.content,
-                                     causal_parents: inbox.folded)
+        @timeline = @timeline.commit(role: :assistant, content: response.content, causal_parents: inbox.folded)
         # Commit BEFORE the token check: a turn that busts the ceiling was still
         # paid for, so it stays in the record -- Timeline and Journal both --
         # rather than vanishing with the raise.
@@ -254,13 +255,26 @@ module Lain
       done? || failed? ? :settled : :continue
     end
 
+    # The override resolves HERE, before {ModelCaller}'s middleware phase, and
+    # this file alone owns that decision: middleware and provider both see the
+    # edited Request as an ordinary one, so ModelCaller stays untouched. The
+    # render rides a callable, so an overridden dispatch never invokes
+    # `Context#render` at all -- the edit bypasses the pure function instead of
+    # traveling through its inputs (T4's design constraint) -- and {RequestOverride#deliver}
+    # owns the one-shot's fine print: consumed on success, restored on a raise
+    # so a retry re-sends the edit.
     def call_model(on_stream_started)
       dispatch!
-      # Compose the sent-not-stored Workspace with the session's live reminders per
-      # render: same-args-same-bytes still holds, but the args now vary with session
-      # state. Session stays ignorant of Workspace; Workspace stays frozen.
-      request = @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
-      @model_caller.call(request, on_stream_started:)
+      @request_override.deliver(render: -> { render_request }) do |request|
+        @model_caller.call(request, on_stream_started:)
+      end
+    end
+
+    # Compose the sent-not-stored Workspace with the session's live reminders per
+    # render: same-args-same-bytes still holds, but the args now vary with session
+    # state. Session stays ignorant of Workspace; Workspace stays frozen.
+    def render_request
+      @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
 
     # Correctness gate 2: every tool_result for one assistant turn goes back in
