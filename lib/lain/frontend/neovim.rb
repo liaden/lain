@@ -22,7 +22,10 @@ module Lain
       # (:LainVersion), this is compatibility, and conflating them made every
       # future gem bump a false mismatch warning.
       # "2": I6 added :LainReply and the inbox drain autocmd.
-      PROTOCOL = "2"
+      # "3": T5 added the User LainAttach/LainRender events, b:lain_view on
+      #   every lain:// buffer, lain://workspace in the runtime's buffer set,
+      #   and the six documented lain* syntax groups.
+      PROTOCOL = "3"
 
       # One of the three background threads (the RPC thread, the drain, or the
       # resend worker -- see {#reraise_recorded_failure}) died and {#run}'s

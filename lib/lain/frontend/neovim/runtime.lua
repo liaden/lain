@@ -12,7 +12,7 @@ local gem_version, protocol, chan = ...
 -- gem release, which is why the handshake does not compare gem versions. A
 -- mismatch WARNS and keeps going: a stale editor half-works (commands still
 -- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "2"
+local RUNTIME_PROTOCOL = "3"
 if protocol ~= RUNTIME_PROTOCOL then
   vim.api.nvim_echo({
     { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },
@@ -25,23 +25,34 @@ vim.g.lain_rpc_version = protocol
 -- pattern below share ONE spelling instead of five copies of the string.
 local JOURNAL = "lain://journal"
 local TIMELINE = "lain://timeline"
+local WORKSPACE = "lain://workspace"
 local DIFF = "lain://diff"
 local INBOX = "lain://inbox"
 local REQUEST = "lain://request"
+
+-- The full buffer set, in render order, as ONE value user config can iterate
+-- (it rides the User LainAttach payload below). WORKSPACE joining the set is
+-- T5's fix: Ruby (Buffers::WORKSPACE) always rendered it, but no lua table
+-- named it, so set_view built it as an orphan -- filetype "" (the nil lookup
+-- landed as an unset option), no syntax, outside the lain contract.
+local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST }
 
 -- I7: filetype attached at buffer CREATION (see `named_buf`/`editable_buf`
 -- below), never re-set on re-attach -- both constructors already return
 -- early for a buffer that exists, so this runs exactly once per buffer ever.
 -- lain://diff reuses nvim's own "diff" filetype so whatever treesitter/syntax
 -- a human's config attaches to it just works -- no grammar shipped. The other
--- three read-only buffers are not an existing filetype's shape (a turn log, a
--- tool-output journal, a pending-question list), so they share one small
--- namespaced regex syntax instead ("lain", set up further down).
+-- read-only buffers are not an existing filetype's shape (a turn log, a
+-- tool-output journal, a pending-question list, a reminders projection), so
+-- they share ONE small namespaced regex syntax ("lain", set up further down)
+-- -- the recorded default: a single lain filetype, with b:lain_view naming the
+-- view, never per-view filetypes.
 local READONLY_FILETYPES = {
   [DIFF] = "diff",
   [TIMELINE] = "lain",
   [JOURNAL] = "lain",
   [INBOX] = "lain",
+  [WORKSPACE] = "lain",
 }
 
 -- I7 motions: ]]/[[ jump between "records", but the three bespoke buffers
@@ -102,6 +113,33 @@ local function bind_motions(buf, name)
   end
 end
 
+-- b:lain_view names the view on every lain:// buffer -- the contract's one
+-- per-buffer variable (protocol 3), what user config dispatches on given the
+-- single shared "lain" filetype. Set on BOTH constructor paths (create and
+-- found-by-name), so a buffer surviving from an older runtime's attach gains
+-- it on re-attach, not only at creation. On the create path the claim MUST
+-- precede the 'filetype' assignment: setting the option fires FileType
+-- SYNCHRONOUSLY, and the advertised dispatch pattern (autocmd FileType lain
+-- -> read vim.b.lain_view) would otherwise see nil (panel probe G).
+local function claim(buf, name)
+  vim.b[buf].lain_view = name
+  return buf
+end
+
+-- User events -- the stable surface a human's config hooks WITHOUT touching
+-- lain internals (protocol 3): LainAttach fires once per attach, its payload
+-- naming the full BUFFERS set (plus versions); LainRender fires after every
+-- landed render, its payload naming the buffer just written. modeline = false
+-- everywhere: these are notifications about nofile buffers, never an edit a
+-- modeline should run against.
+local function announce_render(name, buf)
+  vim.api.nvim_exec_autocmds("User", {
+    pattern = "LainRender",
+    modeline = false,
+    data = { name = name, buf = buf },
+  })
+end
+
 -- Every lain:// buffer -- the append-only journal and the read-only state
 -- views alike -- is found by name so re-attach reuses it (idempotent) instead
 -- of stacking a fresh buffer per reconnect, and stays nomodifiable at rest
@@ -110,10 +148,10 @@ end
 local function named_buf(name)
   local existing = vim.fn.bufnr(name)
   if existing ~= -1 then
-    return existing
+    return claim(existing, name)
   end
 
-  local buf = vim.api.nvim_create_buf(true, true)
+  local buf = claim(vim.api.nvim_create_buf(true, true), name)
   vim.api.nvim_buf_set_name(buf, name)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "hide"
@@ -124,13 +162,32 @@ local function named_buf(name)
   return buf
 end
 
--- I7: the three record-shaped buffers' one small syntax -- no treesitter
--- grammar shipped, and every group is lain-prefixed so a human's own syntax
--- plugins never collide (the same idea every :Lain* command and augroup
--- already follows). Digests are the Store's own "blake3:..." shape; roles
--- are exactly {Event::ROLES} (user/assistant); event kinds cover both
--- {Event::KINDS} and the tool-stream words the journal already prints
--- (stdout/stderr); ages are {InboxView#age_of}'s "12s"/"3m"/"1h" shape.
+-- I7/T5: the record-shaped buffers' one small syntax -- no treesitter grammar
+-- shipped, and every group is lain-prefixed so a human's own syntax plugins
+-- never collide (the same idea every :Lain* command and augroup already
+-- follows). The six documented groups, each anchored to a view's own
+-- rendered shape, all `highlight default link`ed so a colorscheme (or the
+-- human) overrides any of them without a fight:
+--
+--   lainToolName   the journal's tool attribution -- the tool_use id (the
+--                  tool's name, once renders carry one) leading each
+--                  "[id stream]" prefix (JournalView#attribute_lines)
+--   lainDigest     the Store's own "blake3:..." digest shape
+--   lainRole       exactly {Event::ROLES} (user/assistant) opening a
+--                  timeline turn line (Buffers#turn_line)
+--   lainEventKind  {Event::KINDS} plus the tool-stream words the journal
+--                  prints (stdout/stderr)
+--   lainAge        {InboxView#age_of}'s "12s"/"3m"/"1h" shape
+--   lainSender     inbox sender attribution: the text leading the
+--                  double-space-padded age -- the same both-sides anchor
+--                  RECORD_START[INBOX] rides, for the same reason (a
+--                  variable-length sender name has no fixed column). A
+--                  leading "[" is refused (panel probe F): the syntax is
+--                  SHARED across the lain views, and a journal line whose
+--                  tool stdout happens to contain "  12s  " would otherwise
+--                  paint its "[id stream]" attribution as a sender,
+--                  swallowing lainToolName
+--
 -- Registered once per attach in a cleared augroup (idempotent re-attach,
 -- same convention as `lain_inbox` below); the MATCHES it defines stick to
 -- each buffer once applied, so a second attach re-registering the autocmd
@@ -140,18 +197,24 @@ local syntax_group = vim.api.nvim_create_augroup("lain_syntax", { clear = true }
 vim.api.nvim_create_autocmd("FileType", {
   group = syntax_group,
   pattern = "lain",
+  -- [=[ ... ]=] (not [[ ... ]]): lainToolName's bracket expression contains a
+  -- literal "]]", which would close a plain long-bracket string mid-regex.
   callback = function()
-    vim.cmd([[
+    vim.cmd([=[
       syntax clear
+      syntax match lainToolName /^\[\zs[^ \]]\+/
       syntax match lainDigest /\<blake3:\S\+/
       syntax match lainRole /^\(user\|assistant\)\ze:/
       syntax match lainEventKind /\<\(turn\|spawn\|message\|snapshot\|tool_use\|tool_result\|stdout\|stderr\)\>/
       syntax match lainAge /\<[0-9]\+[smh]\>/
+      syntax match lainSender /^\[\@!.\{-1,}\ze  [0-9]\+[smh]  /
+      highlight default link lainToolName Function
       highlight default link lainDigest Identifier
       highlight default link lainRole Keyword
       highlight default link lainEventKind Type
       highlight default link lainAge Comment
-    ]])
+      highlight default link lainSender Constant
+    ]=])
   end,
 })
 
@@ -185,10 +248,10 @@ end
 local function editable_buf(name)
   local existing = vim.fn.bufnr(name)
   if existing ~= -1 then
-    return existing
+    return claim(existing, name)
   end
 
-  local buf = vim.api.nvim_create_buf(true, true)
+  local buf = claim(vim.api.nvim_create_buf(true, true), name)
   vim.api.nvim_buf_set_name(buf, name)
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "hide"
@@ -212,6 +275,7 @@ function _G.__lain.render(lines)
   else
     set_lines(buf, -1, -1, lines)
   end
+  announce_render(JOURNAL, buf)
 end
 
 -- Whole-buffer replace for the state views (4-2.2): lain://timeline,
@@ -220,7 +284,9 @@ end
 -- than growing it -- never nvim_input/feedkeys, and the buffer is never
 -- focused or jumped to, so a live update cannot steal the human's cursor.
 function _G.__lain.set_view(name, lines)
-  set_lines(named_buf(name), 0, -1, lines)
+  local buf = named_buf(name)
+  set_lines(buf, 0, -1, lines)
+  announce_render(name, buf)
 end
 
 -- Whole-buffer replace for the ONE editable view, lain://request (4-2.3). It
@@ -228,7 +294,9 @@ end
 -- editable for the human after the render. Like set_view it never focuses or
 -- jumps to the buffer, so a re-render can't steal the cursor mid-edit.
 function _G.__lain.set_request(name, lines)
-  vim.api.nvim_buf_set_lines(editable_buf(name), 0, -1, false, lines)
+  local buf = editable_buf(name)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  announce_render(name, buf)
 end
 
 -- The current lain://request bytes, for :LainResend to hand back to Ruby -- read
@@ -317,3 +385,16 @@ vim.api.nvim_create_autocmd("BufEnter", {
 define("LainVersion", function()
   vim.api.nvim_echo({ { "lain gem " .. tostring(gem_version), "None" } }, true, {})
 end)
+
+-- The attach announcement, deliberately LAST: by the time a user callback
+-- runs, every :Lain* command and autocmd above exists, so config reacting to
+-- LainAttach may call any of them. The payload carries buffer NAMES (the
+-- whole BUFFERS set), never bufnrs -- the buffers themselves are created
+-- lazily by the first render, which each announces itself via LainRender.
+-- protocol is RUNTIME_PROTOCOL, the contract this running lua actually
+-- speaks, which a mismatched injection has already warned about above.
+vim.api.nvim_exec_autocmds("User", {
+  pattern = "LainAttach",
+  modeline = false,
+  data = { buffers = BUFFERS, gem_version = tostring(gem_version), protocol = RUNTIME_PROTOCOL },
+})
