@@ -1,0 +1,41 @@
+#!/bin/sh
+# Renders the lain HUD line (warmth / fleet / inbox) for a tmux status bar.
+#
+#   lain-status [DIR]
+#
+# Reads DIR/.lain/state.json (DIR defaults to $PWD; lain.tmux passes the
+# pane's cwd via tmux's #{pane_current_path}) -- the three-key struct
+# Lain::StatusFeed publishes: {"cache_deadline","fleet","inbox_count"}.
+#
+# The jq filter below is Lain::CLI::Up::JQ_FILTER, byte for byte -- one HUD,
+# two renderers, pinned by spec (spec/plugin/tmux_plugin_spec.rb). Without
+# jq the raw JSON still shows (cat), and every failure path -- no state
+# file yet, corrupt state, jq mid-write race -- prints an honest
+# "lain: no state yet", never an error and never a blank status segment.
+set -eu
+
+dir="${1:-$PWD}"
+state="$dir/.lain/state.json"
+
+# -s, not -f: jq -r (and cat) on a ZERO-BYTE file exits 0 with empty
+# output, which would render a silently blank segment -- the exact
+# never-blank violation this script exists to prevent. A zero-byte state
+# file is a mid-write/truncated state and reads as "no state yet".
+if [ ! -s "$state" ]; then
+  echo "lain: no state yet"
+  exit 0
+fi
+
+# This is a jq filter; $warmth is jq's variable syntax, not a shell
+# expansion. Single quotes are the point (byte-for-byte pinned against
+# Lain::CLI::Up::JQ_FILTER by the spec).
+# shellcheck disable=SC2016
+JQ_FILTER='if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
+then "🔥" else "❄" end as $warmth
+| "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)"'
+
+if command -v jq >/dev/null 2>&1; then
+  jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"
+else
+  cat "$state" 2>/dev/null || echo "lain: no state yet"
+fi
