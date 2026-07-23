@@ -29,7 +29,8 @@ RSpec.describe Lain::CLI::Command::Registry do
       agent: double("agent"),
       policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
       model_switch: Lain::CLI::Command::Env::NullModelSwitch,
-      chronicle: Lain::CLI::Chronicle::Null.new
+      chronicle: Lain::CLI::Chronicle::Null.new,
+      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
     )
   end
 
@@ -147,16 +148,16 @@ RSpec.describe Lain::CLI::Command::Env do
       replies: double("replies"), fork_point: described_class::NullForkPoint,
       tmux_surface: double("tmux_surface"), agent: double("agent"),
       policy_switch: described_class::NullPolicySwitch, model_switch: described_class::NullModelSwitch,
-      chronicle: Lain::CLI::Chronicle::Null.new }
+      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: described_class::NullRoleSpawn }
   end
 
-  it "is a frozen value over the eleven readers" do
+  it "is a frozen value over the twelve readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                policy_switch model_switch chronicle])
+                policy_switch model_switch chronicle role_spawn])
   end
 
   it "refuses a nil reader loudly, naming it -- Null collaborators, never nil" do

@@ -228,13 +228,31 @@ module Lain
       # typed line dispatches through -- command registry, frozen Env, skill
       # middleware, one shared catalog -- is {Command::Surface}'s (T9).
       def build_repl(tty:, agent:)
-        replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
-        @command_surface = Command::Surface.new(agent:, replies:, supervisor:, role_spawn:, approvals:,
-                                                chronicle: @chronicle, status_feed: @status_feed,
+        @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
+        driver = goal_driver
+        @command_surface = Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:,
+                                                chronicle: @chronicle, status_feed: @status_feed, goal_driver: driver,
                                                 **@switchboard.surface_kwargs(conductor: @conductor, tty:))
-        Repl.new(agent:, tty:, replies:, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
+        Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
-                 auto_surface:)
+                 auto_surface:, goal_driver: driver)
+      end
+
+      # The T21 standing-goal driver (memoized, so the surface and the Repl poll
+      # ONE instance), over the session's live journal -- the null device under
+      # --no-journal, the same resolution the Switchboard uses.
+      def goal_driver
+        journal = chronicle.telemetry_kwargs.fetch(:journal) { Journal.new(io: File.open(File::NULL, "ab")) }
+        @goal_driver ||= GoalDriver.new(journal:, quiescent: -> { quiescent? })
+      end
+
+      # Both OBSERVABLE halves of "do not drive while the fleet is unquiet": a
+      # parked approval, and a human question waiting for an answer. The inbox
+      # half reads HumanReplies#pending? (built in build_repl before the driver,
+      # so @replies is set by the time a poll can run) -- the T21 review's owed
+      # completion of the escalated seam, no longer a follow-up.
+      def quiescent?
+        (approvals.nil? || approvals.each.all?(&:decided?)) && !@replies.pending?
       end
     end
   end

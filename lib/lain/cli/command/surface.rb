@@ -25,8 +25,10 @@ module Lain
         # /rewind's rewound record silently (or hand /fork a session with no
         # record behind it), failing only later, far from the bug.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, approvals: nil, root: Dir.pwd,
-                       status_feed: Env::NullStatus, policy_switch: nil, model_switch: nil, approval_prompt: nil)
+                       status_feed: Env::NullStatus, policy_switch: nil, model_switch: nil, approval_prompt: nil,
+                       goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
+          @goal_driver = goal_driver
           @root = root
           @catalog = Skill::Catalog.load(root:)
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
@@ -36,7 +38,7 @@ module Lain
                               policy_switch:, model_switch:)
         end
 
-        attr_reader :env
+        attr_reader :env, :goal_driver
 
         # The T9 command surface the Repl consults ahead of SkillDispatch
         # (precedence is command-first by design): the registry curried over
@@ -63,7 +65,8 @@ module Lain
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
             policy_switch: policy_switch || Env::NullPolicySwitch,
-            model_switch: model_switch || Env::NullModelSwitch
+            model_switch: model_switch || Env::NullModelSwitch,
+            role_spawn: @role_spawn
           )
         end
 
@@ -84,7 +87,8 @@ module Lain
         # method call, and this list is data, not the registration behavior
         # #registry owns.
         def builtins
-          [Quit.new, Rewind.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new, Inbox.new]
+          [Quit.new, Rewind.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new, Inbox.new,
+           Ruby.new, Goal.new(driver: @goal_driver), Meta.new(root: @root)]
         end
       end
     end

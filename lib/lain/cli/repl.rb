@@ -28,7 +28,8 @@ module Lain
       # session silently lose its command or reply surface.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
-                     middleware: Lain::Middleware::Stack.new, auto_surface: nil)
+                     middleware: Lain::Middleware::Stack.new, auto_surface: nil,
+                     goal_driver: Lain::CLI::GoalDriver::Null)
         @agent = agent
         @tty = tty
         @middleware = middleware
@@ -37,6 +38,7 @@ module Lain
         @supervisor = supervisor
         @replies = replies
         @commands = commands
+        @goal_driver = goal_driver
         watch_approvals(approvals, notifier, auto_surface)
       end
 
@@ -108,10 +110,16 @@ module Lain
       # :quit -- the /quit command's action -- ends the conversation through
       # the SAME exit a bare "quit" takes: a nil text fails continue? exactly
       # as a farewell does, so run's ensures fire identically on both paths.
+      # T21: the standing-goal driver is consulted BETWEEN asks, here, after a
+      # turn has fully settled (respond returned, its approval/reply surfaces
+      # stopped). A driving goal answers the next prompt -- the loop feeds it
+      # like a typed line -- and yields an inline stop notice when it ends;
+      # Null (no goal) answers nil cheaply, so the human prompt is read as
+      # before.
       def next_text(action)
         return if action == :quit || @conductor.closed?
 
-        @conductor.read_prompt(@tty, "you> ")
+        @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || @conductor.read_prompt(@tty, "you> ")
       end
 
       # Routes one typed line: the command registry FIRST (T9) -- a registered

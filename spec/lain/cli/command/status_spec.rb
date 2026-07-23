@@ -23,7 +23,8 @@ RSpec.describe Lain::CLI::Command::Status do
       replies: double("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: double("agent"),
       policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch, chronicle: Lain::CLI::Chronicle::Null.new
+      model_switch: Lain::CLI::Command::Env::NullModelSwitch, chronicle: Lain::CLI::Chronicle::Null.new,
+      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
     )
   end
 

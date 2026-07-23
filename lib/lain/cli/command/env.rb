@@ -14,7 +14,7 @@ module Lain
       # is refused loudly at assembly -- no command ever writes `if env.thing`.
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
-                        :policy_switch, :model_switch, :chronicle) do
+                        :policy_switch, :model_switch, :chronicle, :role_spawn) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \
@@ -53,6 +53,13 @@ module Lain
 
         # Same contract as {NullPolicySwitch}, for /model's render-time slot.
         module NullModelSwitch; end
+
+        # The role-spawn seam reader lands with the /meta card (T23), which
+        # drives {Skill::RoleSpawn} to generate a harness. A wiring that spawns
+        # no roles (specs, headless assemblies) leaves it out; a premature send
+        # fails loudly BY NAME, the {NullStatus} contract. The chat Surface
+        # passes the live seam it already holds.
+        module NullRoleSpawn; end
       end
     end
   end

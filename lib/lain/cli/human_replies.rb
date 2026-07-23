@@ -25,6 +25,13 @@ module Lain
       # runs so #editor_reply_loop knows whether to spawn its consumer fiber.
       def bind_editor(command_inbox) = @command_inbox = command_inbox
 
+      # A human question is waiting for an answer: an item mid-drain (@inbox) or
+      # one a subagent enqueued while the human sat idle at `you>`, which no
+      # answer_loop fiber is watching between asks. T21's standing-goal driver
+      # reads this to hold off re-prompting while the fleet is unquiet -- the
+      # inbox half of that guard (the parked-approval half lives in Wiring).
+      def pending? = !@inbox.empty? || !@questions.empty?
+
       # `/inbox` at `you>` (T13): the SAME TTY drain UX #answer_loop's
       # read_drained_answer calls at `human>`, over whatever has piled up in
       # `@questions` since the last time a fiber was actually watching it.

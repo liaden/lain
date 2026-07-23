@@ -28,7 +28,8 @@ module Lain
         Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep]),
-        Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write])
+        Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write]),
+        Role.new(name: :meta_harness, only: %i[read_file list_files glob grep])
       ].to_h { |role| [role.name, role] }.freeze
 
       class << self

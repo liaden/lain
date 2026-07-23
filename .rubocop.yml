@@ -27,6 +27,15 @@ Layout/LineLength:
 Metrics/ParameterLists:
   CountKeywordArgs: false
 
+# The CLI assembly classes (Wiring, ChatLaunch) legitimately run long: their
+# length is many small, named wire-ups of ONE responsibility -- assembling a
+# chat's collaborators -- not a hidden second concern the cop would otherwise
+# flag. Domain and value objects stay well under, so a long one there still
+# signals a missing object. A modest ceiling keeps that signal while not
+# forcing an artificial split of a cohesive assembler.
+Metrics/ClassLength:
+  Max: 110
+
 # In the middleware idiom the block IS the downstream app, and `&app` says so.
 # Anonymous `&` forwarding would save six characters and cost the reader the one
 # name that explains the shape.

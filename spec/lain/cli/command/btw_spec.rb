@@ -32,7 +32,8 @@ RSpec.describe Lain::CLI::Command::Btw do
       replies: spy("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
       tmux_surface:, agent:, chronicle:,
       policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch
+      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
+      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
     )
   end
 
@@ -162,7 +163,8 @@ RSpec.describe Lain::CLI::Command::Keep do
       replies: spy("replies"), fork_point: Lain::CLI::Command::Env::NullForkPoint,
       tmux_surface: spy("tmux_surface"), agent: spy("agent"), chronicle:,
       policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,
-      model_switch: Lain::CLI::Command::Env::NullModelSwitch
+      model_switch: Lain::CLI::Command::Env::NullModelSwitch,
+      role_spawn: Lain::CLI::Command::Env::NullRoleSpawn
     )
   end
 

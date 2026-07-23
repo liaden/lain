@@ -1,0 +1,163 @@
+# frozen_string_literal: true
+
+require "time"
+require "fileutils"
+require "shellwords"
+
+module Lain
+  module CLI
+    module Command
+      # `/meta` (T23): generate a customized harness from a prompt, then -- only
+      # on an explicit `/meta run <slug>` -- launch it in a new tmux window.
+      #
+      # The generate/run split IS the safety line. A generated script runs with
+      # the user's full authority, so `/meta <prompt>` never executes anything:
+      # it drives the read-only `meta_harness` role ({Skill::RoleSpawn}, `:inherit`
+      # context) to assemble a plain lain-API script, writes it to
+      # `.lain/meta/<slug>.rb` (the `.lain/` artifact home, like state.json), and
+      # returns the path plus a summary. The window opens ONLY when the human
+      # comes back and types the run verb -- generation and execution are two
+      # deliberate steps, never one.
+      #
+      # The written script is honest by construction: this command owns its
+      # header (naming the origin prompt and the head digest it was generated at)
+      # and its `require "lain"`, so provenance never rests on the model's
+      # goodwill. The role assembles the body; the command frames it.
+      class Meta
+        DIR = File.join(".lain", "meta")
+
+        # A well-formed slug, exactly what {#slugify} emits: a `run <slug>` that
+        # does not match is refused before it can index a file, so the launch
+        # verb can never resolve a path outside {DIR}.
+        SLUG = /\A[a-z0-9-]+\z/
+
+        # The launch keyword. A prompt whose first word is literally "run" is
+        # read as a launch (documented in {#usage}); write "/meta launch a run
+        # loop" as, e.g., "/meta a run loop" if that collides.
+        RUN = "run"
+
+        USAGE = "/meta <prompt> -- generate a customized harness script (review it, then /meta run <slug>)"
+
+        def initialize(root: Dir.pwd)
+          @root = root
+          freeze
+        end
+
+        def name = "meta"
+
+        def usage = USAGE
+
+        # Two verbs behind one command: `run <slug>` launches an existing
+        # script; anything else is a generation prompt. Splitting on the first
+        # word keeps the whole remaining prompt intact for generation.
+        def call(args, env)
+          keyword, rest = args.to_s.strip.split(/\s+/, 2)
+          keyword == RUN ? launch(rest.to_s.strip, env) : generate(args.to_s.strip, env)
+        end
+
+        private
+
+        # Generate NEVER runs code: it spawns the read-only role, frames its
+        # body into an honest script, writes it, and hands back the path.
+        def generate(prompt, env)
+          return USAGE if prompt.empty?
+
+          result = env.role_spawn.call(:meta_harness, :inherit, prompt)
+          return generation_failed(result) if result.error?
+
+          slug = slugify(prompt)
+          path = write(slug, compose(body: body_of(result), prompt:, digest: env.agent.timeline.head_digest))
+          generated(path, slug)
+        end
+
+        # The ONLY path that executes a generated script -- an explicit run verb,
+        # against a file the human has had the chance to read.
+        def launch(slug, env)
+          return USAGE if slug.empty?
+          # The run slug indexes into `.lain/meta/`; validate it against the
+          # SAME charset #slugify emits BEFORE it reaches File.join, or a slug
+          # like `../../etc/whatever` traverses out of the artifact home and
+          # `run` launches an arbitrary .rb anywhere on disk (Shellwords.escape
+          # stops shell injection, not path traversal).
+          return bad_slug(slug) unless slug.match?(SLUG)
+
+          path = script_path(slug)
+          return no_script(slug, path) unless File.exist?(path)
+
+          place(env, slug, path)
+        end
+
+        def place(env, slug, path)
+          command = "#{RbConfig.ruby} #{Shellwords.escape(path)}"
+          placement = env.tmux_surface.window(command:, name: "meta-#{slug}", cwd: @root)
+          "launched #{path} in tmux #{placement.kind} #{placement.target}"
+        rescue TmuxSurface::TmuxUnavailable => e
+          "#{e.message}\nrun it yourself: ruby #{path}"
+        end
+
+        def write(slug, contents)
+          path = script_path(slug)
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, contents)
+          path
+        end
+
+        def script_path(slug) = File.join(@root, DIR, "#{slug}.rb")
+
+        # The command owns the header and the require, so a generated script is
+        # honest whatever the model returned: the origin prompt and head digest
+        # are named at the top, and `require "lain"` is guaranteed present.
+        def compose(body:, prompt:, digest:)
+          [header(prompt, digest), %(require "lain"), "", body].join("\n")
+        end
+
+        def header(prompt, digest)
+          (["# frozen_string_literal: true", "#",
+            "# GENERATED by /meta -- a customized harness. REVIEW before running;",
+            "# /meta only writes this file, it never runs generated code.",
+            "#"] + prompt_lines(prompt) +
+            ["# head digest:   #{digest || "(none)"}",
+             "# generated at:  #{Time.now.utc.iso8601}", ""]).join("\n")
+        end
+
+        # A multi-line prompt stays whole in the header, each line commented so
+        # the file still parses; only the first line carries the label.
+        def prompt_lines(prompt)
+          lines = prompt.split("\n")
+          ["# origin prompt: #{lines.first}"] + lines.drop(1).map { |line| "#                #{line}" }
+        end
+
+        # The role answers with a String body; an Array of content blocks is
+        # flattened to its text so the file stays plain ruby either way.
+        def body_of(result)
+          content = result.content
+          content.is_a?(String) ? content : content.filter_map { |block| block["text"] }.join("\n")
+        end
+
+        # A slug the human can type back: the prompt reduced to its leading words.
+        def slugify(prompt)
+          words = prompt.downcase.gsub(/[^a-z0-9]+/, " ").split.first(6)
+          words.empty? ? "harness" : words.join("-")
+        end
+
+        def generated(path, slug)
+          "wrote #{path}\n\nreview it, then launch it in a new tmux window with:\n  /meta run #{slug}"
+        end
+
+        def generation_failed(result)
+          "meta_harness could not generate a script: #{body_of(result)}"
+        end
+
+        def no_script(slug, path)
+          "no script #{slug.inspect} has been generated (#{path} does not exist) -- " \
+            "generate one first with /meta <prompt>"
+        end
+
+        def bad_slug(slug)
+          "not a valid script name: #{slug.inspect} -- a slug is lowercase letters, digits, and dashes " \
+            "(the name /meta printed when it wrote the script)"
+        end
+      end
+    end
+  end
+end
