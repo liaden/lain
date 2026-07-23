@@ -22,8 +22,8 @@ module Lain
       class Surface
         # `chronicle:` is required, not defaulted -- the same reasoning as
         # Repl's: a defaulted Null here would let a mis-wired session lose
-        # /rewind's rewound record silently, failing only at the next
-        # catch_up, far from the bug.
+        # /rewind's rewound record silently (or hand /fork a session with no
+        # record behind it), failing only later, far from the bug.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, approvals: nil, root: Dir.pwd,
                        policy_switch: nil, model_switch: nil, approval_prompt: nil)
           @role_spawn = role_spawn
@@ -58,7 +58,7 @@ module Lain
           Env.new(
             status: Env::NullStatus, sessions: Sessions.new,
             approvals: approvals || Env::NullApprovals, supervisor:,
-            replies:, fork_point: Env::NullForkPoint,
+            replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
             policy_switch: policy_switch || Env::NullPolicySwitch,
             model_switch: model_switch || Env::NullModelSwitch
@@ -69,7 +69,7 @@ module Lain
         # command a later card registers here appears in its listing with no
         # edit of its own.
         def registry
-          @registry ||= Registry.new([Quit.new, Rewind.new]).tap do |registry|
+          @registry ||= Registry.new([Quit.new, Rewind.new, Fork.new]).tap do |registry|
             registry.register(Help.new(registry:, catalog: @catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Yolo.new)

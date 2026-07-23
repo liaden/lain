@@ -41,7 +41,9 @@ module Lain
         # named placeholder, and a premature send fails loudly BY NAME.
         module NullStatus; end
 
-        # T3's fork-point seam has not landed; same contract as {NullStatus}.
+        # The default fork-point stand-in for Env constructions that wire no
+        # live one (specs, headless assemblies); the chat Surface passes a real
+        # {ForkPoint}. Same loud-by-name contract as {NullStatus}.
         module NullForkPoint; end
 
         # A wiring that flips no gate (specs, headless assemblies) leaves the

@@ -24,6 +24,9 @@ module Lain
       # the session record. The `(**)` signatures accept the real methods'
       # keywords without naming arguments a Null never reads.
       class Null
+        # Nil is the honest answer: --no-journal has no file, and /fork reads
+        # this to refuse composing a selector no record backs.
+        def journal_path = nil
         def observer = Event::ChainWriter::Null.new
         def start(**) = self
         def wrap_session(session) = session
@@ -137,6 +140,11 @@ module Lain
         @journal_path = journal_path
         @recorder = nil
       end
+
+      # The session's on-disk identity, read by /fork (T16) to compose the
+      # child's `--fork <session>@<head>` selector. Nil for an injected-io
+      # chronicle (no file), exactly as {#promote!} already refuses.
+      attr_reader :journal_path
 
       # The tools' observer seam ({Event::ChainWriter}'s `observer:` duck),
       # late-bound through {#scribe}: an event before {#start} raises rather

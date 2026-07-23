@@ -111,7 +111,8 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.replies).to be_a(Lain::CLI::HumanReplies)
       expect(env.agent).to be_a(Lain::Agent)
       expect(env.status).to be(Lain::CLI::Command::Env::NullStatus)
-      expect(env.fork_point).to be(Lain::CLI::Command::Env::NullForkPoint)
+      expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
+      expect(env.chronicle).to be(chronicle)
     end
 
     # The load-bearing identity AC1/AC3 stand on (T14 panel probe 7): a dropped

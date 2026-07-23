@@ -246,6 +246,17 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  # T16 F2: the one pane-command recipe, now a public seam so /fork's window
+  # shares it instead of forking the string -- PATH re-export (tmux panes
+  # source no interactive chruby) + exec of the LAUNCHING binary, read at
+  # call time ($PROGRAM_NAME is not the lain binary under rspec).
+  describe ".pane_command" do
+    it "composes the PATH re-export, the launching binary, and the escaped argv" do
+      expect(described_class.pane_command("chat", "--fork", "a b"))
+        .to eq("export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat --fork a\\ b")
+    end
+  end
+
   # T11: `lain up -- ARGS` threads the trailing chat flags into the spawned
   # window's command. `chat` validates its own flags -- Up never parses
   # `chat_args`, only Shellwords-escapes each element, so these examples

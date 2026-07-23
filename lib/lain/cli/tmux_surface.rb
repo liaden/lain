@@ -62,10 +62,15 @@ module Lain
       # @param name [String, nil] window name (`-n`)
       # @param target_session [String, nil] session to add the window to;
       #   nil lets tmux pick (the current session, from inside a pane)
+      # @param cwd [String, nil] the new pane's start directory (`-c`) --
+      #   /fork pins the parent's project root here so the child resolves
+      #   the SAME project regardless of the session's pane-cwd conventions;
+      #   nil leaves tmux's own default-path rules in charge
       # @return [Placement]
-      def window(command:, name: nil, target_session: nil)
+      def window(command:, name: nil, target_session: nil, cwd: nil)
         args = ["new-window"]
         args += ["-t", target_session] if target_session
+        args += ["-c", cwd] if cwd
         args += ["-n", name] if name
         args << command
         act(*args)

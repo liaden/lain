@@ -31,6 +31,36 @@ module Lain
         def open? = open
       end
 
+      class << self
+        # Committing synthetic tool_results would be a design decision, not an
+        # implementation detail (T18 owns the response side): a head still
+        # awaiting its tool results refuses with the re-ask shape rather than
+        # resuming into a request the API must reject. A settled head --
+        # assistant text, or tool_results already committed (then the head is
+        # the user-role results turn) -- resumes fine. Takes the timeline (not
+        # the recording) so fork mode's checked-out head faces the SAME
+        # refusal verbatim -- a fork point mid-tool never auto-picks a
+        # neighboring head. A class method (T16 F1) because /fork mirrors
+        # this exact gate PARENT-SIDE, before opening a window whose child
+        # would only die on it -- one predicate, one wording, wherever the
+        # user meets it.
+        def refuse_mid_tool!(path, timeline)
+          head = timeline.head
+          return if head.nil? || !pending_tool_use?(head)
+
+          raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
+                         "still awaiting tool results (the run stopped mid-tool); fabricating results " \
+                         "would falsify the record -- re-ask the question in a new session"
+        end
+
+        private
+
+        def pending_tool_use?(head)
+          head.role == "assistant" &&
+            head.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
+        end
+      end
+
       def initialize(paths: Paths.new)
         @paths = paths
       end
@@ -180,27 +210,9 @@ module Lain
         end
       end
 
-      # Committing synthetic tool_results would be a design decision, not an
-      # implementation detail (T18 owns the response side): a head still
-      # awaiting its tool results refuses with the re-ask shape rather than
-      # resuming into a request the API must reject. A settled head --
-      # assistant text, or tool_results already committed (then the head is
-      # the user-role results turn) -- resumes fine. Takes the timeline (not
-      # the recording) so fork mode's checked-out head faces the SAME refusal
-      # verbatim -- a fork point mid-tool never auto-picks a neighboring head.
-      def refuse_mid_tool!(path, timeline)
-        head = timeline.head
-        return if head.nil? || !pending_tool_use?(head)
-
-        raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
-                       "still awaiting tool results (the run stopped mid-tool); fabricating results " \
-                       "would falsify the record -- re-ask the question in a new session"
-      end
-
-      def pending_tool_use?(head)
-        head.role == "assistant" &&
-          head.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
-      end
+      # The shared class-level gate (see its own comment), reachable from the
+      # private instance flow.
+      def refuse_mid_tool!(path, timeline) = self.class.refuse_mid_tool!(path, timeline)
 
       # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the
       # Null Object), so it drops out of `.compact` like every other absent

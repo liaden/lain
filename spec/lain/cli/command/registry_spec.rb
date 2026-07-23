@@ -24,7 +24,7 @@ RSpec.describe Lain::CLI::Command::Registry do
       approvals: Lain::CLI::Command::Env::NullApprovals,
       supervisor: Lain::Supervisor::Null,
       replies: double("replies"),
-      fork_point: Lain::CLI::Command::Env::NullForkPoint,
+      fork_point: instance_double(Lain::CLI::ForkPoint),
       tmux_surface: instance_double(Lain::CLI::TmuxSurface),
       agent: double("agent"),
       policy_switch: Lain::CLI::Command::Env::NullPolicySwitch,

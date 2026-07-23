@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(env).to be_frozen
       expect(env.approvals).to be(Lain::CLI::Command::Env::NullApprovals)
       expect(env.status).to be(Lain::CLI::Command::Env::NullStatus)
-      expect(env.fork_point).to be(Lain::CLI::Command::Env::NullForkPoint)
+      expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
     end
   end
 

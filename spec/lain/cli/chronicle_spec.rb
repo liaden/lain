@@ -46,6 +46,22 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(described_class.for(enabled: false)).to be_a(described_class::Null)
       expect(described_class.for(enabled: nil)).to be_a(described_class::Null)
     end
+
+    # T16: /fork composes `<session>@<head>` from this reader, so the opened
+    # chronicle must name the very file `.for` put on disk.
+    it "exposes the opened journal's path -- the session identity /fork forks" do
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        opened = described_class.for(enabled: true, paths:)
+
+        expect(Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))).to eq([opened.journal_path])
+        opened.close
+      end
+    end
+  end
+
+  it "answers no journal_path for an injected-io chronicle -- there is no file to fork" do
+    expect(chronicle.journal_path).to be_nil
   end
 
   # T17's last obligation: chat must actually write a `.wal` when journaling
@@ -521,6 +537,7 @@ RSpec.describe Lain::CLI::Chronicle do
     subject(:null) { described_class.new }
 
     it "satisfies the whole duck and records nothing" do
+      expect(null.journal_path).to be_nil
       expect(null.observer).to be_a(Lain::Event::ChainWriter::Null)
       expect(null.start(context: nil, toolset: nil)).to be(null)
       expect(null.turn_middleware(-> {}).to_a).to be_empty

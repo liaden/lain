@@ -75,6 +75,17 @@ module Lain
       # past); `argv` is exactly {#attach_command}'s `Kernel.exec` array.
       LaunchPlan = Data.define(:messages, :argv)
 
+      # The one pane-command recipe (T16 F2 made it a public seam): tmux's
+      # new pane does not source an interactive shell's chruby (see
+      # CLAUDE.md's toolchain note), so every pane a lain window runs
+      # re-exports the PATH fix and re-invokes the LAUNCHING binary --
+      # composed per call, never a constant, because $PROGRAM_NAME must be
+      # read when the exe runs (under rspec it is not the lain binary).
+      # Callers: `lain up`'s chat window and /fork's sibling window.
+      def self.pane_command(*argv)
+        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+      end
+
       def initialize(session: DEFAULT_SESSION, socket: nil, state_path: default_state_path,
                      chat_command: nil, chat_args: [], status_interval: DEFAULT_STATUS_INTERVAL,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
@@ -147,20 +158,13 @@ module Lain
       # expected, non-error answer that drives #call into #create_session.
       def session_exists? = run("has-session", "-t", @session).exitstatus.zero?
 
-      # tmux's new-session does not source an interactive shell's chruby (see
-      # CLAUDE.md's toolchain note), so the chat window's own command
-      # re-exports the PATH fix before re-invoking the launching binary's
-      # `chat` subcommand. Computed per instance, never a constant:
-      # $PROGRAM_NAME must be read when the exe runs (under rspec it is not
-      # the lain binary). `@chat_args` is the exe's `-- ARGS` trailing
-      # capture -- already `chat`'s own flags to validate, never Up's, so
-      # this only Shellwords-escapes each one before it lands in a string
-      # tmux hands to ITS OWN `$SHELL -c` (the class comment's shell-boundary
-      # note); Up never parses or knows the flag names.
-      def default_chat_command
-        base = "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat"
-        @chat_args.empty? ? base : "#{base} #{Shellwords.join(@chat_args)}"
-      end
+      # {.pane_command} over the `chat` subcommand. `@chat_args` is the exe's
+      # `-- ARGS` trailing capture -- already `chat`'s own flags to validate,
+      # never Up's, so the recipe only Shellwords-escapes each one before it
+      # lands in a string tmux hands to ITS OWN `$SHELL -c` (the class
+      # comment's shell-boundary note); Up never parses or knows the flag
+      # names.
+      def default_chat_command = self.class.pane_command("chat", *@chat_args)
 
       def create_session = act(*new_session_args)
 

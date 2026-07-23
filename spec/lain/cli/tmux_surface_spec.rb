@@ -92,6 +92,37 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
   end
 
+  # T16 F3: /fork's child must resolve the SAME project regardless of the
+  # session's pane-cwd conventions, so #window can pin the new pane's start
+  # directory with tmux's own `-c`.
+  describe "#window cwd: (FakeTmuxShellOut)" do
+    def capturing_factory(calls)
+      lambda do |*args|
+        calls << args
+        FakeTmuxShellOut.new(0, "", "")
+      end
+    end
+
+    it "passes cwd through as new-window's -c flag" do
+      calls = []
+      surface = described_class.new(shell_out_factory: capturing_factory(calls))
+
+      surface.window(command: "sleep 60", name: "fork-abc", cwd: "/some/project")
+
+      new_window = calls.find { |args| args.include?("new-window") }
+      expect(new_window.each_cons(2)).to include(["-c", "/some/project"])
+    end
+
+    it "omits -c entirely when no cwd is given -- tmux's own default-path rules stay in charge" do
+      calls = []
+      surface = described_class.new(shell_out_factory: capturing_factory(calls))
+
+      surface.window(command: "sleep 60", name: "probe")
+
+      expect(calls.find { |args| args.include?("new-window") }).not_to include("-c")
+    end
+  end
+
   describe "popup degrade detection (FakeTmuxShellOut)" do
     # Everything TmuxSurface might shell out to for one #popup call, keyed
     # on the ONE command name each branch cares about -- list-commands
