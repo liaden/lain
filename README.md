@@ -12,53 +12,45 @@ The motivating context is worth stating plainly, because it explains every desig
 
 ## Status
 
-**M0 and M1 are done.** 317 examples, RuboCop clean at default metrics, `cargo test` 6/6. The
-agent loop is complete and provably correct against `Provider::Mock` — all seven correctness
-gates ship as specs — but **it has no tools to call and no way to be typed at**. There is no
-`lib/lain/tools/`, no `Effect::Handler::Gate`, no `lib/lain/frontend/`, and no `exe/lain`.
-`mixlib-shellout`, `thor`, and `state_machines` are declared dependencies with no code using
-them yet. Those land in **M1b**, in progress now.
+The spine, the observability layer, the bench, both frontends, and the interface/UX band are
+all built and running. `exe/lain` is a working Thor CLI; `lib/lain.rb`'s manifest requires 60+
+units; `lib/lain/tools/` holds twenty-odd tools; the agent loop is a live `state_machines`
+machine driving four providers. **[`ARCHITECTURE.md`](ARCHITECTURE.md) is the engineer-facing
+map** — every concept below points at the files that implement it — and it is the source of
+truth where any prose here and the code disagree.
 
-Where this README shows an API, for example `Lain.agent(tools: [...])`, treat it as the target
-design rather than behavior you can run today. Nothing in "Core design" or "The bench" should
-be read as a description of code you can currently execute unless the Status table below says
-otherwise.
+A few code samples below are still marked inline as target design; where a marker and the code
+now disagree, [`ARCHITECTURE.md`](ARCHITECTURE.md) wins. Everything in the "Built today" table
+runs.
 
-| Built (M0 + M1) | Notes |
+| Built today | Notes |
 |---|---|
-| `Canonical` | Deterministic bytes. Serves turn hashing **and** prompt-cache stability. |
-| `Turn` / `Store` / `Timeline` | Lossless content-addressed Merkle DAG. `commit`, `fork`, `checkout`, `rewind`, `meet`, `diverge_at`. Meet-semilattice laws property-tested over a random forest. |
+| `Canonical` | Deterministic bytes (BLAKE3). Serves event hashing **and** prompt-cache stability. |
+| `Event` (was `Turn`) / `Store` / `Timeline` | Lossless content-addressed Merkle DAG. `commit`, `fork`, `checkout`, `rewind`, `meet`, `diverge_at`. Meet-semilattice laws property-tested. Still **pure Ruby** — the Rust DAG binding is latent. |
 | `Request` / `Response` / `Usage` | Provider-neutral value objects. `Usage` is a property-tested commutative monoid. |
-| `Tool` / `Toolset` / `Tool::Input` / `Contracts` | Capabilities, not permissions. ActiveModel input: one declaration yields both JSON Schema and validation. |
-| `Effect` / `Effect::Handler` / `Middleware` | Rack idiom over a property-tested monoid. `Effect::Handler::Live` is where correctness gate 3 lives. |
-| `Provider` / `::Anthropic` / `::Mock` | One round trip, never a loop. |
-| `Workspace` / `Context` | Sent-not-stored. `#render` is pure. |
-| `Agent` / `Budget` / `ToolRunner` | Explicit state machine. All seven correctness gates as specs. |
-| `Channel` / `Sink` / `Event` | Attributed event bus. Only the frontend touches the terminal. |
-| `ext/lain` | `tracing` → NDJSON to a **dup'd** caller fd. Pure, synchronous, no tokio. |
+| `Tool` / `Toolset` / `Tool::Input` | Capabilities, not permissions. ~20 tools: read/edit/write, glob/grep, bash, web fetch/search, AST search, memory read/write, subagent, ask-human, skills. |
+| `Effect` / `Effect::Handler` / `Gate` / `Middleware` | Rack idiom over a property-tested monoid. `Live` dispatches; `Gate` enforces tier-3 approval; `Mock`/`Recorded` replay. |
+| `Provider` / `::AnthropicRaw` / `::Anthropic` / `::Bedrock` / `::Ollama` / `::Mock` | One round trip, never a loop. The vendored Faraday transport (`provider/http/`) is the default Claude path; the official SDK stays as the correctness oracle. |
+| `Workspace` / `Context` | Sent-not-stored. `#render` is pure. Combinators: prune, compact, cache-breakpoints, reminder, recall, dedupe, mailbox. |
+| `Agent` / `Budget` / `ToolRunner` / `Supervisor` | Explicit `state_machines` machine. Subagents over a fresh root, `Isolation` leases per worker. |
+| `Journal` / `Channel` / `StatusFeed` / `SessionRecord` | NDJSON experiment record on its own fd; per-turn usage and cost; crash-resumable via a `.wal`. |
+| Bench (`bench record` / `variance` / `sweep` / `plan-sweep`) | Dry and live replay, retrieval sweeps, distribution reporting. |
+| `Frontend::TTY` + `Frontend::Neovim` | Both built. The Neovim runtime is injected into a bare `nvim --listen` at attach time. |
+| Interface/UX (`lain up`, `lain up --nvim`, tmux + nvim plugins, `you>` slash commands) | tmux-native cockpit, session forking, live subagent viewers — see Topology. |
+| `ext/lain` | Built, in-process (`lain.so`): `tracing` → NDJSON to a **dup'd** caller fd, plus Canonical/digest, the persistent DAG, in-memory BM25, and AST search. Pure, synchronous, no tokio. |
 
-The milestone plan, in brief:
+**Not on the default path yet.** `crates/lain-core` — the out-of-process msgpack-RPC exec
+daemon (`main.rs`/`rpc.rs`/`exec.rs`) and its Ruby client (`Core::Client`/`Core::Child`) — is a
+real crate, but it builds only under `rake core:build` and is exercised solely by opt-in
+`:core` specs and the bench's exec-comparison arm (`Tools::CoreExec`). It is **not wired into
+any shipped toolset**; the live chat path runs `Tools::Bash` in-process. The Timeline's Rust
+port and the speculative-fork HAMT are likewise latent — pure Ruby ships first, behind the same
+interface, so the port is a swap the property tests gate rather than a rewrite.
 
-- **M0 — done.** Gemspec, dependency posture, `ruby-4.0.5` pinned, pre-commit, CI, `CLAUDE.md`.
-- **M1 — done.** The spine: canonical serialization, `Turn`/`Store`/`Timeline`, the
-  provider-neutral request/response value objects, the `Provider` interface with
-  `Provider::Anthropic` and `Provider::Mock`, tools and toolsets, effects, the model and tool
-  middleware phases, the live handler, and the agent state machine.
-- **M1b — in progress.** The agent's hands: `Tools::ReadFile`, `Tools::ListFiles` (tier 1,
-  structured, no subprocess), `Tools::Bash` (tier 3, `Mixlib::ShellOut`), `Effect::Handler::Gate`
-  gating tier 3 by default, `Frontend::TTY`, and `exe/lain`. This is the first point at which
-  the thing can be used. Also this README rewrite and `docs/concurrency.md`.
-- **M2.** Observability: the `Journal` as an NDJSON event bus, per-turn usage and dollar cost,
-  and a recording handler. Measurement comes before the seams, because a seam you cannot
-  measure is decoration.
-- **M3a/b/c.** Test infrastructure (VCR, shared example groups); the transport fork described
-  below; the algebra with property-tested laws, composable `Context` combinators, all four
-  middleware phases, machine-checked provider capabilities, and the bench (`DryReplay`,
-  `LiveReplay`, `Grader`, `Compare`).
-- **M4.** The Timeline reimplemented in Rust behind the same interface with the same property
-  tests, plus a Neovim frontend.
-- **M5.** Orchestration (subagents, todos), cross-session memory, and code mode.
-- **M6.** A second round of Rust work and a sweep of retrieval strategies through the bench.
+For the full concept → file map (the data spine, effects/handlers, the provider boundary, the
+repl collaborator graph, the fan-out, subagents/supervisor/isolation, the NDJSON/WAL disk
+layout, and the `ext/lain` vs `crates/lain-core` placement rule), read
+**[`ARCHITECTURE.md`](ARCHITECTURE.md)**.
 
 ## Architecture, in one breath
 
@@ -77,27 +69,53 @@ head, so causal lineage survives while the child never inherits the parent's pro
 
 ## Topology
 
-`lain` is one Ruby process that owns the loop. It talks to Neovim and to `lain-core` over the
-*same* transport — msgpack-RPC on a Unix socket — which is why they appear symmetric below.
-**`crates/lain-core` and the Neovim frontend are not built yet** (M4/M6); `ext/lain` is the only
-Rust that exists today, and it is in-process.
+`lain` is one Ruby process that owns the loop, and it runs **tmux-native**. `lain up` creates
+(or reattaches to) a tmux session with a `chat` window and a session-scoped status HUD; `lain
+up --nvim` splits that window into an `nvim --listen` pane and a `chat` pane pinned to one cwd
+and one deterministic socket, so the editor and the chat that attaches to it can never diverge.
+The window layer is a multiplexer concern, not lain's — the same tmux session renders under
+iTerm2's `tmux -CC` on macOS. Two frontends subscribe to one Journal and the agent knows about
+neither: `Frontend::TTY` is the chat pane, and `Frontend::Neovim` injects its whole runtime
+(every `lain://` buffer, every `:Lain*` command, all RPC) into a bare editor at attach time
+over msgpack-RPC on a Unix socket. Subagent spawns can open **read-only** viewer windows (`chat
+--windows`, each running `lain watch`).
+
+The in-repo **[tmux plugin](plugin/tmux/README.md)** puts the same HUD in any status bar and
+binds the `--btw`/`--fork` gestures without a managed session; the **[Neovim
+plugin](plugin/nvim/README.md)** owns only the deterministic per-project socket convention and
+a `:LainStart` layout — all buffer/RPC logic stays in the gem.
+
+`crates/lain-core` and Neovim would talk to `lain` over the *same* transport — msgpack-RPC on a
+Unix socket — which is why they appear symmetric below. The Neovim path is live; the
+`lain-core` path is dashed because that daemon is **off the default chat path today** (opt-in
+`:core` specs and the bench's exec-comparison arm only — see Status). `ext/lain` is in-process
+and built.
 
 ```mermaid
 flowchart LR
-  subgraph w1["xmonad window 1"]
-    TTY["lain (Ruby)<br/>TTY frontend · owns the loop"]
+  subgraph sess["tmux session 'lain' (or iTerm2 tmux -CC)"]
+    TTY["chat pane<br/>lain (Ruby) · TTY frontend · owns the loop"]
+    NVIM["nvim pane (lain up --nvim)<br/>nvim --listen"]
+    WATCH["subagent viewer windows<br/>lain watch · read-only"]
   end
-  subgraph w2["xmonad window 2"]
-    NVIM["nvim --listen"]
-  end
-  TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M4| NVIM
-  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust)<br/>pure · synchronous<br/>tracing → NDJSON (built)<br/>Timeline · Canonical: NOT BUILT, M4"]
-  TTY <-->|msgpack-RPC · unix socket<br/>NOT BUILT, M6| CORE["crates/lain-core (Rust · tokio)<br/>exec sandbox · BM25 · parallel tools"]
-  TTY -->|HTTPS| ANTH["api.anthropic.com"]
-  TTY -->|HTTPS| OAI["OpenAI-compatible backends<br/>NOT BUILT"]
-  TTY -->|own fd, append-only<br/>NOT BUILT, M2| J[(".lain/sessions/*.ndjson")]
+  TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
+  TTY -->|read-only journal tail| WATCH
+  TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>tracing → NDJSON · Canonical<br/>persistent DAG · BM25 · AST search"]
+  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process exec daemon<br/>bench exec-comparison arm"]
+  TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
+  TTY -->|HTTPS| BR["AWS Bedrock"]
+  TTY -->|HTTP| OLL["local Ollama"]
+  TTY -->|own fd, append-only| J[("$XDG_STATE_HOME/lain/sessions/&lt;hash&gt;/*.ndjson")]
   EXT -->|dup'd fd| J
 ```
+
+You drive a conversation from the `you>` prompt. Prose, a `@role/skill` line, or a `/command`
+all go in there; the slash-command registry runs lib-side with zero model turns and covers
+`/help /status /sessions /inbox /approve /yolo /model /rewind /fork /btw /keep /quit /goal
+/ruby /meta`. `/fork` durably branches the session into a new tmux window; `/btw` opens an
+ephemeral side-question that is journalled and reaped (or promoted with `/keep`); the editable
+`lain://request` buffer round-trips a hand-edited prompt back to the provider. The interface
+band is designed in [`planning/interface-integration.md`](planning/interface-integration.md).
 
 ## Data flow
 
@@ -114,25 +132,25 @@ flowchart TB
   TL["Timeline<br/>content-addressed Merkle DAG"] --> CTX
   TS["Toolset<br/>capabilities, attenuated"] --> CTX
   WS["Workspace<br/><b>sent, not stored</b>"] --> CTX
-  MEM["Memory index<br/>content-addressed<br/>NOT BUILT, M5"] -->|Context::Recall<br/>after the last cache breakpoint| CTX
+  MEM["Memory index<br/>content-addressed · BM25"] -->|Context::Recall<br/>after the last cache breakpoint| CTX
   CTX["Context#render<br/><b>pure</b>"] --> REQ["Request · provider-neutral"]
   REQ --> ENC["Provider#encode"] --> RESP["Response<br/><b>full</b> content blocks"]
   RESP -->|commit: text + thinking + tool_use| TL
   RESP -->|tool_use| TR["ToolRunner"]
   TR -->|ONE user turn, all tool_results| TL
-  TR -.->|spawn: fresh root<br/>meta.spawned_from<br/>NOT BUILT, M5| CH["child Timeline<br/>shared Store"]
+  TR -.->|spawn: fresh root<br/>meta.spawned_from| CH["child Timeline<br/>shared Store"]
   CH -.->|final result only| TR
   REQ -.->|digest| C{{"prompt cache prefix<br/>tools → system → messages"}}
 ```
 
-See [`docs/concurrency.md`](docs/concurrency.md) for how threads, fibers, and Ractors would
-each sit on the topology diagram above, and why the concurrency model is deliberately deferred
-to M5.
+See [`docs/concurrency.md`](docs/concurrency.md) for how threads, fibers, and Ractors sit on
+the topology diagram above, and why the concurrency posture is `async` fibers (the `Supervisor`
+reactor) rather than threads or Ractors.
 
 ## Requirements
 
 - Ruby `>= 3.2.0`.
-- `ANTHROPIC_API_KEY` in the environment. Anything that talks to the Claude API reads it. Without it, only offline paths (for example, dry replay over a recorded session, once that exists) can run.
+- `ANTHROPIC_API_KEY` in the environment. Anything that talks to the Claude API reads it. Without it, only offline paths (for example, `lain bench` dry replay over a recorded session) can run.
 
 ## Core design
 
@@ -202,12 +220,12 @@ on the official SDK, keep `ruby_llm` behind a provider seam) after three finding
 So instead of depending on `ruby_llm`, Lain **vendors a slice of its HTTP layer** — the Faraday
 connection stack, the SSE stream accumulator, error mapping — into `lib/lain/provider/http/`
 (MIT, © 2025 Carmine Paolino), namespace-rewritten and stripped of the lossy `Message`/`Content`
-model in favor of `Lain::Response`. **This is a transport plan, not shipped code**: `lib/lain/provider/http/`
-does not exist yet. It is being built in parallel on the `vendor` branch, following the plan's
-TDD sequence — vendor verbatim, port their non-VCR unit specs unchanged, bootstrap cassettes,
-then mutate red-green until the lossy parts are gone. The official `anthropic` SDK remains the
-oracle throughout, and the eventual second provider axis (OpenAI-compatible backends) rides the
-same forked transport rather than a `ruby_llm` dependency.
+model in favor of `Lain::Response`. **This transport shipped**: `lib/lain/provider/http/` exists,
+and `Provider::AnthropicRaw` riding it is the default Claude path in the live CLI, byte-diffed
+against the official-SDK `Provider::Anthropic`, which stays mounted only as the correctness
+oracle. `Provider::Bedrock` and `Provider::Ollama` (local) are two further live backends on the
+same seam. The provider detail — wire quirks and local smoke-testing — lives in
+[`docs/porting-providers.md`](docs/porting-providers.md) and [`docs/ollama.md`](docs/ollama.md).
 
 The seam between Lain and any provider is a single HTTP round trip with no loop: a provider
 declares its `capabilities`, encodes a provider-neutral request into a wire payload (so the

@@ -4,7 +4,7 @@ Ideas/Todos:
 * If the session is idle for too long we should consider an autocompact or
   summarization to manage costs proactively, or the ability to summarize/compact
   after the cache is cold with minimal cost?
-* Use tmux/xmonad/neovim for UI:
+* Use tmux/neovim for UI:
   * Launching the subagents and being able to switch to them?
   * Have a different prompting area versus the irb/debug/pry console for running
     ruby so that we segragate the two areas?

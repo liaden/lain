@@ -563,21 +563,26 @@ the *same* msgpack-RPC that talks to `lain-core` — one idiom, two peers. The 2
 actual desktop configs, the verified RPC probe, and the fleshed-out designs live in
 `planning/interface-integration.md`.
 
-**Window topology — xmonad / tmux / iTerm2** `[planned]` (TODO 7–16)
-- The `lain` TTY process **owns the loop** and runs on the alternate screen (`smcup`/`rmcup`) so chat
-  state stays separate from REPL scrollback — window 1.
-- `nvim --listen` runs in its own window / pane, attached via `Neovim.attach_unix` — window 2. Lain
-  prefers **attaching to the already-running editor** (a deterministic socket convention, e.g.
-  `.lain/nvim.sock`) and spawns its own only as fallback — attention-following context needs the
-  *real* editor.
-- **Subagents get their own panes** — **decided (2026-07-11): tmux-native placement**, not
-  xmonad-native. Panes/windows are programmatic (`split-window`, ids lain can track and kill),
-  survive detach, tmux-resurrect can restore them, and iTerm2's `tmux -CC` renders the same session
-  natively on macOS — one mechanism, both platforms. xmonad supplies the *outer* topology (chat
-  monitor vs. editor monitor) with zero config changes. A `lain up` layout script sets per-session
-  pane titles/options so the global tmux.conf is untouched. **Pane cwd = the agent's worktree**
-  (TODO 71–73): spawn with `split-window -c <worktree>`, title `role@branch` — switching panes *is*
-  switching isolated checkouts `[exp]`.
+**Window topology — tmux-native** `[shipped]` (TODO 7–16). The 2026-07-11 survey that settled
+on tmux-native placement, with the desktop-config findings kept as a historical record, lives in
+[`planning/interface-integration.md`](planning/interface-integration.md).
+- ✅ `lain up` creates (idempotently) or reattaches to a `lain` tmux session — a `chat` window
+  plus a session-scoped status HUD (`Lain::CLI::Up`, `plugin/tmux`). The `lain` process **owns
+  the loop**; the chat window is `Frontend::TTY`. iTerm2's `tmux -CC` renders the same session
+  natively on macOS — one mechanism, both platforms.
+- ✅ `lain up --nvim` splits the window into an `nvim --listen` pane and a `chat` pane, both
+  pinned to one cwd and one **deterministic socket** (`$XDG_RUNTIME_DIR/lain/nvim-<hash>.sock`,
+  or `.lain/nvim.sock` when the project carries `.lain/`) so the editor and the chat that
+  attaches to it cannot diverge. Lain prefers **attaching to the already-running editor** and
+  spawns its own only as fallback (`plugin/nvim` owns the socket convention). `--nvim` without
+  an `nvim` binary degrades to the plain chat window with a named warning.
+- ✅ **Subagents get their own windows** — tmux-native, programmatic (`split-window`/`new-window`
+  ids lain can track and kill), survivable across detach. `chat --windows` opens a read-only
+  `lain watch` viewer window per spawn; `/fork` opens a window on the forked H-lineage. Per-pane
+  session-scoped options (`lain up`) keep the global `tmux.conf` untouched.
+- **Pane cwd = the agent's worktree** (TODO 71–73) `[exp]`: `Isolation::Worktree` already leases
+  a per-worker checkout; wiring `split-window -c <worktree>` + a `role@branch` title so
+  switching panes *is* switching isolated checkouts is the remaining step.
 - **Idle detection is an interface signal** (TODO 4–6): the cache-aware compaction policy (M3c
   fold-in) needs to know "the human walked away" — tmux `client_activity`, `focus-events` (already
   on in the dotfiles), nvim `FocusLost`, and time-at-prompt are the sensors; the interface layer
@@ -596,7 +601,7 @@ actual desktop configs, the verified RPC probe, and the fleshed-out designs live
   converts ```mermaid``` blocks itself (`mmdc` + ImageMagick) and draws them in-buffer over the kitty
   graphics protocol, auto-enabling tmux passthrough — but official alacritty ships no graphics
   protocol, so this requires moving to kitty (leaned; reference implementation, zen-mode already has
-  a kitty block) or ghostty. Knock-ons: `myTerminal` in xmonad.hs, `--class` spawn flags. On macOS,
+  a kitty block) or ghostty. Knock-ons: the default terminal and its `--class` spawn flags. On macOS,
   iTerm2 now implements the kitty protocol too — test with snacks' `SNACKS_*` detection override; if
   it holds, the Mac keeps `tmux -CC` *and* gets inline images.
   `markdown-preview.nvim` (bundles mermaid.js, scroll-synced) stays as the full-page review surface
