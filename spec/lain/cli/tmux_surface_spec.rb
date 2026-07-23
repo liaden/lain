@@ -137,6 +137,64 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
   end
 
+  # T17 F1/F2: /btw's popup runs a `lain chat` REPL whose child may exit with a
+  # non-zero status (a crash the human must SEE, not a popup that vanished), and
+  # it must resolve the same project the parent is in -- so #popup pins the start
+  # dir with `-d` and stays up on failure with `-EE`.
+  describe "#popup cwd: and -EE (FakeTmuxShellOut)" do
+    # Captures every argv while still answering the two detection probes, so the
+    # NON-degraded display-popup path actually runs (an empty list-commands reply
+    # would degrade to a window before display-popup is ever reached).
+    def capturing_popup_factory(calls)
+      lambda do |*args|
+        calls << args
+        FakeTmuxShellOut.new(0, popup_probe_stdout(args), "")
+      end
+    end
+
+    def popup_probe_stdout(args)
+      return "display-popup\nnew-window\n" if args.include?("list-commands")
+      return "0\n0\n" if args.include?("list-clients")
+
+      ""
+    end
+
+    it "runs display-popup with -EE, so the popup outlives a non-zero child exit until a key" do
+      calls = []
+      surface = described_class.new(shell_out_factory: capturing_popup_factory(calls))
+
+      surface.popup(command: "lain chat --btw", title: "btw")
+
+      popup = calls.find { |args| args.include?("display-popup") }
+      expect(popup).to include("-EE")
+      expect(popup).not_to include("-E")
+    end
+
+    it "pins the popup's start directory with tmux's own -d" do
+      calls = []
+      surface = described_class.new(shell_out_factory: capturing_popup_factory(calls))
+
+      surface.popup(command: "lain chat --btw", title: "btw", cwd: "/some/project")
+
+      popup = calls.find { |args| args.include?("display-popup") }
+      expect(popup.each_cons(2)).to include(["-d", "/some/project"])
+    end
+
+    it "forwards cwd to the degrade window path as -c when the popup cannot render" do
+      calls = []
+      degrading = lambda do |*args|
+        calls << args
+        FakeTmuxShellOut.new(0, args.include?("list-clients") ? "0\n" : "", "")
+      end
+      surface = described_class.new(shell_out_factory: degrading)
+
+      surface.popup(command: "lain chat --btw", title: "btw", cwd: "/some/project")
+
+      new_window = calls.find { |args| args.include?("new-window") }
+      expect(new_window.each_cons(2)).to include(["-c", "/some/project"])
+    end
+  end
+
   describe "popup degrade detection (FakeTmuxShellOut)" do
     # Everything TmuxSurface might shell out to for one #popup call, keyed
     # on the ONE command name each branch cares about -- list-commands

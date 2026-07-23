@@ -57,11 +57,14 @@ module Lain
         )
       end
 
-      # No next/break: the loop exit is text own truthiness, reassigned each
+      # No next/break: the loop exit is text's own truthiness, reassigned each
       # pass, the same shape the project style favors elsewhere. Prompts read
       # through the conductor so an idle-prompt signal breaks out cleanly.
-      def converse
-        text = @conductor.read_prompt(@tty, "you> ")
+      # `first_prompt` (T17 /btw's --prompt seed) stands in for ONLY the first
+      # read: the seeded question dispatches straight away, then next_text
+      # resumes reading the terminal exactly as an unseeded chat does.
+      def converse(first_prompt: nil)
+        text = first_prompt || @conductor.read_prompt(@tty, "you> ")
         text = next_text(dispatch(text)) while continue?(text)
       end
 
@@ -75,13 +78,15 @@ module Lain
       # fleet a home across asks. supervisor.stop farewells the fleet before the
       # reactor closes; the drain-on-shutdown itself is wired lib-side through
       # the conductor. The editor's :LainReply queue (or nil, no editor) is bound
-      # onto the reply surfaces before converse runs.
-      def run(nvim:, store:, session:)
+      # onto the reply surfaces before converse runs. `first_prompt` (T17) seeds
+      # the child chat /btw opens with its --prompt question, threaded to
+      # converse so the very first read is the side-question, not the terminal.
+      def run(nvim:, store:, session:, first_prompt: nil)
         frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, **nvim)
         @replies.bind_editor(frontend&.command_inbox)
         Sync do |task|
           @supervisor.run(task)
-          @tty.run { frontend ? frontend.run { converse } : converse }
+          @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
         ensure
           @supervisor.stop
         end

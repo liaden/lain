@@ -48,7 +48,10 @@ module Lain
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:)
         @conductor = @conductor_opener.call(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
-        @conductor.guard { build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:) }
+        @conductor.guard do
+          build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:,
+                                       first_prompt: @options[:prompt])
+        end
       end
 
       # The subagent tool reads the live parent head at spawn time, so the Agent is

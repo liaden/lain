@@ -169,4 +169,38 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     expect(tty).not_to have_received(:render_response) # never a silent nil deliver
     expect(agent).not_to have_received(:ask)
   end
+
+  # T17: /btw seeds its child chat's FIRST question through --prompt, so the
+  # ephemeral popup asks straight away and then behaves like any chat. converse
+  # reads the terminal through the conductor; a farewell on the very next read
+  # ends the loop, so a seeded run dispatches the seed then quits -- proving the
+  # seed replaced exactly ONE read, not every read after it.
+  describe "first_prompt seeds only the first converse pass" do
+    let(:conductor) do
+      spy("conductor").tap do |double|
+        allow(double).to receive(:supervise) { |*_, &ask| spy("outcome", response: ask.call) }
+        allow(double).to receive(:read_prompt).and_return("quit")
+        allow(double).to receive(:closed?).and_return(false)
+      end
+    end
+
+    it "dispatches the seed as the first ask, then reads the terminal for the next prompt" do
+      repl = build_repl(middleware: Lain::Middleware::Stack.new)
+
+      repl.__send__(:converse, first_prompt: "why is the build red?")
+
+      expect(agent).to have_received(:ask).with("why is the build red?").once
+      expect(agent).not_to have_received(:ask).with("quit")
+      expect(conductor).to have_received(:read_prompt).once # the SECOND prompt, after the seed
+    end
+
+    it "reads the first prompt from the terminal when no seed is given" do
+      allow(conductor).to receive(:read_prompt).and_return("hi", "quit")
+      repl = build_repl(middleware: Lain::Middleware::Stack.new)
+
+      repl.__send__(:converse)
+
+      expect(agent).to have_received(:ask).with("hi").once
+    end
+  end
 end

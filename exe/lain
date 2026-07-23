@@ -166,6 +166,9 @@ class LainCLI < Thor
                        desc: "Fork a recorded session at <session>@<digest-prefix>; the parent is opened read-only"
   method_option :btw, type: :boolean, default: false,
                       desc: "Ephemeral session (<ts>-<pid>.btw.ndjson), reaped on clean exit unless promoted"
+  method_option :prompt, type: :string,
+                         desc: "Seed the first question (the /btw child's side-question); the chat then reads " \
+                               "the terminal as usual"
   method_option :auto_approve, type: :boolean, default: false,
                                desc: "Wire a third approval surface: an auto_approver role judges pendings " \
                                      "the human hasn't yet -- opt-in, races the human/dunst surfaces"

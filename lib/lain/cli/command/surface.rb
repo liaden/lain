@@ -71,13 +71,20 @@ module Lain
         # command a later card registers here appears in its listing with no
         # edit of its own.
         def registry
-          @registry ||= Registry.new([Quit.new, Rewind.new, Fork.new,
-                                      Status.new, Sessions.new, Inbox.new]).tap do |registry|
+          @registry ||= Registry.new(builtins).tap do |registry|
             registry.register(Help.new(registry:, catalog: @catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Yolo.new)
             registry.register(Model.new)
           end
+        end
+
+        # The parameterless commands, split out so #registry's ABC stays honest
+        # as the set grows (T17 added /btw and /keep): each `.new` is an ABC
+        # method call, and this list is data, not the registration behavior
+        # #registry owns.
+        def builtins
+          [Quit.new, Rewind.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new, Inbox.new]
         end
       end
     end

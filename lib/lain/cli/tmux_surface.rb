@@ -84,12 +84,22 @@ module Lain
       #   forms too, hence String)
       # @param height [String, Integer, nil] `-h` value
       # @param target_session [String, nil] see {#window}
+      # @param cwd [String, nil] the popup's start directory (`-d`), forwarded
+      #   to the degrade window's `-c` too -- /btw pins the parent's project
+      #   root so the child resolves the SAME project, exactly as {#window}
+      #   does for /fork; nil leaves tmux's own default-path rules in charge
       # @return [Placement]
-      def popup(command:, title: nil, width: nil, height: nil, target_session: nil)
+      #
+      # `-EE`, not `-E`: the popup runs a `lain chat` REPL that can exit
+      # non-zero (a crash), and `-EE` keeps the popup up on a non-zero exit
+      # until a key -- so the human READS the failure instead of watching it
+      # vanish. A clean exit (the reap path) still closes on its own.
+      def popup(command:, title: nil, width: nil, height: nil, target_session: nil, cwd: nil)
         reason = degrade_reason
-        return window(command:, name: title, target_session:).with(degraded: true, reason:) if reason
+        return window(command:, name: title, target_session:, cwd:).with(degraded: true, reason:) if reason
 
-        args = ["display-popup", "-E"]
+        args = ["display-popup", "-EE"]
+        args += ["-d", cwd] if cwd
         args += ["-T", title] if title
         args += ["-w", width.to_s] if width
         args += ["-h", height.to_s] if height
