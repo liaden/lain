@@ -30,6 +30,17 @@ class LainCLI < Thor
   # message and exit nonzero, instead of Thor's legacy exit-0 default.
   def self.exit_on_failure? = true
 
+  # Thor swallows the "--" separator before a command method sees its argv,
+  # so remember whether this invocation carried one: `up` forwards trailing
+  # args to the chat window ONLY after `--` -- a bare `lain up typo` must
+  # stay a loud error, never silent pass-through to chat.
+  def self.start(given_args = ARGV, config = {})
+    @double_dash = given_args.include?("--")
+    super
+  end
+
+  def self.double_dash? = !!@double_dash
+
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -134,6 +145,18 @@ class LainCLI < Thor
   desc "sessions", "List this project's recorded sessions (newest first)"
   def sessions = render { Lain::CLI::Sessions.new.listing }
 
+  desc "watch SELECTOR", "Read-only live tail of one actor's lineage (SELECTOR = spawn digest prefix)"
+  method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"
+  def watch(selector)
+    exit Lain::CLI::Watch.new(selector:, path: options[:session], sink: $stdout).run
+  rescue Interrupt
+    # Ctrl-C is how a tail of a SIGKILL'd (never-closed) session ends -- a
+    # clean exit, not a backtrace.
+    exit 0
+  rescue Lain::Error => e
+    raise Thor::Error, e.message
+  end
+
   desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
   def friction(selector) = render { Lain::CLI::Friction.new.report_for(selector) }
 
@@ -157,17 +180,18 @@ class LainCLI < Thor
   method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per improver turn"
   def improve(selector) = render { Lain::CLI::Improve.from_options(options).report_for(selector, dry_run: options[:dry_run]) }
 
-  desc "up", "Create/attach the lain tmux session (chat window + status HUD)"
+  desc "up [-- CHAT_FLAGS...]", "Create/attach the lain tmux session (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION,
                           desc: "tmux session name"
   method_option :socket, type: :string,
                          desc: "tmux socket (-L); default tmux socket when unset"
-  def up
+  def up(*chat_args)
     # ENV.key?("TMUX") is THIS shell's own answer to "am I already an
     # attached tmux client" -- Up#attach_command turns that into the right
     # verb (switch-client vs. attach); see its doc comment for why the
     # branch has to happen before exec, and the cross-server known gap.
-    plan = Lain::CLI::Up.new(session: options[:session], socket: options[:socket])
+    plan = Lain::CLI::Up.new(session: options[:session], socket: options[:socket],
+                             chat_args: chat_flags!(chat_args))
                         .launch_plan(nested: ENV.key?("TMUX"))
     plan.messages.each { |line| say(line) }
     # exec REPLACES this process, so nothing after this line ever runs --
@@ -181,6 +205,16 @@ class LainCLI < Thor
   end
 
   private
+
+  # `up` forwards trailing args to the chat window ONLY when the invocation
+  # carried a `--` separator (see .start); a bare `lain up typo` stays a loud
+  # error, never silent pass-through to chat.
+  def chat_flags!(chat_args)
+    return chat_args if chat_args.empty? || self.class.double_dash?
+
+    raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`, " \
+                       "e.g. `lain up -- --model <id>`"
+  end
 
   # The one command-body shape every read-only report command shares: say the
   # String the block returns, mapping Lain::Error onto Thor's exit contract

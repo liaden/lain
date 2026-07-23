@@ -178,4 +178,27 @@ RSpec.describe LainCLI do
       expect(payload[:options]).to eq(temperature: 0)
     end
   end
+
+  # `up` trailing args ride Thor's real `.start` argv path (method_option
+  # defaults and the post-`--` splat both exist only there), so these examples
+  # drive `.start` itself with Up and Kernel.exec doubled out.
+  describe "up argv threading through .start" do
+    let(:plan) { Lain::CLI::Up::LaunchPlan.new(messages: [], argv: %w[tmux attach]) }
+
+    it "routes post--- args into Up.new(chat_args:)" do
+      up = instance_double(Lain::CLI::Up, launch_plan: plan)
+      expect(Lain::CLI::Up).to receive(:new)
+        .with(hash_including(chat_args: ["--model", "claude-x", "--no-journal"]))
+        .and_return(up)
+      allow(Kernel).to receive(:exec)
+      described_class.start(["up", "--", "--model", "claude-x", "--no-journal"])
+    end
+
+    it "refuses trailing args when the invocation carried no -- separator" do
+      expect(Lain::CLI::Up).not_to receive(:new)
+      expect { described_class.start(%w[up typo]) }
+        .to output(/pass chat flags after `--`/).to_stderr
+        .and raise_error(SystemExit)
+    end
+  end
 end
