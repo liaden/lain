@@ -1,0 +1,228 @@
+*lain.txt*  Conventions around the lain agent harness's Neovim frontend
+
+Author: the lain project
+License: same as the lain gem
+
+==============================================================================
+CONTENTS                                                       *lain-contents*
+
+  1. Introduction ...................... |lain-introduction|
+  2. Setup ............................. |lain-setup|
+  3. Configuration ..................... |lain-configuration|
+  4. The server socket ................. |lain-socket|
+  5. Commands and functions ............ |lain-api|
+  6. The attach contract (protocol 3) .. |lain-contract|
+     6.1 User events ................... |lain-events|
+     6.2 Buffers and b:lain_view ....... |lain-buffers|
+     6.3 Highlight groups .............. |lain-highlights|
+     6.4 Runtime commands .............. |lain-runtime-commands|
+  7. Without the plugin ................ |lain-zero-install|
+
+==============================================================================
+1. INTRODUCTION                                            *lain-introduction*
+
+This plugin is deliberately thin. Everything protocol-shaped -- the `lain://`
+buffers, the `:LainSend`/`:LainReply`/... commands, all RPC handling -- is
+injected into the editor by the lain gem's own runtime at attach time, so gem
+and editor code can never drift. The plugin only owns the conventions AROUND
+that contract:
+
+  - a deterministic per-project server socket, so `lain chat --nvim` finds
+    your editor with no flags (|lain-socket|)
+  - `lain.socket_path()` and `lain.status()`, two read-only conveniences
+  - `:LainStart`, a window layout over the injected buffers (|lain-api|)
+  - this document, which describes the attach contract as a config consumer
+    sees it (|lain-contract|)
+
+The plugin defines no buffer logic and handles no RPC. Everything in section
+|lain-contract| works identically with the plugin uninstalled
+(|lain-zero-install|).
+
+==============================================================================
+2. SETUP                                                          *lain-setup*
+
+The plugin directory ships inside the lain gem at `plugin/nvim`. Add it to
+'runtimepath' (directly, or through your plugin manager pointing at that
+directory) and call: >lua
+
+    require("lain").setup({})
+<
+setup() records your options, defines |:LainStart|, starts listening for
+attaches, and serves the project socket. Serving happens on |VimEnter| -- or
+immediately when VimEnter has already fired, so lazy-loading plugin managers
+that call setup after startup still get a socket.
+
+==============================================================================
+3. CONFIGURATION                                          *lain-configuration*
+
+Every key can be given to setup(), or as `vim.g.lain_<key>` -- precedence is
+setup opts, then `vim.g.lain_*`, then the default. `vim.g` values are read at
+use time, so they work even without calling setup().
+
+    key             default                  meaning ~
+    socket          nil                      full socket path; overrides the
+                                             whole computation in |lain-socket|
+    socket_dir      nil                      base dir for the runtime-dir
+                                             socket; nil means
+                                             $XDG_RUNTIME_DIR/lain (or
+                                             /tmp/lain)
+    project_socket  ".lain/nvim.sock"        in-tree socket path, used when
+                                             the project has a .lain/ dir
+    state_path      ".lain/state.json"       where |lain.status()| reads;
+                                             relative paths resolve against
+                                             the editor's cwd
+    serverstart     true                     serve the socket on VimEnter;
+                                             set false to opt out
+    layout          journal | timeline,      |:LainStart|'s window layout: a
+                             inbox,          list of columns (left to right),
+                             request         each a list of lain:// buffer
+                                             names (top to bottom)
+
+==============================================================================
+4. THE SERVER SOCKET                                             *lain-socket*
+
+The socket path is deterministic from the project directory, so lain (and any
+other tool) can find this editor from the cwd alone:
+
+  - if `cwd/.lain` is a directory, the socket lives in-tree at
+    `cwd/.lain/nvim.sock` (the `project_socket` option) -- the same "beside
+    the project, like .git/" convention as `.lain/state.json`;
+  - otherwise it is `$XDG_RUNTIME_DIR/lain/nvim-<sha256(cwd)[:12]>.sock`
+    (falling back to `/tmp/lain/...` without XDG_RUNTIME_DIR).
+
+The first instance in a project wins the socket. A socket file left behind by
+a crashed instance is reclaimed: a live owner answers a probe connect, a
+stale file refuses and is removed before |serverstart()|. Two instances
+started at the same instant can race the probe; the loser's serverstart
+fails quietly and it simply serves no socket.
+
+==============================================================================
+5. COMMANDS AND FUNCTIONS                                           *lain-api*
+
+                                                                  *:LainStart*
+:LainStart              Open a window layout (new tab) over the injected
+                        lain:// buffers, per the `layout` option. Only
+                        buffers the runtime has actually created are placed.
+                        If lain has not attached yet, the layout opens
+                        automatically the moment it does.
+
+                                                          *lain.socket_path()*
+lain.socket_path()      The deterministic socket path for the current
+                        project (|lain-socket|). Pure -- computes the path,
+                        creates nothing.
+
+                                                               *lain.status()*
+lain.status()           The decoded contents of `.lain/state.json` (the
+                        state feed the running lain session publishes for
+                        the tmux HUD), or nil when no session has published.
+                        The gem writes the file atomically, so a read never
+                        sees a half-written state.
+
+                                                                *lain.setup()*
+lain.setup({opts})      See |lain-setup| and |lain-configuration|.
+
+==============================================================================
+6. THE ATTACH CONTRACT (PROTOCOL 3)                            *lain-contract*
+
+Everything below is provided by the gem's injected runtime, not by this
+plugin, and works without the plugin installed. It is documented here because
+it is the surface your own config hooks.
+
+------------------------------------------------------------------------------
+6.1 USER EVENTS                                                  *lain-events*
+
+The runtime fires |User| autocmds as its stable surface -- hook these, never
+lain internals. Both fire with `modeline = false`.
+
+                                                            *User-LainAttach*
+LainAttach              Fires once per attach, deliberately LAST: by the
+                        time your callback runs, every :Lain* runtime
+                        command and autocmd exists, so config reacting to
+                        LainAttach may call any of them. The payload
+                        (`ev.data`):
+
+                          buffers      the full lain:// buffer-name set, in
+                                       render order (names, never buffer
+                                       numbers -- buffers are created lazily
+                                       by their first render)
+                          gem_version  the lain gem's version string
+                          protocol     the contract the running runtime
+                                       actually speaks
+
+                        Trust `data.protocol` as the runtime's version.
+                        `g:lain_rpc_version` is only the gem's CLAIM -- the
+                        token the gem injected at attach -- and a mismatched
+                        runtime has already warned about it; the payload
+                        field is what the running Lua really speaks.
+
+                                                            *User-LainRender*
+LainRender              Fires after every landed render; `ev.data` carries
+                        `name` (the lain:// buffer name) and `buf` (its
+                        buffer number).
+
+                        Note: attach PRIMES every view, so expect a burst of
+                        LainRender events at attach time -- one per primed
+                        view (six today) -- before the agent has done
+                        anything. Do not treat that burst as agent activity.
+
+------------------------------------------------------------------------------
+6.2 BUFFERS AND b:lain_view                                     *lain-buffers*
+                                                                 *b:lain_view*
+
+The runtime owns six buffers: `lain://journal` (append-only tool journal),
+`lain://timeline`, `lain://workspace`, `lain://diff`, `lain://inbox` (all
+read-only projections), and `lain://request`, the one editable buffer (edit
+it, then `:LainResend`).
+
+The read-only record views share the single `lain` filetype; `b:lain_view`
+names the specific view on EVERY lain:// buffer, and is set before the
+FileType autocmd fires. Dispatch on it: >lua
+
+    vim.api.nvim_create_autocmd("FileType", {
+      pattern = "lain",
+      callback = function(ev)
+        local view = vim.b[ev.buf].lain_view  -- e.g. "lain://timeline"
+      end,
+    })
+<
+`]]` / `[[` jump between records in the journal, timeline, and inbox.
+
+------------------------------------------------------------------------------
+6.3 HIGHLIGHT GROUPS                                         *lain-highlights*
+
+The runtime defines one small namespaced syntax for the `lain`-filetype
+buffers -- six groups, each `highlight default link`ed, so a colorscheme or
+your own `:highlight link` overrides any of them without a fight:
+
+    group           default link  matches ~
+    lainToolName    Function      the journal's tool attribution: the id
+                                  leading each "[id stream]" prefix
+    lainDigest      Identifier    the Store's "blake3:..." digest shape
+    lainRole        Keyword       user/assistant opening a timeline turn line
+    lainEventKind   Type          event kinds (turn, spawn, message,
+                                  snapshot, tool_use, tool_result) plus the
+                                  journal's stream words (stdout/stderr)
+    lainAge         Comment       the inbox's "12s"/"3m"/"1h" ages
+    lainSender      Constant      inbox sender attribution: the text leading
+                                  the double-space-padded age
+
+------------------------------------------------------------------------------
+6.4 RUNTIME COMMANDS                                   *lain-runtime-commands*
+
+Defined by the runtime at attach (they do not exist before it): `:LainSend`,
+`:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainVersion`. In
+`lain://inbox`, `r` and <CR> prompt for and submit a reply.
+
+==============================================================================
+7. WITHOUT THE PLUGIN                                      *lain-zero-install*
+
+The plugin is optional sugar. A bare editor started as >
+
+    nvim --listen /tmp/some.sock
+<
+and a `lain chat --nvim` pointed at that socket attach exactly the same:
+runtime injected, buffers, commands, events, highlights -- everything in
+|lain-contract|. The plugin adds only the socket convention, the two
+functions, and |:LainStart|.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
