@@ -393,8 +393,16 @@ RSpec.describe Lain::CLI::Backend do
     # A nil or blank --model is a WIRING bug, not an unsupported provider, and
     # ContextWindow says so loudly (context_window.rb:104-108) rather than
     # degrading to a fallback that would silently never fire.
-    it "refuses a blank --model loudly rather than falling back" do
-      expect { backend_for(provider: "ollama", model: "  ", max_tokens: 64).pipeline_source(cache_profile: profile) }
+    #
+    # C1 moved the lookup off construction and onto the render, so the raise
+    # lands on the first TURN rather than at startup -- later, but no quieter,
+    # which is the ruling. The Source is built here without incident; the turn
+    # is what refuses.
+    it "refuses a blank --model loudly on the first turn rather than falling back" do
+      backend = backend_for(provider: "ollama", model: "  ", max_tokens: 64)
+      source = backend.pipeline_source(cache_profile: profile, journal:)
+
+      expect { source.context_for(base: backend.context, timeline: history(2), usage: nil, session:) }
         .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
     end
 

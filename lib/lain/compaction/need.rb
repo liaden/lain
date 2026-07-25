@@ -21,7 +21,14 @@ module Lain
       # cannot silently drift from what a detector actually reads -- a fifth
       # signal means adding a field HERE, visibly, not threading one more
       # keyword through #check's signature and every detector's #fired?.
-      State = Data.define(:messages, :used_tokens, :manual, :plan_step_completed)
+      #
+      # `window_tokens` is the exception that proves it: a field added for a
+      # PARAMETER, not for a signal. The context window belongs to the model
+      # THIS turn renders through, and `/model` rewrites that mid-session
+      # ({Context::ModelSwitch}), so a window fixed when the Need was built
+      # would keep measuring occupancy against the model the run began with.
+      # Per-turn state travels here; it does not make Need mutable.
+      State = Data.define(:messages, :used_tokens, :window_tokens, :manual, :plan_step_completed)
       private_constant :State
 
       # Which signals fired, as a frozen list of Symbols; empty means "not
@@ -54,17 +61,21 @@ module Lain
       # Fires once usage crosses a configurable fraction of the model's
       # context window -- ahead of the hard cap, the way a fuel gauge warns
       # before empty rather than at it.
+      #
+      # It holds the RATIO (a policy, set once) and reads the WINDOW off the
+      # state (a fact about this turn's model, which can change under a running
+      # session). That split is what keeps this detector frozen and shareable
+      # while still following a `/model` switch.
       class ApproachingWindow
         KIND = :approaching_window
 
-        def initialize(window_tokens:, ratio:)
-          @window_tokens = Integer(window_tokens)
+        def initialize(ratio:)
           @ratio = Float(ratio)
           freeze
         end
 
         def fired?(state)
-          !state.used_tokens.nil? && state.used_tokens >= @window_tokens * @ratio
+          !state.used_tokens.nil? && state.used_tokens >= state.window_tokens * @ratio
         end
       end
 
@@ -93,28 +104,51 @@ module Lain
       private_constant :DETECTORS
 
       # @param byte_threshold [Integer] see {TokenThreshold}
-      # @param window_tokens [Integer] see {ApproachingWindow}
       # @param approaching_ratio [Float] see {ApproachingWindow}
-      def initialize(byte_threshold:, window_tokens:, approaching_ratio: 0.9)
+      def initialize(byte_threshold:, approaching_ratio: 0.9)
         @detectors = [
           TokenThreshold.new(byte_threshold:),
-          ApproachingWindow.new(window_tokens:, ratio: approaching_ratio),
+          ApproachingWindow.new(ratio: approaching_ratio),
           Manual.new.freeze,
           PlanStepCompletion.new.freeze
         ].freeze
         freeze
       end
 
+      # @param window_tokens [Integer] the context window of the model THIS turn
+      #   renders through. Required, and deliberately not defaulted: a guessed
+      #   window is a silently wrong threshold, and the one thing worse than
+      #   compacting early is never compacting at all.
       # @param messages [Array<Hash>] the candidate-for-drop head, sized the
       #   same way {Context::Compact} sizes it
       # @param used_tokens [Integer, nil] current usage against the context window
       # @param manual [Boolean] an explicit, on-demand trigger
       # @param plan_step_completed [Boolean] {Session#plan_step_completed?}'s signal
       # @return [Result]
-      def check(messages: [], used_tokens: nil, manual: false, plan_step_completed: false)
-        state = State.new(messages:, used_tokens:, manual:, plan_step_completed:)
+      def check(window_tokens:, messages: [], used_tokens: nil, manual: false, plan_step_completed: false)
+        state = State.new(messages:, used_tokens:, window_tokens: window!(window_tokens),
+                          manual:, plan_step_completed:)
         fired = @detectors.select { |detector| detector.fired?(state) }.map { |detector| detector.class::KIND }
         Result.new(signals: fired)
+      end
+
+      private
+
+      # The coercion {ApproachingWindow} ran at construction while the window
+      # was its own, moved to where the value now arrives -- and it has to be
+      # here rather than in `#fired?`, which short-circuits on a nil
+      # `used_tokens`. A garbage window would otherwise stay SILENT until the
+      # first turn carrying usage and then surface as a NoMethodError on nil
+      # from inside a private detector, naming neither the parameter nor the
+      # fix. Zero and negatives are worse: they raise nothing ever and fire
+      # :approaching_window on every turn forever, which reads as a compaction
+      # policy rather than as the wiring bug it is.
+      def window!(window_tokens)
+        tokens = Integer(window_tokens, exception: false)
+        return tokens if tokens&.positive?
+
+        raise ArgumentError, "window_tokens must be a positive Integer, got #{window_tokens.inspect} -- " \
+                             "it is the context window of the model this turn renders through"
       end
     end
   end

@@ -104,7 +104,7 @@ module Lain
       private_constant :IdleGap
 
       # @param need [Need] the detector bank; owns the byte threshold and the
-      #   window, so this object never restates either
+      #   approaching-window RATIO, so this object never restates either
       # @param cold [Cold] cache-warmth state, fed by {#<<} and {#observe_idle}
       # @param hard_cap [Integer] the history size, in {Head#bytesize}'s byte
       #   proxy, that forces a compaction even while the cache is warm
@@ -118,9 +118,16 @@ module Lain
       # @param clock [#call] answers the current Time. Injected, never read
       #   inline: `Time.now` in the render path would make a replayed run
       #   non-deterministic, the same reason {StatusFeed} takes one.
+      # @param context_window [#window_tokens] the window book {#decide} asks
+      #   about the LIVE model each turn. The default degrades to a conservative
+      #   fallback for a model no Anthropic-shaped table carries (`ollama`,
+      #   `bedrock`), because an unsupported provider must still run; a blank
+      #   model still raises there, which is a wiring bug rather than a provider.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, journal: Channel::Null.instance,
-                     model: nil, price_book: PriceBook.default, clock: -> { Time.now })
+                     model: nil, price_book: PriceBook.default, clock: -> { Time.now },
+                     context_window: ContextWindow.default)
         @need = need
+        @context_window = context_window
         @cold = cold
         @hard_cap = Integer(hard_cap)
         @keep_last = validated_keep_last(keep_last)
@@ -210,13 +217,26 @@ module Lain
       # whatever the signals say.
       def decide(base:, messages:, usage:, session:)
         head = Head.new(messages:, keep_last: @keep_last)
-        need = @need.check(messages: head.messages, used_tokens: usage,
+        need = @need.check(messages: head.messages, used_tokens: usage, window_tokens: window_for(base),
                            plan_step_completed: session.plan_step_completed?)
         return defer(base:, need:, head:) if head.empty? || !need.needed?
 
         weigh(base:, messages:, head:, need:,
               snapshot: SummarySnapshot.take(messages: head.messages, eager: @eager))
       end
+
+      # Off the LIVE Context, every turn, never captured at construction:
+      # `/model` writes into {Context::ModelSwitch}'s slot mid-session
+      # (model_switch.rb:20-22), so a window resolved once at startup would go
+      # on measuring occupancy against the model the run began with -- and an
+      # over-estimate is the failure that never fires rather than the one that
+      # fires early. `Context#model` reads that slot at read time, which is
+      # exactly what makes the derivation follow the switch.
+      #
+      # A blank model raises here rather than on the first `#compaction_source`
+      # call, which is later but no quieter: it is a wiring bug, and this bench
+      # fails loudly on one rather than degrading to a threshold nobody chose.
+      def window_for(base) = @context_window.window_tokens(base.model)
 
       # Then WHEN, and only then WHETHER IT HELPS. {Scheduler#evaluate} is pure
       # and journals nothing (only `#pipeline` does), so asking it first costs

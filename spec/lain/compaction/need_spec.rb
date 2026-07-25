@@ -7,19 +7,24 @@ RSpec.describe Lain::Compaction::Need do
     { "role" => role, "content" => text(body) }
   end
 
-  subject(:need) { described_class.new(byte_threshold: 100, window_tokens: 1000, approaching_ratio: 0.9) }
+  subject(:need) { described_class.new(byte_threshold: 100, approaching_ratio: 0.9) }
+
+  # The window is a per-check PARAMETER, not construction state (it follows the
+  # turn's live model), so every example here supplies one. 1000 is the window
+  # the approaching-window examples below are sized against.
+  def check(window_tokens: 1000, **state) = need.check(window_tokens:, **state)
 
   # Scenario: Each need-signal raises the flag without compacting
   describe "the token-threshold signal" do
     it "raises the need flag once the candidate messages cross the byte-length proxy" do
-      result = need.check(messages: [message("user", "a" * 200)])
+      result = check(messages: [message("user", "a" * 200)])
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:token_threshold)
     end
 
     it "does not raise the flag under threshold" do
-      result = need.check(messages: [message("user", "a")])
+      result = check(messages: [message("user", "a")])
 
       expect(result.needed?).to be(false)
       expect(result.signals).not_to include(:token_threshold)
@@ -28,36 +33,81 @@ RSpec.describe Lain::Compaction::Need do
 
   describe "the approaching-window signal" do
     it "raises the need flag once used tokens cross the ratio of the window" do
-      result = need.check(used_tokens: 950)
+      result = check(used_tokens: 950)
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:approaching_window)
     end
 
     it "does not raise the flag comfortably below the window" do
-      result = need.check(used_tokens: 10)
+      result = check(used_tokens: 10)
 
       expect(result.needed?).to be(false)
       expect(result.signals).not_to include(:approaching_window)
     end
 
     it "does not raise the flag when usage is unknown (nil)" do
-      result = need.check(used_tokens: nil)
+      result = check(used_tokens: nil)
 
       expect(result.signals).not_to include(:approaching_window)
+    end
+
+    # C1. The window is whatever THIS check was handed, so one Need answers for
+    # a session whose model changed under it -- the same occupancy fires against
+    # a small window and stays quiet against a large one, with no rebuild.
+    describe "the window is per-check, not per-Need" do
+      it "evaluates the same occupancy against whichever window it is handed" do
+        expect(check(used_tokens: 950, window_tokens: 1000).signals).to include(:approaching_window)
+        expect(check(used_tokens: 950, window_tokens: 1_000_000).signals).not_to include(:approaching_window)
+      end
+    end
+
+    # The coercion the window kept when it was a constructor argument, moved to
+    # where the value now arrives. It has to be HERE and not inside the
+    # detector: #fired? short-circuits on a nil `used_tokens`, so a garbage
+    # window is completely SILENT until the first turn that carries usage, and
+    # then surfaces as a NoMethodError on nil from inside a private object,
+    # naming neither the parameter nor the fix. Zero and negatives are worse
+    # still -- they never raise at all and fire on every turn forever.
+    describe "a window that is not a positive Integer" do
+      it "refuses a nil window, naming the parameter" do
+        expect { check(window_tokens: nil) }.to raise_error(ArgumentError, /window_tokens/)
+      end
+
+      it "refuses a non-numeric window" do
+        expect { check(window_tokens: "banana") }.to raise_error(ArgumentError, /window_tokens/)
+      end
+
+      it "refuses a zero window, which would otherwise fire on every turn forever" do
+        expect { check(window_tokens: 0, used_tokens: 1) }.to raise_error(ArgumentError, /window_tokens/)
+      end
+
+      it "refuses a negative window" do
+        expect { check(window_tokens: -1, used_tokens: 1) }.to raise_error(ArgumentError, /window_tokens/)
+      end
+
+      # The silent case, and the reason the guard cannot live in #fired?: with
+      # no usage to measure, the detector never touches the window at all.
+      it "refuses it on a turn with no usage, before any signal could read it" do
+        expect { check(window_tokens: nil, used_tokens: nil) }.to raise_error(ArgumentError, /window_tokens/)
+      end
+
+      it "coerces a numeric String, as the constructor argument used to" do
+        expect(check(window_tokens: "1000", used_tokens: 950).signals).to include(:approaching_window)
+      end
     end
   end
 
   describe "the manual signal" do
     it "raises the need flag on an explicit manual trigger" do
-      result = need.check(manual: true)
+      result = check(manual: true)
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:manual)
     end
 
     it "does not raise the flag without one" do
-      result = need.check(manual: false)
+      result = check(manual: false)
 
       expect(result.signals).not_to include(:manual)
     end
@@ -66,28 +116,37 @@ RSpec.describe Lain::Compaction::Need do
   describe "the plan-step-completion signal" do
     # Scenario: A completed todo raises the need flag
     it "raises the need flag when handed a completed plan-step signal" do
-      result = need.check(plan_step_completed: true)
+      result = check(plan_step_completed: true)
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:plan_step_completion)
     end
 
     it "does not raise the flag without one" do
-      result = need.check(plan_step_completed: false)
+      result = check(plan_step_completed: false)
 
       expect(result.signals).not_to include(:plan_step_completion)
     end
   end
 
+  # Deliberately REQUIRED, and pinned so it stays that way: a defaulted window
+  # is a threshold nobody chose, silently applied to every model that forgets to
+  # pass one -- and an over-estimate is the failure that never fires at all. The
+  # whole point of C1 is that the window comes from the turn, so a default here
+  # would quietly restore the startup-time constant it replaced.
+  it "demands a window rather than assuming one" do
+    expect { need.check }.to raise_error(ArgumentError, /window_tokens/)
+  end
+
   it "raises no flag when nothing fires" do
-    result = need.check
+    result = check
 
     expect(result.needed?).to be(false)
     expect(result.signals).to eq([])
   end
 
   it "collects every signal that fires, not just the first" do
-    result = need.check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
+    result = check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
 
     expect(result.signals).to contain_exactly(:token_threshold, :manual, :plan_step_completion)
   end
@@ -97,7 +156,7 @@ RSpec.describe Lain::Compaction::Need do
   # object for a signal to reach, so raising a flag structurally cannot also
   # execute a rewrite.
   it "never summarizes or rewrites -- the result carries flags, not content" do
-    result = need.check(messages: [message("user", "a" * 200)], manual: true)
+    result = check(messages: [message("user", "a" * 200)], manual: true)
 
     expect(result).to respond_to(:signals)
     expect(result).not_to respond_to(:messages)
@@ -121,7 +180,7 @@ RSpec.describe Lain::Compaction::Need do
     end
 
     it "produces a deeply frozen, Ractor-shareable Result" do
-      result = need.check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
+      result = check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
 
       expect(result).to be_deeply_frozen
       expect(result).to be_ractor_shareable

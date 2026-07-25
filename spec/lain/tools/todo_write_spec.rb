@@ -173,8 +173,8 @@ RSpec.describe Lain::Tools::TodoWrite do
       tool.call({ todos: [{ content: "a", status: "in_progress" }] }, invocation_with(session))
       tool.call({ todos: [{ content: "a", status: "completed" }] }, invocation_with(session))
 
-      need = Lain::Compaction::Need.new(byte_threshold: 1_000_000, window_tokens: 1_000_000)
-      result = need.check(plan_step_completed: session.plan_step_completed?)
+      need = Lain::Compaction::Need.new(byte_threshold: 1_000_000)
+      result = need.check(window_tokens: 1_000_000, plan_step_completed: session.plan_step_completed?)
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:plan_step_completion)

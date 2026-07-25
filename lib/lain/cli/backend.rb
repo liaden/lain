@@ -234,14 +234,13 @@ module Lain
       # about which model this run is.
       def model = @options[:model] || default_model
 
-      # {ContextWindow.default} degrades to a conservative fallback rather than
-      # raising, because `ollama` and `bedrock` name models no Anthropic-shaped
-      # table can carry and an unsupported provider must still START. A nil or
-      # BLANK model still raises there -- that is a wiring bug, not a provider.
+      # The context window is NOT resolved here: the Source derives it from the
+      # live Context every turn, so a `/model` switch mid-session moves the
+      # threshold with it (see {Compaction::Source#window_for}). What this
+      # method still owns is the byte threshold and the priced model.
       def compaction_source(cache_profile:, journal:)
         Compaction::Source.new(
-          need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD),
-                                     window_tokens: ContextWindow.default.window_tokens(model)),
+          need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
           eager:, journal:, model:, price_book: COMPACTION_PRICES

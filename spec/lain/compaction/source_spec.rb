@@ -124,9 +124,16 @@ RSpec.describe Lain::Compaction::Source do
 
   def messages_of(line) = line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
 
-  def build_need(byte_threshold: 1_000_000, window_tokens: 1_000_000, approaching_ratio: 0.9)
-    Lain::Compaction::Need.new(byte_threshold:, window_tokens:, approaching_ratio:)
+  def build_need(byte_threshold: 1_000_000, approaching_ratio: 0.9)
+    Lain::Compaction::Need.new(byte_threshold:, approaching_ratio:)
   end
+
+  # A book that answers ONE window whatever the model, for the examples that are
+  # about the ratio rather than about model resolution. A blank model still
+  # raises through it, which is the point of the fallback form.
+  def window_book(tokens) = Lain::ContextWindow.new(windows: {}, fallback: tokens)
+
+  def context_naming(model) = Lain::Context.new(model:, max_tokens: 1024, system: "a system prompt")
 
   def build_cold(ttl: 300) = Lain::Compaction::Cold.new(cache_profile: { ttl: }, journal:)
 
@@ -295,7 +302,7 @@ RSpec.describe Lain::Compaction::Source do
       [400, 400, 10].each_with_index do |tokens, index|
         accounting.observe(response(tokens), digest: "blake3:turn-#{index}")
       end
-      built = source(need: build_need(window_tokens: 1_000, approaching_ratio: 0.9))
+      built = source(need: build_need(approaching_ratio: 0.9), context_window: window_book(1_000))
 
       context_for(built, timeline, usage: accounting.last_turn_usage)
 
@@ -310,7 +317,7 @@ RSpec.describe Lain::Compaction::Source do
 
   describe "a resumed session does not force-compact on its first turn" do
     it "does not fire the approaching-window signal when usage is nil" do
-      built = source(need: build_need(byte_threshold: 100, window_tokens: 1_000))
+      built = source(need: build_need(byte_threshold: 100), context_window: window_book(1_000))
 
       context_for(built, timeline, usage: nil)
 
@@ -322,13 +329,103 @@ RSpec.describe Lain::Compaction::Source do
     # distinction a resumed session, whose Accounting is fresh and whose
     # Timeline is not, depends on.
     it "distinguishes an unknown occupancy from a measured zero" do
-      built = source(need: build_need(byte_threshold: 100, window_tokens: 1_000, approaching_ratio: 0.0))
+      built = source(need: build_need(byte_threshold: 100, approaching_ratio: 0.0),
+                     context_window: window_book(1_000))
 
       context_for(built, timeline, usage: nil)
       context_for(built, timeline, usage: 0)
 
       expect(decisions.map { |record| record["signals"] })
         .to eq([%w[token_threshold], %w[token_threshold approaching_window]])
+    end
+  end
+
+  # C1. The window is derived from the LIVE Context every turn, not fixed when
+  # the Source was built -- `/model` rewrites {Context::ModelSwitch}'s slot
+  # mid-session, and a window frozen at startup would keep measuring occupancy
+  # against the model the run began with.
+  describe "the window follows the turn's model" do
+    # ONE Source, two renders. 190_000 is over 0.9 of Opus 4.5's real 200,000
+    # window and far under 0.9 of Opus 4.8's 1,000,000, so the two renders can
+    # only disagree if the lookup happened per turn.
+    it "follows a mid-session model switch" do
+      built = source
+
+      context_for(built, timeline, base: context_naming("claude-opus-4-5"), usage: 190_000)
+      context_for(built, timeline, base: context_naming("claude-opus-4-8"), usage: 190_000)
+
+      expect(decisions.map { |record| record["signals"] })
+        .to eq([%w[approaching_window], []])
+    end
+
+    # The same claim through the seam it is actually ABOUT. Two separately-built
+    # Contexts prove the lookup reads its argument; only the live
+    # {Context::ModelSwitch} slot -- ONE Context object, mutated between renders
+    # exactly as `/model` mutates it -- proves the window follows a switch under
+    # a running session, which is what "mid-session" means. Promoted from the
+    # review panel's `probe-c1-live-switch.rb`.
+    describe "through the live /model slot" do
+      def switching(initial)
+        slot = Lain::Context::ModelSwitch.new(initial, journal:)
+        [slot, Lain::Context.new(model: slot, max_tokens: 1024, system: "a system prompt")]
+      end
+
+      it "stops firing when the switch is to a larger window" do
+        slot, live = switching("claude-opus-4-5")
+        built = source
+
+        context_for(built, timeline, base: live, usage: 190_000)
+        slot.switch("claude-opus-4-8", surface: :spec)
+        context_for(built, timeline, base: live, usage: 190_000)
+
+        expect(decisions.map { |record| record["signals"] }).to eq([%w[approaching_window], []])
+      end
+
+      it "starts firing when the switch is to a smaller window" do
+        slot, live = switching("claude-opus-4-8")
+        built = source
+
+        context_for(built, timeline, base: live, usage: 190_000)
+        slot.switch("claude-opus-4-5", surface: :spec)
+        context_for(built, timeline, base: live, usage: 190_000)
+
+        expect(decisions.map { |record| record["signals"] }).to eq([[], %w[approaching_window]])
+      end
+    end
+
+    it "fires the approaching-window signal for a small-window model" do
+      context_for(source, timeline, base: context_naming("claude-opus-4-5"), usage: 190_000)
+
+      expect(decisions.first["signals"]).to eq(%w[approaching_window])
+    end
+
+    # An ollama/bedrock id no Anthropic-shaped table carries. 7_500 is under 0.9
+    # of every real entry and over 0.9 of the 8_192 conservative fallback, so
+    # only the fallback makes this fire -- and nothing raises.
+    it "falls back conservatively for a model absent from the table, rather than raising" do
+      built = source
+
+      expect { context_for(built, timeline, base: context_naming("qwen3:4b"), usage: 7_500) }
+        .not_to raise_error
+      expect(decisions.first["signals"]).to eq(%w[approaching_window])
+    end
+
+    # Ruling of 2026-07-25: a nil or BLANK model is a wiring bug, not an
+    # unsupported provider, so {ContextWindow} raises for it however the book is
+    # configured. Deriving the window per turn moves that raise from startup to
+    # the first render -- later, but still loud, which is the doctrine. Pinned
+    # here so it stays deliberate.
+    it "raises on a blank model rather than rescuing the wiring bug" do
+      expect { context_for(source, timeline, base: context_naming("  ")) }
+        .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
+    end
+
+    it "leaves the byte threshold untouched by the model" do
+      built = source(need: build_need(byte_threshold: 100))
+
+      context_for(built, timeline, base: context_naming("qwen3:4b"), usage: nil)
+
+      expect(decisions.first["signals"]).to eq(%w[token_threshold])
     end
   end
 

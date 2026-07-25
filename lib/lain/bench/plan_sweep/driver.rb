@@ -54,6 +54,13 @@ module Lain
         REACTIVE_THRESHOLD = 250
         private_constant :REACTIVE_THRESHOLD
 
+        # The window {Need::ApproachingWindow} measures this arm's occupancy
+        # against. Stated, not derived from the run's model as the live path is:
+        # this arm never feeds `used_tokens` at all, so the signal cannot fire
+        # and the value only has to be a number the arm does not vary.
+        REACTIVE_WINDOW = 1_000_000
+        private_constant :REACTIVE_WINDOW
+
         # Trailing messages Compact keeps verbatim; the candidate-for-drop head is
         # everything before them.
         REACTIVE_KEEP_LAST = 1
@@ -118,7 +125,7 @@ module Lain
         # a prefix-digest chain for cache-writes) so the comparison stays honest.
         def reactive(run)
           scheduler = reactive_scheduler
-          need = Compaction::Need.new(byte_threshold: REACTIVE_THRESHOLD, window_tokens: 1_000_000)
+          need = Compaction::Need.new(byte_threshold: REACTIVE_THRESHOLD)
           folded = step_ids.inject(reactive_seed) do |state, step_id|
             reactive_turn(state, run, step_id, scheduler, need)
           end
@@ -141,7 +148,7 @@ module Lain
         # never disagree about whether this turn compacts.
         def reactive_pipeline(timeline, scheduler, need)
           candidate = timeline_messages(timeline)[0...-REACTIVE_KEEP_LAST]
-          scheduler.pipeline(need: need.check(messages: candidate), cold: false,
+          scheduler.pipeline(need: need.check(messages: candidate, window_tokens: REACTIVE_WINDOW), cold: false,
                              history_size: Canonical.dump(candidate).bytesize,
                              base: BASE_PIPELINE, messages: candidate)
         end
