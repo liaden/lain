@@ -8,8 +8,13 @@ module Lain
       # `/goal` reports what is in force. The driving, the done marker, the
       # iteration cap and the journaling all live in {GoalDriver} -- this command
       # is only the write surface over it, injected the SAME way {Help} takes its
-      # registry and {Approve} its prompt (no {Env} reader: the Repl and this
-      # command share the one driver Wiring built).
+      # registry and {Approve} its prompt -- the Repl and this command share the
+      # one driver Wiring built.
+      #
+      # The one {Env} reader is B3's: the driver auto-pins the objective's turn
+      # against the run's pin-set, and it must be given that session. Wiring
+      # memoizes the driver before it can name one, so the session rides in on
+      # the WRITE instead, from the only caller holding both.
       #
       # No LLM judge decides termination in this version -- the driver stops on
       # the agent's explicit marker, the cap, or `/goal off`.
@@ -23,12 +28,12 @@ module Lain
 
         def usage = "/goal <objective> | off -- drive the agent toward a standing goal until it signals done"
 
-        def call(args, _env)
+        def call(args, env)
           objective = args.strip
           return report if objective.empty?
           return turn_off if objective.casecmp?("off")
 
-          @driver.start(objective)
+          @driver.start(objective, session: env.agent.session)
           confirm(objective)
         end
 
