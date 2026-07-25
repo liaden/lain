@@ -40,24 +40,53 @@ module Lain
         Definition.new(template: TEMPLATE, schema: SCHEMA, tier:)
       end
 
-      # A body that is one unbroken run of token-shaped characters, 24+ long:
-      # the heuristic's complement to {Middleware::RefuseSecretWrites::PATTERNS},
-      # which only fires on a NAMED credential shape (`sk-`, `AKIA`, a
-      # `key: value` assignment). An opaque blob with no such cue -- no
-      # keyword, no prefix, just entropy -- reads as not worth saving on its
-      # own terms: whatever it is, it is not prose a memory_read is meant to
-      # surface later.
-      OPAQUE_TOKEN = %r{\A[A-Za-z0-9+/=_.-]{24,}\z}
+      # One alphanumeric character anywhere in the body -- the whole test.
+      #
+      # `[[:alnum:]]` is UNICODE-AWARE, and that is load-bearing: it is the
+      # only reason a Japanese, Cyrillic or Greek body saves. Narrowing it to
+      # `/[a-zA-Z0-9]/` would silently refuse every non-Latin write, and no
+      # existing spec would have caught it -- hence the non-Latin example in
+      # the spec.
+      #
+      # The rule Onigmo actually implements is exactly `Alphabetic | Nd` --
+      # an exhaustive 0..0x10FFFF sweep finds zero codepoints where the two
+      # disagree. `Alphabetic` is WIDER than "letters": it carries
+      # Other_Alphabetic, so 939 `Mn` and 441 `Mc` combining marks match
+      # (`ͣͤͥ` is content), as do 130 `So` circled LETTERS (`Ⓐ`) -- alongside
+      # the obvious `L*`, `Nl` (`Ⅰ`) and `Nd` (fullwidth `０`). Contentless,
+      # and so declined: emoji, math symbols, CJK punctuation, and circled or
+      # superscript DIGITS (`①`, `²` -- `No`, not `Nd`). Do not audit this
+      # rule by sampling: `U+0301` is a non-Alphabetic `Mn` that declines,
+      # and generalizing from it is how this comment previously claimed the
+      # opposite of the truth for the other 1379 marks.
+      #
+      # This replaces an earlier rule (`\A[A-Za-z0-9+/=_.-]{24,}\z`: any
+      # unbroken 24+-char run is not worth saving) that refused git SHAs,
+      # UUIDs, tracking numbers and base64 -- precisely the identifiers a
+      # later `memory_read` exists to surface. The over-refusal is what
+      # blocked wiring this gate into the live guard, and the premise behind
+      # it was wrong twice over: an opaque identifier IS content, and the one
+      # thing it might have caught by accident -- a credential -- is refused
+      # by {Middleware::RefuseSecretWrites::PATTERNS}, which can name the
+      # shape it matched. This oracle is not a secret detector and must not
+      # be read as one; it answers only "is there anything here to save?".
+      CONTENT = /[[:alnum:]]/
 
-      # The heuristic baseline every richer arm (OR-4) must beat: blank
-      # bodies and opaque tokens are not worth saving; everything else is.
+      # A CONTENTLESSNESS FLOOR, not a quality judgement -- and deliberately
+      # nothing more. It sits on the synchronous live write path, where a
+      # false refusal is unrecoverable (the write is withheld and the model
+      # has nothing to retry differently), so the only thing it is willing to
+      # be sure about is that a body with no {CONTENT} at all has nothing to
+      # save. Anything more opinionated reinvents the over-refusal this rule
+      # was written to undo. As an OR-4 comparison baseline it is near-useless
+      # -- almost nothing can lose to it on recall -- and that is the trade
+      # accepted here, not an oversight.
       #
       # @return [Oracle::Heuristic]
       def self.heuristic
         Heuristic.new(definition: definition(tier: :heuristic), predicate: lambda do |inputs|
-          body = inputs.fetch(:body).to_s.strip
-          worth = !body.empty? && !OPAQUE_TOKEN.match?(body)
-          { "worth_saving" => worth, "reason" => worth ? "readable content" : "blank or opaque-token body" }
+          worth = CONTENT.match?(inputs.fetch(:body).to_s)
+          { "worth_saving" => worth, "reason" => worth ? "readable content" : "contentless body" }
         end)
       end
 
@@ -65,6 +94,16 @@ module Lain
       # existing binary `#secret?(input)` seam: the richer `worth_saving` +
       # `reason` answer collapses to the one bit that seam asks for.
       class Gate
+        # The one field this oracle judges, and the test for whether an input
+        # is its business at all. {Middleware::RefuseSecretWrites::GUARDED_TOOLS}
+        # sends BOTH `memory_write` and `improvement_write` through the single
+        # `oracle:` seam, and an `improvement_write` input is
+        # `{note, kind, evidence_digests}` -- no `body`. Reading that missing
+        # key as an empty String would judge every improvement note
+        # contentless and refuse it. A missing `body` is not a contentless
+        # save; it is a question this oracle was never asked.
+        JUDGED_FIELD = "body"
+
         # @param tier [#ask] a live tier answering this module's {.definition}.
         #   Defaults to {.heuristic} -- the only tier safe to construct here,
         #   since {#secret?} runs synchronously on the live write path (see
@@ -74,13 +113,20 @@ module Lain
           @tier = tier
         end
 
-        # @param input [Hash] the memory_write effect's raw input
-        #   (String-keyed id/description/body)
-        # @return [Boolean] true refuses the write -- the oracle judged it
-        #   not worth saving
+        # @param input [Hash] a guarded tool effect's raw input (String-keyed)
+        # @return [Boolean] true withholds the write. False covers two
+        #   different answers on purpose -- "worth saving" and "not mine to
+        #   judge" (see {JUDGED_FIELD}) -- because this seam asks for one bit
+        #   and abstaining must never read as a refusal.
         def secret?(input)
-          answer = @tier.ask(id: input["id"], description: input["description"], body: input["body"]).await
-          !answer.worth_saving
+          input.key?(JUDGED_FIELD) && !worth_saving?(input)
+        end
+
+        private
+
+        def worth_saving?(input)
+          @tier.ask(id: input["id"], description: input["description"],
+                    body: input.fetch(JUDGED_FIELD)).await.worth_saving
         end
       end
     end
