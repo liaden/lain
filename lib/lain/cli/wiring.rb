@@ -192,35 +192,31 @@ module Lain
         gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset:, channel:))
 
         agent = nil
-        Lain::Agent.new(provider: spooled_provider(backend, channel:), toolset:,
-                        context: board.graft(backend.context),
-                        handler: gate, session:, timeline:,
+        Lain::Agent.new(toolset:, context: board.graft(backend.context), handler: gate, session:, timeline:,
                         request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
-                        tool_middleware: guarded_tools,
+                        tool_middleware: ToolGuard.stack(chronicle),
                         turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
-                        **chronicle.telemetry_kwargs).tap { |built| agent = built }
+                        **agent_backing(backend, channel)).tap { |built| agent = built }
       end
 
-      # The tool phase's one guard: {Middleware::RefuseSecretWrites}. Named
-      # rather than inlined so #build_agent's keyword bag reads as wiring, not
-      # as stack construction (and stays under Metrics/AbcSize with T18's
-      # request_override slot in the same call).
-      def guarded_tools = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**guard_kwargs)])
-
-      # Both arms of the guard's construction, kept together because both are
-      # load-bearing in a way the one-liner cannot show.
+      # A8: the provider, and the compaction wiring hung off it -- the per-turn
+      # Context source, the eager-summary observer, and the journal tee that
+      # feeds the source the cache-read counts the render seam cannot see
+      # ({CompactionMount}). One method, because the mount must reference THE
+      # ONE provider the run talks to: {Compaction::Cold} compares idle time
+      # against that provider's own cache TTL, so a second construction would
+      # be a second answer, and the pairing cannot be allowed to come apart.
       #
-      # `.slice(:journal)` must OMIT the key under --no-journal so
-      # RefuseSecretWrites' own Channel::Null default applies -- passing an
-      # explicit `journal: nil` crashes on `<<` at refusal time, the worst
-      # possible moment.
-      #
-      # The `oracle:` arm is a CONTENTLESSNESS FLOOR, not a second secret
-      # detector ({Oracle::MemorySave}): it declines a save with nothing in it
-      # and journals that as a decline rather than under a PATTERNS name. It
-      # abstains entirely for a guarded tool carrying no `body` at all, which
-      # is what keeps improvement_write from being refused wholesale.
-      def guard_kwargs = { oracle: Oracle::MemorySave::Gate.new, **chronicle.telemetry_kwargs.slice(:journal) }
+      # The mount is deliberately NOT memoized. Every piece of run state it
+      # hands over -- the Source's accumulated warmth, the Eager's fired
+      # summaries -- is memoized in {Backend}, which is loud about a differing
+      # rebind ({Backend::Rebound}); the mount itself is a pure assembler over
+      # those, so a memo here would only add a second place for a stale
+      # collaborator to hide.
+      def agent_backing(backend, channel)
+        provider = spooled_provider(backend, channel:)
+        { provider:, **CompactionMount.new(backend:, provider:, chronicle:).agent_kwargs }
+      end
 
       # Both provider construction sites tee their round trips into the
       # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real

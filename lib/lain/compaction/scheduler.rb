@@ -168,10 +168,14 @@ module Lain
         before = Canonical.dump(messages).bytesize
         after = Canonical.dump(@compact.call(messages)).bytesize
 
+        # `model:` is what the two cost figures are QUOTED IN -- see
+        # {Telemetry::Compaction}'s header for why a zero without it is
+        # indistinguishable from a genuinely free compaction, and why it is
+        # deliberately the scheduler's model rather than the one that ran.
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,
           tokens_before: before, tokens_after: after,
-          cost_saved: cost_saved(before, after), cost_spent: cost_spent(decision, after)
+          cost_saved: cost_saved(before, after), cost_spent: cost_spent(decision, after), model: @model
         )
       end
 

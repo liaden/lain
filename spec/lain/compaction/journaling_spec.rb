@@ -114,6 +114,30 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
 
       expect(records.first["trigger"]).to eq(["approaching_window"])
     end
+
+    # A8's review (Schneeman): without this, a compaction priced through a
+    # ZERO fallback -- what an unpriced local model gets -- is byte-identical
+    # on the record to a genuinely free one, and the only recovery is a join
+    # against TurnUsage. That join is not merely inconvenient, it is WRONG
+    # after a `/model` switch: the Source is built once and prices in the
+    # model that was in force THEN, while TurnUsage names the model that
+    # actually ran. Naming the tier here is what lets a reader see the
+    # mismatch instead of being lied to about the dollars.
+    it "names the model its cost figures are quoted in" do
+      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
+      )
+
+      expect(records.first["model"]).to eq("claude-sonnet-4-6")
+    end
+
+    it "journals a nil model beside its zero costs, so an unpriced run says so" do
+      scheduler(hard_cap: 100).pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
+      )
+
+      expect(records.first).to include("model" => nil, "cost_saved" => "0.0", "cost_spent" => "0.0")
+    end
   end
 
   describe Lain::Telemetry::Compaction do
@@ -157,6 +181,26 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
         described_class.new(trigger: %i[manual], cache_state: :lukewarm, tokens_before: 1, tokens_after: 1,
                             cost_saved: 0, cost_spent: 0)
       end.to raise_error(ArgumentError, /cache_state/)
+    end
+
+    # Additive: `model:` defaults, so every constructor that predates it --
+    # this file's own subject included -- keeps working and reads as the
+    # unpriced configuration the record already documented.
+    it "defaults the model to nil, which is the unpriced configuration it always allowed" do
+      expect(compaction.model).to be_nil
+      expect(compaction.to_journal).to include("model" => nil)
+    end
+
+    it "holds the model as a frozen String and stays Ractor-shareable with one" do
+      priced = described_class.new(
+        trigger: %i[token_threshold], cache_state: :forced, tokens_before: 100, tokens_after: 40,
+        cost_saved: 0, cost_spent: 0, model: +"claude-opus-4-8"
+      )
+
+      expect(priced.model).to eq("claude-opus-4-8")
+      expect(priced).to be_deeply_frozen
+      expect(priced).to be_ractor_shareable
+      expect(JSON.parse(JSON.generate(priced.to_journal))).to include("model" => "claude-opus-4-8")
     end
 
     it "accepts a String cache_state (JSON never round-trips Symbols) equal to the Symbol form" do

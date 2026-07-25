@@ -22,9 +22,58 @@ module Lain
       # reused -- Backend does not couple to Bench).
       class MissingAPIKey < Error; end
 
+      # A memoized factory answers its FIRST caller's arguments forever. With
+      # the one wiring site the run has that is a cache hit; a SECOND, differing
+      # call would hand back a {Compaction::Source} still bound to the first
+      # journal, and every per-turn decision would land in `Channel::Null` with
+      # nothing raising and nothing missing from the record's shape -- the
+      # precise silent degrade the whole compaction band exists to prevent.
+      # Loud instead, per CLAUDE.md's unknown-state premise.
+      class Rebound < Error; end
+
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama bedrock].freeze
+
+      # Compaction's knobs, in {Compaction::Head}'s canonical-byte proxy. They
+      # live HERE rather than as Thor defaults so there is one authority: an
+      # unset flag arrives as nil and falls through to these.
+      #
+      # 256 KiB of droppable head is roughly 64k tokens -- big enough that a
+      # working session is never rewritten for nothing, small enough that it is
+      # the trigger that actually fires under Anthropic's 1M window (where
+      # {Need::ApproachingWindow} would not fire until ~900k). The hard cap is
+      # 4x that: below it a WARM cache defers, because a cache read costs ~0.1x
+      # what the rewrite costs, and above it the history is large enough that
+      # protecting the prefix is no longer the better trade.
+      DEFAULT_BYTE_THRESHOLD = 262_144
+      DEFAULT_HARD_CAP = 1_048_576
+
+      # Trailing messages a compaction never touches. Twenty is about the last
+      # ten exchanges: enough that the model keeps the thread of what it is
+      # doing, since everything ahead of it survives only as summary or
+      # attestation.
+      DEFAULT_KEEP_LAST = 20
+
+      # {Compaction::Scheduler} prices EVERY compacting turn, and the bench's
+      # shared {PriceBook} raises on a model it has no list price for -- right,
+      # where a silently-free model would corrupt a cost bench's headline
+      # metric, and fatal here, where it would turn the first compaction of an
+      # ollama chat into a crash mid-conversation. `--model` is a free-form
+      # string, so this is not only the local-provider case.
+      #
+      # So compaction gets its own book: the same DEFAULTS, degrading to zero.
+      # Nothing is being under-reported that a bench reads -- `cost_saved` and
+      # `cost_spent` are annotations on a decision already made on BYTES -- and
+      # zero is the honest figure for the local tier this most often means.
+      # The degrading is not SILENT: {Telemetry::Compaction} carries the model
+      # those figures are quoted in, so a zero beside a local model id reads as
+      # the fallback it is rather than as a free compaction.
+      #
+      # No `.freeze`: PriceBook freezes itself and its map at construction.
+      COMPACTION_PRICES = PriceBook.new(
+        fallback: Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
+      )
 
       def initialize(options)
         @options = options
@@ -71,10 +120,64 @@ module Lain
       # prompt renders from the loaded {#slots} unless a caller overrides it --
       # bench record's `--system` flag is the one caller that does.
       def context(system_override: nil)
-        Context.new(model: @options[:model] || default_model,
-                    max_tokens: @options[:max_tokens], extra: sampler_extra,
+        Context.new(model:, max_tokens: @options[:max_tokens], extra: sampler_extra,
                     system: system_override || slots.render)
       end
+
+      # Which Context THIS turn renders through -- the live compaction source
+      # by DEFAULT, since `lain chat` compacts unless `--no-compact` says
+      # otherwise, and {Agent::PipelineSource::Null} when it does.
+      #
+      # MEMOIZED, unlike {#context}, which deliberately answers a fresh value at
+      # six call sites. The source is RUN state: {Compaction::Cold} accumulates
+      # the cache warmth it has observed and {Oracle::Eager} accumulates the
+      # summaries it has fired, so a source rebuilt per call would silently
+      # reset both every turn and the `:cold` decision path would never fire.
+      # The first call therefore BINDS the journal and the cache profile -- the
+      # run has exactly one wiring site ({CompactionMount}), which is where they
+      # come from -- and a differing second call raises {Rebound} rather than
+      # quietly answering the first binding.
+      #
+      # @param cache_profile [Lain::CacheProfile] the CHAT provider's own, so
+      #   {Compaction::Cold} compares idle time against a TTL that exists (a
+      #   TTL-less provider confirms cold off the zero cache-read alone)
+      # @param journal [#<<] where the per-turn decision and the cold
+      #   confirmation land
+      # @raise [Rebound] on a second call with different arguments
+      def pipeline_source(cache_profile:, journal: Channel::Null.instance)
+        bind_once(:pipeline_source, cache_profile:, journal:)
+        @pipeline_source ||= if compaction?
+                               compaction_source(cache_profile:, journal:)
+                             else
+                               Agent::PipelineSource::Null
+                             end
+      end
+
+      # The post-dispatch observer {Agent::ToolRunner} fires eager summaries
+      # through. {Effect::Handler::Summarizing::Observer} is the PRODUCTION
+      # mount and the {Effect::Handler::Summarizing} decorator is its
+      # alternative -- never both against one {Oracle::Eager}, since `#fire`
+      # consumes a digest before spawning, so whichever fires first spends it
+      # and the other misses that content forever.
+      #
+      # The Null under `--no-compact`: nothing would ever read a summary, so
+      # firing local model calls would be pure waste.
+      def tool_observer
+        @tool_observer ||= if compaction?
+                             Effect::Handler::Summarizing::Observer.new(eager:)
+                           else
+                             Agent::ToolRunner::Observer::Null.new
+                           end
+      end
+
+      # The run's ONE summary store, shared by {#tool_observer} (which fires
+      # into it) and {#pipeline_source} (which snapshots it per turn). Two
+      # instances would mean every fire landed somewhere no render reads.
+      def eager = @eager ||= Oracle::Eager.new(oracle: summary_oracle)
+
+      # @return [Boolean] whether this run compacts at all; on unless
+      #   `--no-compact` turned it off
+      def compaction? = @options.fetch(:compact, true)
 
       # The loaded prompt slots, memoized -- exposed (not just the rendered
       # String {#context} produces) so a caller can emit ONE Telemetry::SlotFills
@@ -125,6 +228,59 @@ module Lain
         when "bedrock" then Provider::Bedrock::DEFAULT_MODEL
         else Provider::AnthropicRaw::DEFAULT_MODEL
         end
+      end
+
+      # `--model` resolved once, so {#context} and the compaction book agree
+      # about which model this run is.
+      def model = @options[:model] || default_model
+
+      # {ContextWindow.default} degrades to a conservative fallback rather than
+      # raising, because `ollama` and `bedrock` name models no Anthropic-shaped
+      # table can carry and an unsupported provider must still START. A nil or
+      # BLANK model still raises there -- that is a wiring bug, not a provider.
+      def compaction_source(cache_profile:, journal:)
+        Compaction::Source.new(
+          need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD),
+                                     window_tokens: ContextWindow.default.window_tokens(model)),
+          cold: Compaction::Cold.new(cache_profile:, journal:),
+          hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
+          eager:, journal:, model:, price_book: COMPACTION_PRICES
+        )
+      end
+
+      # An unset numeric flag arrives as nil; the constant is the authority.
+      def knob(flag, default) = @options[flag] || default
+
+      # The binding half of a memoized factory (see {Rebound}). Same arguments
+      # are a cache hit and pass silently; different ones name WHICH argument
+      # moved, since "it was already built" is exactly the diagnosis a caller
+      # cannot make from the wrong Source it would otherwise be handed.
+      #
+      # Argument CLASSES, never their `#inspect`: a journal is a live sink that
+      # may be holding the whole session's events, and a diagnostic that dumps
+      # it is a second way to corrupt the record it is complaining about.
+      def bind_once(slot, **arguments)
+        bound = (@bound ||= {})
+        drifted = bound[slot]&.reject { |name, value| arguments.fetch(name) == value }
+        raise Rebound, rebound(slot, drifted) unless drifted.nil? || drifted.empty?
+
+        bound[slot] ||= arguments
+      end
+
+      def rebound(slot, drifted)
+        moved = drifted.map { |name, was| "#{name.to_s.tr("_", " ")} (was a #{was.class})" }.join(", ")
+        "#{slot} was already built and is memoized for the run; this call would have changed #{moved}, " \
+          "and the first binding is what every turn would keep using"
+      end
+
+      # The eager tier, always LOCAL and never the chat's provider (see
+      # {Oracle::Summarize}). Construction opens no connection, so an absent
+      # ollama costs nothing here: the fire fails inside {Oracle::Eager}'s task
+      # boundary and the compaction renders an elision instead.
+      def summary_oracle
+        Oracle::Model.new(definition: Oracle::Summarize.definition,
+                          provider: Provider::Ollama.new(api_base: @options[:api_base]),
+                          model: Provider::Ollama::DEFAULT_MODEL)
       end
 
       # Only the sampler flags the caller actually set, String-keyed to match

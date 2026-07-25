@@ -172,6 +172,17 @@ class LainCLI < Thor
                                 "(needs $TMUX and the session journal; incompatible with --no-journal)"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
+  # ON by default: a working harness default, not an opt-in arm. The three
+  # knobs name Backend's own constants as their defaults rather than restating
+  # a number here, so `lain help chat` and the wiring cannot disagree.
+  method_option :compact, type: :boolean, default: true,
+                          desc: "Summarize the history's head as it grows; --no-compact opts out"
+  method_option :compact_bytes, type: :numeric, default: Backend::DEFAULT_BYTE_THRESHOLD,
+                                desc: "Droppable-head bytes above which a compaction is warranted"
+  method_option :compact_cap, type: :numeric, default: Backend::DEFAULT_HARD_CAP,
+                              desc: "History bytes that force a compaction even while the cache is warm"
+  method_option :compact_keep, type: :numeric, default: Backend::DEFAULT_KEEP_LAST,
+                               desc: "Trailing messages a compaction leaves verbatim"
   default_task :chat
 
   # The lifecycle bracket (resolve --resume, open the journal, run the

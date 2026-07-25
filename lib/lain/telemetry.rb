@@ -777,21 +777,45 @@ module Lain
     # legitimate configuration today (nothing downstream reads cost from it
     # yet), not a caller error worth raising over.
     #
+    # `model` names the tier those dollars are QUOTED IN, and it is the field
+    # that keeps the two zeros above from being one zero. Without it a
+    # compaction priced through a degrading fallback -- what an unpriced local
+    # model gets from `CLI::Backend::COMPACTION_PRICES`, so that a `--provider
+    # ollama` chat compacts instead of crashing -- is byte-identical on the
+    # record to a genuinely free one, and the record is exactly where
+    # `price_book.rb:48-50` refuses to tell that lie ("a silently-free model is
+    # a lie" on a cost bench). nil keeps its existing meaning: no model to price
+    # with, both figures zero, a legitimate configuration.
+    #
+    # The one thing it is NOT is the model that ran. It is the model the
+    # SCHEDULER was built with -- for a live chat, whatever `--model` resolved
+    # to when `CLI::Backend` built the compaction source -- so after a `/model`
+    # switch it names the tier the estimate was priced against while
+    # {TurnUsage} names the tier that actually answered. That divergence is the
+    # point of carrying it: joining to TurnUsage to recover a price would
+    # silently use the wrong rate, and only a reader who can SEE both can tell
+    # that a 1M-window frontier estimate is sitting beside a turn that ran
+    # free on a local model.
+    #
     # Held as fixed-point decimal STRINGS, not `BigDecimal`: `Canonical.normalize`
     # deliberately does not support `BigDecimal` (it has no canonical wire
     # form), and every `Data` field here must already be an immutable, JSON-safe
     # value to keep this record `Ractor.shareable?` -- the same "canonical wire
     # form" idiom {RequestSent}'s `payload` and {TurnUsage}'s `usage` already
-    # use for anything that is not natively JSON-safe.
-    Compaction = Data.define(:trigger, :cache_state, :tokens_before, :tokens_after, :cost_saved, :cost_spent) do
+    # use for anything that is not natively JSON-safe. `model` is frozen for
+    # that same reason -- {TurnUsage} freezes its own for it.
+    Compaction = Data.define(:trigger, :cache_state, :tokens_before, :tokens_after, :cost_saved, :cost_spent,
+                             :model) do
       include Journalable
 
-      def initialize(trigger:, cache_state:, tokens_before:, tokens_after:, cost_saved:, cost_spent:)
+      # `model:` defaults, so every constructor that predates it keeps building
+      # the record it always did and reads as the unpriced case.
+      def initialize(trigger:, cache_state:, tokens_before:, tokens_after:, cost_saved:, cost_spent:, model: nil)
         trigger = Array(trigger).map(&:to_sym).freeze
         cache_state = cache_state.to_sym
         Guards::Compaction.check!(trigger:, cache_state:)
         super(trigger:, cache_state:, tokens_before: Integer(tokens_before), tokens_after: Integer(tokens_after),
-              cost_saved: decimal(cost_saved), cost_spent: decimal(cost_spent))
+              cost_saved: decimal(cost_saved), cost_spent: decimal(cost_spent), model: model&.to_s&.freeze)
       end
 
       # The cost delta {Compare} attributes to the scheduling policy:

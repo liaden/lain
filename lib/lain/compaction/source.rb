@@ -283,13 +283,29 @@ module Lain
       # agree, but the flag is journaled and a record claiming a rewrite that
       # did not ship would be a corrupted measurement, not a stale comment.
       def commit(base:, messages:, head:, need:, snapshot:, scheduler:)
-        provider = BASE_PROVIDER.call(base)
+        provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
                                       base: provider, messages:)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, snapshot:)
         compacted ? base.with_pipeline(pipeline) : base
       end
+
+      # The MAIN chat Context is deliberately not `Ractor.shareable?`: `/model`
+      # writes a live {Context::ModelSwitch} into its model slot, which is
+      # mutable by design and says so (model_switch.rb:20-22). A provider
+      # closing over THAT therefore fails {Scheduler::COMPOSE}'s
+      # `make_shareable` on the first compacting turn of every real `lain chat`
+      # -- found by wiring this live (A8), invisible to a spec that builds a
+      # plain Context.
+      #
+      # The render pipeline does not depend on the model: `#pipeline_for` never
+      # reads it, and both Contexts report the same `#requires`. So the PROVIDER
+      # is built from a twin whose slot is flattened to a frozen
+      # {Context::StaticModel}, while the pipeline is applied to the LIVE base
+      # (see {#commit}), which keeps `/model` switchable from the next turn on.
+      # Shareability is established, not skipped.
+      def flattened_twin(base) = base.with_model(base.model)
 
       def record(need:, head:, compacted:, snapshot: NOTHING_TAKEN, would_not_shrink: false)
         @journal << CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,

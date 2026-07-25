@@ -242,6 +242,188 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # A8: everything the live-wiring chunk built converges here. `lain chat`
+  # compacts by DEFAULT -- eager summaries when the local tier answers, honest
+  # elision when it does not -- so these pin the factories the exe's flags
+  # resolve through, including the memoization that makes them RUN state rather
+  # than per-call values (#context is deliberately the opposite: a fresh Context
+  # at six call sites).
+  describe "compaction wiring" do
+    let(:journal) { RecordingChannel.new }
+    let(:session) { instance_double(Lain::Session, plan_step_completed?: false) }
+    let(:profile) { Lain::CacheProfile::ANTHROPIC }
+    let(:toolset) { Lain::Toolset.new([]) }
+
+    def compacting_backend(**overrides)
+      backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64, **overrides)
+    end
+
+    def source_for(**overrides)
+      compacting_backend(**overrides).pipeline_source(cache_profile: profile, journal:)
+    end
+
+    # Substantial String-content tool_results: the shape SummarySnapshot keys a
+    # summary on, and big enough that a rewrite actually SHRINKS the history
+    # (Source#shrinks? refuses one that would not).
+    def history(size)
+      (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+        body = "result number #{index}: #{"the quick brown fox jumped over the lazy dog. " * 20}"
+        line.commit(role: "user",
+                    content: [{ "type" => "tool_result", "tool_use_id" => "call-#{index}", "content" => body }])
+      end
+    end
+
+    # One backend, one source, one turn -- the shape the live path takes.
+    def decide(timeline, usage: nil, cache_profile: profile, **overrides)
+      backend = compacting_backend(**overrides)
+      backend.pipeline_source(cache_profile:, journal:)
+             .context_for(base: backend.context, timeline:, usage:, session:)
+    end
+
+    def decisions = journal.events.grep(Lain::Compaction::Source::CompactionDecision)
+
+    it "builds a live compaction Source when no compaction flags are given at all" do
+      expect(source_for).to be_a(Lain::Compaction::Source)
+    end
+
+    it "builds the Null source under --no-compact" do
+      expect(source_for(compact: false)).to be(Lain::Agent::PipelineSource::Null)
+    end
+
+    # AC2's second half: with compaction off, the turn's Context is the base
+    # ITSELF, so the Request is byte-identical to one rendered with no source
+    # wired at all -- not merely equivalent.
+    it "renders byte-identically to an unwired Context under --no-compact" do
+      backend = compacting_backend(compact: false)
+      timeline = history(8)
+      base = backend.context
+
+      turn = backend.pipeline_source(cache_profile: profile, journal:)
+                    .context_for(base:, timeline:, usage: nil, session:)
+
+      expect(turn).to be(base)
+      expect(Lain::Canonical.dump(turn.render(timeline:, toolset:).cache_payload))
+        .to eq(Lain::Canonical.dump(base.render(timeline:, toolset:).cache_payload))
+    end
+
+    # The Observer is the PRODUCTION mount (summarizing.rb:38-45): it and the
+    # Summarizing decorator are alternatives, never both against one Eager --
+    # #fire consumes the digest before spawning, so whichever fires first spends
+    # it and the other misses forever.
+    it "wires the Summarizing::Observer over the one Eager the source reads" do
+      backend = compacting_backend
+
+      expect(backend.tool_observer).to be_a(Lain::Effect::Handler::Summarizing::Observer)
+      expect(backend.tool_observer.instance_variable_get(:@eager)).to be(backend.eager)
+      expect(backend.pipeline_source(cache_profile: profile, journal:)
+                    .instance_variable_get(:@eager)).to be(backend.eager)
+    end
+
+    it "observes nothing under --no-compact -- no summary is ever read, so none is fired" do
+      expect(compacting_backend(compact: false).tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
+    end
+
+    # AC6. Cold's accumulated warmth and the Eager's fired summaries are run
+    # state: a factory rebuilt per call resets both, silently, every turn.
+    it "builds the source, the eager, and the observer once per run" do
+      backend = compacting_backend
+
+      expect(backend.pipeline_source(cache_profile: profile, journal:))
+        .to be(backend.pipeline_source(cache_profile: profile, journal:))
+      expect(backend.eager).to be(backend.eager)
+      expect(backend.tool_observer).to be(backend.tool_observer)
+    end
+
+    # The other half of that memo, and the half that could hurt: a memoized
+    # factory answers its FIRST caller's arguments forever. With one wiring
+    # site that is a cache hit; a second, DIFFERING call would silently hand
+    # back a Source bound to the first journal, and every compaction decision
+    # would land in Channel::Null with nothing failing -- the precise
+    # silent-degrade shape this chunk exists to end. So it is loud.
+    describe "a second, differing call" do
+      it "refuses one that would bind a different journal" do
+        backend = compacting_backend
+        backend.pipeline_source(cache_profile: profile, journal:)
+
+        expect { backend.pipeline_source(cache_profile: profile) }
+          .to raise_error(Lain::CLI::Backend::Rebound, /pipeline_source/)
+      end
+
+      it "refuses one that would bind a different cache profile" do
+        backend = compacting_backend
+        backend.pipeline_source(cache_profile: profile, journal:)
+
+        expect { backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:) }
+          .to raise_error(Lain::CLI::Backend::Rebound, /cache profile/i)
+      end
+
+      # The guard is about the BINDING, not about what got built, so it holds
+      # on the Null branch too -- where the arguments are ignored entirely and
+      # a mis-wiring would otherwise be even harder to see.
+      it "refuses one under --no-compact as well, where the arguments are unused" do
+        backend = compacting_backend(compact: false)
+        backend.pipeline_source(cache_profile: profile, journal:)
+
+        expect { backend.pipeline_source(cache_profile: profile) }
+          .to raise_error(Lain::CLI::Backend::Rebound)
+      end
+
+      it "names a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
+        expect(Lain::CLI::Backend::Rebound).to be < Lain::Error
+      end
+    end
+
+    # AC4. `--provider ollama` and `--provider bedrock` name models no
+    # Anthropic-shaped window table can carry, so ContextWindow.default falls
+    # back rather than raising -- an unsupported provider must still START.
+    # Proven behaviorally: 7_500 used tokens is under 0.9 of every real entry
+    # and over 0.9 of the 8_192 fallback, so only the fallback makes the signal
+    # fire here.
+    it "builds against the conservative fallback window for a model in no table, and chat starts" do
+      backend = backend_for(provider: "ollama", model: "qwen3:4b", max_tokens: 64,
+                            compact_keep: 1, compact_bytes: 10_000_000)
+      source = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
+
+      source.context_for(base: backend.context, timeline: history(6), usage: 7_500, session:)
+
+      expect(decisions.last.signals).to eq([:approaching_window])
+      expect(decisions.last.compacted).to be(true)
+    end
+
+    # A nil or blank --model is a WIRING bug, not an unsupported provider, and
+    # ContextWindow says so loudly (context_window.rb:104-108) rather than
+    # degrading to a fallback that would silently never fire.
+    it "refuses a blank --model loudly rather than falling back" do
+      expect { backend_for(provider: "ollama", model: "  ", max_tokens: 64).pipeline_source(cache_profile: profile) }
+        .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
+    end
+
+    # AC5.
+    it "schedules against an overridden byte threshold" do
+      decide(history(6), compact_bytes: 200, compact_keep: 1)
+
+      expect(decisions.last.signals).to include(:token_threshold)
+    end
+
+    it "leaves the default threshold far above a short history, so a fresh chat does not compact" do
+      decide(history(6), compact_keep: 1)
+
+      expect(decisions.last.signals).to be_empty
+      expect(decisions.last.compacted).to be(false)
+    end
+
+    # The decision lands on EVERY turn, deferring ones included: Agent#render_request
+    # delegates to a collaborator that reports nothing back, so this record is the
+    # only trace the choice was made -- and on a bench whose deliverable is
+    # comparability, an unrecorded decision is a missing measurement.
+    it "journals a decision even when it defers" do
+      decide(history(3), compact_keep: 1)
+
+      expect(decisions.size).to eq(1)
+      expect(decisions.last.compacted).to be(false)
+    end
+  end
+
   # AC: --temperature 0 --seed 7 reach the sampler extra (Request#extra), but
   # NOT the Request digest -- a sampler knob is not a prompt.
   describe "temperature and seed threading" do

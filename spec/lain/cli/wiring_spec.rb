@@ -1,5 +1,19 @@
 # frozen_string_literal: true
 
+# Stands in for the eager tier's local model (A8 wires an Ollama-backed
+# {Lain::Oracle::Model}), answering the REAL {Lain::Oracle::Summarize}
+# definition so the schema, the Promise, and `#summary` are the production ones
+# -- only the network edge is stubbed, exactly as {Lain::Provider::Mock} stubs
+# the chat provider.
+class WiringSpecSummarizer
+  def initialize(text)
+    @definition = Lain::Oracle::Summarize.definition
+    @text = text
+  end
+
+  def ask(_inputs = {}) = @definition.answer("summary" => @text)
+end
+
 RSpec.describe Lain::CLI::Wiring do
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
@@ -228,6 +242,190 @@ RSpec.describe Lain::CLI::Wiring do
 
         expect(refusals).to be_empty
         expect(tool_results(agent)).to include('no tool named "improvement_write"')
+      end
+    end
+  end
+
+  # A8: the assembly, and the point the whole chunk converges on. A plain `lain
+  # chat` compacts, which means the Agent gets three things Wiring never passed
+  # before: the run's per-turn Context source, the eager-summary observer its
+  # ToolRunner fires through, and a journal that TEES turn_usage to that source
+  # -- `context_for`'s `usage:` is A2's Integer, while {Lain::Compaction::Cold}
+  # needs a {Lain::Telemetry::TurnUsage}'s cache-read count and the render seam
+  # has no route to it.
+  describe "the compaction mount" do
+    require "tmpdir"
+
+    let(:summary_text) { "EAGER-SUMMARY-OF-THE-BIG-RESULT" }
+    let(:big_file) { File.join(@dir, "big.txt") }
+
+    # Only the two network edges are doubled: the chat provider and the eager
+    # tier. The Eager itself, the observer, the snapshot, the scheduler and the
+    # render are the real wiring under test.
+    let(:summarizing_backend_class) do
+      Class.new(Lain::CLI::Backend) do
+        def initialize(options, mock:, oracle:)
+          super(options)
+          @mock = mock
+          @oracle = oracle
+        end
+
+        def provider(**) = @mock
+
+        def eager = @eager ||= Lain::Oracle::Eager.new(oracle: @oracle)
+      end
+    end
+
+    let(:reading_provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 Lain::Response.new(content: [read_use], stop_reason: :tool_use),
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                                    stop_reason: :end_turn)
+                               ])
+    end
+
+    let(:read_use) do
+      { "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => { "path" => big_file } }
+    end
+
+    # compact_keep 1 + compact_bytes 1 puts every turn past the byte threshold,
+    # so what decides is TIMING -- and Provider::Mock's NO_CACHING profile makes
+    # the first turn_usage confirm the cache cold, which is only true if the
+    # source is actually on the journal's sink list.
+    let(:compaction_options) { { provider: "ollama", model: nil, max_tokens: 64, compact_keep: 1, compact_bytes: 1 } }
+
+    let(:backend) do
+      summarizing_backend_class.new(compaction_options, mock: reading_provider,
+                                                        oracle: WiringSpecSummarizer.new(summary_text))
+    end
+
+    let(:journal) { RecordingChannel.new }
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "a8-spec-fake-session.ndjson") }
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        File.write(File.join(dir, "big.txt"), "the quick brown fox jumped over the lazy dog. " * 140)
+        example.run
+      end
+    end
+
+    # A bounded spin, never a synchronization: the fire resolves on its own
+    # fiber and the timeout turns "it never did" into a report instead of a hang.
+    def settle(task, eager, digest)
+      task.with_timeout(1) { task.sleep(0.001) while eager.held(digest).nil? }
+    end
+
+    # Read off the Agent rather than re-asked of the Backend: `#pipeline_source`
+    # binds its journal on the FIRST call and now refuses a differing second
+    # one, so a spec that re-asked with different arguments would be exercising
+    # a wiring the run never performs.
+    def source_of(agent) = agent.instance_variable_get(:@pipeline_source)
+
+    def decisions = journal.events.grep(Lain::Compaction::Source::CompactionDecision)
+
+    # Two asks, because the head a compaction can profitably drop only exists
+    # once the first turn's big tool_result is behind the trailing window: the
+    # opening exchange alone is small enough that Source#shrinks? refuses the
+    # rewrite. The settle between them is what makes the eager fire observable.
+    def converse(agent)
+      Sync do |task|
+        agent.ask("read it")
+        settle(task, backend.eager, Lain::Canonical.digest(File.read(big_file)))
+        agent.ask("now summarize what you saw")
+      end
+    end
+
+    # ONE Eager, reached from both ends: the observer fires into it and the
+    # source snapshots it. Two instances would mean every fire landed somewhere
+    # no render reads, with `hits` reporting an honest, useless zero.
+    it "hands the Agent the run's ONE source and its ONE summary observer" do
+      agent = wire_agent
+
+      expect(source_of(agent)).to be_a(Lain::Compaction::Source)
+      expect(agent.instance_variable_get(:@tool_runner).instance_variable_get(:@observer)).to be(backend.tool_observer)
+      expect(backend.tool_observer.instance_variable_get(:@eager)).to be(backend.eager)
+      expect(source_of(agent).instance_variable_get(:@eager)).to be(backend.eager)
+    end
+
+    # Without the tee `Cold` is never fed, the `:cold` decision path is dead on
+    # the live path, and every compaction journals `cache_state: forced` -- a
+    # bench arm that measures nothing.
+    it "tees turn_usage to the source, so a zero cache-read confirms the cache cold" do
+      agent = wire_agent
+      cold = source_of(agent).instance_variable_get(:@cold)
+      expect(cold).not_to be_cold
+
+      Sync { agent.ask("read it") }
+
+      expect(cold).to be_cold
+      # Provider::Mock carries NO_CACHING, so there is no TTL for an idle mark
+      # to compare against and each zero cache-read confirms on its own -- one
+      # per model round trip, and a tool-use turn makes two.
+      confirmations = journal.events.grep(Lain::Compaction::Cold::CacheColdConfirmed)
+      expect(confirmations.map(&:reason).uniq).to eq([:signal_only])
+    end
+
+    # The live chat Context is deliberately NOT Ractor-shareable -- /model's
+    # slot is mutable by design (model_switch.rb:20-22) -- so the composed
+    # per-turn pipeline has to be built from a flattened twin. Without that,
+    # EVERY compacting turn of every real chat raises Ractor::IsolationError out
+    # of Scheduler::COMPOSE, and no spec holding a plain Context can see it.
+    it "compacts a Context carrying the live /model slot, which is not shareable" do
+      agent = wire_agent
+      expect(Ractor.shareable?(agent.context)).to be(false)
+
+      expect { converse(agent) }.not_to raise_error
+
+      expect(decisions.map(&:compacted)).to include(true)
+    end
+
+    # AC3, end to end: the tool result crosses Summarizing's threshold, the
+    # post-dispatch observer fires a summary into the run's Eager, and the next
+    # render -- which compacts, because the cache is cold -- carries the FIRED
+    # TEXT where an unwired run would carry an elision line.
+    it "renders the summary a tool dispatch fired, not an elision line" do
+      converse(wire_agent)
+
+      rendered = Lain::Canonical.dump(reading_provider.last_request.messages)
+
+      expect(rendered).to include(summary_text)
+      # The dropped bytes are really gone -- the summary replaced them rather
+      # than riding alongside. (The turn's other blocks -- a plain text turn, a
+      # tool_use -- still carry ELIDED lines: nothing is summarizable there, and
+      # attesting them is the invariant, not a miss.)
+      expect(rendered).not_to include("the quick brown fox jumped over the lazy dog. " * 5)
+      expect(decisions.map(&:compacted)).to include(true)
+      expect(decisions.map(&:summary_hits).max).to be >= 1
+    end
+
+    # The live half of the review's cost-honesty fix. This run's model is
+    # Ollama's local default, which Backend::COMPACTION_PRICES prices at zero
+    # -- so the accounting reads "$0.0", and WITHOUT the model beside it that
+    # is indistinguishable on the record from a compaction that genuinely cost
+    # nothing. It is also what a reader needs to spot a `/model` switch: this
+    # names the tier the estimate was priced against, TurnUsage names the tier
+    # that answered, and after a switch they differ.
+    it "journals the model its zero cost figures are quoted in" do
+      converse(wire_agent)
+
+      accounting = journal.events.grep(Lain::Telemetry::Compaction)
+      expect(accounting).not_to be_empty
+      expect(accounting.map(&:model).uniq).to eq([Lain::Provider::Ollama::DEFAULT_MODEL])
+      expect(accounting.map(&:cost_saved).uniq).to eq(["0.0"])
+    end
+
+    context "--no-compact" do
+      let(:compaction_options) { super().merge(compact: false) }
+
+      it "leaves the Agent on the Null source, rendering exactly as an unwired chat would" do
+        agent = wire_agent
+
+        Sync { agent.ask("read it") }
+
+        expect(source_of(agent)).to be(Lain::Agent::PipelineSource::Null)
+        expect(Lain::Canonical.dump(reading_provider.last_request.messages)).not_to include(summary_text)
+        expect(decisions).to be_empty
       end
     end
   end
