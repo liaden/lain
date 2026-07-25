@@ -432,3 +432,70 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
   end
 end
+
+# C2: the turn record's causal edge. `causal_parents` is part of the content
+# address (Event#payload), so a record that drops it cannot be re-committed back
+# to its own digest -- and the empty set writes NO key, `resumed_from`'s idiom,
+# so every turn without a causal edge stays byte-identical to what this writer
+# emitted before the field existed.
+RSpec.describe Lain::SessionRecord do
+  let(:store) { Lain::Store.new }
+
+  def text(body) = [{ "type" => "text", "text" => body }]
+
+  def message(to:, body:)
+    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => body })
+    store.put(payload)
+    Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
+      store.put(event)
+    end
+  end
+
+  # AC2: a turn with no causal parents is unchanged -- proven as BYTES, against
+  # a COMMITTED fixture recorded before this field existed. Its first turn line
+  # is re-committed from its own recorded content and re-journaled under its own
+  # recorded timestamp; anything but a byte-for-byte match means the format
+  # moved under every session already on disk.
+  describe ".turn, for a turn with no causal parents" do
+    fixture = File.expand_path("../fixtures/sessions/variance/one.ndjson", __dir__)
+
+    let(:line) { File.readlines(fixture).find { |raw| JSON.parse(raw)["type"] == "turn" } }
+    let(:recorded) { JSON.parse(line) }
+
+    let(:turn) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: recorded.fetch("role"), content: recorded.fetch("content"),
+                            meta: recorded.fetch("meta"))
+                    .head
+    end
+
+    it "re-journals byte-identically to the committed pre-change record" do
+      io = StringIO.new
+      Lain::Journal.new(io:, clock: -> { recorded.fetch("ts") }) << described_class.turn(turn)
+
+      expect(io.string).to eq(line)
+    end
+
+    it "writes no causal_parents key at all: absence, never an empty value" do
+      expect(described_class.turn(turn)).not_to have_key("causal_parents")
+    end
+  end
+
+  # AC1's writer half; the fold back is spec'd in bench/session/chain_fold_spec.
+  describe ".turn, for a turn that folded two messages" do
+    let(:asked) { message(to: "human", body: "which dose?") }
+    let(:answered) { message(to: "agent", body: "81 mg") }
+
+    let(:turn) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: text("what is the aspirin dosing?"))
+                    .commit(role: :assistant, content: text("81 mg"),
+                            causal_parents: [asked.digest, answered.digest])
+                    .head
+    end
+
+    it "records both parent digests, in the sorted order the content address holds them" do
+      expect(described_class.turn(turn).fetch("causal_parents")).to eq([asked.digest, answered.digest].sort)
+    end
+  end
+end

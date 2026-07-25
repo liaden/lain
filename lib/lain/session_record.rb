@@ -53,9 +53,19 @@ module Lain
     # One turn record, the same fields {Bench::Session} writes: the body plus the
     # render edge, which is exactly what a Loader re-commits to recompute the
     # digest recorded beside it.
+    #
+    # `causal_parents` -- the SET edge, sorted and frozen by {Event} -- rides
+    # here too because it is part of that content address ({Event#payload}), so
+    # a record without it cannot re-commit to the digest written beside it.
+    # Reader and writer therefore move together: {Bench::Session::ChainFold}
+    # feeds it back. It merges in only when the turn HAS one, {.header}'s
+    # `resumed_from` idiom -- absence, never an empty value -- so a turn with no
+    # causal edge stays byte-identical to every record written before the field
+    # existed, and the 13 committed fixtures keep loading unchanged.
     def turn(turn)
-      { "type" => TURN_TYPE, "digest" => turn.digest, "role" => turn.role,
-        "content" => turn.content, "parent" => turn.parent, "meta" => turn.meta }
+      record = { "type" => TURN_TYPE, "digest" => turn.digest, "role" => turn.role,
+                 "content" => turn.content, "parent" => turn.parent, "meta" => turn.meta }
+      turn.causal_parents.empty? ? record : record.merge("causal_parents" => turn.causal_parents)
     end
 
     # T15: the render head moved BACKWARD -- the one record that changes the

@@ -112,6 +112,49 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
+  # C2/AC4: this writer and SessionRecord.turn are byte-compatible twins -- one
+  # Loader reads both -- so a field one of them grows and the other does not is
+  # a live session and a recorded one silently ceasing to share a format. The
+  # keys are compared turn for turn, with and without a causal edge.
+  describe "the recorded turn record stays in lockstep with the live scribe's" do
+    let(:store) { Lain::Store.new }
+
+    def text(body) = [{ "type" => "text", "text" => body }]
+
+    def message(to:, body:)
+      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => body })
+      store.put(payload)
+      Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
+        store.put(event)
+      end
+    end
+
+    let(:lockstep_timeline) do
+      asked = message(to: "human", body: "which dose?")
+      answered = message(to: "agent", body: "81 mg")
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: text("what is the aspirin dosing?"))
+                    .commit(role: :assistant, content: text("81 mg"),
+                            causal_parents: [asked.digest, answered.digest])
+    end
+
+    let(:written) do
+      io = StringIO.new
+      described_class.write(Lain::Journal.new(io:), timeline: lockstep_timeline, context:, toolset:, workspace:)
+      io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
+    end
+
+    it "writes exactly the keys SessionRecord.turn writes, turn for turn" do
+      expect(written.map { |record| record.keys - ["ts"] })
+        .to eq(lockstep_timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn).keys })
+    end
+
+    it "writes the same bytes as SessionRecord.turn for the turn that folded two messages" do
+      expect(JSON.generate(written.last.except("ts")))
+        .to eq(JSON.generate(Lain::SessionRecord.turn(lockstep_timeline.head)))
+    end
+  end
+
   describe "round trip" do
     before { write_session }
 

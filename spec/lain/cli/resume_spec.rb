@@ -685,6 +685,30 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # C2 review FIX 1, end to end. An assistant turn can cite an answered
+    # ask_human question (ToolRunner#delivery's causal edge -- ask_human is in
+    # the LIVE toolset), and the `message` record replaying that event is a
+    # separate pass the turn fold has not run. So the fold cannot resolve the
+    # parent, and Store::MissingObject is rescued nowhere -- exactly the
+    # named-refusal-into-raw-backtrace regression journaling causal_parents
+    # would otherwise have introduced here.
+    it "refuses a session whose turn cites a causal parent the fold cannot resolve" do
+      store = Lain::Store.new
+      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
+      store.put(payload)
+      answered = Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to: "agent")
+      store.put(answered)
+      cited = Lain::Timeline.empty(store:)
+                            .commit(role: :user, content: text("dose?"))
+                            .commit(role: :assistant, content: text("81 mg"), causal_parents: [answered.digest])
+      write_session("20260101T000000-1.ndjson", [open_header] + turn_records(cited))
+
+      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+        expect(error).to be_a(Lain::Error)
+        expect(error.message).to include("20260101T000000-1.ndjson", answered.digest)
+      end
+    end
+
     it "refuses a pre-scribe (headerless, --nvim-era) journal namedly" do
       write_session("20260101T000000-1.ndjson", [{ "type" => "request_sent", "digest" => "blake3:#{"a" * 64}" }])
 

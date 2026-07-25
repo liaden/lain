@@ -225,9 +225,16 @@ module Lain
         # digest is what lets the Loader recompute and compare. (The turn's own
         # envelope hashes correlation too, but correlation derives from the
         # chain itself, so the re-commit reproduces it from these bytes alone.)
+        #
+        # Delegated rather than duplicated. This WAS a byte-compatible twin of
+        # {SessionRecord.turn}, kept in step by hand -- and it fell out of step
+        # exactly once, when {Event} grew `causal_parents` and neither writer
+        # followed. One Loader reads both formats, so "byte-compatible" is a
+        # requirement, not a coincidence; {SessionRecord} is where the format
+        # was promoted to, and this is that format. The header stays its own
+        # method because it genuinely differs (`provider`).
         def turn_record(turn)
-          { "type" => TURN_TYPE, "digest" => turn.digest, "role" => turn.role,
-            "content" => turn.content, "parent" => turn.parent, "meta" => turn.meta }
+          SessionRecord.turn(turn)
         end
       end
     end

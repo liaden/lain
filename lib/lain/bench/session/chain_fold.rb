@@ -52,9 +52,51 @@ module Lain
         def folded(chain, record, index)
           return rewound_checkout(chain, record, index) if record["type"].to_s == SessionRecord::REWOUND_TYPE
 
-          verified_turn(chain.commit(role: record.fetch("role"), content: record.fetch("content"),
-                                     meta: record.fetch("meta", {})),
-                        record, index)
+          verified_turn(recommitted(chain, record, index), record, index)
+        end
+
+        # The causal edge is part of the content address ({Event#payload}), so
+        # a fold that dropped it would re-derive a different digest and raise
+        # {Corrupt} over bytes that are perfectly sound -- the reason the
+        # writer and this reader had to move together. DEFAULTED, never
+        # fetched: every journal written before {SessionRecord.turn} carried
+        # the field has no key, and no key IS the empty set, the same tolerance
+        # `meta` already has.
+        #
+        # {Event#normalize_causal} re-sorts and dedups on the way in, so a
+        # record whose array was reordered or repeated folds to the SAME
+        # verified turn -- two distinct journal byte strings, one record. That
+        # is correct, since element order is deliberately outside the content
+        # address; it does mean this fold verifies the SET, never those bytes.
+        #
+        # The parents must already be in the store this chain builds on --
+        # {Store#put} enforces the causal edge like any other, which is what
+        # keeps the fold from vouching for an event nothing recorded. Its
+        # refusal is TRANSLATED here rather than left to escape: {Corrupt} is
+        # the one error this format's readers rescue ({CLI::Resume} builds its
+        # Refusal out of it), so a bare {Store::MissingObject} would reach the
+        # exe as a backtrace instead of a named refusal.
+        def recommitted(chain, record, index)
+          chain.commit(role: record.fetch("role"), content: record.fetch("content"),
+                       meta: record.fetch("meta", {}), causal_parents: cited_parents(record, index))
+        rescue Store::MissingObject => e
+          raise Corrupt, "turn record #{index} (#{record.fetch("role")}) cites a causal parent this fold " \
+                         "never landed: #{e.message}"
+        end
+
+        # A journal is bytes, and bytes can be wrong. `content` and `meta`
+        # announce their corruption through the digest they then fail to
+        # re-derive, and a bad `role` raises a named {Event::InvalidRole} --
+        # but this field reaches neither check, because
+        # {Event#normalize_causal} maps and sorts it before any digest exists,
+        # so a null arrives as a NoMethodError three frames down. Shape-checked
+        # here so the whole record type answers corruption in ONE currency.
+        def cited_parents(record, index)
+          cited = record.fetch("causal_parents", [])
+          return cited if cited.is_a?(Array) && cited.all?(String)
+
+          raise Corrupt, "turn record #{index} (#{record.fetch("role")}) records causal_parents as " \
+                         "#{cited.inspect}; the field is a set of digest strings, and only an array of them folds"
         end
 
         def verified_turn(chain, record, index)
