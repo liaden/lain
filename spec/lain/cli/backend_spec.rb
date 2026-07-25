@@ -451,7 +451,9 @@ RSpec.describe Lain::CLI::Backend do
 
     # The journaling wrap is OUTERMOST (A3 slots a router above it), so the live
     # tier that actually pays is one layer in.
-    def tier_of(backend) = backend.send(:summary_oracle).instance_variable_get(:@inner)
+    # The nesting the run is wired in: RoutedSummarizer(Journaling(Model)).
+    def journaling_of(backend) = backend.send(:summary_oracle).instance_variable_get(:@inner)
+    def tier_of(backend) = journaling_of(backend).instance_variable_get(:@inner)
 
     # A local reply the summarizer schema accepts, priced with a REAL usage so
     # the journaled cost is a genuine count rather than the zero identity.
@@ -471,9 +473,26 @@ RSpec.describe Lain::CLI::Backend do
       expect(tier.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
     end
 
-    it "wraps the live tier in the journaling decorator, outermost" do
-      expect(summarizer_for.send(:summary_oracle)).to be_a(Lain::Oracle::Recorded::Journaling)
+    # A3: the router goes ABOVE the journaling wrap, not below it. Below, a
+    # custom answer would be journaled as an oracle call some model was billed
+    # for; above, it never reaches the record at all and a fallthrough is
+    # journaled exactly once. The order is forced besides -- Recorded::Journaling
+    # defines neither #model nor #usage, so the other nesting raises.
+    it "wraps the journaled live tier in the routed summarizer, outermost" do
+      expect(summarizer_for.send(:summary_oracle)).to be_a(Lain::Oracle::RoutedSummarizer)
+      expect(journaling_of(summarizer_for)).to be_a(Lain::Oracle::Recorded::Journaling)
       expect(tier_of(summarizer_for)).to be_a(Lain::Oracle::Model)
+    end
+
+    # The project's own `.lain/summarizers.rb`, loaded once per oracle build.
+    # Lain's own tree declares none, so the catalog is empty and every result
+    # falls through -- which is exactly what the journaling examples below rely
+    # on.
+    it "routes through the project's declared summarizer catalog" do
+      catalog = summarizer_for.send(:summary_oracle).instance_variable_get(:@catalog)
+
+      expect(catalog).to be_a(Lain::Summarizer::Catalog)
+      expect(catalog).to be_empty
     end
 
     # The point of the flag: compressing a tool result is a different job from

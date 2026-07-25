@@ -355,7 +355,19 @@ module Lain
       # Construction opens no connection, so an absent ollama still costs
       # nothing here: the fire fails inside {Oracle::Eager}'s task boundary and
       # the compaction renders an elision instead.
-      def summary_oracle = Summarizer.new(backend: self).oracle
+      #
+      # {Oracle::RoutedSummarizer} goes OUTERMOST, above the journaling wrap
+      # {Summarizer} builds: an answer the project's own `.lain/summarizers.rb`
+      # produced cost no tokens, so it must not land on the record as a model
+      # call, while a fallthrough still journals exactly once from inside.
+      #
+      # `Summarizer` here is {Backend::Summarizer} -- the flag resolution --
+      # and `Lain::Summarizer` is the project's declared free tier. Two
+      # different objects one lexical scope apart, hence the explicit root.
+      def summary_oracle
+        Oracle::RoutedSummarizer.new(inner: Summarizer.new(backend: self).oracle,
+                                     catalog: Lain::Summarizer::Catalog.load)
+      end
 
       # Only the sampler flags the caller actually set, String-keyed to match
       # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`

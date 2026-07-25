@@ -298,6 +298,24 @@ RSpec.describe Lain::Oracle::Eager do
       end
     end
 
+    # A ScriptError, not a StandardError: {Summarizer::Base} raises exactly this
+    # for a declaration whose `compact` is not written yet, and it travels up
+    # through the tier into the fire's task. The task boundary is the
+    # containment for EVERY way a fire can fail, so it has to cover this one.
+    it "contains a fire that raises a ScriptError, holding nothing and killing no turn" do
+      raising = Class.new do
+        def ask(_inputs) = raise(NotImplementedError, "summarizer \"wip\" must implement #compact")
+        def model = nil
+        def usage = {}
+      end.new
+
+      Sync do
+        eager = Lain::Oracle::Eager.new(oracle: raising)
+        expect { eager.fire(digest, big).wait }.not_to raise_error
+        expect(eager.held(digest)).to be_nil
+      end
+    end
+
     it "does not break the dispatch when its fire will fail" do
       raising = Class.new do
         def ask(_inputs) = raise "oracle unavailable"

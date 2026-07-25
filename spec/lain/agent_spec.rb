@@ -607,13 +607,13 @@ RSpec.describe Lain::Agent do
       observer = Class.new do
         def initialize(seen) = @seen = seen
 
-        def observe(block) = @seen << block["tool_use_id"]
+        def observe(block, tool_name) = @seen << "#{tool_name}:#{block["tool_use_id"]}"
       end.new(seen)
       provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
                                                       text_response])
       described_class.new(provider:, toolset:, context:, tool_observer: observer).ask("hi")
 
-      expect(seen).to eq(["tu_1"])
+      expect(seen).to eq(["echo:tu_1"])
     end
 
     it "observes nothing by default, leaving the delivered results byte-identical" do

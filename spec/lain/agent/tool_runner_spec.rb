@@ -51,17 +51,19 @@ module ToolRunnerSpecSupport
   # own scope rather than to a gather child. Shares the dispatch log, so
   # ordering against the tools' own boundaries reads off one ordered list.
   class RecordingObserver
-    attr_reader :blocks, :tasks
+    attr_reader :blocks, :names, :tasks
 
     def initialize(log: [])
       @log = log
       @blocks = []
+      @names = []
       @tasks = []
     end
 
-    def observe(block)
+    def observe(block, tool_name)
       @log << "observe:#{block["tool_use_id"]}"
       @blocks << block
+      @names << tool_name
       @tasks << Async::Task.current?
     end
   end
@@ -76,7 +78,7 @@ module ToolRunnerSpecSupport
       @seen = []
     end
 
-    def observe(block)
+    def observe(block, _tool_name)
       @seen << block["tool_use_id"]
       raise "observer exploded"
     end
@@ -415,6 +417,9 @@ RSpec.describe Lain::Agent::ToolRunner do
       end
 
       expect(observer.blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+      # The tool NAME rides alongside the block: gate 4 pins the block's four
+      # keys, so the name a summarizer routes on cannot live inside it.
+      expect(observer.names).to eq(%w[safe_a safe_b])
       expect(log.index("observe:tu_1")).to be > log.index("safe_b:resolve")
       # The observation ran in the CALLER's task, not in a gather child -- which
       # is exactly what lets a fire it spawns outlive the fan-out.
@@ -463,6 +468,18 @@ RSpec.describe Lain::Agent::ToolRunner do
       expect(eager.held(digest)).to eq({ "summary" => "later" })
     end
 
+    # `to_h` is last-wins, so two tool_uses sharing an id would route the FIRST
+    # block under the SECOND tool's name -- a silent mislabel where the `fetch`
+    # beside it was chosen for loudness. Gate 4 is already violated by such a
+    # turn; the pairing says so rather than inventing an answer.
+    it "refuses two tool_uses sharing one id rather than mislabelling the pairing" do
+      observer = ToolRunnerSpecSupport::RecordingObserver.new
+      response = tool_response(["dup", "echo", {}], ["dup", "echo", {}])
+
+      expect { described_class.new(handler: echoing_handler, observer:).run(response, context: nil) }
+        .to raise_error(described_class::DuplicateToolUse, /two tool_uses share id "dup"/)
+    end
+
     it "summarizes nothing under the default observer, leaving the blocks byte-identical" do
       response = tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }])
 
@@ -500,15 +517,39 @@ RSpec.describe Lain::Agent::ToolRunner do
         { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => content, "is_error" => is_error }
       end
 
-      def observing(content, is_error: false, **options)
-        described_class.new(eager:, **options).observe(block_for(content, is_error:))
+      def observing(content, is_error: false, tool_name: "bash", **options)
+        described_class.new(eager:, **options).observe(block_for(content, is_error:), tool_name)
         eager.fired
       end
 
+      def fired_for(content, tool_name: "bash")
+        [Lain::Canonical.digest(content), Lain::Summarizer::Result.new(tool_name:, text: content)]
+      end
+
+      # The digest stays the content address of the tool's own bytes -- what
+      # {Compaction::SummarySnapshot} looks a summary up by -- while the fired
+      # VALUE gains the tool name a custom summarizer routes on.
       it "fires a successful String result over the threshold, keyed by its content address" do
         content = "x" * 5000
 
-        expect(observing(content)).to eq([[Lain::Canonical.digest(content), content]])
+        expect(observing(content)).to eq([fired_for(content)])
+      end
+
+      it "carries the producing tool's name into the fired result" do
+        content = "x" * 5000
+
+        expect(observing(content, tool_name: "read_file")).to eq([fired_for(content, tool_name: "read_file")])
+      end
+
+      # A3's escalation trigger: this method already no-ops silently on a
+      # Symbol-keyed block (a named follow-up). An observation that cannot say
+      # WHICH tool ran must not widen that -- routing every result as nameless
+      # would silently disable every tool-keyed summarizer -- so the name is a
+      # required argument and its absence is an ArgumentError, not a miss.
+      it "refuses an observation with no tool name" do
+        observer = described_class.new(eager:)
+
+        expect { observer.observe(block_for("x" * 5000)) }.to raise_error(ArgumentError)
       end
 
       it "declines an error result however large -- a failure is not worth compressing" do
@@ -532,7 +573,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       end
 
       it "honours an injected threshold_bytes" do
-        expect(observing("small", threshold_bytes: 2)).to eq([[Lain::Canonical.digest("small"), "small"]])
+        expect(observing("small", threshold_bytes: 2)).to eq([fired_for("small")])
       end
     end
   end

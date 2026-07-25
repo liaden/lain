@@ -16,11 +16,23 @@ module Lain
     # Gate 2 stays with the Agent, because "all results in ONE user turn" is a
     # statement about the Timeline, not about any individual tool.
     class ToolRunner
+      # Two tool_uses in one turn sharing an id. Gate 4 pairs each tool_result
+      # to the tool_use it answers BY that id, so a duplicate makes the pairing
+      # ambiguous -- and a Hash built from them silently keeps the LAST, which
+      # would label the first result with the second tool's name. Loud, at the
+      # first place the ambiguity is observable.
+      class DuplicateToolUse < Error; end
+
       # The post-dispatch observers a {ToolRunner} accepts: one message,
-      # `#observe(tool_result_block)`, sent once per completed result. The duck
-      # is deliberately narrow -- a wire block carries everything an observer
-      # of *results* can want, and nothing about oracles or summaries leaks
-      # into the dispatcher.
+      # `#observe(tool_result_block, tool_name)`, sent once per completed
+      # result. The duck is deliberately narrow -- a wire block plus the name
+      # of the tool that filled it carries everything an observer of *results*
+      # can want, and nothing about oracles or summaries leaks into the
+      # dispatcher.
+      #
+      # The name is a second argument because it is NOT on the block:
+      # {#result_block} emits the four keys gate 4 pins, and that block is the
+      # `tool_result` the provider receives. It rides beside the block instead.
       #
       # The eager-summary observer this seam exists for is
       # {Effect::Handler::Summarizing::Observer}, which lives with the policy
@@ -33,7 +45,7 @@ module Lain
         # Observes nothing, so a ToolRunner built without one behaves exactly
         # as it did before the seam existed.
         class Null
-          def observe(_block) = nil
+          def observe(_block, _tool_name) = nil
         end
       end
 
@@ -67,7 +79,7 @@ module Lain
         blocks = contiguous_runs(uses, safety).flat_map do |run|
           gatherable?(run, safety) ? gather(run, context) : sequential(run, context)
         end
-        blocks.each { |block| observe(block) }
+        observe_all(uses, blocks)
         blocks
       end
 
@@ -113,8 +125,37 @@ module Lain
       # so today there is nowhere for the failure to go. Give this object a
       # journal and this rescue should record instead of swallow. `Async::Stop`
       # is not a StandardError, so a stop still cancels the tree.
-      def observe(block)
-        @observer.observe(block)
+      # Pairs each block back to the tool_use it answers, because the NAME the
+      # observer needs is on the tool_use ({#dispatch} reads it there) and not
+      # on the block gate 4 pins. Keyed by `tool_use_id` rather than by
+      # position, and `fetch`ed: an unpaired block would be a dispatcher bug,
+      # not a summary to skip. Nothing about {#dispatch}'s return or {#gather}'s
+      # arity moves for this -- the pairing happens after both have finished.
+      def observe_all(uses, blocks)
+        names = names_by_id(uses)
+        blocks.each { |block| observe(block, names.fetch(block["tool_use_id"])) }
+      end
+
+      # NOT `to_h`, which is last-wins and would answer a lie: the first
+      # block would pair to the second tool's name with nothing raised, in the
+      # one method whose `fetch` was chosen for loudness.
+      def names_by_id(uses)
+        uses.each_with_object({}) do |tool_use, names|
+          id = tool_use.fetch("id")
+          refuse_duplicate(names, id, tool_use.fetch("name"))
+          names[id] = tool_use.fetch("name")
+        end
+      end
+
+      def refuse_duplicate(names, id, name)
+        return unless names.key?(id)
+
+        raise DuplicateToolUse, "two tool_uses share id #{id.inspect} (#{names.fetch(id)} and #{name}); " \
+                                "gate 4 pairs each tool_result to its tool_use by that id"
+      end
+
+      def observe(block, tool_name)
+        @observer.observe(block, tool_name)
       rescue StandardError
         nil
       end

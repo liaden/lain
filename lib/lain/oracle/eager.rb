@@ -70,11 +70,17 @@ module Lain
         @fired << digest
         task.async(transient: true) do
           @held[digest] = @oracle.ask({ @slot => text }).await
-        rescue StandardError
+        rescue ScriptError, StandardError
           # The task boundary is the containment: a failed fire holds nothing and
           # journals nothing. Async::Stop is not a StandardError, so a stop still
           # flows past this rescue and cancels the task quietly rather than raising
           # out at the reactor.
+          #
+          # ScriptError is named too, because NotImplementedError is one and NOT a
+          # StandardError: {Summarizer::Base} raises exactly that for a declaration
+          # a user has not finished writing, and it reaches here through the tier.
+          # Containment that covered only StandardError would let a half-written
+          # `.lain/summarizers.rb` kill the turn that fired the summary.
         end
       end
 

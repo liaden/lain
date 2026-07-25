@@ -49,21 +49,33 @@ module Lain
             @threshold_bytes = threshold_bytes
           end
 
-          # The seam's message: one completed tool_result wire block. Every
-          # effect a ToolRunner dispatches is already a tool call, so `is_error`
-          # is all that remains here of "a successful tool call".
-          def observe(block)
-            summarize(block["content"]) unless block["is_error"]
+          # The seam's message: one completed tool_result wire block, plus the
+          # NAME of the tool that produced it. Every effect a ToolRunner
+          # dispatches is already a tool call, so `is_error` is all that
+          # remains here of "a successful tool call".
+          #
+          # The name is a second ARGUMENT, not a fifth key: the block is the
+          # `tool_result` sent to the provider and gate 4 pins its shape. It is
+          # REQUIRED, so a mount that cannot say which tool ran raises rather
+          # than routing every result as nameless -- which would silently
+          # disable every tool-keyed {Summarizer}.
+          def observe(block, tool_name)
+            summarize(block["content"], tool_name) unless block["is_error"]
           end
 
           # THE rule, in one place for both mounts: String content over the
           # threshold earns a summary, keyed by its content address. Block
           # (Array) content is structured, not free text, so there is nothing
           # for a prose summarizer to compress.
-          def summarize(content)
+          #
+          # The KEY stays the digest of the tool's own bytes -- that is what
+          # {Compaction::SummarySnapshot} looks a summary up by -- while the
+          # fired VALUE is a {Summarizer::Result}, which carries the tool name
+          # {Oracle::RoutedSummarizer} routes suitability on.
+          def summarize(content, tool_name)
             return unless content.is_a?(String) && content.bytesize > @threshold_bytes
 
-            @eager.fire(Canonical.digest(content), content)
+            @eager.fire(Canonical.digest(content), Summarizer::Result.new(tool_name:, text: content))
           end
         end
 
@@ -90,8 +102,15 @@ module Lain
         # shape rule both mounts share -- so a change to the policy cannot reach
         # one mount and miss the other.
         def fire_summary(effect, result)
-          @observer.summarize(result.content) if (effect.tool_call? || effect.approval?) && result.ok?
+          @observer.summarize(result.content, tool_name(effect)) if summarizable?(effect, result)
         end
+
+        def summarizable?(effect, result) = (effect.tool_call? || effect.approval?) && result.ok?
+
+        # An {Effect::Approval} WRAPS the tool call it gates, so the name lives
+        # one level in -- and {#summarizable?} has already established that one
+        # of the two is what this is.
+        def tool_name(effect) = effect.tool_call? ? effect.name : effect.effect.name
       end
     end
   end
