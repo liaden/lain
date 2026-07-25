@@ -237,6 +237,11 @@ Inspect live state. Bare opens a console, an expression prints its `inspect`, a 
 `/meta <prompt>` generates a customized harness script into `.lain/meta/`. Review it, then
 `/meta run <slug>`.
 
+`/meta summarizer <prompt>` generates a summarizer declaration into `.lain/summarizers/`.
+**Nothing loads that directory** — the catalog loads the single file `.lain/summarizers.rb`,
+so review the generated file and copy the declaration into it yourself. A summarizer is loaded,
+never launched: there is no run verb for it, and `/meta run` cannot reach one.
+
 ### /quit
 
 End the session. Same as a bare `quit`.
