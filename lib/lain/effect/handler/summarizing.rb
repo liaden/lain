@@ -31,13 +31,48 @@ module Lain
         # threshold spends local compute, not tokens.
         DEFAULT_THRESHOLD_BYTES = 4096
 
+        # The same policy at the OTHER mount point: the duck
+        # {Agent::ToolRunner}'s post-dispatch observation seam takes, holding
+        # the rule this decorator also asks for so the two cannot drift.
+        #
+        # **This is the mount production should use, and exactly one of the two
+        # may be mounted against a given {Oracle::Eager}.** The decorator fires
+        # from inside the handler chain -- which is inside `ToolRunner#gather`
+        # -- where a fire can be reaped while {Oracle::Eager#fire} has already
+        # consumed its digest, and a consumed digest is refused forever. With
+        # both mounted, the decorator reaches the Eager first and burns the key
+        # before the post-dispatch seam is ever offered the result. The
+        # decorator remains for a chain that has no ToolRunner above it.
+        class Observer
+          def initialize(eager:, threshold_bytes: DEFAULT_THRESHOLD_BYTES)
+            @eager = eager
+            @threshold_bytes = threshold_bytes
+          end
+
+          # The seam's message: one completed tool_result wire block. Every
+          # effect a ToolRunner dispatches is already a tool call, so `is_error`
+          # is all that remains here of "a successful tool call".
+          def observe(block)
+            summarize(block["content"]) unless block["is_error"]
+          end
+
+          # THE rule, in one place for both mounts: String content over the
+          # threshold earns a summary, keyed by its content address. Block
+          # (Array) content is structured, not free text, so there is nothing
+          # for a prose summarizer to compress.
+          def summarize(content)
+            return unless content.is_a?(String) && content.bytesize > @threshold_bytes
+
+            @eager.fire(Canonical.digest(content), content)
+          end
+        end
+
         # @param eager [Oracle::Eager] the summary store this fires into
         # @param threshold_bytes [Integer] the size a result must exceed to fire
         # @param inner [Effect::Handler, nil] performs the effect this only observes
         def initialize(eager:, threshold_bytes: DEFAULT_THRESHOLD_BYTES, inner: nil)
           super(inner:)
-          @eager = eager
-          @threshold_bytes = threshold_bytes
+          @observer = Observer.new(eager:, threshold_bytes:)
         end
 
         # Perform through the chain, then fire a summary of the outcome if it earns
@@ -50,18 +85,12 @@ module Lain
 
         private
 
+        # This mount's half of the predicate: was the outcome a successful tool
+        # call at all. {Observer#summarize} owns the other half -- the size and
+        # shape rule both mounts share -- so a change to the policy cannot reach
+        # one mount and miss the other.
         def fire_summary(effect, result)
-          return unless summarizable?(effect, result)
-
-          @eager.fire(Canonical.digest(result.content), result.content)
-        end
-
-        # A summarizable outcome is a successful tool call whose String content
-        # crosses the threshold. Anything else -- a non-tool effect, an error, or
-        # structured block content -- is left untouched.
-        def summarizable?(effect, result)
-          (effect.tool_call? || effect.approval?) && result.ok? &&
-            result.content.is_a?(String) && result.content.bytesize > @threshold_bytes
+          @observer.summarize(result.content) if (effect.tool_call? || effect.approval?) && result.ok?
         end
       end
     end

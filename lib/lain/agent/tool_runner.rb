@@ -16,12 +16,36 @@ module Lain
     # Gate 2 stays with the Agent, because "all results in ONE user turn" is a
     # statement about the Timeline, not about any individual tool.
     class ToolRunner
+      # The post-dispatch observers a {ToolRunner} accepts: one message,
+      # `#observe(tool_result_block)`, sent once per completed result. The duck
+      # is deliberately narrow -- a wire block carries everything an observer
+      # of *results* can want, and nothing about oracles or summaries leaks
+      # into the dispatcher.
+      #
+      # The eager-summary observer this seam exists for is
+      # {Effect::Handler::Summarizing::Observer}, which lives with the policy
+      # it applies. It is the mount production should use, and it and the
+      # {Effect::Handler::Summarizing} decorator are ALTERNATIVES, never both
+      # against one {Oracle::Eager}: the decorator fires from inside the
+      # handler chain, i.e. inside {#gather}, and would consume each digest
+      # before this seam is ever offered the result.
+      module Observer
+        # Observes nothing, so a ToolRunner built without one behaves exactly
+        # as it did before the seam existed.
+        class Null
+          def observe(_block) = nil
+        end
+      end
+
       # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
       # itself still routes through `handler`, never a direct tool lookup.
-      def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new)
+      # `observer:` is the post-dispatch seam {#observe} describes.
+      def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
+                     observer: Observer::Null.new)
         @handler = handler
         @middleware = middleware
         @toolset = toolset
+        @observer = observer
       end
 
       # @return [Array<Hash>] one tool_result block per tool_use, in wire order
@@ -40,9 +64,11 @@ module Lain
       def run(response, context:)
         uses = response.tool_uses
         safety = safety_by_name(uses)
-        contiguous_runs(uses, safety).flat_map do |run|
+        blocks = contiguous_runs(uses, safety).flat_map do |run|
           gatherable?(run, safety) ? gather(run, context) : sequential(run, context)
         end
+        blocks.each { |block| observe(block) }
+        blocks
       end
 
       # One user-turn delivery (I6, ruled): the tool_result blocks PLUS the
@@ -62,6 +88,36 @@ module Lain
       end
 
       private
+
+      # The observation seam, deliberately HERE and not inside {#gather}. An
+      # observer may spawn work on the ambient reactor -- an eager summary is
+      # the motivating case -- and {Oracle::Eager#fire} consumes its digest
+      # BEFORE it spawns, so any fire that is later reaped burns that content's
+      # key for the whole session. #gather is where reaping happens, on both
+      # paths: with no ambient reactor its `Sync` builds and closes one of its
+      # own, and on the live path an interrupt mid-fan-out unwinds the run's
+      # reactor, whose close terminates transients outright. (A plain stop does
+      # not reap them -- async skips transient children and reparents them on
+      # `consume` -- but the digest is spent either way.) Called from {#run}
+      # once every run has gathered, the observation instead inherits the
+      # CALLER's reactor -- the agent loop's, which outlives the turn -- and
+      # where the caller has none it degrades to the clean no-op #fire performs
+      # before it consumes anything. An interrupt never reaches here at all, so
+      # a stopped turn commits exactly what it always did AND leaves every
+      # digest still summarizable.
+      #
+      # Observation is a side channel, so a broken observer costs the turn
+      # nothing -- the same containment {Oracle::Eager} gives a failed fire.
+      # That it is also SILENT is a named debt, not an oversight: a ToolRunner
+      # holds no journal and nothing outside the frontend may write to $stderr,
+      # so today there is nowhere for the failure to go. Give this object a
+      # journal and this rescue should record instead of swallow. `Async::Stop`
+      # is not a StandardError, so a stop still cancels the tree.
+      def observe(block)
+        @observer.observe(block)
+      rescue StandardError
+        nil
+      end
 
       # {#delivery}'s harvest, duck-collected from whichever tools answer the
       # hand-over message; each hands over exactly once.

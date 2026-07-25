@@ -45,6 +45,68 @@ module ToolRunnerSpecSupport
       Lain::Tool::Result.ok(value)
     end
   end
+
+  # A7's fixtures. Records what the post-dispatch seam was handed and WHERE it
+  # ran -- the Async task, so a spec can pin the observation to the caller's
+  # own scope rather than to a gather child. Shares the dispatch log, so
+  # ordering against the tools' own boundaries reads off one ordered list.
+  class RecordingObserver
+    attr_reader :blocks, :tasks
+
+    def initialize(log: [])
+      @log = log
+      @blocks = []
+      @tasks = []
+    end
+
+    def observe(block)
+      @log << "observe:#{block["tool_use_id"]}"
+      @blocks << block
+      @tasks << Async::Task.current?
+    end
+  end
+
+  # Fails every observation and remembers what it was offered: containment is
+  # per block, so a raising observer must cost the turn neither its results nor
+  # the next block's observation.
+  class RaisingObserver
+    attr_reader :seen
+
+    def initialize
+      @seen = []
+    end
+
+    def observe(block)
+      @seen << block["tool_use_id"]
+      raise "observer exploded"
+    end
+  end
+
+  # Records what it was asked to summarize, so the observer's POLICY can be
+  # pinned without a reactor -- whether a fire survives is {Oracle::Eager}'s
+  # own question, answered by the examples above and by eager_spec.
+  class RecordingEager
+    attr_reader :fired
+
+    def initialize
+      @fired = []
+    end
+
+    def fire(digest, text)
+      @fired << [digest, text]
+    end
+  end
+
+  # An oracle tier whose Promise stays pending until the spec resolves it, so a
+  # fire can be watched outliving the turn that spawned it. eager_spec's idiom.
+  class PendingOracle
+    def initialize
+      @promise = Lain::Promise.new
+    end
+
+    def ask(_inputs) = @promise
+    def resolve(value) = @promise.resolve(value)
+  end
 end
 
 # ToolRunner turns an assistant turn's tool_use blocks into the tool_result
@@ -304,6 +366,174 @@ RSpec.describe Lain::Agent::ToolRunner do
       expect(log).to eq(%w[unsafe_a:enter unsafe_a:resolve unsafe_b:enter unsafe_b:resolve
                            unsafe_c:enter unsafe_c:resolve])
       expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2 tu_3])
+    end
+  end
+
+  # A7: the post-dispatch observation seam. An eager summary of a tool result
+  # must be spawned where the CALLER's reactor is -- the agent loop's, which
+  # lives for the whole run -- and never from inside #gather, whose `Sync`
+  # spins up and closes its own reactor whenever no reactor is ambient. Every
+  # parallel-safe read tool goes through #gather, and those are exactly the
+  # tools whose results are worth summarizing, so the inside-gather mount
+  # misses systematically. Worse than a miss: {Oracle::Eager#fire} consumes the
+  # digest BEFORE it spawns, so a reaped fire poisons that content's key for
+  # the rest of the session.
+  describe "post-dispatch observation (A7)" do
+    # Big enough to clear Summarizing's real byte threshold, and distinct per
+    # tool so the two fires do not collapse into one digest.
+    def big(name) = "#{name}:#{"x" * 5000}"
+
+    def probe(name, log:) = ToolRunnerSpecSupport::ProbeTool.new(name:, safe: true, log:, body: -> { big(name) })
+
+    # Two parallel-safe tools: this turn is gatherable, so its results come
+    # back through the very scope the observation must outlive.
+    def gathering_runner(log:, **options)
+      described_class.new(
+        handler: Lain::Effect::Handler::Live.new(toolset: Lain::Toolset.new([probe("safe_a", log:),
+                                                                             probe("safe_b", log:)])),
+        **options
+      )
+    end
+
+    def gathered_response = tool_response(["tu_1", "safe_a", {}], ["tu_2", "safe_b", {}])
+
+    # A bounded spin, never a synchronization: the fire resolves on its own
+    # fiber and the timeout only turns "it never did" into a report instead of
+    # a hang. Nothing here awaits the fire's task -- that would prove nothing.
+    def settle(task, eager, digest)
+      task.with_timeout(1) { task.sleep(0.001) while eager.held(digest).nil? }
+    end
+
+    it "hands each result to the observer in the caller's own task, after the gather scope closed" do
+      log = []
+      observer = ToolRunnerSpecSupport::RecordingObserver.new(log:)
+
+      outer = nil
+      Sync do |task|
+        outer = task
+        gathering_runner(log:, observer:).run(gathered_response, context: nil)
+      end
+
+      expect(observer.blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+      expect(log.index("observe:tu_1")).to be > log.index("safe_b:resolve")
+      # The observation ran in the CALLER's task, not in a gather child -- which
+      # is exactly what lets a fire it spawns outlive the fan-out.
+      expect(observer.tasks).to all(be(outer))
+    end
+
+    it "keeps a real Oracle::Eager fire alive past the gather scope, resolving after the turn returns" do
+      oracle = ToolRunnerSpecSupport::PendingOracle.new
+      eager = Lain::Oracle::Eager.new(oracle:)
+      digest = Lain::Canonical.digest(big("safe_a"))
+      observer = Lain::Effect::Handler::Summarizing::Observer.new(eager:)
+
+      Sync do |task|
+        blocks = gathering_runner(log: [], observer:).run(gathered_response, context: nil)
+
+        expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+        expect(eager.held(digest)).to be_nil # still in flight: the turn waited on nothing
+        oracle.resolve({ "summary" => "compressed" })
+        settle(task, eager, digest)
+      end
+
+      expect(eager.held(digest)).to eq({ "summary" => "compressed" })
+    end
+
+    # The pin against the inside-gather mount. With no ambient reactor #gather's
+    # `Sync` builds one and closes it, so a fire spawned in there is reaped AND
+    # its digest stays consumed -- the summary could never be produced again.
+    # Firing post-dispatch inherits the caller's (absent) reactor instead, where
+    # #fire is a documented no-op that leaves the digest untouched.
+    it "leaves the digest unconsumed when no reactor is ambient, so a later fire still runs" do
+      oracle = ToolRunnerSpecSupport::PendingOracle.new
+      eager = Lain::Oracle::Eager.new(oracle:)
+      text = big("safe_a")
+      digest = Lain::Canonical.digest(text)
+      observer = Lain::Effect::Handler::Summarizing::Observer.new(eager:)
+
+      gathering_runner(log: [], observer:).run(gathered_response, context: nil)
+      expect(eager.held(digest)).to be_nil
+
+      Sync do |task|
+        eager.fire(digest, text)
+        oracle.resolve({ "summary" => "later" })
+        settle(task, eager, digest)
+      end
+
+      expect(eager.held(digest)).to eq({ "summary" => "later" })
+    end
+
+    it "summarizes nothing under the default observer, leaving the blocks byte-identical" do
+      response = tool_response(["tu_1", "echo", { "text" => "a" }], ["tu_2", "echo", { "text" => "b" }])
+
+      blocks = described_class.new(handler: echoing_handler).run(response, context: nil)
+
+      expect(Lain::Canonical.dump(blocks)).to eq(Lain::Canonical.dump(
+                                                   [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                                      "content" => "ran tu_1", "is_error" => false },
+                                                    { "type" => "tool_result", "tool_use_id" => "tu_2",
+                                                      "content" => "ran tu_2", "is_error" => false }]
+                                                 ))
+    end
+
+    it "returns the tool results unchanged when the observer raises, and still offers the next block" do
+      observer = ToolRunnerSpecSupport::RaisingObserver.new
+      response = tool_response(["tu_1", "echo", {}], ["tu_2", "echo", {}])
+
+      blocks = described_class.new(handler: echoing_handler, observer:).run(response, context: nil)
+
+      expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+      expect(blocks.map { |block| block["content"] }).to eq(["ran tu_1", "ran tu_2"])
+      expect(observer.seen).to eq(%w[tu_1 tu_2])
+    end
+
+    # The production observer this seam is built for, pinned at its own
+    # boundary: which results earn a summary is policy, and it lives with
+    # {Effect::Handler::Summarizing}, the decorator that shares the rule.
+    # These examples are here rather than beside that class because A7 owns
+    # the observer; the chain-mount decorator's own examples are in
+    # spec/lain/oracle/eager_spec.rb.
+    describe Lain::Effect::Handler::Summarizing::Observer do
+      let(:eager) { ToolRunnerSpecSupport::RecordingEager.new }
+
+      def block_for(content, is_error: false)
+        { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => content, "is_error" => is_error }
+      end
+
+      def observing(content, is_error: false, **options)
+        described_class.new(eager:, **options).observe(block_for(content, is_error:))
+        eager.fired
+      end
+
+      it "fires a successful String result over the threshold, keyed by its content address" do
+        content = "x" * 5000
+
+        expect(observing(content)).to eq([[Lain::Canonical.digest(content), content]])
+      end
+
+      it "declines an error result however large -- a failure is not worth compressing" do
+        expect(observing("x" * 5000, is_error: true)).to be_empty
+      end
+
+      # Strictly OVER: the threshold names the size a result must exceed.
+      it "declines content of exactly the threshold and fires at one byte more" do
+        expect(observing("x" * Lain::Effect::Handler::Summarizing::DEFAULT_THRESHOLD_BYTES)).to be_empty
+        expect(observing("x" * (Lain::Effect::Handler::Summarizing::DEFAULT_THRESHOLD_BYTES + 1))).not_to be_empty
+      end
+
+      it "declines content well below the threshold" do
+        expect(observing("small")).to be_empty
+      end
+
+      # Array content is structured blocks, not free text: there is nothing for
+      # a prose summarizer to compress.
+      it "declines structured block (Array) content" do
+        expect(observing([{ "type" => "text", "text" => "x" * 5000 }])).to be_empty
+      end
+
+      it "honours an injected threshold_bytes" do
+        expect(observing("small", threshold_bytes: 2)).to eq([[Lain::Canonical.digest("small"), "small"]])
+      end
     end
   end
 end
