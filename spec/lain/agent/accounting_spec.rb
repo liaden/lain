@@ -69,5 +69,30 @@ RSpec.describe Lain::Agent::Accounting do
 
       expect(journal_io).to include_journal_record("turn_usage", model: nil)
     end
+
+    it "still returns the cumulative Usage the budget check consumes" do
+      accounting = described_class.new
+      accounting.observe(response(input: 10, output: 5), digest: "blake3:one")
+
+      second = accounting.observe(response(input: 3, output: 2), digest: "blake3:two")
+
+      expect(second).to eq(accounting.usage)
+      expect(second).to eq(Lain::Usage.new(input_tokens: 13, output_tokens: 7))
+    end
+  end
+
+  describe "#last_turn_usage" do
+    it "is nil before any turn -- unknown, not zero" do
+      expect(described_class.new.last_turn_usage).to be_nil
+    end
+
+    it "reports the most recent response's input tokens, not the sum" do
+      accounting = described_class.new
+      accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
+      accounting.observe(response(input: 250, output: 5), digest: "blake3:two")
+
+      expect(accounting.last_turn_usage).to eq(250)
+      expect(accounting.usage.total_input_tokens).to eq(350)
+    end
   end
 end

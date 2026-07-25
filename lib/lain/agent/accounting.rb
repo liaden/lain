@@ -17,6 +17,7 @@ module Lain
       def initialize(journal: Channel::Null.instance)
         @journal = journal
         @usage = Usage.zero
+        @last_turn_usage = nil
       end
 
       # Roll one model response into the running total and journal it against
@@ -27,6 +28,7 @@ module Lain
       # @return [Lain::Usage] the cumulative usage, ready for a budget check
       def observe(response, digest:)
         @usage += response.usage
+        @last_turn_usage = response.usage.total_input_tokens
         @journal << Telemetry::TurnUsage.new(
           digest:,
           model: response.model,
@@ -35,6 +37,16 @@ module Lain
         )
         @usage
       end
+
+      # Current context occupancy: the most recent response's billed-on-the-way-in
+      # tokens (`Usage#total_input_tokens`), not the run's cumulative sum. `#usage`
+      # answers "what has this run spent"; compaction's `Need` needs "how full is
+      # the context right now", which only the latest response can answer.
+      #
+      # @return [Integer, nil] nil before any turn -- distinct from zero, which
+      #   would read as an empty context on a resumed session whose Accounting is
+      #   fresh but whose Timeline is not
+      attr_reader :last_turn_usage
     end
   end
 end
