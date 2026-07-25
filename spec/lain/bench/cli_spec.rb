@@ -4,6 +4,50 @@ require "fileutils"
 require "json"
 require "tmpdir"
 
+# Answers every `git` the worktree backend shells out with success, recording
+# the argv. This spec's claim is WHICH backend reaches the arms, not what git
+# does with a checkout -- spec/lain/cli/isolation_backend_spec.rb runs the real
+# thing -- so faking the subprocess keeps an arm run off the filesystem.
+class BenchArmShells
+  Fake = Struct.new(:argv, :exitstatus, :stderr, :stdout) do
+    def run_command = self
+  end
+
+  def initialize
+    @calls = []
+  end
+
+  attr_reader :calls
+
+  def call(*argv, **)
+    @calls << argv
+    Fake.new(argv, 0, "", "")
+  end
+end
+
+# Records the isolation backend the {Lain::Arm::Driver} hands each `#run` and
+# then IS the control arm: the lease lifecycle under observation is
+# {Lain::Arm::SingleThread}'s own acquire/release, not a mock of it.
+#
+# `isolation:` is REQUIRED here, unlike on every real arm. Re-declaring the
+# base's `NoIsolation` default would let this arm supply the very value the
+# spec then credits the DRIVER with, so a driver that stopped passing
+# `isolation:` at all would still read as one defaulting to NoIsolation.
+# Required, that driver is a loud ArgumentError instead.
+class IsolationRecordingArm < Lain::Arm::SingleThread
+  def initialize(name:, clock: -> { 0.0 })
+    super
+    @isolations = []
+  end
+
+  attr_reader :isolations
+
+  def run(task, isolation:, **rest)
+    @isolations << isolation
+    super
+  end
+end
+
 # Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
 # calls these methods, and `say`s the returned Strings. Every refused input is
 # a {Lain::Error} -- {CLI::Refusal} for the user's own mistakes, with the path
@@ -123,6 +167,106 @@ RSpec.describe Lain::Bench::CLI do
 
     it "refuses a fractional k rather than silently truncating recall@2.5 to recall@2" do
       expect { cli.sweep_report(k: 2.5) }.to raise_error(described_class::Refusal, /whole number/)
+    end
+  end
+
+  # An arm run leases its workers from the SAME `--isolation` resolver the chat
+  # fleet uses, so a backend name means one thing across commands -- and the
+  # resolved backend has to reach EVERY arm, or the comparison is between arms
+  # that ran under different confinement.
+  describe "#arm_report" do
+    let(:spawn_seam) do
+      lambda do |journal:|
+        Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(
+            responses: [text_response("done", model: "claude-sonnet-4",
+                                              usage: Lain::Usage.new(input_tokens: 100, output_tokens: 20))]
+          ),
+          toolset: Lain::Toolset.new([]),
+          context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 256),
+          journal:
+        )
+      end
+    end
+
+    let(:grader) do
+      Lain::Grader::Fixture.new("settled") do |f|
+        f.check("committed an assistant turn") { |timeline| timeline.to_a.map(&:role).include?("assistant") }
+      end
+    end
+
+    let(:arms) { [IsolationRecordingArm.new(name: "arm-a"), IsolationRecordingArm.new(name: "arm-b")] }
+    let(:tasks) { ["procedural task", "another task"] }
+
+    # What every arm was handed, across every task in the suite.
+    def isolations = arms.flat_map(&:isolations)
+
+    it "returns the driver's report as a String, without printing" do
+      report = nil
+      expect { report = cli.arm_report(arms, tasks:, spawn_seam:, grader:) }
+        .to output("").to_stdout.and output("").to_stderr
+      expect(report).to include("arm-a").and include("arm-b").and include("grader score")
+    end
+
+    it "leaves every arm with Arm::NoIsolation when no isolation option is given" do
+      cli.arm_report(arms, tasks:, spawn_seam:, grader:)
+
+      expect(isolations).to all(be(Lain::Arm::NoIsolation))
+    end
+
+    # An unset flag is NOT `--isolation none`. Unset keeps the arm-local
+    # NoIsolation, whose lease carries NO WorkerEnv at all; `none` resolves a
+    # real Isolation::Null that leases the shared process environment. Passing
+    # the resolver's own nil-means-default through here would collapse the two,
+    # and that distinction is what tells a report's reader whether a run was
+    # isolated by a backend or never leased anything.
+    it "distinguishes an unset flag from an explicit isolation of none" do
+      cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "none")
+
+      expect(isolations).to all(be_a(Lain::Isolation::Null))
+      expect(isolations.map { |backend| backend.acquire("arm-a").worker_env }).to all(be_a(Lain::WorkerEnv))
+      expect(Lain::Arm::NoIsolation.acquire("arm-a").worker_env).to be_nil
+    end
+
+    it "reaches every arm with ONE resolved backend, each arm leasing under its own name" do
+      Dir.mktmpdir("lain-bench-project") do |project|
+        Dir.mktmpdir("lain-bench-runtime") do |runtime|
+          FileUtils.mkdir_p(File.join(project, ".git"))
+          journal = Lain::Channel.new
+          cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "worktree", root: project, journal:,
+                               paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }),
+                               shell_out_factory: BenchArmShells.new)
+
+          leases = journal.drain.grep(Lain::Telemetry::IsolationLease).group_by(&:kind)
+          acquired = leases.fetch(:acquired)
+          expect(isolations.uniq.size).to eq(1)
+          expect(acquired.size).to eq(arms.size * tasks.size)
+          expect(acquired.map(&:worker_key).uniq).to contain_exactly("arm-a", "arm-b")
+          expect(acquired.map(&:backend).uniq).to eq([Lain::Isolation::Worktree.name])
+          # Acquire alone is not the claim: a backend that leaked every lease
+          # would satisfy it. The record is a LIFECYCLE, so every acquire the
+          # arms took must have a release journaled against it.
+          expect(leases.fetch(:released).size).to eq(acquired.size)
+        end
+      end
+    end
+
+    # Forwarding backend options to a resolver that is never called would drop
+    # them in silence -- and a caller who passes `journal:` for lease telemetry
+    # but no name would get neither the telemetry nor a word about it, while the
+    # same key one flag later (`isolation: "none", bogus: 1`) is a loud unknown-
+    # keyword ArgumentError. A wiring bug, so it crashes like one.
+    it "refuses backend options given with no isolation name, rather than dropping them" do
+      expect { cli.arm_report(arms, tasks:, spawn_seam:, grader:, journal: Lain::Channel.new) }
+        .to raise_error(ArgumentError, /journal/)
+    end
+
+    # Parity with record's unknown --provider: the ONE named Lain error, raised
+    # at resolution, so the exe's `rescue Lain::Error` presents it and no arm is
+    # dispatched under a backend the operator did not ask for.
+    it "raises the one named Lain error on an unknown isolation name" do
+      expect { cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "docker") }
+        .to raise_error(Lain::CLI::IsolationBackend::Unknown, /docker/)
     end
   end
 

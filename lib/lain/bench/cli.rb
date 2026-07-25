@@ -78,6 +78,52 @@ module Lain
         PlanSweep.new(plan_path:, runs_path:).report
       end
 
+      # The live arm comparison ({Arm::Driver}): every arm runs the same task
+      # suite, and each arm leases its workers from the backend `isolation`
+      # names -- so the arms are compared under ONE confinement rather than
+      # whichever each happened to construct.
+      #
+      # `isolation` is the `--isolation` FLAG, not a backend object, the same
+      # name-to-resolve/object-to-inject split {#record} keeps between
+      # `provider_name` and `provider`. It resolves through the ONE
+      # {Lain::CLI::IsolationBackend} chat resolves through, so a name means the
+      # same thing from either command and an unknown one raises the single
+      # named error from both.
+      #
+      # AN UNSET FLAG IS NOT `--isolation none`. Unset leaves {Arm::Driver}'s own
+      # default, {Arm::NoIsolation}, whose lease carries no {WorkerEnv} at all;
+      # `none` resolves an {Isolation::Null}, a real backend leasing the shared
+      # process environment. Forwarding the resolver's own nil-means-default
+      # through here would collapse the two, and that distinction is what tells a
+      # report's reader whether a run was isolated by a backend or never leased
+      # anything.
+      #
+      # PASS A REAL `journal:` WITH ANY NAME BUT nil. The resolver decorates by
+      # NEED, so a resolve with no journal (or a {Channel::Null}) hands back a
+      # BARE backend that emits no {Telemetry::IsolationLease} record at all --
+      # an isolated run nothing can observe. For chat that is merely quiet; on
+      # the bench, where the record IS the deliverable, an unobservable arm run
+      # is not a run worth reporting. Treat `journal:` as required whenever
+      # `isolation` is set, and wire the exe that way.
+      #
+      # @param arms [Array<Arm>] the topologies under comparison
+      # @param tasks [Array<String>] the suite each arm runs
+      # @param spawn_seam [#call] the agent/child factory threaded into every arm
+      # @param grader [#grade] scores each run's Timeline
+      # @param isolation [String, nil] the `--isolation` name; nil keeps the
+      #   Driver's own default
+      # @param backend_options [Hash] forwarded verbatim to
+      #   {Lain::CLI::IsolationBackend.resolve} (`root:`, `journal:`, `paths:`,
+      #   `shell_out_factory:`); ITS signature owns those defaults, so restating
+      #   them here would be a second authority to drift from
+      # @return [String] never printed here
+      # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
+      #   resolver's advertised set
+      # @raise [ArgumentError] on backend options with no name to resolve
+      def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, **backend_options)
+        Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, **arm_isolation(isolation, **backend_options)).report
+      end
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.
@@ -120,6 +166,25 @@ module Lain
       end
 
       private
+
+      # The `isolation:` keyword {Arm::Driver} is built with -- or NO keyword at
+      # all when the flag is unset, so the Driver stays the one authority on what
+      # "no isolation" means (see {#arm_report}).
+      #
+      # Options with no name to resolve CRASH rather than being dropped: with a
+      # name, the resolver's own signature rejects a key it does not know, and a
+      # silent drop here would make that guard depend on an unrelated argument --
+      # `journal:` typo'd next to `--isolation worktree` is loud, while a
+      # `journal:` the run will never use is a report missing the lease telemetry
+      # its caller asked for, with nothing said.
+      def arm_isolation(name, **backend_options)
+        return { isolation: Lain::CLI::IsolationBackend.resolve(name, **backend_options) } unless name.nil?
+        return {} if backend_options.empty?
+
+        raise ArgumentError, "isolation options #{backend_options.keys.inspect} were given with no isolation " \
+                             "name to resolve them for; an unisolated arm run leases through Arm::NoIsolation " \
+                             "and consults no backend"
+      end
 
       def session_paths(sources)
         Array(sources).flat_map do |source|
