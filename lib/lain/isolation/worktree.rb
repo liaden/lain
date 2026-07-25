@@ -167,3 +167,7 @@ module Lain
     end
   end
 end
+
+# This file is the worktree/ subtree's index. Handback reopens the class above
+# and reads its GIT_CONTEXT_SCRUB, so it loads AFTER the class body.
+require_relative "worktree/handback"
