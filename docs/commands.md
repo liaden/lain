@@ -181,6 +181,22 @@ List recorded sessions, newest first. `/sessions --all` includes ephemeral `.btw
 recorded turn. The Timeline is content-addressed, so nothing is destroyed and the old head stays
 reachable.
 
+### /pin
+
+`/pin` marks a turn so compaction may not elide it. Bare `/pin` takes the last assistant turn;
+`/pin <digest>` takes the turn a digest prefix names, resolved against this session's chain.
+
+Unlike `/rewind`, `/pin` takes **no turn count** — its argument names a turn, it does not measure a
+distance. A prefix must be at least four characters, so a count-shaped `/pin 3` is refused rather
+than silently resolving against whichever digest happens to start with `3`.
+
+Pins live on the session and are journalled, so they survive `--resume`.
+
+### /unpin
+
+`/unpin` releases a pin, taking the same argument grammar `/pin` does. A turn that was not pinned
+says so rather than reporting a release.
+
 ### /fork
 
 Fork this session at its head into a new tmux window: a durable sibling chat over the shared

@@ -15,13 +15,17 @@ module Lain
   # or forking the Timeline can never resurrect (or lose) a todo list: there was
   # never a copy of it there to begin with, only here.
   #
-  # Four responsibilities today:
+  # Five responsibilities today:
   #   * a read-set, so an edit-before-read contract can ask "was this file read
   #     this session?" (see {Tool::Contracts});
   #   * a write-set, the read-set's mirror for mutations: the paths structured
   #     mutating tools wrote this session, which is exactly the scope of a
   #     workspace snapshot ({Workspace::Snapshot} -- write-set only, the
   #     documented gap for free-form bash);
+  #   * a pin-set, the turn digests compaction may not elide (B1) -- modelled
+  #     on the READ-set, not the write-set: only the read-set is journaled and
+  #     replayed, and a pin that vanished on `--resume` would be worse than no
+  #     pin at all;
   #   * a reminders channel -- empty until {Tools::TodoWrite} lands the run's
   #     todo list, then one rendered string -- that the Agent composes into the
   #     Workspace tail every render;
@@ -55,6 +59,7 @@ module Lain
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default)
       @reads = Set.new
       @writes = Set.new
+      @pins = Set.new
       @todo_reminder = nil
       @todo_items = []
       @plan_step_completed = false
@@ -117,6 +122,47 @@ module Lain
     # @return [Array<String>]
     def writes
       @writes.sort.freeze
+    end
+
+    # Pin a turn digest: "compaction may not elide this one". Digests are
+    # already content addresses, so unlike a path there is no normalization to
+    # do -- the digest a caller resolved off the Timeline IS the identity, and
+    # interning it keeps the set's members comparable as pointers.
+    #
+    # @return [self]
+    def record_pin(digest)
+      @pins << named!(digest)
+      self
+    end
+
+    # Retract a pin. Unpinning what was never pinned is a no-op, not an error:
+    # the pin-set is a SET, and a caller who cannot see it (a replay folding a
+    # log, an operator retyping) should not have to check first.
+    #
+    # @return [self]
+    def record_unpin(digest)
+      @pins.delete(named!(digest))
+      self
+    end
+
+    # Raise-free by construction: nothing blank can enter the set (see
+    # {#named!}), so the query needs no guard of its own and a caller may ask
+    # about anything without a rescue.
+    #
+    # @return [Boolean] whether `digest` is pinned this session
+    def pinned?(digest)
+      @pins.include?(-digest.to_s)
+    end
+
+    # The pin-set as sorted digests -- the query a compaction source asks
+    # ("which turns must survive?"), sorted for the same reason {#writes} is:
+    # a consumer must not vary with the order the pins happened to arrive.
+    # The sort is per call, so a hot loop testing MEMBERSHIP wants {#pinned?}
+    # (O(1) on the Set) rather than this.
+    #
+    # @return [Array<String>]
+    def pins
+      @pins.sort.freeze
     end
 
     # Replaces the ENTIRE todo list -- deterministic, no merge logic, so a
@@ -208,6 +254,17 @@ module Lain
       self.class.normalize_path(path)
     end
 
+    # A digest has no empty spelling the way a path has "" -> `Dir.pwd`, so a
+    # blank one is refused rather than coerced: `-nil.to_s` would otherwise put
+    # "" in the set, after which `pinned?(nil)` answers TRUE and a turn that
+    # does not exist reads as protected.
+    def named!(digest)
+      name = -digest.to_s
+      raise ArgumentError, "a pin must name a turn digest, got #{digest.inspect}" if name.strip.empty?
+
+      name
+    end
+
     def render_todos(list)
       lines = list.map { |todo| "- [#{todo.status}] #{todo.content}" }
       "Current todo list:\n#{lines.join("\n")}"
@@ -245,6 +302,26 @@ module Lain
 
       # @return [Array]
       def writes
+        [].freeze
+      end
+
+      # @return [self]
+      def record_pin(_digest)
+        self
+      end
+
+      # @return [self]
+      def record_unpin(_digest)
+        self
+      end
+
+      # @return [false]
+      def pinned?(_digest)
+        false
+      end
+
+      # @return [Array]
+      def pins
         [].freeze
       end
 
@@ -341,6 +418,38 @@ module Lain
 
       # @return [Array<String>]
       def writes = @session.writes
+
+      # The pin-set journals BOTH directions, unconditionally: the record
+      # stream is an ordered LOG, not a set of pin events, because a pin
+      # followed by an unpin has to rebuild as NOT pinned. Hence one record
+      # type carrying `pinned:` rather than two types -- a reader folding in
+      # file order gets the retraction for free.
+      #
+      # No first-time dedupe here (unlike {#record_read}): a pin arrives from
+      # an operator command or an auto-pin at a plan boundary, never from a
+      # read/edit loop, so there is no per-iteration flood to suppress -- and
+      # suppressing a repeat would make the log's order-sensitivity subtler
+      # for no gain.
+      #
+      # @return [self]
+      def record_pin(digest)
+        @session.record_pin(digest)
+        @journal << Telemetry::SessionPin.new(digest:, pinned: true)
+        self
+      end
+
+      # @return [self]
+      def record_unpin(digest)
+        @session.record_unpin(digest)
+        @journal << Telemetry::SessionPin.new(digest:, pinned: false)
+        self
+      end
+
+      # @return [Boolean]
+      def pinned?(digest) = @session.pinned?(digest)
+
+      # @return [Array<String>]
+      def pins = @session.pins
 
       # @return [self]
       def write_todos(todos)

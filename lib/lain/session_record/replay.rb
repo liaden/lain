@@ -24,7 +24,14 @@ module Lain
     # tolerant zero-record precedent {Bench::Session::MemoryReplay} itself
     # already sets for a `memory_root`-free chain.
     class Replay
+      # A record of ours whose FIELDS are not what the writer's guard promised
+      # -- the shape a salvaged or hand-edited journal reaches us in. Distinct
+      # from a foreign record, which {Journal.records} skips by type, and from
+      # a missing key, which `fetch` already raises KeyError for.
+      class Malformed < Error; end
+
       SESSION_READ_TYPE = "session_read"
+      SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       MEMORY_ROOT_TYPE = "memory_root"
 
@@ -43,11 +50,13 @@ module Lain
       end
 
       # @return [Session] a fresh Session carrying the recorded read-set, the
-      #   LAST recorded todo list, and the manifest reminders the recorded
-      #   memory chain reconstructs
+      #   pin-set the recorded transitions fold to, the LAST recorded todo
+      #   list, and the manifest reminders the recorded memory chain
+      #   reconstructs
       def session
         Session.new(memory:).tap do |fresh|
           reads.each { |record| fresh.record_read(record.fetch("path")) }
+          pins.each { |record| apply_pin(fresh, record) }
           todo_records.each { |record| fresh.write_todos(items(record)) }
         end
       end
@@ -67,6 +76,32 @@ module Lain
 
       def reads
         Journal.records(@records, type: SESSION_READ_TYPE)
+      end
+
+      def pins
+        Journal.records(@records, type: SESSION_PIN_TYPE)
+      end
+
+      # RECORDED ORDER is the whole contract: a `session_pin` stream is an
+      # ordered log of transitions, so folding it in file order makes the last
+      # transition for a digest win -- which is how a pin-then-unpin rebuilds
+      # as NOT pinned rather than as a stale pin nothing can retract.
+      #
+      # The direction is read as a STRICT boolean, matching what
+      # {Telemetry::Guards::SessionPin} enforces on the way out. Folding by
+      # truthiness instead would trust more than the writer ever promised:
+      # `"pinned": "false"` would rebuild as PINNED and `null` as an unpin, and
+      # a salvaged or hand-edited journal is exactly the input this record type
+      # exists to survive. Loud beats plausible.
+      def apply_pin(fresh, record)
+        digest = record.fetch("digest")
+        direction = record.fetch("pinned")
+        unless [true, false].include?(direction)
+          raise Malformed, "session_pin for #{digest.inspect} must carry pinned true or false, " \
+                           "got #{direction.inspect}"
+        end
+
+        direction ? fresh.record_pin(digest) : fresh.record_unpin(digest)
       end
 
       def todo_records

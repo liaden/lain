@@ -89,8 +89,8 @@ module Lain
         # method call, and this list is data, not the registration behavior
         # #registry owns.
         def builtins
-          [Quit.new, Rewind.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new, Inbox.new,
-           Ruby.new, Goal.new(driver: @goal_driver), Meta.new(root: @root)]
+          [Quit.new, Rewind.new, Pin.new, Unpin.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new,
+           Inbox.new, Ruby.new, Goal.new(driver: @goal_driver), Meta.new(root: @root)]
         end
       end
     end
