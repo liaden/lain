@@ -207,6 +207,16 @@ module Lain
         stack = stack_for(worker_id)
         guard_unoccupied(stack, base)
         up_and_lease(stack, base, compose_services)
+      rescue StandardError
+        # The inner lease is ours to reclaim on ANY failure past the acquire, or
+        # a Worktree inner strands a checkout -- {DbIndex#acquire}'s rescue, for
+        # its reason. `stack_for` is why this is not redundant with the releases
+        # inside guard_unoccupied/up_and_lease: it runs BEFORE both, and
+        # {#resolve_compose_file} raises there when the compose file is gone.
+        # Double-releasing on the paths that already released is harmless -- a
+        # {Lease} is idempotent-loud, so the reclaim runs exactly once.
+        base&.release
+        raise
       end
 
       private
