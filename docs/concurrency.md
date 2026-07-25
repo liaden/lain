@@ -138,7 +138,7 @@ check `#closed?` explicitly; the exception class does not do that work for you.
 
 ## Where each model sits on the topology
 
-Referring to the [topology diagram in the README](../README.md#topology):
+Referring to the [process topology diagram](../ARCHITECTURE.md#process-topology):
 
 - **Sequential (today, M1).** `lain` is one thread. Every arrow on the diagram — the HTTPS call
   to `api.anthropic.com`, the in-process FFI call into `ext/lain`, eventually the msgpack-RPC

@@ -1,4 +1,4 @@
-# Running the Ollama bench arm
+# Ollama
 
 `Provider::Ollama` gives the bench a free, local, temperature-0 arm over Ollama's
 native `/api/chat` (NDJSON streaming + non-streaming). It exists to be an
@@ -9,6 +9,36 @@ before you trust the second half of that sentence.
 The provider itself is documented in `lib/lain/provider/ollama.rb`; the wire
 format and its quirks are distilled in `references/ollama/`. This file is only
 the operational how-to.
+
+## Capabilities
+
+`streaming`, `thinking`, `structured_output`. `cache_profile` is
+`CacheProfile::NO_CACHING`.
+
+No `prompt_caching` and no `strict_tools`, which makes Ollama the provider that
+most often triggers a capability degrade. A `Context::CacheBreakpoints` combinator
+declares `requires :prompt_caching`, so under `:degrade` it no-ops here and the
+degradation lands in the Journal; under `:strict` it raises. `Capability::Guard`
+then refuses to compare an Ollama run against an Anthropic run whose degraded set
+differs. That is the point: a context tactic that silently became a no-op would
+otherwise make the comparison a lie.
+
+## Ollama also powers compaction, on every provider
+
+Even when you are chatting against Claude, the eager tool-result summarizer talks
+to a local Ollama model. `CLI::Backend#summary_oracle` wires
+`Provider::Ollama.new(api_base:)` at `DEFAULT_MODEL` unconditionally, never the
+chat's own provider: a summary fires once per large tool result, off the turn's
+critical path, and paying frontier-model tokens to compress a tool result would
+cost more than resending it.
+
+So `ollama serve` + `ollama pull qwen3:4b` is worth doing even if you never pass
+`--provider ollama`. Without it, the fire fails inside `Oracle::Eager`'s task
+boundary, nothing raises, and the compacting turn renders an elision line instead
+of a summary. See the
+[README](../../README.md#compaction-and-local-summarization) for the two tiers.
+
+`--api-base` moves the summarizer as well as the chat provider.
 
 ## Install and pull the model
 
