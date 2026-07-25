@@ -43,16 +43,17 @@ module Lain
           "read, or the language is unsupported."
       end
 
-      # Audited: reads one file (File.read) and runs it through a fresh,
+      # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
+      # resolve the path, then one file (File.read), run through a fresh,
       # per-call Structural::Matcher -- documented stateless (astgrep.rs:
-      # "Every call is STATELESS", no ext-side index handle). No Session
-      # touched, no process-global state.
+      # "Every call is STATELESS", no ext-side index handle). No Session write,
+      # no chdir, no process-global state.
       def parallel_safe? = true
 
       protected
 
-      def perform(input, _invocation)
-        path = input.path
+      def perform(input, invocation)
+        path = resolved_path(input, invocation)
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
@@ -72,6 +73,14 @@ module Lain
       end
 
       private
+
+      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+      # under the default, so byte-identical to a raw File.read); an absolute
+      # one is honored as given. Same rule, same shape, as {ReadFile}
+      # and {Grep#resolved_path}.
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+      end
 
       def problem_with(path)
         return "no such file: #{path}" unless File.exist?(path)

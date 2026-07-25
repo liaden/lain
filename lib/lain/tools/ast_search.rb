@@ -78,21 +78,23 @@ module Lain
           "an ok, explicit result, not an error."
       end
 
-      # Audited: reads the filesystem (Dir.glob, File.read) and runs each
-      # match through a fresh, per-call Structural::Matcher -- documented
+      # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
+      # resolve the path, then the filesystem (Dir.glob, File.read), running
+      # each match through a fresh, per-call Structural::Matcher -- documented
       # stateless (astgrep.rs: "Every call is STATELESS", no ext-side index
-      # handle). No Session touched, no process-global state.
+      # handle). No Session write, no chdir, no process-global state.
       def parallel_safe? = true
 
       protected
 
-      def perform(input, _invocation)
-        problem = problem_with(input)
+      def perform(input, invocation)
+        path = resolved_path(input, invocation)
+        problem = problem_with(input, path)
         return Tool::Result.error(problem) if problem
 
         language = input.language.downcase.to_sym
         patterns = resolve_patterns(input, language)
-        matches = deduplicate(search(input.path, language, patterns)).first(MAX_MATCHES + 1)
+        matches = capped_matches(path, input.path, language, patterns)
         Tool::Result.ok(RESULT_FORMATTER.call(matches, patterns:, path: input.path))
       rescue Structural::Matcher::BadPattern, Structural::Matcher::UnknownLanguage, Structural::Patterns::Unknown => e
         Tool::Result.error(e.message)
@@ -100,9 +102,28 @@ module Lain
 
       private
 
-      def problem_with(input)
-        return "no such file or directory: #{input.path}" unless File.exist?(input.path)
-        return "not readable: #{input.path}" unless File.readable?(input.path)
+      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+      # under the default, so byte-identical to the pre-WorkerEnv raw path); an
+      # absolute path is honored as given. Matching {Grep}: this is the
+      # FILESYSTEM locator, and every MODEL-FACING mention of the path -- the
+      # match labels (see {#search}) and the no-matches line -- keeps the
+      # model's original spelling instead. An ERROR is the one exception: it
+      # names the resolved path, because "where did it actually look" is the
+      # whole content of that message.
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+      end
+
+      # One more than the cap is all that is ever pulled off the lazy walk --
+      # enough for {ResultFormatter} to know the result WAS capped, without
+      # parsing a single file past what the cap needs.
+      def capped_matches(path, display, language, patterns)
+        deduplicate(search(path, display, language, patterns)).first(MAX_MATCHES + 1)
+      end
+
+      def problem_with(input, path)
+        return "no such file or directory: #{path}" unless File.exist?(path)
+        return "not readable: #{path}" unless File.readable?(path)
         return "give exactly one of pattern or query, not both" if present?(input.pattern) && present?(input.query)
         unless present?(input.pattern) || present?(input.query)
           return "give one of pattern (a raw ast-grep pattern) or query (a catalog name)"
@@ -137,12 +158,18 @@ module Lain
       # An Enumerator, for the same reason as {Grep#search}: the MAX_MATCHES+1
       # cap in {#perform} stops walking the moment it has enough, rather than
       # matching every file under `path` before discarding most of the result.
-      def search(path, language, patterns)
+      #
+      # `path` is the resolved filesystem locator; `display` is the model's
+      # original spelling. A DIRECTORY target labels each hit by its path
+      # relative to the walked root; a SINGLE-FILE target labels its hits with
+      # `display` verbatim -- so a relative `foo.rb` stays `foo.rb:1:` rather
+      # than leaking the WorkerEnv-resolved absolute path.
+      def search(path, display, language, patterns)
         root = path if File.directory?(path)
         matcher = Structural::Matcher.new
         Enumerator.new do |yielder|
           files_under(path, language).each do |file|
-            label = root ? file.delete_prefix("#{root}/") : file
+            label = root ? file.delete_prefix("#{root}/") : display
             each_structural_match(matcher, file, language, patterns) do |line_no, text, captures|
               yielder << [label, line_no, text, captures]
             end

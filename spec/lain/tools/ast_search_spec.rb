@@ -156,4 +156,74 @@ RSpec.describe Lain::Tools::AstSearch do
     expect(result.content).not_to include(".git")
     expect(result.content).to include("real.rb:1:")
   end
+
+  describe "resolving paths against the session WorkerEnv" do
+    let(:pattern) { "def $NAME($$$A)" }
+
+    def invocation_with(session)
+      Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+    end
+
+    def session_at(cwd)
+      Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: ENV.to_h))
+    end
+
+    it "resolves a relative path under the injected WorkerEnv cwd" do
+      write("foo.rb", "def total(items)\n  items.sum\nend\n")
+
+      result = tool.call({ pattern:, language: "ruby", path: "." }, invocation_with(session_at(tmpdir)))
+
+      expect(result.content).to include("foo.rb:1:")
+    end
+
+    it "honors an absolute path as given, whatever the WorkerEnv cwd" do
+      write("foo.rb", "def total(items)\n  items.sum\nend\n")
+
+      Dir.mktmpdir do |elsewhere|
+        result = tool.call({ pattern:, language: "ruby", path: tmpdir }, invocation_with(session_at(elsewhere)))
+
+        expect(result.content).to include("foo.rb:1:")
+      end
+    end
+
+    it "resolves a relative path against the process cwd under the default WorkerEnv" do
+      write("foo.rb", "def total(items)\n  items.sum\nend\n")
+
+      Dir.chdir(tmpdir) do
+        result = tool.call({ pattern:, language: "ruby", path: "." }, invocation_with(Lain::Session.new))
+
+        expect(result.content).to include("foo.rb:1:")
+      end
+    end
+
+    # The resolved path is the FILESYSTEM locator only. Model-facing output
+    # keeps the model's own spelling, exactly as {Grep} does: a single-file
+    # target labels its hits with the given path, and the no-matches line names
+    # the given path -- neither leaks the WorkerEnv-resolved absolute path.
+    it "labels a single-file hit with the given spelling, not the resolved path" do
+      write("foo.rb", "def total(items)\n  items.sum\nend\n")
+
+      result = tool.call({ pattern:, language: "ruby", path: "foo.rb" }, invocation_with(session_at(tmpdir)))
+
+      expect(result.content).to include("foo.rb:1:")
+      expect(result.content).not_to include(tmpdir)
+    end
+
+    it "names the given path, not the resolved one, in the no-matches line" do
+      write("foo.rb", "one\ntwo\nthree\n")
+
+      result = tool.call({ pattern:, language: "ruby", path: "." }, invocation_with(session_at(tmpdir)))
+
+      expect(result.content).to eq(%(no matches for "def $NAME($$$A)" under .))
+    end
+
+    # An ERROR is a diagnostic, not model-facing content: it names the resolved
+    # path so a wrong-directory read says exactly where it looked. Same split as
+    # {Grep}, whose #problem_with also takes the resolved locator.
+    it "names the resolved path in an error Result" do
+      result = tool.call({ pattern:, language: "ruby", path: "nope" }, invocation_with(session_at(tmpdir)))
+
+      expect(result).to have_attributes(is_error: true, content: "no such file or directory: #{tmpdir}/nope")
+    end
+  end
 end

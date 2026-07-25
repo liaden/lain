@@ -24,15 +24,20 @@ module Lain
           "directory, or cannot be read."
       end
 
-      # Audited: reads the filesystem only (Dir.glob, File.exist?/directory?/
-      # readable?), touches no Session, and never chdirs -- no process-global
-      # state.
+      # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
+      # resolve the path, then only the filesystem (Dir.glob, File.exist?/
+      # directory?/readable?). No Session write, and never a chdir -- no
+      # process-global state.
       def parallel_safe? = true
 
       protected
 
-      def perform(input, _invocation)
-        path = input.path
+      def perform(input, invocation)
+        # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+        # under the default, so byte-identical to the pre-WorkerEnv listing); an
+        # absolute one is honored as given. Entries stay relative to the
+        # resolved root, so the model-visible listing is unchanged either way.
+        path = File.expand_path(input.path, session_of(invocation).worker_env.cwd)
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 

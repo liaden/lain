@@ -42,16 +42,17 @@ module Lain
           "directory, cannot be read, or the language is unsupported."
       end
 
-      # Audited: reads one file (File.read) and runs it through
+      # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
+      # resolve the path, then one file (File.read), run through
       # Ext::TreeSitter.query -- documented stateless (treesitter.rs: "Every
-      # call is STATELESS", no ext-side index handle to keep). No Session
-      # touched, no process-global state.
+      # call is STATELESS", no ext-side index handle to keep). No Session write,
+      # no chdir, no process-global state.
       def parallel_safe? = true
 
       protected
 
-      def perform(input, _invocation)
-        path = input.path
+      def perform(input, invocation)
+        path = resolved_path(input, invocation)
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
@@ -65,6 +66,14 @@ module Lain
       end
 
       private
+
+      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
+      # under the default, so byte-identical to a raw File.read); an absolute
+      # one is honored as given. Same rule, same shape, as {ReadFile}
+      # and {Grep#resolved_path}.
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
+      end
 
       # Shared with ReadFile/CodeOutline: a missing path, a directory, or an
       # unreadable file is a reasonable question the model asked, so it earns an
