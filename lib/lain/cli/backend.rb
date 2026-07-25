@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "backend/summarizer"
+
 module Lain
   module CLI
     # Turns the CLI flags into the two collaborators a run needs a CHOICE about --
@@ -31,9 +33,27 @@ module Lain
       # Loud instead, per CLAUDE.md's unknown-state premise.
       class Rebound < Error; end
 
+      # A summarizer ceiling of zero or less. Loud, because every other layer is
+      # deaf to it: `0` is TRUTHY, so {#knob}'s `||` does not fall back for it;
+      # `Request#max_tokens` only does `Integer()`, with no range check; the
+      # provider 400s; and {Oracle::Eager}'s task boundary swallows that BY
+      # DESIGN, leaving "compaction quietly stopped summarizing" as the only
+      # symptom. A {Lain::Error}, not {Compaction::Head}'s bare ArgumentError,
+      # for {MissingAPIKey}'s reason: a bad flag reaches the operator as a clean
+      # Thor::Error only if the exe's `rescue Lain::Error` can see it.
+      class InvalidCeiling < Error; end
+
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama bedrock].freeze
+
+      # Which of those the SUMMARIZER tier defaults to. Local, because an eager
+      # summary fires once per large tool result, off the turn's critical path,
+      # and paying frontier-model tokens to compress a tool result costs more
+      # than resending it. A default, not a law: `--summarizer-provider` buys a
+      # local chat a better summarizer, or lets a frontier chat keep summarizing
+      # for free -- which is exactly why the tier is journalled now.
+      DEFAULT_SUMMARIZER_PROVIDER = "ollama"
 
       # Compaction's knobs, in {Compaction::Head}'s canonical-byte proxy. They
       # live HERE rather than as Thor defaults so there is one authority: an
@@ -75,8 +95,17 @@ module Lain
         fallback: Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
       )
 
+      # Both summarizer flags are refused HERE, at construction, rather than
+      # where the tier is built. `--provider` refuses on every run because
+      # {#provider} always runs; the summarizer's would not, because under
+      # `--no-compact` {#tool_observer} answers the Null, {#summary_oracle} is
+      # never built, and neither check ever ran -- so a typo was accepted in
+      # exactly one configuration. An asymmetry a user meets in only one mode is
+      # one they misread. Construction is the single path every command takes.
       def initialize(options)
         @options = options
+        summarizer_name
+        summarizer_max_tokens
       end
 
       # Anthropic reads its key from the environment; Ollama is local and takes an
@@ -85,6 +114,11 @@ module Lain
       # flag threads through here). An unknown name fails loudly, naming the
       # valid set, as {UnknownProvider} (a bad flag is user error, surfaced by
       # the exe as a clean Thor::Error, not a bug with a backtrace).
+      #
+      # @param name [String] WHICH provider to build, already validated against
+      #   PROVIDERS -- the chat's by default. {#summarizer_provider} passes its
+      #   own name here rather than carrying a second copy of this case, so the
+      #   two flags cannot come to disagree about what a provider name means.
       #
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
@@ -106,13 +140,45 @@ module Lain
       #   stream start actually reaches the frontend. Like spool it defaults to
       #   the Null instance (headless/bench pass nothing, so their events land
       #   nowhere) and Ollama/Bedrock never receive the keyword.
-      def provider(spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
-        case provider_name
+      def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
+        case name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
         when "bedrock" then Provider::Bedrock.new
         else anthropic_provider(spool, channel)
         end
       end
+
+      # The summarizer tier's provider, resolved through {#provider}'s validated
+      # set. Deliberately handed neither the chat's spool nor its channel: an
+      # oracle round trip is not a turn, so it belongs in neither the response
+      # WAL a replay reads back as turns nor the live stream the frontend paints.
+      def summarizer_provider = provider(name: summarizer_name)
+
+      # `--summarizer-model`, defaulting to the SUMMARIZER provider's own
+      # default rather than the chat's -- the two tiers are chosen separately,
+      # so `--provider anthropic` must not silently name the local tier's model.
+      def summarizer_model = @options[:summarizer_model] || default_model(summarizer_name)
+
+      # `--summarizer-max-tokens`. A summary that runs out of ceiling is a
+      # truncated summary, and a truncated summary REPLACES the result it
+      # compressed, so the knob is worth exposing rather than inheriting the
+      # chat's (which is sized for a turn, not for a paragraph).
+      #
+      # Non-positive is refused rather than measured, mirroring
+      # {Compaction::Head#validated} line for line (see {InvalidCeiling} for
+      # what stays silent otherwise).
+      def summarizer_max_tokens
+        ceiling = Integer(knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS))
+        raise InvalidCeiling, "--summarizer-max-tokens must be positive, got #{ceiling}" unless ceiling.positive?
+
+        ceiling
+      end
+
+      # Where this run's records land. Bound by the first {#pipeline_source}
+      # call (the run has exactly one wiring site) and the Null channel until
+      # then, so a path that never wires compaction -- bench, `--no-journal` --
+      # reads a destination rather than a nil to guard.
+      def journal = @journal || Channel::Null.instance
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
@@ -146,6 +212,7 @@ module Lain
       # @raise [Rebound] on a second call with different arguments
       def pipeline_source(cache_profile:, journal: Channel::Null.instance)
         bind_once(:pipeline_source, cache_profile:, journal:)
+        @journal = journal
         @pipeline_source ||= if compaction?
                                compaction_source(cache_profile:, journal:)
                              else
@@ -215,15 +282,21 @@ module Lain
 
       # Validated once, so #provider and #default_model both key off a name
       # already known to be in PROVIDERS.
-      def provider_name
-        name = @options[:provider]
+      def provider_name = validated(@options[:provider], "provider")
+
+      def summarizer_name = validated(knob(:summarizer_provider, DEFAULT_SUMMARIZER_PROVIDER), "summarizer provider")
+
+      # `flag` names WHICH flag was wrong: `--provider` and
+      # `--summarizer-provider` are two different mistakes to make, and a
+      # refusal that named neither would send the operator to the wrong one.
+      def validated(name, flag)
         return name if PROVIDERS.include?(name)
 
-        raise UnknownProvider, "unknown provider #{name.inspect}, expected one of #{PROVIDERS.inspect}"
+        raise UnknownProvider, "unknown #{flag} #{name.inspect}, expected one of #{PROVIDERS.inspect}"
       end
 
-      def default_model
-        case provider_name
+      def default_model(name)
+        case name
         when "ollama" then Provider::Ollama::DEFAULT_MODEL
         when "bedrock" then Provider::Bedrock::DEFAULT_MODEL
         else Provider::AnthropicRaw::DEFAULT_MODEL
@@ -232,7 +305,7 @@ module Lain
 
       # `--model` resolved once, so {#context} and the compaction book agree
       # about which model this run is.
-      def model = @options[:model] || default_model
+      def model = @options[:model] || default_model(provider_name)
 
       # The context window is NOT resolved here: the Source derives it from the
       # live Context every turn, so a `/model` switch mid-session moves the
@@ -272,15 +345,17 @@ module Lain
           "and the first binding is what every turn would keep using"
       end
 
-      # The eager tier, always LOCAL and never the chat's provider (see
-      # {Oracle::Summarize}). Construction opens no connection, so an absent
-      # ollama costs nothing here: the fire fails inside {Oracle::Eager}'s task
-      # boundary and the compaction renders an elision instead.
-      def summary_oracle
-        Oracle::Model.new(definition: Oracle::Summarize.definition,
-                          provider: Provider::Ollama.new(api_base: @options[:api_base]),
-                          model: Provider::Ollama::DEFAULT_MODEL)
-      end
+      # The eager tier ({Oracle::Summarize}), assembled by {Summarizer} out of
+      # the summarizer's OWN provider, model and ceiling. It defaults to the
+      # local tier and is no longer confined to it: `--summarizer-provider` may
+      # point it at a paid model independently of `--provider`, which is why
+      # every answer it gives is journalled -- an unrecorded model call is spend
+      # the bench cannot see.
+      #
+      # Construction opens no connection, so an absent ollama still costs
+      # nothing here: the fire fails inside {Oracle::Eager}'s task boundary and
+      # the compaction renders an elision instead.
+      def summary_oracle = Summarizer.new(backend: self).oracle
 
       # Only the sampler flags the caller actually set, String-keyed to match
       # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`

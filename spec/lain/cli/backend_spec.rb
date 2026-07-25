@@ -432,6 +432,176 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # A1. The eager summarizer is a SELECTABLE tier now, not a hardcoded local
+  # one, and its spend lands on the record. Before this, #summary_oracle built a
+  # bare Oracle::Model over Ollama and wrapped nothing, so eager summary Q&A
+  # produced no Telemetry::OracleAnswer at all on the live chat path -- pointing
+  # it at a paid model would have spent tokens with no trace of the spend.
+  #
+  # The default is unchanged (local Ollama, its own default model): what changed
+  # is that the choice is a flag resolved through the SAME validated PROVIDERS
+  # set the chat tier uses, so `--summarizer-provider` cannot mean something
+  # `--provider` does not.
+  describe "#summary_oracle" do
+    let(:journal) { RecordingChannel.new }
+
+    def summarizer_for(**overrides) = backend_for(provider: "ollama", max_tokens: 64, **overrides)
+
+    # The journaling wrap is OUTERMOST (A3 slots a router above it), so the live
+    # tier that actually pays is one layer in.
+    def tier_of(backend) = backend.send(:summary_oracle).instance_variable_get(:@inner)
+
+    # A local reply the summarizer schema accepts, priced with a REAL usage so
+    # the journaled cost is a genuine count rather than the zero identity.
+    def answering_provider
+      reply = Lain::Response.new(content: [{ "type" => "text", "text" => %({"summary":"it listed three files"}) }],
+                                 stop_reason: :end_turn,
+                                 usage: Lain::Usage.new(input_tokens: 12, output_tokens: 7))
+      Lain::Provider::Mock.new(responses: [reply])
+    end
+
+    def answers = journal.events.grep(Lain::Telemetry::OracleAnswer)
+
+    it "defaults to today's local tier -- Provider::Ollama at its own default model" do
+      tier = tier_of(summarizer_for)
+
+      expect(tier.instance_variable_get(:@provider)).to be_a(Lain::Provider::Ollama)
+      expect(tier.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+    end
+
+    it "wraps the live tier in the journaling decorator, outermost" do
+      expect(summarizer_for.send(:summary_oracle)).to be_a(Lain::Oracle::Recorded::Journaling)
+      expect(tier_of(summarizer_for)).to be_a(Lain::Oracle::Model)
+    end
+
+    # The point of the flag: compressing a tool result is a different job from
+    # answering the conversation, so it gets its own tier. A local chat can buy
+    # a better summarizer, and a frontier chat can keep summarizing for free.
+    it "points the summarizer at a paid provider while the chat model stays local" do
+      backend = summarizer_for(summarizer_provider: "anthropic")
+      chat, summary = with_env("ANTHROPIC_API_KEY" => "sk-test") { [backend.provider, tier_of(backend)] }
+
+      expect(chat).to be_a(Lain::Provider::Ollama)
+      expect(summary.instance_variable_get(:@provider)).to be_a(Lain::Provider::AnthropicRaw)
+      expect(summary.model).to eq(Lain::Provider::AnthropicRaw::DEFAULT_MODEL)
+    end
+
+    it "honors an explicit --summarizer-model over the tier provider's default" do
+      expect(tier_of(summarizer_for(summarizer_model: "qwen3:8b")).model).to eq("qwen3:8b")
+    end
+
+    # Resolved through Backend#provider's own PROVIDERS set, not a second copy,
+    # so the two flags cannot drift about what a provider name means. The
+    # refusal names WHICH flag was wrong -- "provider" and "summarizer provider"
+    # are different mistakes to make.
+    it "refuses an unknown summarizer provider by name, naming the valid set" do
+      expect { tier_of(summarizer_for(summarizer_provider: "notreal")) }
+        .to raise_error(Lain::CLI::UnknownProvider,
+                        /unknown summarizer provider "notreal", expected one of.*anthropic.*ollama/m)
+    end
+
+    it "still names the chat flag when --provider is the wrong one" do
+      expect { summarizer_for(provider: "gemini").provider }
+        .to raise_error(Lain::CLI::UnknownProvider, /unknown provider "gemini"/)
+    end
+
+    it "defaults the token ceiling to Oracle::Model::DEFAULT_MAX_TOKENS" do
+      expect(tier_of(summarizer_for).instance_variable_get(:@max_tokens))
+        .to eq(Lain::Oracle::Model::DEFAULT_MAX_TOKENS)
+    end
+
+    it "honors --summarizer-max-tokens" do
+      expect(tier_of(summarizer_for(summarizer_max_tokens: 256)).instance_variable_get(:@max_tokens)).to eq(256)
+    end
+
+    # 0 is TRUTHY in Ruby, so #knob's `||` never falls back for it: a zero or
+    # negative ceiling reaches Request#max_tokens, which only does Integer()
+    # with no range check, and the provider 400s. Oracle::Eager's task boundary
+    # then swallows that BY DESIGN, so the only symptom a user ever sees is
+    # "compaction quietly stopped summarizing" -- exactly the silent failure
+    # this card exists to end. Refused at the seam, the shape
+    # {Compaction::Head#validated} already uses for keep_last.
+    it "refuses a non-positive summarizer ceiling rather than 400ing silently later" do
+      expect { summarizer_for(summarizer_max_tokens: 0) }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--summarizer-max-tokens must be positive, got 0/)
+      expect { summarizer_for(summarizer_max_tokens: -1) }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /got -1/)
+    end
+
+    # Named Lain error, not Head's bare ArgumentError: a bad flag is user error
+    # and the exe's `rescue Lain::Error` is what turns it into a clean
+    # Thor::Error instead of a backtrace -- {MissingAPIKey}'s own reasoning.
+    it "raises a Lain::Error for a bad ceiling (so the exe presents it cleanly)" do
+      expect(Lain::CLI::Backend::InvalidCeiling).to be < Lain::Error
+    end
+
+    # `--provider` refuses on EVERY run, because #provider always runs. The
+    # summarizer flags did not: under --no-compact #tool_observer answers the
+    # Null, #summary_oracle is never built, and #validated never ran -- so a
+    # typo was accepted in exactly one configuration. An asymmetry a user hits
+    # in only one mode is one they misread, so both flags are refused at
+    # CONSTRUCTION, which is the one path every command takes.
+    describe "under --no-compact, where no summarizer tier is ever built" do
+      it "still refuses a typo'd --summarizer-provider" do
+        expect { summarizer_for(compact: false, summarizer_provider: "notreal") }
+          .to raise_error(Lain::CLI::UnknownProvider, /unknown summarizer provider "notreal"/)
+      end
+
+      it "still refuses a non-positive --summarizer-max-tokens" do
+        expect { summarizer_for(compact: false, summarizer_max_tokens: 0) }
+          .to raise_error(Lain::CLI::Backend::InvalidCeiling)
+      end
+
+      it "builds normally when both flags are well-formed" do
+        expect(summarizer_for(compact: false).tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
+      end
+    end
+
+    # The bug this card fixes: a summarizer call is a model call, and a model
+    # call that does not reach the Journal is spend the bench cannot see.
+    it "journals a Telemetry::OracleAnswer carrying the model and a non-empty usage" do
+      backend = summarizer_for
+      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
+
+      Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
+
+      expect(answers.last.oracle_digest).to eq(Lain::Oracle::Summarize.definition.digest)
+      expect(answers.last.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+      expect(answers.last.usage).not_to be_empty
+      expect(answers.last.usage).to include("input_tokens" => 12, "output_tokens" => 7)
+      expect(answers.last.question).to include("a tool result")
+    end
+
+    # Nothing orders #tool_observer (which builds the one Eager, and with it the
+    # oracle) against #pipeline_source (which binds the run's journal):
+    # CompactionMount happens to reach the journal first only because a Hash
+    # literal evaluates left to right. A wrap that captured its destination at
+    # construction would hold Channel::Null for the whole run and journal
+    # nothing, with nothing raising -- so the destination is resolved per EVENT.
+    it "records a summary fired through an Eager built BEFORE the journal was bound" do
+      backend = summarizer_for
+      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      oracle = backend.eager.instance_variable_get(:@oracle)
+      backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
+
+      Sync { oracle.ask(source: "a tool result").await }
+
+      expect(answers.size).to eq(1)
+    end
+
+    # And with no journal bound at all -- a bench path that never calls
+    # #pipeline_source -- the wrap still answers, into the Null channel.
+    it "answers with no journal bound at all, sending the record nowhere" do
+      backend = summarizer_for
+      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+
+      answer = Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
+
+      expect(answer.summary).to eq("it listed three files")
+    end
+  end
+
   # AC: --temperature 0 --seed 7 reach the sampler extra (Request#extra), but
   # NOT the Request digest -- a sampler knob is not a prompt.
   describe "temperature and seed threading" do
