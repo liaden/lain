@@ -68,6 +68,62 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # B1: the tool-phase guard was constructed bare (`RefuseSecretWrites.new`
+  # with no `journal:`), so a live credential-shaped refusal journaled to
+  # `Channel::Null` and left no record while every other mount of this
+  # middleware (consolidation.rb, improve.rb, run_recorder.rb) passes one.
+  describe "the secret-write guard's journal wiring" do
+    def credential_tool_use
+      { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
+        "input" => { "id" => "creds", "description" => "oops", "body" => "sk-#{"a" * 20}" } }
+    end
+
+    let(:credential_provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 Lain::Response.new(content: [credential_tool_use], stop_reason: :tool_use),
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                                    stop_reason: :end_turn)
+                               ])
+    end
+    let(:backend) do
+      offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: credential_provider)
+    end
+
+    def build_agent_and_recorder
+      recorder, session = wiring.run_state(nil)
+      [wiring.wire_agent(channel:, recorder:, session:, backend:), recorder]
+    end
+
+    context "a wired chat whose journal is capturing" do
+      let(:journal) { RecordingChannel.new }
+      # journal_path: a bogus-but-harmless NDJSON name -- Chronicle#spool
+      # derives the WAL path from it via pure string manipulation
+      # (Paths.wal_for) and ResponseWal opens its file lazily on the first
+      # frame, which a Provider::Mock-backed run never writes.
+      let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "b1-spec-fake-session.ndjson") }
+
+      it "records a WriteRefused naming the matched pattern when a credential-shaped memory_write is refused" do
+        agent, = build_agent_and_recorder
+        agent.ask("please remember this credential")
+
+        refusal = journal.events.find { |event| event.is_a?(Lain::Telemetry::WriteRefused) }
+        expect(refusal).not_to be_nil
+        expect(refusal.pattern).to eq("openai-style api key")
+      end
+    end
+
+    context "a wired chat started with --no-journal" do
+      let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+
+      it "still refuses a credential-shaped memory_write, and nothing raises" do
+        agent, recorder = build_agent_and_recorder
+
+        expect { agent.ask("please remember this credential") }.not_to raise_error
+        expect { recorder.fetch("creds") }.to raise_error(Lain::Memory::Index::UnknownId)
+      end
+    end
+  end
+
   describe "#run" do
     require "stringio"
     require "tmpdir"
