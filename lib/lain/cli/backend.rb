@@ -86,9 +86,16 @@ module Lain
       # Nothing is being under-reported that a bench reads -- `cost_saved` and
       # `cost_spent` are annotations on a decision already made on BYTES -- and
       # zero is the honest figure for the local tier this most often means.
-      # The degrading is not SILENT: {Telemetry::Compaction} carries the model
-      # those figures are quoted in, so a zero beside a local model id reads as
-      # the fallback it is rather than as a free compaction.
+      # The degrading is not SILENT: {Telemetry::Compaction} carries a model
+      # beside the figures, so a zero next to a local model id reads as the
+      # fallback it is rather than as a free compaction.
+      #
+      # Read that record's `model` through its `#priced?`, though, and not as
+      # "the tier these dollars are quoted in" -- since C2 it means one of
+      # three things (see {Telemetry::Compaction}'s header). It is the quoted
+      # tier only when `priced?`; on a refused quote it names the tier that
+      # RAN, with no figures beside it. This fallback's own zero is the case
+      # neither covers: `priced?` is true and the figure was never measured.
       #
       # No `.freeze`: PriceBook freezes itself and its map at construction.
       COMPACTION_PRICES = PriceBook.new(

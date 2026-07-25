@@ -2,6 +2,7 @@
 
 require "json"
 require "stringio"
+require "bigdecimal"
 
 # A clock the examples drive by hand. The Source measures the idle gap that
 # {Lain::Compaction::Cold#idle!} needs, and reading `Time.now` inline would make
@@ -435,6 +436,92 @@ RSpec.describe Lain::Compaction::Source do
       context_for(built, timeline, base: context_naming("qwen3:4b"), usage: nil)
 
       expect(decisions.first["signals"]).to eq(%w[token_threshold])
+    end
+  end
+
+  # C2, the other half of C1's pair. C1 made the WINDOW follow the live model
+  # and left the PRICE behind: the Source is priced once, at construction, so
+  # after a `/model` switch it would go on quoting dollars at the rate of a
+  # model that is no longer answering. It now names what actually ran and
+  # quotes nothing, which is {PriceBook}'s own refusal one tier up.
+  describe "the price follows the turn's model too" do
+    def switchable(initial)
+      slot = Lain::Context::ModelSwitch.new(initial, journal:)
+      [slot, Lain::Context.new(model: slot, max_tokens: 1024, system: "a system prompt")]
+    end
+
+    def forced(model:)
+      source(need: build_need(byte_threshold: 100), hard_cap: 100, model:)
+    end
+
+    it "quotes real figures while the priced model is still the one answering" do
+      built = forced(model: "claude-opus-4-8")
+
+      context_for(built, timeline, base: context_naming("claude-opus-4-8"))
+
+      expect(compactions.first).to include("model" => "claude-opus-4-8")
+      expect(BigDecimal(compactions.first["cost_saved"])).to be > BigDecimal(0)
+      expect(BigDecimal(compactions.first["cost_spent"])).to be > BigDecimal(0)
+    end
+
+    # The claim through the seam it is actually about: ONE live Context whose
+    # {Context::ModelSwitch} slot is rewritten between renders, exactly as
+    # `/model` rewrites it under a running session.
+    it "quotes nothing once a live /model switch has moved off the priced model" do
+      slot, live = switchable("claude-opus-4-8")
+      built = forced(model: "claude-opus-4-8")
+
+      context_for(built, timeline, base: live)
+      slot.switch("claude-sonnet-4-6", surface: :spec)
+      context_for(built, timeline, base: live)
+
+      before, after = compactions
+      expect(before).to include("model" => "claude-opus-4-8")
+      expect(after).to include("model" => "claude-sonnet-4-6", "cost_saved" => nil, "cost_spent" => nil)
+    end
+
+    # A reader of the NDJSON must be able to tell a refusal from a genuinely
+    # free compaction without knowing any Ruby, so this asserts on the BYTES:
+    # a refusal is a JSON `null`, a real zero is the string `"0.0"`.
+    it "is a JSON null on the wire, never the string a real zero writes" do
+      slot, live = switchable("claude-opus-4-8")
+      built = forced(model: "claude-opus-4-8")
+
+      context_for(built, timeline, base: live)
+      slot.switch("claude-sonnet-4-6", surface: :spec)
+      context_for(built, timeline, base: live)
+
+      lines = journal_io.string.each_line.select { |line| line.include?(%("type":"compaction")) }
+      expect(lines.last).to include(%("cost_saved":null), %("cost_spent":null))
+      expect(lines.last).not_to include(%("cost_saved":"0.0"))
+    end
+
+    # nil-model and switched-model are DIFFERENT states. An unpriced Source
+    # never quoted anything to invalidate, so it keeps journalling the zeros
+    # {Telemetry::Compaction}'s header documents -- byte-identically, whatever
+    # the live model is doing.
+    it "leaves an unpriced Source journalling zeros beside a nil model, not absence" do
+      slot, live = switchable("claude-opus-4-8")
+      built = forced(model: nil)
+
+      context_for(built, timeline, base: live)
+      slot.switch("claude-sonnet-4-6", surface: :spec)
+      context_for(built, timeline, base: live)
+
+      expect(compactions).to all(include("model" => nil, "cost_saved" => "0.0", "cost_spent" => "0.0"))
+    end
+
+    it "leaves the decision itself untouched -- the same signals, the same rewrite, either side" do
+      slot, live = switchable("claude-opus-4-8")
+      built = forced(model: "claude-opus-4-8")
+      line = timeline
+
+      before = render(context_for(built, line, base: live), line).messages
+      slot.switch("claude-sonnet-4-6", surface: :spec)
+      after = render(context_for(built, line, base: live), line).messages
+
+      expect(Lain::Canonical.dump(after)).to eq(Lain::Canonical.dump(before))
+      expect(decisions.map { |record| record["compacted"] }).to eq([true, true])
     end
   end
 

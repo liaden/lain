@@ -766,13 +766,32 @@ module Lain
   module Telemetry
     module Guards
       # A compaction record must name what fired it and land on one of the
-      # three cache states the scheduler's policy actually reaches.
+      # three cache states the scheduler's policy actually reaches. Both stay
+      # REQUIRED: a record with no trigger or an unknown cache state is a bug,
+      # and neither has a "we cannot say" reading the way the dollars do.
+      #
+      # The two cost figures MAY be absent (nil), which is the one thing this
+      # guard adds: a scheduler that cannot stand behind its dollars emits
+      # neither. It emits neither TOGETHER -- one figure beside a missing one
+      # would read as a real zero on the missing side, which is exactly the
+      # confusion absence exists to remove.
       class Compaction < Guard
         attribute :trigger
         attribute :cache_state
+        attribute :cost_saved
+        attribute :cost_spent
         validates :trigger, presence: { message: "must name the Need signal(s) that fired, got none" }
         validates :cache_state, inclusion: { in: %i[warm cold forced],
                                              message: "must be one of warm/cold/forced, got %<value>s" }
+        validate :costs_quoted_together
+
+        private
+
+        def costs_quoted_together
+          return if cost_saved.nil? == cost_spent.nil?
+
+          errors.add(:cost_saved, "and cost_spent must be quoted together or not at all")
+        end
       end
     end
 
@@ -820,15 +839,35 @@ module Lain
     # a lie" on a cost bench). nil keeps its existing meaning: no model to price
     # with, both figures zero, a legitimate configuration.
     #
-    # The one thing it is NOT is the model that ran. It is the model the
-    # SCHEDULER was built with -- for a live chat, whatever `--model` resolved
-    # to when `CLI::Backend` built the compaction source -- so after a `/model`
-    # switch it names the tier the estimate was priced against while
-    # {TurnUsage} names the tier that actually answered. That divergence is the
-    # point of carrying it: joining to TurnUsage to recover a price would
-    # silently use the wrong rate, and only a reader who can SEE both can tell
-    # that a 1M-window frontier estimate is sitting beside a turn that ran
-    # free on a local model.
+    # After a `/model` switch the scheduler's construction-time price and the
+    # tier that actually ran come apart (C1 made the compaction WINDOW follow
+    # the live model per turn; the price lookup did not follow it). C2 settles
+    # that by REFUSING: both cost figures are then nil -- absent, not zero --
+    # and `model` names the tier the compaction actually ran under, the only
+    # fact left that a reader can use. `PriceBook`'s refusal to price an
+    # unlisted model (`price_book.rb:112`) is the same doctrine one tier up: a
+    # figure that cannot be stood behind is not emitted.
+    #
+    # Absence is nil on BOTH figures or on neither ({Guards::Compaction}
+    # enforces the pair), and it is deliberately not a zero: `cost_spent`
+    # legitimately zeroes on a `:cold` compaction and both zero on an unpriced
+    # scheduler, so a switched run reporting zero would be indistinguishable
+    # from a compaction that genuinely ran for free. Ask {#priced?} rather
+    # than comparing against `"0.0"`. A nil `model` keeps its OWN meaning --
+    # the unpriced configuration, zeros beside no model at all -- which is a
+    # different state from a refusal and journals differently.
+    #
+    # So `model` now carries THREE meanings, separable only through
+    # {#priced?}: the tier the figures are quoted in (priced, no switch), the
+    # tier that RAN (refused, no figures), or nothing at all (unpriced). That
+    # is a real cost and it was paid deliberately. The alternative was to name
+    # the live tier in the unpriced case too, which reads more uniformly and
+    # would have changed the bytes an unpriced run has always journaled --
+    # `model` going from nil to a model id beside the same two zeros, for a
+    # configuration where no quote was ever made or invalidated. Byte-identity
+    # for the untouched state won. The visible seam is that AC2's "still names
+    # the model it ran under" holds for a REFUSAL and not for an unpriced run,
+    # where `ran_under` is known and deliberately discarded.
     #
     # Held as fixed-point decimal STRINGS, not `BigDecimal`: `Canonical.normalize`
     # deliberately does not support `BigDecimal` (it has no canonical wire
@@ -846,17 +885,40 @@ module Lain
       def initialize(trigger:, cache_state:, tokens_before:, tokens_after:, cost_saved:, cost_spent:, model: nil)
         trigger = Array(trigger).map(&:to_sym).freeze
         cache_state = cache_state.to_sym
-        Guards::Compaction.check!(trigger:, cache_state:)
+        cost_saved = decimal(cost_saved)
+        cost_spent = decimal(cost_spent)
+        Guards::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
         super(trigger:, cache_state:, tokens_before: Integer(tokens_before), tokens_after: Integer(tokens_after),
-              cost_saved: decimal(cost_saved), cost_spent: decimal(cost_spent), model: model&.to_s&.freeze)
+              cost_saved:, cost_spent:, model: model&.to_s&.freeze)
       end
+
+      # Does this record CARRY figures at all? False for exactly one cause: the
+      # compaction ran under a model its scheduler was not priced for, so the
+      # quote was refused (see the header).
+      #
+      # It is NOT "these dollars can be trusted", and a consumer must not read
+      # it that way. A true here still admits a zero that was never really
+      # measured: a live chat prices through the zero-fallback
+      # `CLI::Backend::COMPACTION_PRICES` (backend.rb:78-92), so an UNLISTED
+      # model with no switch at all journals `"0.0"`/`"0.0"` beside its own
+      # name and answers true, folding into a sum as "broke even". That
+      # fallback is a reasoned decision belonging to the CLI, not to this
+      # record; refusing it too is ticketed separately. Until then this
+      # predicate answers "no switch happened", which is less than it sounds.
+      def priced? = !cost_saved.nil?
 
       # The cost delta {Compare} attributes to the scheduling policy:
       # positive means the compaction paid for itself, negative means it cost
       # more than it saved (a forced-warm rewrite on a small delta, say).
       #
-      # @return [BigDecimal]
+      # nil, never zero, when the record quotes nothing: a consumer that sums
+      # these gets a loud `TypeError` rather than a total that silently counted
+      # a refusal as a compaction which paid for itself.
+      #
+      # @return [BigDecimal, nil]
       def cost_delta
+        return nil unless priced?
+
         BigDecimal(cost_saved) - BigDecimal(cost_spent)
       end
 
@@ -865,7 +927,15 @@ module Lain
       # Fixed-point ("F") rather than BigDecimal's default `to_s`, which
       # emits scientific notation (`"0.12345e-2"`) that is technically valid
       # JSON but unreadable in an NDJSON line meant for a human to scan.
+      #
+      # nil passes through as nil -- it is the REFUSAL. `nil?` and not a truthy
+      # test: `value && ...` would wave `false` through as well, storing a JSON
+      # boolean in a money field that then answered {#priced?} true about
+      # itself. Everything that is not nil still goes to `BigDecimal`, which
+      # raises on `"false"` exactly as it always did.
       def decimal(value)
+        return nil if value.nil?
+
         (value.is_a?(BigDecimal) ? value : BigDecimal(value.to_s)).to_s("F").freeze
       end
     end

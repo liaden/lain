@@ -53,8 +53,8 @@ RSpec.describe Lain::Compaction::Scheduler do
     pipeline.call(Lain::Workspace.empty).call(messages)
   end
 
-  def scheduler(hard_cap: 1_000_000)
-    described_class.new(compact:, hard_cap:, journal:)
+  def scheduler(hard_cap: 1_000_000, model: nil)
+    described_class.new(compact:, hard_cap:, journal:, model:)
   end
 
   describe "#evaluate (the pure policy)" do
@@ -130,6 +130,22 @@ RSpec.describe Lain::Compaction::Scheduler do
       expect(records.map { |r| r["cache_state"] }).to eq(["cold"])
     end
 
+    # C2's seam. The model in force is a fact about the TURN, not about the
+    # scheduler's configuration, so it arrives per call rather than being
+    # captured at construction -- which is also what keeps the Scheduler frozen
+    # and everything it hands back shareable.
+    it "takes the model in force per turn and never lets it move the decision" do
+      pipeline = scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history,
+        ran_under: "claude-opus-4-8"
+      )
+
+      expect(rendered(pipeline, history)).to include(
+        a_hash_including("content" => [a_hash_including("text" => "SUMMARY")])
+      )
+      expect(records.map { |r| r["cache_state"] }).to eq(["forced"])
+    end
+
     it "leaves the injected base pipeline unmutated across a compacting decision (renders stay pure)" do
       scheduler(hard_cap: 100).pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:)
 
@@ -155,6 +171,14 @@ RSpec.describe Lain::Compaction::Scheduler do
 
       expect(Ractor.shareable?(pipeline)).to be(true)
       expect { Ractor.make_shareable(pipeline) }.not_to raise_error
+    end
+
+    it "stays shareable when a live model is named too -- the quote never rides along" do
+      pipeline = scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:, ran_under: "claude-opus-4-8"
+      )
+
+      expect(Ractor.shareable?(pipeline)).to be(true)
     end
 
     it "survives being stored in a Context via the injected-pipeline seam" do

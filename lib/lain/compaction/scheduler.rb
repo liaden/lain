@@ -54,6 +54,41 @@ module Lain
         COLD_FREE = new(action: :cold_free, tier: :message)
       end
 
+      # WHOSE rates this compaction's dollars may be quoted at, and whether they
+      # may be quoted at all.
+      #
+      # `priced` is the model the scheduler was BUILT with -- what its PriceBook
+      # lookups resolve. `ran_under` is the model in force on the turn being
+      # journaled, which arrives per call because `/model` moves it mid-session
+      # (model_switch.rb:20-22) while this frozen object cannot follow.
+      #
+      # When they disagree, nothing is quoted. RE-pricing to `ran_under` would
+      # be the fabrication rather than the fix: a live chat's book is the
+      # degrading `CLI::Backend::COMPACTION_PRICES`, which answers ZERO for a
+      # model it does not know, so "reprice" would silently invent a free
+      # compaction. {PriceBook}'s own refusal to price an unlisted model
+      # (price_book.rb:112) is the doctrine, one tier up.
+      Quote = Data.define(:priced, :ran_under) do
+        def initialize(priced:, ran_under: nil)
+          super(priced: priced&.to_s&.freeze, ran_under: ran_under&.to_s&.freeze)
+        end
+
+        # A quote is refused only when there WAS a price and the turn ran
+        # somewhere else. A nil `priced` is the unpriced configuration -- zeros
+        # beside a nil model, which {Telemetry::Compaction}'s header documents
+        # as legitimate and which is a DIFFERENT state that must keep journaling
+        # differently. A nil `ran_under` is "the caller did not say": absence of
+        # information cannot contradict a price.
+        def switched? = !priced.nil? && !ran_under.nil? && priced != ran_under
+
+        # The tier the record names. A record carrying figures names the tier
+        # they are QUOTED IN (identical to the one that ran, or the caller named
+        # none); a refused one names the tier that actually ran, the only fact
+        # about the dollars still worth recording.
+        def model = switched? ? ran_under : priced
+      end
+      private_constant :Quote
+
       # @param compact [Context::Compact] the combinator swapped into the render
       #   pipeline when a compaction is scheduled. Injected, never reached for,
       #   so the scheduler never performs the summarization itself and the
@@ -63,11 +98,12 @@ module Lain
       #   same byte/token proxy {Need} and {Context::Compact} use).
       # @param journal [#<<] where a compacting decision lands; the Null channel
       #   by default, so no caller guards `if journal`.
-      # @param model [String, Symbol, nil] the tier this scheduler is running
-      #   under, priced through `price_book` for T20/CAC-6's `cost_saved`/
-      #   `cost_spent`. nil is a legitimate configuration -- see
-      #   {Telemetry::Compaction}'s header -- not an error: those fields
-      #   simply journal as zero.
+      # @param model [String, Symbol, nil] the tier this scheduler is PRICED
+      #   for, through `price_book`, for T20/CAC-6's `cost_saved`/`cost_spent`.
+      #   Fixed here at construction, which is why `#pipeline` takes the model
+      #   actually in force separately (see its `ran_under:` and {Quote}). nil
+      #   is a legitimate configuration -- see {Telemetry::Compaction}'s header
+      #   -- not an error: those fields simply journal as zero.
       # @param price_book [Lain::PriceBook] how `model`'s usage becomes
       #   dollars; the bench default, like every other PriceBook consumer.
       def initialize(compact:, hard_cap:, journal: Channel::Null.instance, model: nil, price_book: PriceBook.default)
@@ -114,10 +150,18 @@ module Lain
       #   T20/CAC-6's before/after accounting; never captured into the
       #   returned pipeline (see {COMPOSE}'s shareability comment -- nothing
       #   this method closes over may ride along).
+      # @param ran_under [String, Symbol, nil] the model in force on THIS turn.
+      #   A per-call parameter and not a second ivar: `/model` moves it
+      #   mid-session while this object is frozen, and the model in force is a
+      #   fact about the turn rather than about the scheduler's configuration.
+      #   It reaches only {#accounting} -- never {COMPOSE} -- so nothing the
+      #   composed pipeline closes over changes and the T21/T19 shareability
+      #   contract is untouched. nil means "the caller did not say", which
+      #   journals exactly as it did before {Quote} existed.
       # @return the base itself, or a provider riding Compact ahead of it
-      def pipeline(need:, cold:, history_size:, base:, messages: [])
+      def pipeline(need:, cold:, history_size:, base:, messages: [], ran_under: nil)
         decision = evaluate(need:, cold:, history_size:)
-        @journal << accounting(decision, need, messages) if decision.compact?
+        @journal << accounting(decision, need, messages, Quote.new(priced: @model, ran_under:)) if decision.compact?
         pipeline_for(decision, base)
       end
 
@@ -164,19 +208,26 @@ module Lain
       # pipeline reruns it later, deterministically, when `#render` actually
       # calls it (see {COMPOSE}'s shareability comment for why this method's
       # `messages` cannot ride along inside that closure instead).
-      def accounting(decision, need, messages)
+      def accounting(decision, need, messages, quote)
         before = Canonical.dump(messages).bytesize
         after = Canonical.dump(@compact.call(messages)).bytesize
 
-        # `model:` is what the two cost figures are QUOTED IN -- see
-        # {Telemetry::Compaction}'s header for why a zero without it is
-        # indistinguishable from a genuinely free compaction, and why it is
-        # deliberately the scheduler's model rather than the one that ran.
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,
-          tokens_before: before, tokens_after: after,
-          cost_saved: cost_saved(before, after), cost_spent: cost_spent(decision, after), model: @model
+          tokens_before: before, tokens_after: after, model: quote.model,
+          **costs(quote, decision, before, after)
         )
+      end
+
+      # Absent, never zero: `cost_spent` already zeroes legitimately on a
+      # `:cold` compaction and both figures zero on an unpriced scheduler, so a
+      # switched run reporting zero would be indistinguishable from one that
+      # genuinely ran for free. The tokens and the trigger are still measured
+      # and still journaled -- only the dollars are withheld.
+      def costs(quote, decision, before, after)
+        return { cost_saved: nil, cost_spent: nil } if quote.switched?
+
+        { cost_saved: cost_saved(before, after), cost_spent: cost_spent(decision, after) }
       end
 
       # What continuing to resend the dropped tokens every subsequent turn

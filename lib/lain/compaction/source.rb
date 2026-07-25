@@ -322,10 +322,15 @@ module Lain
       # {#timely?}: `#pipeline` re-runs the same pure evaluation, so it will
       # agree, but the flag is journaled and a record claiming a rewrite that
       # did not ship would be a corrupted measurement, not a stale comment.
+      # `ran_under:` is `base.model` off the LIVE Context -- the same read
+      # {#window_for} makes, and the other half of the pair C1 opened. The
+      # scheduler is priced for `@model` at CONSTRUCTION, so naming what is
+      # actually answering is what lets it refuse a stale quote after a
+      # `/model` switch rather than journal opus dollars for a sonnet turn.
       def commit(base:, messages:, head:, need:, snapshot:, scheduler:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
-                                      base: provider, messages:)
+                                      base: provider, messages:, ran_under: base.model)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, snapshot:)
         compacted ? base.with_pipeline(pipeline) : base
