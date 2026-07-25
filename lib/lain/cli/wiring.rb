@@ -11,6 +11,15 @@ module Lain
     # needs (the flags, and the chronicle whose lifecycle #chat owns); it hands
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
+    #
+    # ⚠️ THIS CLASS IS AT 109 OF ITS 110-LINE Metrics/ClassLength BUDGET. There
+    # is room for ONE more line, and the cop's config (see .rubocop.yml) is a
+    # reasoned policy, not a number to raise: a long assembler is fine, a
+    # SECOND responsibility hiding in it is not. So the next addition of any
+    # size extracts a collaborator -- {CompactionMount} and {Command::Surface}
+    # are the shape to copy. D2 did not extract because its whole addition was
+    # one line of delegation, and a two-line object would have been the worse
+    # design; that argument does not survive a second caller.
     class Wiring
       attr_reader :ask_human, :questions, :notifier, :supervisor, :role_spawn, :conductor, :auto_surface
 
@@ -85,7 +94,7 @@ module Lain
         # OM-6: the reactor above the Agent that un-refuses model-dispatched
         # actors. Journals a bounded drain's timeout to the live Channel; the exe
         # #run_chat below runs it under a chat-level reactor that outlives asks.
-        @supervisor = Lain::Supervisor.new(journal: channel)
+        @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation(channel))
         @ask_human = notifying_ask_human(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
@@ -95,6 +104,25 @@ module Lain
       private
 
       attr_reader :options, :chronicle
+
+      # D2: `--isolation`, read at its construction site (the --auto-approve
+      # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv
+      # from. Only actor-mode subagents lease: #run_state builds the main chat's
+      # Session on {WorkerEnv.default} deliberately, because the user's own edits
+      # belong in the user's own tree. Resolved HERE, before the chronicle pins
+      # its header, so an unrecognized name refuses while the session record is
+      # still empty -- the refusal-before-journal ordering --resume already
+      # keeps. The journal is the run's live Channel, so what comes back is
+      # always {Isolation::Journal}-wrapped ({IsolationBackend}'s by-need
+      # decoration), never a bare backend.
+      #
+      # `root:` is passed EXPLICITLY even though `Dir.pwd` is its default. It is
+      # what `.lain/services.rb` is read from and where the repository search
+      # starts, so it is a real dependency of this wiring, not a detail of the
+      # resolver's signature -- and the day a project-root flag lands, this call
+      # is where it has to be threaded. Silently inheriting the default would
+      # make that omission invisible.
+      def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: Dir.pwd, journal:)
 
       # A resumed chat opens its NEW journal chained to the old one; a fresh chat
       # passes nothing, and the scribe writes an unchained header. Derived from

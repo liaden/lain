@@ -14,6 +14,29 @@ class WiringSpecSummarizer
   def ask(_inputs = {}) = @definition.answer("summary" => @text)
 end
 
+# The launch block's stand-in for an adopted actor (D2): it builds the child's
+# Session from the LEASED WorkerEnv exactly as
+# {Lain::Tools::Subagent::ChildBuilder#spawn_agent} does, so what a spec reads
+# back is the object the real spawn path constructs. Only `#stop` is owed of the
+# actor duck -- {Lain::Supervisor#stop} farewells each registration before it
+# releases the lease.
+class WiringSpecWorker
+  attr_reader :session, :checkout
+
+  # `checkout` is snapshotted HERE, inside the launch block, while the lease is
+  # still live: {Lain::Supervisor#stop} releases it and a worktree release
+  # removes the tree, so a spec that looked afterwards could only ever do string
+  # math over `#cwd` -- which passes whether or not a checkout was ever created.
+  def initialize(worker_env)
+    @session = Lain::Session.new(worker_env:)
+    @checkout = { exists: Dir.exist?(worker_env.cwd),
+                  repo: File.exist?(worker_env.resolve(".git")),
+                  seeded: File.exist?(worker_env.resolve("README")) }
+  end
+
+  def stop = self
+end
+
 RSpec.describe Lain::CLI::Wiring do
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
@@ -426,6 +449,148 @@ RSpec.describe Lain::CLI::Wiring do
         expect(source_of(agent)).to be(Lain::Agent::PipelineSource::Null)
         expect(Lain::Canonical.dump(reading_provider.last_request.messages)).not_to include(summary_text)
         expect(decisions).to be_empty
+      end
+    end
+  end
+
+  # D2: `--isolation`, wired at the ONE seam the fleet leases through. The main
+  # chat is deliberately NOT leased -- #run_state builds its Session on
+  # {Lain::WorkerEnv.default}, because the user's own edits belong in the user's
+  # own tree -- so what a leased environment reaches is an ACTOR-mode subagent,
+  # adopted through this Supervisor.
+  describe "the fleet's isolation backend" do
+    require "fileutils"
+    require "mixlib/shellout"
+    require "tmpdir"
+
+    # The journal Wiring hands the Supervisor is the run's live Channel; a
+    # recording stand-in is what lets the lease records be read back (and never
+    # blocks, unlike a SizedQueue nobody drains).
+    let(:channel) { RecordingChannel.new }
+
+    def wiring_with(isolation)
+      described_class.new(options: { grace: 5, isolation: }, chronicle:, status_feed:)
+    end
+
+    # Adoption is what leases: the Supervisor acquires the worker's environment
+    # and hands it to the launch block, exactly as {Lain::Tools::Subagent}'s
+    # `mode: :actor` dispatch does. The supervisor's own reactor task is what an
+    # actor outlives, so the adoption runs under a Sync the spec holds.
+    def adopt_worker(wiring)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+      Sync do |task|
+        wiring.supervisor.run(task)
+        wiring.supervisor.adopt(role: "researcher") { |worker_env| WiringSpecWorker.new(worker_env) }
+      ensure
+        wiring.supervisor.stop
+      end
+    end
+
+    def leases = channel.events.grep(Lain::Telemetry::IsolationLease)
+
+    # A chat started somewhere OTHER than the repo this suite runs in, so "the
+    # lease names the chat's own cwd" is an assertion and not a coincidence --
+    # and so no `.lain/services.rb` of the host project can decorate the backend.
+    def in_throwaway_chat_dir(&block)
+      Dir.mktmpdir("lain-d2-chat") { |dir| Dir.chdir(File.realpath(dir), &block) }
+    end
+
+    context "wired with no isolation option" do
+      it "leases the chat's own process environment -- the shared-process default" do
+        chat_cwd = nil
+        worker = in_throwaway_chat_dir do |dir|
+          chat_cwd = dir
+          adopt_worker(wiring_with(nil))
+        end
+
+        expect(worker.session.worker_env.cwd).to eq(chat_cwd)
+        expect(worker.session.worker_env.env).to eq(ENV.to_h)
+      end
+
+      # The resolver decorates BY NEED, so a run whose journal records anything
+      # never holds a bare Null -- what a spec can see is the concrete backend
+      # NAMED on the lease record the Journal decorator emits.
+      it "resolves the shared-process backend, journalled, so the lease is on the record" do
+        in_throwaway_chat_dir { adopt_worker(wiring_with(nil)) }
+
+        expect(leases.map { |lease| [lease.kind, lease.backend] })
+          .to eq([[:acquired, "Lain::Isolation::Null"], [:released, "Lain::Isolation::Null"]])
+      end
+    end
+
+    context "wired with the worktree isolation option" do
+      # The spec's own git calls reuse the backend's pinned scrub set, so the
+      # throwaway repo is built hermetically under a GIT_*-polluted env (a
+      # pre-commit hook) exactly as the backend runs.
+      def run_git(dir, *args)
+        Mixlib::ShellOut.new("git", "-C", dir, *args,
+                             environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
+      end
+
+      def seed_repo(dir)
+        run_git(dir, "init", "-q")
+        run_git(dir, "config", "user.email", "test@example.com")
+        run_git(dir, "config", "user.name", "Test")
+        File.write(File.join(dir, "README"), "seed\n")
+        run_git(dir, "add", "README")
+        run_git(dir, "commit", "-q", "-m", "seed")
+      end
+
+      # A throwaway repo AND a throwaway XDG_RUNTIME_DIR: the leased checkouts
+      # land under the tmpdir, never the machine's real runtime dir and never the
+      # lain repo this suite runs in.
+      def in_throwaway_repo
+        Dir.mktmpdir("lain-d2-project") do |project|
+          Dir.mktmpdir("lain-d2-runtime") do |runtime|
+            repo = File.realpath(project)
+            seed_repo(repo)
+            Dir.chdir(repo) { with_env("XDG_RUNTIME_DIR" => File.realpath(runtime)) { yield repo } }
+          end
+        end
+      end
+
+      it "hands the supervisor the resolved worktree backend" do
+        in_throwaway_repo { adopt_worker(wiring_with("worktree")) }
+
+        expect(leases.map(&:backend).uniq).to eq(["Lain::Isolation::Worktree"])
+      end
+
+      it "runs the adopted actor's session against the leased checkout, not the chat's cwd" do
+        chat_cwd = nil
+        worker = in_throwaway_repo do |repo|
+          chat_cwd = repo
+          adopt_worker(wiring_with("worktree"))
+        end
+        leased = worker.session.worker_env.cwd
+
+        expect(leased).not_to eq(chat_cwd)
+        # A REAL checkout, not a path the lease merely named: it exists, git
+        # knows it (`.git` is a file inside a linked worktree), and it carries
+        # the repo's seeded content -- so the cwd below is somewhere a child's
+        # tools can actually work, which `#resolve`'s string math cannot show.
+        expect(worker.checkout).to eq({ exists: true, repo: true, seeded: true })
+        expect(worker.session.worker_env.resolve("notes.md")).to eq(File.join(leased, "notes.md"))
+      end
+    end
+
+    # Resolved BEFORE {Lain::CLI::Chronicle#start} pins the header, so the
+    # refusal lands while the session record is still empty -- the same
+    # refusal-before-journal ordering --resume and --fork already keep.
+    context "wired with an unrecognized isolation option" do
+      it "raises a Lain::Error and leaves no session record behind" do
+        Dir.mktmpdir("lain-d2-state") do |state|
+          paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => state })
+          journaled = Lain::CLI::Chronicle.for(enabled: true, paths:)
+          wiring = described_class.new(options: { grace: 5, isolation: "docker" }, chronicle: journaled, status_feed:)
+          recorder, session = wiring.run_state(nil)
+
+          expect { wiring.wire_agent(channel:, recorder:, session:, backend:) }
+            .to raise_error(Lain::Error, /unknown isolation backend "docker".*none.*worktree/m)
+
+          journaled.close(reason: :exit)
+          expect(File.read(journaled.journal_path)).to be_empty
+        end
       end
     end
   end
