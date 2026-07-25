@@ -121,28 +121,29 @@ RSpec.describe Lain::Compaction::Head do
       expect(compact.call(messages)).to eq(messages)
     end
 
-    # OPEN QUESTION, pinned rather than left silent (this card's escalation
-    # trigger). Under a CONFIGURED ProtectedPatterns, Compact keeps the
-    # protected messages and summarizes only the rest, so the head names a
-    # SUPERSET of what is removed and over-reports its bytes. No production
-    # site configures protected_patterns today -- every Compact in lib/ and
-    # bench/ takes the NONE default -- so nothing over-reports yet. Whether
-    # Head should subtract the protected span is a policy call; this example
-    # records today's behavior so a future ruling has to change a test.
-    it "names the whole candidate span, protected survivors included" do
-      protected_first = [message("user", "SECRET")] + messages.drop(1)
-      head = described_class.new(messages: protected_first, keep_last: 1)
+    # THE OPEN QUESTION, ANSWERED (B2, 2026-07-25). This example used to record
+    # the opposite -- "names the whole candidate span, protected survivors
+    # included" -- as a characterization of the over-report a configured
+    # protection policy produced. Wiring pins made that over-report real, so the
+    # ruling changed rather than the silence continuing: the SAME policy object
+    # goes to both, and the head is now exactly what Compact summarizes, byte
+    # for byte.
+    it "excludes the protected survivors it once named, leaving exactly what Compact summarizes" do
+      pinned = message("user", "SECRET")
+      history = [pinned] + messages.drop(1)
+      pins = Lain::Context::PinnedMessages.new([pinned])
+      head = described_class.new(messages: history, keep_last: 1, pins:)
       summarized = nil
       compact = Lain::Context::Compact.new(
-        threshold: 1, keep_last: 1, protected_patterns: Lain::Context::ProtectedPatterns.new(["SECRET"]),
+        threshold: 1, keep_last: 1, protected_patterns: pins,
         summarizer: ->(dropped) { (summarized = dropped) && "s" }
       )
-      output = compact.call(protected_first)
+      output = compact.call(history)
 
-      expect(head.messages).to eq(protected_first[0..2])
-      expect(summarized).to eq(protected_first[1..2])
-      expect(output.first).to eq(protected_first.first)
-      expect(head.bytesize).to be > Lain::Canonical.dump(summarized).bytesize
+      expect(head.messages).to eq(history[1..2])
+      expect(summarized).to eq(head.messages)
+      expect(output.first).to eq(pinned)
+      expect(head.bytesize).to eq(Lain::Canonical.dump(summarized).bytesize)
     end
 
     it "is empty exactly where Compact bails without dropping anything" do
@@ -151,6 +152,130 @@ RSpec.describe Lain::Compaction::Head do
 
       expect(head).to be_empty
       expect(compact.call(messages)).to eq(messages)
+    end
+  end
+
+  # B2. A pin is recorded as a turn DIGEST while Compact only ever sees
+  # projected TEXT, so the mapping between them is made ONCE -- in
+  # {Lain::Compaction::Source}, the one object holding both the timeline and the
+  # session -- and the SAME {Lain::Context::PinnedMessages} value is then handed
+  # to the head and to the Compact. These examples build one by hand because
+  # that is what the spec is about; nothing in `lib/` builds one anywhere else.
+  describe "pins" do
+    def projected(line) = line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+
+    def pins_for(*pinned) = Lain::Context::PinnedMessages.new(pinned)
+
+    # Scenario: the candidate head excludes pinned messages
+    it "excludes a pinned turn, and its bytesize counts only the rest" do
+      line = timeline_of(6)
+      pinned = projected(line)[2]
+      rest = projected(line)[0..3] - [pinned]
+      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(pinned))
+
+      expect(head.messages).to eq(rest)
+      expect(head.bytesize).to eq(Lain::Canonical.dump(rest).bytesize)
+    end
+
+    # Scenario: no pins behaves exactly as today
+    it "names the whole candidate span when nothing is pinned" do
+      line = timeline_of(6)
+      unpinned = described_class.from_timeline(timeline: line, keep_last: 2,
+                                               pins: Lain::Context::PinnedMessages::NONE)
+
+      expect(unpinned.messages).to eq(projected(line)[0..3])
+      expect(unpinned.messages).to eq(described_class.from_timeline(timeline: line, keep_last: 2).messages)
+      expect(unpinned.bytesize).to eq(described_class.from_timeline(timeline: line, keep_last: 2).bytesize)
+    end
+
+    it "is empty when every droppable turn is pinned, which is what makes Source decline" do
+      line = timeline_of(4)
+      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(*projected(line)[0..1]))
+
+      expect(head).to be_empty
+    end
+
+    it "leaves a pinned turn inside the kept tail alone -- the tail is sliced off the FULL list" do
+      line = timeline_of(4)
+      head = described_class.from_timeline(timeline: line, keep_last: 2, pins: pins_for(projected(line)[3]))
+
+      expect(head.messages).to eq(projected(line)[0..1])
+    end
+
+    # Scenario: Head and Compact agree on what is droppable.
+    #
+    # A property, not an example: the asymmetry (a head filtered on turns, a
+    # Compact filtered on text) is the whole design and the thing most likely to
+    # be quietly broken, so every history size, every keep_last and every subset
+    # of the history is exercised -- including histories of REPEATED messages,
+    # where pinning one occurrence protects both and the head has to say so.
+    describe "agreement with what Compact actually removes" do
+      def histories
+        (1..4).flat_map do |size|
+          [(1..size).map { |index| message("user", "m#{index}") },
+           (1..size).map { |index| message("user", "m#{index % 2}") }]
+        end
+      end
+
+      def pin_sets(history)
+        (0...(1 << history.size)).map do |mask|
+          history.each_index.select { |index| mask.anybits?(1 << index) }.map { |index| history[index] }
+        end
+      end
+
+      def cases
+        histories.flat_map do |history|
+          pin_sets(history).product((1..4).to_a).map { |pinned, keep_last| [history, pinned, keep_last] }
+        end
+      end
+
+      it "hands Compact's summarizer exactly the head's messages, for every pin set" do
+        cases.each do |history, pinned, keep_last|
+          pins = pins_for(*pinned)
+          head = described_class.new(messages: history, keep_last:, pins:)
+          seen = :summarizer_never_called
+          compact = Lain::Context::Compact.new(threshold: 1, keep_last:, protected_patterns: pins,
+                                               summarizer: ->(dropped) { (seen = dropped) && "s" })
+          compact.call(history)
+          expected = history.size <= keep_last ? :summarizer_never_called : head.messages
+
+          expect(seen).to eq(expected), "size=#{history.size} keep_last=#{keep_last} pinned=#{pinned.size}"
+        end
+      end
+
+      # Scenario: Compact's own threshold measures the same set the Head
+      # measured. The pinned message is big, so a threshold between the two
+      # sizes discriminates: gate on `dropped` and both calls compact.
+      it "sets the threshold Compact obeys: at the head's size it compacts, one byte above it defers" do
+        pinned = message("user", "PINNED #{"p" * 200}")
+        history = [pinned] + messages
+        pins = pins_for(pinned)
+        head = described_class.new(messages: history, keep_last: 2, pins:)
+
+        expect(compacting(history, pins, head.bytesize)).not_to eq(history)
+        expect(compacting(history, pins, head.bytesize + 1)).to eq(history)
+        expect(head.bytesize).to be < Lain::Canonical.dump(history[0...-2]).bytesize
+      end
+
+      def compacting(history, pins, threshold)
+        Lain::Context::Compact.new(threshold:, keep_last: 2, protected_patterns: pins,
+                                   summarizer: ->(_) { "s" }).call(history)
+      end
+
+      # The other half of the same agreement: what SURVIVES is the protected
+      # messages plus the tail, and the head is precisely the complement.
+      it "measures exactly the bytes Compact's threshold measures, for every pin set" do
+        cases.reject { |history, _, keep_last| history.size <= keep_last }.each do |history, pinned, keep_last|
+          pins = pins_for(*pinned)
+          head = described_class.new(messages: history, keep_last:, pins:)
+          summarizable = nil
+          compact = Lain::Context::Compact.new(threshold: 1, keep_last:, protected_patterns: pins,
+                                               summarizer: ->(dropped) { (summarizable = dropped) && "s" })
+          compact.call(history)
+
+          expect(head.bytesize).to eq(Lain::Canonical.dump(summarizable).bytesize)
+        end
+      end
     end
   end
 

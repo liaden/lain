@@ -17,22 +17,26 @@ module Lain
     # verbatim -- the head must be the bytes that will actually be rendered,
     # not a parallel rendering of the same turns.
     #
-    # RULING 2026-07-25: this head is the whole CANDIDATE span, so a Compact it
-    # is paired with must keep `protected_patterns` at
-    # {Context::ProtectedPatterns::NONE}. Wire a real policy and this object
-    # silently over-reports: `compact.rb:56-58` partitions the drop set and the
-    # protected messages SURVIVE, so the head becomes a superset of what is
-    # removed and Need fires on bytes no compaction will reclaim -- the exact
-    # silent disagreement this class was written to delete. Changing that is a
-    # deliberate re-ruling, not a quiet wiring change. Pinned by the "names the
-    # whole candidate span" example in the spec.
+    # RULING 2026-07-25, RE-RULED the same day (B2): this head is the candidate
+    # span MINUS whatever the protection policy exempts, and the Compact it is
+    # paired with must be handed the SAME `pins` value. The first ruling made it
+    # protection-agnostic and forbade a real policy, because `compact.rb`
+    # partitions the drop set and the protected messages SURVIVE -- so a head
+    # that named them was a superset of what is removed, and Need fired on bytes
+    # no compaction reclaims. Wiring session pins made that over-report real, so
+    # the exemption moved INTO the head rather than the policy staying unwired.
+    # One object, one policy, both consumers: the disagreement this class exists
+    # to delete cannot reappear as long as the same `pins` goes to both.
     class Head
       # @param timeline [Lain::Timeline]
       # @param keep_last [Integer] the trailing messages a Compact keeps verbatim
+      # @param pins [Context::PinnedMessages] the exemption policy, which must
+      #   be the very object the paired {Context::Compact} takes as
+      #   `protected_patterns:`
       # @return [Head]
-      def self.from_timeline(timeline:, keep_last:)
+      def self.from_timeline(timeline:, keep_last:, pins: Context::PinnedMessages::NONE)
         new(messages: timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } },
-            keep_last:)
+            keep_last:, pins:)
       end
 
       include Enumerable
@@ -54,7 +58,8 @@ module Lain
       # @param messages [Array<Hash>] the full rendered message list. Only READ
       #   -- the caller keeps its array, untouched and unfrozen.
       # @param keep_last [Integer] must be positive; see {#validated}
-      def initialize(messages:, keep_last:)
+      # @param pins [Context::PinnedMessages] see {.from_timeline}
+      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE)
         @keep_last = validated(keep_last)
         # A deeply frozen SNAPSHOT, taken by copy. Deep, because a value object
         # whose elements a caller can still mutate is one whose @bytesize goes
@@ -67,7 +72,7 @@ module Lain
         # slice is empty. Two Heads over one list at different `keep_last` is a
         # thing A6 may well do. The copy is affordable: it measures as noise
         # beside the `Canonical.dump` on the next line.
-        @messages = Ractor.make_shareable(droppable(messages), copy: true)
+        @messages = Ractor.make_shareable(droppable(messages, pins), copy: true)
         @bytesize = Canonical.dump(@messages).bytesize
         freeze
       end
@@ -96,13 +101,27 @@ module Lain
         integer
       end
 
-      # Mirrors {Context::Compact#call}'s guard and slice line for line
-      # (`compact.rb:50-52`). The guard is redundant with Ruby's range
+      # Mirrors {Context::Compact#call}'s guard, slice and partition line for
+      # line (`compact.rb:50-57`). The guard is redundant with Ruby's range
       # clamping, and kept anyway: it is the coupling being pinned, and it
       # should read as the same decision, not as a slice that happens to
       # coincide.
-      def droppable(messages)
-        messages.size <= @keep_last ? [] : messages[0...-@keep_last]
+      #
+      # The exemption comes AFTER the slice for the same reason it does there:
+      # the kept tail is `keep_last` off the FULL list, so a pinned turn sitting
+      # inside the tail must not shift the window -- it survives because it is
+      # the tail, not because it is pinned.
+      #
+      # Positions, never a per-message `Canonical.dump`: this runs on every turn
+      # including the ~1.47 ms deferring ones, and the one dump this object pays
+      # for is {#bytesize}. {Context::PinnedMessages#indices_in} answers nothing
+      # at all for an unpinned session.
+      def droppable(messages, pins)
+        return [] if messages.size <= @keep_last
+
+        candidates = messages[0...-@keep_last]
+        exempt = pins.indices_in(candidates)
+        exempt.empty? ? candidates : candidates.reject.with_index { |_, index| exempt.include?(index) }
       end
     end
   end

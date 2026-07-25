@@ -176,7 +176,9 @@ module Lain
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
       def context_for(base:, timeline:, usage:, session:)
         observe_idle
-        decide(base:, messages: rendered(timeline), usage:, session:)
+        turns = timeline.to_a
+        messages = projected(turns)
+        decide(base:, messages:, usage:, session:, pins: pinned(turns, messages, session))
       end
 
       private
@@ -207,21 +209,39 @@ module Lain
       # full list is built ONCE here because both halves of the decision need
       # it: {Head} slices the candidate span out of it, and {Scheduler} measures
       # its before/after accounting over the whole thing.
-      def rendered(timeline)
-        timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+      def projected(turns) = turns.map { |turn| { "role" => turn.role, "content" => turn.content } }
+
+      # The pin-set, translated once. A pin is a turn DIGEST and {Context::Compact}
+      # only ever sees projected TEXT -- a turn's content address folds `meta`
+      # and `causal_parents` that no projection carries, so the two are not
+      # interchangeable and deriving one from the other by hashing the wrong
+      # bytes misses every lookup in silence. This is the only object holding
+      # both the timeline and the session, so it is the only place the mapping
+      # can be made; making it ONCE and handing the same value to {Head} and to
+      # the Compact is what stops them naming different messages.
+      #
+      # `#pinned?` and never `#pins`: the latter sorts the whole set on every
+      # call (session.rb:164) and this is a per-turn membership test.
+      def pinned(turns, messages, session)
+        Context::PinnedMessages.new(
+          turns.zip(messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
+        )
       end
 
       # Is a compaction warranted at all? An empty head is asked for with
       # `#empty?`, never a zero byte count: an empty Head measures 2, the bytes
       # of `"[]"`. With nothing droppable there is no compaction to perform
-      # whatever the signals say.
-      def decide(base:, messages:, usage:, session:)
-        head = Head.new(messages:, keep_last: @keep_last)
+      # whatever the signals say -- which is also how a history whose every
+      # droppable turn is PINNED declines here rather than reaching Compact's
+      # empty-summarizable path and paying a cache break for
+      # {SummarySnapshot::NOTHING}.
+      def decide(base:, messages:, usage:, session:, pins:)
+        head = Head.new(messages:, keep_last: @keep_last, pins:)
         need = @need.check(messages: head.messages, used_tokens: usage, window_tokens: window_for(base),
                            plan_step_completed: session.plan_step_completed?)
         return defer(base:, need:, head:) if head.empty? || !need.needed?
 
-        weigh(base:, messages:, head:, need:,
+        weigh(base:, messages:, head:, need:, pins:,
               snapshot: SummarySnapshot.take(messages: head.messages, eager: @eager))
       end
 
@@ -247,8 +267,8 @@ module Lain
       # scheduler was going to defer regardless, and a turn deferred on TIMING
       # would have been journaled as an inflation refusal, over-counting the
       # refusals a bench reads by the whole warm-defer population.
-      def weigh(base:, messages:, head:, need:, snapshot:)
-        compact = compaction(snapshot)
+      def weigh(base:, messages:, head:, need:, pins:, snapshot:)
+        compact = compaction(snapshot, pins)
         scheduler = scheduler_for(compact)
         return defer(base:, need:, head:, snapshot:) unless timely?(scheduler, need, head)
         return defer(base:, need:, head:, snapshot:, would_not_shrink: true) unless shrinks?(compact, messages)
@@ -339,13 +359,17 @@ module Lain
       # summary landing between renders must not change bytes a prompt was
       # already built from.
       #
-      # {Context::ProtectedPatterns::NONE} is the ruling of 2026-07-25, not a
-      # default left unset: {Head} measures the whole candidate span and is
-      # protected-agnostic, so under any other policy Compact would remove a
-      # SUBSET of what Need measured and fire on bytes no compaction reclaims.
-      def compaction(snapshot)
+      # RE-RULED 2026-07-25 (B2), replacing the ruling that pinned this at
+      # {Context::ProtectedPatterns::NONE}. That ruling was right about the
+      # hazard and wrong about the fix: a protection-agnostic {Head} measures a
+      # SUPERSET of what a policy-carrying Compact removes, so Need fires on
+      # bytes no compaction reclaims. The policy is now wired to BOTH, as the
+      # very same value -- `pins` here is the object {#decide} already handed
+      # the Head -- so the superset cannot open up. Passing a second, equal
+      # policy would be the bug: equal is not the guarantee, identical is.
+      def compaction(snapshot, pins)
         Context::Compact.new(threshold: OBEY_THE_SCHEDULER, keep_last: @keep_last, summarizer: snapshot,
-                             protected_patterns: Context::ProtectedPatterns::NONE)
+                             protected_patterns: pins)
       end
 
       # A fresh Scheduler per turn, because the Compact it is frozen around is

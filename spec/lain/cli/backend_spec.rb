@@ -250,7 +250,9 @@ RSpec.describe Lain::CLI::Backend do
   # at six call sites).
   describe "compaction wiring" do
     let(:journal) { RecordingChannel.new }
-    let(:session) { instance_double(Lain::Session, plan_step_completed?: false) }
+    # `pinned?` too: the per-turn path asks the Session which turns compaction
+    # may not elide (B2), and a verifying double answers only what it declares.
+    let(:session) { instance_double(Lain::Session, plan_step_completed?: false, pinned?: false) }
     let(:profile) { Lain::CacheProfile::ANTHROPIC }
     let(:toolset) { Lain::Toolset.new([]) }
 

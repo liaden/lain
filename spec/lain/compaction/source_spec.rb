@@ -55,10 +55,19 @@ RSpec.describe Lain::Compaction::Source do
   let(:clock) { SourceSpecClock.new(Time.at(1_700_000_000).utc) }
   let(:eager) { SourceSpecEager.new }
   let(:keep_last) { 2 }
-  let(:session) { instance_double(Lain::Session, plan_step_completed?: false) }
+  let(:session) { session_pinning }
   let(:toolset) { Lain::Toolset.new([]) }
   let(:workspace) { Lain::Workspace.empty }
   let(:base) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "a system prompt") }
+
+  # A Session that pins the turn digests it is handed. `pinned?` is the O(1)
+  # membership test the per-turn path asks (session.rb:153); `#pins` sorts on
+  # every call and is deliberately NOT what a hot loop reaches for.
+  def session_pinning(*digests, plan_step_completed: false)
+    instance_double(Lain::Session, plan_step_completed?: plan_step_completed).tap do |double|
+      allow(double).to receive(:pinned?) { |digest| digests.include?(digest) }
+    end
+  end
 
   def records
     journal_io.string.each_line.map { |line| JSON.parse(line) }
@@ -277,7 +286,7 @@ RSpec.describe Lain::Compaction::Source do
   end
 
   describe "a completed plan step is a trigger" do
-    let(:session) { instance_double(Lain::Session, plan_step_completed?: true) }
+    let(:session) { session_pinning(plan_step_completed: true) }
 
     it "compacts a history above the byte threshold" do
       line = timeline
@@ -567,7 +576,7 @@ RSpec.describe Lain::Compaction::Source do
   end
 
   describe "a history with nothing droppable" do
-    let(:session) { instance_double(Lain::Session, plan_step_completed?: true) }
+    let(:session) { session_pinning(plan_step_completed: true) }
 
     it "answers the base untouched even when a signal fires" do
       built = source(need: build_need(byte_threshold: 1), hard_cap: 1, keep_last: 6)
@@ -652,6 +661,117 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(compacting).not_to equal(base)
       expect(rewound).to equal(base)
+    end
+  end
+
+  # B2. This is the ONE object holding both the timeline and the session, so it
+  # is the only place a pin -- recorded as a turn DIGEST -- can be mapped onto
+  # the projected TEXT {Context::Compact} filters on. The head and the Compact
+  # are handed the SAME {Context::PinnedMessages} value, which is what makes
+  # "what Need measured" and "what Compact removes" the same list by
+  # construction rather than by agreement.
+  describe "the pins it must not elide" do
+    def digests_of(line) = line.to_a.map(&:digest)
+
+    def pins_for(line, *indices) = Lain::Context::PinnedMessages.new(messages_of(line).values_at(*indices))
+
+    def head_for(line, pins: Lain::Context::PinnedMessages::NONE)
+      Lain::Compaction::Head.new(messages: messages_of(line), keep_last:, pins:)
+    end
+
+    def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+    # Scenario: a pinned message survives a compaction verbatim
+    it "renders the pinned turn verbatim, ahead of the summary message" do
+      line = timeline
+      pinning = session_pinning(digests_of(line)[1])
+
+      messages = render(context_for(forcing, line, session: pinning), line).messages
+
+      expect(messages.size).to eq(keep_last + 2)
+      expect(messages.first["content"].first).to include("content" => block(2)["content"])
+      expect(messages[1]["content"].first["text"]).to include("elided")
+    end
+
+    it "leaves the unpinned head summarized, so the pin costs only its own bytes" do
+      line = timeline
+      pinning = session_pinning(digests_of(line)[1])
+
+      text = render(context_for(forcing, line, session: pinning), line).messages[1]["content"].first["text"]
+
+      expect(text).not_to include(block(2)["content"])
+      expect(text.lines.grep(/^\[user /).size).to eq(3)
+    end
+
+    # Scenario: pinning everything droppable declines the compaction rather than
+    # emitting an empty summary. `SummarySnapshot::NOTHING` exists for Compact's
+    # empty-summarizable path, but a Source that reached it would have broken
+    # the cache prefix to say "(nothing to summarize)".
+    it "declines rather than emitting an empty summary when every droppable turn is pinned" do
+      line = timeline
+      pinning = session_pinning(*digests_of(line).first(4), plan_step_completed: true)
+
+      returned = context_for(forcing, line, session: pinning)
+
+      expect(returned).to equal(base)
+      expect(Lain::Canonical.dump(render(returned, line).cache_payload))
+        .to eq(Lain::Canonical.dump(render(base, line).cache_payload))
+      expect(compactions).to be_empty
+    end
+
+    # Scenario: a pin-shrunk head that no longer saves bytes is journalled as
+    # not shrinking. A completed plan step is a non-byte detector, so it fires
+    # on a short unpinned head -- and here the only unpinned droppable message
+    # is smaller than the ~230-byte attestation that would replace it.
+    it "journals a pin-shrunk head that no longer saves bytes as not shrinking" do
+      line = timeline(6) { |index| index == 3 ? small_block(index) : block(index) }
+      pinning = session_pinning(*digests_of(line).values_at(0, 1, 3), plan_step_completed: true)
+      built = source(need: build_need(byte_threshold: 1_000_000), hard_cap: 1)
+
+      expect(context_for(built, line, session: pinning)).to equal(base)
+      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => true)
+    end
+
+    # Scenario: Compact's own threshold measures the same set the Head measured.
+    # A byte threshold BETWEEN the unpinned head and the whole candidate span
+    # must not fire -- that gap is the over-report a protection-agnostic head
+    # used to produce, and Need firing across it is the silent disagreement
+    # {Head} exists to delete.
+    it "measures the byte threshold on the unpinned head, not on the whole candidate span" do
+      line = timeline
+      pins = pins_for(line, 1)
+      between = (head_for(line, pins:).bytesize + head_for(line).bytesize) / 2
+      built = source(need: build_need(byte_threshold: between), hard_cap: 1)
+
+      expect(context_for(built, line, session: session_pinning(digests_of(line)[1]))).to equal(base)
+      expect(decisions.first["signals"]).to eq([])
+      expect(decisions.first["head_bytes"]).to eq(head_for(line, pins:).bytesize)
+    end
+
+    it "journals the head it measured with the pinned bytes taken out" do
+      line = timeline
+      pinning = session_pinning(digests_of(line)[1])
+
+      context_for(forcing, line, session: pinning)
+
+      expect(decisions.first["head_bytes"]).to eq(head_for(line, pins: pins_for(line, 1)).bytesize)
+      expect(decisions.first["head_bytes"]).to be < head_for(line).bytesize
+    end
+
+    it "behaves exactly as an unpinned run when the session pins nothing" do
+      line = timeline
+      unpinned = render(context_for(forcing, line), line)
+
+      expect(Lain::Canonical.dump(unpinned.cache_payload))
+        .to eq(Lain::Canonical.dump(render(context_for(forcing, line, session: session_pinning), line)
+                                      .cache_payload))
+    end
+
+    it "still hands the scheduler a shareable Context when a pin is in force" do
+      line = timeline
+      pinning = session_pinning(digests_of(line)[1])
+
+      expect(Ractor.shareable?(context_for(forcing, line, session: pinning))).to be(true)
     end
   end
 

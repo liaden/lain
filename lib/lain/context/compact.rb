@@ -46,19 +46,24 @@ module Lain
         freeze
       end
 
+      # The partition runs BEFORE the threshold gate. Protected messages survive
+      # this pass verbatim, so they are not bytes a compaction reclaims, and
+      # thresholding on the whole drop set would fire on a saving that cannot
+      # happen -- while {Compaction::Head}, which measures the same span for
+      # {Compaction::Need}, subtracts them. Two byte counts over two different
+      # sets is the disagreement that head exists to delete, so there is one:
+      # `summarizable`.
       def call(messages)
         return messages if messages.size <= @keep_last
 
-        dropped = messages[0...-@keep_last]
-        return messages if Canonical.dump(dropped).bytesize < @threshold
-
-        tail = messages.last(@keep_last)
-        protected_head, summarizable = dropped.partition do |message|
+        protected_head, summarizable = messages[0...-@keep_last].partition do |message|
           @protected_patterns.protects?(Canonical.dump(message))
         end
+        return messages if Canonical.dump(summarizable).bytesize < @threshold
+
         summary_message = { "role" => "assistant",
                             "content" => [{ "type" => "text", "text" => @summarizer.call(summarizable) }] }
-        protected_head + [summary_message] + tail
+        protected_head + [summary_message] + messages.last(@keep_last)
       end
     end
   end
