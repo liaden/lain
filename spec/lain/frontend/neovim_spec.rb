@@ -59,6 +59,30 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     @nvim_pid = nil
   end
 
+  def bufnr(name) = inspector.exec_lua("return vim.fn.bufnr(...)", [name])
+
+  # The runtime's own whole-buffer-replace entry point, called straight from
+  # the inspector connection -- `_G.__lain` is nvim-process-wide Lua state,
+  # reachable from any RPC connection. Content is injected here rather than
+  # driven through Telemetry so the example pins the BINDING, not {Buffers}'
+  # rendering (which the default-suite group at the bottom of this file owns).
+  def set_view(name, lines)
+    inspector.exec_lua("local name, lines = ...; _G.__lain.set_view(name, lines)", [name, lines])
+  end
+
+  # Feeds `keys` through nvim's own mapping resolution (feedkeys, NOT
+  # `:normal!`, which bypasses mappings entirely -- this must exercise the
+  # actual buffer-local map). Same helper shape as
+  # spec/lain/frontend/neovim/buffers_spec.rb's.
+  def feed(bufname, keys, cursor:)
+    inspector.exec_lua(<<~LUA, [bufname, keys, cursor])
+      local bufname, keys, cursor = ...
+      vim.cmd("buffer " .. bufname)
+      vim.api.nvim_win_set_cursor(0, cursor)
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+    LUA
+  end
+
   # Poll until the block returns truthy, or fail. Editor effects arrive on the
   # RPC thread, not synchronously with the push that caused them.
   def wait_until(timeout: 8)
@@ -350,6 +374,171 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         received = Timeout.timeout(5) { handle.command_inbox.pop }
         expect(received).to include("resend")
       end
+    end
+  end
+
+  # B4's editor half. Only the keybinding ROUND TRIP needs a real nvim -- what
+  # the pin resolves to, and how it renders, is plain Ruby in {Buffers} and is
+  # pinned by the default-suite group at the bottom of this file.
+  describe "the pin gesture on lain://timeline" do
+    it "enqueues a pin command naming the cursor's line, buffer-locally" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        wait_until { bufnr("lain://timeline") != -1 }
+        set_view("lain://timeline", ["user: first", "assistant: second", "user: third"])
+
+        feed("lain://timeline", "p", cursor: [2, 0])
+
+        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
+        expect(verb).to eq("pin")
+        expect(args).to eq([2])
+      end
+    end
+
+    # Fix round. Every :Lain* command is GLOBAL (see runtime.lua's `define`),
+    # and :LainPin reads the CURRENT window's cursor -- so hand-typed from
+    # lain://journal line 1 it would send ["pin", [1]] and pin TIMELINE turn 1,
+    # a turn the human never looked at, silently and (under B2) permanently.
+    # Hand-typing is an invited path here precisely because the `p` map invokes
+    # the command rather than a private helper, so the command must refuse on
+    # its own. Asserted without a sleep: the journal invocation is followed by a
+    # real one, and the FIRST thing to reach the inbox must be the real one.
+    it "refuses to pin from a buffer that is not the timeline, and says so" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        wait_until { bufnr("lain://timeline") != -1 && bufnr("lain://journal") != -1 }
+        set_view("lain://timeline", ["user: first", "assistant: second", "user: third"])
+
+        feed("lain://journal", ":LainPin<CR>", cursor: [1, 0])
+        feed("lain://timeline", "p", cursor: [3, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["pin", [3]])
+        expect(messages).to match(/LainPin/)
+      end
+    end
+  end
+end
+
+# B4's plain-Ruby half: the line -> digest index, the pin marker, and the pin
+# gesture itself. {Buffers} never touches nvim -- it turns events into lines
+# and answers "which turn is on line N?" -- so this whole group runs in the
+# DEFAULT suite, with no editor and no :nvim tag. The one thing that genuinely
+# needs an editor (does `p` reach Ruby at all?) is the :nvim example above.
+RSpec.describe Lain::Frontend::Neovim::Buffers do
+  let(:store) { Lain::Store.new }
+  let(:session) { Lain::Session.new }
+  let(:buffers) { described_class.new(store:, session:) }
+
+  # Three turns, alternating roles, root first -- {Timeline#to_a}'s order and
+  # therefore the rendered line order.
+  def timeline_of(*texts)
+    texts.each_with_index.inject(Lain::Timeline.empty(store:)) do |timeline, (text, i)|
+      timeline.commit(role: i.even? ? :user : :assistant, content: [{ "type" => "text", "text" => text }])
+    end
+  end
+
+  def usage(digest)
+    Lain::Telemetry::TurnUsage.new(digest:, model: "m", stop_reason: :end_turn, usage: {})
+  end
+
+  # One render of lain://timeline, through the same public surface the drain
+  # thread uses.
+  def render(view, timeline)
+    view.updates(usage(timeline.head_digest)).fetch(described_class::TIMELINE)
+  end
+
+  describe "pinning from the timeline buffer" do
+    it "pins the turn the cursor's line names" do
+      timeline = timeline_of("first", "second", "third")
+      render(buffers, timeline)
+
+      outcome = buffers.pin(2)
+
+      expect(outcome).to be_pinned
+      expect(outcome.digest).to eq(timeline.to_a[1].digest)
+      expect(session.pins).to eq([timeline.to_a[1].digest])
+    end
+  end
+
+  describe "a pinned turn is marked in the rendering" do
+    it "marks only the pinned turn's line on the next render" do
+      timeline = timeline_of("first", "second", "third")
+      render(buffers, timeline)
+      buffers.pin(2)
+
+      lines = render(buffers, timeline)
+
+      expect(lines[1]).to end_with(described_class::TimelineView::PIN_MARKER)
+      expect(lines.grep(/#{Regexp.escape(described_class::TimelineView::PIN_MARKER)}\z/).size).to eq(1)
+    end
+  end
+
+  describe "every rendered turn line maps to its own digest" do
+    it "resolves each 1-based line to that turn's digest" do
+      timeline = timeline_of("first", "second", "third")
+
+      lines = render(buffers, timeline)
+
+      expect((1..lines.size).map { |line| buffers.digest_at(line) }).to eq(timeline.to_a.map(&:digest))
+    end
+
+    # Line 0 is the trap a bare `@line_digests[line - 1]` walks into: -1
+    # indexes the LAST turn, so a cursor nvim never reports would pin the head.
+    it "resolves nothing for a line outside the rendering" do
+      render(buffers, timeline_of("first", "second"))
+
+      expect(buffers.digest_at(0)).to be_nil
+      expect(buffers.digest_at(3)).to be_nil
+    end
+  end
+
+  describe "an unavailable timeline offers nothing to pin" do
+    # The Store::MissingObject rescue replaces the WHOLE chain with one notice
+    # line, so the index must empty with it -- and the gesture must not reach
+    # Session#record_pin, which refuses a blank digest loudly.
+    it "pins nothing and reports the failure" do
+      timeline = timeline_of("first", "second")
+      detached = described_class.new(store: Lain::Store.new, session:)
+      allow(session).to receive(:record_pin).and_call_original
+
+      lines = render(detached, timeline)
+      outcome = detached.pin(1)
+
+      expect(lines.size).to eq(1)
+      expect(lines.first).to include("timeline unavailable")
+      expect(outcome).not_to be_pinned
+      expect(outcome.report).to include("line 1")
+      expect(session.pins).to be_empty
+      expect(session).not_to have_received(:record_pin)
+    end
+
+    # Fix round. {Buffers#initial} is a RENDER like any other -- it posts the
+    # "(no turns yet)" placeholder, which describes no turn -- so it must leave
+    # nothing resolvable behind it. Latent rather than live today (priming runs
+    # once, first), but it is the same stale-index class this card exists to
+    # close, and closing it is one line.
+    it "drops the index when the at-rest placeholder is re-posted" do
+      render(buffers, timeline_of("first", "second"))
+
+      expect(buffers.initial.fetch(described_class::TIMELINE)).to eq(["(no turns yet)"])
+      expect(buffers.digest_at(1)).to be_nil
+      expect(buffers.pin(1)).not_to be_pinned
+    end
+
+    # The index that a successful render built must not survive a later miss:
+    # the lines it described are gone from the buffer.
+    it "drops a previously built index when a later chain cannot be resolved" do
+      timeline = timeline_of("first", "second")
+      render(buffers, timeline)
+      orphan = Lain::Timeline.empty(store: Lain::Store.new)
+                             .commit(role: :user, content: [{ "type" => "text", "text" => "elsewhere" }])
+
+      buffers.updates(usage(orphan.head_digest))
+
+      expect(buffers.digest_at(1)).to be_nil
+      expect(buffers.pin(1)).not_to be_pinned
     end
   end
 end
