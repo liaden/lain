@@ -6,6 +6,7 @@ require_relative "compaction/cold"
 require_relative "compaction/scheduler"
 require_relative "compaction/prepared"
 require_relative "compaction/summary_snapshot"
+require_relative "compaction/source"
 
 module Lain
   # WHETHER a compaction is warranted, kept apart from {Context::Compact}
