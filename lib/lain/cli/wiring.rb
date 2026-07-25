@@ -205,13 +205,21 @@ module Lain
       # rather than inlined so #build_agent's keyword bag reads as wiring, not
       # as stack construction (and stays under Metrics/AbcSize with T18's
       # request_override slot in the same call).
-      # `.slice(:journal)` must OMIT the key under --no-journal so RefuseSecretWrites' own Channel::Null default
-      # applies -- passing an explicit `journal: nil` would crash on `<<` at refusal time, the worst possible moment.
-      # The `oracle:` arm is a CONTENTLESSNESS FLOOR, not a second secret detector
-      # (Oracle::MemorySave): it declines a save with nothing in it, and journals
-      # that as a decline rather than under a PATTERNS name.
       def guarded_tools = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**guard_kwargs)])
 
+      # Both arms of the guard's construction, kept together because both are
+      # load-bearing in a way the one-liner cannot show.
+      #
+      # `.slice(:journal)` must OMIT the key under --no-journal so
+      # RefuseSecretWrites' own Channel::Null default applies -- passing an
+      # explicit `journal: nil` crashes on `<<` at refusal time, the worst
+      # possible moment.
+      #
+      # The `oracle:` arm is a CONTENTLESSNESS FLOOR, not a second secret
+      # detector ({Oracle::MemorySave}): it declines a save with nothing in it
+      # and journals that as a decline rather than under a PATTERNS name. It
+      # abstains entirely for a guarded tool carrying no `body` at all, which
+      # is what keeps improvement_write from being refused wholesale.
       def guard_kwargs = { oracle: Oracle::MemorySave::Gate.new, **chronicle.telemetry_kwargs.slice(:journal) }
 
       # Both provider construction sites tee their round trips into the
