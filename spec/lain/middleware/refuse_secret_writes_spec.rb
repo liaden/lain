@@ -150,7 +150,68 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       expect(called).to be(false)
       expect(env.fetch(:result).error?).to be(true)
       expect(journal.events.size).to eq(1)
-      expect(journal.events.first.pattern).to eq(Lain::Middleware::RefuseSecretWrites::ORACLE_MATCH)
+      expect(journal.events.first.pattern).to eq(Lain::Middleware::RefuseSecretWrites::ORACLE_DECLINE)
+    end
+  end
+
+  # B2: a regex hit means "this looks like a credential"; an oracle decline
+  # means "this is not worth remembering". They used to journal under the same
+  # grammar, which recorded a judgment call as a security finding.
+  describe "an oracle's decline is not a credential match" do
+    let(:declining) do
+      always = Class.new do
+        def secret?(_input) = true
+      end.new
+      described_class.new(journal:, oracle: always)
+    end
+
+    def refuse_by_pattern
+      run(tool_call(input: { "id" => "creds", "description" => "oops", "body" => "AKIA#{"A" * 16}" }))
+    end
+
+    def refuse_by_decline
+      run(tool_call(input: { "id" => "a", "description" => "b", "body" => "looks fine to a regex" }),
+          middleware: declining)
+    end
+
+    it "records a pattern hit under the name of the pattern that matched" do
+      refuse_by_pattern
+
+      reason = journal.events.first.pattern
+      expect(reason).to eq("aws access key id")
+      expect(described_class).not_to be_decline(reason)
+    end
+
+    it "records a decline under a reason distinguishable from every pattern name" do
+      refuse_by_decline
+
+      reason = journal.events.first.pattern
+      expect(reason).to eq(described_class::ORACLE_DECLINE)
+      expect(described_class::PATTERNS.keys).not_to include(reason)
+      expect(described_class).to be_decline(reason)
+    end
+
+    # Escaped and anchored to match what `.decline?` actually tests: the
+    # prefix is inert as a regex today, but a later one need not be.
+    it "keeps the decline prefix out of every pattern name, so the distinction cannot drift" do
+      reserved = /\A#{Regexp.escape(described_class::DECLINE_PREFIX)}/
+      expect(described_class::PATTERNS.keys.grep(reserved)).to be_empty
+      expect(described_class::PATTERNS.keys.select { |name| described_class.decline?(name) }).to be_empty
+    end
+
+    it "tells the model what to do instead, so its only move is not an identical retry" do
+      decline_env, = refuse_by_decline
+
+      expect(decline_env.fetch(:result).content).to include("write substantive content")
+    end
+
+    it "tells the model which happened, and never describes a decline as a credential" do
+      pattern_env, = refuse_by_pattern
+      decline_env, = refuse_by_decline
+
+      expect(pattern_env.fetch(:result).content).to include("aws access key id pattern")
+      expect(decline_env.fetch(:result).content).not_to eq(pattern_env.fetch(:result).content)
+      expect(decline_env.fetch(:result).content).not_to match(/pattern|credential|secret/i)
     end
   end
 
@@ -158,15 +219,23 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     it "refuses through the SAME seam a plain oracle does, for a write the regex never catches" do
       gate = Lain::Oracle::MemorySave::Gate.new
       guarded = described_class.new(journal:, oracle: gate)
-      opaque = ("a".."z").cycle.first(40).join
+      # Contentless, not opaque: the gate declines a body with nothing in it
+      # to save. An earlier vehicle here was a 40-char blob, which B3's
+      # recalibration correctly rules WORTH saving -- an opaque identifier is
+      # still content, and a credential-shaped one is PATTERNS' job, not the
+      # oracle's. What this example needs is only a body no regex names and
+      # the gate still refuses.
+      contentless = "   \t  "
+      expect(described_class::PATTERNS.filter_map { |name, shape| name if shape.match?(contentless) }).to be_empty
 
-      env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => opaque }),
+      env, called = run(tool_call(input: { "id" => "x", "description" => "y", "body" => contentless }),
                         middleware: guarded)
 
       expect(called).to be(false)
       expect(env.fetch(:result).error?).to be(true)
       expect(journal.events.size).to eq(1)
-      expect(journal.events.first.pattern).to eq(described_class::ORACLE_MATCH)
+      expect(journal.events.first.pattern).to eq(described_class::ORACLE_DECLINE)
+      expect(described_class).to be_decline(journal.events.first.pattern)
     end
 
     it "lets a write both the regex and the oracle judge safe proceed" do

@@ -72,10 +72,11 @@ module Lain
         validates :turn_digest, presence: { message: "must name the committed turn, got nil" }
       end
 
-      # A refusal record must name what matched (never the matched bytes).
+      # A refusal record must name its reason -- the pattern that matched, or
+      # the judgment that declined (never the matched bytes).
       class WriteRefused < Guard
         attribute :pattern
-        validates :pattern, presence: { message: "must name what matched, got nil" }
+        validates :pattern, presence: { message: "must name what matched or what declined, got nil" }
       end
 
       # A grading verdict must name the finding it judged, say whether it
@@ -354,11 +355,21 @@ module Lain
     end
 
     # A `memory_write` withheld by {Middleware::RefuseSecretWrites} before it
-    # ever reached the recorder. `pattern` NAMES what matched -- e.g. "aws
+    # ever reached the recorder. `pattern` NAMES the reason -- e.g. "aws
     # access key id" -- and MUST NEVER be the matched bytes themselves: a
     # refusal record that quoted the secret would write the secret to the very
     # Journal the refusal exists to protect. `tool_use_id` ties the record back
     # to the tool_result the model actually saw.
+    #
+    # The field carries TWO kinds of reason and a reader must not conflate
+    # them. A named credential pattern means "this looks like a credential".
+    # A *decline* means an oracle judged the write not worth making, with no
+    # pattern matching at all -- a judgment call, not a security finding.
+    # Declines live in a reserved namespace
+    # ({Middleware::RefuseSecretWrites::DECLINE_PREFIX}, `"decline:"`); test
+    # for one with {Middleware::RefuseSecretWrites.decline?} rather than by
+    # membership in `PATTERNS`, which drifts as shapes are added. Counting
+    # every WriteRefused as a security finding over-counts by every decline.
     WriteRefused = Data.define(:tool_use_id, :pattern) do
       include Journalable
 

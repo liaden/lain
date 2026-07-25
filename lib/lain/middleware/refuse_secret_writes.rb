@@ -53,9 +53,41 @@ module Lain
         "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
       }.freeze
 
-      # The name journaled when the oracle -- not a named PATTERNS entry --
-      # is what flagged the input. There is no regex to name in that case.
-      ORACLE_MATCH = "oracle-flagged"
+      # A refusal that came from the oracle rather than from a named PATTERNS
+      # entry is NOT a pattern hit, and journaling it under the same grammar
+      # recorded a judgment call ("not worth remembering") as a security
+      # finding ("this looks like a credential"). {Telemetry::WriteRefused}
+      # requires `pattern` non-nil, so a decline cannot simply omit it; it
+      # carries a reason from a reserved namespace instead. The PREFIX is the
+      # mechanical test -- {.decline?}, not an allow-list of pattern names a
+      # reader would have to keep in sync with {PATTERNS}. It is a prefix
+      # rather than one flat value so a later arm can name WHICH judgment
+      # declined without a replay reader learning a new word.
+      DECLINE_PREFIX = "decline:"
+      ORACLE_DECLINE = "#{DECLINE_PREFIX}oracle".freeze
+
+      # @param reason [String] a journaled {Telemetry::WriteRefused#pattern}
+      # @return [Boolean] true if a judgment declined the write, false if a
+      #   credential pattern matched it
+      def self.decline?(reason) = reason.start_with?(DECLINE_PREFIX)
+
+      # A PATTERNS key inside the reserved namespace would make {.decline?}
+      # report a genuine credential hit as a judgment call -- the exact
+      # inverse of the mislabel the namespace exists to fix, and silent. The
+      # invariant is asserted through {.decline?} itself so it cannot test
+      # something subtly different from what readers call.
+      PATTERNS.each_key do |name|
+        raise "PATTERNS may not use the reserved #{DECLINE_PREFIX.inspect} namespace: #{name.inspect}" if decline?(name)
+      end
+
+      # What the MODEL is told about a decline. It deliberately names no
+      # pattern and makes no credential claim: the model that reads "matches
+      # a ... pattern" for a write the oracle merely found unworthy learns
+      # the wrong lesson and redacts prose that was never sensitive. The
+      # second clause is why the model has a move other than an identical
+      # retry -- a refusal that only says "no" gets resent verbatim.
+      DECLINED = "the oracle judged this input not worth writing -- " \
+                 "write substantive content rather than retrying this one"
 
       # Null Object for the injectable predicate seam: never flags anything,
       # so bare construction needs no guard and today's default cannot be
@@ -74,8 +106,11 @@ module Lain
 
       # @param journal [#<<] where WriteRefused records land; the Null channel
       #   by default, so no caller guards `if journal`
-      # @param oracle [#secret?] a second, swappable arm over the same input --
-      #   the Null Object today, an ollama-backed classifier once OR-1 lands
+      # @param oracle [#secret?] a second, swappable arm over the same input.
+      #   The duck's name predates its real users: what a true answer means is
+      #   "withhold this write", and {Oracle::MemorySave::Gate} means it as a
+      #   judgment ("not worth remembering"), not a credential finding --
+      #   which is why it journals {ORACLE_DECLINE} and never a PATTERNS name.
       def initialize(journal: Channel::Null.instance, oracle: NullOracle.instance)
         @journal = journal
         @oracle = oracle
@@ -88,12 +123,20 @@ module Lain
         return downstream(env, &app) unless GUARDED_TOOLS.include?(effect.name)
 
         pattern = matched_pattern(effect.input)
-        return downstream(env, &app) unless pattern || @oracle.secret?(effect.input)
+        return refuse(env, effect, pattern, "input matches a #{pattern} pattern") if pattern
+        return refuse(env, effect, ORACLE_DECLINE, DECLINED) if withhold?(effect.input)
 
-        refuse(env, effect, pattern || ORACLE_MATCH)
+        downstream(env, &app)
       end
 
       private
+
+      # The seam's duck is `#secret?`, but a true answer means only "withhold
+      # this write": {Oracle::MemorySave::Gate} answers it as a judgment, not
+      # a credential finding. Naming that here keeps the call site from
+      # reading "if it is secret, record it as not-a-secret". Renaming the
+      # duck itself crosses into the oracle's own file and is ticketed.
+      def withhold?(input) = @oracle.secret?(input)
 
       def matched_pattern(input)
         haystack = text(input)
@@ -118,11 +161,13 @@ module Lain
       # actually refused (`effect.name`) so a model juggling both writers
       # learns which call to retry differently -- "memory_write refused"
       # read after an improvement_write call would be a lie.
-      def refuse(env, effect, pattern)
-        @journal << Telemetry::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern:)
-        env.merge(result: Tool::Result.error(
-          "#{effect.name} refused: input matches a #{pattern} pattern; nothing was written."
-        ))
+      #
+      # `reason` is journaled; `why` is what the model reads. They differ
+      # because the record is keyed on by replay readers and the message is
+      # prose, but both must agree on WHICH kind of refusal happened.
+      def refuse(env, effect, reason, why)
+        @journal << Telemetry::WriteRefused.new(tool_use_id: effect.tool_use_id, pattern: reason)
+        env.merge(result: Tool::Result.error("#{effect.name} refused: #{why}; nothing was written."))
       end
     end
   end
