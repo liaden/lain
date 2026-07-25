@@ -9,6 +9,7 @@ require_relative "agent/accounting"
 require_relative "agent/budget"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
+require_relative "agent/pipeline_source"
 require_relative "agent/request_override"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
@@ -79,7 +80,8 @@ module Lain
                    transition_listener: TransitionListener::Null,
                    model_middleware: Middleware::Stack.new,
                    tool_middleware: Middleware::Stack.new,
-                   turn_middleware: Middleware::Stack.new)
+                   turn_middleware: Middleware::Stack.new,
+                   tool_observer: ToolRunner::Observer::Null.new, pipeline_source: PipelineSource::Null)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
@@ -88,8 +90,8 @@ module Lain
       @mailbox = mailbox
       @budget = budget
       @turn_middleware = turn_middleware
-      wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:)
-      seed_run_state(transition_listener, journal, session, snapshot_writer)
+      wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:, tool_observer:)
+      seed_run_state(transition_listener, journal, session, snapshot_writer, pipeline_source)
     end
 
     # Append a user turn and run until the loop settles.
@@ -174,10 +176,11 @@ module Lain
     # {RequestOverride} slot #call_model consults before rendering. Grouped
     # out of #initialize so the constructor reads as the wiring seam its own
     # comment describes rather than growing a line per collaborator.
-    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:)
+    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:, tool_observer:)
       @request_override = request_override
       @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
-      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware, toolset: @toolset)
+      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware, toolset: @toolset,
+                                    observer: tool_observer)
     end
 
     # The mutable run context, kept apart from #initialize on purpose: the
@@ -187,14 +190,18 @@ module Lain
     # mutable Session (read-set + write-set + reminders, which -- unlike
     # everything the model sees -- never enters the Timeline), the snapshot
     # writer (stateful: it remembers the last files map it wrote, so it is run
-    # state exactly as the Session is), and the iteration count. Naming that
-    # seam is the point; the machine owns the state ITSELF (initial:
-    # :awaiting_user), so it is not seeded here.
-    def seed_run_state(transition_listener, journal, session, snapshot_writer)
+    # state exactly as the Session is), the per-turn Context source (stateful for
+    # the same reason -- a live {PipelineSource} accumulates cache-warmth and
+    # idle readings ACROSS turns, which is why it is asked rather than
+    # recomputed), and the iteration count. Naming that seam is the point; the
+    # machine owns the state ITSELF (initial: :awaiting_user), so it is not
+    # seeded here.
+    def seed_run_state(transition_listener, journal, session, snapshot_writer, pipeline_source)
       @transition_listener = transition_listener
       @accounting = Accounting.new(journal:)
       @session = session
       @snapshot_writer = snapshot_writer
+      @pipeline_source = pipeline_source
       @iterations = 0
       @dispatch_lock = Monitor.new
     end
@@ -284,8 +291,18 @@ module Lain
     # Compose the sent-not-stored Workspace with the session's live reminders per
     # render: same-args-same-bytes still holds, but the args now vary with session
     # state. Session stays ignorant of Workspace; Workspace stays frozen.
+    #
+    # The Context itself is asked for per turn rather than read from `@context`,
+    # because a strategy that must re-decide every turn (compaction) has no other
+    # place to stand -- see {PipelineSource}, whose Null default answers
+    # `@context` and makes this line byte-identical to what it replaced. `usage`
+    # is Accounting's LAST-turn reading, never its cumulative `#usage`: cumulative
+    # input tokens only ever grow, so a window detector fed them latches on and
+    # never clears.
     def render_request
-      @context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
+      turn_context = @pipeline_source.context_for(base: @context, timeline: @timeline,
+                                                  usage: @accounting.last_turn_usage, session: @session)
+      turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
 
     # Correctness gate 2: every tool_result for one assistant turn goes back in

@@ -1,5 +1,50 @@
 # frozen_string_literal: true
 
+# A1's per-turn Context sources. Defined in a module body so each pipeline is
+# built where `self` is Ractor-shareable -- the same reason
+# T21PipelineProviders exists (see context_spec) -- and so the doubles read as
+# the production duck they stand in for: `context_for(base:, timeline:, usage:,
+# session:) -> Context`.
+module A1PipelineSources
+  # Records every call verbatim and defers to the base, so what the Agent
+  # passes can be asserted without changing what it renders.
+  class Recording
+    attr_reader :calls
+
+    def initialize = @calls = []
+
+    def context_for(base:, **rest)
+      @calls << rest.merge(base:)
+      base
+    end
+  end
+
+  # One fixed strategy, every turn: the copy-with the card is about.
+  class Pruning
+    attr_reader :contexts
+
+    def initialize(keep_last:)
+      @keep_last = keep_last
+      @contexts = []
+    end
+
+    def context_for(base:, **)
+      base.with_pipeline(Lain::Context::Prune.new(keep_last: @keep_last)).tap { |ctx| @contexts << ctx }
+    end
+  end
+
+  # A DIFFERENT pipeline per call -- the shape that tells "consulted every
+  # turn" apart from "consulted once and cached".
+  class Widening
+    def initialize = @calls = 0
+
+    def context_for(base:, **)
+      @calls += 1
+      base.with_pipeline(Lain::Context::Prune.new(keep_last: @calls))
+    end
+  end
+end
+
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -447,6 +492,138 @@ RSpec.describe Lain::Agent do
 
       timeline_blocks = a.timeline.to_a.flat_map(&:content)
       expect(timeline_blocks.map { |block| block["text"] }).not_to include(/workspace/)
+    end
+  end
+
+  # A1: @context is construction-fixed and #render_request always rendered from
+  # it, so a strategy that must re-decide EVERY turn (compaction) had nowhere to
+  # live. The source is that seam: one message, asked once per render.
+  describe "the per-turn Context source" do
+    def texts(request) = request.messages.flat_map { |m| m["content"].map { |b| b["text"] } }.compact
+
+    # AC1. The default is a real Null Object, so an Agent built without a source
+    # sends the bytes its base Context renders -- not "equivalent" bytes.
+    it "sends a Request byte-identical to the base Context's own render, with no source wired" do
+      provider = Lain::Provider::Mock.new(responses: [text_response])
+      a = described_class.new(provider:, toolset:, context:)
+      a.ask("hi")
+
+      direct = context.render(timeline: a.timeline.rewind(1), toolset:, workspace: Lain::Workspace.empty)
+      # `eq`, deliberately NOT have_same_digest_as: Request#digest is Canonical
+      # over #cache_payload, which by design omits `stream` and `extra`, so two
+      # Requests differing in either share a digest. Request is a Data, so
+      # value equality covers every field this example claims is identical.
+      expect(provider.last_request).to eq(direct)
+    end
+
+    # AC2.
+    it "renders through the Context the source returns, so its pipeline decides what is sent" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response])
+      a = described_class.new(provider:, toolset:, context:,
+                              pipeline_source: A1PipelineSources::Pruning.new(keep_last: 2))
+      a.ask("hi")
+
+      expect(provider.requests.last.messages.size).to eq(2)
+      expect(texts(provider.requests.last)).not_to include("hi")
+    end
+
+    # AC3. A source consulted once per RUN would answer [1, 1, 1] here; one
+    # consulted per RENDER widens with the turn.
+    it "is consulted once per render, not once per run" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      tool_response(["tu_2", "echo", { "text" => "y" }]),
+                                                      text_response])
+      a = described_class.new(provider:, toolset:, context:, pipeline_source: A1PipelineSources::Widening.new)
+      a.ask("hi")
+
+      expect(provider.requests.map { |request| request.messages.size }).to eq([1, 2, 3])
+    end
+
+    # AC4. `session:` is the parameter this card exists to place: the Session is
+    # built in Wiring and handed to Agent.new separately, so the Agent is the
+    # only place it and the base Context both exist. `usage:` is the LAST turn's
+    # billed input, not the run's cumulative sum -- nil before any turn, which
+    # is distinct from zero on a resumed session.
+    it "hands the source the agent's own Session, its base Context, and the last turn's input tokens" do
+      first = Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                             "input" => { "text" => "x" } }],
+                                 stop_reason: :tool_use,
+                                 usage: Lain::Usage.new(input_tokens: 40, output_tokens: 5,
+                                                        cache_read_input_tokens: 2))
+      provider = Lain::Provider::Mock.new(responses: [first, text_response])
+      recorder = A1PipelineSources::Recording.new
+      a = described_class.new(provider:, toolset:, context:, pipeline_source: recorder)
+      a.ask("hi")
+
+      expect(recorder.calls.map { |call| call[:usage] }).to eq([nil, 42])
+      expect(recorder.calls.map { |call| call[:session] }).to all(be(a.session))
+      expect(recorder.calls.map { |call| call[:base] }).to all(be(a.context))
+      expect(recorder.calls.last[:timeline].head_digest).to eq(a.timeline.rewind(1).head_digest)
+    end
+
+    # AC6. `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing
+    # over the pipeline, so a per-turn Context that is not shareable is not a
+    # style failure -- it is an IsolationError on the compacting turn.
+    it "keeps every per-turn Context Ractor-shareable" do
+      source = A1PipelineSources::Pruning.new(keep_last: 2)
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response])
+      described_class.new(provider:, toolset:, context:, pipeline_source: source).ask("hi")
+
+      # The size check is what makes this about the Context RENDERED THROUGH and
+      # not merely the one the source happened to build: two renders, and the
+      # second carries the pruned shape only that Context produces.
+      expect(source.contexts.size).to eq(2)
+      expect(provider.requests.last.messages.size).to eq(2)
+      expect(source.contexts).to all(be_ractor_shareable)
+    end
+
+    # The override preempts the render entirely (see RequestOverride), so a
+    # resent edit must not acquire a pipeline on its way out.
+    it "leaves an overridden dispatch alone -- the source is never consulted for a resend" do
+      recorder = A1PipelineSources::Recording.new
+      provider = Lain::Provider::Mock.new(responses: [text_response])
+      override = Lain::Agent::RequestOverride.new
+      a = described_class.new(provider:, toolset:, context:, pipeline_source: recorder,
+                              request_override: override)
+      override.queue(context.render(timeline: Lain::Timeline.empty(store: Lain::Store.new)
+                                                            .commit(role: :user, content: [{ "type" => "text",
+                                                                                             "text" => "edited" }]),
+                                    toolset:))
+      a.ask("hi")
+
+      expect(recorder.calls).to be_empty
+      expect(texts(provider.last_request)).to include("edited")
+    end
+  end
+
+  # A7's owed diff: the post-dispatch tool-result observer is threaded from the
+  # constructor into ToolRunner, and defaults to the Null so an Agent built
+  # without one behaves byte-identically.
+  describe "the tool-result observer" do
+    it "hands each completed tool_result block to an injected observer" do
+      seen = []
+      observer = Class.new do
+        def initialize(seen) = @seen = seen
+
+        def observe(block) = @seen << block["tool_use_id"]
+      end.new(seen)
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response])
+      described_class.new(provider:, toolset:, context:, tool_observer: observer).ask("hi")
+
+      expect(seen).to eq(["tu_1"])
+    end
+
+    it "observes nothing by default, leaving the delivered results byte-identical" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response])
+      a = described_class.new(provider:, toolset:, context:)
+      a.ask("hi")
+
+      results = a.timeline.to_a[2].content
+      expect(results.map { |block| block["type"] }).to eq(["tool_result"])
     end
   end
 end

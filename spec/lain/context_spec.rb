@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 RSpec.describe Lain::Workspace do
   it "is empty by default" do
     expect(described_class.empty).to be_empty
@@ -41,6 +43,14 @@ module T21PipelineProviders
   DEFAULT = Ractor.make_shareable(
     ->(workspace) { Lain::Context::Reminder.new(workspace:) >> Lain::Context::CacheBreakpoints.new }
   )
+end
+
+# A1's counter-example: the hand-rolled base a per-turn source composes around
+# when it does NOT read #pipeline_for. It marks cache breakpoints and omits
+# Reminder, which is the exact shape bench/plan_sweep/driver.rb's BASE_PIPELINE
+# has -- the one precedent a compaction source would copy.
+module WithPipelineBases
+  CACHE_ONLY = Ractor.make_shareable(->(_workspace) { Lain::Context::CacheBreakpoints.new })
 end
 
 RSpec.describe Lain::Context do
@@ -306,6 +316,115 @@ RSpec.describe Lain::Context do
 
       it "stays deeply frozen and Ractor-shareable" do
         expect(injected).to be_ractor_shareable
+      end
+    end
+  end
+
+  # A1's mirror of #with_model: the copy-with that lets a per-turn source swap
+  # the render strategy without the Context's owner rebuilding it from parts.
+  describe "#with_pipeline" do
+    let(:built) do
+      described_class.new(model: "claude-opus-4-8", max_tokens: 64, system: "be terse",
+                          stream: false, extra: { "temperature" => 0.2 })
+    end
+
+    it "keeps everything but the pipeline" do
+      copy = built.with_pipeline(Lain::Context::Identity)
+
+      expect([copy.model, copy.max_tokens, copy.system, copy.stream, copy.extra])
+        .to eq(["claude-opus-4-8", 64, "be terse", false, { "temperature" => 0.2 }])
+    end
+
+    it "renders through the new pipeline, not the one it was built with" do
+      copy = built.with_pipeline(Lain::Context::Identity)
+      tail = copy.render(timeline:, toolset:, workspace: Lain::Workspace.new(reminders: ["LIVE"]))
+                 .messages.last
+
+      expect(tail["content"].map { |block| block["text"] }).to eq(["more"])
+      expect(tail["content"].last).not_to have_key("cache")
+    end
+
+    it "leaves the receiver untouched -- a copy, because Context is frozen by design" do
+      built.with_pipeline(Lain::Context::Identity)
+
+      expect(built.render(timeline:, toolset:).messages.last["content"].last).to have_key("cache")
+    end
+
+    # #requires is DERIVED from the effective pipeline (see #initialize), so a
+    # copy declares the capabilities its own strategy needs, never the ones it
+    # inherited. Drift here is what Capability::Policy would act on.
+    it "re-derives #requires from the new pipeline" do
+      copy = built.with_pipeline(Lain::Context::Identity)
+
+      expect(built.requires).to include(:prompt_caching)
+      expect(copy.requires).to eq(Lain::Context::Identity.requires)
+    end
+
+    it "stays Ractor-shareable when the injected pipeline is" do
+      expect(built.with_pipeline(Lain::Context::Prune.new(keep_last: 1))).to be_ractor_shareable
+    end
+
+    # AC5, and the trap it exists for: `model:` in a copy-with must be the
+    # STORED slot, never the `#model` reader -- the reader unwraps to
+    # `.current`, so writing it here would freeze a live ModelSwitch at the
+    # value it happened to hold and silently break `/model` from the next turn
+    # on. #with_model passes its own shadowed parameter, so it never had this
+    # shape to get wrong; #with_pipeline does.
+    it "preserves a live model switch instead of flattening it to the model in force" do
+      journal = Lain::Journal.new(io: StringIO.new)
+      switch = Lain::Context::ModelSwitch.new("claude-opus-4-8", journal:)
+      copy = built.with_model(switch).with_pipeline(Lain::Context::Identity)
+      switch.switch("claude-haiku-4-5", surface: "tty")
+
+      expect(copy.render(timeline:, toolset:).model).to eq("claude-haiku-4-5")
+      expect(copy.model).to eq("claude-haiku-4-5")
+    end
+
+    # #with_pipeline is a write, and A6 needs the matching READ: to compose
+    # Compact AHEAD of whatever this Context would otherwise render through, it
+    # must be able to ask. #pipeline_for is that read, and it is public for
+    # exactly this round trip.
+    describe "the read that closes the loop -- #pipeline_for" do
+      it "round-trips: reading the effective pipeline and writing it back changes nothing" do
+        same = built.with_pipeline(built.pipeline_for(Lain::Workspace.empty))
+
+        expect(same.requires).to eq(built.requires)
+        expect(same.render(timeline:, toolset:)).to eq(built.render(timeline:, toolset:))
+      end
+
+      it "answers an INJECTED pipeline, which self.class.pipeline silently discards" do
+        injected = built.with_pipeline(Lain::Context::Identity)
+
+        expect(injected.pipeline_for(Lain::Workspace.empty)).to be(Lain::Context::Identity)
+        expect(described_class.pipeline(Lain::Workspace.empty).requires).to include(:prompt_caching)
+        expect(injected.pipeline_for(Lain::Workspace.empty).requires).to eq([])
+      end
+
+      # The ->(workspace) provider form is rebuilt per render, so the read has
+      # to be per-workspace too -- a source that wraps it must pass the live
+      # Workspace through, not Workspace.empty, or the reminders it composes
+      # around are the wrong ones.
+      it "builds a provider-form pipeline against the workspace it is asked about" do
+        ctx = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                  pipeline: T21PipelineProviders::DEFAULT)
+        live = Lain::Workspace.new(reminders: ["LIVE"])
+
+        rendered = ctx.pipeline_for(live).call([{ "role" => "user", "content" => [] }])
+        expect(rendered.last["content"].map { |block| block["text"] }).to include("<workspace>LIVE</workspace>")
+      end
+
+      # The hazard this read exists to prevent, pinned so it cannot re-hide:
+      # composing around a hand-rolled base that omits Reminder loses the
+      # Session's live reminders, and #requires does NOT notice -- the composed
+      # requires is a union, so it still reports :prompt_caching.
+      it "pins that a Reminder-less base loses reminders while #requires still reports prompt_caching" do
+        reminderless = built.with_pipeline(WithPipelineBases::CACHE_ONLY)
+        live = Lain::Workspace.new(reminders: ["REMEMBER-ME"])
+
+        expect(reminderless.requires).to eq(built.requires)
+        expect(reminderless.render(timeline:, toolset:, workspace: live).messages.to_s)
+          .not_to include("REMEMBER-ME")
+        expect(built.render(timeline:, toolset:, workspace: live).messages.to_s).to include("REMEMBER-ME")
       end
     end
   end

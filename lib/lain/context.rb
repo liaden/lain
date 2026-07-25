@@ -125,6 +125,23 @@ module Lain
       self.class.new(model:, max_tokens:, system:, stream:, extra:, pipeline: @pipeline)
     end
 
+    # This Context rebuilt around `pipeline` -- the mirror of #with_model, and
+    # how a per-turn source ({Agent::PipelineSource}) swaps the render strategy
+    # without rebuilding the Context from parts it does not own.
+    #
+    # `model: @model` is the STORED slot, deliberately not the `#model` reader:
+    # the reader unwraps to `.current`, so writing it here would flatten a live
+    # {ModelSwitch} to whatever it held at copy time and silently break `/model`
+    # from the next turn on. #with_model has the same constraint but never faces
+    # it -- `model:` there resolves to its own shadowed parameter.
+    #
+    # `@requires` re-derives from the NEW pipeline in the constructor, by
+    # design: a declared capability that outlived the strategy that needed it is
+    # exactly the drift #pipeline_for exists to prevent.
+    def with_pipeline(pipeline)
+      self.class.new(model: @model, max_tokens:, system:, stream:, extra:, pipeline:)
+    end
+
     # @return [Lain::Request] deterministic for identical inputs
     #
     # The message-list pipeline is itself a Context combinator composition
@@ -148,8 +165,6 @@ module Lain
       )
     end
 
-    private
-
     # The render pipeline in effect for this workspace. With no injected
     # collaborator this is exactly today's `self.class.pipeline(workspace)`, so
     # a default Context (and any subclass overriding `self.pipeline`) is
@@ -158,11 +173,26 @@ module Lain
     # a combinator per render -- the same pure call the class default makes.
     # #render and #requires both route through here, which is what keeps a
     # declared capability from drifting from the behavior it names.
+    #
+    # PUBLIC because #with_pipeline is a write that needs a matching read: a
+    # per-turn source ({Agent::PipelineSource}) that WRAPS the render strategy --
+    # compaction composes Compact ahead of it -- must first ask what the strategy
+    # would otherwise have been. Read it, wrap it, hand the result back through
+    # #with_pipeline.
+    #
+    # `self.class.pipeline(workspace)` is NOT a substitute for that read: it
+    # silently discards an injected `@pipeline` and rebuilds the class default,
+    # so an Identity-carrying Context answers with the base pipeline. Neither is
+    # a hand-rolled stand-in -- a base that omits {Reminder} drops the Session's
+    # live reminders from every wrapped render, and NOTHING catches it: the
+    # composed `#requires` is a union, so it still reports `[:prompt_caching]`.
     def pipeline_for(workspace)
       return self.class.pipeline(workspace) if @pipeline.nil?
 
       @pipeline.respond_to?(:requires) ? @pipeline : @pipeline.call(workspace)
     end
+
+    private
 
     # The system prompt in Anthropic's block form, normalized ONCE. A String
     # prompt becomes a single text block; a caller who already passed blocks is
