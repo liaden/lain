@@ -25,7 +25,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 |---|---|---|
 | `--provider` | `anthropic` | `anthropic`, `ollama`, or `bedrock`. |
 | `--model` | the provider's own | Model id. Free-form string, not validated against a list. |
-| `--api-base` | Ollama's localhost | Overrides the Ollama base URL. Also moves the compaction summarizer (see [Compaction](#compaction-flags)). |
+| `--api-base` | Ollama's localhost | Overrides the Ollama base URL — for whichever of the chat and the summarizer is on Ollama (see [Compaction](#compaction-flags)). |
 | `--max-tokens` | `4096` | Per model turn. |
 | `--temperature`, `--seed` | unset | Ride `Request#extra`. Ollama honors both; `--temperature 0` is the determinism recipe. |
 | `--yolo` | off | Skip the approval prompt for tier-3 (free-form shell) tools. |
@@ -37,12 +37,14 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
 | `--nvim SOCKET` | off | Attach a Neovim frontend to an `nvim --listen` socket. |
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
+| `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in chat today** — see [Isolation](#isolation-flag). |
 | `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. |
 
 #### Compaction flags
 
-Compaction is on by default. See [Compaction and local summarization](../README.md#compaction-and-local-summarization)
-for how the two tiers work.
+Compaction is on by default. See
+[Compaction and summarizer tiers](../README.md#compaction-and-summarizer-tiers) for how the three
+tiers work.
 
 | Flag | Default | What it does |
 |---|---|---|
@@ -50,6 +52,40 @@ for how the two tiers work.
 | `--compact-bytes` | `262144` | Droppable-head bytes above which a compaction is warranted. Roughly 64k tokens. |
 | `--compact-cap` | `1048576` | History bytes that force a compaction even while the prompt cache is warm. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
+| `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `bedrock`. The summarizer is a **tier**, chosen independently of `--provider`. |
+| `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
+| `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |
+
+Both provider flags are validated against the same set, and a typo in either is refused when the
+`Backend` is constructed — not at the first compacting turn, which under `--no-compact` never comes.
+A non-positive `--summarizer-max-tokens` is refused there too.
+
+```bash
+lain --provider anthropic --summarizer-provider ollama    # frontier chat, free local summaries (default)
+lain --provider ollama --summarizer-provider anthropic \
+     --summarizer-model claude-haiku-4-5-20251001         # local chat, bought summaries
+```
+
+Ahead of both sits a third tier that takes no flag: the deterministic summarizers you declare in
+`.lain/summarizers.rb`, consulted before any model call. See
+[Compaction and summarizer tiers](../README.md#compaction-and-summarizer-tiers).
+
+#### Isolation flag
+
+`--isolation worktree` resolves an `Isolation::Worktree` backend under a per-project root, decorated
+with whatever `.lain/services.rb` declares, and hands it to the `Supervisor` the chat fleet leases
+from. Two things are true and worth knowing before you reach for it:
+
+- **Only actor-mode subagents lease.** One-shot spawns and `@role/skill` lines never touch the
+  supervisor, and no chat path constructs an actor-mode subagent yet — so in `lain chat` the flag
+  resolves a real backend that nothing currently leases from. It is a wired seam, not a feature.
+- **One concurrent isolated run per project.** The worktree root is keyed on the repository and
+  worker ids restart at 1 per process, so a second `--isolation worktree` run in the same repo
+  reaps the first's live checkouts. That is a deliberate trade — it is what lets a *crashed* run's
+  leftovers get cleared before the next lease — not an oversight.
+
+A bad backend name, or `worktree` outside a git repository, is refused during wiring, before the
+journal is opened.
 
 ### lain up
 

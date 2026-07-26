@@ -153,22 +153,51 @@ Tool results come back as **one** user turn carrying every `tool_result`, then t
 transition rather than a branch someone might forget to write. The full state diagram is in
 [`docs/agent-state-machine.md`](docs/agent-state-machine.md).
 
-### Compaction and local summarization
+### Compaction and summarizer tiers
 
-Compaction is on by default in `lain chat`. It runs in two tiers, and only one of them costs a
-model call.
+Compaction is on by default in `lain chat`. It runs in three tiers, and only one of them costs a
+model call. Each tier only sees what the one before it declined.
 
-**Tier 1, eager and local.** When a large tool result lands, `Oracle::Eager` fires a summary of it
-on its own `Async` task and holds the answer against the result's content address. That call always
-goes to a local Ollama model (`qwen3:4b` by default), never to the chat's provider. It fires once
-per large result, off the turn's critical path, and paying frontier-model tokens to compress a tool
-result would cost more than resending the result.
+**Tier 0, yours, free.** Summarizers you declare in `.lain/summarizers.rb` — pure Ruby, no provider,
+no IO, so they cost neither tokens nor latency. Each one answers two questions about **one** tool
+result: `suitable?` and `compact`. They live in one object because "can I compress this" and "how"
+are the same knowledge.
+
+```ruby
+# .lain/summarizers.rb
+summarizer "rspec" do
+  def suitable?(result) = result.tool_name == "bash" && result.text.include?("examples,")
+
+  def compact(result) = result.text.lines.grep(/examples,|^rspec /).join
+end
+```
+
+A `Summarizer::Result` carries `tool_name` and `text`, because some kinds are distinguishable by
+tool and some only by content (a coverage report and a build log are both `bash`). Declaration order
+decides between two suitable summarizers — the first declared wins, which is a lever you can see in
+your own file. A typo'd verb, a duplicate name, and a bodyless declaration are each refused by name
+at load. A summarizer that raises falls through to tier 1 rather than losing the summary, and one
+returning blank is refused loudly. An absent file is an empty catalog, never an error.
+
+`/meta summarizer <prompt>` will draft one for you into `.lain/summarizers/` for review. Nothing
+loads that directory — copy the declaration into `.lain/summarizers.rb` yourself once you have read
+it.
+
+**Tier 1, eager and model-backed.** When a large tool result lands and no tier-0 summarizer claimed
+it, `Oracle::Eager` fires a summary on its own `Async` task and holds the answer against the
+result's content address. It fires once per large result, off the turn's critical path. The
+summarizer is a **tier chosen independently of the chat**: `--summarizer-provider`,
+`--summarizer-model`, `--summarizer-max-tokens`, defaulting to a local Ollama `qwen3:4b`, because
+paying frontier-model tokens to compress a tool result usually costs more than resending the result.
+When it is a paid tier, its spend lands on the record as a `Telemetry::OracleAnswer` carrying the
+model and real usage — a summarizer that spends silently would make the whole ledger a fiction.
 
 **Tier 2, the compacting turn, pure.** When the head grows past the threshold, `Context::Compact`
-rewrites it using a frozen snapshot of the summaries tier 1 already produced. No model call, no
-network, deterministic bytes. A result with no held summary renders as an honest elision line.
+rewrites it using a frozen snapshot of the summaries the tiers above already produced. No model
+call, no network, deterministic bytes. A result with no held summary renders as an honest elision
+line.
 
-To turn tier 1 on:
+To turn the local tier 1 on:
 
 ```bash
 ollama serve            # http://localhost:11434
@@ -177,17 +206,29 @@ ollama pull qwen3:4b    # Provider::Ollama::DEFAULT_MODEL
 
 With Ollama absent or the model unpulled, the fire fails inside its task boundary and nothing
 raises. You get elision lines instead of summaries, which is a less useful compaction rather than
-an error. `--api-base` moves the summarizer to another Ollama host, and it moves the chat provider
-too when you are running `--provider ollama`.
+an error. `--api-base` moves whichever of the chat and the summarizer is on Ollama.
+
+**Pinned history.** [`/pin`](docs/commands.md#pin) marks a turn the compactor may not touch, and
+`/goal`'s objective is pinned automatically once it enters the timeline. A pin is a turn digest
+recorded on the `Session`, journalled, and replayed on `--resume`. Both halves of the pipeline honor
+the same pin set: the candidate head excludes pinned turns, and `Context::Compact` re-emits them
+verbatim ahead of the summary message. Pinning enough can leave a compaction with nothing worth
+removing, which the journal records as a decision that would not shrink rather than a compaction
+that did nothing.
 
 Compaction prices every decision from its own `PriceBook`, which degrades to zero for a model with
 no list price rather than crashing a local chat mid-conversation. `Telemetry::Compaction` records
-the model those figures are quoted in, so a zero beside `qwen3:4b` reads as the fallback it is.
+the model those figures are quoted in, so a zero beside `qwen3:4b` reads as the fallback it is — and
+when a run switches models mid-session, the cost fields are **absent** rather than repriced, since a
+figure quoted against a model that did not run is worse than no figure. The record still names the
+model the compaction actually ran under.
 
 Knobs: `--no-compact`, `--compact-bytes` (default 262144, roughly 64k tokens), `--compact-cap`
 (1048576, forces a compaction even while the cache is warm), `--compact-keep` (20 trailing messages
-left verbatim). `lain friction SESSION` reads a finished journal back and tells you which of these
-the run was fighting.
+left verbatim). The window that triggers a compaction follows the live model, re-derived each turn, so
+switching to a larger-window model mid-session widens the runway instead of leaving the old ceiling
+in force. `lain friction SESSION` reads a finished journal back and tells you which of these the run
+was fighting.
 
 ### Slow middleware blocks the reactor
 
@@ -333,7 +374,9 @@ There are no config files to write before the first run. Everything below has a 
 | `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. |
 | `.lain/slots/skill/*.md` | Per-skill prompt fills. |
 | `.lain/skills/*.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
-| `.lain/services.rb` | The isolation services DSL: the per-worker `postgres` / `redis` instances a worker's lease provisions. Read by the `DbIndex` and `Compose` backends, which are injection-only today (no CLI flag selects them). |
+| `.lain/services.rb` | The isolation services DSL: the per-worker `postgres` / `redis` instances a worker's lease provisions. Read by the `DbIndex` and `Compose` decorators, which layer over whatever `--isolation` resolved. |
+| `.lain/summarizers.rb` | Your deterministic tier-0 summarizers, tried before any model call. See [Compaction and summarizer tiers](#compaction-and-summarizer-tiers). |
+| `.lain/summarizers/` | Drafts written by `/meta summarizer`, for you to read and copy into `summarizers.rb`. **Nothing loads this directory.** |
 | `.lain/meta/` | Scripts generated by [`/meta`](docs/commands.md#meta). |
 | `.lain/state.json` | The status HUD's state, read by the tmux plugin. |
 
@@ -450,6 +493,36 @@ A subagent holds the tools it was handed, attenuated at construction, for exampl
 you can read. There is no permission layer to consult, and possession of the tool *is* the
 authorization. A `Role` packages that attenuation with a prompt slot and a spawn posture.
 
+### Workers can be isolated, and their commits survive the isolation
+
+Isolation is one seam — `acquire(worker_id) -> Lease` — and a `Lease` carries the `WorkerEnv` a
+worker resolves its paths against. `--isolation worktree` resolves an `Isolation::Worktree` behind
+it, decorated by whatever `.lain/services.rb` declares, so a worker can get its own checkout and its
+own `postgres` without the topology knowing that happened.
+
+The checkout is **detached** on purpose, and release **destroys** it. A bare `git worktree add`
+would leak a branch per cycle, and a re-acquire after a crash would check out that leaked tip —
+bleeding a dead worker's state into its successor, which defeats isolation on exactly the
+crash-restart path. Leaving a checkout on disk is worse still, because a leaked worktree silently
+defeats the next acquire. So uncommitted work in a worktree is **scratch**.
+
+*Committed* work is not. Before reclaim, `Worktree::Handback` captures the worker's `HEAD` to
+`refs/lain/worker/<id>` — outside `refs/heads/`, so it is not a branch and `add --detach` can never
+check it out — and then merges into the parent checkout only if that checkout is clean. A dirty
+parent is declined, never merged into. A conflict is reported with its paths and its ref, and the
+orchestrator spawns a `merge_resolver` subagent over a *fresh* Timeline root, so the conflict
+transcript never lands in its own context. That resolver holds `read_file`/`edit_file`/`write_file`/
+`grep` and deliberately **not** `bash`: with no tier-3 tool it never reaches the approval gate,
+which is what makes an unattended spawn safe. Handback never raises past its caller and never
+removes a worktree.
+
+Two honest limits, both recorded as tickets rather than papered over. Bench arms get handback at
+worker completion, because all four release per worker mid-run inside a live reactor; a
+`Supervisor`-adopted chat actor holds its lease until `Supervisor#stop`, so **`lain chat --isolation
+worktree` isolates workers but never hands their commits back** — and no chat path constructs an
+actor-mode subagent yet, so today it isolates nothing there either. And the worktree root is keyed
+on the repository, so one concurrent isolated run per project is a precondition, not a bug.
+
 ### Orchestration topologies are values
 
 The way an agent decomposes work is usually structural: the orchestrator-worker shape is written
@@ -500,8 +573,8 @@ against `Provider::Anthropic#encode`, and one live differential run must produce
 `Lain::Response`. The SDK is retired only once the vendored path has held.
 
 Ollama is worth installing even if you never chat against it, because the compaction summarizer
-always runs locally. See [Compaction and local
-summarization](#compaction-and-local-summarization).
+runs there by default. See [Compaction and summarizer
+tiers](#compaction-and-summarizer-tiers).
 
 Porting a fourth provider is documented in
 [`docs/porting-providers.md`](docs/porting-providers.md): the 4 wire protocols, the 11 leak sites,

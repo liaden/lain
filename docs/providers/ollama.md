@@ -36,9 +36,11 @@ So `ollama serve` + `ollama pull qwen3:4b` is worth doing even if you never pass
 `--provider ollama`. Without it, the fire fails inside `Oracle::Eager`'s task
 boundary, nothing raises, and the compacting turn renders an elision line instead
 of a summary. See the
-[README](../../README.md#compaction-and-local-summarization) for the two tiers.
+[README](../../README.md#compaction-and-summarizer-tiers) for the three tiers.
 
-`--api-base` moves the summarizer as well as the chat provider.
+Ollama is the summarizer's **default**, not its only home: `--summarizer-provider`
+and `--summarizer-model` point that tier anywhere, independently of `--provider`.
+`--api-base` moves whichever of the two is on Ollama.
 
 ## Install and pull the model
 
