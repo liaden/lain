@@ -135,6 +135,61 @@ class LainCLI < Thor
   desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record, sweep)"
   subcommand "bench", Bench
 
+  # The compaction band of `chat`'s flag surface: whether to compact at all, the
+  # three byte knobs, and the summarizer TIER. Its own module because it is its
+  # own question -- "how does this run manage a growing history", answered by
+  # seven flags that only make sense read together, and `lain help chat` is where
+  # an operator meets them as a group.
+  #
+  # It stays in the exe rather than lib/ for a hard reason: the library does not
+  # depend on Thor, and a lib object calling `method_option` would make it.
+  #
+  # Every default names its authority in lib -- Backend's constants, the oracle's
+  # ceiling -- rather than restating a number, so `lain help chat` and the wiring
+  # cannot come to disagree about what an unset flag means.
+  module CompactionFlags
+    # Thor's `method_option` accumulates onto the command declared NEXT, so this
+    # runs from the class body where the band belongs: after chat's other flags,
+    # before `def chat`.
+    def self.declare(thor)
+      history(thor)
+      summarizer(thor)
+    end
+
+    # ON by default: a working harness default, not an opt-in arm.
+    def self.history(thor)
+      thor.method_option :compact, type: :boolean, default: true,
+                                   desc: "Summarize the history's head as it grows; --no-compact opts out"
+      thor.method_option :compact_bytes, type: :numeric, default: Backend::DEFAULT_BYTE_THRESHOLD,
+                                         desc: "Droppable-head bytes above which a compaction is warranted"
+      thor.method_option :compact_cap, type: :numeric, default: Backend::DEFAULT_HARD_CAP,
+                                       desc: "History bytes that force a compaction even while the cache is warm"
+      thor.method_option :compact_keep, type: :numeric, default: Backend::DEFAULT_KEEP_LAST,
+                                        desc: "Trailing messages a compaction leaves verbatim"
+    end
+
+    # A TIER, chosen independently of the chat model: a frontier chat can
+    # summarize locally for free, and a local chat can buy better summaries.
+    # Ahead of both sits the deterministic tier of `.lain/summarizers.rb`, which
+    # costs no tokens and takes no flag -- these three only decide what handles
+    # what it declines.
+    #
+    # --summarizer-model carries no Thor default on purpose: like --model it
+    # resolves to the SELECTED provider's own default, which is not knowable
+    # until --summarizer-provider is parsed.
+    def self.summarizer(thor)
+      thor.method_option :summarizer_provider, type: :string, default: Backend::DEFAULT_SUMMARIZER_PROVIDER,
+                                               desc: "Provider for the compaction summarizer, chosen separately " \
+                                                     "from --provider: anthropic, ollama, or bedrock"
+      thor.method_option :summarizer_model, type: :string,
+                                            desc: "Model id for the compaction summarizer; defaults to the " \
+                                                  "summarizer provider's own default, never the chat's --model"
+      thor.method_option :summarizer_max_tokens, type: :numeric, default: Lain::Oracle::Model::DEFAULT_MAX_TOKENS,
+                                                 desc: "max_tokens per summary; a truncated summary REPLACES the " \
+                                                       "result it compressed, so this is sized for a paragraph"
+    end
+  end
+
   desc "chat", "Start an interactive Lain session"
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
@@ -170,19 +225,18 @@ class LainCLI < Thor
   method_option :windows, type: :boolean, default: false,
                           desc: "Open a tmux window running lain watch per subagent spawn " \
                                 "(needs $TMUX and the session journal; incompatible with --no-journal)"
+  # Names IsolationBackend::BACKENDS rather than restating the set, on the same
+  # rule the compact knobs below follow: the flag's help text and the resolver
+  # cannot come to disagree about what a backend name means. Honest about reach:
+  # only an actor-mode subagent leases (Tools::Subagent#adopt_actor), and no chat
+  # path constructs one today, so the flag isolates nothing in chat yet.
+  method_option :isolation, type: :string, default: Lain::CLI::IsolationBackend::DEFAULT,
+                            desc: "Isolation backend actor-mode subagents lease workers from " \
+                                  "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); no chat path " \
+                                  "spawns an actor-mode subagent yet, so this is inert in chat today"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
-  # ON by default: a working harness default, not an opt-in arm. The three
-  # knobs name Backend's own constants as their defaults rather than restating
-  # a number here, so `lain help chat` and the wiring cannot disagree.
-  method_option :compact, type: :boolean, default: true,
-                          desc: "Summarize the history's head as it grows; --no-compact opts out"
-  method_option :compact_bytes, type: :numeric, default: Backend::DEFAULT_BYTE_THRESHOLD,
-                                desc: "Droppable-head bytes above which a compaction is warranted"
-  method_option :compact_cap, type: :numeric, default: Backend::DEFAULT_HARD_CAP,
-                              desc: "History bytes that force a compaction even while the cache is warm"
-  method_option :compact_keep, type: :numeric, default: Backend::DEFAULT_KEEP_LAST,
-                               desc: "Trailing messages a compaction leaves verbatim"
+  CompactionFlags.declare(self)
   default_task :chat
 
   # The lifecycle bracket (resolve --resume, open the journal, run the
