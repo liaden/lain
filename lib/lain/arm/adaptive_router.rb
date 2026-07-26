@@ -47,8 +47,10 @@ module Lain
       # @param clock [#call] returns a monotonic seconds Float; injectable
       # @param price_book [PriceBook] prices the run's journal into dollars
       def initialize(router:, name: "adaptive-router", definition: Oracle::Router.definition,
-                     clock: DEFAULT_CLOCK, price_book: PriceBook.default)
+                     clock: DEFAULT_CLOCK, price_book: PriceBook.default,
+                     handoff: Isolation::WorkerHandoff::Null)
         super(name:)
+        @handoff = handoff
         @router = router
         @definition = definition
         @clock = clock
@@ -71,9 +73,15 @@ module Lain
         lease = isolation.acquire(name)
         journal = Channel.new
         routed = route(task, journal:)
-        graded_run(task, spawn_seam:, grader:, journal:, routed:)
+        graded = graded_run(task, spawn_seam:, grader:, journal:, routed:)
+        @handoff.reclaim(lease, worker_id: name)
+        graded
       ensure
-        lease&.release
+        # See {SingleThread#run} for the reclaim/surrender split: `#surrender`
+        # tries to anchor the worker's commits before the release destroys them
+        # and restores a parent left mid-merge, on every path INCLUDING the
+        # `Exception` classes no rescue here sees, and it spawns nothing.
+        @handoff.surrender(lease, worker_id: name)
       end
 
       private

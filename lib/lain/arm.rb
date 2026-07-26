@@ -26,6 +26,14 @@ module Lain
       class Lease
         def release = nil
         def worker_env = nil
+
+        # Completes the {Isolation::Lease} duck a worker-completion seam asks
+        # (`Isolation::WorkerHandoff` guards on it to stay exactly-once across
+        # its reclaim/surrender pair). Always false, truthfully: this lease is
+        # shared, frozen, and holds nothing, so it is never "given up" -- and a
+        # completion seam wired over NO isolation has nothing to hand back,
+        # which the handback reports loudly rather than silently skipping.
+        def released? = false
       end
 
       LEASE = Lease.new.freeze

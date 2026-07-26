@@ -17,10 +17,14 @@ module Lain
       # @param name [String] the arm's label
       # @param clock [#call] returns a monotonic seconds Float; injectable
       # @param price_book [PriceBook] prices the run's journal into dollars
-      def initialize(name: "single-thread", clock: DEFAULT_CLOCK, price_book: PriceBook.default)
+      # @param handoff [#reclaim] the worker-completion point: hand the work
+      #   back, resolve a conflict, release. The Null releases and nothing else.
+      def initialize(name: "single-thread", clock: DEFAULT_CLOCK, price_book: PriceBook.default,
+                     handoff: Isolation::WorkerHandoff::Null)
         super(name:)
         @clock = clock
         @price_book = price_book
+        @handoff = handoff
       end
 
       # Spawn one agent through `spawn_seam`, ask it the task, and hand back the
@@ -44,13 +48,33 @@ module Lain
         journal = Channel.new
         agent = spawn_seam.call(journal:)
         elapsed = timed { agent.ask(task) }
-        ledger = Ledger.from_journal(journal.drain.map(&:to_journal), price_book: @price_book)
-        Run.new(arm: name, timeline: agent.timeline, grade: grader.grade(agent.timeline), elapsed:, ledger:)
+        graded = graded_run(agent, grader:, elapsed:, journal:)
+        @handoff.reclaim(lease, worker_id: name)
+        graded
       ensure
-        lease&.release
+        # `#reclaim` above is the SETTLED completion -- handback, resolver,
+        # release -- and it only happens when the ask returned. `#surrender` here
+        # is what stops any exception class from releasing the `--detach`ed
+        # checkout without FIRST trying to anchor the worker's commits to a ref;
+        # it also restores a parent left mid-merge, and it spawns NOTHING,
+        # because an unbounded provider round trip inside an unwinding `ensure`
+        # would hold the worktree for as long as the provider hangs. It no-ops on
+        # an already-released lease, so the settled path pays one boolean. This
+        # arm has no per-worker result to fold a Report into, so the Handback
+        # journal is what records either.
+        @handoff.surrender(lease, worker_id: name)
       end
 
       private
+
+      # Grade and price the settled agent -- the accounting half of {#run}, split
+      # out so the lifecycle half (lease, ask, hand back, release) reads as its
+      # own concern, the same split {DualLedger} and {AdaptiveRouter} already
+      # make.
+      def graded_run(agent, grader:, elapsed:, journal:)
+        ledger = Ledger.from_journal(journal.drain.map(&:to_journal), price_book: @price_book)
+        Run.new(arm: name, timeline: agent.timeline, grade: grader.grade(agent.timeline), elapsed:, ledger:)
+      end
 
       # Run the block, returning the monotonic seconds it took (the block's own
       # value is discarded -- the caller reads the settled Timeline off the agent).

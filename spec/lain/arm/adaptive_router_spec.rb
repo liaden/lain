@@ -73,14 +73,18 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
       expect(run.total_tokens).to eq(120)
     end
 
-    it "acquires and releases the injected isolation lease" do
-      lease = instance_double("lease", release: nil)
+    # See single_thread_spec: the real Lease, because reclaim-then-surrender
+    # relies on its idempotent-loud release to reclaim exactly once.
+    it "acquires and releases the injected isolation lease exactly once" do
+      released = []
+      lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
       isolation = instance_double("isolation", acquire: lease)
 
       arm.run("fix the typo", spawn_seam:, grader:, isolation:)
 
       expect(isolation).to have_received(:acquire)
-      expect(lease).to have_received(:release)
+      expect(lease).to be_released
+      expect(released).to eq([:once])
     end
   end
 

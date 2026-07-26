@@ -188,14 +188,18 @@ RSpec.describe Lain::Arm::DualLedger do
   end
 
   describe "the injected isolation seam" do
-    it "acquires a lease and releases it, even though the ledger arm ignores its env" do
-      lease = instance_double("lease", release: nil)
+    # See single_thread_spec: the real Lease, because reclaim-then-surrender
+    # relies on its idempotent-loud release to reclaim exactly once.
+    it "acquires a lease and releases it exactly once, even though the ledger arm ignores its env" do
+      released = []
+      lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
       isolation = instance_double("isolation", acquire: lease)
 
       described_class.new.run("t", spawn_seam:, grader: settling_grader, isolation:)
 
       expect(isolation).to have_received(:acquire)
-      expect(lease).to have_received(:release)
+      expect(lease).to be_released
+      expect(released).to eq([:once])
     end
   end
 end

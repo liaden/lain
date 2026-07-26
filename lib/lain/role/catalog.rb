@@ -30,7 +30,13 @@ module Lain
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep]),
         Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write]),
         Role.new(name: :meta_harness, only: %i[read_file list_files glob grep]),
-        Role.new(name: :meta_summarizer, only: %i[read_file list_files glob grep])
+        Role.new(name: :meta_summarizer, only: %i[read_file list_files glob grep]),
+        # Spawned UNATTENDED by {Isolation::WorkerHandoff} when a worker's
+        # handback conflicts, so it deliberately holds no `bash`: every git call
+        # belongs to {Isolation::Worktree::Handback}, this role only edits the
+        # conflicted files, and without a tier-3 tool it never reaches the
+        # approval gate that would hang the spawn waiting for a human.
+        Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep])
       ].to_h { |role| [role.name, role] }.freeze
 
       class << self

@@ -4,10 +4,6 @@
 # per worker and records every acquire/release, standing in for the real
 # Isolation unit (a sibling card) over B1's WorkerEnv.
 class FakeWorkerIsolation
-  Lease = Struct.new(:worker_env, :log) do
-    def release = log << worker_env
-  end
-
   attr_reader :acquired, :released
 
   def initialize
@@ -15,9 +11,46 @@ class FakeWorkerIsolation
     @released = []
   end
 
+  # The REAL {Isolation::Lease}, not a Struct standing in for one: the arm now
+  # both hands a worker back (which releases) and keeps its own `ensure
+  # lease&.release`, so the idempotent-loud contract -- the reclaim runs exactly
+  # once however many times release is called -- is load-bearing here.
   def acquire(worker_id)
     @acquired << worker_id
-    Lease.new(Lain::WorkerEnv.new(cwd: "/tmp/#{worker_id}", env: {}), @released)
+    env = Lain::WorkerEnv.new(cwd: "/tmp/#{worker_id}", env: {})
+    Lain::Isolation::Lease.new(worker_env: env, on_release: -> { @released << env })
+  end
+end
+
+# The worker-completion seam's duck, recording what it was handed and answering
+# a canned {Isolation::WorkerHandoff::Report}. It records whether the lease was
+# STILL LIVE when it was called -- the whole point of the seam is that the
+# handback happens before the checkout is reclaimed -- and, like the real one,
+# no-ops on an already-released lease so the arm's `ensure` costs a boolean.
+class RecordingHandoff
+  Call = Struct.new(:kind, :worker_id, :lease, :live)
+
+  attr_reader :calls
+
+  def initialize(report)
+    @report = report
+    @calls = []
+  end
+
+  def reclaim(lease, worker_id:) = record(:reclaim, lease, worker_id)
+  def surrender(lease, worker_id:) = record(:surrender, lease, worker_id)
+
+  def reclaims = calls.select { |call| call.kind == :reclaim }
+  def surrenders = calls.select { |call| call.kind == :surrender }
+
+  private
+
+  def record(kind, lease, worker_id)
+    return Lain::Isolation::WorkerHandoff::Report.nothing if lease.nil? || lease.released?
+
+    @calls << Call.new(kind, worker_id, lease, !lease.released?)
+    lease.release
+    @report
   end
 end
 
@@ -120,6 +153,117 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
 
       expect(sessions.map { |session| session.worker_env.cwd })
         .to contain_exactly("/tmp/ow-worker-0", "/tmp/ow-worker-1", "/tmp/ow-worker-2")
+    end
+  end
+
+  # D5: the worker-completion point. The arm hands each finished worker back
+  # while its lease is still live, and folds what that did into the worker's own
+  # result -- the resolver's conflict transcript stays in the child's fresh root.
+  describe "a finished worker is handed back before its lease is released" do
+    subject(:arm) { described_class.new(name: "ow", handoff:) }
+
+    let(:backend) { FakeWorkerIsolation.new }
+    let(:report) do
+      Lain::Isolation::WorkerHandoff::Report.new(
+        kind: :resolved, ref: "refs/lain/worker/ow-worker-0-c0ffee", paths: %w[alpha.txt beta.txt]
+      )
+    end
+    let(:handoff) { RecordingHandoff.new(report) }
+    let(:silent_report) { Lain::Isolation::WorkerHandoff::Report.nothing }
+
+    def synthesis_text(run) = run.timeline.head.content.first["text"]
+
+    it "reclaims once per worker, under the worker_id its lease was acquired with" do
+      arm.run(task, spawn_seam: worker_seam, grader:, isolation: backend)
+
+      expect(handoff.reclaims.map(&:worker_id))
+        .to contain_exactly("ow-worker-0", "ow-worker-1", "ow-worker-2")
+      expect(handoff.reclaims.map(&:lease)).to all(be_a(Lain::Isolation::Lease))
+    end
+
+    it "hands back while the lease is still LIVE, never after the checkout is reclaimed" do
+      arm.run(task, spawn_seam: worker_seam, grader:, isolation: backend)
+
+      expect(handoff.calls.map(&:live)).to all(be(true))
+      expect(handoff.surrenders).to be_empty
+    end
+
+    it "releases each lease exactly once despite the arm's own ensure" do
+      arm.run(task, spawn_seam: worker_seam, grader:, isolation: backend)
+
+      expect(backend.released.size).to eq(3)
+    end
+
+    it "folds what the handoff did into the synthesis, naming the files and the ref" do
+      text = synthesis_text(arm.run(task, spawn_seam: worker_seam, grader:, isolation: backend))
+
+      expect(text).to include("alpha.txt").and include("beta.txt")
+      expect(text).to include("refs/lain/worker/ow-worker-0-c0ffee")
+      expect(text).to include("worker-done")
+    end
+
+    it "gains the resolver's result only -- never the conflict transcript" do
+      text = synthesis_text(arm.run(task, spawn_seam: worker_seam, grader:, isolation: backend))
+
+      expect(text).not_to include("<<<<<<<")
+      expect(text).not_to include(">>>>>>>")
+    end
+
+    it "leaves the worker's result byte-identical when the handoff has nothing to say" do
+      quiet = described_class.new(name: "ow", handoff: RecordingHandoff.new(silent_report))
+      unwired = described_class.new(name: "ow")
+
+      expect(synthesis_text(quiet.run(task, spawn_seam: worker_seam, grader:, isolation: backend)))
+        .to eq(synthesis_text(unwired.run(task, spawn_seam: worker_seam, grader:, isolation: backend)))
+    end
+
+    it "carries a failed worker's handoff report on its error, where the synthesis renders it" do
+      seam = ->(*, **) { raise "worker exploded" }
+
+      run = arm.run("one subtask", spawn_seam: seam, grader:, isolation: backend)
+
+      expect(synthesis_text(run)).to include("worker exploded").and include("alpha.txt")
+    end
+
+    it "still releases every lease with no handoff wired (the Null default)" do
+      described_class.new(name: "ow").run(task, spawn_seam: worker_seam, grader:, isolation: backend)
+
+      expect(backend.released.size).to eq(3)
+    end
+
+    # `#settle` catches only StandardError, and this arm's fan-out is
+    # `Sync { ...map { Async { work } }.map(&:wait) }` -- a sibling's failure
+    # cancels the rest with Async::Cancel, which is `< Exception` and reaches no
+    # rescue. Releasing a `--detach`ed worktree destroys unanchored commits, so
+    # no path may release without FIRST trying to anchor -- the attempt is what
+    # cannot be skipped by an exception class (WorkerHandoff's class doc names
+    # the one case the attempt itself cannot cover).
+    it "surrenders the lease -- trying to anchor the work -- when an Interrupt takes the worker out" do
+      seam = ->(*, **) { raise Interrupt }
+
+      expect { arm.run("one subtask", spawn_seam: seam, grader:, isolation: backend) }.to raise_error(Interrupt)
+
+      expect(handoff.surrenders.map(&:worker_id)).to eq(["ow-worker-0"])
+      expect(handoff.surrenders.map(&:live)).to all(be(true))
+      expect(handoff.reclaims).to be_empty
+      expect(backend.released.size).to eq(1)
+    end
+
+    # DISCOVERED while pinning the cancel path, and reported rather than papered
+    # over: Async::Cancel STOPS a task rather than failing it, so `Async{...}.wait`
+    # answers nil and the Synthesis fold NoMethodErrors on the missing result.
+    # That is a pre-existing fan-out fragility, not this seam's -- what belongs
+    # here is that the `ensure` still surrendered the lease while it was live, so
+    # the handback was attempted before the checkout was reclaimed.
+    it "still surrenders the lease when an Async::Cancel stops the worker" do
+      seam = ->(*, **) { raise Async::Cancel }
+
+      expect { arm.run("one subtask", spawn_seam: seam, grader:, isolation: backend) }
+        .to raise_error(NoMethodError, /rendered/)
+
+      expect(handoff.surrenders.map(&:worker_id)).to eq(["ow-worker-0"])
+      expect(handoff.surrenders.map(&:live)).to all(be(true))
+      expect(backend.released.size).to eq(1)
     end
   end
 

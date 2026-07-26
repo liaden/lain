@@ -61,14 +61,20 @@ RSpec.describe Lain::Arm::SingleThread do
   end
 
   describe "the injected isolation seam" do
-    it "acquires a lease and releases it, even though the control ignores its env" do
-      lease = instance_double("lease", release: nil)
+    # The REAL Lease, not a stand-in for one: the arm now reclaims on the settled
+    # path and surrenders from its `ensure`, so the idempotent-loud contract --
+    # the reclaim runs exactly once however many times release is called -- is
+    # what keeps this to a single reclamation.
+    it "acquires a lease and releases it exactly once, even though the control ignores its env" do
+      released = []
+      lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
       isolation = instance_double("isolation", acquire: lease)
 
       arm.run("please echo hi", spawn_seam:, grader:, isolation:)
 
       expect(isolation).to have_received(:acquire)
-      expect(lease).to have_received(:release)
+      expect(lease).to be_released
+      expect(released).to eq([:once])
     end
   end
 end

@@ -32,14 +32,18 @@ module Lain
       # @param synthesis [Synthesis] the fan-in fold
       # @param clock [#call] monotonic seconds, injectable for deterministic specs
       # @param price_book [PriceBook] prices the run's journal into dollars
+      # @param handoff [#reclaim] what a finished worker's completion point does
+      #   with its lease -- hand the work back, resolve a conflict, release. The
+      #   Null releases and nothing else, so an unwired arm is unchanged.
       def initialize(name: "orchestrator-worker", decompose: DEFAULT_DECOMPOSE,
                      synthesis: Synthesis.new, clock: SingleThread::DEFAULT_CLOCK,
-                     price_book: PriceBook.default)
+                     price_book: PriceBook.default, handoff: Isolation::WorkerHandoff::Null)
         super(name:)
         @decompose = decompose
         @synthesis = synthesis
         @clock = clock
         @price_book = price_book
+        @handoff = handoff
       end
 
       # Decompose, fan the workers out, fold their results, and hand back the
@@ -81,12 +85,42 @@ module Lain
       # One worker's isolation lifecycle: lease its WorkerEnv, run it under the
       # lease, and release the lease whatever happens. The lease is this method's
       # whole responsibility; {#settle} owns the spawn and the outcome.
+      #
+      # `#reclaim` runs in the BODY, not the ensure, because its
+      # {Isolation::WorkerHandoff::Report} is folded into the worker's result --
+      # and it can, because {#settle} catches its own failures.
+      #
+      # `#surrender` in the `ensure` is what makes that safe. `settle` catches
+      # only `StandardError`, and this whole method runs inside an `Async` task:
+      # a sibling's failure cancels it with `Async::Cancel`, which is `<
+      # Exception` and reaches neither rescue. Releasing a `--detach`ed worktree
+      # DESTROYS unanchored commits, so no path may release without first TRYING
+      # to anchor -- `surrender` hands back, restores the parent, and releases,
+      # spawning nothing (there is no budget for a model call inside an unwind).
+      # Both no-op on an already-released lease, so the settled path pays one
+      # boolean. What that buys is the attempt, not a guarantee the ref exists:
+      # see {Isolation::WorkerHandoff}'s class doc for the case it cannot cover.
       def work(subtask, index, spawn_seam:, isolation:, lead:)
-        lease = isolation.acquire("#{name}-worker-#{index}")
-        settle(subtask, spawn_seam:, lease:, lead:)
+        worker_id = "#{name}-worker-#{index}"
+        lease = isolation.acquire(worker_id)
+        handed(settle(subtask, spawn_seam:, lease:, lead:), @handoff.reclaim(lease, worker_id:))
       ensure
-        lease&.release
+        @handoff.surrender(lease, worker_id:)
       end
+
+      # Carry what the handoff did back on the worker's own {Synthesis::Result},
+      # so a resolved conflict names its files and one that STANDS names the ref
+      # still holding the work -- in the synthesis the orchestrator folds, never
+      # as a conflict transcript in its context. A failed worker's message is its
+      # `error`, so the summary joins THAT rather than a `text` nothing renders.
+      def handed(result, report)
+        return result if report.summary.empty?
+        return result.with(error: joined(result.error, report.summary)) if result.failed?
+
+        result.with(text: joined(result.text, report.summary))
+      end
+
+      def joined(existing, summary) = [existing, summary].compact.reject(&:empty?).join("\n\n")
 
       # Spawn a fresh agent rooted in the shared Store, ask its subtask, and
       # carry back the settled head plus the spend it journaled. A worker failure

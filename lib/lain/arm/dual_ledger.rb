@@ -32,8 +32,9 @@ module Lain
       def initialize(name: "dual-ledger", stall_limit: DEFAULT_STALL_LIMIT, max_steps: DEFAULT_MAX_STEPS,
                      progress: DEFAULT_PROGRESS, replanner: DEFAULT_REPLANNER,
                      clock: SingleThread::DEFAULT_CLOCK, price_book: PriceBook.default,
-                     journal_factory: -> { Channel.new })
+                     journal_factory: -> { Channel.new }, handoff: Isolation::WorkerHandoff::Null)
         super(name:)
+        @handoff = handoff
         @stall_limit = Integer(stall_limit)
         @max_steps = Integer(max_steps)
         @progress = progress
@@ -54,9 +55,15 @@ module Lain
         journal = @journal_factory.call
         state = nil
         elapsed = timed { state = drive(task, spawn_seam:, grader:, journal:, planner: build_planner(journal)) }
-        graded_run(state, grader:, elapsed:, ledger: price(journal))
+        graded = graded_run(state, grader:, elapsed:, ledger: price(journal))
+        @handoff.reclaim(lease, worker_id: name)
+        graded
       ensure
-        lease&.release
+        # See {SingleThread#run} for the reclaim/surrender split: `#surrender`
+        # tries to anchor the worker's commits before the release destroys them
+        # and restores a parent left mid-merge, on every path INCLUDING the
+        # `Exception` classes no rescue here sees, and it spawns nothing.
+        @handoff.surrender(lease, worker_id: name)
       end
 
       private
