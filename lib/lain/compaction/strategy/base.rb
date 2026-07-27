@@ -139,13 +139,18 @@ module Lain
         def collapse(messages) = Replacement.of(answered_blocks(messages))
 
         # The conditions of an interval partition, and the only place they are
-        # stated. Order matters twice over: a non-Range cannot be asked whether
-        # it is empty, and ranges out of order would ALSO trip the overlap check,
+        # stated. Order matters three times over: a non-collection cannot be
+        # asked for its elements at all, a non-Range cannot be asked whether it
+        # is empty, and ranges out of order would ALSO trip the overlap check,
         # so being told about an overlap when the real fault is the ordering
-        # sends a reader to the wrong line.
+        # sends a reader to the wrong line. Each refusal is stated on its own
+        # terms so that the message names the fault a reader has to fix, rather
+        # than whichever later check happened to trip over it first.
         Partition = Data.define(:strategy, :span, :ranges) do
           def validated
+            refuse_answerless
             refuse_foreign
+            refuse_uncountable
             refuse_empty
             refuse_outside
             refuse_disorder
@@ -155,12 +160,44 @@ module Lain
 
           private
 
+          # FIRST, because everything below asks the proposal a question only a
+          # collection can answer. A strategy whose hook falls off the end (a
+          # guard clause with no else, an `each` where a `map` was meant)
+          # answers `nil`, and `nil.grep_v` named nobody -- a NoMethodError from
+          # inside the validator, about the validator, for a bug in a strategy.
+          def refuse_answerless
+            return if ranges.is_a?(Array)
+
+            raise NotAPartition, "#{strategy} answers #{ranges.inspect} from #propose_ranges; expected an " \
+                                 "Array of Ranges"
+          end
+
           def refuse_foreign
             alien = ranges.grep_v(Range)
             return if alien.empty?
 
             raise NotAPartition, "#{strategy} answers #{listed(alien)}, which is not a Range"
           end
+
+          # A range's members ARE message indices -- the caller maps them onto
+          # source turns -- so a Range of anything but Integers is not a smaller
+          # kind of partition, it is a different type of thing. `0.0..1.5` cleared
+          # every check below it (`cover?` compares numerically, and it is
+          # neither empty nor out of order) and died in the CALLER as
+          # `TypeError: can't iterate from Float`, naming nobody. Unbounded ends
+          # are left to #refuse_outside, which has something truer to say about
+          # them.
+          def refuse_uncountable
+            odd = ranges.select { |range| bounded?(range) && !integral?(range) }
+            return if odd.empty?
+
+            raise NotAPartition, "#{strategy} answers #{listed(odd)}, whose endpoints are not Integer message " \
+                                 "indices"
+          end
+
+          def bounded?(range) = !range.begin.nil? && !range.end.nil?
+
+          def integral?(range) = range.begin.is_a?(Integer) && range.end.is_a?(Integer)
 
           # An empty interval is not a small collapse, it is no collapse, and
           # answering one is how a strategy would commit a replacement event that

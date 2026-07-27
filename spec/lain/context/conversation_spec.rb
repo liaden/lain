@@ -85,6 +85,89 @@ RSpec.describe Lain::Context::Conversation do
     end
   end
 
+  # Invariant 5, added by T5's panel round. The producer it exists for is a
+  # derivation whose strategy echoes the blocks of the span it collapsed: the
+  # replacement's role is fixed at `user` (the Messages API requires
+  # `messages[0]` to be one), so an echoed `tool_use` lands in a user message.
+  # Every other rule here calls that array valid, and the wire returns 400.
+  describe "block/role compatibility" do
+    it "refuses a tool_use in a user message, naming the block and the role it needs" do
+      messages = [user(text("hi")), user(tool_use("toolu_0")), user(tool_result("toolu_0"))]
+
+      found = violation(messages, :misplaced_block)
+
+      expect(found.positions).to eq([1])
+      expect(found.subject).to eq("toolu_0")
+      expect(found.message).to include("tool_use", "assistant")
+    end
+
+    it "refuses a tool_result in an assistant message" do
+      messages = [user(text("hi")), assistant(tool_use("toolu_0")), assistant(tool_result("toolu_0"))]
+
+      found = violation(messages, :misplaced_block)
+
+      expect(found.positions).to eq([2])
+      expect(found.subject).to eq("toolu_0")
+      expect(found.message).to include("tool_result", "user")
+    end
+
+    # The shape the panel actually built against the derivation: an echoing
+    # strategy over one range. Pairing is satisfied -- the use is answered by
+    # the result immediately after it -- so this array passed every other rule.
+    it "refuses an echoed tool round whose pairing is otherwise perfect" do
+      messages = [user(text("hi")), user(tool_use("toolu_0")), user(tool_result("toolu_0")),
+                  assistant(text("done"))]
+
+      conversation = described_class.new(messages)
+
+      expect(conversation.violations.map(&:rule)).to eq([:misplaced_block])
+      expect(conversation).not_to be_valid
+    end
+
+    it "names each misplaced block separately, so two ids at one position do not fuse" do
+      messages = [user(text("hi")), user(tool_use("toolu_0"), tool_use("toolu_1"))]
+
+      found = described_class.new(messages).violations.select { |candidate| candidate.rule == :misplaced_block }
+
+      expect(found.map(&:subject)).to eq(%w[toolu_0 toolu_1])
+    end
+
+    # Extended thinking is assistant-only on the wire, and `lib/` writes four
+    # `thinking` and three `redacted_thinking` blocks -- more than it writes
+    # `tool_result`. The producer is the same one invariant 5 was added for, one
+    # block type over: a strategy echoing a span that contains an assistant turn
+    # with extended thinking puts a `thinking` block into the fixed-`user`
+    # replacement.
+    it "refuses a thinking block in a user message" do
+      messages = [user(text("hi")), user({ "type" => "thinking", "thinking" => "hmm", "signature" => "s" })]
+
+      found = violation(messages, :misplaced_block)
+
+      expect(found.positions).to eq([1])
+      expect(found.message).to include("thinking", "assistant")
+    end
+
+    it "refuses a redacted_thinking block in a user message" do
+      messages = [user(text("hi")), user({ "type" => "redacted_thinking", "data" => "opaque" })]
+
+      expect(violation(messages, :misplaced_block).message).to include("redacted_thinking", "assistant")
+    end
+
+    it "permits both thinking kinds in an assistant message, which is where they belong" do
+      messages = [user(text("hi")),
+                  assistant({ "type" => "thinking", "thinking" => "hmm", "signature" => "s" },
+                            { "type" => "redacted_thinking", "data" => "opaque" }, text("done"))]
+
+      expect(described_class.new(messages).violations).to be_empty
+    end
+
+    it "says nothing about a text block, which any role may carry" do
+      messages = [user(text("hi")), assistant(text("ok")), user(text("more"))]
+
+      expect(described_class.new(messages).violations).to be_empty
+    end
+  end
+
   describe "tool pairing" do
     it "refuses a tool_use with no answering tool_result, naming the id" do
       messages = [user(text("hi")), assistant(tool_use("toolu_0")), assistant(text("never answered"))]
@@ -428,6 +511,7 @@ RSpec.describe Lain::Context::Conversation do
           orphaned_tool_result: [user(text("hi")), assistant(text("a")), user(tool_result("toolu_ghost"))],
           split_tool_pair: [user(text("hi")), assistant(tool_use("t")), user(text("wait")), user(tool_result("t"))],
           missing_tool_id: [user(text("hi")), assistant({ "type" => "tool_use", "name" => "read" })],
+          misplaced_block: [user(text("hi")), user(tool_use("t")), user(tool_result("t"))],
           empty_content: [user(text("hi")), assistant]
         }
       end

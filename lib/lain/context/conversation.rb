@@ -14,7 +14,7 @@ module Lain
     # violation. Callers assert validity; {Context::Compact} and the derivation
     # are what get fixed when the assertion fails.
     #
-    # Four invariants, each a 400 on the wire:
+    # Five invariants, each a 400 on the wire:
     #
     # 1. `messages[0]` has role `user`.
     # 2. No two adjacent non-user messages.
@@ -22,6 +22,21 @@ module Lain
     #    IMMEDIATELY after it, and every `tool_result` answers one immediately
     #    before it.
     # 4. No message has empty content.
+    # 5. A block whose type the API binds to a role appears only in a message of
+    #    that role: `tool_use`, `thinking` and `redacted_thinking` are
+    #    assistant-only, `tool_result` is user-only.
+    #
+    # == Why invariant 5 is a separate rule from invariant 3
+    #
+    # Because pairing and placement are independent, and an array can satisfy
+    # one perfectly while breaking the other. The producer this was added for is
+    # a {Compaction::Derivation} whose strategy ECHOES the blocks of the span it
+    # collapsed: a replacement's role is fixed at `user` (with no pins the
+    # replacement IS `messages[0]`, which the API requires to be `user`), so an
+    # echoed `tool_use` lands in a user message with its `tool_result` still
+    # immediately after it. Pairing reports nothing, alternation reports
+    # nothing, and the wire returns 400 -- which is the exact class of bug this
+    # object exists to catch, found by T5's panel one rule short.
     #
     # == Why adjacent USER messages are legal and adjacent ASSISTANT ones are not
     #
@@ -50,6 +65,31 @@ module Lain
     # it changes nothing. So construction computes the violations and keeps
     # THOSE; the input is read once and let go.
     class Conversation
+      # Which role may carry which block (invariant 5). A block type absent from
+      # this map may be carried by any role: counting what `lib/` actually
+      # writes, `text` is the whole of that set -- there is no `image` block
+      # anywhere in this codebase, and an earlier version of this comment named
+      # one.
+      #
+      # A WHITELIST of the types the API constrains, never a rule inferred from
+      # a name. `thinking` and `redacted_thinking` are here because extended
+      # thinking is assistant-only on the wire and `lib/` writes seven of them
+      # between the two -- more than it writes `tool_result` -- so a strategy
+      # echoing a span that contains an assistant turn with extended thinking
+      # would otherwise put one into the fixed-`user` replacement and be called
+      # valid. That is the same defect as the tool_use one, one block type over.
+      #
+      # The rule these produce is `:misplaced_block`, renamed from
+      # `:misplaced_tool_block` the moment the thinking types arrived. It does
+      # not mean "a tool block in the wrong role", it means "a ROLE-RESTRICTED
+      # block in the wrong role", and `thinking` is not a tool block by any
+      # reading. A violation rule name is INTERFACE -- an audit and a grader key
+      # on it -- so a symbol saying `tool` about a thinking block is the
+      # name-drifts-from-behaviour failure in the one place it is most
+      # expensive. The constant was renamed with it, for the same reason.
+      BLOCK_ROLES = { "tool_use" => "assistant", "tool_result" => "user",
+                      "thinking" => "assistant", "redacted_thinking" => "assistant" }.freeze
+
       # `positions` are indices into the message array, so a violation points at
       # the messages rather than describing them -- what T4/T5 need to localize
       # a producer bug. `subject` is the datum the violation is ABOUT (a tool
@@ -97,7 +137,32 @@ module Lain
 
       def refusals(messages)
         malformed_messages(messages) + malformed_blocks(messages) + opening(messages) +
-          alternation(messages) + tool_pairs(messages) + empty_content(messages)
+          alternation(messages) + tool_pairs(messages) + block_roles(messages) + empty_content(messages)
+      end
+
+      # Invariant 5. A BLOCK question, so unlike {#tool_pairs} it needs no
+      # second object: placement is answered per block against the role of the
+      # message carrying it, with nothing to pair and no position arithmetic.
+      def block_roles(messages)
+        messages.each_with_index.flat_map { |message, index| misplaced(message, index) }
+      end
+
+      # The subject is the tool id rather than the block type, for the reason
+      # {Violation}'s own doc gives: two misplaced blocks in ONE message would
+      # otherwise carry identical rule, positions and subject, and a caller
+      # grouping by them would fuse two defects into one. An id-less block
+      # answers nil here and is already named by {ToolPairs#anonymous}.
+      def misplaced(message, index)
+        blocks(message).grep(Hash).filter_map do |block|
+          required = BLOCK_ROLES[block["type"]]
+
+          unless required.nil? || role(message) == required
+            Violation.of(:misplaced_block, [index],
+                         "the #{block["type"]} in messages[#{index}] is carried by a " \
+                         "#{role(message).inspect} message; #{block["type"]} blocks are #{required}-only",
+                         subject: block["id"] || block["tool_use_id"])
+          end
+        end
       end
 
       # `messages.empty?`, not `messages.first.nil?`: those are the same

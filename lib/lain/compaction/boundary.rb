@@ -69,7 +69,20 @@ module Lain
     #     droppable message which IS the `tool_use` answered by the first
     #     retained one -- rather than the whole family of `user` runs it used
     #     to cover. Nearly unreachable now, and kept because it is still the
-    #     only honest answer for that shape. This is never allowed to raise: a
+    #     only honest answer for that shape.
+    #
+    #     Through a {Compaction::Derivation} it is unreachable OUTRIGHT, and
+    #     changing the cut rule here is what would change that. Both routes to a
+    #     decline in {#snapped} require either a `tool_use` at index 0 or one
+    #     message carrying both a `tool_result` and a `tool_use`, and
+    #     {Context::Conversation} refuses both (invariants 1 and 5) -- so a
+    #     declining source is one the derivation will not send. That coupling is
+    #     pinned as a characterization example in
+    #     `spec/lain/compaction/derivation_spec.rb` ("cannot reach a declined
+    #     cut"), which is the example a new cut rule here will break. Breaking it
+    #     is not automatically wrong; leaving it broken silently is.
+    #
+    #     This is never allowed to raise: a
     #     `Boundary` that raised would do so inside `Context#render`, mid-turn,
     #     on a history that is perfectly legal -- worse than just not
     #     compacting this turn.
