@@ -60,7 +60,13 @@ module Lain
       # @param keep_last [Integer] must be positive; see {#validated}
       # @param pins [Context::PinnedMessages] see {.from_timeline}
       def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE)
-        @keep_last = validated(keep_last)
+        # The cut RULE, consulted rather than restated. {Context::Compact} asks
+        # the same object the same question with the same arguments, and a
+        # `Boundary` is a pure function of `(messages, keep_last)` -- which is
+        # what makes "one answer, two consumers" hold across two objects that
+        # cannot pass an instance between them (Compact receives its messages
+        # per `#call`, long after it was frozen).
+        @boundary = Boundary.new(messages:, keep_last: validated(keep_last))
         # A deeply frozen SNAPSHOT, taken by copy. Deep, because a value object
         # whose elements a caller can still mutate is one whose @bytesize goes
         # stale, and being the single answer is this object's whole job; it also
@@ -81,19 +87,56 @@ module Lain
 
       def empty? = @messages.empty?
 
+      # How far the cut moved off a tool pair, and whether it found no legal cut
+      # at all -- {Boundary}'s two diagnostics, answered HERE because this is
+      # the object {Compaction::Source} already holds when it journals the
+      # turn's decision (`source.rb:355`), so a consumer needs no new
+      # collaborator.
+      #
+      # READ THIS BEFORE ACTING ON `#moved`. It is NOT a degradation signal, and
+      # it must not be journalled as one. It was one under the rule this class
+      # first shipped against, where the cut walked backward to an `assistant`
+      # landing: one assistant at index 1 followed by thirty user messages
+      # reported `moved` 28 and a head of ONE message where three were asked,
+      # with {Need} then never crossing threshold and compaction silently
+      # ceasing while every predicate read normally. The relaxed rule (T4) took
+      # the cut where it was asked for and that failure mode no longer exists,
+      # so `#moved` now means one thing: a tool pair was in the way, and the cut
+      # moved the single position that clears it.
+      #
+      # This object deliberately does not ACT on either answer: "is this span
+      # worth compacting" is {Need}'s and {Scheduler}'s decision, and a second
+      # authority over it could only disagree (`source.rb:72-86`). It reports;
+      # they decide.
+      def moved = @boundary.moved
+
+      # Distinct from {#empty?} for the reason {Boundary} states: an empty head
+      # whose boundary DECLINED was refused a legal cut, while an ordinary empty
+      # one was never asked for one. Both drop nothing; only one is a shape a
+      # reader needs to know about.
+      def declined? = @boundary.declined?
+
       private
 
-      # Both degenerate values diverge from Compact silently, so they are
-      # refused rather than measured (panel probe, 2026-07-25):
+      # Both degenerate values USED TO diverge from Compact silently, which is
+      # why they are refused rather than measured (panel probe, 2026-07-25):
       #
       #   0 -- `messages[0...0]` and `messages.last(0)` are both empty, so above
-      #     threshold Compact replaces the ENTIRE history with a summary of ZERO
-      #     messages while this head reports nothing droppable. Total history
-      #     loss, and the disagreement runs opposite to the one that motivated
+      #     threshold Compact replaced the ENTIRE history with a summary of ZERO
+      #     messages while this head reported nothing droppable. Total history
+      #     loss, and the disagreement ran opposite to the one that motivated
       #     the class.
-      #   negative -- this head slices happily; `messages.last(-1)` raises
+      #   negative -- this head sliced happily; `messages.last(-1)` raised
       #     `ArgumentError: negative array size` inside `Compact#call`, which
       #     means inside `Context#render`.
+      #
+      # T4 closed the divergence at its source: {Context::Compact} now asks
+      # {Boundary}, which refuses both values by this very rule (it borrows this
+      # method), so the two objects agree at the degenerate values instead of
+      # one refusing what the other silently mishandles. The rule stays HERE
+      # because this is where its reasons are, and because
+      # {Compaction::Source#validated_keep_last} builds a throwaway Head to
+      # apply it at wiring time.
       def validated(keep_last)
         integer = Integer(keep_last)
         raise ArgumentError, "keep_last must be positive, got #{integer}" unless integer.positive?
@@ -101,14 +144,15 @@ module Lain
         integer
       end
 
-      # Mirrors {Context::Compact#call}'s guard, slice and partition line for
-      # line (`compact.rb:50-57`). The guard is redundant with Ruby's range
-      # clamping, and kept anyway: it is the coupling being pinned, and it
-      # should read as the same decision, not as a slice that happens to
-      # coincide.
+      # Slices at {Boundary}'s index, which is what {Context::Compact#call} also
+      # slices at -- the coupling is now one shared rule rather than two copies
+      # of one expression that had to be kept reading alike. An index of 0
+      # (nothing droppable, whether {Boundary#empty?} or {Boundary#declined?})
+      # falls out as the empty slice, so the guard this method used to carry is
+      # gone rather than restated.
       #
       # The exemption comes AFTER the slice for the same reason it does there:
-      # the kept tail is `keep_last` off the FULL list, so a pinned turn sitting
+      # the kept tail is sliced off the FULL list, so a pinned turn sitting
       # inside the tail must not shift the window -- it survives because it is
       # the tail, not because it is pinned.
       #
@@ -117,9 +161,7 @@ module Lain
       # for is {#bytesize}. {Context::PinnedMessages#indices_in} answers nothing
       # at all for an unpinned session.
       def droppable(messages, pins)
-        return [] if messages.size <= @keep_last
-
-        candidates = messages[0...-@keep_last]
+        candidates = messages[0...@boundary.index]
         exempt = pins.indices_in(candidates)
         exempt.empty? ? candidates : candidates.reject.with_index { |_, index| exempt.include?(index) }
       end

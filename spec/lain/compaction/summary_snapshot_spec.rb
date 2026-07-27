@@ -295,19 +295,29 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     end
 
     # Probe 4c: when protected_patterns matches every dropped message, Compact's
-    # `summarizable` is [] and it emits {"type"=>"text","text"=>""}. Anthropic
-    # rejects empty text blocks, and Provider::Ollama:131-132 guards the same
-    # hazard on the response side. Plan::ClosureSummary never returned empty,
-    # so this summarizer is what makes the trap reachable.
+    # `summarizable` is [] and it used to emit {"type"=>"text","text"=>""}.
+    # Anthropic rejects empty text blocks, and Provider::Ollama:131-132 guards
+    # the same hazard on the response side. Plan::ClosureSummary never returned
+    # empty, so this summarizer is what made the trap reachable.
+    #
+    # T4 closed the trap one level up rather than leaving this summarizer as its
+    # only defence: Compact now DECLINES when nothing is summarizable, returning
+    # the history untouched. So the guarantee is stronger than it was -- there is
+    # no empty text block because there is no summary message at all, and no
+    # cache prefix is broken to add one. This summarizer's own refusal to return
+    # an empty String is still pinned directly, one example above.
     it "never lets Compact emit an empty text block when every dropped message is protected" do
       patterns = Lain::Context::ProtectedPatterns.new([/tool_result/])
       messages = Array.new(3) { |index| tool_result_message("body #{index}", tool_use_id: "tu-#{index}") }
       compact = Lain::Context::Compact.new(threshold: 1, keep_last: 1, summarizer: described_class.new,
                                            protected_patterns: patterns)
 
-      summary_message = compact.call(messages).find { |message| message["role"] == "assistant" }
+      rendered = compact.call(messages)
 
-      expect(summary_message.dig("content", 0, "text")).not_to be_empty
+      expect(rendered).to eq(messages)
+      expect(rendered.map { |message| message["role"] }).to all(eq("user"))
+      expect(rendered.flat_map { |message| message["content"] }.map { |block| block["type"] })
+        .to all(eq("tool_result"))
     end
   end
 

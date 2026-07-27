@@ -22,16 +22,19 @@ RSpec.describe Lain::Compaction::Boundary do
 
   # Scenario: an unconstrained span snaps to exactly the requested keep_last
   #
-  # FIX 3 (panel round 1): the plan's English -- "the split index equals the
-  # one today's slice would use" -- is only true when the naive split ALREADY
-  # begins an assistant message. `probe_t2_collapse.rb`'s AC1 sweep found this
-  # holds for 5 of 9 `keep_last` values on `alternating(10)` and fails for the
-  # other 4 (the even ones, where the naive split lands on `user`). The two
-  # branches are both the real rule, not a coincidence one fixture happened to
-  # dodge -- so both are pinned here, over the full sweep, rather than one
-  # cherry-picked `keep_last`.
-  describe "the naive slice, both when it holds and when it is snapped" do
-    it "equals today's slice when the naive split already begins an assistant message" do
+  # RE-RULED 2026-07-27 (orchestrator, during T4). This block used to pin TWO
+  # branches -- the naive split when it already began an `assistant` message,
+  # and a walk back to the nearest earlier one otherwise -- because the
+  # replacement was an ASSISTANT message and `summary(assistant) + assistant`
+  # is F1's second 400. T4 fixed the replacement's role at `user`, and T1
+  # separately ruled that adjacent `user` messages are legal production shape
+  # (`agent_spec.rb:407-410`) while only adjacent `assistant` is a violation.
+  # A `user` replacement can therefore be followed by EITHER role, so the
+  # role rule is not merely weaker than it was -- it is vacuous, and its only
+  # remaining effect was to over-restrict. The naive split now stands unless
+  # the tool-pair rule moves it. See the class doc.
+  describe "the naive slice, which now stands unless a tool pair is in the way" do
+    it "equals today's slice when the naive split begins an assistant message" do
       messages = alternating(10)
 
       # keep_last: 3 -> raw = 7, and messages[7] is "assistant" (odd index).
@@ -43,35 +46,41 @@ RSpec.describe Lain::Compaction::Boundary do
       expect(boundary.moved).to eq(0)
     end
 
-    it "snaps to the nearest earlier assistant-starting index otherwise" do
+    # The case the old rule moved and this one does not. It is safe for exactly
+    # one reason: the replacement is a `user` message, so `user + user` is the
+    # legal adjacency T1 pinned rather than the illegal one F1 measured.
+    it "equals today's slice when the naive split begins a USER message too" do
       messages = alternating(10)
 
       # keep_last: 4 -> raw = 6, and messages[6] is "user" (even index).
       boundary = described_class.new(messages:, keep_last: 4)
 
       expect(messages[6]["role"]).to eq("user")
-      expect(boundary.index).to eq(5)
-      expect(boundary.index).not_to eq(messages.size - 4)
-      expect(boundary.moved).to eq(1)
+      expect(boundary.index).to eq(6)
+      expect(boundary.index).to eq(messages.size - 4)
+      expect(boundary.moved).to be_zero
     end
 
-    it "demonstrates both branches across every keep_last on one fixture, not a single hand-picked case" do
+    it "equals the naive split at every keep_last on a history with no tool calls at all" do
       messages = alternating(10)
-      # index -> role is deterministic here: even is "user", odd is "assistant".
-      # So the naive split (10 - keep_last) already lands on assistant iff it
-      # is odd; otherwise the nearest earlier assistant is exactly one back.
-      (1..9).each do |keep_last|
-        raw = messages.size - keep_last
-        expected = raw.odd? ? raw : raw - 1
 
+      (1..9).each do |keep_last|
         boundary = described_class.new(messages:, keep_last:)
 
-        expect(boundary.index).to eq(expected), "keep_last=#{keep_last} raw=#{raw}"
+        expect(boundary.index).to eq(messages.size - keep_last), "keep_last=#{keep_last}"
+        expect(boundary.moved).to be_zero, "keep_last=#{keep_last}"
       end
     end
   end
 
-  # Scenario: a cut that would split a tool pair moves off it
+  # Scenario: a cut that would split a tool pair moves off it.
+  #
+  # T2's NIT 7 coming due. Pair safety used to be EMERGENT: "land on assistant"
+  # happened to imply it, because a `tool_result` is always a `user` message
+  # immediately after its `assistant` `tool_use`. Relaxing the role rule (T4,
+  # orchestrator ruling) removes the thing that was accidentally providing it,
+  # so the rule is now written directly -- and tested directly, which is what
+  # T2's own warning said would be needed the day the role rule was relaxed.
   describe "a cut that would split a tool pair" do
     it "moves so the pair stays whole on one side" do
       messages = [
@@ -94,19 +103,85 @@ RSpec.describe Lain::Compaction::Boundary do
       expect(messages[boundary.index]["content"].first["type"]).to eq("tool_use")
       expect(messages[boundary.index + 1]["content"].first["type"]).to eq("tool_result")
     end
-  end
 
-  # Scenario: the retained tail begins with the role that can follow a user replacement
-  describe "a tail that would begin with a user message" do
-    it "moves the split so the tail begins with an assistant message" do
-      messages = alternating(5) # user, assistant, user, assistant, user
+    # The pair is exactly two adjacent messages (Correctness gate 2,
+    # `agent.rb:326-328`), so ONE position always clears it. This is also the
+    # card's "if landing needs more than two positions, stop" trigger, which the
+    # old role rule was quietly violating -- `probe_t2_collapse.rb` measured
+    # walks of 8, and the near-decline case walked 28.
+    it "never moves by more than one position, over every keep_last of a tool-heavy history" do
+      messages = [message("user", "ask")] +
+                 (1..6).flat_map { |round| [tool_use_message("t#{round}"), tool_result_message("t#{round}")] }
 
-      # keep_last: 3 -> raw split at index 2, which is "user".
-      boundary = described_class.new(messages:, keep_last: 3)
+      (1..messages.size).each do |keep_last|
+        boundary = described_class.new(messages:, keep_last:)
 
-      expect(messages[2]["role"]).to eq("user")
-      expect(boundary.index).to eq(1)
-      expect(messages[boundary.index]["role"]).to eq("assistant")
+        expect(boundary.moved).to be <= 1, "keep_last=#{keep_last} moved=#{boundary.moved}"
+      end
+    end
+
+    # The guard matches IDS, not block types. A `tool_result` at the head of the
+    # tail whose `tool_use` is nowhere near it was already an orphan in the
+    # source; moving the cut for it would retain a message for no reason and
+    # would report a `moved` the caller cannot act on.
+    #
+    # DISCRIMINATING FIXTURE, and it has to be: the predecessor carries a
+    # `tool_use` of a DIFFERENT id, so a type-only reading ("previous has a
+    # tool_use, next has a tool_result") answers 1 while the id reading answers
+    # 2. An earlier version of this example used a predecessor with no
+    # `tool_use` at all, where the two readings coincide -- so replacing the id
+    # intersection with a bare type check left the whole suite green, and the
+    # claim "matched by id" was untested. Verified by mutation.
+    it "does not move for a tool_result whose tool_use is not the message before it" do
+      messages = [message("user", "ask"), tool_use_message("toolu_other"),
+                  tool_result_message("toolu_nowhere"), message("assistant", "fin")]
+
+      boundary = described_class.new(messages:, keep_last: 2)
+
+      expect(boundary.index).to eq(2)
+      expect(boundary.moved).to be_zero
+    end
+
+    # The re-check at the move's DESTINATION, which is the only thing that can
+    # produce a decline on a history longer than one droppable message -- and
+    # was equally untested until this example: removing the second check left
+    # the suite green.
+    #
+    # It needs a message carrying BOTH a `tool_result` answering the turn before
+    # it and a `tool_use` answered by the turn after. That is legal on the wire
+    # and nothing in `lib/` emits it (`Agent#perform_tools` commits one user
+    # message per assistant turn's results), which is exactly why it must be
+    # pinned rather than assumed away. This is T2's NIT 7 one level down: a
+    # branch whose safety was emergent from the fixtures rather than asserted.
+    it "declines when the move off one pair lands on another" do
+      both = { "role" => "assistant",
+               "content" => [{ "type" => "tool_result", "tool_use_id" => "a", "content" => "ok" },
+                             { "type" => "tool_use", "id" => "b", "name" => "read", "input" => {} }] }
+      messages = [message("user", "ask"), tool_use_message("a"), both,
+                  tool_result_message("b"), message("assistant", "fin")]
+
+      boundary = described_class.new(messages:, keep_last: 2)
+
+      expect(boundary).to be_declined
+      expect(boundary).not_to be_empty
+      expect(boundary.index).to be_zero
+      # `moved` is the full naive distance when declined, so it is NOT bounded
+      # by one here -- the bound is on a cut that lands, not on a refusal.
+      expect(boundary.moved).to eq(3)
+    end
+
+    # The only shape that still declines: the single droppable message IS the
+    # tool_use answered by the first retained one, so the one legal move lands
+    # on 0 and there is nothing to drop.
+    it "declines when the only droppable message is the tool_use of a retained tool_result" do
+      messages = [tool_use_message("t0"), tool_result_message("t0"), message("assistant", "fin")]
+
+      boundary = described_class.new(messages:, keep_last: 2)
+
+      expect(boundary).to be_declined
+      expect(boundary).not_to be_empty
+      expect(boundary.index).to be_zero
+      expect(boundary.moved).to eq(1)
     end
   end
 
@@ -133,51 +208,50 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 1 (panel round 1, BLOCKER). `land_on_assistant` could walk all the
-  # way to index 0 on a history far LONGER than keep_last, and the old
-  # `#empty?` could not tell that apart from "nothing was ever droppable" --
-  # so `Head#empty?` would read true, `Need` would never fire, and
-  # compaction would silently stop happening forever, on a history where
-  # nothing else is wrong. T1 ruled that runs of consecutive `user` messages
-  # ARE legal production shape (a tool_result turn followed by the human's
-  # next ask), so a long run is real, not a fixture artifact --
-  # `probe_t2_bruteforce.rb` found 3552 such cases up to history length 9
-  # alone. This is what makes `#empty?` and `#declined?` two named states
-  # rather than one boolean doing double duty.
-  describe "a history with no assistant-starting message within reach of the naive split" do
-    it "declines rather than answering an empty span that lies about why" do
+  # FIX 1 (panel round 1, BLOCKER) -- and the shape that FIX addressed is gone.
+  # `land_on_assistant` could walk all the way to index 0 on a history far
+  # LONGER than keep_last, so `#declined?` was named to keep that apart from
+  # "nothing was ever droppable". T1 ruled runs of consecutive `user` messages
+  # legal production shape, so those runs are real -- and under the relaxed rule
+  # (T4) they no longer move the cut at all, which is what dissolved 44 sibling
+  # failures across six spec files that had been asserting compaction over
+  # all-user fixtures. `#declined?` STAYS: it is still correct, still
+  # mutually exclusive with `#empty?`, and still the only honest answer for the
+  # tool-pair shape above. It is now nearly unreachable rather than wrong.
+  describe "a long run of user messages, which used to exhaust the search" do
+    it "cuts at the naive split rather than declining" do
       messages = Array.new(40) { |i| message("user", "u#{i}") }
 
       boundary = described_class.new(messages:, keep_last: 5)
 
-      expect(boundary).to be_declined
-      expect(boundary).not_to be_empty # FIX 2: these must not be conflated
-      expect(boundary.index).to eq(0)
-      expect(boundary.moved).to eq(35) # the full naive split (40 - 5), walked and exhausted
+      expect(boundary).not_to be_declined
+      expect(boundary).not_to be_empty
+      expect(boundary.index).to eq(35)
+      expect(boundary.moved).to be_zero
     end
 
-    it "declines on the smallest history that can reproduce it: one droppable user message, no assistant" do
+    it "cuts on the smallest history that used to reproduce the decline" do
       messages = [message("user", "a"), message("user", "b")]
 
       boundary = described_class.new(messages:, keep_last: 1)
 
-      expect(boundary).to be_declined
-      expect(boundary).not_to be_empty
-      expect(boundary.index).to eq(0)
+      expect(boundary).not_to be_declined
+      expect(boundary.index).to eq(1)
     end
 
-    it "still lands normally when an assistant exists further back than the naive split, however far" do
-      # One assistant at index 1, then thirty more user messages -- there IS
-      # a valid landing, just a costly one. Not a decline: a real answer that
-      # retains far more than requested, which is the honest outcome, not a
-      # bug in itself (see FIX 6, `#moved` reports exactly how costly).
+    # The near-decline the T2 panel found and handed to T4 as a carry-forward:
+    # one assistant at index 1, thirty user messages after it, `keep_last: 3`
+    # answered index 1 and `moved` 28 -- correct, honest, and a head of ONE
+    # message where three were asked, with every predicate reporting normally.
+    # The relaxed rule dissolves it: the cut is where it was asked for.
+    it "no longer retains 31 of 32 messages when three were asked for" do
       messages = [message("user", "u"), message("assistant", "a")] + Array.new(30) { |i| message("user", "u#{i}") }
 
       boundary = described_class.new(messages:, keep_last: 3)
 
       expect(boundary).not_to be_declined
-      expect(boundary.index).to eq(1)
-      expect(boundary.moved).to eq(28)
+      expect(boundary.index).to eq(29)
+      expect(boundary.moved).to be_zero
     end
   end
 
@@ -233,29 +307,31 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 5. `Context::PinnedMessages` documents the same Symbol-vs-String
-  # projection hazard at `pinned_messages.rb:70-80` and `:96-108` because a
-  # silent mismatch there is exactly this failure mode: an equality check
-  # that quietly never matches. A Boundary that read `messages[index]["role"]`
-  # on a Symbol-keyed or role-less projection would silently treat every
-  # message as non-assistant and (per FIX 1) correctly decline rather than
-  # lie -- but declining because of a MALFORMED precondition is a different,
-  # worse-to-hide problem than declining because a legitimate history lacks
-  # an assistant. `Hash#fetch` turns the malformed case into a loud, precise
-  # failure instead.
+  # FIX 5, re-pointed at the key this object actually reads. It used to read
+  # `"role"`; the relaxed rule reads `"content"` instead, so that is where the
+  # precondition now bites. The reasoning is unchanged: `Context::PinnedMessages`
+  # documents the same Symbol-vs-String projection hazard
+  # (`pinned_messages.rb:70-80`) because a silent mismatch is exactly this
+  # failure mode -- a lookup that quietly never matches. A Boundary reading
+  # `message[:content]` as nil would silently see no tool blocks anywhere and
+  # split pairs happily. `Hash#fetch` makes it loud instead.
+  #
+  # A message with no `"role"` is no longer this object's business at all: the
+  # cut rule stopped depending on roles when the replacement's role became
+  # fixed, so there is nothing here to be silently wrong about.
   describe "a malformed message projection" do
-    it "raises loudly on a message with no \"role\" key at all" do
-      messages = Array.new(4) { { "content" => [] } }
+    it "raises loudly on a message with no \"content\" key at all" do
+      messages = Array.new(4) { { "role" => "user" } }
 
       expect { described_class.new(messages:, keep_last: 1) }
-        .to raise_error(KeyError, /role/)
+        .to raise_error(KeyError, /content/)
     end
 
-    it "raises loudly on Symbol-keyed messages rather than silently declining" do
+    it "raises loudly on Symbol-keyed messages rather than silently splitting a pair" do
       messages = (0...10).map { |i| { role: i.even? ? "user" : "assistant", content: [] } }
 
       expect { described_class.new(messages:, keep_last: 3) }
-        .to raise_error(KeyError, /role/)
+        .to raise_error(KeyError, /content/)
     end
   end
 
@@ -267,22 +343,31 @@ RSpec.describe Lain::Compaction::Boundary do
     it "is zero when the naive split needs no adjustment" do
       boundary = described_class.new(messages: alternating(10), keep_last: 3)
 
-      expect(boundary.moved).to eq(0)
+      expect(boundary.moved).to be_zero
     end
 
-    it "is the exact distance walked when the split snaps to an earlier assistant" do
-      boundary = described_class.new(messages: alternating(10), keep_last: 4)
-
-      expect(boundary.moved).to eq(1)
-    end
-
-    it "is the full naive split's distance when declined" do
-      messages = Array.new(12) { |i| message("user", "u#{i}") }
+    it "is one when the split moves off a tool pair" do
+      messages = [message("user", "ask"), tool_use_message("t0"), tool_result_message("t0"),
+                  message("assistant", "fin")]
 
       boundary = described_class.new(messages:, keep_last: 2)
 
-      expect(boundary.moved).to eq(10)
-      expect(boundary.index).to eq(0)
+      expect(boundary.index).to eq(1)
+      expect(boundary.moved).to eq(1)
+    end
+
+    # Still `raw`, and under the relaxed rule a decline can only happen at
+    # raw == 1 -- so this now reads 1 rather than the double-digit distances the
+    # old backward walk produced. The invariant `index + moved == raw` is what
+    # both spellings share, and the sweep below asserts it.
+    it "is the full naive split's distance when declined" do
+      messages = [tool_use_message("t0"), tool_result_message("t0")]
+
+      boundary = described_class.new(messages:, keep_last: 1)
+
+      expect(boundary).to be_declined
+      expect(boundary.moved).to eq(1)
+      expect(boundary.index).to be_zero
     end
   end
 
@@ -315,7 +400,55 @@ RSpec.describe Lain::Compaction::Boundary do
 
     def histories(len) = %w[U A T R].repeated_permutation(len).select { |k| wellformed?(k) }
 
-    it "never starts the tail on a non-assistant, never splits a tool pair, and never lets empty? lie" do
+    # What a cut actually produces, taken from the object that DECIDES the
+    # replacement rather than restated here. Validity is a property of the
+    # rendered array, which is why the sweep builds it and asks
+    # {Lain::Context::Conversation} -- the object T1 wrote for exactly this --
+    # rather than asking what role the tail happens to begin with. That question
+    # was a proxy for validity under an assistant replacement, and it is no
+    # longer even correlated with it.
+    #
+    # Reading the replacement from {Lain::Context::Compact} rather than writing
+    # `{"role" => "user"}` here is the load-bearing half. {Lain::Compaction::Boundary}'s
+    # cut rule is sound ONLY while the replacement is a `user` message: that is
+    # what makes both a `user` and an `assistant` tail legal after it, and it is
+    # why this object correctly takes no role parameter. A literal here would go
+    # on validating a summary nobody emits, so the day anything assigns
+    # `assistant` -- the derivation assigns the role, per the Open decisions
+    # ruling, which puts it in T9's hands -- every Boundary-derived cut would
+    # become F1's 400 again with not one example failing. Now it fails here.
+    def rendered(messages, keep_last)
+      Lain::Context::Compact.new(threshold: 0, keep_last:, summarizer: ->(_) { "summary" }).call(messages)
+    end
+
+    # The object's own rule, restated in the spec's terms rather than in this
+    # alphabet's letters. `raw == 1 && kinds[1] == "R"` characterized these
+    # FIXTURES -- one block kind per message is an artifact of `build` -- not the
+    # object: a message carrying a `tool_result` for the previous turn AND a
+    # `tool_use` for the next is legal on the wire, and there a decline happens
+    # at `raw` 2 with `moved` 2. Deriving from the predicate is what keeps this
+    # assertion true if the alphabet ever grows that letter.
+    def splits_pair?(messages, index)
+      tool_ids(messages[index - 1], "tool_use", "id")
+        .intersect?(tool_ids(messages[index], "tool_result", "tool_use_id"))
+    end
+
+    def tool_ids(message, type, key)
+      message["content"].select { |block| block["type"] == type }.filter_map { |block| block[key] }
+    end
+
+    def declines?(messages, raw)
+      raw.positive? && splits_pair?(messages, raw) && (raw == 1 || splits_pair?(messages, raw - 1))
+    end
+
+    # Every well-formed source has zero of these, so any that appear were
+    # introduced by the cut. Alternation and opening are deliberately NOT in
+    # this list: this alphabet's `wellformed?` enforces only Correctness gate 2,
+    # so a history like "AAU" carries its own pre-existing alternation
+    # violation, and inheriting one is not the same as causing one.
+    def cut_rules = %i[unanswered_tool_use orphaned_tool_result split_tool_pair missing_tool_id]
+
+    it "never splits a tool pair, never renders an invalid conversation, and never lets empty? lie" do
       violations = []
 
       (1..7).each do |len|
@@ -326,35 +459,35 @@ RSpec.describe Lain::Compaction::Boundary do
             index = boundary.index
             raw = [messages.size - keep_last, 0].max
 
-            violations << ["tail_not_assistant", kinds.join, keep_last, index] \
-              unless index.zero? || messages[index]["role"] == "assistant"
             violations << ["pair_split", kinds.join, keep_last, index] \
               if index.positive? && kinds[index] == "R"
+            violations << ["moved_more_than_one", kinds.join, keep_last, boundary.moved] \
+              unless boundary.moved <= 1 || boundary.declined?
             violations << ["empty_lies", kinds.join, keep_last, index] \
               if boundary.empty? && messages.size > keep_last
 
-            # FIX ROUND 2. These two assertions define #declined? and #moved,
-            # rather than merely observing them -- unlike the three checks
-            # above, which would all pass even if #declined? fired whenever
-            # #index happened to be 0 for ANY reason (including the mutual-
-            # exclusivity example, since that only checks empty? && declined?
-            # is never both true, not WHY declined? is true).
+            if index.positive?
+              found = Lain::Context::Conversation.new(rendered(messages, keep_last)).violations.map(&:rule)
+              violations << ["rendered_invalid", kinds.join, keep_last, index, found] \
+                if found.intersect?(cut_rules)
+              violations << ["rendered_opening", kinds.join, keep_last, index] \
+                if found.include?(:opening_role)
+            end
+
+            # FIX ROUND 2, re-derived for the relaxed rule. These two define
+            # #declined? and #moved rather than merely observing them: the
+            # checks above would all pass even if #declined? fired whenever
+            # #index happened to be 0 for any reason.
             #
-            # The landing search only ever considers indices 1..raw, never 0
-            # -- {Boundary}'s own contract assumes, and does not verify, that
-            # `messages[0]` is `user` in a well-formed conversation (see the
-            # class doc), which is what index 0 being "never a valid landing"
-            # rests on. This alphabet's `wellformed?` enforces only
-            # Correctness gate 2 (tool_use/tool_result pairing), not T1's
-            # separate "starts with user" invariant, so a handful of
-            # histories here (e.g. "AU") start with "assistant" or a
-            # `tool_use` -- outside that assumed precondition. Checking 1..raw
-            # rather than 0..raw is deliberate, not a blind spot introduced by
-            # this check: it matches what the object itself assumes at index
-            # 0, so this assertion characterizes the CURRENT contract exactly
-            # rather than a broader one nobody asked this object to satisfy.
-            violations << ["declined_but_landing_existed", kinds.join, keep_last, raw] \
-              if boundary.declined? && (1..raw).any? { |i| messages[i]["role"] == "assistant" }
+            # Under the relaxed rule the candidates are exactly `raw` and
+            # `raw - 1`, so a decline is fully characterized rather than merely
+            # bounded: it happens iff the naive split splits a pair AND moving
+            # off it lands on 0 or on another pair. An equality, not an
+            # implication -- it also fails if #declined? ever STOPS firing where
+            # it must. See {#declines?} for why it is derived from the pair
+            # predicate rather than from this alphabet's letters.
+            violations << ["declined_mischaracterized", kinds.join, keep_last, raw, boundary.declined?] \
+              unless boundary.declined? == declines?(messages, raw)
             violations << ["index_plus_moved_ne_raw", kinds.join, keep_last, index, boundary.moved, raw] \
               unless index + boundary.moved == raw
           end
@@ -371,16 +504,31 @@ RSpec.describe Lain::Compaction::Boundary do
   # reproduced here as the regression for that specific production shape,
   # distinct from the general bruteforce sweep above.
   describe "the real Agent shape (adjacent user messages from a tool_result turn)" do
-    it "never splits a tool pair and never starts the tail on a non-assistant message" do
-      agentish = [message("user", "ask1"), tool_use_message("t0"), tool_result_message("t0"),
-                  message("user", "ask2"), tool_use_message("t1"), tool_result_message("t1"),
-                  message("user", "ask3"), message("assistant", "fin")]
+    let(:agentish) do
+      [message("user", "ask1"), tool_use_message("t0"), tool_result_message("t0"),
+       message("user", "ask2"), tool_use_message("t1"), tool_result_message("t1"),
+       message("user", "ask3"), message("assistant", "fin")]
+    end
 
+    it "never splits a tool pair, and never moves further than the one position it needs" do
       (1..agentish.size).each do |keep_last|
         boundary = described_class.new(messages: agentish, keep_last:)
-        index = boundary.index
+        landed_on = boundary.index.zero? ? "none" : agentish[boundary.index]["content"].first["type"]
 
-        expect(index.zero? || agentish[index]["role"] == "assistant").to be(true), "keep_last=#{keep_last}"
+        expect(landed_on).not_to eq("tool_result"), "keep_last=#{keep_last}"
+        expect(boundary.moved).to be <= 1, "keep_last=#{keep_last}"
+      end
+    end
+
+    # Through the real {Lain::Context::Compact}, so the replacement's role comes
+    # from the object that decides it rather than from a literal here -- see the
+    # sweep's `rendered` helper for why that link must be tested and not assumed.
+    it "renders a valid conversation at every keep_last, which is what the role rule used to stand in for" do
+      (1..agentish.size).each do |keep_last|
+        composed = Lain::Context::Compact.new(threshold: 0, keep_last:, summarizer: ->(_) { "summary" })
+                                         .call(agentish)
+
+        expect(Lain::Context::Conversation.new(composed).violations).to be_empty, "keep_last=#{keep_last}"
       end
     end
   end

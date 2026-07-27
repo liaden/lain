@@ -105,12 +105,19 @@ RSpec.describe Lain::Compaction::Source do
   def small_timeline(size = 6) = timeline(size) { |index| small_block(index) }
 
   # The floor's crossover, found by walking ONE dropped body a character at a
-  # time (the re-review's `probe_a6_floor_cost.rb`): at 366 Z's the canonical
-  # history and its rewrite both dump to 1,600 bytes, 365 inflates by one byte
-  # and 367 saves one. The examples assert the delta they claim to sit on, so a
+  # time (the re-review's `probe_a6_floor_cost.rb`): at 361 Z's the canonical
+  # history and its rewrite both dump to 1,595 bytes, 360 inflates by one byte
+  # and 362 saves one. The examples assert the delta they claim to sit on, so a
   # change in canonical framing fails loudly here rather than sliding the
   # fixture quietly off the boundary.
-  def neutral_pad = 366
+  #
+  # MOVED BY T4, 366 -> 361, and the five bytes are the whole story: the summary
+  # message's role went from `"assistant"` to `"user"` (Open decisions ruling),
+  # which is five fewer bytes in the canonical dump. Nothing else about this
+  # fixture moved -- `Compaction::Boundary` cuts it at the naive split, since it
+  # splits no tool pair. Re-measured to the byte rather than loosened to a
+  # range, which is what makes it still able to fail loudly.
+  def neutral_pad = 361
 
   def crossover_timeline(pad)
     bodies = (1..5).map { |index| "pad#{index}-#{"m" * 100}" } + ["Z" * pad, "tail-a", "tail-b"]
@@ -613,7 +620,10 @@ RSpec.describe Lain::Compaction::Source do
       line = timeline
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
       messages = messages_of(line)
-      summary = { "role" => "assistant",
+      # `user`, fixed by the Open decisions ruling and never computed from the
+      # history's parity: with nothing pinned the summary IS `messages[0]`, and
+      # the Messages API requires that to be `user` (T4, Grounding F1).
+      summary = { "role" => "user",
                   "content" => [{ "type" => "text",
                                   "text" => Lain::Compaction::SummarySnapshot.new
                                                                              .call(messages[0...-keep_last]) }] }
@@ -768,23 +778,33 @@ RSpec.describe Lain::Compaction::Source do
 
     def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
-    # Scenario: a pinned message survives a compaction verbatim
-    it "renders the pinned turn verbatim, ahead of the summary message" do
+    # Scenario: a pinned message survives a compaction verbatim, IN POSITION.
+    #
+    # RE-TITLED AND RE-POINTED BY T4 (Grounding F3). This used to read "ahead of
+    # the summary message", because `Compact#call` PARTITIONED the span and
+    # hoisted every protected message to the front -- so a pin from the middle
+    # of the span landed at index 0, ahead of the summary of everything that
+    # preceded it, with its own predecessor gone. Reading order inverted. The
+    # survivors are now kept in position (`Context::Prune#call`'s idiom), and
+    # the single summary takes the position of the FIRST message it subsumes:
+    # this pin is the history's second turn, so the summary of the first now
+    # correctly precedes it.
+    it "renders the pinned turn verbatim, in position after the summary of what preceded it" do
       line = timeline
       pinning = session_pinning(digests_of(line)[1])
 
       messages = render(context_for(forcing, line, session: pinning), line).messages
 
       expect(messages.size).to eq(keep_last + 2)
-      expect(messages.first["content"].first).to include("content" => block(2)["content"])
-      expect(messages[1]["content"].first["text"]).to include("elided")
+      expect(messages.first["content"].first["text"]).to include("elided")
+      expect(messages[1]["content"].first).to include("content" => block(2)["content"])
     end
 
     it "leaves the unpinned head summarized, so the pin costs only its own bytes" do
       line = timeline
       pinning = session_pinning(digests_of(line)[1])
 
-      text = render(context_for(forcing, line, session: pinning), line).messages[1]["content"].first["text"]
+      text = render(context_for(forcing, line, session: pinning), line).messages.first["content"].first["text"]
 
       expect(text).not_to include(block(2)["content"])
       expect(text.lines.grep(/^\[user /).size).to eq(3)

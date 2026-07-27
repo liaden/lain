@@ -40,30 +40,109 @@ module Lain
       def initialize(threshold:, keep_last:, summarizer:, protected_patterns: ProtectedPatterns::NONE)
         super()
         @threshold = Integer(threshold)
+        # A throwaway {Compaction::Boundary} applies the `keep_last` rule HERE,
+        # at construction, rather than leaving it to fire from inside `#call` --
+        # the same move `Compaction::Source#validated_keep_last` makes with a
+        # throwaway {Compaction::Head} (`source.rb:190-193`), and for the same
+        # reason: a wiring error must fail at wiring time. Boundary's own doc
+        # argues that raising inside `Context#render` is worse than not
+        # compacting, and a non-positive `keep_last` would do exactly that,
+        # mid-turn, on the first render. Reusing the rule rather than restating
+        # it is what keeps this object from drifting onto a third copy of it.
+        Compaction::Boundary.new(messages: [], keep_last:)
         @keep_last = Integer(keep_last)
         @summarizer = summarizer
         @protected_patterns = protected_patterns
         freeze
       end
 
-      # The partition runs BEFORE the threshold gate. Protected messages survive
+      # The exemption runs BEFORE the threshold gate. Protected messages survive
       # this pass verbatim, so they are not bytes a compaction reclaims, and
       # thresholding on the whole drop set would fire on a saving that cannot
       # happen -- while {Compaction::Head}, which measures the same span for
       # {Compaction::Need}, subtracts them. Two byte counts over two different
       # sets is the disagreement that head exists to delete, so there is one:
       # `summarizable`.
+      #
+      # Where the cut falls is {Compaction::Boundary}'s answer, not
+      # `messages[0...-keep_last]`: the naive slice landed the retained tail on
+      # whatever role parity happened to put there, which made the summary and
+      # the tail two adjacent assistant messages at every even keep_last, and
+      # split tool pairs (Grounding F1/F2). {Compaction::Head} consults the same
+      # object with the same arguments, which is what keeps the two in step --
+      # a `Boundary` is a pure function of `(messages, keep_last)`, so consulting
+      # it twice and holding one instance are the same answer. The instance
+      # cannot literally be shared while `#call` receives its messages per call
+      # and this combinator is frozen per turn.
+      #
+      # Both of the boundary's no-op states answer `index` 0, and BOTH must
+      # return `messages` untouched here rather than fall through: an empty span
+      # summarizes nothing, and a DECLINED one (the only legal cut is 0) would
+      # additionally slice the tail at 0 and prepend a summary of nothing to the
+      # whole history.
+      #
+      # PRECONDITION, and it is what the agreement with {Compaction::Head}
+      # actually rests on: this combinator must be the HEAD of the pipeline,
+      # called with `Context#render`'s own projection, unmodified. Head and this
+      # object agree because they compute the same pure `Boundary` from the same
+      # `(messages, keep_last)` -- so a combinator composed AHEAD of this one
+      # that reshapes the array silently breaks the agreement rather than
+      # failing: measured during T4, a Head naming 5 messages beside a Compact
+      # summarizing 3, with nothing raising. `Compaction::Source` composes it
+      # first (`scheduler.rb:187-191`) and hands both the same list, which is
+      # why this is a precondition and not a bug today. Handing ONE `Boundary`
+      # to both sites would make it structural instead; that needs a `Source`
+      # change and belongs to T9.
       def call(messages)
-        return messages if messages.size <= @keep_last
+        span = messages[0...Compaction::Boundary.new(messages:, keep_last: @keep_last).index]
+        exempt = protected_indices(span)
+        summarizable = span.values_at(*(span.each_index.to_a - exempt))
+        return messages if summarizable.empty? || Canonical.dump(summarizable).bytesize < @threshold
 
-        protected_head, summarizable = messages[0...-@keep_last].partition do |message|
-          @protected_patterns.protects?(Canonical.dump(message))
-        end
-        return messages if Canonical.dump(summarizable).bytesize < @threshold
+        surviving(span, exempt, summary(summarizable)) + messages.drop(span.size)
+      end
 
-        summary_message = { "role" => "assistant",
-                            "content" => [{ "type" => "text", "text" => @summarizer.call(summarizable) }] }
-        protected_head + [summary_message] + messages.last(@keep_last)
+      private
+
+      # The role is `user`, fixed, never computed from the history's parity
+      # (Open decisions ruling). With nothing pinned the summary IS `messages[0]`
+      # and the Messages API requires that to be `user`; the boundary is what
+      # then guarantees the tail can follow it.
+      def summary(summarizable)
+        { "role" => "user", "content" => [{ "type" => "text", "text" => @summarizer.call(summarizable) }] }
+      end
+
+      # Survivors in POSITION, which is {Prune#call}'s idiom -- select indices
+      # in order, `values_at` -- rather than the `partition` that hoisted every
+      # protected message to the front and put a pin from the middle of the span
+      # at index 0, ahead of the summary of what preceded it (F3).
+      #
+      # One summary replaces a set that pins may have left non-contiguous, so it
+      # takes the position of the FIRST message it subsumes: everything pinned
+      # ahead of that stays ahead, everything pinned after stays after. That is
+      # the only placement that is order-preserving for a single replacement.
+      #
+      # KNOWN DEFECT, characterized in `compact_spec.rb` and NOT fixed here.
+      # {Compaction::Boundary} protects the CUT, but a pin punches a hole in the
+      # MIDDLE of the span and nothing looks at that hole. A pinned `tool_use`
+      # turn survives while the `tool_result` answering it is summarized away
+      # (and vice versa), and a pinned assistant turn can end up adjacent to the
+      # retained tail's assistant -- F1 and F2 reconstituted, on the pinned path
+      # only. Measured through the real `Compaction::Source` at the shipped
+      # `keep_last: 20`. The fix is a decision about what a PIN MEANS -- either a
+      # pin that would strand its counterpart drags the counterpart along, or it
+      # is dropped with it -- and that decision is not this combinator's to make,
+      # so it is named rather than guessed at. The unpinned path, which is every
+      # render with no pins configured, is exhaustively valid.
+      def surviving(span, exempt, summary)
+        first = (span.each_index.to_a - exempt).first
+
+        span.values_at(*exempt.select { |index| index < first }) + [summary] +
+          span.values_at(*exempt.select { |index| index > first })
+      end
+
+      def protected_indices(span)
+        span.each_index.select { |index| @protected_patterns.protects?(Canonical.dump(span[index])) }
       end
     end
   end

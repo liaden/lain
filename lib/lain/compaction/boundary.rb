@@ -9,28 +9,49 @@ module Lain
     # (`head.rb:20-29`) exists to delete, one level up: the answer is an
     # INDEX, never a rewritten array.
     #
-    # Two corrections to the naive `messages.size - keep_last` slice, both
-    # from Grounding F1/F2:
+    # == One correction to the naive `messages.size - keep_last` slice
     #
-    #   1. never cut between a `tool_use` message and its answering
-    #      `tool_result` -- they are always exactly two adjacent messages
-    #      (Correctness gate 2, `agent.rb:326-328`);
-    #   2. land the retained tail on `assistant`, the only role that can
-    #      follow the fixed-`user` replacement (Open decisions ruling) -- a
-    #      strategy or a summarizer never computes a role from history
-    #      parity, so this object takes no role parameter at all.
+    # **Never cut between a `tool_use` message and its answering
+    # `tool_result`.** They are always exactly two adjacent messages
+    # (Correctness gate 2, `agent.rb:326-328`), so the cut moves by at most one
+    # position -- back, never forward, because retaining one extra message is
+    # the safe direction while dropping one extra breaks the `keep_last` floor.
     #
-    # Both corrections turn out to be the SAME search. A `tool_use` message is
-    # always `assistant`-role and always the message immediately before its
-    # `tool_result`, so "the tail starts on assistant" and "the pair is not
-    # split" are one invariant, not two -- the rule is: **the greatest index
-    # <= the naive split whose message begins an assistant turn.** Walking
-    # backward from the naive split for that index satisfies both at once.
-    # The tool-pair language survives in this doc because it is what
-    # motivates the rule, not because it needs a second code path. A caller
-    # that later relaxes the role rule (to permit a `user`-starting tail, say)
-    # loses tool-pair safety along with it -- there is no separate guard to
-    # fall back on.
+    # == Why there is no longer a second, role-based correction
+    #
+    # RE-RULED 2026-07-27 (orchestrator, during T4). This class shipped with a
+    # second rule -- *land the retained tail on `assistant`* -- and an argument
+    # that it and the tool-pair rule were one backward search. That argument
+    # was sound when it was written and is now wrong, so it is recorded here
+    # rather than deleted: the next reader's instinct will be to restore it.
+    #
+    # It was derived while the replacement was an **assistant** message. F1's
+    # second 400 was `summary(assistant)` followed by another assistant, and
+    # landing the tail on `assistant` was the fix for THAT. T4 then fixed the
+    # replacement's role at **`user`** (Open decisions ruling), and T1
+    # separately ruled -- verified against `agent_spec.rb:407-410` -- that
+    # adjacent `user` messages are legal production shape while only adjacent
+    # `assistant` is a violation. Together those make the role rule vacuous: a
+    # `user` replacement can be followed by EITHER role (`user + assistant`
+    # alternates, `user + user` is legal), so no tail role can produce an
+    # invalid adjacency, and the rule's only remaining effect was to move cuts
+    # that never needed moving.
+    #
+    # That effect was not small. The backward walk ran until it found an
+    # `assistant`, so a long run of `user` messages -- legal per T1, and the
+    # ordinary shape of a tool_result turn followed by the human's next ask --
+    # pushed the cut arbitrarily far back, or off the front entirely. Measured
+    # during T4: six spec files asserting compaction over all-`user` histories
+    # went red, and the T2 panel's near-decline case retained 31 of 32 messages
+    # when 3 were asked for.
+    #
+    # **The cost, named by T2's own NIT 7 and now come due:** pair safety used
+    # to be EMERGENT. A `tool_result` is always a `user` message immediately
+    # after its `assistant` `tool_use`, so "land on assistant" implied "do not
+    # split a pair" for free -- which meant nothing turned red for pair safety
+    # specifically. Relaxing the role rule removes what was accidentally
+    # providing it, so the tool-pair rule is now written directly above, and
+    # tested directly in `boundary_spec.rb`.
     #
     # == Two ways to answer "nothing is safely droppable"
     #
@@ -42,47 +63,46 @@ module Lain
     #
     #   {#empty?} -- the request itself was vacuous: `keep_last` was at least
     #     the whole history, so there was never anything to drop.
-    #   {#declined?} -- the request was real, but no `assistant`-starting
-    #     message exists at or before the naive split, so no cut satisfies
-    #     the rule above. This is NOT exotic: T1 ruled that adjacent `user`
-    #     messages are legal production shape (a tool_result turn followed by
-    #     the human's next ask), so a long run of `user` messages is real, and
-    #     the backward search can run off the front of it. The naive
-    #     `land_on_assistant` walk used to return 0 here and let {#empty?}
-    #     lie about why -- `Need` would then never fire and compaction would
-    #     silently stop happening, forever, with no error anywhere. This is
-    #     never allowed to raise: a `Boundary` that raised would do so inside
-    #     `Context#render`, mid-turn, on a history that is perfectly legal --
-    #     worse than just not compacting this turn.
+    #   {#declined?} -- the request was real, but the only legal cut is 0: the
+    #     naive split would split a pair, and the one move off it lands on the
+    #     front. Under the relaxed rule that is exactly one shape -- a single
+    #     droppable message which IS the `tool_use` answered by the first
+    #     retained one -- rather than the whole family of `user` runs it used
+    #     to cover. Nearly unreachable now, and kept because it is still the
+    #     only honest answer for that shape. This is never allowed to raise: a
+    #     `Boundary` that raised would do so inside `Context#render`, mid-turn,
+    #     on a history that is perfectly legal -- worse than just not
+    #     compacting this turn.
     #
     # Both states answer {#index} as 0 (nothing droppable, the same safe
     # default either way), so a caller that only wants "can I drop anything"
-    # needs neither predicate. {#moved} is the diagnostic surface for the
-    # case that is neither: how far the search walked. It is what
-    # `spec/lain/compaction/head_spec.rb:357-372`'s cross-object agreement
-    # sweep needs to say more than "these two integers differ" if it ever
-    # goes red.
+    # needs neither predicate. {#moved} is the diagnostic surface for the case
+    # that is neither. {Head} answers it too, because {Compaction::Source}
+    # already holds a {Head} when it journals the turn's decision.
     class Boundary
       # @param messages [Array<Hash>] the full rendered message list. Only
       #   READ -- the caller keeps its array, untouched and unfrozen. Each
       #   entry must be a canonical-normalized projection (String-keyed
-      #   `"role"`), the same precondition {Context::PinnedMessages}
+      #   `"content"`), the same precondition {Context::PinnedMessages}
       #   documents at `pinned_messages.rb:70-80` -- a Symbol-keyed or
-      #   role-less entry does not raise on ITS OWN, but the backward search
-      #   below reads `"role"` with `Hash#fetch`, so it surfaces as a loud
-      #   `KeyError` the first time the walk reaches that message, rather
-      #   than being silently treated as non-assistant forever.
+      #   content-less entry does not raise on ITS OWN, but the pair check
+      #   below reads `"content"` with `Hash#fetch`, so it surfaces as a loud
+      #   `KeyError` rather than as a message that silently appears to carry no
+      #   tool blocks and gets its pair split. `"role"` is no longer read at
+      #   all: the cut rule stopped depending on roles when the replacement's
+      #   role became fixed, so a role-less projection is not this object's
+      #   business.
       # @param keep_last [Integer] must be positive; see {#validated}, which
       #   borrows {Head}'s refusal rather than inventing a second.
       # @param pins [Context::PinnedMessages] accepted for interface parity
       #   with {Head} and {Context::Compact}, which both take the SAME pins
-      #   object (F3) -- T4 hands one `Boundary` instance to both. It is
-      #   never consulted: pin exemption is applied downstream against the
-      #   fixed span this object answers, exactly as {Head#droppable} already
-      #   applies it AFTER its own slice. Holding it anyway (an inert ivar,
-      #   "for future introspection") was tried and reverted: it bought
-      #   nothing, and a non-frozen duck-typed pins collaborator would have
-      #   made this object fail its own `Ractor.shareable?` AC.
+      #   object (F3). It is never consulted: pin exemption is applied
+      #   downstream against the fixed span this object answers, exactly as
+      #   {Head#droppable} already applies it AFTER its own slice. Holding it
+      #   anyway (an inert ivar, "for future introspection") was tried and
+      #   reverted: it bought nothing, and a non-frozen duck-typed pins
+      #   collaborator would have made this object fail its own
+      #   `Ractor.shareable?` AC.
       def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE) # rubocop:disable Lint/UnusedMethodArgument
         @keep_last = validated(keep_last)
         @index, @declined, @moved = snapped(messages)
@@ -95,19 +115,18 @@ module Lain
       #   droppable," by different causes.
       attr_reader :index
 
-      # @return [Integer] how far the backward search moved from the naive
-      #   `messages.size - keep_last` split: 0 when the naive split already
-      #   landed on `assistant` (or was never taken, {#empty?}), the full
-      #   distance attempted when it {#declined?}.
+      # @return [Integer] how far the cut moved from the naive
+      #   `messages.size - keep_last` split: 0 when it split no tool pair (or
+      #   was never taken, {#empty?}), 1 when it moved off one, and the full
+      #   naive distance when it {#declined?} -- so `index + moved == raw`
+      #   holds in every state, which is what the sweep asserts.
       attr_reader :moved
 
       # The request was vacuous: `keep_last` already covered the whole
       # history, so nothing was ever droppable.
       def empty? = @index.zero? && !@declined
 
-      # The request was real, but no `assistant`-starting message exists at
-      # or before the naive split -- there is no valid cut, so this object
-      # declines rather than lying about why nothing dropped. See the class
+      # The request was real, but the only legal cut is 0 -- see the class
       # doc's "Two ways to answer" section.
       def declined? = @declined
 
@@ -125,23 +144,49 @@ module Lain
       end
 
       # @return [Array(Integer, bool, Integer)] index, declined?, moved
+      #
+      # The one-position move is checked again at its destination rather than
+      # taken on faith. In a well-formed history it always clears -- a
+      # `tool_result` is preceded by its `tool_use`, never by another
+      # `tool_result` -- so the second check can only fire on a message
+      # carrying both a `tool_use` and a `tool_result` answering the one before
+      # it, which nothing in `lib/` emits. Declining there is the safe answer
+      # for a shape whose pairing this object cannot honour.
       def snapped(messages)
         raw = [messages.size - @keep_last, 0].max
         return [0, false, 0] if raw.zero?
+        return [raw, false, 0] unless splits_pair?(messages, raw)
 
-        land_on_assistant(messages, raw)
+        off = raw - 1
+        off.positive? && !splits_pair?(messages, off) ? [off, false, 1] : [0, true, raw]
       end
 
-      # Walks backward from `raw` for the greatest index whose message is
-      # `assistant`-role -- resolving F1's role-landing rule and F2's
-      # tool-pair rule in the same search (see class doc). Index 0 is never a
-      # valid landing (`messages[0]` is always `user` in a well-formed
-      # conversation), so reaching it without finding `assistant` means the
-      # search exhausted the span: DECLINED, not "landed at 0."
-      def land_on_assistant(messages, raw)
-        index = raw
-        index -= 1 while index.positive? && messages.fetch(index).fetch("role") != "assistant"
-        index.positive? ? [index, false, raw - index] : [0, true, raw]
+      # Would cutting at `index` leave a `tool_use` in the dropped span and its
+      # answering `tool_result` in the retained tail?
+      #
+      # By ID, not by block type: a `tool_result` at the head of the tail whose
+      # `tool_use` is nowhere near it was ALREADY an orphan in the source, and
+      # moving the cut for it would retain a message for no reason while
+      # reporting a {#moved} the caller cannot act on.
+      def splits_pair?(messages, index)
+        ids(messages[index - 1], "tool_use", "id")
+          .intersect?(ids(messages[index], "tool_result", "tool_use_id"))
+      end
+
+      def ids(message, type, key)
+        blocks(message).select { |block| block["type"] == type }.filter_map { |block| block[key] }
+      end
+
+      # {Context::Conversation#blocks}' reading, and its reasoning: a content
+      # that is not a list carries no blocks rather than raising, because a
+      # bare String content is a shape the Messages API itself accepts
+      # (`conversation.rb:188`) and refusing it would raise inside
+      # `Context#render` over something legal. A missing KEY is a different
+      # thing -- a broken precondition -- and stays loud.
+      def blocks(message)
+        content = message.fetch("content")
+
+        content.is_a?(Array) ? content.grep(Hash) : []
       end
     end
   end
