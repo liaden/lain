@@ -33,7 +33,8 @@ module AlgebraGenerators
   # summarizing and eliding strategies next.
   def self.strategy_claims
     { [Lain::Compaction::Strategy::Replacement, :+] => Replacements.concatenation,
-      [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges }
+      [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
+      [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks }
   end
 
   def self.claims = registered.keys
@@ -291,6 +292,32 @@ module AlgebraGenerators
       { instance: -> { identity },
         population: -> { spans },
         keywords: ->(span) { { span: 0..[span.size - 1, 0].max } } }
+    end
+
+    # {Lain::Compaction::Strategy::Elide} attests one text block per message and
+    # is unconditional -- the {Lain::Algebra::Elementwise::Alone} shape -- so ONE
+    # entry, keyed [Elide, :blocks], carries both structures' knobs: `each:` and
+    # `spans:` for the elementwise declaration, `population:` for the purity one.
+    # `operation:` and `analysis:` come from the registry rather than from here.
+    def elide_blocks
+      elide = Lain::Compaction::Strategy::Elide.new
+      { instance: -> { elide },
+        each: :attested,
+        spans: -> { [repeating, *spans] },
+        population: -> { spans } }
+    end
+
+    # `[m, other, m]`: attested per message, so the image preserves length and
+    # repeats an element, and no message survives untouched -- the three
+    # conditions spec/support/shared_examples/elementwise.rb's `judged` guard
+    # reads. Without them that law is read over nothing and certifies nothing.
+    # The plain {#spans} ride along beside it, as {Spans#dedupe}'s three do: the
+    # guards need this one span, but `concatenates?` reads every span it is
+    # given, and the EMPTY one is the shape a generated `flat_map` is likeliest
+    # to break on.
+    def repeating
+      repeated = message("a")
+      [repeated, message("b"), repeated]
     end
 
     def spans = [[], [message("a")], [message("a"), message("b")]]

@@ -3,6 +3,7 @@
 require_relative "strategy/replacement"
 require_relative "strategy/base"
 require_relative "strategy/identity"
+require_relative "strategy/elide"
 
 module Lain
   module Compaction
