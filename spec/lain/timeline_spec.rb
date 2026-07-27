@@ -473,6 +473,34 @@ RSpec.describe Lain::Timeline do
     end
   end
 
+  # The TL-3 ruling above, said in `lib/` per operation rather than only in
+  # the shapes of the groups that run. Three meet-ish operators and only two
+  # semilattices is exactly why the claim is per-operation: `include
+  # MeetSemilattice` on the class, naming nothing, would be a lie about
+  # #causal_meets.
+  describe "the declared algebra" do
+    let(:claims) { Lain::Algebra.registry.about(described_class) }
+
+    let(:declarations) { claims.grep(Lain::Algebra::Declaration) }
+
+    it "declares both the render meet and the dominator meet -- the two the law group above runs" do
+      expect(declarations.map { |claim| [claim.structure, claim.operation] })
+        .to contain_exactly(%i[meet_semilattice meet], %i[meet_semilattice dominator_meet])
+    end
+
+    # Prose, not a value: Timeline.empty mints a fresh Store per call, so a
+    # stored bottom would raise CrossStore against every real operand.
+    it "names each bottom in prose" do
+      expect(declarations.map(&:bottom))
+        .to contain_exactly(a_string_including("empty Timeline"), a_string_including("empty Timeline"))
+    end
+
+    it "refutes the semilattice on #causal_meets, naming the criss-cross fan-in" do
+      refutation = claims.grep(Lain::Algebra::Refutation).find { |claim| claim.operation == :causal_meets }
+      expect([refutation.structure, refutation.reason]).to match([:meet_semilattice, /criss-cross/])
+    end
+  end
+
   # #meet and #diverge_at walk the render edge only; causal edges landing in
   # the Store must not perturb them. On single-parent render chains they return
   # exactly what they returned before causal edges existed -- the ruling's

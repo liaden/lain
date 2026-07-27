@@ -67,8 +67,15 @@ module Lain
   # and defined by REOPENING the class, because a constant set inside the
   # `Data.define` block above would scope to `Lain`, not `Usage` (CLAUDE.md).
   class Usage
+    include Algebra::CommutativeMonoid
+
     ZERO = new.freeze
 
     def self.zero = ZERO
+
+    # The doc comment above, made enumerable. One line files both the monoid
+    # and the commutative-monoid claim, so a walk holds `#+` to identity,
+    # associativity and commutativity without knowing which contains which.
+    commutative_monoid on: :+, identity: ZERO
   end
 end

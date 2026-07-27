@@ -32,6 +32,30 @@ RSpec.describe Lain::Context::Combinator do
                      equal: ->(a, b) { observe(a) == observe(b) }
   end
 
+  # The same monoid the group above property-tests, now said in `lib/` beside
+  # the operator: a reader of base.rb is told what `>>` is, and the registry
+  # walk can hold it to these laws without knowing this spec file exists.
+  describe "the declared algebra" do
+    # Declarations only: a Refutation answers #structure but carries no
+    # identity, so an unfiltered `about` would select a future `not_a_monoid`
+    # entry here and then blow up on #identity instead of showing a diff.
+    subject(:declaration) do
+      Lain::Algebra.registry.about(described_class)
+                   .grep(Lain::Algebra::Declaration)
+                   .find { |entry| entry.structure == :monoid }
+    end
+
+    it "declares a monoid on #>>" do
+      expect(declaration.operation).to eq(:>>)
+    end
+
+    # The very object the law group above composes with, so the declaration
+    # cannot drift from what the suite already proved.
+    it "names Context::Identity as the unit" do
+      expect(declaration.identity).to be(Lain::Context::Identity)
+    end
+  end
+
   describe "#>>" do
     it "runs the first combinator, then the second, on the message list" do
       composed = tag(:a) >> tag(:b)

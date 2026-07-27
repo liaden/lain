@@ -30,6 +30,8 @@ module Lain
     # duplication, since the *laws* (both a monoid, both property-tested via
     # the shared "a monoid" group) are still shared, only the shape differs.
     class Combinator
+      include Algebra::Monoid
+
       # @param messages [Array<Hash>]
       # @return [Array<Hash>] the identity: unchanged
       def call(messages)
@@ -52,6 +54,11 @@ module Lain
       def >>(other)
         Composed.new(self, other)
       end
+
+      # The first paragraph's sentence, in a form a walk can hold to its laws.
+      # {Identity} is an instance built after this class body closes, so the
+      # unit can only be named lazily.
+      monoid on: :>>, identity: Algebra.later { Context::Identity }
     end
 
     # The monoid unit: composing it changes nothing, so a fold over an empty

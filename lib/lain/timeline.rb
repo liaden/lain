@@ -20,6 +20,11 @@ module Lain
   # receiver that owns its elements, where a Timeline is a movable pointer into
   # a Store it does not own and that other Timelines share.
   class Timeline
+    # Granted here, claimed per operation below: three meet-ish operators and
+    # only two of them are semilattices, so a bare `include` naming nothing
+    # would be a lie about #causal_meets.
+    include Algebra::MeetSemilattice
+
     class CrossStore < Error; end
 
     attr_reader :head_digest, :store
@@ -133,6 +138,10 @@ module Lain
     end
     alias & meet
 
+    # `&` is the same method, so the claim covers both spellings; a second
+    # entry for the alias would only make one operation look like two.
+    meet_semilattice on: :meet, bottom: "the empty Timeline, per store"
+
     # The event where two branches diverged, or nil if they share no history.
     # Walking two chains and comparing digests is all that cache-break
     # localization needs.
@@ -154,6 +163,14 @@ module Lain
       same_store!(other)
       CausalAncestry.new(store).meets(head_digest, other.head_digest)
     end
+
+    # The paragraph above, as a first-class negative rather than a comment that
+    # rots: this is the one meet-ish operator here that is NOT a semilattice.
+    not_a_meet_semilattice on: :causal_meets,
+                           because: "the causal ancestry order has no unique greatest lower bound -- a " \
+                                    "criss-cross fan-in leaves incomparable maximal common ancestors, so " \
+                                    "this answers with the SET of them (git merge-base's shape) and a " \
+                                    "set-valued operator makes no semilattice claim"
 
     # TL-3 (pinned, 2026-07-17): the checkpoint primitive. The deepest common
     # dominator of the two heads over the UNION graph -- render and causal
@@ -183,6 +200,13 @@ module Lain
       same_store!(other)
       checkout(dominators.meet(head_digest, other.head_digest))
     end
+
+    # The second semilattice, under dominance rather than render ancestry --
+    # which is why the claim is per operation and not per class. A walk driven
+    # off this entry should inject ONE Dominators across the run, as the law
+    # group does: the default mints a fresh one per call, so every invocation
+    # rebuilds the whole union-graph dominator tree.
+    meet_semilattice on: :dominator_meet, bottom: "the empty Timeline, per store (the virtual root, unnameable)"
 
     # TL-2 (pinned): the chain's identity, by the same derivation
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --

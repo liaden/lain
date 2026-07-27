@@ -56,6 +56,26 @@ RSpec.describe Lain::Usage do
     end
   end
 
+  # The laws above, said in `lib/` beside `#+`. One `commutative_monoid` line
+  # files BOTH claims, which is what lets a walk hold `#+` to identity,
+  # associativity and commutativity without knowing which structure contains
+  # which.
+  describe "the declared algebra" do
+    # Declarations only: a Refutation carries no identity, so an unfiltered
+    # `about` would raise instead of diffing the day somebody files one here.
+    let(:declarations) { Lain::Algebra.registry.about(described_class).grep(Lain::Algebra::Declaration) }
+
+    it "declares both the monoid and the commutative monoid on #+" do
+      expect(declarations.map { |claim| [claim.structure, claim.operation] })
+        .to eq([%i[monoid +], %i[commutative_monoid +]])
+    end
+
+    # The very object the two law groups above are run with.
+    it "names ZERO as the unit of both" do
+      expect(declarations.map(&:identity)).to contain_exactly(be(described_class.zero), be(described_class.zero))
+    end
+  end
+
   describe "totals" do
     subject(:u) { usage(input: 100, output: 20, creation: 30, read: 70) }
 
