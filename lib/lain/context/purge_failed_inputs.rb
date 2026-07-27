@@ -30,6 +30,21 @@ module Lain
     # `#requires` is the inherited {Combinator} default: this is a pure
     # rewrite of tool_use blocks already in the message list, so it needs
     # nothing from the Provider.
+    #
+    # Two phases, like {DedupeToolCalls}: an ANALYSIS of the whole list (which
+    # tool_use ids failed -- a failure is recorded on the ANSWERING tool_result,
+    # so it can only be read off the whole list), then a map over messages
+    # against that fixed analysis. Unlike DedupeToolCalls the second phase is
+    # NOT elementwise, not even relative to the analysis, and the class files
+    # that refutation at the bottom of this body rather than leaving it to a
+    # reader to notice. The window is why: `turns:` is a POSITION, so two
+    # messages that are `==` receive different images inside a single call when
+    # one sits either side of the boundary. An elementwise map is a function of
+    # (message, analysis), and a function cannot answer two things for one
+    # argument. Nothing here may be re-expressed in terms of tool_use ids to
+    # dodge that -- {Grader::ToolCallIndex} treats a repeated id as a wire
+    # anomaly to tolerate, never as impossible, and an id-keyed rewrite of this
+    # class silently redacts protected content when one shows up.
     class PurgeFailedInputs < Combinator
       def initialize(turns:, protected_patterns: ProtectedPatterns::NONE)
         Guards::PurgeFailedInputs.check!(turns:)
@@ -45,42 +60,66 @@ module Lain
 
         boundary = messages.size - @turns
         failed_ids = failed_tool_use_ids(messages)
-        aged = messages.first(boundary).map { |message| purge(message, failed_ids) }
+        aged = messages.first(boundary).map { |message| without_failed_input(message, failed_ids) }
         aged + messages.last(@turns)
       end
 
-      private
-
-      # A tool_use's failure is recorded on its ANSWERING tool_result, so the
-      # failed set is derived from the whole list -- a tool_use aging out of
-      # the window does not imply its tool_result did too.
+      # The analysis, public so a caller can ask what this run would act on
+      # without running it. A tool_use's failure is recorded on its ANSWERING
+      # tool_result, so the failed set is derived from the whole list -- a
+      # tool_use aging out of the window does not imply its tool_result did too.
+      #
+      # It answers every failed id, not every id this run will redact: the
+      # window is positional and so belongs to #call, not here.
       def failed_tool_use_ids(messages)
         messages.flat_map { |message| message["content"] }
                 .select { |block| block["type"] == "tool_result" && block["is_error"] }
                 .map { |block| block["tool_use_id"] }
       end
 
+      private
+
+      # The second phase, per message and against the fixed analysis: every
+      # aged message has exactly one image, which is what would let a caller
+      # journal what was redacted and why. Answers the message itself when
+      # nothing changed, so "untouched" is observable as object identity.
+      def without_failed_input(message, failed_ids)
+        return message unless redactable?(message)
+
+        content = message["content"].map { |block| purge_block(block, failed_ids) }
+        content == message["content"] ? message : message.merge("content" => content)
+      end
+
       # Only assistant messages carry tool_use blocks; a tool_result's
-      # message (role "user") is returned as-is, which is precisely how the
-      # error text stays put while the input it answers gets redacted.
+      # message (role "user") is exempt, which is precisely how the error text
+      # stays put while the input it answers gets redacted.
       #
       # Protection is checked ONCE per message, against the CONTAINING
       # MESSAGE's dump -- the same granularity {Prune} and {Compact} use --
       # rather than per-block: a protected span anywhere in the message
       # (a sibling text block, not just the tool_use's own input) exempts
-      # every tool_use the message carries.
-      def purge(message, failed_ids)
-        return message unless message["role"] == "assistant"
-
-        protected_message = @protected_patterns.protects?(Canonical.dump(message))
-        content = message["content"].map { |block| purge_block(block, failed_ids, protected_message) }
-        content == message["content"] ? message : message.merge("content" => content)
+      # every tool_use the message carries. Asked HERE, beside the message it
+      # judges, so a message's fate never depends on another message.
+      def redactable?(message)
+        message["role"] == "assistant" && !@protected_patterns.protects?(Canonical.dump(message))
       end
 
-      def purge_block(block, failed_ids, protected_message)
-        redactable = block["type"] == "tool_use" && failed_ids.include?(block["id"]) && !protected_message
-        redactable ? block.merge("input" => {}) : block
+      def purge_block(block, failed_ids)
+        redact = block["type"] == "tool_use" && failed_ids.include?(block["id"])
+        redact ? block.merge("input" => {}) : block
       end
+
+      # Filed directly rather than through {Algebra::Elementwise}, which refuses
+      # to refute an includer -- for a structural property the absence of the
+      # module IS the negative, and this is the escape hatch its own doc names
+      # for recording one anyway. Below #call, because a refutation is checked
+      # against the operation it names exactly like a declaration is.
+      Algebra.registry.refute(
+        subject: self, operation: :call, structure: :elementwise,
+        reason: "the trailing turns: window is positional -- two messages that are == take different " \
+                "images inside one call when the boundary falls between them, so no (message, analysis) " \
+                "function reproduces #call"
+      )
     end
   end
 end

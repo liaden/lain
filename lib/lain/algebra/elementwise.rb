@@ -36,12 +36,19 @@ module Lain
     #
     # And elementwise is often relative to a fixed ANALYSIS of the whole span
     # rather than unconditional: DedupeToolCalls must know every stale tool_use
-    # id, and {Context::PurgeFailedInputs} every failed one, before either can
-    # map a single message -- a tool_use's failure is recorded on its answering
-    # tool_result, which may live anywhere in the list. `given:` names that
-    # analysis, it runs once per span, and its result is passed to each
-    # per-element call. Saying so is the point: an unconditional elementwise
-    # claim about either of those two would be false.
+    # id before it can map a single message -- a tool_use's staleness is
+    # recorded on its answering tool_result, which may live anywhere in the
+    # list. `given:` names that analysis, it runs once per span, and its result
+    # is passed to each per-element call. Saying so is the point: an
+    # unconditional elementwise claim about DedupeToolCalls would be false.
+    #
+    # Note which law that makes the discriminating one. The plain homomorphism
+    # `call(A ++ B) == call(A) ++ call(B)` FAILS even for an honest
+    # elementwise-given-analysis combinator, because splitting the span splits
+    # the analysis: DedupeToolCalls answers 2 messages for a span it answers 4
+    # for in halves. The law that holds is the conditional one,
+    # `call(S) == S.flat_map { each(_1, analysis(S)) }`. A sweep that tests the
+    # plain form would refute every correct declaration here.
     #
     # == This one IS structural, unlike the other four
     #
@@ -50,11 +57,16 @@ module Lain
     # classification, with no separate label to drift from it. That is why
     # {ClassMethods#not_elementwise} refuses rather than files -- the refutation
     # of elementwise-ness is an absence, not a verb. A class that wants the
-    # negative RECORDED does not include the module and files it directly:
+    # negative RECORDED does not include the module and files it directly --
+    # {Context::PurgeFailedInputs} is the live instance, and its witness is
+    # worth knowing because it rules out every candidate analysis at once:
+    # a span `[m, error, m]` whose first and last messages are `==` gives them
+    # DIFFERENT images in one call, and a map that is a function of
+    # `(element, analysis)` cannot do that for any analysis whatever.
     #
-    #   Algebra.registry.refute(subject: Summarize, operation: :call,
+    #   Algebra.registry.refute(subject: PurgeFailedInputs, operation: :call,
     #                           structure: :elementwise,
-    #                           reason: "a summary of a span is not a map over it")
+    #                           reason: "the trailing window is positional")
     #
     # == The generated method's shape
     #
