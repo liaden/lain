@@ -34,7 +34,8 @@ module AlgebraGenerators
   def self.strategy_claims
     { [Lain::Compaction::Strategy::Replacement, :+] => Replacements.concatenation,
       [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
-      [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks }
+      [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks,
+      [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks }
   end
 
   def self.claims = registered.keys
@@ -305,6 +306,53 @@ module AlgebraGenerators
         each: :attested,
         spans: -> { [repeating, *spans] },
         population: -> { spans } }
+    end
+
+    # {Lain::Compaction::Strategy::Summarizing} refutes TWO structures on ONE
+    # operation, which is what the per-structure `refutes:`/`exhibits:` shape
+    # exists for -- the registry is keyed [subject, operation], so both
+    # refutations are judged through this single entry.
+    #
+    # `each:` and `analysis:` are the elementwise battery's half and come from
+    # here rather than from the registry (a Refutation carries neither);
+    # `population:` is the purity battery's, drawn FRESH on every call for the
+    # reason spec/support/shared_examples/pure.rb documents. The strategy itself
+    # is built once and captured: the answers it holds by content address are
+    # what let the purity battery invoke #blocks twice per input without the
+    # oracle being asked a second time.
+    def summarizing_blocks
+      strategy = Lain::Compaction::Strategy::Summarizing.new(oracle: summarizer)
+      halves = [[message("a")], [message("b")]]
+      { instance: -> { strategy },
+        each: :per_message, analysis: :whole_span,
+        spans: -> { [halves.flatten] },
+        population: -> { spans },
+        refutes: { elementwise: "concatenates its per-element map against the whole-span analysis",
+                   pure: "reaches no mutable state" },
+        exhibits: summarizing_exhibits(strategy, halves) }
+    end
+
+    # The two recorded reasons, said as predicates over a witness rather than as
+    # prose this file would otherwise only measure the length of: one block for
+    # a span whose halves answer two is the homomorphism failing, and an oracle
+    # held is the shareability proxy failing.
+    def summarizing_exhibits(strategy, halves)
+      { elementwise: { "answers one block for a span it answers two for in halves" =>
+                         -> { strategy.blocks(halves.flatten).size == 1 && halved(strategy, halves) == 2 } },
+        pure: { "holds an oracle, so it is not Ractor.shareable?" => -> { !Ractor.shareable?(strategy) } } }
+    end
+
+    def halved(strategy, halves) = halves.sum { |half| strategy.blocks(half).size }
+
+    # A tier that answers every question the same way, through the definition's
+    # own schema. Deterministic on purpose: the purity battery invokes the
+    # operation twice per input, so a counting or queue-consuming tier would
+    # report a second negative the refutation above does not name.
+    def summarizer
+      definition = Lain::Compaction::Strategy::Summarizing.definition
+      Class.new do
+        define_method(:ask) { |_inputs| definition.answer("summary" => "a summary") }
+      end.new
     end
 
     # `[m, other, m]`: attested per message, so the image preserves length and
