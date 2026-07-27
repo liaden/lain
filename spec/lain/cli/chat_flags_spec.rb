@@ -182,6 +182,34 @@ RSpec.describe "lain chat's flag surface" do
     end
   end
 
+  describe "--compact-strategy" do
+    it "defaults to the resolver's own DEFAULT rather than a second copy of it" do
+      expect(parse[:compact_strategy]).to eq(Lain::CLI::CompactionStrategy::DEFAULT)
+    end
+
+    it "names every strategy the resolver accepts in its help text" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:compact_strategy).description
+      expect(help).to include(*Lain::CLI::CompactionStrategy::STRATEGIES)
+    end
+
+    it "carries a selected strategy name through to the resolver" do
+      expect(parse("--compact-strategy", "elide")[:compact_strategy]).to eq("elide")
+    end
+
+    # `elide` needs no `tier:` factory, so this reaches the real resolver with
+    # no oracle machinery to fake -- the same "no extra collaborators" shape
+    # `--isolation`'s own resolver call above has with its default backend.
+    it "reaches the resolver as a strategy selection" do
+      resolved = Lain::CLI::CompactionStrategy.resolve(parse("--compact-strategy", "elide")[:compact_strategy])
+      expect(resolved).to be_a(Lain::Compaction::Strategy::Elide)
+    end
+
+    it "is refused by name when the operator misspells it" do
+      expect { Lain::CLI::CompactionStrategy.resolve(parse("--compact-strategy", "nope")[:compact_strategy]) }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /"nope".*summarizing.*elide/m)
+    end
+  end
+
   describe "the summarizer tier flags" do
     it "defaults the provider to Backend's own constant" do
       expect(parse[:summarizer_provider]).to eq(Lain::CLI::Backend::DEFAULT_SUMMARIZER_PROVIDER)
