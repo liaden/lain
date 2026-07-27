@@ -117,16 +117,23 @@ module AlgebraLaws
     monoid: "a monoid",
     commutative_monoid: "a commutative monoid",
     meet_semilattice: "a meet semilattice under ancestry",
-    elementwise: "an elementwise map"
+    elementwise: "an elementwise map",
+    pure: "a pure operation"
   }.freeze
 
-  BATTERIES = { meet_semilattice: MeetSemilattice, elementwise: Elementwise }.freeze
+  BATTERIES = { meet_semilattice: MeetSemilattice, elementwise: Elementwise, pure: Pure }.freeze
 
   # What the REGISTRY contributes to a law run, by structure. Asked by
   # respond_to? rather than by record type: a Declaration answers #identity and
   # #analysis and a Refutation answers neither, which is the honest shape --
   # what evidence a claim carries depends on what it claims.
-  EVIDENCE = { monoid: :identity, commutative_monoid: :identity, elementwise: :analysis }.freeze
+  #
+  # `operation` is evidence too, and for the same reason the others are: a group
+  # that assumed WHICH method it was judging could be handed a generator that
+  # proved a different one. Both structures whose laws invoke the subject take
+  # it, so `pure on: :blocks` cannot be discharged by exercising `#ranges`.
+  EVIDENCE = { monoid: :identity, commutative_monoid: :identity,
+               elementwise: %i[operation analysis], pure: %i[operation] }.freeze
 
   # The knobs that carry a population, whichever structure supplies one. An
   # empty population makes every `all?` law vacuously true, which is the
@@ -150,14 +157,12 @@ module AlgebraLaws
   # there looking plausible.
   def config(entry, knobs) = knobs.merge(evidence(entry))
 
+  # Lazy identities re-invoke their thunk on every read (a frozen Data has
+  # nowhere to memoize), and Timeline's would mint a fresh Store each time. Read
+  # once, here, and the whole run shares the answer.
   def evidence(entry)
-    field = EVIDENCE[entry.structure]
-    return {} unless field && entry.respond_to?(field)
-
-    # Lazy identities re-invoke their thunk on every read (a frozen Data has
-    # nowhere to memoize), and Timeline's would mint a fresh Store each time.
-    # Read once, here, and the whole run shares the answer.
-    { field => entry.public_send(field) }
+    Array(EVIDENCE[entry.structure]).select { |field| entry.respond_to?(field) }
+                                    .to_h { |field| [field, entry.public_send(field)] }
   end
 
   # Every law of `structure`, classified. An Exception is returned rather than
@@ -180,6 +185,28 @@ module AlgebraLaws
   def refutable?(entry) = battery?(entry.structure) && !AlgebraGenerators.knobs_for(entry).nil?
 
   def barren?(knobs) = POPULATIONS.filter_map { |knob| knobs[knob] }.any? { |source| source.call.empty? }
+
+  # A generator is keyed [subject, operation] and therefore serves EVERY claim
+  # about that operation -- which the declaration side already handles, since
+  # each structure's group reads only the knobs it needs. `refutes:` and
+  # `exhibits:` were the one place that multiplicity was unhandled: a class
+  # refuting two structures on one operation held the second battery to the
+  # first's law name, and no phrasing of the generator could say otherwise.
+  #
+  # So both may be keyed BY STRUCTURE, and stay flat when only one structure is
+  # refuted. Told apart by the keys rather than by a flag: a per-structure form's
+  # top-level keys are all STRUCTURES, while a flat `exhibits:` is keyed by its
+  # own prose and a flat `refutes:` is not a Hash at all. Every generator written
+  # before this distinction existed reads unchanged.
+  def for_structure(knob, structure)
+    return knob unless per_structure?(knob)
+
+    knob.fetch(structure)
+  end
+
+  def per_structure?(knob)
+    knob.is_a?(Hash) && !knob.empty? && knob.keys.all? { |key| Lain::Algebra::STRUCTURES.include?(key) }
+  end
 
   def name(claim) = "#{claim.first}##{claim.last}"
 
@@ -284,6 +311,8 @@ RSpec.describe "the algebra registry, held to the laws it claims" do
   registry.refutations.select { |entry| AlgebraLaws.refutable?(entry) }.each do |refutation|
     knobs = AlgebraGenerators.knobs_for(refutation)
     config = AlgebraLaws.config(refutation, knobs)
+    refutes = AlgebraLaws.for_structure(knobs.fetch(:refutes), refutation.structure)
+    exhibits = AlgebraLaws.for_structure(knobs.fetch(:exhibits, {}), refutation.structure)
 
     describe "#{refutation.subject}##{refutation.operation}, refuted as :#{refutation.structure}" do
       let(:outcomes) { AlgebraLaws.run(refutation.structure, config) }
@@ -291,8 +320,8 @@ RSpec.describe "the algebra registry, held to the laws it claims" do
       # The generator names which law the refutation turns on, so a refutation
       # cannot be confirmed by whichever law happened to break -- including one
       # that broke on a typo'd operation name.
-      it "fails #{knobs[:refutes].inspect}, which is what makes the refutation true" do
-        expect(outcomes).to include(knobs[:refutes] => :fails)
+      it "fails #{refutes.inspect}, which is what makes the refutation true" do
+        expect(outcomes).to include(refutes => :fails)
       end
 
       # The escalation trigger, mechanised: a law that raised was never
@@ -310,10 +339,10 @@ RSpec.describe "the algebra registry, held to the laws it claims" do
       # reason itself, or `reason` is a comment whose length this file has been
       # measuring.
       it "exhibits that reason rather than only stating it" do
-        expect(knobs.fetch(:exhibits)).not_to be_empty
+        expect(exhibits).not_to be_empty
       end
 
-      knobs.fetch(:exhibits, {}).each do |shown, holds|
+      exhibits.each do |shown, holds|
         it("exhibits its recorded reason: #{shown}") { expect(holds.call).to be(true) }
       end
     end

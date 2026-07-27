@@ -24,7 +24,16 @@ module AlgebraGenerators
       [Lain::Timeline, :causal_meets] => Timelines.causal_meets,
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.freeze
+    }.merge(strategy_claims).freeze
+  end
+
+  # The compaction strategies' claims, kept in their own hash rather than in the
+  # list above because that list is at Metrics/MethodLength's limit and a
+  # strategy seam grows an entry per strategy -- two here now, one each for the
+  # summarizing and eliding strategies next.
+  def self.strategy_claims
+    { [Lain::Compaction::Strategy::Replacement, :+] => Replacements.concatenation,
+      [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges }
   end
 
   def self.claims = registered.keys
@@ -247,5 +256,45 @@ module AlgebraGenerators
         witness.first == witness.last && images.first != images.last
       }
     end
+  end
+
+  module Replacements
+    module_function
+
+    # The free monoid on content blocks, drawn from three one-block
+    # replacements, one two-block replacement, and the unit itself -- DROP has
+    # to be IN the draw as well as being the declared identity, since `a + DROP`
+    # is a fold this monoid meets constantly (a range that collapses to nothing)
+    # and associativity around it is exactly what the laws are for.
+    def concatenation
+      unit = Lain::Compaction::Strategy::DROP
+      pool = %w[a b c].map { |body| Lain::Compaction::Strategy::Replacement.text(body) }
+      pool << (pool.first + pool.last) << unit
+      { operation: ->(a, b) { a + b }, generator: -> { pool.sample } }
+    end
+  end
+
+  module Strategies
+    module_function
+
+    # {Lain::Compaction::Strategy::Identity} proposes no ranges whatever it is
+    # offered, so what the purity laws read here is the shareability proxy and
+    # the absence of any reachable state -- which is the whole claim for a Null
+    # Object.
+    #
+    # The population is rebuilt on every draw and never captured: the laws call
+    # it once each, precisely so that one law cannot read arguments another law
+    # has already been through. A generator answering one memoized Array would
+    # put that bug back where the shared example cannot see it.
+    def identity_ranges
+      identity = Lain::Compaction::Strategy::Identity.new
+      { instance: -> { identity },
+        population: -> { spans },
+        keywords: ->(span) { { span: 0..[span.size - 1, 0].max } } }
+    end
+
+    def spans = [[], [message("a")], [message("a"), message("b")]]
+
+    def message(body) = { "role" => "user", "content" => [{ "type" => "text", "text" => body }] }
   end
 end

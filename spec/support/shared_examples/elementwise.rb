@@ -36,14 +36,33 @@
 # is the reason it records) and exactly what {Lain::Context::DedupeToolCalls}
 # must not. ONE law separates the declaration from the refutation.
 #
-# Only the `given:` shape is transcribed, because only that shape is declared;
-# an unconditional {Lain::Algebra::Elementwise::Alone} declaration would arrive
-# with a nil analysis and say so loudly rather than quietly passing.
+# == Both declaration shapes, and neither operation name assumed
+#
+# Two things here are read off the REGISTRY rather than assumed, and both were
+# assumptions this file made until a seam arrived that broke them.
+#
+# The OPERATION is one. `#call` was every declaration's operation while every
+# declaration was a {Lain::Context::Combinator}, and hardcoding it made this
+# group unable to judge anything else: {Lain::Compaction::Strategy::Base}
+# deliberately has NO `#call` (an endomorphism on the message array would lose
+# the preimage its causal edges are), so a strategy declaring
+# `elementwise on: :blocks` died here with `NoMethodError: undefined method
+# 'call'` -- and a NoMethodError proves nothing about elementwise-ness, exactly
+# as spec/algebra_laws_spec.rb says of a refutation confirmed by an error. The
+# {Lain::Algebra::Declaration} already carries `operation`, so it is threaded in
+# as evidence the same way `analysis` is.
+#
+# The ANALYSIS is the other. A nil analysis is the unconditional
+# {Lain::Algebra::Elementwise::Alone} shape -- the per-element map knows only its
+# own element -- and it is a real declaration, not a malformed one. The arity of
+# the per-element call is settled once, here, from whether the analysis is nil,
+# which is the same Null-Object pair {Lain::Algebra::Elementwise} makes at
+# declaration time rather than a branch inside every element.
 module AlgebraLaws
-  Elementwise = Data.define(:instance, :spans, :each, :analysis) do
+  Elementwise = Data.define(:instance, :spans, :operation, :each, :analysis) do
     def self.from(config)
       new(instance: config.fetch(:instance).call, spans: config.fetch(:spans).call,
-          each: config.fetch(:each), analysis: config.fetch(:analysis))
+          operation: config.fetch(:operation), each: config.fetch(:each), analysis: config.fetch(:analysis))
     end
 
     def to_h
@@ -51,16 +70,25 @@ module AlgebraLaws
         "gives two equal elements equal images within one call" => method(:functional?) }
     end
 
-    # {Lain::Algebra::Elementwise::GivenAnalysis#map}, said as a law: the
-    # analysis runs once per span and `flat_map` is the concatenation. No
-    # `Array()` wrapper -- a per-element map that answers a bare Hash must stay
-    # one element, and coercing it would fail the law for a reason of our own
-    # making rather than the operation's.
+    # {Lain::Algebra::Elementwise::GivenAnalysis#map} and {...::Alone#map}, said
+    # as a law: the analysis (when there is one) runs once per span and
+    # `flat_map` is the concatenation. No `Array()` wrapper -- a per-element map
+    # that answers a bare Hash must stay one element, and coercing it would fail
+    # the law for a reason of our own making rather than the operation's.
     def concatenates?
-      spans.all? do |span|
-        found = instance.public_send(analysis, span)
-        instance.call(span) == span.flat_map { |element| instance.send(each, element, found) }
-      end
+      spans.all? { |span| image(span) == concatenated(span) }
+    end
+
+    # The declared operation, SENT rather than public_sent: {Lain::Algebra.answers?}
+    # admits a private operation, so "does this class answer it?" stays a
+    # different question from "is it public?".
+    def image(span) = instance.send(operation, span)
+
+    def concatenated(span)
+      return span.flat_map { |element| instance.send(each, element) } if analysis.nil?
+
+      found = instance.public_send(analysis, span)
+      span.flat_map { |element| instance.send(each, element, found) }
     end
 
     # A map that is a function of (element, analysis) cannot answer two things
@@ -77,7 +105,7 @@ module AlgebraLaws
     # combinator passes through untouched certifies nothing, so this is
     # asserted non-empty below rather than left to the generator's good
     # intentions.
-    def rewritten = spans.reject { |span| instance.call(span) == span }
+    def rewritten = spans.reject { |span| image(span) == span }
 
     # ...and of those, the ones `functional?` can actually read: images come
     # off BY POSITION, which needs a call that neither dropped nor added, and
@@ -85,7 +113,7 @@ module AlgebraLaws
     # non-empty -- this is the exact vacuum that let two identical untouched
     # messages stand in for a proof.
     def judged
-      rewritten.map { |span| [span, instance.call(span)] }
+      rewritten.map { |span| [span, image(span)] }
                .select { |span, images| span.size == images.size && span.uniq.size < span.size }
     end
   end
