@@ -5,10 +5,36 @@
 //! walk here follows the SINGLE render edge -- the first-parent chain -- and is
 //! unchanged by the envelope re-port: `causal_parents` never participates
 //! (causal projections stay Ruby-only until a bench shows them hot). Keeping
-//! these as plain functions over an `rpds` map -- no `magnus` -- means the whole
-//! meet-semilattice can be unit-tested without an embedded Ruby VM, and the FFI
-//! layer performs each walk ENTIRELY in Rust, crossing the boundary once with a
+//! these as plain functions over an `rpds` map -- no `magnus` -- is what lets
+//! the structure below be proven without an embedded Ruby VM, and lets the FFI
+//! layer perform each walk ENTIRELY in Rust, crossing the boundary once with a
 //! batched result rather than once per node.
+//!
+//! # The structure, and exactly which laws are proven where
+//!
+//! **Structure:** the heads over one Store form a MEET-SEMILATTICE ordered by
+//! render ancestry -- `a <= b` when a is an ancestor of b ([`ancestor_of`]).
+//! **Operation:** [`meet`], the greatest common ancestor. **Bottom:** the empty
+//! head, `None`, which is what makes `meet` total for two heads sharing no
+//! history. That is the whole claim; this module implements no join, and there
+//! is no dominator meet or causal meet here (those stay Ruby-only, and adding
+//! them is a port decision under the root `CLAUDE.md`'s five rules, not a
+//! documentation one).
+//!
+//! **Four laws, and no fifth:** idempotent, commutative, associative, and "a
+//! meet sits below both operands". Each has a `#[test]` in this file's `tests`
+//! module named for it, and the list is the same one
+//! `spec/support/shared_examples/meet_semilattice.rb` asserts -- that file is
+//! the authority on which laws exist, so the two layers cannot come to disagree
+//! about what a law IS.
+//!
+//! **Two suites, two different claims.** `cargo test` proves the Rust
+//! ALGORITHM here obeys those four laws, at a layer the Ruby suite cannot
+//! reach. `spec/lain/rust/*` proves the Rust BINDING agrees with Ruby, by
+//! running the shared groups unchanged, and it is the SOLE authority on that
+//! cross-implementation claim -- no test in this file compares against a Ruby
+//! value. Read one as "the algorithm is a meet-semilattice" and the other as
+//! "the port is faithful"; neither substitutes for the other.
 
 use crate::digest::Digest;
 use crate::event::EventData;
@@ -93,6 +119,15 @@ pub fn parent_of(map: &StoreMap, digest: &Digest) -> Result<Option<Digest>, Dang
 /// the bottom element. A dangle in either chain is `Err(DanglingDigest)` -- never
 /// a wrong answer computed over a truncated chain. Walks `b` head-first and
 /// returns the first digest also on `a`, matching `Timeline#meet` exactly.
+///
+/// This is the MEET of the ancestry meet-semilattice (see the module doc), and
+/// it is **idempotent, commutative, and associative**, with `None` as the
+/// bottom element -- laws, not incidental behaviour. Proven by `cargo test`
+/// against this function, over every pair and triple of a generated forest
+/// (`tests::meet_is_idempotent`, `meet_is_commutative`, `meet_is_associative`,
+/// `meet_orders_below_both_operands`). That the Ruby-facing `Ext::Timeline#meet`
+/// binding obeys the same four is proven separately, and only, by
+/// `spec/lain/rust/timeline_spec.rb` running the shared group unchanged.
 pub fn meet(
     map: &StoreMap,
     a_head: Option<&Digest>,
@@ -108,6 +143,12 @@ pub fn meet(
 /// `descendant`. The empty Timeline (`None`) is below everything; otherwise the
 /// descendant's chain must include the ancestor's head -- and a dangle in that
 /// chain raises rather than answering `false` over a truncated walk.
+///
+/// This is the ORDER (`a <= b`) the meet-semilattice is taken over, so it is
+/// half of what "a meet sits below both operands" even means; `cargo test`'s
+/// `tests::meet_orders_below_both_operands` proves [`meet`] against it, and
+/// `spec/lain/rust/timeline_spec.rb` is what proves the binding agrees with
+/// Ruby's `Timeline#ancestor_of?`.
 pub fn ancestor_of(
     map: &StoreMap,
     ancestor: Option<&Digest>,
@@ -165,6 +206,42 @@ mod tests {
         (map, b, left, right)
     }
 
+    // The population the four laws run over: FOUR independent roots grown into
+    // binary trees, plus `None`, the empty head -- 28 nodes, 29 heads. (Four,
+    // not two: `frontier` is seeded with two `None`s and the first depth gives
+    // each seed two children, so the first generation is already four roots.)
+    // Deliberately wider than the hand-picked `forest()` shape above --
+    // disjoint roots are what force a meet to bottom out at `None`, and the
+    // bottom element is what makes the operation total. The laws then run over
+    // EVERY pair and EVERY triple of these heads rather than a sample, because
+    // an associativity bug hides exactly in the shape nobody thought to pick.
+    // Deterministic: the same 29 heads every run, so a failure reproduces.
+    //
+    // Widening this is CUBIC in the head count -- associativity is exhaustive
+    // over triples, so today's 29 heads are 24_389 of them (0.36s for the whole
+    // suite). Another two levels of depth would be ~125 heads and ~1.9M
+    // triples. Raise the loop bound only if you have checked what it costs.
+    fn law_population() -> (StoreMap, Vec<Option<Digest>>) {
+        let mut map = StoreMap::new_sync();
+        let mut heads: Vec<Option<Digest>> = vec![None];
+        let mut frontier: Vec<Option<Digest>> = vec![None, None];
+        let mut label = 0;
+        for _depth in 0..3 {
+            let mut children = Vec::new();
+            for parent in &frontier {
+                for _branch in 0..2 {
+                    label += 1;
+                    let (grown, digest) = commit(&map, parent.as_ref(), &format!("n{label}"));
+                    map = grown;
+                    children.push(Some(digest.clone()));
+                    heads.push(Some(digest));
+                }
+            }
+            frontier = children;
+        }
+        (map, heads)
+    }
+
     // A corrupt chain built the way a corrupt Store would be: a head node whose
     // parent digest was never inserted. Returns (map, head digest); the head is
     // present, its parent `blake3:absent` is not.
@@ -198,13 +275,83 @@ mod tests {
         assert_eq!(meet(&map, Some(&left), Some(&right)), Ok(Some(base)));
     }
 
+    // -------------------------------------------------------------------
+    // The four semilattice laws.
+    //
+    // These are the SAME four the Ruby group asserts -- idempotent,
+    // commutative, associative, and "a meet sits below both operands"
+    // (`spec/support/shared_examples/meet_semilattice.rb`, which is the
+    // authority on which laws exist; neither side asserts a law the other
+    // does not). What they prove here is different from what they prove
+    // there: this module proves the pure Rust ALGORITHM obeys them, at a
+    // layer with no `magnus` and no Ruby VM. That the Rust BINDING agrees
+    // with Ruby is a separate claim owned solely by `spec/lain/rust/*`,
+    // which runs those shared groups unchanged -- no `cargo test` here
+    // compares against a Ruby value.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn meet_is_idempotent() {
+        let (map, heads) = law_population();
+        for a in &heads {
+            assert_eq!(
+                meet(&map, a.as_ref(), a.as_ref()),
+                Ok(a.clone()),
+                "idempotence failed for {a:?}"
+            );
+        }
+    }
+
     #[test]
     fn meet_is_commutative() {
-        let (map, _base, left, right) = forest();
-        assert_eq!(
-            meet(&map, Some(&left), Some(&right)),
-            meet(&map, Some(&right), Some(&left))
-        );
+        let (map, heads) = law_population();
+        for a in &heads {
+            for b in &heads {
+                assert_eq!(
+                    meet(&map, a.as_ref(), b.as_ref()),
+                    meet(&map, b.as_ref(), a.as_ref()),
+                    "commutativity failed for {a:?} and {b:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn meet_is_associative() {
+        let (map, heads) = law_population();
+        for a in &heads {
+            for b in &heads {
+                let ab = meet(&map, a.as_ref(), b.as_ref()).expect("the forest is well-formed");
+                for c in &heads {
+                    let bc = meet(&map, b.as_ref(), c.as_ref()).expect("the forest is well-formed");
+                    assert_eq!(
+                        meet(&map, ab.as_ref(), c.as_ref()),
+                        meet(&map, a.as_ref(), bc.as_ref()),
+                        "associativity failed for {a:?}, {b:?}, {c:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn meet_orders_below_both_operands() {
+        let (map, heads) = law_population();
+        for a in &heads {
+            for b in &heads {
+                let m = meet(&map, a.as_ref(), b.as_ref()).expect("the forest is well-formed");
+                assert_eq!(
+                    ancestor_of(&map, m.as_ref(), a.as_ref()),
+                    Ok(true),
+                    "{m:?} is not below {a:?}"
+                );
+                assert_eq!(
+                    ancestor_of(&map, m.as_ref(), b.as_ref()),
+                    Ok(true),
+                    "{m:?} is not below {b:?}"
+                );
+            }
+        }
     }
 
     #[test]

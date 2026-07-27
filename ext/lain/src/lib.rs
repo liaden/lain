@@ -1,16 +1,45 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
 //! Output discipline is enforced at the crate root: `print_stdout` /
 //! `print_stderr` are hard errors so no Rust code here can smear plain text
 //! onto a stream the Ruby-side Journal may be parsing as NDJSON. Diagnostics go
-//! through `tracing`, whose writer is a caller-supplied fd (see
-//! [`ffi::init_tracing`]).
+//! through `tracing`, whose writer is a caller-supplied fd (see `ffi`'s
+//! `init_tracing`; plain backticks, not an intra-doc link, because `ffi` is a
+//! private module and rustdoc cannot resolve a link into one).
+//!
+//! **Documentation is enforced by two lints, and they cover different things.**
+//! `missing_docs` here is only the `pub mod` tripwire: it fires on items
+//! reachable as public API from this root, and every module below is private,
+//! so its scope today is ZERO items. It bites the moment someone writes
+//! `pub mod`; it is not a claim about current coverage, and on its own it would
+//! not notice a deleted doc comment anywhere in this crate.
+//!
+//! The lint that actually bites today is scoped rather than global:
+//! `clippy::missing_docs_in_private_items` is denied on `dag` and `digest`, the
+//! modules carrying this crate's algebraic claims. Both are already at zero
+//! offenses, so the deny costs no doc-writing diff -- and deleting any doc
+//! comment in them is a hard error (verified: removing `meet`'s doc yields
+//! `error: missing documentation for a function`). Crate-wide the same lint
+//! would report 109 and is deliberately NOT enabled: filler comments on 109
+//! items would be worse than none, while the modules that carry a law are
+//! covered.
+//!
+//! What that documentation is FOR: an item carrying an ALGEBRAIC claim must name
+//! the structure, the operation, and which suite proves it. There are two suites
+//! and they prove different things -- `cargo test` proves the pure Rust
+//! algorithm obeys a law, and `spec/lain/rust/*` proves the binding agrees with
+//! Ruby by running the shared example groups unchanged. See the `dag` module's
+//! own doc, which states that split once for the whole ancestry structure.
 
 use tracing_subscriber::EnvFilter;
 
 mod astgrep;
 mod bm25;
 mod canonical;
+#[deny(clippy::missing_docs_in_private_items)]
 mod dag;
+#[deny(clippy::missing_docs_in_private_items)]
 mod digest;
 mod event;
 mod treesitter;
@@ -163,6 +192,39 @@ fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), Dang
     }
 }
 
+/// The whole `put` decision, as a pure function of the map: validate, insert
+/// if absent, and answer the address either way. Returns the map that results,
+/// never mutating the caller's -- an `rpds` map, so the unchanged return is an
+/// `Arc` bump, not a copy.
+///
+/// **Idempotent**, and that is a law, not an implementation detail: the address
+/// IS the content, so a second put of the same node cannot mean anything
+/// different from the first. Proven in `cargo test` (`put_tests`, this file)
+/// against this function; that the Ruby-facing binding obeys the same law is
+/// the separate business of the shared "a content-addressed store" group
+/// (`spec/lain/rust/store_spec.rb`), and neither proof stands in for the other.
+///
+/// Split out of [`ffi::Store::put`] so the law is provable with no `magnus` in
+/// the signature and no embedded Ruby VM -- the same reason `build_env_filter`
+/// and `validate_put` are shaped this way. `Store::put` is then only the lock
+/// and the error translation, and it holds that ONE lock across this whole
+/// call, so no concurrent put can race between the check and the insert.
+fn put_into(
+    map: &dag::StoreMap,
+    node: &std::sync::Arc<event::EventData>,
+) -> Result<(dag::StoreMap, crate::digest::Digest), DanglingPut> {
+    let digest = node.digest.clone();
+    // A digest already present skips validation: the store is append-only, so
+    // its edges were checked when it first entered, and re-checking would
+    // refuse a legitimate no-op whenever the caller's map has since changed.
+    if map.contains_key(&digest) {
+        return Ok((map.clone(), digest));
+    }
+    validate_put(map, node)?;
+    let inserted = map.insert(digest.clone(), std::sync::Arc::clone(node));
+    Ok((inserted, digest))
+}
+
 // ---------------------------------------------------------------------------
 // FFI surface.
 //
@@ -177,7 +239,7 @@ fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), Dang
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, validate_put};
+    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, put_into};
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::digest::Digest;
@@ -934,25 +996,22 @@ mod ffi {
             self.locked().contains_key(digest)
         }
 
-        /// The public `put` boundary: refuse a node whose parent digest the
-        /// store does not hold (see [`super::validate_put`]), then insert.
+        /// The public `put` boundary: the lock and the error translation over
+        /// [`super::put_into`], which carries the whole decision (refuse a node
+        /// whose parent digest the store does not hold, else insert if absent)
+        /// and carries the idempotence law's `cargo test` proof with it.
         /// One lock held across check AND insert -- no TOCTOU window for a
-        /// concurrent put. A digest already present skips the check entirely:
-        /// the store is append-only and content-addressed, so a re-put is a
-        /// no-op and its parent was validated when it first entered.
+        /// concurrent put.
         fn put(ruby: &Ruby, rb_self: &Store, turn: &Turn) -> Result<String, Error> {
-            let digest = turn.inner.digest.clone();
             let mut map = rb_self.locked();
-            if !map.contains_key(&digest) {
-                validate_put(&map, &turn.inner).map_err(|dangling| {
-                    lookup_error(
-                        ruby,
-                        &["Lain", "Ext", "Store", "MissingObject"],
-                        dangling.to_string(),
-                    )
-                })?;
-                *map = map.insert(digest.clone(), Arc::clone(&turn.inner));
-            }
+            let (updated, digest) = put_into(&map, &turn.inner).map_err(|dangling| {
+                lookup_error(
+                    ruby,
+                    &["Lain", "Ext", "Store", "MissingObject"],
+                    dangling.to_string(),
+                )
+            })?;
+            *map = updated;
             // FFI-out boundary: the digest returns to Ruby as a String.
             Ok(digest.into())
         }
@@ -1674,8 +1733,8 @@ mod num_class_tests {
 }
 
 #[cfg(test)]
-mod validate_put_tests {
-    use super::{DanglingPut, validate_put};
+mod put_tests {
+    use super::{DanglingPut, put_into, validate_put};
     use crate::canonical::{Canon, build_object};
     use crate::dag::StoreMap;
     use crate::digest::Digest;
@@ -1752,6 +1811,65 @@ mod validate_put_tests {
                 child: child.digest.clone(),
             })
         );
+    }
+
+    // -------------------------------------------------------------------
+    // The store law. EXACTLY the two the Ruby group declares, and no third.
+    //
+    // `put` is idempotent, because the address IS the content, in both of the
+    // forms `spec/support/shared_examples/store_laws.rb` asserts: the same
+    // object twice, and two structurally equal objects built independently.
+    // That file is the authority on which store laws exist -- everything under
+    // this banner, down to the fence below, is a law and nothing else. Proven here
+    // against the pure decision, with no `magnus` and no Ruby VM; that the
+    // Rust BINDING agrees with Ruby stays the sole business of
+    // `spec/lain/rust/store_spec.rb`.
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn putting_the_same_object_twice_is_idempotent() {
+        let object = node("a", None);
+        let (once, first) = put_into(&StoreMap::new_sync(), &object).expect("a root put");
+        let (twice, second) = put_into(&once, &object).expect("a re-put");
+        assert_eq!(first, second);
+        assert_eq!(twice.size(), 1);
+    }
+
+    #[test]
+    fn structurally_equal_content_is_one_object() {
+        // Two nodes built independently from the same body: content-addressing
+        // means they share an address, so the second put cannot grow the store.
+        let (once, first) = put_into(&StoreMap::new_sync(), &node("a", None)).expect("first put");
+        let (twice, second) = put_into(&once, &node("a", None)).expect("an equal-content put");
+        assert_eq!(first, second);
+        assert_eq!(twice.size(), 1);
+    }
+
+    // -------------------------------------------------------------------
+    // Characterization, NOT a law. Below the banner above deliberately.
+    // -------------------------------------------------------------------
+
+    // Characterizes the `contains_key` shortcut in `put_into`: a digest already
+    // present returns early, so the re-put never revalidates its edges. The
+    // shipped append-only `Store` cannot reach the map this builds -- only
+    // `StoreMap::remove` can drop a parent out from under a child -- so this
+    // pins an implementation choice, not a property of the store. It is NOT a
+    // third store law: `store_laws.rb` declares two, and Rust asserts that same
+    // two (see `ext/lain/CLAUDE.md`, "a ported structure inherits the Ruby
+    // declaration"). Kept because the shortcut is load-bearing for idempotence
+    // and a future refactor that dropped it would otherwise go unnoticed.
+    #[test]
+    fn a_re_put_returns_early_without_revalidating_edges() {
+        let root = node("a", None);
+        let child = node("b", Some(&root.digest));
+        let map = StoreMap::new_sync().insert(root.digest.clone(), Arc::clone(&root));
+        let (with_child, first) = put_into(&map, &child).expect("a child of a present parent");
+        // Re-put against a map that no longer holds the parent: still accepted,
+        // still one write, still the same address.
+        let orphaned = with_child.remove(&root.digest);
+        let (again, second) = put_into(&orphaned, &child).expect("a re-put skips validation");
+        assert_eq!(first, second);
+        assert_eq!(again.size(), orphaned.size());
     }
 
     // The Display IS the FFI-visible message; Ruby `Store#put` pins the same
