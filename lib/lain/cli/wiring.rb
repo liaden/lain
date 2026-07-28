@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 require_relative "wiring/base_tools"
+require_relative "wiring/toolset_build"
 
 module Lain
   module CLI
@@ -12,16 +15,25 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     #
-    # ⚠️ THIS CLASS IS AT 109 OF ITS 110-LINE Metrics/ClassLength BUDGET. There
-    # is room for ONE more line, and the cop's config (see .rubocop.yml) is a
-    # reasoned policy, not a number to raise: a long assembler is fine, a
-    # SECOND responsibility hiding in it is not. So the next addition of any
-    # size extracts a collaborator -- {CompactionMount} and {Command::Surface}
-    # are the shape to copy. D2 did not extract because its whole addition was
-    # one line of delegation, and a two-line object would have been the worse
-    # design; that argument does not survive a second caller.
+    # ⚠️ THIS CLASS IS AT 98 OF ITS 110-LINE Metrics/ClassLength BUDGET. It
+    # spent a year at 109 and reached 110 exactly, which is what finally
+    # forced {ToolsetBuild} out of it (T1 review): "what capabilities this run
+    # holds, and how a child inherits them" was never this object's question,
+    # and the tell was a `(backend:, parent:, journal:)` triple threaded
+    # verbatim through three private methods -- a repeated parameter list is
+    # the state of an object that has not been named yet.
+    #
+    # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
+    # to raise: a long assembler is fine, a SECOND responsibility hiding in it
+    # is not. So spend the headroom the same way -- {CompactionMount},
+    # {Command::Surface}, and {ToolsetBuild} are the shape to copy -- and when
+    # it runs out again, extract rather than loosen.
     class Wiring
-      attr_reader :ask_human, :questions, :notifier, :supervisor, :role_spawn, :conductor, :auto_surface
+      attr_reader :ask_human, :questions, :notifier, :supervisor, :conductor
+
+      # Both are the {ToolsetBuild}'s discoveries, not this object's state --
+      # kept as Wiring accessors because the Repl and the exe read them here.
+      delegate :role_spawn, :auto_surface, to: :toolset_build
 
       # The parked-approval queue, nil under --yolo -- the {Switchboard}'s now,
       # kept as a Wiring accessor because the Repl and exe read it here.
@@ -53,7 +65,7 @@ module Lain
       def run(backend:, resumed:, nvim:, &notice)
         channel = Lain::Channel.new
         recorder, session = run_state(resumed)
-        agent = wire_agent(channel:, recorder:, session:, backend:, resumed:)
+        agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim)
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:)
         @conductor = @conductor_opener.call(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
@@ -87,7 +99,7 @@ module Lain
         [recorder, chronicle.wrap_session(session)]
       end
 
-      def wire_agent(channel:, recorder:, session:, backend:, resumed: nil)
+      def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil)
         agent = nil
         parent = -> { agent.timeline }
         @notifier = Lain::Notify.for
@@ -98,7 +110,7 @@ module Lain
         @ask_human = notifying_ask_human(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
-        build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline)
+        build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
       end
 
       private
@@ -150,52 +162,17 @@ module Lain
         @notifier.question(agent: "lain", text: question)
       end
 
+      # The run's capability set and the child seams hung off it: what a chat
+      # can DO, and what a child inherits, is {ToolsetBuild}'s question, not
+      # this assembler's (see its class comment for the parameter-triple tell
+      # that named it). Held, not just called, because #role_spawn and
+      # #auto_surface delegate to what the build discovered.
+      attr_reader :toolset_build
+
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
-        base = Lain::Toolset.new(BaseTools.build(recorder))
-        @role_spawn = role_spawn_seam(base, backend:, parent:, journal:)
-        # T12: opt-in third approval surface, over the SAME role_spawn seam a
-        # `@role/skill` line folds through -- nil without --auto-approve, so
-        # the Repl's ApprovalSurfaces wires nothing extra by default.
-        @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if @options[:auto_approve])
-        Lain::Toolset.new(base.to_a + [research_subagent(base, backend:, parent:, journal:), ask_human, run_skill])
-      end
-
-      # The repl-phase role-spawn seam (a @role/skill line folds a persona'd
-      # one-shot subagent through this). It attenuates from the SAME base union the
-      # research subagent does, over the same spooled provider, child context, live
-      # parent handle, journal, supervisor, and lineage observer -- the
-      # role/policy/persona are chosen PER CALL from the parsed role name and
-      # context mode, so one seam serves every role. `slots:` is the session's
-      # rendered-persona source (Backend#slots, loaded once).
-      def role_spawn_seam(base, backend:, parent:, journal:)
-        Lain::Skill::RoleSpawn.new(toolset: base, slots: backend.slots,
-                                   **child_seam_kwargs(backend, parent:, journal:))
-      end
-
-      # The collaborators BOTH child seams (role spawn above, the research
-      # subagent below) attenuate over -- the same spooled provider, child
-      # context, live parent handle, journal, supervisor, and lineage observer.
-      # One helper, so the sentence "over the same seams" is code, not a
-      # comment that can drift.
-      def child_seam_kwargs(backend, parent:, journal:)
-        { provider: spooled_provider(backend), context_factory: -> { backend.context },
-          parent:, journal:, supervisor: @supervisor, observer: chronicle.observer }
-      end
-
-      # The in-agent composition primitive, main-agent-only: appended AFTER `base`
-      # (like ask_human), never inside base_tools, so the union a subagent role
-      # attenuates from does not carry it. It renders a skill's scaffold back to the
-      # SAME agent as a tool_result -- a continuation, not a spawn. The renderer is
-      # built over the same catalog + slots the repl's ReplMiddleware composes,
-      # loaded once from the project root.
-      def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer)
-
-      # The chat default: an attenuated read-only child (schema posture, depth 1).
-      # The observer routes its :spawn/:message lineage events into the session
-      # record, exactly as ask_human's Q/A goes.
-      def research_subagent(base, backend:, parent:, journal:)
-        Lain::Tools::Subagent.new(toolset: base, policy: backend.spawn_policy(:researcher), max_depth: 1,
-                                  **child_seam_kwargs(backend, parent:, journal:))
+        @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
+                                          supervisor: @supervisor, parent:, journal:)
+        @toolset_build.build(recorder, ask_human:)
       end
 
       # Gate and Live share ONE Toolset (the single-map invariant the plan
@@ -215,9 +192,13 @@ module Lain
       # gives the turn middleware's thunk the same late-bound agent binding the
       # subagent's parent handle uses. `timeline:` seeds a resumed chat's Agent
       # with the chain-verified Timeline (nil = Agent's fresh default).
-      def build_agent(toolset:, channel:, session:, backend:, timeline: nil)
+      # `views:` is T1's: a streamed tool's bytes are a view, not a record, so
+      # the executor writes them to the TTY Channel AND the editor's -- never
+      # to the journal, which already holds them in the turn's tool_result.
+      def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil)
         board = switchboard(backend)
-        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset:, channel:))
+        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset:,
+                                                                 channel: LiveViews.tool_output(channel, views)))
 
         agent = nil
         Lain::Agent.new(toolset:, context: board.graft(backend.context), handler: gate, session:, timeline:,

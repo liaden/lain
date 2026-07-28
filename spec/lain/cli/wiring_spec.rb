@@ -269,6 +269,84 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
+  # T1: a streamed tool's bytes are a VIEW, not a record. Wiring hands
+  # Handler::Live a fan-out over the run's TTY Channel AND the editor's, so
+  # nvim's lain://journal sees what the terminal sees -- while the durable
+  # NDJSON keeps only the turn's tool_result (Tools::Bash.render_output),
+  # which is where those same bytes already are.
+  describe "streamed tool output on the live views" do
+    let(:bash_use) do
+      { "type" => "tool_use", "id" => "tu_bash", "name" => "bash", "input" => { "command" => "printf hello" } }
+    end
+    let(:streaming_provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 Lain::Response.new(content: [bash_use], stop_reason: :tool_use),
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
+                                                    stop_reason: :end_turn)
+                               ])
+    end
+    let(:backend) do
+      offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: streaming_provider)
+    end
+    # The TTY leg, recorded rather than a real SizedQueue: nothing drains it here.
+    let(:channel) { RecordingChannel.new }
+    let(:view_channel) { Lain::Channel::DropOldest.new }
+    let(:journal) { RecordingChannel.new }
+    # See B1's note on journal_path: Chronicle#spool derives the WAL path by
+    # pure string manipulation, and a Provider::Mock run never writes a frame.
+    let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-spec-fake-session.ndjson") }
+    let(:views) { { channel: view_channel, socket_path: "/tmp/lain-t1-spec.sock", journal: } }
+    # --yolo, because bash is tier 3 and would otherwise park on the approval
+    # gate; this block is about where the bytes go, not who let them run.
+    let(:wiring) { described_class.new(options: { grace: 5, yolo: true }, chronicle:, status_feed:) }
+
+    def dispatch(attached)
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:, views: attached)
+      agent.ask("run it")
+      agent
+    end
+
+    def streamed(events) = events.grep(Lain::Telemetry::ToolOutput)
+
+    # The tool's own answer off the committed timeline -- proof the call
+    # completed rather than dying inside the fan-out.
+    def tool_results(agent)
+      agent.timeline.to_a.map(&:content).grep(Array).flatten.grep(Hash)
+           .select { |block| block["type"] == "tool_result" }.map { |block| block["content"] }.join("\n")
+    end
+
+    it "fans a bash tool's stdout onto the editor's Channel as well as the TTY's" do
+      dispatch(views)
+
+      expect(streamed(channel.events).map(&:bytes).join).to include("hello")
+      expect(streamed(view_channel.drain).map { |event| [event.tool_use_id, event.stream, event.bytes] })
+        .to eq([["tu_bash", :stdout, "hello"]])
+    end
+
+    it "keeps the streamed bytes off the durable record, which already carries them in the tool_result" do
+      agent = dispatch(views)
+
+      expect(streamed(journal.events)).to be_empty
+      expect(tool_results(agent)).to include("hello")
+    end
+
+    it "completes the tool, and still renders to the TTY, when the editor quit and closed its Channel" do
+      view_channel.close
+      agent = dispatch(views)
+
+      expect(streamed(channel.events).map(&:bytes).join).to include("hello")
+      expect(tool_results(agent)).to include("hello")
+    end
+
+    it "renders to the TTY and raises nothing when no editor is attached" do
+      agent = dispatch(nil)
+
+      expect(streamed(channel.events).map(&:bytes).join).to include("hello")
+      expect(tool_results(agent)).to include("hello")
+    end
+  end
+
   # A8: the assembly, and the point the whole chunk converges on. A plain `lain
   # chat` compacts, which means the Agent gets three things Wiring never passed
   # before: the run's per-turn Context source, the eager-summary observer its
