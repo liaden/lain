@@ -667,7 +667,11 @@ RSpec.describe Lain::CLI::Wiring do
             .to raise_error(Lain::Error, /unknown isolation backend "docker".*none.*worktree/m)
 
           journaled.close(reason: :exit)
-          expect(File.read(journaled.journal_path)).to be_empty
+          # T3: "no session record behind" is now literal. A journal that
+          # closes with nothing ever recorded into it removes its own file, so
+          # the zero-byte artifact never reaches the readers that pick the
+          # newest session (--resume, --fork, watch, sessions).
+          expect(File).not_to exist(journaled.journal_path)
         end
       end
     end

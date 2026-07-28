@@ -291,4 +291,87 @@ RSpec.describe Lain::CLI::Watch do
       expect { watch.run }.to raise_error(Lain::Error, /no sessions/)
     end
   end
+
+  # T3 fix round: the newest-session pick filtered on the ".ndjson" suffix
+  # ALONE, so it admitted both a zero-byte file (Journal.open creates the file
+  # before the header lands) and a `.btw` scratch session that `lain sessions`
+  # and `--resume` both hide. Tailing an empty file is unbounded by
+  # construction: the session_closed that stops the poll can never arrive in a
+  # file nobody is writing.
+  describe "choosing the newest session with no --session" do
+    # Any poll here is the bug: every fixture below either closes or refuses.
+    let(:sleeper) { ->(_seconds) { raise "watch polled a file that can never close" } }
+
+    def write_empty(name) = File.write(File.join(paths.sessions_dir, name), "")
+
+    subject(:watch) { described_class.new(selector:, sink: output, paths:, sleeper:) }
+
+    it "refuses a zero-byte newest session with a message instead of polling it forever" do
+      write_empty("20260724T000000-1.ndjson")
+
+      expect { watch.run }.to raise_error(Lain::Error, /no sessions/)
+    end
+
+    # "No sessions" while `ls` shows files is a refusal the user stops
+    # believing. Name what was passed over, and why it could never have ended.
+    it "counts what it skipped rather than claiming an empty directory" do
+      write_empty("20260724T000000-1.ndjson")
+      write_empty("20260725T000000-1.ndjson")
+      write_journal(opening_records, name: "20260726T000000-9.btw.ndjson")
+
+      expect { watch.run }
+        .to raise_error(Lain::Error) { |error|
+              expect(error.message).to include(paths.sessions_dir, "2 empty", "1 ephemeral")
+            }
+    end
+
+    it "skips a zero-byte newest for the newest session that can actually close" do
+      write_journal(opening_records + traffic_records + [closed_record])
+      write_empty("20260724T000000-1.ndjson")
+
+      expect(watch.run).to eq(0)
+      expect(output.string).to include("S found 3 papers")
+    end
+
+    it "ignores an ephemeral newest, choosing the newest durable session instead" do
+      write_journal(opening_records + traffic_records + [closed_record])
+      write_journal(opening_records, name: "20260724T000000-9.btw.ndjson")
+
+      expect(watch.run).to eq(0)
+      expect(output.string).to include("S found 3 papers")
+    end
+  end
+
+  # An explicitly named file is an instruction, not a guess, so watch honors it
+  # even when it holds nothing yet -- a live session IS empty for the instant
+  # between Journal.open and its header. But an unbounded wait with no output
+  # and no exit is indistinguishable from a hang, and the reviewer's probe sat
+  # through 500+ polls in silence. Saying so costs one line and turns it into a
+  # deliberate wait.
+  describe "an explicit --session naming a file with no records yet" do
+    it "says it is waiting, naming the file, before the first poll" do
+      path = File.join(paths.sessions_dir, "20260723T000000-1.ndjson")
+      File.write(path, "")
+      polls = 0
+      sleeper = lambda do |_seconds|
+        polls += 1
+        raise "polled without ever saying why" if output.string.empty?
+
+        append_journal(path, [closed_record])
+      end
+
+      described_class.new(selector:, path:, sink: output, paths:, sleeper:).run
+
+      expect(output.string).to include("waiting for records", path)
+      expect(polls).to eq(1)
+    end
+
+    it "stays silent about waiting for a file that already has records" do
+      path = write_journal(opening_records + traffic_records + [closed_record])
+
+      described_class.new(selector:, path:, sink: output, paths:).run
+
+      expect(output.string).not_to include("waiting for records")
+    end
+  end
 end

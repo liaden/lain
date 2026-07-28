@@ -43,24 +43,36 @@ module Lain
         SHORT = 19
 
         def self.for(name:, path:)
-          new(name:, records: Journal.records(File.foreach(path)).to_a)
+          new(name:, records: Journal.records(File.foreach(path)).to_a, empty: Journal.empty?(path))
         end
 
-        def initialize(name:, records:)
+        # `empty:` is required, not defaulted: a default exists only to let a
+        # caller omit it, and the sole thing omitting it could produce is a
+        # zero-byte file silently mislabelled "unreadable" -- the exact
+        # confusion this row was split to end.
+        def initialize(name:, records:, empty:)
           @name = name
           @records = records
+          @empty = empty
         end
 
         # A file with no session header is not a loadable session (a pre-scribe
         # --nvim-era journal, or not ours at all); listed honestly rather than
         # skipped, so the directory's contents and the listing never disagree.
         def to_s
-          return "#{@name}  ?  0 turns  unreadable  -" if header.nil?
+          return "#{@name}  ?  0 turns  #{unloadable}  -" if header.nil?
 
           "#{@name}  #{started}  #{turns.size} turns  #{status}  #{head_short}"
         end
 
         private
+
+        # Both are headerless, but the cause and the fix differ: a zero-byte
+        # file is what {Journal.open} left when a chat died before its header,
+        # while an unreadable one holds bytes nothing can load. Calling the
+        # empty one "unreadable" sends a reader hunting corruption that is not
+        # there.
+        def unloadable = @empty ? "empty" : "unreadable"
 
         def header = @records.find { |record| record["type"] == SessionRecord::HEADER_TYPE }
         def turns = @records.select { |record| record["type"] == SessionRecord::TURN_TYPE }

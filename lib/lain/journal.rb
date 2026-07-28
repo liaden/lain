@@ -53,13 +53,51 @@ module Lain
     def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new)
       path ||= default_path(paths:)
       FileUtils.mkdir_p(File.dirname(path))
-      # Append mode so a shared fd (ours and a dup handed to Rust tracing) writes
-      # atomically at end-of-file, never overwriting the other's bytes. File.new
-      # (not the block form) because the Journal OWNS this handle for its whole
-      # life and closes it in #close -- there is no scope to hand it to.
-      io = File.new(path, "ab")
-      new(io:, clock:, owns_io: true, fsync:)
+      # File.new (not the block form) because the Journal OWNS this handle for
+      # its whole life and closes it in #close -- there is no scope to hand it
+      # to. `path:` ONLY when this call created the file: it is the sole thing
+      # licensing #close to unlink, and a file that already existed is somebody
+      # else's (see {#discard_unwritten}).
+      created = create(path)
+      new(io: created || File.new(path, "ab"), clock:, owns_io: true, fsync:, path: created && path)
     end
+
+    # O_CREAT|O_EXCL: answers the fd only if this call brought the file into
+    # existence, nil if the name was already taken. Append mode for the same
+    # reason the fallback uses "ab" -- a shared fd (ours plus a dup handed to
+    # Rust tracing) writes atomically at end-of-file, never overwriting the
+    # other's bytes -- and binary so the bytes on the wire are unchanged.
+    #
+    # O_EXCL also refuses to create THROUGH a symlink, which is what keeps
+    # {#discard_unwritten} from ever facing a link whose target it measured and
+    # whose pointer it would remove.
+    def self.create(path)
+      File.new(path, File::WRONLY | File::CREAT | File::EXCL | File::APPEND | File::BINARY)
+    rescue SystemCallError
+      nil
+    end
+    private_class_method :create
+
+    # The ONE predicate for "this file holds no records at all", shared by the
+    # readers that pick a session off the directory listing ({Resume::Selector},
+    # {CLI::Watch}, {CLI::Sessions}). An absent path answers true for the same
+    # reason a zero-byte one does -- there is nothing in it to read -- so a file
+    # reaped between a listing and this call is a skip, never an Errno::ENOENT.
+    #
+    # `File.size?` is the idiom that gives both: nil for empty AND for absent.
+    #
+    # THE WINDOW: a live session is genuinely zero bytes between {.open} and the
+    # moment {SessionRecord::Scribe} writes its header, so this answers true for
+    # a session that is starting right now. A byte count cannot tell "never
+    # written" from "not written YET", and no cheap predicate can. The cost is
+    # not merely a wrong label: {CLI::Watch} uses this to CHOOSE a file, so a
+    # chat starting in the same instant can be passed over for an older session.
+    # Naming a file explicitly (`--session`) bypasses the choice entirely, which
+    # is why that path stays honored even when the file is empty.
+    #
+    # @param path [String]
+    # @return [Boolean]
+    def self.empty?(path) = !File.size?(path)
 
     # @param paths [Paths] resolves `sessions_dir`; injectable for specs
     # @return [String] a timestamped path under `paths.sessions_dir`
@@ -112,11 +150,18 @@ module Lain
     #   no-op on an `io` that truly lacks `#fsync` (note StringIO is NOT such an
     #   IO -- it answers `#fsync` as a no-op itself) -- this is a durability
     #   upgrade, never a new failure mode.
-    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false, fsync: false)
+    # @param path [String, nil] the file this Journal opened and may therefore
+    #   remove when it closes still empty (see {#close}); nil for an injected
+    #   IO, whose file is the caller's and never ours to unlink
+    def initialize(io:, clock: DEFAULT_CLOCK, owns_io: false, fsync: false, path: nil)
       @io = io
       @clock = clock
       @owns_io = owns_io
       @fsync = fsync
+      # `path:` is public, so the "a file we did not open is never ours to
+      # unlink" rule is applied HERE rather than trusted to {.open} happening to
+      # be the only caller that passes one.
+      @unwritten = Unwritten.new(owns_io ? path : nil)
       @monitor = Monitor.new
       @closed = false
       # Unbuffered writes: an event that reached #record is on the fd before the
@@ -143,16 +188,32 @@ module Lain
     end
     alias << record
 
-    # The underlying fd, for handing to the Rust tracing subscriber so its spans
-    # merge into this same NDJSON stream. `nil` for an IO with no descriptor (a
-    # StringIO), which simply means no Rust side shares it.
+    # Hand this Journal's descriptor to another writer -- the Rust tracing
+    # subscriber dups it (`dup_writer` in ext/lain) so its spans merge into this
+    # same NDJSON stream. `nil` for an IO with no descriptor (a StringIO), which
+    # simply means nothing can share it.
+    #
+    # Sharing is a COMMITMENT, and it is what this method exists to NAME: the
+    # receiver may land bytes long after we stop looking, so a shared Journal
+    # retires {#discard_unwritten} for good. Those writes would otherwise go to
+    # an inode we had already unlinked -- invisibly, since nothing on this side
+    # can see them coming. Asking for the number and asking to share are the
+    # same act, but only one of them says so, and the cleanup policy has to turn
+    # on a decision a caller made deliberately.
     #
     # @return [Integer, nil]
-    def fileno
-      @io.respond_to?(:fileno) ? @io.fileno : nil
-    rescue IOError
-      nil
+    def share_fd
+      @monitor.synchronize { @unwritten.shared! }
+      descriptor
     end
+
+    # Conservatively an alias for {#share_fd}: a descriptor that leaves this
+    # object may be written through whatever the caller meant by asking, so the
+    # disarm cannot be the thing a caller has to remember. New callers say
+    # {#share_fd}.
+    #
+    # @return [Integer, nil]
+    def fileno = share_fd
 
     # @return [Boolean]
     def closed?
@@ -162,18 +223,31 @@ module Lain
     # Stop accepting records. Closes the underlying IO only if this Journal opened
     # it; an injected fd is the caller's to close. Idempotent.
     #
+    # A file this Journal CREATED and that is still empty at close is REMOVED --
+    # see {Unwritten#discard} for which files that is and why it is so narrow.
+    #
     # @return [self]
     def close
       @monitor.synchronize do
         return self if @closed
 
         @closed = true
+        # Judged BEFORE the close, through the fd, because that is the only
+        # handle on the inode itself -- see {Unwritten#inode}.
+        inode = @unwritten.inode(@io)
         @io.close if @owns_io && @io.respond_to?(:close)
+        @unwritten.discard(inode)
       end
       self
     end
 
     private
+
+    def descriptor
+      @io.respond_to?(:fileno) ? @io.fileno : nil
+    rescue IOError
+      nil
+    end
 
     # Build the JSON object for `entry`, stamped with a timestamp. A serialization
     # failure never escapes and never yields a partial line: it becomes a
@@ -205,3 +279,8 @@ module Lain
     end
   end
 end
+
+# At the bottom, not the top: Unwritten reopens Lain::Journal to nest itself, so
+# the class has to exist first ({CLI::Watch}'s LineageFilter, same shape). Only
+# ever constructed at runtime from #initialize, so nothing above needs it.
+require_relative "journal/unwritten"

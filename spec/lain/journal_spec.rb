@@ -164,6 +164,220 @@ RSpec.describe Lain::Journal do
     end
   end
 
+  # T3: .open creates the file, but the session header lands much later
+  # (SessionRecord::Scribe writes it), so a chat that died in the window
+  # between left a zero-byte .ndjson on disk FOREVER -- and it sorts newest,
+  # so every reader that picks "the newest session" trips over it. The writer
+  # cleans up after itself rather than leaving three readers to recognise the
+  # artifact.
+  describe "a session file nothing was ever recorded into" do
+    it "leaves no zero-byte file behind on close" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+
+        described_class.open(path).close
+
+        expect(File).not_to exist(path)
+      end
+    end
+
+    it "keeps the file once a single record has landed" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        journal = described_class.open(path)
+
+        journal.record("type" => "session")
+        journal.close
+
+        expect(File).to exist(path)
+      end
+    end
+
+    # Salvage reopens a CRASHED session's own file and may append nothing at
+    # all (an already-recovered head). Unlinking on "we wrote nothing" would
+    # destroy that record; the test is the file's own bytes, not ours.
+    it "keeps an existing non-empty file it appended nothing to" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        File.write(path, %({"type":"session"}\n))
+
+        described_class.open(path).close
+
+        expect(File.read(path)).to include("session")
+      end
+    end
+
+    # The fd can be shared with the Rust tracing subscriber, which dups it and
+    # writes spans we never see. Zero-byte means the FILE is empty, not that
+    # this Journal happened not to write.
+    it "keeps a file another writer on the shared fd landed bytes in" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        journal = described_class.open(path)
+        File.open(path, "ab") { |other| other.write("{\"subject\":\"rust\"}\n") }
+
+        journal.close
+
+        expect(File).to exist(path)
+      end
+    end
+
+    it "never unlinks anything for an injected IO -- a file we did not open is not ours to remove" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        File.write(path, "")
+
+        File.open(path, "ab") { |io| described_class.new(io:).close }
+
+        expect(File).to exist(path)
+      end
+    end
+  end
+
+  # The unlink is the only destructive filesystem operation the harness
+  # performs on the experiment record, so it is pinned to the INODE this
+  # Journal created rather than to the name it used. These are the reviewer's
+  # `.review-T3/probe_unlink.rb` reproductions, ported: every one of them is a
+  # file the Journal must NOT remove.
+  describe "the unlink is pinned to the inode it created, never to the path" do
+    around { |example| Dir.mktmpdir { |dir| @dir = dir and example.run } }
+
+    def path_for(name) = File.join(@dir, name)
+
+    # P2. Reachable today: Resume::Salvager reopens a crashed session's file,
+    # which it did not create. A zero-byte one is somebody else's empty file,
+    # not ours to clean up.
+    it "keeps a zero-byte file that already existed when it opened (P2)" do
+      path = path_for("p2.ndjson")
+      File.write(path, "")
+
+      described_class.open(path).close
+
+      expect(File).to exist(path)
+    end
+
+    # Probe G. `path:` is a public kwarg on a public constructor, so "a file we
+    # did not open is never ours to unlink" cannot rest on .open being its only
+    # caller -- the doc says it, so the code has to enforce it.
+    it "keeps the caller's file when the IO was injected, however the path was passed (G)" do
+      path = path_for("g.ndjson")
+      File.write(path, "")
+
+      File.open(path, "ab") { |io| described_class.new(io:, path:, owns_io: false).close }
+
+      expect(File).to exist(path)
+    end
+
+    # P3. #share_fd exists precisely so the Rust tracing subscriber can dup the
+    # descriptor (ext/lain's dup_writer) and interleave its spans. Once the
+    # number is handed out, another writer may land bytes after our close --
+    # onto an unlinked inode, invisibly, if we still removed the file.
+    it "keeps a file whose descriptor was handed to another writer through #share_fd (P3)" do
+      path = path_for("p3.ndjson")
+      journal = described_class.open(path)
+      # A real dup(2), which is what ext/lain's dup_writer does. `autoclose:
+      # false` on the wrapper because that fd belongs to the Journal -- letting
+      # GC close it would yank a descriptor out from under another example.
+      dup = IO.for_fd(journal.share_fd, autoclose: false).dup
+      dup.sync = true
+
+      journal.close
+      dup.write(%({"type":"rust_span"}\n))
+      dup.close
+
+      expect(File).to exist(path)
+      expect(File.read(path)).to include("rust_span")
+    end
+
+    # #fileno stays conservative: a descriptor that leaves the object may be
+    # written through whatever the caller meant by asking, so the disarm must
+    # not be something a caller has to remember to opt into.
+    it "keeps a file whose descriptor merely left through #fileno too" do
+      path = path_for("p3b.ndjson")
+      journal = described_class.open(path)
+
+      journal.fileno
+      journal.close
+
+      expect(File).to exist(path)
+    end
+
+    # P4. The comment this replaces reasoned only about a rename AWAY from the
+    # path. A rename ONTO it substitutes a different inode under the same name.
+    it "keeps a different file renamed onto the path between open and close (P4)" do
+      path = path_for("p4.ndjson")
+      journal = described_class.open(path)
+      other = path_for("p4-other")
+      File.write(other, "")
+      File.rename(other, path)
+
+      journal.close
+
+      expect(File).to exist(path)
+    end
+
+    # P5. File.size? follows a symlink while unlink removes the link itself --
+    # testing one file and deleting another. O_EXCL refuses to create through a
+    # symlink at all, so the split cannot arise.
+    it "keeps both the link and its target when the path is a symlink (P5)" do
+      target = path_for("p5-target.ndjson")
+      link = path_for("p5-link.ndjson")
+      File.write(target, "")
+      File.symlink(target, link)
+
+      described_class.open(link).close
+
+      expect(File).to exist(target)
+      expect(File).to be_symlink(link)
+    end
+
+    # P6. THE one that decides it. Chronicle and ChatLaunch both document two
+    # Journal.open calls straddling a clock tick as a bug that already had to
+    # be closed once; when it cost a duplicate file that was untidy, and if the
+    # empty one could unlink the live one's file it would cost a SESSION -- its
+    # header and every turn landing on an inode with no name.
+    it "never unlinks the file a second, live Journal on the same path is writing (P6)" do
+      path = path_for("p6.ndjson")
+      live = described_class.open(path)
+      scratch = described_class.open(path)
+
+      scratch.close
+      live.record("type" => "session", "id" => "important")
+      live.close
+
+      expect(File).to exist(path)
+      expect(File.read(path)).to include("important")
+    end
+  end
+
+  # The one predicate the three readers (Resume::Selector, CLI::Watch,
+  # CLI::Sessions) share for "this file holds no records at all".
+  describe ".empty?" do
+    it "is true for a zero-byte journal" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        File.write(path, "")
+
+        expect(described_class).to be_empty(path)
+      end
+    end
+
+    it "is false for a file with bytes, even unparseable ones" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "s.ndjson")
+        File.write(path, "not json at all\n")
+
+        expect(described_class).not_to be_empty(path)
+      end
+    end
+
+    # A file that vanished between a listing and this read has nothing to
+    # offer a reader either -- a refusal, never a raw Errno::ENOENT.
+    it "is true for a path that does not exist" do
+      Dir.mktmpdir { |dir| expect(described_class).to be_empty(File.join(dir, "gone.ndjson")) }
+    end
+  end
+
   describe ".default_path" do
     it "is <sessions_dir>/<UTC-timestamp>-<pid>.ndjson" do
       Dir.mktmpdir do |tmp|

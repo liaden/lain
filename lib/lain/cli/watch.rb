@@ -49,11 +49,26 @@ module Lain
       # @return [Integer] 0 once session_closed lands with the watched spawn
       #   seen; 1 when the session closed and no spawn ever matched
       def run
-        File.open(journal_path, "r") { |io| follow(io) }
+        path = journal_path
+        announce_wait(path)
+        File.open(path, "r") { |io| follow(io) }
         conclude
       end
 
       private
+
+      # An explicitly named file is an instruction, not a guess, so a `--session`
+      # holding nothing yet is still tailed -- a live session IS empty for the
+      # instant between {Journal.open} and its header. But a wait with no
+      # output, no exit and no reason is indistinguishable from a hang, and this
+      # one is unbounded: if nothing is writing that file, the session_closed
+      # record that ends {#follow} never arrives. One line makes it a deliberate
+      # wait the user can judge and interrupt.
+      def announce_wait(path)
+        return unless Journal.empty?(path)
+
+        @sink.puts("waiting for records in #{path}")
+      end
 
       # The tail as composition: {Tail} yields only COMPLETE lines,
       # {Journal.records} parses them and skips foreign bytes (the shared-fd
@@ -98,11 +113,36 @@ module Lain
       # UTC-timestamped, so lexicographic IS chronological.
       def newest_session
         dir = @paths.sessions_dir
-        names = Dir.children(dir).select { |name| name.end_with?(".ndjson") }.sort
-        raise NoSession, "no sessions recorded under #{dir}" if names.empty?
+        names = watchable(dir)
+        raise NoSession, "no sessions to watch under #{dir}#{skipped(dir)}" if names.empty?
 
         File.join(dir, names.last)
       end
+
+      # "No sessions" said about a directory the user can SEE files in is a
+      # refusal they stop believing. Name what was passed over, and why it could
+      # never have ended: an empty file has no writer, so the session_closed
+      # that stops the tail is never coming.
+      def skipped(dir)
+        counts = { "empty (nothing is writing them, so they can never close)" =>
+                     durable_names(dir).size - watchable(dir).size,
+                   "ephemeral (--btw)" => session_names(dir).size - durable_names(dir).size }
+        named = counts.filter_map { |label, count| "#{count} #{label}" if count.positive? }
+        named.empty? ? "" : ": skipped #{named.join(" and ")}"
+      end
+
+      # The same three-tier narrowing {Resume::Selector} names, so the two
+      # readers agree on what "the newest session" means: every `.ndjson`, then
+      # the durable ones {Sessions} lists, then the ones a watch can actually
+      # FINISH. A zero-byte file is the sharpest case: it is what
+      # {Journal.open} leaves when a chat dies before its header, nobody is
+      # writing it, so the session_closed record that ends {#follow} can never
+      # arrive and the poll would run until the user killed it.
+      def session_names(dir) = Dir.children(dir).select { |name| name.end_with?(".ndjson") }
+
+      def durable_names(dir) = session_names(dir).reject { |name| Paths.ephemeral?(name) }
+
+      def watchable(dir) = durable_names(dir).reject { |name| Journal.empty?(File.join(dir, name)) }.sort
 
       # The fd tail as an Enumerable of COMPLETE ("\n"-terminated) lines,
       # composing with {Journal.records}. The fragment buffer lives here: at

@@ -157,6 +157,57 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
+    # T3 fix round: Journal.open creates the session file long before the
+    # scribe writes its header, so a chat that died in that window leaves a
+    # zero-byte .ndjson -- and it sorts NEWEST, so a bare --resume picked it
+    # and the Loader raised Corrupt on a file that is not corrupt, merely
+    # empty. The writer now cleans up after itself; these pin the reader's
+    # defence for the file a hard kill still leaves.
+    context "with a zero-byte session newest in the directory" do
+      let(:empty_name) { "20260404T000000-1.ndjson" }
+      before { File.write(File.join(paths.sessions_dir, empty_name), "") }
+
+      it "bare --resume skips it for the newest session that has records" do
+        expect(resume.call.file).to eq("20260202T000000-1.ndjson")
+      end
+
+      it "naming it exactly refuses saying it is EMPTY, never that it is corrupt" do
+        expect { resume.call(selector: empty_name) }
+          .to raise_error(described_class::Refusal) { |error|
+                expect(error.message).to include(empty_name, "empty")
+                expect(error.message).not_to match(/corrupt/i)
+              }
+      end
+
+      it "a unique prefix naming it refuses the same way, not with 'no session matching'" do
+        expect { resume.call(selector: "20260404") }
+          .to raise_error(described_class::Refusal, /empty/)
+      end
+
+      # "No sessions" while `ls` shows three files is a refusal the user stops
+      # believing, and they cannot act on it: the fix (delete them, or name one
+      # exactly) depends entirely on WHY each was passed over.
+      it "refuses a bare --resume when every durable session is empty, counting what it skipped" do
+        %w[20260101T000000-1.ndjson 20260202T000000-1.ndjson]
+          .each { |name| File.write(File.join(paths.sessions_dir, name), "") }
+        write_session("20260505T000000-9.btw.ndjson", [open_header])
+
+        expect { resume.call }
+          .to raise_error(described_class::Refusal) { |error|
+                expect(error.message).to include(paths.sessions_dir, "3 empty", "1 ephemeral")
+              }
+      end
+
+      # Resume::Selector is shared with ForkPoint, so --fork's "newest" moves
+      # with --resume's. The two must not disagree about which file is real.
+      it "--fork's newest agrees: the empty file is no fork parent either" do
+        point = Lain::CLI::ForkPoint.new(dir: paths.sessions_dir)
+                                    .call("@#{second.head_digest.delete_prefix("blake3:")[0, 8]}")
+
+        expect(File.basename(point.path)).to eq("20260202T000000-1.ndjson")
+      end
+    end
+
     it "refuses a bare --resume when only ephemerals exist, naming the directory" do
       Dir.children(paths.sessions_dir).each { |name| File.delete(File.join(paths.sessions_dir, name)) }
       write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(chain("scratchy")))
@@ -234,6 +285,34 @@ RSpec.describe Lain::CLI::Resume do
       frame = Lain::Provider::ResponseWal.new(wal_path_for(name)).open_frame(request_digest: request.digest)
       frame.append(AnthropicSSE.body(response))
       frame.close(complete: true)
+    end
+
+    # Salvager REOPENS a file it did not create (salvager.rb:60) and may append
+    # nothing to it. Its safety used to be borrowed: the only thing keeping a
+    # zero-byte file away from this reopen was Selector refusing it -- a
+    # different class, on a different card, that a future caller need not go
+    # through. Journal.open now only ever removes a file it created itself, so
+    # the invariant is structural; pinned HERE because this is the class that
+    # would pay for it being broken.
+    describe "the salvage reopen never destroys the file it salvages" do
+      it "keeps a crashed session's bytes intact across a reopen that appends nothing" do
+        path = write_session("20260101T000000-1.ndjson", [open_header] + turn_records(committed))
+        before = File.read(path)
+
+        Lain::CLI::Resume::Salvager.new(path:, timeline: committed).outcome
+        Lain::Journal.open(path, fsync: true).close
+
+        expect(File.read(path)).to eq(before)
+      end
+
+      it "keeps even a zero-byte file handed to the same reopen" do
+        path = File.join(paths.sessions_dir, "20260101T000000-1.ndjson")
+        File.write(path, "")
+
+        Lain::Journal.open(path, fsync: true).close
+
+        expect(File).to exist(path)
+      end
     end
 
     describe "a complete uncommitted response" do

@@ -141,5 +141,18 @@ RSpec.describe Lain::CLI::Sessions do
 
       expect(sessions.listing).to include("20260101T000000-1.ndjson", "unreadable")
     end
+
+    # T3 fix round: both are headerless, but they have different causes and
+    # different fixes -- a zero-byte file is Journal.open's artifact from a
+    # chat that died before its header, while an unreadable one holds bytes
+    # nobody can load. Calling the empty one "unreadable" sends a reader
+    # hunting corruption that is not there.
+    it "reads a zero-byte session as empty and a headerless one as unreadable" do
+      File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), "")
+      File.write(File.join(paths.sessions_dir, "20260102T000000-1.ndjson"), "not json at all\n")
+
+      expect(sessions.listing).to match(/20260102T000000-1\.ndjson.*unreadable/)
+        .and match(/20260101T000000-1\.ndjson.*\bempty\b/)
+    end
   end
 end
