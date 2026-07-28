@@ -71,7 +71,8 @@ module Lain
         tool_output: [],                 # a tool subprocess's stdout bytes
         plain: [],                       # a Renderable's own unstyled prose
         warm: %i[green],                 # the prompt cache is still inside its TTL
-        cold: %i[dim]                    # the cache went cold, or never warmed
+        cold: %i[dim],                   # the cache went cold, or never warmed
+        match: %i[green bold]            # the characters a query matched (Completion::Menu)
       }.transform_values(&:freeze).freeze
 
       # Colour is off unless the stream is a real terminal, matching {TTY}'s own

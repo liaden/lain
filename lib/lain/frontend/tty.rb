@@ -77,12 +77,18 @@ module Lain
       #   answers a different question (I3)
       # @param vi_mode [Boolean] ask the line editor for vi mode; off unless
       #   asked, in which case {LineEditor} leaves Reline as it found it (T14)
+      # @param completion_sources [Completion::Sources] where a `/command` or
+      #   `@path` candidate comes from -- injectable so a caller that HAS the
+      #   command registry and the skill catalog can hand them over, and so a
+      #   spec completes against a fixture tree rather than the real cwd (T16).
+      #   Only the sources are injectable, not the {Completion} around them:
+      #   the theme and the screen are this class's to hand over
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                      state_path: File.join(Dir.pwd, ".lain", "state.json"),
-                     wall_clock: -> { Time.now }, vi_mode: false)
+                     wall_clock: -> { Time.now }, vi_mode: false, completion_sources: Completion::Sources.new)
         @channel = channel
         @output = output
         @input = input
@@ -92,6 +98,10 @@ module Lain
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
+        # Built here, CLAIMED in #run: constructing a TTY must not rebind the
+        # human's keys. Draws through {Countdown#draw}, the existing owner of
+        # writing to the screen while the prompt is live (T16).
+        @completion = Completion.new(sources: completion_sources, theme:, screen: @countdown.method(:draw))
       end
 
       # Non-blocking: render whatever is queued right now and return. The
@@ -114,9 +124,13 @@ module Lain
       # (typically by ending its own loop); {#run} closes it too, defensively, so
       # the background thread is guaranteed to observe the close and exit rather
       # than leak past `run`'s return.
+      # Claiming the completion key sits beside {History#load} on purpose: both
+      # mutate process-global Reline state, and this is the moment lain is
+      # entitled to -- the terminal is ours from here (T16).
       def run
         enter_alternate_screen
         @history.load
+        Completion.install(@completion, notify: method(:render_warning))
         renderer = Thread.new { render_until_closed }
         yield self
       ensure
@@ -178,10 +192,7 @@ module Lain
         render_turn(renderable.paint(@theme))
       end
 
-      def render_error(message)
-        @output.puts(@theme.paint(:error, "error: #{message}"))
-        @output.flush
-      end
+      def render_error(message) = render_line(:error, "error: #{message}")
 
       # Surface a question the agent has put to the human (ask_human, OM-4).
       # Synchronous and Channel-bypassing for the same reason {#render_response}
@@ -254,11 +265,20 @@ module Lain
       # when a renderer raises. Everything the rendering puts ABOVE the editor's
       # line is printed here, because Reline's prompt is one line and it mangles
       # a newline into a literal backslash-n rather than wrapping.
+      #
+      # The completion menu is torn down HERE rather than by the key action
+      # that drew it: a menu belongs to the prompt it was drawn under. In an
+      # `ensure` because a prompt has THREE exits, not two -- a submitted line,
+      # EOF, and the {CLI::PromptBreaker} Interrupt that T14's dispatch
+      # deliberately lets through, which unwinds straight past a trailing
+      # statement (T16).
       def read_line_with_history(text)
         composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
         line = @line_editor.read(composed.editor_line(@output))
         @history.append(line) if line
         line
+      ensure
+        @completion.clear
       end
 
       # Empty string (never nil) when `output` is not a real terminal or
@@ -273,9 +293,16 @@ module Lain
       end
 
       # Presentation for a collaborator's degraded-path warning ({History}'s
-      # `notify:` seam) -- the palette stays in TTY proper.
-      def render_warning(message)
-        @output.puts(@theme.paint(:warning, message))
+      # and {Completion}'s `notify:` seam) -- the palette stays in TTY proper.
+      def render_warning(message) = render_line(:warning, message)
+
+      # One themed line, printed and flushed. Named because two renderers
+      # spelled it out byte-identically and a forgotten flush is invisible
+      # until it is not. {#render_question} is deliberately NOT folded in: it
+      # prints two lines under one flush, and routing it through here would
+      # buy a name at the cost of an extra flush per question.
+      def render_line(token, text)
+        @output.puts(@theme.paint(token, text))
         @output.flush
       end
 
@@ -578,6 +605,21 @@ module Lain
         def print_above(rendered)
           @lock.synchronize do
             active? ? above(rendered) : @output.print(rendered)
+            @output.flush
+          end
+        end
+
+        # Bytes straight to the screen, under the SAME lock {#print_above}
+        # holds. The completion menu (T16) draws through here rather than
+        # inventing a lock of its own: a menu, a countdown tick and a channel
+        # event all write to one terminal while the prompt is live, and two
+        # locks over one stream is two locks that can interleave a torn write.
+        # No status-line dance, because the menu carries its own cursor
+        # discipline (save / step down / clear below / restore) and asks this
+        # class for nothing but serialization.
+        def draw(bytes)
+          @lock.synchronize do
+            @output.print(bytes)
             @output.flush
           end
         end
