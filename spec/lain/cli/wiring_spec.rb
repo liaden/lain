@@ -711,6 +711,25 @@ RSpec.describe Lain::CLI::Wiring do
       expect(opened).to eq([wiring.conductor])
     end
 
+    # T7: the Conductor is the ONE place a user prompt is answered, so it is
+    # where RunClock#record_input is called -- and the clock it records on has
+    # to be the one the StatusFeed publishes, or the published idle never
+    # resets. ChatLaunch builds it; this class only has to pass it on.
+    it "passes the run's RunClock on to the conductor it opens" do
+      run_clock = Lain::RunClock.new
+      seen = []
+      opener = ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { seen << kwargs[:run_clock] } }
+
+      Dir.mktmpdir do |dir|
+        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, run_clock:,
+                                     tty_factory: tty_factory("quit\n", dir), conductor_opener: opener)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(seen).to eq([run_clock])
+    end
+
     it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired" do
       wiring = run_wiring
       env = wiring.command_env

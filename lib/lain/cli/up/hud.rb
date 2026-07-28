@@ -21,10 +21,35 @@ module Lain
         # attached PTY: tmux's own `#()` job-boundary parser counts nesting
         # correctly, so this is not the tmux-3.7-only risk it might look like
         # at a glance.
+        #
+        # The two later segments are CONDITIONAL, and both conditions are
+        # written to survive a key that is simply absent: a state published by
+        # an older `lain`, or the ordinary pre-first-turn window where
+        # occupancy is genuinely unknown, must render the line it always did
+        # rather than "approve:0 ctx:--". A status bar that says something on
+        # every quiet chat is noise; these two speak only when there is
+        # something to say. (`.foo` on a missing key is null in jq, never an
+        # error, which is what makes the guards one comparison each. A zero
+        # occupancy is truthy in jq -- only null and false are not -- so a
+        # genuinely empty context still renders `ctx:0%`, and only ABSENCE is
+        # silent, which is the distinction the field exists to carry.)
+        #
+        # The percentage is CLAMPED, and this is not defensive padding.
+        # {Lain::StatusFeed} publishes `used / window`, and
+        # {Lain::ContextWindow.default} answers an unmatched model with its
+        # 8,192-token conservative fallback rather than raising -- which is
+        # every Ollama id and most Bedrock ids. A real 32k local window then
+        # publishes 4.0, and an unclamped filter renders `ctx:400%`. The
+        # published number stays honest about what the book was asked (a bench
+        # reading it wants the truth); the status bar is where nonsense gets
+        # trimmed, because a pegged 100% reads as "full", which is the one
+        # thing a human can act on.
         JQ_FILTER = <<~'JQ'.strip
           if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
           then "🔥" else "❄" end as $warmth
-          | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)"
+          | (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
+          | (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
+          | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"
         JQ
 
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \

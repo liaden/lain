@@ -225,6 +225,32 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # T7: elapsed/idle/since_compaction are published by the StatusFeed but
+  # WRITTEN elsewhere -- Conductor#read_prompt records input on the clock, the
+  # tee's Telemetry::Compaction moves it. Two RunClocks would publish an idle
+  # that never resets, so the run builds exactly one and both halves get it.
+  describe "the run's one RunClock" do
+    it "hands the SAME instance to the state feed and to the wiring" do
+      given_to_feed = nil
+      given_to_wiring = nil
+      instance = launch({ journal: false },
+                        status_feed_factory: lambda { |run_clock:|
+                          given_to_feed = run_clock
+                          Lain::StatusFeed.new(run_clock:)
+                        },
+                        wiring_factory: lambda { |run_clock:, **|
+                          given_to_wiring = run_clock
+                          instance_double(Lain::CLI::Wiring, conductor: spy("conductor")).tap do |double|
+                            allow(double).to receive(:run)
+                          end
+                        })
+
+      instance.call { |_notice| nil }
+
+      expect(given_to_feed).to be_a(Lain::RunClock).and be(given_to_wiring)
+    end
+  end
+
   # A resolver double honoring Resume#call's keyword signature.
   def refusing_resolver(refusal)
     resolver = Object.new

@@ -1,11 +1,18 @@
 #!/bin/sh
-# Renders the lain HUD line (warmth / fleet / inbox) for a tmux status bar.
+# Renders the lain HUD line (warmth / fleet / inbox / approvals / context)
+# for a tmux status bar.
 #
 #   lain-status [DIR]
 #
 # Reads DIR/.lain/state.json (DIR defaults to $PWD; lain.tmux passes the
-# pane's cwd via tmux's #{pane_current_path}) -- the three-key struct
-# Lain::StatusFeed publishes: {"cache_deadline","fleet","inbox_count"}.
+# pane's cwd via tmux's #{pane_current_path}) -- the struct
+# Lain::StatusFeed publishes. The filter reads five of its keys
+# ("cache_deadline","fleet","inbox_count","approvals_pending","occupancy")
+# and ignores the rest; the last two are rendered only when present, so a
+# state.json written by an older lain still renders the line it always did.
+# The occupancy percentage is clamped to 100: an unmatched model (every
+# Ollama id, most Bedrock ids) is measured against ContextWindow's 8,192
+# conservative fallback, which can publish a ratio well above 1.0.
 #
 # The jq filter below is Lain::CLI::Up::JQ_FILTER, byte for byte -- one HUD,
 # two renderers, pinned by spec (spec/plugin/tmux_plugin_spec.rb). Without
@@ -32,7 +39,9 @@ fi
 # shellcheck disable=SC2016
 JQ_FILTER='if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
 then "🔥" else "❄" end as $warmth
-| "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)"'
+| (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
+| (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
+| "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"'
 
 if command -v jq >/dev/null 2>&1; then
   jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"

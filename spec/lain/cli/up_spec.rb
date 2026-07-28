@@ -4,6 +4,7 @@ require "tmpdir"
 require "json"
 require "open3"
 require "shellwords"
+require "time"
 
 # I2: `lain up` -- create/attach the "lain" tmux session, session-scoped so the
 # global theme is untouched, with a status-right HUD (warmth/fleet/inbox) read
@@ -524,6 +525,64 @@ RSpec.describe Lain::CLI::Up do
 
       expect(report.created).to be(false)
       expect(report.warnings).to be_empty
+    end
+  end
+
+  # T7: the HUD's own render, driven straight through `sh` rather than through
+  # a tmux server, so the new StatusFeed fields are pinned on every machine
+  # that has jq -- not only on one that also has tmux. The filter under test is
+  # the SAME Up::Hud::JQ_FILTER the tmux plugin script embeds byte-for-byte
+  # (spec/plugin/tmux_plugin_spec.rb pins that), so one render is one HUD.
+  describe "Hud, rendering the state feed's fields" do
+    def jq_present? = system("jq", "--version", out: File::NULL, err: File::NULL)
+
+    before { skip("jq not found on PATH") unless jq_present? }
+
+    around do |example|
+      Dir.mktmpdir { |dir| @state_dir = dir and example.run }
+    end
+
+    let(:state_path) { File.join(@state_dir, "state.json") }
+
+    def render(state)
+      File.write(state_path, JSON.generate(state))
+      value, = Lain::CLI::Up::Hud.new(state_path:).status_right(jq_present: true)
+      eval_status_job(value)
+    end
+
+    def warm_state(**overrides)
+      { "cache_deadline" => (Time.now + 300).utc.iso8601, "fleet" => %w[a b], "inbox_count" => 3 }.merge(overrides)
+    end
+
+    it "names both a pending approval and the context occupancy" do
+      out = render(warm_state("approvals_pending" => 1, "occupancy" => 0.34))
+
+      expect(out).to eq("🔥 fleet:2 inbox:3 approve:1 ctx:34%")
+    end
+
+    # A state written before these fields existed (an older `lain`, a
+    # hand-written fixture, the pre-first-turn publish where occupancy is
+    # genuinely absent) must render the line it always did -- a HUD that says
+    # "approve:0 ctx:--" on every quiet chat is noise, not information.
+    it "says nothing about either when the state carries neither" do
+      expect(render(warm_state)).to eq("🔥 fleet:2 inbox:3")
+    end
+
+    it "stays quiet about approvals while none are parked" do
+      expect(render(warm_state("approvals_pending" => 0, "occupancy" => nil))).to eq("🔥 fleet:2 inbox:3")
+    end
+
+    it "renders a genuinely empty context as 0%, since only ABSENCE is silent" do
+      expect(render(warm_state("occupancy" => 0.0))).to eq("🔥 fleet:2 inbox:3 ctx:0%")
+    end
+
+    # StatusFeed publishes used/window, and ContextWindow.default answers an
+    # unmatched model (every Ollama id, most Bedrock ids) with its 8,192-token
+    # conservative fallback rather than raising -- so a ratio above 1.0 is a
+    # normal published value, and "ctx:244%" is what an unclamped filter would
+    # put on a status bar.
+    it "clamps a ratio above 1.0 rather than rendering a nonsense percentage" do
+      expect(render(warm_state("occupancy" => 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100%")
     end
   end
 

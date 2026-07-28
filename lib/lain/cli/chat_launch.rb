@@ -21,12 +21,14 @@ module Lain
                      chronicle_factory: Chronicle.public_method(:for),
                      live_views_factory: LiveViews.public_method(:new),
                      wiring_factory: Wiring.public_method(:new),
-                     status_feed_factory: -> { Lain::StatusFeed.new })
+                     run_clock_factory: -> { Lain::RunClock.new },
+                     status_feed_factory: ->(run_clock:) { Lain::StatusFeed.new(run_clock:) })
         @options = options
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
         @live_views_factory = live_views_factory
         @wiring_factory = wiring_factory
+        @run_clock_factory = run_clock_factory
         @status_feed_factory = status_feed_factory
       end
 
@@ -76,7 +78,15 @@ module Lain
       # unchanged into Wiring's Command::Env -- so /status reads the same live
       # instance the tee feeds. Exists even for a headless run (--no-journal
       # --no-nvim builds no tee), so /status still answers its honest zeros.
-      def status_feed = @status_feed ||= @status_feed_factory.call
+      def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:)
+
+      # The ONE RunClock for the run (T7). Its three measures are WRITTEN in
+      # two places and READ in a third: the Conductor records a user prompt on
+      # it, the tee's Telemetry::Compaction moves its compaction age, and the
+      # StatusFeed publishes all three. Two instances would publish an `idle`
+      # that never resets, so it is built here -- the one point above both --
+      # and threaded down, exactly as the status feed is.
+      def run_clock = @run_clock ||= @run_clock_factory.call
 
       # The session record's lifecycle collaborator (journal, scribe, observer,
       # per-iteration durability -- see {Chronicle}). Defaults to the Null duck
@@ -114,7 +124,7 @@ module Lain
       # bracket it reads as; @wiring is instance state because the ensure closes
       # its conductor.
       def converse(backend:, resumed:, &notice)
-        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:)
+        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

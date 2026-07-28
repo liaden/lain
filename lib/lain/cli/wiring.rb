@@ -15,7 +15,7 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     #
-    # ⚠️ THIS CLASS IS AT 98 OF ITS 110-LINE Metrics/ClassLength BUDGET. It
+    # ⚠️ THIS CLASS IS AT 102 OF ITS 110-LINE Metrics/ClassLength BUDGET. It
     # spent a year at 109 and reached 110 exactly, which is what finally
     # forced {ToolsetBuild} out of it (T1 review): "what capabilities this run
     # holds, and how a child inherits them" was never this object's question,
@@ -46,12 +46,16 @@ module Lain
       # from the T1 panel note): the exe takes the real defaults; a spec hands
       # in a StringIO-backed TTY factory or a recording opener and drives #run
       # itself -- no send(:build_repl), no instance_variable_set.
-      def initialize(options:, chronicle:, status_feed:,
+      # `run_clock:` is the RUN's clock, built by {ChatLaunch} beside the
+      # StatusFeed that publishes its readings and passed straight through to
+      # the Conductor, which is the one place a user prompt is answered (T7).
+      def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
         @options = options
         @chronicle = chronicle
         @status_feed = status_feed
+        @run_clock = run_clock
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
       end
@@ -68,11 +72,20 @@ module Lain
         agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim)
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:)
-        @conductor = @conductor_opener.call(tty:, chronicle: @chronicle, grace: @options[:grace], supervisor:)
+        @conductor = open_conductor(tty)
         @conductor.guard do
           build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:,
                                        first_prompt: @options[:prompt])
         end
+      end
+
+      # The run's shutdown coordinator. `run_clock:` is the T7 thread: the
+      # Conductor is the ONE place a user prompt is answered, so it is where
+      # {RunClock#record_input} is called -- and the clock it records on has to
+      # be the instance the StatusFeed publishes, or the published `idle` never
+      # resets. This class only passes on what {ChatLaunch} built.
+      def open_conductor(tty)
+        @conductor_opener.call(tty:, chronicle:, grace: @options[:grace], supervisor:, run_clock:)
       end
 
       # The subagent tool reads the live parent head at spawn time, so the Agent is
@@ -115,7 +128,7 @@ module Lain
 
       private
 
-      attr_reader :options, :chronicle
+      attr_reader :options, :chronicle, :run_clock
 
       # D2: `--isolation`, read at its construction site (the --auto-approve
       # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv

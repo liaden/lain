@@ -37,11 +37,11 @@ RSpec.describe "plugin/tmux" do
     Dir.mktmpdir { |dir| @dir = dir and example.run }
   end
 
-  def write_state(cache_deadline:, fleet:, inbox_count:, dir: @dir)
+  def write_state(cache_deadline:, fleet:, inbox_count:, dir: @dir, **extra)
     FileUtils.mkdir_p(File.join(dir, ".lain"))
     File.write(File.join(dir, ".lain", "state.json"),
                JSON.generate({ "cache_deadline" => cache_deadline, "fleet" => fleet,
-                               "inbox_count" => inbox_count }))
+                               "inbox_count" => inbox_count }.merge(extra.transform_keys(&:to_s))))
   end
 
   describe "scripts/lain-status" do
@@ -61,6 +61,33 @@ RSpec.describe "plugin/tmux" do
       out, _err, status = run_status
 
       expect(out.strip).to eq("🔥 fleet:2 inbox:3")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # T7: the shipped script and Up::Hud move together or not at all -- the
+    # verbatim-embedding example above is the mechanism, this is the effect:
+    # the fields StatusFeed gained render identically out of the tmux plugin.
+    it "renders the parked-approval count and the context occupancy the state feed now publishes" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3,
+                  approvals_pending: 1, occupancy: 0.34)
+
+      out, _err, status = run_status
+
+      expect(out.strip).to eq("🔥 fleet:2 inbox:3 approve:1 ctx:34%")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # The clamp ships in the script too, or an Ollama chat's status bar reads
+    # "ctx:244%" -- ContextWindow.default measures an unmatched model against
+    # its 8,192-token fallback, so a ratio above 1.0 reaches this renderer.
+    it "clamps the occupancy percentage at 100, exactly as Up::Hud does" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 2.44)
+
+      out, _err, status = run_status
+
+      expect(out.strip).to eq("❄ fleet:0 inbox:0 ctx:100%")
       expect(status.exitstatus).to eq(0)
     end
 
