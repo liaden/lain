@@ -130,9 +130,102 @@ class LainCLI < Thor
     method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
                       aliases: "-k", desc: "retrieval depth (recall@k)"
     def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k]) }
+
+    desc "arms FIXTURE", "Compare the three orchestration arms live over an ArmTasks fixture " \
+                         "-- spends real API money"
+    # PROVIDERS, not a restated list: the same rule --isolation follows below,
+    # so the help text and the resolver cannot come to disagree about what a
+    # provider name means.
+    method_option :provider, type: :string, default: "anthropic",
+                             desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
+    method_option :api_base, type: :string, desc: "Override the Ollama API base (ollama provider only)"
+    method_option :model, type: :string,
+                          desc: "Model id; defaults to the selected provider's own default when unset"
+    method_option :max_tokens, type: :numeric, default: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
+                               desc: "max_tokens per model turn; higher than record's, because an arm task " \
+                                     "answers with whole file bodies and a ceiling hit ends the run"
+    method_option :system, type: :string, desc: "system prompt"
+    method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
+    method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
+    # NO Thor `default:`, deliberately, and NOT chat's declaration copied over
+    # (which sets `default: IsolationBackend::DEFAULT`). A default materializes
+    # the key, so `options[:isolation]` would never be nil -- and unset is not
+    # `none`: unset leaves Arm::Driver's own Arm::NoIsolation, which leases
+    # nothing at all, while `none` resolves a real backend over the shared
+    # process environment. Bench::CLI#arm_isolation preserves that distinction,
+    # and a default here would collapse it silently. BACKENDS in the help text
+    # only, so the flag's advertised set and the resolver cannot disagree.
+    method_option :isolation, type: :string,
+                              desc: "Isolation backend every arm leases its workers from " \
+                                    "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); leave it unset " \
+                                    "for Arm::Driver's own default, which leases nothing -- not the same as none"
+    method_option :journal, type: :string,
+                            desc: "NDJSON file this run's isolation lease telemetry is recorded into; " \
+                                  "--isolation leases the workers, and refuses without somewhere to record them"
+    # Flag name → Bench::CLI#arms_report keyword, RECORD_FLAGS' shape: one
+    # declarative map, so adding a flag is one line here and one method_option
+    # above. `decompose:` and `price_book:` are absent on purpose -- a lambda and
+    # a price table are injection seams for specs, not things an argv can spell;
+    # `journal:` is absent because the flag is a PATH and the keyword is an open
+    # Journal, and this map forwards values verbatim (a String answers `<<` by
+    # appending to itself, so a raw path would reach the resolver and quietly
+    # collect the telemetry in a local variable).
+    ARMS_FLAGS = { provider: :provider_name, api_base: :api_base, model: :model,
+                   max_tokens: :max_tokens, system: :system, temperature: :temperature,
+                   seed: :seed, isolation: :isolation }.freeze
+
+    def arms(fixture)
+      refuse_journal_without_isolation!
+      kwargs = ARMS_FLAGS.to_h { |flag, keyword| [keyword, options[flag]] }
+      journal = lease_journal
+      render { Lain::Bench::CLI.new.arms_report(fixture_path: fixture, journal:, **kwargs) }
+    ensure
+      # Closing is what discards a journal this run created and never wrote to,
+      # so a refusal leaves no zero-byte artifact -- the rule the chat path keeps.
+      journal&.close
+    end
+
+    no_commands do
+      # The argv door in front of Bench::CLI#arm_isolation's deliberate CRASH.
+      # A journal with no isolation name to resolve it against raises a bare
+      # ArgumentError there -- it refuses to silently drop an option the caller
+      # asked for -- and that is right for the library, whose caller is a
+      # programmer. It rested on nothing in argv being able to reach it, and
+      # --journal is what broke that premise. So this closes the door in FRONT
+      # of that refusal, which stays exactly as it is and stays the authority:
+      # two flags in a defensible combination get a sentence, not a backtrace
+      # (the rule at the top of this file -- every Lain::Error presents clean,
+      # anything else is a bug and keeps its trace).
+      #
+      # {CLI::ChatLaunch#refuse_windows_without_journal!} is the same shape one
+      # layer down, for the same reason: refuse the PAIR at the door.
+      def refuse_journal_without_isolation!
+        return unless options[:journal] && options[:isolation].nil?
+
+        raise Thor::Error, "--journal records the isolation leases a run takes, and nothing leases without " \
+                           "--isolation: drop --journal, or add --isolation " \
+                           "#{Lain::CLI::IsolationBackend::BACKENDS.join("|")}"
+      end
+
+      # A SET --isolation REQUIRES a journal, and Bench::CLI is what refuses the
+      # pair: IsolationBackend decorates BY NEED, so an unjournalled resolve hands
+      # back a bare backend emitting no Telemetry::IsolationLease at all -- an
+      # isolated, paid run nothing can observe. That refusal names the missing
+      # journal, and the flag it asks for is right here in the same help output.
+      #
+      # ITS OWN FD, on the operator's own path. Not stderr, which Journal's
+      # contract forbids outright and which `render` fills with this command's
+      # error message anyway -- one such line and the record stops parsing, which
+      # is the wound output discipline exists for. Not Journal.open's DEFAULT
+      # path either: that lands in Paths#sessions_dir, which `lain sessions` and
+      # --resume enumerate, and a header-less bench journal is not a session.
+      def lease_journal = options[:journal] && Lain::Journal.open(options[:journal])
+    end
   end
 
-  desc "bench SUBCOMMAND ...ARGS", "Bench drivers over recorded sessions (variance, record, sweep)"
+  desc "bench SUBCOMMAND ...ARGS",
+       "Bench drivers over recorded sessions, and the live arm comparison " \
+       "(variance, record, sweep, plan-sweep, arms)"
   subcommand "bench", Bench
 
   # The compaction band of `chat`'s flag surface: whether to compact at all, the
