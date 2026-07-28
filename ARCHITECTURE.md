@@ -657,6 +657,288 @@ free and byte-diffable), `live_replay.rb` (re-run against the API), `variance.rb
 identity over a shared Store, so N branches start from the same immutable node and it is the
 divergence, not the fork, that costs anything.
 
+## The algebra: laws as architecture
+
+The bench's whole premise is "swap a strategy, run both, compare". Swapping is only meaningful
+if composition is lawful: if the prompt you get depends on how a pipeline was bracketed, or a
+session total depends on the order you folded it, then 2 runs differ by accident of assembly
+and the comparison measures nothing. So lain names the algebraic structure of its operations
+explicitly, holds every implementation to each structure's laws, and asserts the deliberate
+*violations* as first-class refutations with recorded reasons.
+
+None of this needs math past what a working programmer already has. Each concept below links to
+[`docs/GLOSSARY.md`](docs/GLOSSARY.md), which gives the general definition before the
+lain-specific use. One prerequisite runs under everything here: laws are statements about
+*values*, so they are only checkable because `Event` and `Timeline` are
+[regular types](docs/GLOSSARY.md#regular-type): deeply frozen, equality by content,
+`Ractor.shareable?` as the mechanical no-mutable-state test.
+
+### Claims are code, and one spec sweeps them
+
+`Lain::Algebra` (`lib/lain/algebra.rb`) is the vocabulary. `STRUCTURES` is a closed list of 5
+(`monoid`, `commutative_monoid`, `meet_semilattice`, `elementwise`, `pure`), and a claim is a
+declaration written in `lib/`, beside the operation it is about:
+
+```ruby
+include Algebra::Monoid
+monoid on: :>>, identity: Algebra.later { Context::Identity }
+```
+
+(`Algebra.later` defers a unit that does not exist yet at declaration time: `Context::Identity`
+is an instance built after the class body closes. A bare `Proc` is refused so laziness is never
+accidental.)
+
+The negative form has equal rank, and its reason is mandatory. This one is real, from
+`lib/lain/timeline.rb`:
+
+```ruby
+not_a_meet_semilattice on: :causal_meets,
+                       because: "the causal ancestry order has no unique greatest lower bound -- a " \
+                                "criss-cross fan-in leaves incomparable maximal common ancestors, so " \
+                                "this answers with the SET of them (git merge-base's shape) and a " \
+                                "set-valued operator makes no semilattice claim"
+```
+
+The registry refuses malformed claims at load: an unknown structure, an operation the class does
+not answer, a duplicate, a declaration facing a refutation (`Contradiction`), a refutation with
+no stated reason (`Unexplained`: an unexplained negative tells a later reader only that somebody
+once knew something). Claims are per-*operation*, not per-class, because `Timeline` has 3 meet-ish
+operations and only 2 are semilattices; `include MeetSemilattice` on the class would be a lie.
+
+`spec/algebra_laws_spec.rb` walks the registry and names no class of its own: declare a
+structure anywhere in `lib/` and it is swept. A claim costs its author a generator in
+`spec/support/algebra_generators.rb`, keyed by class and operation. No generator, no proof: the
+coverage examples fail by name on a claim with no generator, on a generator for a claim nobody
+makes, and on an empty population, which would turn `all?` into "true, of nothing" and the
+sweep into a green certificate of silence.
+
+Declarations run the shared example groups in `spec/support/shared_examples/` **unchanged**.
+Refutations cannot reuse those groups (RSpec has no "expect this group to fail"), so a refuted
+operation runs a battery transcribed from the group it names, with 3 outcomes: `:holds`,
+`:fails`, or the exception raised. A refutation is confirmed only by `:fails`, because a
+negative confirmed by an *error* proves nothing: run `#causal_meets` through the semilattice
+laws naively and associativity dies of `NoMethodError` on `Array`, which says nothing about
+associativity.
+
+Transcribing 1 law set twice invites drift, so the battery is pinned to its group in both
+directions. Every declaration also runs through the battery, where a battery law stronger than
+the group's fails a known-good instance at once; and the battery's law names are checked against
+the example names the shared group actually contributed, so a gutted or renamed battery law
+cannot quietly stop judging while everything stays green. A refutation carries 2 further
+obligations: its generator names the law it turns on (`refutes:`), so it cannot be confirmed by
+whichever law happened to break, and its reason is exhibited by executable witnesses rather than
+merely recorded (`#causal_meets` is shown answering 2 incomparable ancestors;
+`PurgeFailedInputs` is shown giving 1 message 2 different images). For some structures the
+positive group and the battery are literally 1 object with 2 readings, so those laws exist
+once; where RSpec forces a second transcription, the pinning is what holds the copies together.
+This is [property-based testing](docs/GLOSSARY.md#property-based-testing) with the claims made
+enumerable, so no hand-kept list in a spec can drift from what `lib/` asserts.
+
+```mermaid
+flowchart LR
+  DECL["declaration, in lib/ beside the operation<br/><i>monoid on: :>>, identity: ...</i>"] --> REG
+  REF["refutation, reason mandatory<br/><i>not_a_meet_semilattice on: :causal_meets, because: ...</i>"] --> REG
+  REG["Algebra.registry<br/>refuses at load: unknown · unanswered ·<br/>duplicate · contradiction · unexplained"]
+  REG --> SWEEP["spec/algebra_laws_spec.rb<br/>walks the registry; names no class itself;<br/>a generator per claim, or it fails by name"]
+  SWEEP -->|declaration| GROUPS["shared example groups, unchanged<br/>monoid · meet_semilattice · elementwise · pure"]
+  SWEEP -->|refutation| BATTERY["law battery: :holds / :fails / raised<br/>confirmed only by :fails, on the named law,<br/>reason exhibited by witnesses"]
+  GROUPS -.->|"pinned both ways: declarations run the<br/>battery too; battery law names matched<br/>to the group's contributed examples"| BATTERY
+  GROUPS --> RUST["same groups run against ext/lain's Timeline:<br/>the differential oracle for the Rust port"]
+```
+
+### Monoids: composition that cannot depend on bracketing
+
+A [monoid](docs/GLOSSARY.md#monoid) is an associative operation with an identity: string
+concatenation with `""`, list append with `[]`, function composition with `id`. Associativity is
+the operationally interesting law: it says grouping is irrelevant, so a *pipeline is fully
+described by its sequence*. 4 instances carry the claim:
+
+| Where | Operation | Unit | The bug the law rules out |
+|---|---|---|---|
+| `Context::Combinator` (`context/base.rb`) | `>>` | `Context::Identity` | the rendered prompt depending on how the combinator chain was bracketed |
+| `Usage` (`usage.rb`) | `+` | `Usage::ZERO` | a session total depending on fold order (commutative as well, so *no* order dependence at all) |
+| `Compaction::Strategy::Replacement` (`compaction/strategy/replacement.rb`) | `+` | `DROP` | an "empty replacement" message the provider would reject; the unit *vanishes* instead of rendering blank |
+| `Middleware` (`middleware.rb`) | `>>` | `Middleware::Identity` | a stack behaving differently depending on assembly order of sub-stacks (property-tested against the same shared group; it predates the registry) |
+
+The payoff is the [free monoid](docs/GLOSSARY.md#free-monoid). Since bracketing is irrelevant, a
+strategy *description* is exactly its finite sequence of combinators, and the descriptions form
+the free monoid on the combinator set. Distinct descriptions can name the same strategy
+(compose with `Identity`; prune twice), so the strategy space proper is the image of the
+description space, but descriptions are what the bench enumerates: fix a generator list, bound
+the length, and `lain bench sweep` walks the words mechanically. That enumerable space is what
+the algebra buys the bench.
+
+### Homomorphisms: which collapses distribute, and which must not
+
+The next question, in plain terms: *does processing 2 adjacent spans separately give the same
+answer as processing them joined?* Symbolically `f(a · b) = f(a) · f(b)`, a
+[monoid homomorphism](docs/GLOSSARY.md#monoid-homomorphism). For compaction strategies this is
+the honest classifier:
+
+- `Compaction::Strategy::Elide` **is** one, held to both halves of the law (empty span to unit,
+  concatenation to concatenation of collapses) by example groups included directly in its spec.
+  The registry's swept form of the same fact is its `elementwise` claim, which the theorem below
+  makes equivalent.
+- `Compaction::Strategy::Summarizing` is **refuted**: summarizing a concatenation is not the
+  concatenation of summaries, and 1 span answers 1 block where its halves answer 2. The
+  refutation guards a real refactor: rewrite `Summarizing` to summarize each message
+  independently (parallelizable, cacheable per message) and every example-based test stays
+  green while the output quietly stops being a summary of a *conversation*. The registry entry
+  makes that tidy-up fail loudly.
+
+A theorem does real work here. Single messages are the span monoid's *generators*: every span
+factors uniquely as a concatenation of them. A homomorphism is therefore pinned down by its
+values on single messages, and, because the domain is free, any per-message map extends to a
+homomorphism: `flat_map` is that extension. The 2 directions together make "is a homomorphism"
+and "is a per-message map, concatenated" the same condition. `Algebra::Elementwise` is that
+universal property implemented as a module. You supply the action on single messages (`each:`)
+and it generates the whole-span method as `span.flat_map { attested(_1) }`, so the law cannot
+be broken through that door, and `is_a?(Elementwise)` is the classification with no separate
+label to drift. Two refinements matter in practice:
+
+- The per-element map is `M -> [M]`, zero-or-more, not `M -> M`: `Context::DedupeToolCalls`
+  drops a whole message when purging empties it, and concatenation is what makes that a drop
+  rather than a hole.
+- `given:` names a whole-span *analysis* computed once and handed to every element
+  (`elementwise on: :call, each: :without_stale, given: :stale_tool_use_ids`). For that family
+  the plain homomorphism law is false even when the declaration is honest, because splitting
+  the span splits the analysis, so the sweep judges it by the conditional law
+  `call(S) == S.flat_map { each(_1, analysis(S)) }` instead.
+
+`Context::PurgeFailedInputs` records the true negative the only way the design permits, by *not*
+including the module and filing the refutation directly, and its witness is worth reading: a
+span `[m, error, m]` whose first and last messages are `==` gives them different images in 1
+call, so no function of `(element, analysis)` can reproduce it, whatever the analysis.
+
+Related, 1 level down: what a strategy answers from `#ranges` is an
+[interval partition](docs/GLOSSARY.md#interval-partition) of the collapsible span: ascending,
+non-overlapping, non-empty ranges, with the gaps between them retained verbatim. Those
+conditions are well-formedness, refused in 1 place (a private `Partition` value in
+`Strategy::Base`) because the derivation folds the ranges straight into writes, with no
+per-index membership check downstream to catch a bad answer. The partition framing also settles
+what a pin is: a cut point. `Source::Derived::PinCuts` splits the span around a pinned turn
+rather than lifting it out, so the pin survives in place between the 2 replacements either side.
+
+### Three meets, one lattice question
+
+A [meet-semilattice](docs/GLOSSARY.md#meet-semilattice) is a partial order where any 2 elements
+have a greatest lower bound, their *meet* (necessarily unique when it exists; that is what
+"greatest" means in a partial order). `gcd` over integers is one, and so are `min` over numbers
+and longest-common-prefix over paths. The laws
+(`spec/support/shared_examples/meet_semilattice.rb`) are
+[idempotence](docs/GLOSSARY.md#idempotence), commutativity, and associativity, and knowing
+whether an operation obeys them tells you whether "the" meeting point is even a coherent phrase.
+
+`git merge-base` is the instructive example because it is 2-faced. On linear or first-parent
+history it is a genuine meet: "where do these 2 histories last agree?". In general it is not,
+and git's own `--all` flag is the confession: a criss-cross merge leaves several maximal bases
+and no greatest one. `Timeline` answers the question 3 ways, and the registry records which
+side of that line each falls on:
+
+- `#meet`: first-parent render edges only. The chain is linear, so the meet exists and is
+  unique. **Declared** a semilattice.
+- `#causal_meets`: reachability over both edge kinds. **Refuted**: a criss-cross fan-in leaves
+  incomparable maximal common ancestors, so no greatest lower bound exists at all, and the
+  honest answer is the *set* of maximal ones, `git merge-base --all`'s shape.
+- `#dominator_meet`: the deepest common [dominator](docs/GLOSSARY.md#dominator-immediate-dominator-dominator-tree)
+  over the union graph. **Declared**: a node's dominators are totally ordered, so uniqueness
+  comes back, which is exactly what a checkpoint primitive needs.
+
+The criss-cross that separates them, arrows pointing to parents as the
+[DAG](docs/GLOSSARY.md#directed-acyclic-graph-dag)'s edges do:
+
+```mermaid
+flowchart BT
+  A --> R["R"]
+  B --> R
+  C["C (head 1)"] --> A
+  C --> B
+  D["D (head 2)"] --> A
+  D --> B
+```
+
+`causal_meets(C, D)` is `{A, B}`: both are common ancestors, neither is an ancestor of the
+other, and any singleton answer would be arbitrary. `dominator_meet(C, D)` is `R`, the latest
+event *every* path to both heads passes through, and therefore the latest point no in-flight
+branch can bypass: the safe place to synchronize or compact. Same graph, different question,
+and only the lattice-lawful ones may be used where the code assumes a unique answer.
+
+### The negatives are design decisions
+
+The pattern above (Summarizing's refuted homomorphism, `causal_meets`' refuted lattice) is
+deliberate policy: where a structure's *absence* is a design decision, that absence is asserted
+with the same machinery as a presence, because a negative living only in a comment rots silently
+while the spec suite stays green. Two more instances shape the compaction design:
+
+**Derivation is not monotone.** Timelines are ordered by prefix, and the tempting model is that
+compaction respects that order: extend the source, and the derived chain extends too, sharing
+its prefix. It does not (`derive(T1) <= derive(T2)` fails even when `T1 <= T2`), for 2
+independent reasons: a retained turn re-committed under a different parent chain gets a
+different digest, and the `keep_last` window slides. (In the glossary's categorical terms:
+derivation is not a [functor](docs/GLOSSARY.md#functor) between the prefix orders.) The wrong
+model has a name, `Derivation#extend` holding the last derived head, and 2 specs go red if
+anyone "fixes" the code toward it. Full re-derivation stays affordable because the derived
+chain is bounded by `keep_last`, not by history length.
+
+**The preimage is the record.** A compaction maps source turns to derived events, and a
+replacement's `causal_parents` records which source turns collapsed into it: the
+[fiber](docs/GLOSSARY.md#fiber-preimage) of the map over that replacement, in the glossary's
+vocabulary (no relation to Ruby's `Fiber`). A retained event's preimage is the singleton you
+can read off the event itself, so its causal set is stored empty: nothing collapsed here.
+Replacements' preimages plus retained turns cover the source span exactly once, and nothing
+else is stored: no side table of "what became what", because the derived chain *is* the mapping
+read backwards, which is what lets `Compaction::DerivationAudit` re-derive an edge and compare.
+A causal parent the `Store` has not seen raises, so a preimage is never silently incomplete.
+This is also why a strategy is deliberately **not** an
+[endomorphism](docs/GLOSSARY.md#endomorphism) on message arrays: a bare
+`#call(messages) -> messages` would compose beautifully and destroy the preimage.
+
+```mermaid
+flowchart LR
+  subgraph SRC["source timeline"]
+    t1 --> t2 --> t3 --> t4 --> t5
+  end
+  subgraph DER["derived chain, bounded by keep_last"]
+    r["replacement<br/>(collapse of t1..t3)"] --> k4["t4 retained"] --> k5["t5 retained"]
+  end
+  r -. "causal_parents: the preimage {t1, t2, t3}" .-> t1
+  r -.-> t2
+  r -.-> t3
+```
+
+The fifth structure is `pure` (`Algebra::Pure`): a claim that an operation reaches no mutable
+state. `Strategy::Identity` and `Elide` carry it; `Summarizing#blocks` is refuted because it
+holds an oracle (a live model call, per the compaction section above: equal inputs need not
+answer equal outputs), which is precisely why re-deriving its edges needs the journalled answer
+rather than the edge alone. The registry is also a production dependency here:
+`Compaction::DerivationAudit` reads it at runtime to classify a drifted edge (declared pure
+means a derivation bug, refuted pure means an incomplete replay, unclaimed means it refuses to
+attribute until someone declares or refutes). The refutation documents the dependency where a
+spec, and now the audit, can enforce it.
+
+### What this buys, and how to add a claim
+
+For a new operation with compositional shape (a `>>`, a `+`, a merge, a collapse), the
+checklist is short:
+
+1. Name the structure and its unit in the code, beside the operation, with the declaration
+   verbs (`monoid on:`, `meet_semilattice on:`, `elementwise on:`, `pure on:`).
+2. Supply a generator in `spec/support/algebra_generators.rb`; the sweep fails by name without
+   one.
+3. If the structure is deliberately absent, refute it instead: a reason, the law the refutation
+   turns on, and witnesses that exhibit the reason.
+4. Stop there. The sweep picks the claim up on its own, and a hand-kept spec list would only
+   drift.
+
+What the discipline buys, concretely: a strategy-description space the bench can enumerate
+rather than curate (the free monoid); bracketing ruled out as a source of prompt variation
+(associativity certifies the composition operator, and `Context#render`'s purity is what
+extends that to the request bytes); token totals independent of fold order (commutativity); a
+compaction audit with no bookkeeping tables (preimages); a checkpoint primitive that is
+provably unique where the naive one provably is not (dominators versus causal meets); and a
+Rust port whose acceptance test is *the same unchanged law suite* the Ruby version passes,
+which is how a port is known to be a swap rather than a rewrite.
+
 ## Everything else, mapped
 
 Subsystems without a section above, each self-documented in its own index file:

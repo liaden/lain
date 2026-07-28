@@ -26,10 +26,12 @@ example-based tests miss.
 > The monoid whose elements are all finite sequences of elements from a set, with concatenation as
 > the operation. ([Wikipedia](https://en.wikipedia.org/wiki/Free_monoid))
 
-Because `Context` composition is associative, a strategy is determined by the *sequence* of
-combinators and not by how they are bracketed. The space of strategies is therefore the free monoid
-on the combinator set, which is what makes it enumerable: the bench can sweep it instead of running
-a hand-written menu of named strategies.
+Because `Context` composition is associative, a strategy *description* is determined by its
+sequence of combinators and not by how they are bracketed, so the descriptions form the free
+monoid on the combinator set. Distinct descriptions can name the same strategy (composing with the
+identity; pruning twice), so the strategy space proper is that monoid's image under evaluation,
+but descriptions are what is enumerable: the bench sweeps words over a fixed generator list
+instead of running a hand-written menu of named strategies.
 
 There is a second instance one level down. A compaction strategy's `#blocks` maps a span of messages
 into the free monoid on **content blocks** — concatenation, with the empty block list as `ε`. The
@@ -123,8 +125,9 @@ seam were a bare endomorphism on message arrays.
 
 This works because `Timeline#to_a` follows `render_parent` only, so a fan-in on `causal_parents`
 never drags the subsumed turns back into the render, and `Ledger#unique_turns` walks render ancestry,
-so it never double-counts their tokens. A retained turn's causal set is **empty**, because a retained
-turn subsumes nothing — the fibers cover only what actually collapsed. `Arm::Synthesis` is the older
+so it never double-counts their tokens. A retained turn's causal set is stored **empty**: its fiber
+is the singleton recoverable from the event itself, so only the replacements' fibers need recording,
+and replacements' fibers plus retained turns still cover the source span exactly once. `Arm::Synthesis` is the older
 writer of the same shape, and both share its discipline: a causal parent the `Store` has not seen
 raises rather than being quietly dropped, so a fiber is never silently incomplete.
 
