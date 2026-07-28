@@ -57,3 +57,4 @@ module Lain
 end
 
 require_relative "transport/mock"
+require_relative "transport/vsock"
