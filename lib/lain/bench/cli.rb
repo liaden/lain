@@ -124,6 +124,48 @@ module Lain
         Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, **arm_isolation(isolation, **backend_options)).report
       end
 
+      # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits
+      # on. Everything {#arm_report} needs is built here from plain values -- the
+      # three arms, {ArmTasks}' committed suite and its per-task gold graders,
+      # and the live {SpawnSeam} -- so `exe/lain` stays a flag parser and never
+      # names an Arm, a Grader, or a Provider itself (its boundary rule).
+      #
+      # THIS SPENDS REAL API MONEY per run: every arm asks a real provider once
+      # per task, and the dual-ledger arm asks up to {Arm::DualLedger::DEFAULT_MAX_STEPS}
+      # times. `provider:` is the injected Provider OBJECT specs pass;
+      # `provider_name:` is the `--provider` FLAG -- {SpawnSeam} keeps that split
+      # for the same reason {#record} does.
+      #
+      # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none" --
+      # see {#arm_report} for what that distinction buys and {#lease_options} for
+      # how it survives the call. A SET name REQUIRES `journal:`; B3 is written
+      # against that, and {#lease_options} says why.
+      #
+      # @param fixture_path [String] the committed {ArmTasks} suite the arms run
+      # @param isolation [String, nil] the `--isolation` name; nil keeps
+      #   {Arm::Driver}'s own default
+      # @param journal [#<<, nil] where the resolved backend's
+      #   {Telemetry::IsolationLease} records land; REQUIRED with an `isolation`
+      # @param decompose [#call] how the orchestrator arm splits a task up; see
+      #   {LiveArms::DEFAULT_DECOMPOSE} for why the arm's own default is wrong here
+      # @param price_book [Lain::PriceBook] prices every arm's journal
+      # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam} (`provider:`,
+      #   `provider_name:`, `model:`, `max_tokens:`, `temperature:`, `seed:`,
+      #   `system:`, `api_base:`, `toolset:`); ITS signature owns those defaults
+      # @return [String] the Driver's report; never printed here
+      # @raise [Refusal] on an `isolation` with no journal, or a suite whose
+      #   tasks share a prompt
+      # @raise [ArmTasks::MissingFixture] when the suite path is not there
+      # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
+      # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
+      def arms_report(fixture_path:, isolation: nil, journal: nil, decompose: LiveArms::DEFAULT_DECOMPOSE,
+                      price_book: PriceBook.default, **spawn_options)
+        suite = ArmTasks.new(fixture_path:)
+        arm_report(LiveArms.build(price_book:, decompose:),
+                   tasks: suite.map(&:prompt), spawn_seam: SpawnSeam.new(**spawn_options),
+                   grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
+      end
+
       # Record `runs` fresh live sessions of one task file (user prompts, one
       # per line, blank lines skipped) into `out/<i>.ndjson`, each a full
       # Session a later {#variance_report} can load.
@@ -166,6 +208,30 @@ module Lain
       end
 
       private
+
+      # The isolation half of the {#arm_report} call, and the one place the unset
+      # name stays unset: nil with nothing to journal passes NO keyword at all,
+      # so {#arm_isolation} sends none either and {Arm::Driver}'s own default
+      # stands.
+      #
+      # A SET name REQUIRES a journal, and refuses without one.
+      # {Lain::CLI::IsolationBackend} decorates BY NEED, so resolving with no
+      # journal hands back a bare backend emitting no {Telemetry::IsolationLease}
+      # at all -- and manufacturing a Channel here instead would emit the records
+      # into a sink nobody drains, which is the same unobservable run one layer
+      # down. On the bench the record IS the deliverable, so the operator hears
+      # this at the door rather than from an empty result after a paid run.
+      #
+      # A journal with NO name goes through UNACCOMPANIED on purpose, so
+      # {#arm_isolation}'s existing refusal is what says the telemetry would
+      # never arrive; a second guard here would be a second authority to drift.
+      def lease_options(isolation:, journal:)
+        return { journal: }.compact if isolation.nil?
+
+        raise Refusal, "--isolation #{isolation} leases workers and has no journal to record them in" if journal.nil?
+
+        { isolation:, journal: }
+      end
 
       # The `isolation:` keyword {Arm::Driver} is built with -- or NO keyword at
       # all when the flag is unset, so the Driver stays the one authority on what
@@ -286,6 +352,60 @@ module Lain
 
         Provider::AnthropicRaw.new
       end
+
+      # Grades a run against THE TASK IT WAS GIVEN. {Arm::Driver} threads ONE
+      # `#grade` duck through every arm and every task, while {ArmTasks} carries
+      # a gold {Grader::Fixture} PER TASK -- so something has to dispatch, and a
+      # `grade(timeline)` call carries exactly one usable key: the run's own user
+      # turns, one of which is verbatim the prompt the Driver handed the arm
+      # (every arm asks the task text unchanged -- {Arm::SingleThread} and
+      # {Arm::DualLedger} through `Agent#ask`, {Arm::OrchestratorWorker} as the
+      # lead root the synthesis folds onto).
+      #
+      # {ArmSweep::GraderAdapter} is the replayed sibling of this object; it
+      # needs no dispatch because that sweep drives the arms itself, one task at
+      # a time, and so can build a per-task adapter per run.
+      #
+      # A timeline naming no task in the suite is a WIRING bug, not a zero score:
+      # scored as zero it would look like an arm that failed every task, which is
+      # the one reading a bench must never invent.
+      class SuiteGrader
+        def initialize(suite)
+          @suite = unique_prompts!(suite)
+        end
+
+        # @param timeline [Timeline] the run to score
+        # @return [Grader::Grade]
+        def grade(timeline) = task_for(asked_in(timeline)).grader.grade(ArmSweep.trajectory(timeline))
+
+        private
+
+        # {ArmTasks} enforces a unique `id`, NOT a unique `prompt`, and the
+        # fixture path is user input. Dispatching by prompt across a duplicate
+        # resolves BOTH tasks' runs to the first, scoring the second's gold
+        # against the first's trajectory and reporting the difference as a score
+        # -- the invented number this class doc forbids, arriving through the one
+        # door the doc does not guard. Refused in {ArmTasks#unique!}'s shape,
+        # here where the assumption is made and before any arm runs.
+        def unique_prompts!(suite)
+          shared = suite.group_by(&:prompt).values.select { |tasks| tasks.size > 1 }
+          return suite if shared.empty?
+
+          raise Refusal, "arm tasks #{shared.flatten.map(&:id).sort.inspect} share a prompt, and the grader " \
+                         "dispatches by prompt -- their gold could not be told apart"
+        end
+
+        def task_for(asked)
+          @suite.find { |task| asked.include?(task.prompt) } ||
+            raise(ArgumentError, "graded a timeline whose user turns name no task in the suite")
+        end
+
+        def asked_in(timeline)
+          timeline.to_a.select { |turn| turn.role == "user" }
+                       .flat_map(&:content).filter_map { |block| block["text"] }
+        end
+      end
+      private_constant :SuiteGrader
     end
   end
 end
