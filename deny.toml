@@ -29,6 +29,33 @@ allow = [
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
+# No crate in this workspace may own, drive, or interrogate a terminal.
+#
+# Ruby owns the stream. `NO_COLOR`, `FORCE_COLOR`, `isatty` and `TERM` are read
+# on the Ruby side and the resolved answer is passed across the FFI boundary as
+# an argument, which is what keeps `Lain::Ext::Prompt`'s renderer the pure
+# `(format, vars, color) -> String` that the prompt-cache purity rule wants. A
+# crate that opens /dev/tty, installs a raw-mode guard, or reads the environment
+# to decide color breaks that from inside a `.so` we cannot see into -- and
+# `skim` 5.6.1 demonstrates the failure mode, hard-depending on `crossterm`
+# (`use-dev-tty`) and installing a `#[global_allocator]` from its LIBRARY crate.
+# `anstyle` (style value types, zero deps, no env access) is the sanctioned
+# substitute for the whole class.
+#
+# This list is workspace-wide and therefore also binds `crates/lain-core`. That
+# is deliberate: the daemon is the isolation boundary and has even less business
+# holding a tty. `onig_sys` is here for a different reason -- it is a C
+# dependency that arrives transitively via `syntect`'s default `regex-onig`
+# feature, and `regex-fancy` is the pure-Rust alternative we would take instead.
+deny = [
+    { crate = "crossterm", reason = "owns the terminal; Ruby does" },
+    { crate = "termion", reason = "owns the terminal; Ruby does" },
+    { crate = "termwiz", reason = "owns the terminal; Ruby does" },
+    { crate = "console", reason = "reads the environment to decide color; color is a resolved argument" },
+    { crate = "termcolor", reason = "reads the environment to decide color; use anstyle" },
+    { crate = "terminal_size", reason = "interrogates the tty; Ruby measures its own stream" },
+    { crate = "onig_sys", reason = "C oniguruma; prefer the pure-Rust regex-fancy path" },
+]
 
 [sources]
 unknown-registry = "deny"

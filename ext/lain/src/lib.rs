@@ -42,6 +42,7 @@ mod dag;
 #[deny(clippy::missing_docs_in_private_items)]
 mod digest;
 mod event;
+mod prompt;
 mod treesitter;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or
@@ -1591,6 +1592,12 @@ mod ffi {
         bm25.define_error("DuplicateId", lain_error)?;
         bm25.define_singleton_method("build", function!(Bm25::build, 1))?;
         bm25.define_method("search", method!(Bm25::search, 2))?;
+
+        // The starship-compatible prompt formatter. Its whole binding -- class,
+        // errors, methods -- is defined in `prompt::ffi` rather than inline here,
+        // because grammar, style vocabulary and FFI surface belong in one file;
+        // this line is the registration, not the definition.
+        crate::prompt::ffi::define(ruby, ext, lain_error)?;
 
         // Stateless structural search: no wrapped handle, so `AstGrep` is a bare
         // class with two singleton methods and one named error. `BadPattern`

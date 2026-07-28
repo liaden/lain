@@ -69,3 +69,27 @@ ast-grep-language = "=0.44.1"
 # -- NO separate grammar deps. Pinned EXACT to the version ast-grep-language
 # already resolves (=0.26.11) so the Language ABI matches its bundled grammars.
 tree-sitter = "=0.26.11"
+# Style VALUE TYPES for the prompt formatter -- `Style`, `AnsiColor`,
+# `Ansi256Color`, `RgbColor`, `Effects` -- and their `Display` renderers. Chosen
+# over `console`/`termcolor`/`owo-colors` for one reason that is a rule, not a
+# preference: `anstyle` has ZERO runtime dependencies and reads NO environment.
+# `NO_COLOR`, `FORCE_COLOR`, `isatty` and `TERM` are properties of the stream
+# RUBY owns, so color arrives here as a resolved argument and the renderer
+# stays the pure `(format, vars, color) -> String` that `Context#render`'s
+# purity rule wants. A crate that decides color for us would be deciding it
+# from the wrong process.
+anstyle = "1"
+# TOML config parsing for `Lain::Ext::Prompt.from_toml`. `from_str` ONLY -- Ruby
+# reads the file, so no I/O crosses into this crate; the source arrives as a
+# String. Paired with `serde`'s derive because the config is a typed struct
+# (`format` plus an optional `[settings]` table), not a free-form map: an
+# unknown top-level key is then a loud deserialize error rather than a silently
+# ignored typo.
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
+serde = { version = "1", features = ["derive"] }
+# Display-column width for the rendered prompt, so the line editor's cursor
+# arithmetic is right in front of an emoji or a CJK glyph. 0.2's `str` width is
+# NOT the sum of its `char` widths (ZWJ sequences, variation selectors), which
+# is exactly the correction we need and the reason the version floor matters.
+# `no_std`, zero dependencies.
+unicode-width = "0.2"

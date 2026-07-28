@@ -1,0 +1,54 @@
+Third-party notices for `ext/lain`
+==================================
+
+This file records source that was VENDORED into this crate -- copied in, rather
+than depended on. `deny.toml`'s licence allow-list governs dependencies pulled
+from crates.io; it says nothing about code carried in the repository, which is
+what this file is for.
+
+
+starship -- the prompt format grammar
+-------------------------------------
+
+`ext/lain/src/prompt.rs` implements the prompt format DSL specified by
+starship's `src/formatter/spec.pest`. The grammar's four productions are
+reproduced verbatim in that file's module documentation, and the parser,
+conditional-elision rule and style vocabulary below it are a reimplementation of
+the language those productions define. No starship Rust code was copied: the
+implementation is original, the *language* is starship's.
+
+    Upstream: https://github.com/starship/starship
+    File:     src/formatter/spec.pest
+    Licence:  ISC
+
+ISC License
+
+Copyright (c) 2019-2022, Starship Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+
+Where lain's implementation deliberately differs
+------------------------------------------------
+
+Compatibility is with the *grammar*, not with starship's runtime. Recorded here
+because a reader comparing the two will otherwise read a difference as a bug:
+
+- Colour is an argument, never a discovery. starship consults the environment
+  and the terminal; nothing here does, and `deny.toml`'s `[bans]` list enforces
+  that for the whole workspace.
+- A literal style word that is not in the vocabulary is refused when the format
+  is COMPILED. starship logs and continues.
+- `prev_fg` / `prev_bg`, and every starship module and its config, are out of
+  scope: this crate renders a format against variables a caller supplies, and
+  knows nothing about git, languages, or the filesystem.

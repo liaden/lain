@@ -12,7 +12,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 112/112 today; must not regress
+cargo test                                  # 170/170 today; must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -28,7 +28,7 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 - **Stable channel only. No `#![feature]`.** A subagent has already shipped `#![feature]` here
   and it does not build. If you reach for a nightly feature, the design is wrong.
 - **No `forbid(unsafe_code)` here.** That rule is `crates/lain-core`'s
-  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has ~7 `unsafe` blocks and
+  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 10 `unsafe` blocks and
   they are FFI-boundary calls in magnus's own unsafe API plus `libc::dup` — they cannot be
   removed, and forbidding them would not compile. Every one carries a `SAFETY:` comment; that is
   the standard here. The root `CLAUDE.md`'s "NO `unsafe` in lain's Rust" means *do not hand-roll
@@ -54,6 +54,22 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   `tracing`, whose writer is a caller-supplied fd.
 - **Pin every dependency.** `cargo deny` bans wildcards. `libc` is pinned at `0.2` for exactly
   this reason, and it is here solely for `dup(2)`.
+- **No crate here may own, drive, or interrogate a terminal — and none may read the
+  environment to decide colour.** `NO_COLOR`, `FORCE_COLOR`, `TERM` and `isatty` are properties
+  of the stream **Ruby** owns. Ruby resolves them and passes the answer across the boundary as
+  an argument; `Lain::Ext::Prompt#render(vars, color:)` takes `color` as a **required** keyword
+  for that reason, because a default would let a caller forget who is entitled to answer. This
+  is the `anstyle`-over-`console` rule: `anstyle` is style *value types* with zero runtime
+  dependencies and no env access, while `console`/`termcolor` decide colour for you from inside
+  a `.so` you cannot see into. The rule is mechanical, not remembered —
+  `deny.toml`'s `[bans] deny` list refuses `crossterm`, `termion`, `termwiz`, `console`,
+  `termcolor`, `terminal_size` and `onig_sys` **workspace-wide**, so it binds
+  `crates/lain-core` too. If a crate you want pulls one of them in, that crate is answering a
+  question in the wrong process — stop, do not add an exception.
+- **Vendored source needs a `NOTICE` entry; the licence allow-list does not cover it.**
+  `deny.toml`'s `allow` list governs crates resolved from crates.io. Grammar, algorithms, or
+  tables copied *into* this repository are outside its reach, and `ext/lain/NOTICE` is where
+  their attribution lives (today: starship's prompt-format grammar, ISC).
 - **`cargo fmt` before you commit**, not after the hook rejects you.
 
 ## The two invariants that cost real debugging
