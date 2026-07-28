@@ -84,8 +84,8 @@ Ractors are still explicitly experimental on Ruby 4.0.5 (the interpreter prints 
 Ractor-safe. None of those were written with Ractor's shareable-object rules in mind, and
 retrofitting them is not this project's to do.
 
-What *is* already true, and already spec'd, is that `Ractor.shareable?(turn)` returns `true` —
-`Turn` and the other value objects in the Timeline are deeply frozen, with no reachable mutable
+What *is* already true, and already spec'd, is that `Ractor.shareable?(event)` returns `true` —
+`Event` and the other value objects in the Timeline are deeply frozen, with no reachable mutable
 state. That spec exists as a mechanical guard on immutability (it caught a real bug: `@role`
 via `Symbol#to_s` and `@digest` via string interpolation both silently produced mutable Strings
 inside a supposedly-frozen object). It is not a promise that Ractors will parallelize anything.

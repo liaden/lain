@@ -31,6 +31,44 @@ combinators and not by how they are bracketed. The space of strategies is theref
 on the combinator set, which is what makes it enumerable: the bench can sweep it instead of running
 a hand-written menu of named strategies.
 
+There is a second instance one level down. A compaction strategy's `#blocks` maps a span of messages
+into the free monoid on **content blocks** — concatenation, with the empty block list as `ε`. The
+image of that unit is `Compaction::Strategy::DROP`, and `Replacement` declares itself a monoid over
+it — `monoid on: :+, identity: Algebra.later { DROP }`, deferred because the unit is defined below the
+declaration — so `spec/support/shared_examples/monoid.rb` holds it to the same identity and
+associativity laws it holds `Middleware` to. That declaration is why a range whose collapse answers
+`DROP` contributes no replacement event at all rather than an empty one: vanishing *is* what a unit
+does, and `Strategy::Base#collapse` reads an empty block list as `DROP` rather than as a blank
+message the provider would reject.
+
+### Monoid homomorphism
+
+> A map between monoids that preserves the operation and the identity: `f(a · b) = f(a) · f(b)` and
+> `f(e) = e'`. ([Wikipedia](https://en.wikipedia.org/wiki/Monoid#Monoid_homomorphisms))
+
+Both halves are checked by `spec/support/shared_examples/monoid_homomorphism.rb`: "maps the empty
+span to the unit" and "maps a concatenation of spans to the concatenation of their collapses".
+`Compaction::Strategy::Elide` is held to it; `Compaction::Strategy::Summarizing` is held to the
+group's *negative* reading, because summarizing a concatenation is not the concatenation of
+summaries.
+
+The universal property of the free monoid is what makes this the same condition as being
+**elementwise**. A map out of a free monoid is determined by its action on generators, so a
+span-collapse that is a homomorphism is exactly one that is a per-message map concatenated — and
+conversely. That equivalence is why `Algebra::Elementwise` is *structure* rather than convention:
+`elementwise on: :blocks, each: :attested` **generates** the whole-span method as
+`span.flat_map { attested(_1) }`, so an includer cannot be non-homomorphic through that door, and
+`is_a?(Elementwise)` is the classification with no separate label to drift from it. Recording the
+negative therefore means *not* including the module and filing the refutation directly with
+`Algebra.registry.refute` — `Elementwise.not_elementwise` raises `Algebra::Contradiction` on an
+includer, on purpose.
+
+`spec/algebra_laws_spec.rb` sweeps the registry, so every declaration runs the shared group and every
+refutation runs a battery, and a refutation confirmed by an *error* rather than by a failing law is
+itself a failure. The scoping is worth knowing: the plain law above is false on purpose for a
+combinator declared `given:` an analysis of the whole span (splitting the span splits the analysis),
+so that family is judged by the conditional law in `elementwise.rb` instead.
+
 ### Endomorphism
 
 > A homomorphism from a mathematical object to itself.
@@ -40,6 +78,79 @@ Every `Context` combinator maps a message list to a message list. Prune, Compact
 Reminder, and the rest all share that shape, which is what lets them compose in any order and form
 the monoid above. A combinator that returned something other than a message list would break the
 composition.
+
+A compaction `Strategy` is deliberately **not** one. A bare `#call(messages) -> messages` would lose
+the preimage — which source turns each replacement stands for — so the seam answers a `Replacement`
+and the derivation records the preimage as `causal_parents`. See [Fiber](#fiber-preimage).
+
+### Functor
+
+> A structure-preserving map between categories: it sends objects to objects and arrows to arrows,
+> preserving identities and composition. Over two partial orders, that is simply a monotone map —
+> `a <= b` implies `f(a) <= f(b)`. ([Wikipedia](https://en.wikipedia.org/wiki/Functor))
+
+lain's instructive instance is a **negative**, and it is asserted rather than merely noted.
+Timelines are partially ordered by prefix, and compaction is a map from a timeline to a derived one,
+so the obvious guess is that the map is monotone: extend the source by a turn and the derived chain
+should extend too. It does not. `T1 <= T2` does not imply `derive(T1) <= derive(T2)`, for two
+independent reasons — `Event#payload` folds `render_parent`, so a retained turn re-committed under a
+different parent chain gets a *different* digest, and the `keep_last` window slides, so a later
+derivation collapses a different span. `spec/lain/compaction/derivation_spec.rb` ("is not a functor
+on the prefix order: T1 <= T2 does not imply derive(T1) <= derive(T2)") and
+`spec/lain/compaction/source_spec.rb` ("is not a functor on the prefix order") each pin it, the
+second through the live `Compaction::Source`.
+
+The wrong model those two exist to prevent is "**derivation is incremental**" — that a compacting
+turn extends the previous derived chain, sharing its prefix, the way the session timeline extends
+itself. A reader who assumes it writes a `Derivation#extend`, which would have to hold the last
+derived head, which is the state the non-recursive ruling exists to avoid. So there is no `#extend`,
+every compacting turn derives fully, and the specs go red if someone "fixes" it. Failed structural
+sharing and failed functoriality are the same fact stated twice; what makes full re-derivation
+affordable is that the derived chain is bounded by `keep_last`, not by history length
+(`spec/lain/compaction/derivation_spec.rb` pins 21 events and 22 store objects at 50, 200 and 800
+source turns alike).
+
+### Fiber (preimage)
+
+> The fiber of a map `f` over a point `y` is `f⁻¹(y)`, the set of inputs that map to it. The fibers
+> partition the domain. ([Wikipedia](https://en.wikipedia.org/wiki/Fiber_(mathematics)))
+
+A replacement event's `causal_parents` is exactly the fiber of the collapse: the set of source turns
+that map to it. Nothing else needs storing. There is no side table of "what became what", because the
+derived chain *is* the mapping, read backwards along its causal edges — which is what lets
+`Compaction::DerivationAudit` re-derive an edge and compare, and what would be lost if the strategy
+seam were a bare endomorphism on message arrays.
+
+This works because `Timeline#to_a` follows `render_parent` only, so a fan-in on `causal_parents`
+never drags the subsumed turns back into the render, and `Ledger#unique_turns` walks render ancestry,
+so it never double-counts their tokens. A retained turn's causal set is **empty**, because a retained
+turn subsumes nothing — the fibers cover only what actually collapsed. `Arm::Synthesis` is the older
+writer of the same shape, and both share its discipline: a causal parent the `Store` has not seen
+raises rather than being quietly dropped, so a fiber is never silently incomplete.
+
+### Interval partition
+
+> A partition of a totally ordered set into contiguous blocks. Choosing one is choosing where to cut:
+> for `n` elements there are `n-1` gaps, each independently a cut or not, so the interval partitions
+> form a Boolean lattice of size `2^(n-1)` ordered by refinement.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Partition_of_an_interval))
+
+What a compaction strategy answers from `#ranges` is one of these over the collapsible span: an
+ascending, non-overlapping, non-empty set of index ranges inside the span, with the gaps between them
+retained verbatim. Those three conditions are **well-formedness**, not style, because the derivation
+folds the ranges straight into writes — one replacement per range, retained turns in the gaps — with
+no per-index membership test to catch a bad answer. A private `Partition` value inside
+`Compaction::Strategy::Base` states them in one place and refuses each on its own terms, and
+`spec/lain/compaction/strategy_spec.rb` covers each of these five: out of ascending order,
+overlapping, an empty range, not a `Range`, and outside the span.
+
+The lattice framing is what makes a **pin a cut point rather than a shield**. `Source::Derived::PinCuts`
+does not lift a pinned message out of a collapse; it splits the span into one sub-span per contiguous
+run of unpinned messages, so the pinned turn falls in no range at all and the derivation retains it,
+in position, between the two replacements either side. That is `keep_last + 3` rendered messages where
+the old projection gave `keep_last + 2`, pinned in `spec/lain/compaction/source_spec.rb`. It is also
+the shape that makes combining strategies expressible later — two answers over one span have a common
+refinement — which is designed and deliberately not built.
 
 ### Idempotence
 
@@ -69,9 +180,9 @@ Knowing which of the 3 you are holding matters, because only the semilattice one
 > copies are indistinguishable and equal values stay equal. From Stepanov's *Elements of Programming*.
 
 `spec/support/shared_examples/regular.rb` holds lain to this for its value objects. It is why
-`Timeline#==` is defined as naming the same head digest, and why `Turn`/`Event` values are deeply
-frozen. The mechanical statement of "no reachable mutable state" is `Ractor.shareable?(event)`
-staying `true`, and there is a spec for it.
+`Timeline#==` is defined as naming the same head digest, and why `Event` values are deeply frozen.
+The mechanical statement of "no reachable mutable state" is `Ractor.shareable?(event)` staying
+`true`, and there is a spec for it.
 
 ## Graphs and hashing
 
@@ -318,10 +429,25 @@ closed set is the point: an unknown kind fails loudly rather than being silently
 > specific inputs.
 
 lain states its laws as RSpec shared example groups and runs them against every implementation:
-`monoid.rb`, `meet_semilattice.rb`, `regular.rb`, `store_laws.rb`, `canonical_laws.rb`,
-`memory_index_laws.rb`, and `provider_parity.rb`. This is also the acceptance test for any Rust port.
-A Rust `Timeline` has to pass the same unchanged law suites as the Ruby one, which is how a port is
-known to be a swap rather than a rewrite.
+`monoid.rb`, `meet_semilattice.rb`, `elementwise.rb`, `pure.rb`, `monoid_homomorphism.rb`,
+`regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`, and
+`provider_parity.rb`. This is also the acceptance test for any Rust port. A Rust `Timeline` has to
+pass the same unchanged law suites as the Ruby one, which is how a port is known to be a swap rather
+than a rewrite.
+
+`monoid_homomorphism.rb` is the first group whose **negative** form is asserted too. It ships two
+readings of one law set from one object — "a monoid homomorphism" and "not a monoid homomorphism" —
+because two transcriptions of a law drift, and a drifted negative stops recording anything while
+staying green. The negative exists for maintenance: non-compositionality is *intended* for a
+model-backed collapse, and without an example saying so a later reader tidies it toward a shape it
+cannot have. Its failure message names the witness pair, so a negative that has quietly become true
+says which spans stopped distinguishing it.
+
+The same posture runs one level up. `Lain::Algebra` records structures as declarations in `lib/`,
+beside the operations they are about, and `spec/algebra_laws_spec.rb` sweeps that registry rather
+than a hand-kept list: a declaration with no generator fails, a generator for a claim nobody makes
+fails, and a *refutation* is confirmed only by a law that genuinely fails — one that raises instead
+proves nothing and fails the sweep.
 
 ### CRDT, causal stability
 

@@ -52,6 +52,7 @@ tiers work.
 | `--compact-bytes` | `262144` | Droppable-head bytes above which a compaction is warranted. Roughly 64k tokens. |
 | `--compact-cap` | `1048576` | History bytes that force a compaction even while the prompt cache is warm. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
+| `--compact-strategy` | **none** | `summarizing` or `elide`. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for either. |
 | `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `bedrock`. The summarizer is a **tier**, chosen independently of `--provider`. |
 | `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
 | `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |
@@ -69,6 +70,30 @@ lain --provider ollama --summarizer-provider anthropic \
 Ahead of both sits a third tier that takes no flag: the deterministic summarizers you declare in
 `.lain/summarizers.rb`, consulted before any model call. See
 [Compaction and summarizer tiers](../README.md#compaction-and-summarizer-tiers).
+
+#### Collapse strategies
+
+`--compact-strategy` does **not** switch compaction on, and it does not decide whether the derived
+context timeline is built. Every compacting turn derives; this picks the policy that collapses a span
+inside that derivation. The background is
+[Two lineages, one render path](../README.md#two-lineages-one-render-path).
+
+| Value | What collapses a span | What it costs |
+|---|---|---|
+| *unset* — the default | The run's own **eager tool-result tier**, read back through the turn's `SummarySnapshot`. This is the control arm, and it is what every un-flagged chat has always rendered. | Nothing extra. The summaries were already fired off the critical path by tier 1; the compacting turn only reads them. A result with no held summary becomes an elision line. |
+| `summarizing` | One model call per span, answered through the `--summarizer-*` tier and wrapped in a recorded oracle, so every answer lands on the journal as an `oracle_answer` that a later re-derivation *could* read back instead of re-asking. Nothing in the CLI does that yet — a resumed chat re-asks. | Tokens and latency **on the compacting turn's critical path**, where the eager tier's are not. An unreachable tier leaves the span **uncollapsed** and writes a line to `stderr` attributed to `lain:compaction`; it costs the span, never the turn. |
+| `elide` | A deterministic per-message attestation — role, digest, byte count, one line each — and no model call at all. | Nothing but its own bytes, and those are not always a saving: over short messages an attested span can be no smaller than what it replaced. That case is caught and declined as `would_not_shrink` rather than shipped. |
+
+**Unset carries no Thor default, on purpose.** A default would materialize the key, so the code that
+reads the flag could never tell "no strategy was named" from "someone named the default" — and the
+eager tier, the control every flagged run is measured against, would be selectable by nobody. An
+unrecognized name is refused by name, listing the valid ones.
+
+```bash
+lain --compact-strategy elide          # no model call at compaction time, attestations instead
+lain --compact-strategy summarizing \
+     --summarizer-provider ollama      # a fresh local summary per span, on the critical path
+```
 
 #### Isolation flag
 

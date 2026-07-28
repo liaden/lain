@@ -93,7 +93,7 @@ separate responsibility (see `Agent::Budget`, `Agent::ToolRunner`). Config that 
   wire-format quirk, a cop's false positive, a performance shape — write a comment that says
   both what it does and why it has to be ugly. Match `lib/lain/timeline.rb` and
   `lib/lain/canonical.rb`.
-- **Value objects are deeply frozen.** `Ractor.shareable?(turn)` must stay `true` — it is the
+- **Value objects are deeply frozen.** `Ractor.shareable?(event)` must stay `true` — it is the
   mechanical statement of "no reachable mutable state", and it broke once because
   `Symbol#to_s` and string interpolation both return *mutable* Strings. There is a spec.
 
@@ -150,8 +150,11 @@ fails its hook.
 ## Architecture, in one breath
 
 `Canonical` gives deterministic bytes, which serve turn hashing *and* prompt-cache stability —
-one function, two invariants. `Turn`/`Store`/`Timeline` form a lossless content-addressed
-Merkle DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a
+one function, two invariants. `Event`/`Store`/`Timeline` form a lossless content-addressed
+Merkle DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. **There is no `Lain::Turn`**:
+it was collapsed into `Lain::Event`, kind-tagged `:turn`, with a closed
+`KINDS = %i[turn spawn message snapshot]` — one primitive, one content-addressing scheme, one Store.
+`spec/lain/event_spec.rb` asserts no `Turn` constant remains. `Context#render` is a
 **pure** function `(Timeline, Toolset, Workspace) → Request`; purity and cache-hit are the same
 constraint. Tool calls are `Effect`s interpreted by an `Effect::Handler`; `Middleware` is the
 Rack-idiom public API over that, and it is a property-tested monoid. Tools are capabilities, not
@@ -199,7 +202,7 @@ Structures that plausibly qualify, and what they buy:
 | Vector / graph index | `tantivy`, `usearch`, `petgraph` | Memory retrieval (M6) — these are I/O-shaped, so they live **out** of process. |
 
 > ⚠️ **A magnus-wrapped object is not `Ractor.shareable?` for free.** Deep immutability is spec'd
-> mechanically, and `Ractor.shareable?(turn)` must stay `true`. Porting `Turn` or `Timeline` to a
+> mechanically, and `Ractor.shareable?(event)` must stay `true`. Porting `Event` or `Timeline` to a
 > Rust-backed `TypedData` object will break that spec unless shareability is established
 > deliberately. Treat the spec as the acceptance test for the port, not as an obstacle to it.
 
