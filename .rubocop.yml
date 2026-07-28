@@ -1,7 +1,20 @@
+# Without this, the AllCops/Exclude below REPLACES RuboCop's default exclude
+# list (tmp/, vendor/, node_modules/) rather than adding to it, and the build
+# artifacts under tmp/ get linted.
+inherit_mode:
+  merge:
+    - Exclude
+
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
   SuggestExtensions: false
+  # `spike/` is throwaway research: one-off probes, and fixtures deliberately
+  # shaped to be *matched* by a structural-search experiment rather than to read
+  # well. Linting it fails commits over code nobody intends to keep, and `.rspec`
+  # already fences the same directory off with its `spike: true` tag filter.
+  Exclude:
+    - "spike/**/*"
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes
