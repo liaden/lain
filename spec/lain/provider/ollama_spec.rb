@@ -264,6 +264,34 @@ RSpec.describe Lain::Provider::Ollama do
       ) { |error| expect(error.status).to eq(500) }
       expect(retries).to eq([0, 1, 2])
     end
+
+    # A CONNECTION-level failure, which is a different arm from a non-2xx and
+    # was the one that leaked. Exhausted retries re-raise the last transport
+    # failure as a bare `Faraday::Error` subclass -- it never passes through the
+    # vendored ErrorMiddleware, so `rescue Provider::HTTP::Error` does not see
+    # it and nothing above the Provider rescues a transport class either.
+    #
+    # It matters here more than anywhere: ollama is the DEFAULT summarizer
+    # provider, so "ollama is not running" is the ordinary case, and since T9
+    # the span summarizer answers on the RENDER path rather than behind
+    # {Oracle::Eager}'s task boundary. Uncontained, it takes out the whole turn:
+    # {Compaction::Strategy::Summarizing} rescues {Lain::Error} on purpose (a
+    # NoMethodError from inside a tier is a defect to surface, not an outage to
+    # absorb), so the containment has to be established HERE, exactly as
+    # {Provider::AnthropicRaw#complete} already establishes it.
+    it "wraps an exhausted connection failure into APIError, not a bare Faraday class" do
+      stub_request(:post, "http://localhost:11434/api/chat").to_raise(Faraday::ConnectionFailed)
+
+      expect { described_class.new(config: zero_retry_config).complete(request(stream: false)) }
+        .to raise_error(Lain::Provider::Ollama::APIError)
+    end
+
+    it "contains a streaming connection failure in the same family" do
+      stub_request(:post, "http://localhost:11434/api/chat").to_raise(Faraday::ConnectionFailed)
+
+      expect { described_class.new(config: zero_retry_config).complete(request(stream: true)) }
+        .to raise_error(Lain::Error)
+    end
   end
 
   # A transport double that captures the payload it was handed.

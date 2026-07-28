@@ -176,10 +176,21 @@ class LainCLI < Thor
     # set, the rule the compact knobs and `--isolation` both follow: the
     # flag's help text and the resolver cannot come to disagree about what a
     # strategy name means.
+    # NO `default:`, and that is load-bearing rather than an omission.
+    # {Lain::CLI::CompactionStrategy}'s own header says the fallback is that
+    # class's DEFAULT constant and "not a Thor default" -- and a Thor default
+    # here does not merely duplicate it, it makes the flag's OFF STATE
+    # unreachable: Thor materializes the key, so `options[:compact_strategy]`
+    # is never nil in a real run, and {Lain::CLI::Backend::SpanSummarizer}'s
+    # "no flag named a strategy" branch becomes dead code from the CLI. The
+    # eager tier -- the control arm every `--compact-strategy` run is measured
+    # against -- would then be selectable only from an options Hash the
+    # executable cannot produce. Unset must reach the reader as nil.
     def self.strategy(thor)
-      thor.method_option :compact_strategy, type: :string, default: Lain::CLI::CompactionStrategy::DEFAULT,
+      thor.method_option :compact_strategy, type: :string,
                                             desc: "How a compacted span collapses " \
-                                                  "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")})"
+                                                  "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")}; " \
+                                                  "unset keeps the eager tool-result tier)"
     end
 
     # A TIER, chosen independently of the chat model: a frontier chat can

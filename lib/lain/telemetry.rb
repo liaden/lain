@@ -1546,19 +1546,30 @@ module Lain
     # a property of THIS record. `cut` is the verdict; this is the detail
     # underneath one.
     #
+    # `keep_last` is here because RE-DERIVATION IS NOT REPRODUCIBLE WITHOUT IT.
+    # This record's whole contract is that an audit can rebuild the chain rather
+    # than read a copy of it, and the trailing window is part of what determines
+    # that chain -- it fixes where {Compaction::Boundary} cuts, and therefore
+    # which turns a strategy is ever offered. It is not recoverable from `spans`
+    # either: a collapsed range's endpoints say nothing about how many messages
+    # were retained after it. Without the field {Compaction::DerivationAudit}
+    # has to be TOLD the parameter, and a wrong one reads as drift -- a
+    # confident, wrong "the chain disagrees" from the one object whose whole job
+    # is to tell real drift from noise.
+    #
     # Held in canonical wire form (String keys, deeply frozen) so the record
     # stays `Ractor.shareable?`, the same idiom {TurnUsage}'s `usage` uses.
-    ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved) do
+    ContextDerived = Data.define(:source_head, :derived_head, :strategy, :spans, :cut, :moved, :keep_last) do
       include Journalable
 
-      def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0)
+      def initialize(source_head:, derived_head:, strategy:, spans:, cut:, moved: 0, keep_last: nil)
         strategy = named(strategy)
         spans = Canonical.normalize(spans)
         cut = cut.to_sym
         Guards::ContextDerived.check!(strategy:, spans:, cut:)
 
         super(source_head: source_head&.dup&.freeze, derived_head: derived_head&.dup&.freeze,
-              strategy:, spans:, cut:, moved: Integer(moved))
+              strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) })
       end
 
       private

@@ -50,6 +50,55 @@ module SourceSpecPipelines
   INJECTED = Ractor.make_shareable(->(_workspace) { Marker.new.freeze })
 end
 
+# The Source's un-flagged collapse policy, written out: one range over whatever
+# span it is offered, collapsed into the turn's {Lain::Compaction::SummarySnapshot}.
+# It exists so {#rewrite_delta} can measure the same crossover by a second path
+# rather than by reaching into the Source's own private strategy.
+class SourceSpecHeldSpan < Lain::Compaction::Strategy::Base
+  def initialize(snapshot)
+    super()
+    @snapshot = snapshot
+    freeze
+  end
+
+  def propose_ranges(_messages, span:) = [span]
+
+  def blocks(messages) = [{ "type" => "text", "text" => @snapshot.call(messages) }]
+end
+
+# The span oracle {Lain::Compaction::Strategy::Summarizing} speaks to, reduced
+# to the two calls it makes: `#ask(...).await.summary`. It counts its asks, so
+# an example can tell "the strategy held the answer" from "the model was asked
+# twice for one range".
+class SourceSpecSpanOracle
+  Answer = Struct.new(:summary) do
+    def await = self
+  end
+
+  attr_reader :asks
+
+  def initialize(text)
+    @text = text
+    @asks = 0
+  end
+
+  def ask(_inputs = {})
+    @asks += 1
+    Answer.new("#{@text} (#{@asks})")
+  end
+end
+
+# A strategy that answers a replacement no conversation can carry: an
+# `assistant`-first chain is what {Lain::Compaction::Derivation} refuses, and
+# refusing is what the fallback record exists to name.
+class SourceSpecStrandingSpan < Lain::Compaction::Strategy::Base
+  def propose_ranges(_messages, span:) = [span]
+
+  def blocks(_messages)
+    [{ "type" => "tool_use", "id" => "call-nobody-answers", "name" => "read", "input" => {} }]
+  end
+end
+
 RSpec.describe Lain::Compaction::Source do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
@@ -78,31 +127,66 @@ RSpec.describe Lain::Compaction::Source do
 
   def compactions = records.select { |record| record["type"] == "compaction" }
 
-  # Substantial tool_result messages: `content` is a String, which is what
-  # {Lain::Compaction::SummarySnapshot} keys a summary on, so the same fixture
-  # serves the elision path and the eager-hit path.
+  # Substantial text messages, in a WELL-FORMED conversation: roles alternate
+  # from `user`, and no block claims to answer a tool call nothing made.
+  #
+  # THE SHAPE IS NOW LOAD-BEARING, and it was not before. These fixtures used to
+  # be a run of `user` turns each carrying an orphan `tool_result` -- an array
+  # the Messages API would reject -- which was invisible while compaction was a
+  # render-time projection. {Lain::Compaction::Derivation} validates the chain it
+  # derives through {Lain::Context::Conversation} and REFUSES an invalid one, so
+  # an ill-formed fixture measures a compaction that never runs: `compacted:
+  # false`, nothing raised, every byte assertion quietly about the uncompacted
+  # history. The tier that keys on tool_results is exercised through
+  # {#tool_timeline} below, which carries a real, answered pair.
   #
   # They are BIG on purpose. An elision line attests its message (role, digest,
   # byte counts, one line per block) in ~230 bytes, so a history of small
   # messages is one that compaction would GROW -- the case the floor in #decide
   # refuses, exercised by {#small_block} below.
   def block(index)
-    { "type" => "tool_result", "tool_use_id" => "call-#{index}",
-      "content" => "the quick brown fox jumped over the lazy dog, result number #{index}. " * 15 }
+    { "type" => "text", "text" => "the quick brown fox jumped over the lazy dog, result number #{index}. " * 15 }
   end
 
-  def small_block(index)
-    { "type" => "tool_result", "tool_use_id" => "call-#{index}", "content" => "result #{index}" }
-  end
+  def small_block(index) = { "type" => "text", "text" => "result #{index}" }
+
+  # `user, user, assistant, user, assistant, user, ...`: it opens on `user`, it
+  # ENDS on `user`, and no two `assistant` turns are adjacent -- which is
+  # exactly what {Lain::Context::Conversation} asks of a conversation (adjacent
+  # `user` messages are the real Agent shape, a tool_result turn followed by the
+  # human's next ask, and T1 ruled them legal). Ending on `user` is what lets
+  # {Lain::Context::Reminder} still find somewhere to inject.
+  def role_at(index) = index.odd? && index > 1 ? "assistant" : "user"
 
   def timeline(size = 6, &block_for)
     block_for ||= method(:block)
     (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
-      line.commit(role: "user", content: [block_for.call(index)])
+      line.commit(role: role_at(index), content: [block_for.call(index)])
     end
   end
 
   def small_timeline(size = 6) = timeline(size) { |index| small_block(index) }
+
+  # The eager tier keys a summary on a String-content `tool_result`'s own
+  # content address, so a fixture that exercises a HIT has to carry a real tool
+  # exchange rather than a loose tool_result: an `assistant` tool_use answered
+  # by the `user` tool_result immediately after it, which is the only shape
+  # `Agent#perform_tools` commits (Correctness gate 2, agent.rb:326-328).
+  #
+  # The pair sits at indices 1-2, wholly inside the droppable span at
+  # `keep_last: 2`, so {Lain::Compaction::Boundary} never has to move the cut
+  # off it and the examples stay about the summary rather than about the cut.
+  def tool_body(index) = "the quick brown fox jumped over the lazy dog, result number #{index}. " * 15
+
+  def tool_timeline
+    [["user", [block(1)]],
+     ["assistant", [{ "type" => "tool_use", "id" => "call-2", "name" => "read", "input" => { "n" => 2 } }]],
+     ["user", [{ "type" => "tool_result", "tool_use_id" => "call-2", "content" => tool_body(2) }]],
+     ["assistant", [block(4)]], ["user", [block(5)]], ["user", [block(6)]]]
+      .inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (role, content)|
+        line.commit(role:, content:)
+      end
+  end
 
   # The floor's crossover, found by walking ONE dropped body a character at a
   # time (the re-review's `probe_a6_floor_cost.rb`): at 361 Z's the canonical
@@ -111,32 +195,39 @@ RSpec.describe Lain::Compaction::Source do
   # change in canonical framing fails loudly here rather than sliding the
   # fixture quietly off the boundary.
   #
-  # MOVED BY T4, 366 -> 361, and the five bytes are the whole story: the summary
-  # message's role went from `"assistant"` to `"user"` (Open decisions ruling),
-  # which is five fewer bytes in the canonical dump. Nothing else about this
-  # fixture moved -- `Compaction::Boundary` cuts it at the naive split, since it
-  # splits no tool pair. Re-measured to the byte rather than loosened to a
-  # range, which is what makes it still able to fail loudly.
-  def neutral_pad = 361
+  # MOVED BY T4, 366 -> 361: the summary message's role went from `"assistant"`
+  # to `"user"` (Open decisions ruling), five fewer bytes in the canonical dump.
+  # MOVED AGAIN BY T9, 361 -> 85, because the fixture's blocks are now `text`
+  # rather than orphan `tool_result`s (see {#block}), its roles alternate, and
+  # the rewrite being measured is the DERIVED chain's projection rather than
+  # `Context::Compact`'s. Walked one character at a time, as before: at 85 Z's
+  # the history and its rewrite dump to the same size, 84 inflates by one byte
+  # and 86 saves one. Re-measured to the byte rather than loosened to a range,
+  # which is what makes it still able to fail loudly.
+  def neutral_pad = 85
 
   def crossover_timeline(pad)
     bodies = (1..5).map { |index| "pad#{index}-#{"m" * 100}" } + ["Z" * pad, "tail-a", "tail-b"]
     bodies.each_with_index.inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, (body, index)|
-      line.commit(role: "user",
-                  content: [{ "type" => "tool_result", "tool_use_id" => "call-#{index}", "content" => body }])
+      line.commit(role: role_at(index + 1), content: [{ "type" => "text", "text" => body }])
     end
   end
 
-  # What the floor measures, measured independently: the bytes the rewrite would
-  # add or remove from the rendered history.
+  # What the floor measures, measured independently: the bytes the DERIVED chain
+  # would add to or remove from the rendered history.
+  #
+  # It mirrors the Source's un-flagged policy -- one range over the whole
+  # droppable span, collapsed into a {Lain::Compaction::SummarySnapshot} -- with
+  # its own strategy rather than reaching into the Source's private one, so the
+  # crossover is still measured by a second, independent path.
   def rewrite_delta(line)
     messages = messages_of(line)
     head = Lain::Compaction::Head.new(messages:, keep_last:)
     snapshot = Lain::Compaction::SummarySnapshot.take(messages: head.messages,
                                                       eager: Lain::Compaction::Source::NoSummaries)
-    compact = Lain::Context::Compact.new(threshold: 0, keep_last:, summarizer: snapshot,
-                                         protected_patterns: Lain::Context::ProtectedPatterns::NONE)
-    Lain::Canonical.dump(compact.call(messages)).bytesize - Lain::Canonical.dump(messages).bytesize
+    derived = Lain::Compaction::Derivation.new(strategy: SourceSpecHeldSpan.new(snapshot), keep_last:).derive(line)
+    Lain::Canonical.dump(Lain::Compaction::Derivation.projected(derived.to_a)).bytesize -
+      Lain::Canonical.dump(messages).bytesize
   end
 
   def messages_of(line) = line.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
@@ -544,8 +635,8 @@ RSpec.describe Lain::Compaction::Source do
     end
 
     it "is shareable when the eager holds live summaries" do
-      line = timeline
-      eager = SourceSpecEager.new(Lain::Canonical.digest(block(1)["content"]) => "a held summary")
+      line = tool_timeline
+      eager = SourceSpecEager.new(Lain::Canonical.digest(tool_body(2)) => "a held summary")
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager:)
 
       expect(Ractor.shareable?(context_for(built, line))).to be(true)
@@ -575,34 +666,42 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  # The eager tier still reaches the render after T9 moved it onto the derived
+  # chain. It is no longer {Context::Compact}'s summarizer -- it is the
+  # un-flagged COLLAPSE POLICY's, read through the same per-turn
+  # {SummarySnapshot} -- and these assert the summary a dispatch fired still
+  # arrives where an unwired run would carry an elision line.
   describe "the summaries it renders" do
+    def held_summaries(text) = SourceSpecEager.new(Lain::Canonical.digest(tool_body(2)) => text)
+
     it "renders a summary the eager fired, not an elision line" do
-      line = timeline
-      eager = SourceSpecEager.new(Lain::Canonical.digest(block(1)["content"]) => "a held summary")
-      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager:)
+      line = tool_timeline
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager: held_summaries("a held summary"))
 
       text = render(context_for(built, line), line).messages.first["content"].first["text"]
 
       expect(text).to include("a held summary")
     end
 
-    it "reads the eager once per turn, not once per pass over the head" do
-      line = timeline
+    # The snapshot is taken ONCE per turn rather than rebuilt inside each pass a
+    # compacting turn makes over the head. One lookupable block in the droppable
+    # span, so three passes would read three times.
+    it "reads the eager once per lookupable block, not once per pass over the head" do
+      line = tool_timeline
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
       render(context_for(built, line), line)
 
-      expect(eager.reads).to eq(messages_of(line).size - keep_last)
+      expect(eager.reads).to eq(1)
     end
 
     it "journals what the snapshot found" do
-      line = timeline
-      eager = SourceSpecEager.new(Lain::Canonical.digest(block(1)["content"]) => "a held summary")
-      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager:)
+      line = tool_timeline
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager: held_summaries("a held summary"))
 
       context_for(built, line)
 
-      expect(decisions.first).to include("summary_hits" => 1, "summary_misses" => 3, "compacted" => true)
+      expect(decisions.first).to include("summary_hits" => 1, "summary_misses" => 0, "compacted" => true)
     end
   end
 
@@ -784,30 +883,37 @@ RSpec.describe Lain::Compaction::Source do
     # the summary message", because `Compact#call` PARTITIONED the span and
     # hoisted every protected message to the front -- so a pin from the middle
     # of the span landed at index 0, ahead of the summary of everything that
-    # preceded it, with its own predecessor gone. Reading order inverted. The
-    # survivors are now kept in position (`Context::Prune#call`'s idiom), and
-    # the single summary takes the position of the FIRST message it subsumes:
-    # this pin is the history's second turn, so the summary of the first now
-    # correctly precedes it.
-    it "renders the pinned turn verbatim, in position after the summary of what preceded it" do
+    # preceded it, with its own predecessor gone. Reading order inverted.
+    #
+    # RE-POINTED AGAIN BY T9, and the count moved with it. A pin is now a CUT
+    # POINT rather than a shield (F8: `#ranges` is an interval partition): the
+    # span becomes one range per contiguous run of unpinned messages, so the pin
+    # is not lifted out of a collapse at all -- it simply falls in no range, and
+    # the derivation retains it, between the summary of what preceded it and the
+    # summary of what followed. That is TWO replacements around one pin where
+    # `Compact` emitted one, and it is the placement that keeps reading order
+    # under any pin set rather than only under a single-replacement one.
+    it "renders the pinned turn verbatim, between the summaries either side of it" do
       line = timeline
       pinning = session_pinning(digests_of(line)[1])
 
       messages = render(context_for(forcing, line, session: pinning), line).messages
 
-      expect(messages.size).to eq(keep_last + 2)
-      expect(messages.first["content"].first["text"]).to include("elided")
-      expect(messages[1]["content"].first).to include("content" => block(2)["content"])
+      expect(messages.size).to eq(keep_last + 3)
+      expect(messages[0]["content"].first["text"]).to include("elided")
+      expect(messages[1]["content"].first).to eq(block(2))
+      expect(messages[2]["content"].first["text"]).to include("elided")
     end
 
     it "leaves the unpinned head summarized, so the pin costs only its own bytes" do
       line = timeline
       pinning = session_pinning(digests_of(line)[1])
 
-      text = render(context_for(forcing, line, session: pinning), line).messages.first["content"].first["text"]
+      messages = render(context_for(forcing, line, session: pinning), line).messages
+      attested = messages.values_at(0, 2).map { |message| message["content"].first["text"] }.join("\n")
 
-      expect(text).not_to include(block(2)["content"])
-      expect(text.lines.grep(/^\[user /).size).to eq(3)
+      expect(attested).not_to include(block(2)["text"])
+      expect(attested.lines.grep(/^\[user |^\[assistant /).size).to eq(3)
     end
 
     # Scenario: pinning everything droppable declines the compaction rather than
@@ -885,6 +991,247 @@ RSpec.describe Lain::Compaction::Source do
   describe "construction" do
     it "refuses a keep_last that would destroy the whole history" do
       expect { source(keep_last: 0) }.to raise_error(ArgumentError, /keep_last must be positive/)
+    end
+  end
+
+  # T9. What a compacting turn actually renders is the projection of a SECOND
+  # LINEAGE -- a derived chain materialized in the source's own Store, whose
+  # replacement events name the source turns they subsume. These are the claims
+  # that only hold once the render goes through it.
+  describe "rendering through the derived chain" do
+    def forcing(**overrides) = source(need: build_need(byte_threshold: 100), hard_cap: 100, **overrides)
+
+    def derivations = records.select { |record| record["type"] == "context_derived" }
+
+    def refusals = records.select { |record| record["type"] == "derivation_refused" }
+
+    def chain_at(digest, store) = Lain::Timeline.new(head_digest: digest, store:)
+
+    def projection_of(digest, store)
+      Lain::Compaction::Derivation.projected(chain_at(digest, store).to_a)
+    end
+
+    it "renders the projection of the derived head the journal names" do
+      line = timeline
+
+      messages = render(context_for(forcing, line), line).messages
+
+      expect(derivations.size).to eq(1)
+      expect(messages.map { |message| message["role"] })
+        .to eq(projection_of(derivations.first["derived_head"], line.store).map { |m| m["role"] })
+      expect(Lain::Canonical.dump(messages.first))
+        .to eq(Lain::Canonical.dump(projection_of(derivations.first["derived_head"], line.store).first))
+    end
+
+    # The session timeline is the LOSSLESS record and a derivation is a reader
+    # of it. The replacement events land in the Store -- content-addressed
+    # storage is append-only -- but nothing about the chain the Agent holds
+    # moves, so its head advances only by committed turns.
+    it "leaves the source timeline's head where it found it" do
+      line = timeline
+      before = line.head_digest
+
+      context_for(forcing, line)
+
+      expect(line.head_digest).to eq(before)
+      expect(derivations.first["derived_head"]).not_to eq(before)
+      expect(derivations.first["source_head"]).to eq(before)
+    end
+
+    # F5/F8, as a characterization example: `T1 <= T2` does NOT imply
+    # `derive(T1) <= derive(T2)`. `Event#payload` folds `render_parent`, so a
+    # retained turn re-committed under a new parent chain gets a different
+    # address, and the `keep_last` window slides besides. The wrong conceptual
+    # model this exists to prevent is "derivation is incremental" -- if it ever
+    # fails because someone made derivation prefix-preserving, that is a real
+    # achievement and needs confirming, not deleting.
+    it "is not a functor on the prefix order" do
+      shorter = timeline(6)
+      longer = shorter.commit(role: role_at(7), content: [block(7)])
+      built = forcing
+
+      context_for(built, shorter)
+      context_for(built, longer)
+
+      first, second = derivations.map { |record| record["derived_head"] }
+      expect(first).not_to eq(second)
+      expect(chain_at(second, longer.store).ancestor_digests).not_to include(first)
+      expect(chain_at(first, shorter.store).ancestor_digests).not_to include(second)
+    end
+
+    # F5: the derived chain is bounded by `keep_last` plus the number of ranges,
+    # never by history length -- which is what makes deriving FULLY on every
+    # compacting turn affordable and an incremental `#extend` unnecessary.
+    it "writes the same number of store objects however long the history is" do
+      expect(objects_written(timeline(8))).to eq(objects_written(timeline(80)))
+    end
+
+    def objects_written(line)
+      before = line.store.size
+      context_for(forcing, line)
+      line.store.size - before
+    end
+
+    # The F1/F2 class of 400, on the path that actually reaches Anthropic.
+    #
+    # STATED HONESTLY, per T4's measurement: this is the UNPINNED claim. A pin
+    # punches a hole in the middle of the span, and a pinned `tool_use` whose
+    # `tool_result` is inside a collapsed range is still stranded (follow-up
+    # 14). What this path does NOT do is ship it -- see the refusal group below.
+    it "renders a conversation the Messages API would accept, with nothing pinned" do
+      line = timeline(12)
+
+      messages = render(context_for(forcing, line), line).messages
+
+      expect(Lain::Context::Conversation.new(messages).violations.map(&:message)).to be_empty
+    end
+
+    it "journals one edge per derivation, naming distinct derived heads" do
+      built = forcing
+      first = timeline(6)
+      second = first.commit(role: role_at(7), content: [block(7)])
+
+      context_for(built, first)
+      context_for(built, second)
+
+      expect(derivations.size).to eq(2)
+      expect(derivations.map { |record| record["derived_head"] }.uniq.size).to eq(2)
+    end
+
+    # A8's regression, one object further in: the live `/model` slot makes the
+    # chat Context unshareable, and `Scheduler::COMPOSE` calls
+    # `Ractor.make_shareable` on a Proc -- which RAISES on anything it refers to
+    # that is not already shareable rather than deep-freezing it. A replay
+    # holding an ordinary Array fails there, on the first compacting turn of
+    # every real chat.
+    # The LIVE Context is deliberately not shareable -- `/model`'s slot is
+    # mutable by design -- so what is asserted is what A8 asserts: the composed
+    # pipeline is established shareable around it without raising, and the turn
+    # really did compact.
+    it "compacts a base Context carrying the live model slot, without raising" do
+      slot = Lain::Context::ModelSwitch.new("claude-opus-4-8", journal:)
+      live = Lain::Context.new(model: slot, max_tokens: 1024, system: "a system prompt")
+      line = timeline
+      built = forcing
+
+      expect(Ractor.shareable?(live)).to be(false)
+      expect { render(context_for(built, line, base: live), line) }.not_to raise_error
+      expect(decisions.map { |record| record["compacted"] }).to eq([true])
+    end
+
+    it "carries the keep_last a re-derivation needs on the edge" do
+      context_for(forcing, timeline)
+
+      expect(derivations.first["keep_last"]).to eq(keep_last)
+    end
+
+    # The counters, read at the site that journals them, under the ONE policy
+    # whose counters were the argument for carrying them at all.
+    #
+    # It discriminates on ARGUMENT-EVALUATION ORDER, which is why it exists. The
+    # only thing that runs the strategy is the replay, so reading `policy.hits`
+    # in the same argument list as the replay would be correct purely because
+    # Ruby evaluates keyword arguments in source order -- and putting `hits:`
+    # first would shift every journalled figure back one turn, permanently and
+    # silently, with the rest of the suite still green. That is
+    # {SummarySnapshot}'s "invisible except as a count that never rises",
+    # reproduced one level up at the reader.
+    #
+    # One per turn each: `Summarizing` touches `#blocks` twice for one range
+    # (once proposing it, once collapsing it) and holds the answer between them,
+    # so a turn is one miss and one hit -- never two asks.
+    describe "the hit rate a model-backed policy journals" do
+      it "rises turn over turn, rather than reporting the previous turn's" do
+        oracle = SourceSpecSpanOracle.new("a span summary")
+        built = source(need: build_need(byte_threshold: 100), hard_cap: 100,
+                       strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+        first = timeline(6)
+
+        context_for(built, first)
+        context_for(built, first.commit(role: role_at(7), content: [block(7)]))
+
+        expect(decisions.map { |record| [record["summary_hits"], record["summary_misses"]] })
+          .to eq([[1, 1], [2, 2]])
+        expect(oracle.asks).to eq(2)
+      end
+    end
+  end
+
+  # The fallback. {Compaction::Derivation} validates its own projection and
+  # RAISES rather than shipping a chain the Messages API would reject, so the
+  # turn renders uncompacted -- which is the right answer once and the
+  # silent-stop mode forty times, and the record is what tells them apart.
+  describe "a derivation the Messages API would reject" do
+    def stranding
+      source(need: build_need(byte_threshold: 100), hard_cap: 100, strategy: SourceSpecStrandingSpan.new)
+    end
+
+    def refusals = records.select { |record| record["type"] == "derivation_refused" }
+
+    it "renders the uncompacted history rather than an invalid one" do
+      line = timeline
+      returned = context_for(stranding, line)
+
+      expect(returned).to equal(base)
+      expect(Lain::Canonical.dump(render(returned, line).cache_payload))
+        .to eq(Lain::Canonical.dump(render(base, line).cache_payload))
+    end
+
+    # Its own record type, never a `context_derived` with empty spans: `cut`
+    # exists to make an empty collapse readable, and a fallback wearing a
+    # derivation's badge would put the ambiguity straight back.
+    it "journals the refusal as its own record, naming the strategy and the violation" do
+      context_for(stranding, timeline)
+
+      expect(records.map { |record| record["type"] }).not_to include("context_derived")
+      expect(refusals.first).to include("strategy" => "SourceSpecStrandingSpan", "consecutive" => 1)
+      expect(refusals.first["violations"]).to include("toolu", "never answered").or include("call-nobody-answers")
+    end
+
+    # A deterministic strategy over a stable history refuses IDENTICALLY every
+    # turn. One refusal is an awkward history; a rising streak is a session that
+    # has stopped compacting, and a record that counted nothing could not tell a
+    # bench arm which it was looking at.
+    it "counts the streak, so a session that has stopped compacting is visible" do
+      built = stranding
+      line = timeline
+
+      3.times { context_for(built, line) }
+
+      expect(refusals.map { |record| record["consecutive"] }).to eq([1, 2, 3])
+    end
+
+    it "is still journalled as a plain defer on the turn's own decision record" do
+      context_for(stranding, timeline)
+
+      expect(decisions.first).to include("compacted" => false, "would_not_shrink" => false)
+    end
+
+    # FOLLOW-UP 14, CHARACTERIZED ON THIS PATH. A pin whose tool counterpart is
+    # inside a collapsed range strands it -- the hole T4 measured through
+    # `Context::Compact`, where it renders and 400s. Here the same hole exists
+    # and does NOT ship: the derivation validates its own projection, refuses,
+    # and the turn renders the full history instead. That is not the repair --
+    # the session stops compacting for as long as the pin stands, which is what
+    # the streak count above is for -- and the repair is still a decision about
+    # what a pin MEANS ({Context::PinnedMessages}), not a compaction-path fix.
+    it "refuses rather than shipping a pinned tool_use whose answer was collapsed" do
+      line = stranded_pin_timeline
+      pinning = session_pinning(line.to_a[1].digest)
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      expect(context_for(built, line, session: pinning)).to equal(base)
+      expect(refusals.first["violations"]).to include("call-1")
+    end
+
+    # A pinned `tool_use` at index 1 whose answering `tool_result` sits at index
+    # 2, both inside the droppable span at `keep_last: 2`.
+    def stranded_pin_timeline
+      [["user", [block(1)]],
+       ["assistant", [{ "type" => "tool_use", "id" => "call-1", "name" => "read", "input" => { "n" => 1 } }]],
+       ["user", [{ "type" => "tool_result", "tool_use_id" => "call-1", "content" => tool_body(1) }]],
+       ["user", [block(4)]], ["assistant", [block(5)]], ["user", [block(6)]]]
+        .inject(Lain::Timeline.empty(store: Lain::Store.new)) { |line, (role, content)| line.commit(role:, content:) }
     end
   end
 

@@ -90,6 +90,19 @@ module Lain
         build_response(request.stream ? stream_body(request) : sync_body(request))
       rescue Provider::HTTP::Error => e
         raise wrap_error(e)
+      rescue Faraday::Error => e
+        # {Provider::AnthropicRaw#complete}'s second arm, and it was missing
+        # here. A non-2xx passes through the vendored ErrorMiddleware and
+        # arrives as a {Provider::HTTP::Error}; a CONNECTION-level failure never
+        # reaches that middleware at all, so exhausted retries re-raise the last
+        # transport failure as a bare Faraday class. Nothing above the Provider
+        # rescues a transport class, so uncontained it escapes the whole stack.
+        #
+        # It bites hardest here of all the backends: ollama is the DEFAULT
+        # summarizer provider, "ollama is not running" is the ordinary case, and
+        # since the span summarizer answers on the RENDER path a leak takes out
+        # the turn rather than one summary.
+        raise APIError, e.message
       end
 
       private

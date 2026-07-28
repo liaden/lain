@@ -166,7 +166,7 @@ module Lain
       def edge(plan, source, derived)
         Telemetry::ContextDerived.new(source_head: source.head_digest, derived_head: derived.head_digest,
                                       strategy: @strategy.name, spans: plan.spans, cut: plan.cut,
-                                      moved: plan.boundary.moved)
+                                      moved: plan.boundary.moved, keep_last: @keep_last)
       end
 
       # One event the derived chain will carry, and the only place a role is

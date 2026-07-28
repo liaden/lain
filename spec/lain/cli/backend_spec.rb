@@ -264,14 +264,23 @@ RSpec.describe Lain::CLI::Backend do
       compacting_backend(**overrides).pipeline_source(cache_profile: profile, journal:)
     end
 
-    # Substantial String-content tool_results: the shape SummarySnapshot keys a
-    # summary on, and big enough that a rewrite actually SHRINKS the history
-    # (Source#shrinks? refuses one that would not).
+    # A WELL-FORMED conversation -- alternating from `user` -- and substantial
+    # enough that a rewrite actually SHRINKS it (Source#shrinks? refuses one
+    # that would not).
+    #
+    # It used to be a run of `user` turns each carrying an orphan
+    # `tool_result`, which the Messages API would reject outright. That was
+    # invisible while compaction was a render-time projection and is not now:
+    # {Compaction::Derivation} validates the chain it derives through
+    # {Context::Conversation} and REFUSES an invalid one, so an ill-formed
+    # fixture measures a compaction that never happens (`compacted: false`,
+    # nothing raised). Tool blocks moved out with the orphans: the tier that
+    # keys on them is exercised in `spec/lain/compaction/source_spec.rb`, and
+    # what this file is about is which flags reach which collaborator.
     def history(size)
       (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
         body = "result number #{index}: #{"the quick brown fox jumped over the lazy dog. " * 20}"
-        line.commit(role: "user",
-                    content: [{ "type" => "tool_result", "tool_use_id" => "call-#{index}", "content" => body }])
+        line.commit(role: index.odd? ? "user" : "assistant", content: [{ "type" => "text", "text" => body }])
       end
     end
 
@@ -431,6 +440,63 @@ RSpec.describe Lain::CLI::Backend do
 
       expect(decisions.size).to eq(1)
       expect(decisions.last.compacted).to be(false)
+    end
+
+    # T9. `--compact-strategy` is DECLARED by exe/lain and RESOLVED by
+    # CLI::CompactionStrategy; this is the seam that reads it. Without this call
+    # site the flag ships parsed and consumed by nobody -- F7's "unwired in
+    # production" pattern, and the exact direction `chat_flags_spec.rb` cannot
+    # see (it fails on read-but-undeclared, never on declared-but-unread).
+    describe "--compact-strategy" do
+      def strategy_of(backend)
+        source_for_backend(backend).instance_variable_get(:@derived).instance_variable_get(:@strategy)
+      end
+
+      def source_for_backend(backend) = backend.pipeline_source(cache_profile: profile, journal:)
+
+      it "resolves the named strategy and injects it into the Source" do
+        expect(strategy_of(compacting_backend(compact_strategy: "elide")))
+          .to be_a(Lain::Compaction::Strategy::Elide)
+      end
+
+      it "builds the summarizing strategy over a RECORDED oracle, never a bare model tier" do
+        strategy = strategy_of(compacting_backend(compact_strategy: "summarizing", provider: "ollama"))
+
+        expect(strategy).to be_a(Lain::Compaction::Strategy::Summarizing)
+        expect(strategy.instance_variable_get(:@oracle)).to be_a(Lain::Oracle::Recorded::Journaling)
+      end
+
+      it "refuses an unknown name as a Lain::Error, naming the flag and the valid set" do
+        expect { source_for_backend(compacting_backend(compact_strategy: "vibes")) }
+          .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /--compact-strategy.*summarizing/m)
+      end
+
+      # An UNSET flag is deliberately not CompactionStrategy::DEFAULT: the
+      # un-flagged run keeps the eager tier it already fires and snapshots, and
+      # naming a strategy is what opts into the seam. See {SpanSummarizer}.
+      it "leaves the un-flagged run on its own eager tier rather than resolving a default" do
+        expect(strategy_of(compacting_backend)).to be_nil
+      end
+
+      # The tier a down summarizer reports through. With the Null sink "the
+      # summarizer is unreachable" and "compaction is off" are the same silence.
+      it "threads the run's sink into the strategy" do
+        sink = Lain::Sink::Null.new
+        backend = compacting_backend(compact_strategy: "summarizing", provider: "ollama")
+        strategy = backend.pipeline_source(cache_profile: profile, journal:, sink:)
+                          .instance_variable_get(:@derived).instance_variable_get(:@strategy)
+
+        expect(strategy.instance_variable_get(:@sink)).to be(sink)
+      end
+
+      # Resolved ONCE, with the memoized Source. #pipeline_source raises Rebound
+      # on a differing second call and a model-backed strategy holds a memo, so
+      # a strategy fetched per turn would be a second, disconnected one.
+      it "resolves the strategy once for the run" do
+        backend = compacting_backend(compact_strategy: "elide")
+
+        expect(strategy_of(backend)).to be(strategy_of(backend))
+      end
     end
   end
 

@@ -109,6 +109,21 @@ module Lain
         # reachable from values that have to stay shareable.
         def name = -(self.class.name || self.class.to_s)
 
+        # How many ranges this strategy answered from an address it already
+        # held, and how many it had to work for. Zero here, and answered by
+        # EVERY strategy rather than by the ones that hold something: a
+        # {Compaction::Source} journalling the rate would otherwise carry a
+        # `respond_to?` in front of the one policy that does not, which is the
+        # `nil` guard CLAUDE.md's Null-Object rule exists to delete. A strategy
+        # holding nothing has an honest rate of nothing, not an absent one.
+        #
+        # The counts matter because a mis-keyed content address is invisible
+        # EXCEPT as a hit count that never rises ({Compaction::SummarySnapshot}'s
+        # discipline, `summary_snapshot.rb:23-30`).
+        def hits = 0
+
+        def misses = 0
+
         # @param messages [Array<Hash>] the rendered messages
         # @param span [Range] the droppable span, as message indices
         # @return [Array<Range>] the sub-spans to collapse: ascending,

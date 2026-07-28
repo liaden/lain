@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "backend/summarizer"
+require_relative "backend/span_summarizer"
 
 module Lain
   module CLI
@@ -216,12 +217,16 @@ module Lain
       #   TTL-less provider confirms cold off the zero cache-read alone)
       # @param journal [#<<] where the per-turn decision and the cold
       #   confirmation land
+      # @param sink [Lain::Sink] where a `--compact-strategy`-selected policy
+      #   reports a tier that is DOWN. Not bound by {#bind_once}: it changes
+      #   nothing about which Source gets built, and it is the one argument a
+      #   caller may reasonably not have (see {SpanSummarizer}).
       # @raise [Rebound] on a second call with different arguments
-      def pipeline_source(cache_profile:, journal: Channel::Null.instance)
+      def pipeline_source(cache_profile:, journal: Channel::Null.instance, sink: Sink::Null.new)
         bind_once(:pipeline_source, cache_profile:, journal:)
         @journal = journal
         @pipeline_source ||= if compaction?
-                               compaction_source(cache_profile:, journal:)
+                               compaction_source(cache_profile:, journal:, sink:)
                              else
                                Agent::PipelineSource::Null
                              end
@@ -318,12 +323,20 @@ module Lain
       # live Context every turn, so a `/model` switch mid-session moves the
       # threshold with it (see {Compaction::Source#window_for}). What this
       # method still owns is the byte threshold and the priced model.
-      def compaction_source(cache_profile:, journal:)
+      #
+      # `--compact-strategy` is resolved ONCE, HERE, and injected -- never
+      # fetched per turn. This method runs from the memoized {#pipeline_source},
+      # which raises {Rebound} on a differing second call, and a model-backed
+      # strategy holds a memo whose absence turns one range's two questions into
+      # two model calls (`summarizing.rb:220-239`). {SpanSummarizer} owns what
+      # an unset flag means and why it is not the resolver's own default.
+      def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
           need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
-          eager:, journal:, model:, price_book: COMPACTION_PRICES
+          eager:, journal:, model:, price_book: COMPACTION_PRICES,
+          strategy: SpanSummarizer.new(backend: self, name: @options[:compact_strategy], sink:).strategy
         )
       end
 

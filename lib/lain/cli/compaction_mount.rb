@@ -30,9 +30,17 @@ module Lain
       #   cache-read alone. Injected rather than rebuilt from the Backend so
       #   the profile is the one the run actually talks to.
       # @param chronicle [CLI::Chronicle] resolves the telemetry destinations
-      def initialize(backend:, provider:, chronicle:)
+      # @param channel [Lain::Channel] the run's live Channel, which the
+      #   frontend paints. It is here for ONE line: a `--compact-strategy`
+      #   summarizer that is DOWN leaves the span uncollapsed and says so, and
+      #   with nowhere to say it "the summarizer is unreachable" and
+      #   "compaction is off" are the same silence to an operator -- both just
+      #   stop shrinking the prompt. Defaults to the Null channel so a caller
+      #   with no frontend (bench, headless) is byte-identical to before.
+      def initialize(backend:, provider:, chronicle:, channel: Channel::Null.instance)
         @backend = backend
         @provider = provider
+        @channel = channel
         @telemetry = chronicle.telemetry_kwargs
       end
 
@@ -64,8 +72,26 @@ module Lain
       def sinks = source.respond_to?(:<<) ? [source] : []
 
       def source
-        @source ||= @backend.pipeline_source(cache_profile: @provider.cache_profile, journal: destination)
+        @source ||= @backend.pipeline_source(cache_profile: @provider.cache_profile, journal: destination,
+                                             sink: diagnostics)
       end
+
+      # The one route from `lib/` to an operator's screen: the frontend renders
+      # exactly one event ({Telemetry::ToolOutput}, `decorators.rb:18`), and
+      # {Sink::IOAdapter} is what turns an IO-shaped `#puts` into one. So the
+      # attribution is SYNTHETIC and deliberately so -- there is no tool call
+      # here, and a diagnostic routed anywhere the frontend does not render is
+      # {Sink::Null} with extra steps. `:stderr`, because a summarizer that
+      # cannot be reached is a fault report and not part of the conversation.
+      def diagnostics = Sink::IOAdapter.new(@channel, tool_use_id: DIAGNOSTICS, stream: :stderr)
+
+      # Stable and NAMESPACED, so a reader grepping a journal or an nvim view
+      # can filter these apart from real tool output exactly rather than
+      # probably: {Provider::Ollama} mints `call["id"] || "ollama-tool-#{index}"`
+      # for a local model that answered without one, so a bare "compaction" is a
+      # string a model could produce. `lain:` is a prefix nothing else emits.
+      DIAGNOSTICS = "lain:compaction"
+      private_constant :DIAGNOSTICS
     end
   end
 end

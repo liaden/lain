@@ -183,8 +183,28 @@ RSpec.describe "lain chat's flag surface" do
   end
 
   describe "--compact-strategy" do
-    it "defaults to the resolver's own DEFAULT rather than a second copy of it" do
-      expect(parse[:compact_strategy]).to eq(Lain::CLI::CompactionStrategy::DEFAULT)
+    # TWO DIFFERENT CLAIMS, and the example this replaces conflated them into
+    # one that asserted a broken shape.
+    #
+    # What the CLI must produce for an unset flag is **nil**. A Thor `default:`
+    # materializes the key, so the reader can never see "no strategy was named"
+    # and {Lain::CLI::Backend::SpanSummarizer}'s whole opt-in branch becomes
+    # unreachable from the executable -- the arm always on, the control arm
+    # (the eager tool-result tier) selectable by nobody. That is F7's pattern
+    # inverted: not "declared and read by nobody" but "declared with a default
+    # that hides its off-state", which this file's read-but-undeclared guard
+    # cannot see.
+    it "parses to nil when unset, so the reader can tell that no strategy was named" do
+      expect(parse.key?(:compact_strategy)).to be(false)
+      expect(parse[:compact_strategy]).to be_nil
+    end
+
+    # And separately: DEFAULT is what an explicit, empty RESOLUTION falls
+    # through to. That is the resolver's own question and the constant is its
+    # answer -- the flag never restates it.
+    it "leaves DEFAULT as the resolver's fallback, not the executable's" do
+      expect(Lain::CLI::CompactionStrategy.new(nil).send(:strategy_name))
+        .to eq(Lain::CLI::CompactionStrategy::DEFAULT)
     end
 
     it "names every strategy the resolver accepts in its help text" do
@@ -253,6 +273,86 @@ RSpec.describe "lain chat's flag surface" do
     it "refuses a non-positive ceiling at construction, not at the first summary" do
       expect { Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "0")) }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling, /must be positive/)
+    end
+  end
+
+  # S4. EVERY other spec in this repo builds Backend and Wiring from a plain
+  # option Hash that simply omits the keys it does not care about -- including
+  # the A8 shareability regression at `wiring_spec.rb:397-403`. That is the
+  # exact blind spot this file's header describes from the other direction: a
+  # hand-built Hash cannot reproduce what Thor MATERIALIZES, so a flag whose
+  # declared default changes the run is invisible to all of them.
+  #
+  # These build the compaction wiring from the executable's OWN parsed options
+  # and then take a real turn through it. Both of the defects this group was
+  # written after would have failed here and nowhere else: a `default:` on
+  # `--compact-strategy` (which made the control arm unselectable), and a
+  # summarizer transport error escaping as a bare Faraday class (which killed
+  # the turn rather than the span).
+  describe "a turn taken through the executable's own parsed options" do
+    let(:journal) { RecordingChannel.new }
+    let(:session) { instance_double(Lain::Session, plan_step_completed?: false, pinned?: false) }
+
+    let(:surface) { RecordingChannel.new }
+
+    # The run's real sink shape: {Sink::IOAdapter} over a Channel, which is what
+    # {CLI::CompactionMount} builds and the only route from `lib/` to a
+    # frontend. Passing `Sink::Null` here would leave this group proving the
+    # turn survives while proving nothing about the operator being told, which
+    # is the whole of the sink's justification.
+    def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "lain:compaction", stream: :stderr)
+
+    def source_from(*argv, **overrides)
+      Lain::CLI::Backend.new(parse(*argv).merge(overrides))
+                        .pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
+    end
+
+    def reported = surface.events.grep(Lain::Telemetry::ToolOutput)
+
+    def collapse_policy(source)
+      source.instance_variable_get(:@derived).instance_variable_get(:@strategy)
+    end
+
+    # A well-formed conversation, big enough to cross a lowered threshold.
+    def history(size)
+      (1..size).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |line, index|
+        line.commit(role: index.odd? && index > 1 ? "assistant" : "user",
+                    content: [{ "type" => "text", "text" => "turn #{index}: #{"the quick brown fox. " * 40}" }])
+      end
+    end
+
+    def decisions = journal.events.grep(Lain::Compaction::Source::CompactionDecision)
+
+    it "leaves an un-flagged run on the eager tier, the arm every comparison is measured against" do
+      expect(collapse_policy(source_from)).to be_nil
+    end
+
+    it "puts a flagged run on the strategy the flag names" do
+      expect(collapse_policy(source_from("--compact-strategy", "elide")))
+        .to be_a(Lain::Compaction::Strategy::Elide)
+    end
+
+    # B2, end to end and through the DEFAULT summarizer provider, which is the
+    # one whose transport errors leaked. Nothing is listening on the ollama port
+    # under WebMock, so the tier really is down -- and a down summarizer must
+    # cost the SPAN, never the turn.
+    #
+    # THREE HALVES, and each of them lives somewhere else: the provider contains
+    # the transport error (`ollama_spec`), the strategy declines the range and
+    # reports it (`summarizing_spec:183`), the mount routes the report to a
+    # channel (`compaction_mount_spec`). Nothing joined them, and each passes
+    # while the next is broken. This is the join.
+    it "renders the turn when the summarizer is unreachable, and TELLS the operator", :webmock do
+      stub_request(:post, %r{/api/chat}).to_raise(Faraday::ConnectionFailed)
+      source = source_from("--compact-strategy", "summarizing", compact_bytes: 100, compact_cap: 100,
+                                                                compact_keep: 2)
+      base = Lain::CLI::Backend.new(parse).context
+      line = history(6)
+
+      expect { source.context_for(base:, timeline: line, usage: nil, session:) }.not_to raise_error
+      expect(decisions.last.compacted).to be(false)
+      expect(reported.map(&:bytes).join).to include("Summarizing leaves", "uncollapsed")
+      expect(reported.map(&:tool_use_id).uniq).to eq(["lain:compaction"])
     end
   end
 end

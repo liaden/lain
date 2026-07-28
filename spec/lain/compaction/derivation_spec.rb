@@ -253,7 +253,7 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(journal.last.to_journal).to eq(
         "type" => "context_derived", "source_head" => source.head_digest, "derived_head" => derived.head_digest,
         "strategy" => "(anonymous strategy)", "spans" => [[source.to_a.first.digest, source.to_a[5].digest]],
-        "cut" => :offered, "moved" => 0
+        "cut" => :offered, "moved" => 0, "keep_last" => 3
       )
     end
 

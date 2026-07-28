@@ -17,15 +17,31 @@ module Lain
     #
     # DECIDE is one pass, in the order `bench/plan_sweep/driver.rb` established:
     # derive the candidate head, ask {Need} whether a compaction is warranted,
-    # take a fresh {SummarySnapshot}, and let {Scheduler} choose. It answers the
-    # base Context ITSELF when the scheduler defers -- byte-identical, not merely
-    # equivalent, which is the whole DEFER contract -- and `base.with_pipeline`
-    # of the composed pipeline when it does not.
+    # let {Scheduler} choose, and -- only then -- derive this turn's context
+    # timeline. It answers the base Context ITSELF when the scheduler defers --
+    # byte-identical, not merely equivalent, which is the whole DEFER contract --
+    # and `base.with_pipeline` of the composed pipeline when it does not.
+    #
+    # == What a compacting turn renders
+    #
+    # A DERIVED chain, not a render-time projection. {Derived} materializes a
+    # second lineage in the source's own Store and substitutes its projection as
+    # the rendered messages; {Context::Compact} is no longer composed here at
+    # all. The session timeline stays the lossless record and its head advances
+    # only by committed turns -- a derivation writes replacement events into the
+    # Store and never onto the chain the Agent holds.
+    #
+    # Substituting MESSAGES rather than handing `#render` a different timeline
+    # is the Open decisions ruling, and it is load-bearing rather than
+    # cosmetic: a strategy may hold a live oracle and a mutable memo, and
+    # {Scheduler::COMPOSE}'s `Ractor.make_shareable` would deep-freeze that
+    # graph in SILENCE. The derivation therefore runs here, off the pipeline,
+    # and only a frozen array of finished messages crosses into it.
     #
     # It is NOT `Ractor.shareable?` and must not become so: it holds the mutable
     # {Cold} and the live {Oracle::Eager}. What it HANDS BACK is shareable, which
     # is the constraint that matters, and {SummarySnapshot} is what makes the two
-    # compatible -- the summarizer riding into the pipeline is a frozen copy of
+    # compatible -- the summaries riding into the derivation are a frozen copy of
     # what the Eager held, never the Eager.
     class Source
       # The per-turn decision, journaled on EVERY turn including a deferring
@@ -60,31 +76,23 @@ module Lain
         def held(_digest) = nil
       end
 
-      # What a deferring turn journals for a snapshot it never took: zero hits,
-      # zero misses. `SummarySnapshot.new` with no arguments is the sanctioned
-      # pure-elision default (never the hand-built-map hazard `.take` exists to
-      # prevent), and it hashes NOTHING at construction -- which is what makes it
-      # safe as a class-body constant here, since this unit loads at `lain.rb:24`
-      # and `Canonical.digest` is not reachable until `:71`.
-      NOTHING_TAKEN = SummarySnapshot.new
-      private_constant :NOTHING_TAKEN
-
-      # {Context::Compact} re-thresholds the drop set it derives, which was a
-      # SECOND authority over a decision {Need} and {Head} have already made
-      # against the very same bytes -- and two authorities can only disagree.
-      # Head deleted the slice half of that disagreement; zero deletes the
-      # threshold half, so a Compact composed here always performs the
-      # compaction the scheduler committed to and journaled.
+      # A turn whose derived chain the Messages API would have rejected, and
+      # the uncompacted render it fell back to.
       #
-      # A real threshold here would not be SILENT about the disagreement --
-      # panel-measured 2026-07-25, {Scheduler#accounting} re-runs the summarizer
-      # and journals `tokens_before == tokens_after` with `cost_saved: 0.0`, so a
-      # declined rewrite is visible. It would simply be the WRONG PLACE: "is this
-      # rewrite worth making" belongs to whoever owns the decision, and it is
-      # asked in {#decide} as a floor on the rendered RESULT rather than as a
-      # second byte count on the head. See {#shrinks?}.
-      OBEY_THE_SCHEDULER = 0
-      private_constant :OBEY_THE_SCHEDULER
+      # ITS OWN TYPE rather than a {Telemetry::ContextDerived} carrying empty
+      # `spans`: that record's `cut` field exists precisely to make an empty
+      # collapse readable, and a fallback wearing a derivation's badge would put
+      # back the ambiguity it was added to destroy.
+      #
+      # `consecutive` is what keeps this from being the silent-stop mode wearing
+      # a badge. A deterministic strategy over a stable history refuses
+      # IDENTICALLY every turn -- one refusal is an awkward history, forty in a
+      # row is a session that has stopped compacting -- and the two are
+      # indistinguishable from a record that counts nothing. See {Derived} for
+      # why the streak is journalled rather than raised on.
+      DerivationRefused = Data.define(:strategy, :violations, :consecutive) do
+        include Telemetry::Journalable
+      end
 
       # How long since the cache was last touched -- the observe half's clock,
       # extracted so the Source holds a measurement rather than a raw `Time` and
@@ -111,6 +119,12 @@ module Lain
       # @param keep_last [Integer] trailing messages kept verbatim -- the ONE
       #   number {Head} and {Context::Compact} must agree on
       # @param eager [#held] the live summary store; the Null holds nothing
+      # @param strategy [Strategy::Base, nil] which policy collapses a span,
+      #   `--compact-strategy`'s answer. nil is the un-flagged wiring, which
+      #   collapses into the run's own eager tier exactly as {Context::Compact}
+      #   did -- see {Derived}. Injected ONCE, never fetched per turn: a
+      #   model-backed strategy holds a memo whose absence turns one range's two
+      #   questions into two model calls (`summarizing.rb:220-239`).
       # @param journal [#<<] where the decision lands; the Null channel by
       #   default, so no caller guards `if journal`
       # @param model [String, nil] priced for {Scheduler}'s cost accounting
@@ -123,19 +137,19 @@ module Lain
       #   fallback for a model no Anthropic-shaped table carries (`ollama`,
       #   `bedrock`), because an unsupported provider must still run; a blank
       #   model still raises there, which is a wiring bug rather than a provider.
-      def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, journal: Channel::Null.instance,
-                     model: nil, price_book: PriceBook.default, clock: -> { Time.now },
-                     context_window: ContextWindow.default)
+      def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
+                     journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
+                     clock: -> { Time.now }, context_window: ContextWindow.default)
         @need = need
         @context_window = context_window
         @cold = cold
         @hard_cap = Integer(hard_cap)
-        @keep_last = validated_keep_last(keep_last)
         @eager = eager
         @journal = journal
         @model = model
         @price_book = price_book
         @idle = IdleGap.new(clock:)
+        @derived = Derived.new(keep_last: validated_keep_last(keep_last), strategy:, journal:)
       end
 
       # The observe half's response leg. A turn's own usage carries the
@@ -178,15 +192,20 @@ module Lain
         observe_idle
         turns = timeline.to_a
         messages = projected(turns)
-        decide(base:, messages:, usage:, session:, pins: pinned(turns, messages, session))
+        decide(base:, timeline:, messages:, usage:, session:, pins: pinned(turns, messages, session))
       end
 
       private
 
-      # {Head} owns the rule -- a keep_last of 0 makes Compact replace the
+      # {Head} owns the rule -- a keep_last of 0 makes a derivation replace the
       # ENTIRE history with a summary of nothing -- and asking it against an
       # empty history is how a bad wiring fails HERE rather than on the first
       # turn of a live chat.
+      #
+      # The validated number is then held by {Derived} and asked back for the
+      # Head, rather than kept in a second ivar here. One number, one owner: the
+      # {Boundary} the derivation cuts at and the {Head} {Need} measures have to
+      # be computed from the SAME keep_last, and two copies is how they drift.
       def validated_keep_last(keep_last)
         Head.new(messages: [], keep_last:)
         keep_last
@@ -235,14 +254,13 @@ module Lain
       # droppable turn is PINNED declines here rather than reaching Compact's
       # empty-summarizable path and paying a cache break for
       # {SummarySnapshot::NOTHING}.
-      def decide(base:, messages:, usage:, session:, pins:)
-        head = Head.new(messages:, keep_last: @keep_last, pins:)
+      def decide(base:, timeline:, messages:, usage:, session:, pins:)
+        head = Head.new(messages:, keep_last: @derived.keep_last, pins:)
         need = @need.check(messages: head.messages, used_tokens: usage, window_tokens: window_for(base),
                            plan_step_completed: session.plan_step_completed?)
         return defer(base:, need:, head:) if head.empty? || !need.needed?
 
-        weigh(base:, messages:, head:, need:, pins:,
-              snapshot: SummarySnapshot.take(messages: head.messages, eager: @eager))
+        weigh(base:, timeline:, messages:, head:, need:, pins:)
       end
 
       # Off the LIVE Context, every turn, never captured at construction:
@@ -267,26 +285,42 @@ module Lain
       # scheduler was going to defer regardless, and a turn deferred on TIMING
       # would have been journaled as an inflation refusal, over-counting the
       # refusals a bench reads by the whole warm-defer population.
-      def weigh(base:, messages:, head:, need:, pins:, snapshot:)
-        compact = compaction(snapshot, pins)
-        scheduler = scheduler_for(compact)
-        return defer(base:, need:, head:, snapshot:) unless timely?(scheduler, need, head)
-        return defer(base:, need:, head:, snapshot:, would_not_shrink: true) unless shrinks?(compact, messages)
+      def weigh(base:, timeline:, messages:, head:, need:, pins:)
+        return defer(base:, need:, head:) unless timely?(need, head)
 
-        commit(base:, messages:, head:, need:, snapshot:, scheduler:)
+        outcome = @derived.over(timeline, pins:, snapshot: SummarySnapshot.take(messages: head.messages,
+                                                                                eager: @eager))
+        return defer(base:, need:, head:, outcome:) if outcome.refused?
+        return defer(base:, need:, head:, outcome:, would_not_shrink: true) unless shrinks?(outcome.replay, messages)
+
+        commit(base:, messages:, head:, need:, outcome:)
       end
 
-      def timely?(scheduler, need, head)
-        scheduler.evaluate(need:, cold: @cold.cold?, history_size: head.bytesize).compact?
+      # {Scheduler#evaluate} is the PURE half of the policy and never reads the
+      # combinator its scheduler was built around, which is what lets the timing
+      # question be asked BEFORE this turn's derivation exists -- so the unit
+      # stands in for the pipeline that has not been decided on yet.
+      #
+      # Asking it first is not a micro-optimization. A derivation writes ~22
+      # objects into the Store and journals an edge, and paying that on every
+      # warm-under-cap turn -- the steady state once the byte threshold is
+      # crossed -- would fill the experiment record with derivations no render
+      # ever used, on top of asking a model-backed strategy for summaries
+      # nothing reads.
+      def timely?(need, head)
+        scheduler_for(Context::Identity).evaluate(need:, cold: @cold.cold?,
+                                                  history_size: head.bytesize).compact?
       end
 
-      def defer(base:, need:, head:, snapshot: NOTHING_TAKEN, would_not_shrink: false)
-        record(need:, head:, compacted: false, snapshot:, would_not_shrink:)
+      def defer(base:, need:, head:, outcome: Derived::Outcome::NOTHING, would_not_shrink: false)
+        record(need:, head:, compacted: false, outcome:, would_not_shrink:)
         base
       end
 
       # The floor: a rewrite that would not SHRINK the rendered history is
-      # refused however loudly the signals fired.
+      # refused however loudly the signals fired -- and it now measures the
+      # DERIVED chain's own projection, which is the very array a render will
+      # send, rather than a second computation of it.
       #
       # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
       # digest, byte counts, a line per block) costs ~230 bytes, so over small
@@ -298,16 +332,15 @@ module Lain
       # default.
       #
       # It asks the real question rather than a proxy for it -- the very rewrite
-      # that would ship, measured -- at the price of one `Compact#call` and two
-      # `Canonical.dump`s, now paid only on a turn the scheduler has already
-      # committed to (see {#weigh}).
+      # that would ship, measured -- at the price of two `Canonical.dump`s, paid
+      # only on a turn the scheduler has already committed to (see {#weigh}).
       #
       # STRICT: a byte-NEUTRAL rewrite is declined too. It buys nothing and
       # still breaks the cache prefix, so `<=` would be a rewrite that costs a
       # full cache write to change nothing. Pinned at the crossover, byte for
       # byte, in the spec.
-      def shrinks?(compact, messages)
-        Canonical.dump(compact.call(messages)).bytesize < Canonical.dump(messages).bytesize
+      def shrinks?(replay, messages)
+        Canonical.dump(replay.call(messages)).bytesize < Canonical.dump(messages).bytesize
       end
 
       # `head.messages` to {Need} (a {Head} itself is not dumpable), the WHOLE
@@ -327,12 +360,12 @@ module Lain
       # scheduler is priced for `@model` at CONSTRUCTION, so naming what is
       # actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
-      def commit(base:, messages:, head:, need:, snapshot:, scheduler:)
+      def commit(base:, messages:, head:, need:, outcome:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
-        pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
-                                      base: provider, messages:, ran_under: base.model)
+        pipeline = scheduler_for(outcome.replay).pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
+                                                          base: provider, messages:, ran_under: base.model)
         compacted = !pipeline.equal?(provider)
-        record(need:, head:, compacted:, snapshot:)
+        record(need:, head:, compacted:, outcome:)
         compacted ? base.with_pipeline(pipeline) : base
       end
 
@@ -352,33 +385,20 @@ module Lain
       # Shareability is established, not skipped.
       def flattened_twin(base) = base.with_model(base.model)
 
-      def record(need:, head:, compacted:, snapshot: NOTHING_TAKEN, would_not_shrink: false)
+      # `summary_hits`/`summary_misses` are the collapse POLICY's, not a
+      # snapshot's. The un-flagged policy reads the eager tier through this
+      # turn's {SummarySnapshot} and reports exactly what it did before; a
+      # model-backed strategy reports its OWN content-address hit rate, which is
+      # the count a mis-keyed address is invisible in except as a number that
+      # never rises. A policy holding nothing reports honest zeros.
+      def record(need:, head:, compacted:, outcome:, would_not_shrink: false)
         @journal << CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
-                                           summary_hits: snapshot.hits, summary_misses: snapshot.misses,
+                                           summary_hits: outcome.hits, summary_misses: outcome.misses,
                                            cold: @cold.cold?, would_not_shrink:)
       end
 
-      # This turn's rewrite, built once and then asked two questions: whether it
-      # shrinks anything ({#shrinks?}) and, if so, what the scheduler does with
-      # it. The snapshot inside it is what cannot be shared across turns -- a
-      # summary landing between renders must not change bytes a prompt was
-      # already built from.
-      #
-      # RE-RULED 2026-07-25 (B2), replacing the ruling that pinned this at
-      # {Context::ProtectedPatterns::NONE}. That ruling was right about the
-      # hazard and wrong about the fix: a protection-agnostic {Head} measures a
-      # SUPERSET of what a policy-carrying Compact removes, so Need fires on
-      # bytes no compaction reclaims. The policy is now wired to BOTH, as the
-      # very same value -- `pins` here is the object {#decide} already handed
-      # the Head -- so the superset cannot open up. Passing a second, equal
-      # policy would be the bug: equal is not the guarantee, identical is.
-      def compaction(snapshot, pins)
-        Context::Compact.new(threshold: OBEY_THE_SCHEDULER, keep_last: @keep_last, summarizer: snapshot,
-                             protected_patterns: pins)
-      end
-
-      # A fresh Scheduler per turn, because the Compact it is frozen around is
-      # this turn's. Both are cheap frozen values.
+      # A fresh Scheduler per turn, because the combinator it is frozen around
+      # is this turn's. Both are cheap frozen values.
       def scheduler_for(compact)
         Scheduler.new(compact:, hard_cap: @hard_cap, journal: @journal, model: @model, price_book: @price_book)
       end
@@ -408,3 +428,8 @@ module Lain
     end
   end
 end
+
+# AFTER the class body, the placement rule `effect/handler.rb` follows: {Derived}
+# reopens {Lain::Compaction::Source} and names {Source::DerivationRefused}, so
+# the class it hangs off has to exist first.
+require_relative "source/derived"

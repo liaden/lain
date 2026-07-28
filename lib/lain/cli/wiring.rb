@@ -243,7 +243,7 @@ module Lain
       # collaborator to hide.
       def agent_backing(backend, channel)
         provider = spooled_provider(backend, channel:)
-        { provider:, **CompactionMount.new(backend:, provider:, chronicle:).agent_kwargs }
+        { provider:, **CompactionMount.new(backend:, provider:, chronicle:, channel:).agent_kwargs }
       end
 
       # Both provider construction sites tee their round trips into the
