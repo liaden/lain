@@ -94,6 +94,14 @@ Gem::Specification.new do |spec|
   # history. Only the frontend may touch the terminal; see spec/output_discipline_spec.rb.
   spec.add_dependency "pastel", "~> 0.8"
   spec.add_dependency "rb_sys", "~> 0.9.91"
+  # Line editing for Frontend::TTY, via Frontend::LineEditor. Declared even though
+  # reline ships with Ruby, and pinned to a minor series: the key-action seam binds
+  # keys to a method on Reline::LineEditor and drives that class's whole_buffer /
+  # delete_text / insert_multiline_text, plus Reline.core.config's mode accessors.
+  # Left transitive, a released gem would get whatever reline the user's Ruby has,
+  # and a rename in a minor bump would break the prompt in SILENCE -- the seam would
+  # simply stop firing. spec/lain/frontend/reline_spec.rb fails loudly instead.
+  spec.add_dependency "reline", "~> 0.6.3"
   # Declarative state machines. Chosen over `statesman`, which is built around a
   # persisted transition store -- the Timeline already is one, content-addressed
   # and replayable, and a second would only diverge from it.

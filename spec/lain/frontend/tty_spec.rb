@@ -17,12 +17,26 @@ RSpec.describe Lain::Frontend::TTY do
   # Reline::HISTORY is process-global (Reline::History < Array), so every example
   # that touches it must restore the pre-existing content -- otherwise a line
   # pushed by one example leaks into the next.
+  #
+  # Reline.core.config is process-global too, and the interactive prompt now
+  # reads the human's inputrc to resolve the editing mode (T14). Without the
+  # INPUTRC override these examples run against whatever dotfile the developer
+  # happens to own -- an inputrc saying `set editing-mode vi` puts Reline in a
+  # different keymap for every example that follows, and reset_variables also
+  # drops any key binding a sibling spec file registered. Nothing here fails
+  # without it today; it is here so that "passes on my machine" and "passes"
+  # stay the same sentence.
   around do |example|
     original = Reline::HISTORY.to_a
+    original_inputrc = ENV.fetch("INPUTRC", nil)
+    ENV["INPUTRC"] = File.join(Dir.tmpdir, "lain-spec-no-such-inputrc")
+    Reline.core.config.reset_variables
     Reline::HISTORY.clear
     example.run
     Reline::HISTORY.clear
     Reline::HISTORY.concat(original)
+    ENV["INPUTRC"] = original_inputrc
+    Reline.core.config.reset_variables
   end
 
   # A double standing in for a real terminal's input: #prompt only takes the
@@ -120,6 +134,25 @@ RSpec.describe Lain::Frontend::TTY do
 
       expect(output.string).to include(">")
     end
+
+    # T14: the interactive read goes through {Frontend::LineEditor}, which is
+    # what makes a backslash-continued message arrive as ONE line here rather
+    # than as two prompts.
+    it "delivers a backslash-continued message as one line" do
+      allow(Reline).to receive(:readmultiline).and_return("first \\\nsecond")
+
+      expect(described_class.new(channel:, output:, input: tty_input).prompt).to eq("first \nsecond")
+    end
+
+    it "asks the line editor for vi mode only when the caller configured it" do
+      allow(Reline).to receive(:readmultiline).and_return("hi")
+
+      described_class.new(channel:, output:, input: tty_input, vi_mode: true).prompt
+
+      expect(Reline.core.config.editing_mode_is?(:vi_insert)).to be(true)
+    ensure
+      Reline.core.config.reset_variables
+    end
   end
 
   # I3: the prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
@@ -155,41 +188,41 @@ RSpec.describe Lain::Frontend::TTY do
 
     it "renders a warm glyph when the deadline is still ahead of now" do
       write_state(cache_deadline: Time.at(1_500).utc.iso8601)
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline)
+      expect(Reline).to have_received(:readmultiline)
         .with(a_string_including(described_class::Warmth::WARM), true)
-      expect(Reline).not_to have_received(:readline)
+      expect(Reline).not_to have_received(:readmultiline)
         .with(a_string_including(described_class::Warmth::COLD), true)
     end
 
     it "renders a cold glyph when the deadline has already passed" do
       write_state(cache_deadline: Time.at(500).utc.iso8601)
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline)
+      expect(Reline).to have_received(:readmultiline)
         .with(a_string_including(described_class::Warmth::COLD), true)
     end
 
     it "renders today's bare prompt when no state file has ever been published" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state(state_path: File.join(@state_dir, "never-written", "state.json")).prompt
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     it "renders today's bare prompt when the feed exists but has no cache_deadline yet" do
       write_state(cache_deadline: nil)
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     # Review fix round: the reviewer reproduced a crash where a syntactically
@@ -200,29 +233,29 @@ RSpec.describe Lain::Frontend::TTY do
     # prompt exactly like a missing file does.
     it "renders today's bare prompt when the state file is not valid JSON" do
       write_raw("not json at all {{{")
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     it "renders today's bare prompt when cache_deadline is not a parseable timestamp" do
       write_state(cache_deadline: "not-a-real-timestamp")
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     it "renders today's bare prompt when the published JSON's top level is not a Hash" do
       write_raw(JSON.generate([1, 2, 3]))
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_state.prompt
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     it "leaves non-tty output byte-identical to today: no glyph, no escapes" do
@@ -250,16 +283,16 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "hands the composed line to the line editor" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_renderer(->(text:, **) { "opus 42% #{text}" }).prompt("> ")
 
-      expect(Reline).to have_received(:readline).with("opus 42% > ", true)
+      expect(Reline).to have_received(:readmultiline).with("opus 42% > ", true)
     end
 
     it "writes every line but the final one to the screen BEFORE the editor takes over" do
       seen = nil
-      allow(Reline).to receive(:readline) { seen = output.string.dup and "hi" }
+      allow(Reline).to receive(:readmultiline) { seen = output.string.dup and "hi" }
 
       tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
 
@@ -270,26 +303,26 @@ RSpec.describe Lain::Frontend::TTY do
     # (line_editor.rb), so a multi-line rendering has to be split here or it
     # arrives mangled.
     it "never lets a newline reach the line editor" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     it "shows today's prompt, and no header, when the renderer raises" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
 
-      expect(Reline).to have_received(:readline).with("> ", true)
+      expect(Reline).to have_received(:readmultiline).with("> ", true)
     end
 
     # A degraded renderer is reported through the same warning line an
     # unwritable history file uses -- once, above the prompt, never instead
     # of it.
     it "renders a warning line for a broken renderer rather than failing silently" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
 
       tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
 
@@ -297,7 +330,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "still prepends the warmth glyph the null renderer was handed" do
-      allow(Reline).to receive(:readline).and_return("hi")
+      allow(Reline).to receive(:readmultiline).and_return("hi")
       allow(output).to receive(:tty?).and_return(true)
       state = File.join(@prompt_dir, "state.json")
       File.write(state, JSON.generate({ "cache_deadline" => Time.at(1_500).utc.iso8601 }))
@@ -306,7 +339,7 @@ RSpec.describe Lain::Frontend::TTY do
                           wall_clock: -> { Time.at(1_000) }, history_path: File.join(@prompt_dir, "history"))
                      .prompt("> ")
 
-      expect(Reline).to have_received(:readline).with("#{described_class::Warmth::WARM} > ", true)
+      expect(Reline).to have_received(:readmultiline).with("#{described_class::Warmth::WARM} > ", true)
     end
   end
 
@@ -332,7 +365,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "writes an accepted line to disk before the next prompt" do
-      allow(Reline).to receive(:readline).and_return("remember me")
+      allow(Reline).to receive(:readmultiline).and_return("remember me")
 
       tty_with_history.prompt
 
@@ -340,7 +373,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "creates the history file owner-only (0600) at open(), with no chmod window" do
-      allow(Reline).to receive(:readline).and_return("secret-adjacent line")
+      allow(Reline).to receive(:readmultiline).and_return("secret-adjacent line")
       expect(File).not_to receive(:chmod)
 
       tty_with_history.prompt
@@ -349,7 +382,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     it "appends rather than truncating across multiple accepted lines" do
-      allow(Reline).to receive(:readline).and_return("one", "two")
+      allow(Reline).to receive(:readmultiline).and_return("one", "two")
 
       history_tty = tty_with_history
       2.times { history_tty.prompt }
@@ -370,7 +403,7 @@ RSpec.describe Lain::Frontend::TTY do
       blocking_file = File.join(@history_dir, "blocked")
       File.write(blocking_file, "not a directory")
       unwritable_path = File.join(blocking_file, "history")
-      allow(Reline).to receive(:readline).and_return("still works")
+      allow(Reline).to receive(:readmultiline).and_return("still works")
 
       line = nil
       expect { line = tty_with_history(history_path: unwritable_path).prompt }.not_to raise_error
@@ -383,7 +416,7 @@ RSpec.describe Lain::Frontend::TTY do
       blocking_file = File.join(@history_dir, "blocked")
       File.write(blocking_file, "not a directory")
       unwritable_path = File.join(blocking_file, "history")
-      allow(Reline).to receive(:readline).and_return("a", "b")
+      allow(Reline).to receive(:readmultiline).and_return("a", "b")
 
       history_tty = tty_with_history(history_path: unwritable_path)
       2.times { history_tty.prompt }

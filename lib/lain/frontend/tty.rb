@@ -75,19 +75,20 @@ module Lain
       #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
       #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
       #   answers a different question (I3)
+      # @param vi_mode [Boolean] ask the line editor for vi mode; off unless
+      #   asked, in which case {LineEditor} leaves Reline as it found it (T14)
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                      state_path: File.join(Dir.pwd, ".lain", "state.json"),
-                     wall_clock: -> { Time.now })
+                     wall_clock: -> { Time.now }, vi_mode: false)
         @channel = channel
         @output = output
         @input = input
         @pastel = pastel
         @theme = theme
-        @composer = PromptComposer.new(theme:, renderer: prompt_renderer, notify: method(:render_warning))
-        @history = History.new(path: history_path, notify: method(:render_warning))
+        build_prompt_stack(prompt_renderer:, vi_mode:, history_path:)
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
@@ -134,10 +135,16 @@ module Lain
       # real terminal (it calls `IO#winsize`) and has no business running
       # against a StringIO in a unit spec.
       #
+      # The read goes through {Frontend::LineEditor}, so a line ending in a
+      # backslash continues and the human's next line joins it: what arrives
+      # here is one message, however many lines they typed (T14). vi COMMAND
+      # mode is the one exception -- Enter submits there regardless; see
+      # {Frontend::LineEditor}'s comment for why that is not worked around.
+      #
       # The interactive path is also where {Warmth} prepends a cache-warmth
       # glyph -- a per-prompt SNAPSHOT of {StatusFeed}'s published deadline,
-      # read once right here. This is deliberate, not a shortcut: Reline's
-      # `readline` fixes its prompt string for the whole wait (the approved
+      # read once right here. This is deliberate, not a shortcut: Reline
+      # fixes its prompt string for the whole wait (the approved
       # doc's documented limitation, interface-integration.md § 1), so there
       # is no mid-wait refresh to build -- tmux's status-right is where live
       # ticking lives. A non-tty `output` gets no glyph at all (gated
@@ -249,7 +256,7 @@ module Lain
       # a newline into a literal backslash-n rather than wrapping.
       def read_line_with_history(text)
         composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
-        line = Reline.readline(composed.editor_line(@output), true)
+        line = @line_editor.read(composed.editor_line(@output))
         @history.append(line) if line
         line
       end
@@ -331,6 +338,23 @@ module Lain
     # idiom: each collaborator is its own responsibility, and the split keeps
     # each body within Metrics/ClassLength instead of loosening it.
     class TTY
+      private
+
+      # The three collaborators {#read_line_with_history} drives, in the order
+      # it drives them: compose the prompt string, read a line with it, durably
+      # record what was accepted. Extracted because Metrics/MethodLength was
+      # right that #initialize had started doing two jobs -- storing the
+      # terminal's handles, and assembling the prompt stack -- and placed HERE,
+      # beside the collaborators it builds, for the same reason they are here:
+      # this block is where the parts that are not "owning the terminal" live.
+      # They share a `notify:` because a degraded collaborator reports through
+      # the frontend's one warning line.
+      def build_prompt_stack(prompt_renderer:, vi_mode:, history_path:)
+        @composer = PromptComposer.new(theme: @theme, renderer: prompt_renderer, notify: method(:render_warning))
+        @line_editor = LineEditor.new(vi_mode:, notify: method(:render_warning))
+        @history = History.new(path: history_path, notify: method(:render_warning))
+      end
+
       # Durable reline history (T12): loaded into `Reline::HISTORY` at {#run}
       # entry so history round-trips a process, write-through on each accepted
       # line rather than dump-at-exit, so a SIGKILL between prompts loses at
