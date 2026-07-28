@@ -107,6 +107,12 @@ Gem::Specification.new do |spec|
   # and replayable, and a second would only diverge from it.
   spec.add_dependency "state_machines", "~> 0.201"
   spec.add_dependency "thor", "~> 1.3"
+  # `.lain/config.toml`. Chosen over `toml-rb`, which pulls in `citrus`; tomlrb is
+  # racc-based with no runtime deps of its own. `Ext::Prompt.from_toml` cannot serve
+  # here -- its deserializer requires a `format` field and denies unknown ones, so it
+  # structurally cannot read an `[epics]` table, and a generic Rust TOML binding fails
+  # the placement rule's rule 3: config reading is per-session, never hot per-turn.
+  spec.add_dependency "tomlrb", "~> 2.0"
   # Declared directly, not leaned on transitively: `Frontend::Theme` requires it
   # for colour-depth detection, and pastel only happens to pull it in at `~> 0.5`.
   # A pastel release that dropped it would turn into a LoadError at require time.
