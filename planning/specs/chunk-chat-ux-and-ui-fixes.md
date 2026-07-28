@@ -1,6 +1,6 @@
 # Chat UX and the UI defects the live test found
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (+ rust in `ext/lain`)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -115,6 +115,19 @@ now stand). What the exploration established, and where docs and code disagreed:
   `nvim_buf_get_lines`); `:LainStart` laying out all four buffers once the plugin is on
   runtimepath; and the `:LainResend` provider round trip end to end.
 
+## Execution note (added 2026-07-28, during the run)
+
+**Worktrees fork from the commit main was at when the session started, not from current main.**
+Every wave after the first therefore starts *blind to its own dependencies* unless the
+orchestrator says so at spawn. T9 caught this itself and materialised T8's files read-only; T7
+caught it and merged before writing code; T11 was warned pre-emptively. The fix is one line in
+each brief — `git stash -u && git merge --ff-only main ; git stash pop`, authorised as the single
+permitted git write — plus `bundle exec rake compile`, because the worktree's `.so` is stale too.
+
+Watch the stash pop: a file the card creates as **untracked** that a dependency also landed
+(here `lib/lain/frontend/theme.rb`) comes back as main's tracked copy and the card's additions are
+**silently dropped**. Diff against the retained stash before assuming a clean reconciliation.
+
 ## Orchestrator contract (plan-specific only)
 
 - **Shared files (orchestrator-owned, wiring diffs only):** `lib/lain.rb`,
@@ -164,8 +177,7 @@ Critical path: **T8 → T9 → T12 → T14 → T15 → T16**.
 
 ## Tasks
 
-### T1 — Fan streamed tool output onto the live-view channel   [wave 1] [risk: medium]
-
+### T1 — Fan streamed tool output onto the live-view channel   [wave 1] [risk: medium]   ✅ LANDED `310d5da`
 **Depends on:** none
 **Files:** `lib/lain/cli/wiring.rb`, `lib/lain/cli/live_views.rb`, `lib/lain/cli/chat_launch.rb`
 **Reuse:** `Lain::Channel::DropOldest` (`lib/lain/channel.rb`) is the editor-side channel that
@@ -217,7 +229,7 @@ example in `spec/lain/cli/wiring_spec.rb`
 
 ---
 
-### T2 — Put lain's own nvim plugin on the cockpit's runtimepath   [wave 1] [risk: low]
+### T2 — Put lain's own nvim plugin on the cockpit's runtimepath   [wave 1] [risk: low]   ✅ LANDED `d4d2726`
 
 **Depends on:** none
 **Files:** `lib/lain/cli/up/cockpit.rb`, `lib/lain/cli/up.rb`, `lib/lain/paths.rb`
@@ -260,8 +272,7 @@ Scenario: reattaching to an existing cockpit stays silent
 
 ---
 
-### T3 — A zero-byte session never blocks resume, fork, or watch   [wave 1] [risk: medium]
-
+### T3 — A zero-byte session never blocks resume, fork, or watch   [wave 1] [risk: medium]   ✅ LANDED `e7b50a5`
 **Depends on:** none
 **Files:** `lib/lain/cli/resume/selector.rb`, `lib/lain/cli/watch.rb`, `lib/lain/cli/sessions.rb`,
 `lib/lain/journal.rb`
@@ -328,8 +339,7 @@ Scenario: a session that never wrote a record leaves no file behind
 
 ---
 
-### T4 — Emit an approval-pending signal when a tool call parks   [wave 1] [risk: medium]
-
+### T4 — Emit an approval-pending signal when a tool call parks   [wave 1] [risk: medium]   ✅ LANDED `3053e49`
 **Depends on:** none
 **Files:** `lib/lain/approval/queue.rb`, `lib/lain/telemetry.rb`
 **Reuse:** `Telemetry::Journalable` (`telemetry.rb:28-35`) — `journal_type` derives the record
@@ -373,7 +383,17 @@ Scenario: the pending event is deeply frozen
 
 ---
 
-### T5 — A run clock: session start, last input, last compaction   [wave 1] [risk: low]
+### T5 — A run clock: session start, last input, last compaction   [wave 1] [risk: low]   ✅ LANDED `ec2eed2`
+
+> **Contract published to T7 and T13** (panel-verified against the code):
+> `RunClock.new(clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })`;
+> `#elapsed → Float` seconds since construction; `#idle → Float` seconds since last
+> `#record_input` (before any input, seconds since construction); `#since_compaction → Float | nil`
+> (`nil`, never `0.0`, if never compacted); `#record_input → self`; `#<<(event) → self`, a channel
+> sink that only `Telemetry::Compaction` moves and that is inert to everything else.
+> **All three readers are monotonic durations — never wall-clock, never ISO8601.** `StatusFeed`
+> publishes one absolute ISO8601 deadline; these are a different shape, so T7 publishes them as
+> plain durations alongside `cache_deadline` rather than converting them into deadlines.
 
 **Depends on:** none
 **Files:** `lib/lain/run_clock.rb` (new), `lib/lain/cli/conductor.rb`
@@ -427,8 +447,7 @@ Scenario: unrelated events are inert
 
 ---
 
-### T6 — Context-window occupancy as a readable number   [wave 1] [risk: medium]
-
+### T6 — Context-window occupancy as a readable number   [wave 1] [risk: medium]   ✅ LANDED `b8bdced`
 **Depends on:** none
 **Files:** `lib/lain/agent/accounting.rb`, `lib/lain/agent.rb`, `lib/lain/context_window.rb`,
 `lib/lain/compaction/need.rb`
@@ -476,8 +495,7 @@ Scenario: the compaction trigger is unchanged
 
 ---
 
-### T7 — Publish the run's live metrics to the state feed and its renderers   [wave 2] [risk: high]
-
+### T7 — Publish the run's live metrics to the state feed and its renderers   [wave 2] [risk: high]   ✅ LANDED `7a15e84`
 **Depends on:** T4, T5, T6
 **Files:** `lib/lain/status_feed.rb`, `lib/lain/cli/up/hud.rb`,
 `plugin/tmux/scripts/lain-status`, `lib/lain/cli/wiring.rb`, `lib/lain/cli/chat_launch.rb`
@@ -556,8 +574,7 @@ Scenario: the two known defects are not made worse
 
 ---
 
-### T8 — A Theme of named style tokens over Pastel   [wave 1] [risk: medium]
-
+### T8 — A Theme of named style tokens over Pastel   [wave 1] [risk: medium]   ✅ LANDED `ccddd16`
 **Depends on:** none
 **Files:** `lib/lain/frontend/theme.rb` (new), `lib/lain/frontend/tty.rb`,
 `lib/lain/frontend/decorators.rb`
@@ -600,6 +617,14 @@ Scenario: an unknown token fails loudly
 ```
 → spec files: `spec/lain/frontend/theme_spec.rb` (new), `spec/lain/frontend/decorators_spec.rb`
 
+> **AC-vs-code gap, recorded 2026-07-28 (panel-upheld).** The first scenario says stderr styling
+> comes from the theme's **error** token. It does not, and should not: `:error` is red+**bold**
+> (the harness's own error line) while a subprocess's fd-2 bytes are plain red. Honoring the AC
+> literally would have added a byte and tripped this card's own byte-preservation trigger, which
+> says *report rather than rewrite the expectation to match*. The implementation uses a distinct
+> token, renamed `:tool_error` in the fix round so all ten tokens name **intent** rather than a
+> file descriptor. The AC is wrong; the code is right.
+
 **Escalation triggers:**
 - `spec/lain/frontend/decorators_spec.rb:20` asserts `include(colored.red("boom\n"))` with colour
   enabled — it pins **red for stderr**, round-tripped through Pastel. It must become a token
@@ -614,8 +639,7 @@ Scenario: an unknown token fails loudly
 
 ---
 
-### T9 — Commands return a renderable, not a String   [wave 2] [risk: high]
-
+### T9 — Commands return a renderable, not a String   [wave 2] [risk: high]   ✅ LANDED `76563c5`
 **Depends on:** T8
 **Files:** `lib/lain/renderable.rb` (new), `lib/lain/cli/repl.rb`,
 `lib/lain/cli/command/status.rb`, `lib/lain/cli/command/help.rb`,
@@ -679,8 +703,7 @@ Scenario: a renderable on a non-tty stream carries no escapes
 
 ---
 
-### T10 — A starship-compatible prompt formatter in ext/lain   [wave 1] [risk: high]
-
+### T10 — A starship-compatible prompt formatter in ext/lain   [wave 1] [risk: high]   ✅ LANDED `4e86d09`
 **Depends on:** none
 **Files:** `ext/lain/src/prompt.rs` (new), `ext/lain/src/lib.rs`, `ext/lain/CLAUDE.md`,
 `ext/lain/NOTICE` (new)
@@ -734,7 +757,13 @@ Scenario: the renderer is shareable
   Given a compiled format
   Then Ractor.shareable? holds for it
 ```
-→ spec file: `spec/lain/ext/prompt_spec.rb` (new), plus Rust unit tests in `ext/lain/src/prompt.rs`
+→ spec file: ~~`spec/lain/ext/prompt_spec.rb`~~ → **`spec/lain/rust/prompt_spec.rb`** (new), plus Rust
+unit tests in `ext/lain/src/prompt.rs`
+
+> **Card corrected 2026-07-28.** `spec/lain/ext/` does not exist; the repo's convention is
+> `spec/lain/rust/`, which already holds nine files including `bm25_spec.rb` — and that one
+> describes `Lain::Ext::Bm25`, so the directory tracks *which language implements it*, not the
+> Ruby namespace. Same correction applies to T11.
 
 **Escalation triggers:**
 - **`NO_COLOR`/`FORCE_COLOR`/isatty must never be read in Rust.** Colour arrives as a resolved
@@ -753,8 +782,7 @@ Scenario: the renderer is shareable
 
 ---
 
-### T11 — A fuzzy matcher binding in ext/lain   [wave 2] [risk: medium]
-
+### T11 — A fuzzy matcher binding in ext/lain   [wave 2] [risk: medium]   ✅ LANDED `7e36f58`
 **Depends on:** T10
 **Files:** `ext/lain/src/fuzzy.rs` (new), `ext/lain/src/lib.rs`, `ext/lain/CLAUDE.md`
 **Reuse:** the same `Bm25` binding shape as T10; `nucleo-matcher` 0.3.1 — upstream-documented as
@@ -791,7 +819,8 @@ Scenario: ties break deterministically
   When they are matched twice
   Then the order is the same both times
 ```
-→ spec file: `spec/lain/ext/fuzzy_spec.rb` (new), plus Rust unit tests in `ext/lain/src/fuzzy.rs`
+→ spec file: ~~`spec/lain/ext/fuzzy_spec.rb`~~ → **`spec/lain/rust/fuzzy_spec.rb`** (new), plus Rust
+unit tests in `ext/lain/src/fuzzy.rs` (see the correction on T10)
 
 **Escalation triggers:**
 - **`nucleo`'s `Matcher` takes `&mut self`** and carries ~135 KB of scratch, so this binding
@@ -804,8 +833,7 @@ Scenario: ties break deterministically
 
 ---
 
-### T12 — A prompt-composition seam in the terminal frontend   [wave 3] [risk: medium]
-
+### T12 — A prompt-composition seam in the terminal frontend   [wave 3] [risk: medium]   ✅ LANDED `920c129`
 **Depends on:** T9 *(file contention on `tty.rb` only — no behavioural dependency)*
 **Files:** `lib/lain/frontend/prompt.rb` (new), `lib/lain/frontend/tty.rb`
 **Reuse:** `TTY#read_line_with_history` (`tty.rb:222-226`) is the sole composition site today;
@@ -859,7 +887,25 @@ Scenario: a failing renderer never blocks the prompt
 
 ---
 
-### T13 — Render the prompt through the Rust formatter   [wave 4] [risk: medium]
+### T13 — Render the prompt through the Rust formatter   [wave 4] [risk: medium]   ✅ LANDED `2831ea8`
+> **`Lain::Ext::Prompt`'s contract, panel-confirmed 2026-07-28.**
+> `.compile(src)` / `.from_toml(src)` / `.width(text)`; `#source`, `#variables`, `#settings`,
+> `#render(vars, color:)` — **`color:` is a required keyword**, never defaulted, because Ruby owns
+> the stream. `ParseError` / `StyleError` / `ConfigError` all `< Lain::Error`. The handle,
+> `#source`, `#variables`, `#settings` (deeply) and `#render`'s result are frozen;
+> `Ractor.shareable?` holds. Strings and Symbols accepted; UTF-8 / US-ASCII / BINARY-that-is-valid-
+> UTF-8 only, else `EncodingError` naming the encoding; anything else `TypeError`.
+>
+> **Four things this card must design around:**
+> 1. Interpolated values are **silently stripped** of every control character, so a displayed value
+>    may differ from the value passed — and a control-only value elides as if unset.
+> 2. `#render` can raise `StyleError` **at render time**, not only at compile time, when a `$style`
+>    variable supplies an unknown word. The REPL needs a rescue.
+> 3. `.width` counts a literal `\n` as zero, so a multi-line source reports the **sum** of its
+>    lines' widths — that is not a cursor column. T12 already splits multi-line rendering.
+> 4. Bidi/Cf characters (U+202E and friends) pass through by design; `sanitize` covers Cc only,
+>    because blanket Cf stripping would break legitimate ZWJ sequences. Pass a real boolean to
+>    `color:` — it goes through `to_bool`, so `"no"` would colour.
 
 **Depends on:** T10, T12
 **Files:** `lib/lain/frontend/prompt.rb`, `lib/lain/prompt/default.toml` (new),
@@ -911,7 +957,7 @@ Scenario: the prompt aligns with wide glyphs
 
 ---
 
-### T14 — Configure Reline: vi mode, multiline input, and a key-action seam   [wave 4] [risk: high]
+### T14 — Configure Reline: vi mode, multiline input, and a key-action seam   [wave 4] [risk: high]   ✅ LANDED `ea7b5c0`
 
 **Depends on:** T12
 **Files:** `lib/lain/frontend/reline.rb` (new), `lib/lain/frontend/tty.rb`
@@ -997,7 +1043,7 @@ Scenario: registering on an already-bound key is refused
 
 ---
 
-### T15 — C-g composes the message in Neovim and :wq returns it   [wave 5] [risk: high]
+### T15 — C-g composes the message in Neovim and :wq returns it   [wave 5] [risk: high]   ✅ LANDED `044dff9`
 
 **Depends on:** T14
 **Files:** `lib/lain/frontend/neovim/compose.rb` (new),
@@ -1065,7 +1111,7 @@ Scenario: a dead editor never wedges the prompt
 
 ---
 
-### T16 — Fuzzy completion for `/` commands and `@` paths   [wave 6] [risk: high]
+### T16 — Fuzzy completion for `/` commands and `@` paths   [wave 6] [risk: high]   ✅ LANDED `506e811`
 
 **Depends on:** T11, T14, T15 *(T15 for `reline.rb` registration ordering only)*
 **Files:** `lib/lain/frontend/completion.rb` (new), `lib/lain/frontend/completion/sources.rb`
