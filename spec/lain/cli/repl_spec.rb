@@ -31,7 +31,9 @@ RSpec.describe Lain::CLI::Repl do
 
   def run_chat(input, dir:, chronicle: Lain::CLI::Chronicle::Null.new, options: { grace: 5 })
     output = StringIO.new
-    tty_factory = lambda do |channel:|
+    # `**` swallows T13's `prompt_renderer:` -- this spec is about the chat
+    # round trip, and its StringIO input never reaches the composing path.
+    tty_factory = lambda do |channel:, **|
       Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new(input),
                               history_path: File.join(dir, "history"))
     end

@@ -71,7 +71,7 @@ module Lain
         recorder, session = run_state(resumed)
         agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim)
         resumed&.notices&.each(&notice)
-        tty = @tty_factory.call(channel:)
+        tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
         @conductor.guard do
           build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:,
@@ -148,6 +148,17 @@ module Lain
       # is where it has to be threaded. Silently inheriting the default would
       # make that omission invisible.
       def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: Dir.pwd, journal:)
+
+      # T13: the prompt's state reader is assembled HERE because this is the
+      # only object holding the live Agent, the run's RunClock and the
+      # StatusFeed at once -- the three things a prompt format writes against.
+      # A malformed config reports through the SAME startup-notice seam a
+      # resumed chat's notices use, which is why the block is threaded down;
+      # `#run` takes it optionally, so SILENT stands in when nobody passed one.
+      def prompt_renderer(agent, notice)
+        state = Frontend::PromptComposer::RunState.new(agent:, clock: run_clock, status_feed: @status_feed)
+        Frontend::PromptComposer.renderer(state:, notify: notice || Frontend::PromptComposer::SILENT)
+      end
 
       # A resumed chat opens its NEW journal chained to the old one; a fresh chat
       # passes nothing, and the scribe writes an unchained header. Derived from

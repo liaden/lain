@@ -1,0 +1,31 @@
+# The prompt lain ships with, written in the format language `ext/lain/src/prompt.rs`
+# implements (starship's, four productions). Compiled once at chat start and
+# rendered per prompt, in process -- there is no fork/exec behind this file, and
+# nothing here may cause one.
+#
+# A project overrides it with `.lain/prompt.toml`; a machine, with
+# `$XDG_CONFIG_HOME/lain/prompt.toml`. The narrowest scope that answered wins.
+#
+# Every variable is optional. A `( ... )` group elides when every variable inside
+# it is empty, so a chat with no turn behind it and no subagent spawned composes
+# nothing at all and the prompt is exactly today's.
+#
+# What `Lain::Frontend::PromptComposer::RunState` supplies:
+#
+#   $model      the live model slot -- follows a /model switch mid-chat
+#   $occupancy  how full the context window is, a whole percent, clamped at 100%
+#               (absent before the first turn, and absent when the model slot is
+#               blank -- a prompt is not the place to answer for a wiring bug)
+#   $fleet      how many subagents have spawned, absent when none have
+#   $idle       since the human last answered a prompt: 12s, 5m, 2h
+#
+# Colour is NOT resolved here. Ruby owns the stream, so it decides whether this
+# renders with escape sequences at all; a `(bold cyan)` on a piped stdout emits
+# plain bytes.
+format = "[$model](bold cyan)( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"
+
+# [settings]
+# The composed line is dropped, rather than wrapped, when it is wider than the
+# room it has -- a wrapped row above the cursor smears the moment anything
+# redraws. That room is the terminal's own width unless this names a smaller one.
+# max_width = 60

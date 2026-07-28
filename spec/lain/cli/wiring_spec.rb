@@ -688,8 +688,11 @@ RSpec.describe Lain::CLI::Wiring do
     let(:opened) { [] }
     let(:conductor_opener) { ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { |c| opened << c } } }
 
+    # T13 hands the factory a `prompt_renderer:` too. It is swallowed rather
+    # than forwarded: what this spec is about is the object WIRING composes and
+    # passes on, not what the TTY then does with it (that is tty_spec's).
     def tty_factory(input, dir)
-      lambda do |channel:|
+      lambda do |channel:, **|
         Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new(input),
                                 history_path: File.join(dir, "history"))
       end
@@ -766,6 +769,86 @@ RSpec.describe Lain::CLI::Wiring do
       wiring = run_wiring(options: { grace: 5, yolo: true })
 
       expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
+    end
+
+    # T13: this class is the only object holding the Agent, the RunClock and
+    # the StatusFeed at once, so composing the prompt's state reader is its
+    # job -- and the TTY factory is where it hands it over.
+    describe "the prompt renderer" do
+      require "fileutils"
+
+      let(:plain_theme) { Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false)) }
+
+      # The fleet reading the renderer takes off the feed. Stubbed here and
+      # nowhere else, because this is the only block that actually composes a
+      # prompt -- every other #run spec leaves the renderer unused.
+      before { allow(status_feed).to receive(:state).and_return({ "fleet" => [] }) }
+
+      # Records what #run passed, and still builds a working TTY so the rest
+      # of the run proceeds exactly as the specs above drive it.
+      def recording_factory(input, dir, seen)
+        lambda do |channel:, **kwargs|
+          seen << kwargs[:prompt_renderer]
+          tty_factory(input, dir).call(channel:)
+        end
+      end
+
+      def run_recording(options: { grace: 5 }, &notice)
+        seen = []
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options:, chronicle:, status_feed:,
+                                       tty_factory: recording_factory("quit\n", dir, seen), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil, &notice)
+          wiring.conductor.close(reason: :exit)
+        end
+        seen
+      end
+
+      it "hands the TTY factory a renderer composed from the run's own state" do
+        expect(run_recording.first).to be_a(Lain::Frontend::PromptComposer::Formatted)
+      end
+
+      # AC1, through the wiring rather than in isolation: the renderer this
+      # class built reads the LIVE agent, so the model it names is the one the
+      # run is actually talking to.
+      it "builds it over the live model slot, the run clock and the status feed" do
+        composed = run_recording.first.call(text: "> ", theme: plain_theme)
+
+        expect(composed).to include(Lain::Provider::Ollama::DEFAULT_MODEL)
+        expect(composed.lines.last).to eq("> ")
+      end
+
+      # AC3: a project config that does not parse is reported through the same
+      # startup-notice seam a resumed chat's notices use, and the chat is still
+      # usable -- today's prompt, not a crash.
+      def with_project_config(bytes)
+        notices = []
+        renderer = Dir.mktmpdir do |project|
+          FileUtils.mkdir_p(File.join(project, ".lain"))
+          File.binwrite(File.join(project, ".lain", "prompt.toml"), bytes)
+          Dir.chdir(project) { run_recording { |notice| notices << notice }.first }
+        end
+        [notices, renderer]
+      end
+
+      it "reports a malformed project config as a startup notice, and keeps the chat usable" do
+        notices, renderer = with_project_config(%(format = "[unclosed"\n))
+
+        expect(notices.join).to include("prompt.toml")
+        expect(renderer).to be_a(Lain::Frontend::PromptComposer::Null)
+      end
+
+      # `Wiring#run` has no rescue around the renderer and `exe/lain` catches
+      # only Lain::Error, so an EncodingError escaping `.renderer` aborts the
+      # chat with a backtrace before a prompt ever exists. A single Latin-1
+      # byte in a project config is enough to do it.
+      it "survives a project config that is not valid UTF-8, rather than aborting the chat" do
+        notices = renderer = nil
+
+        expect { notices, renderer = with_project_config(%(format = "\xBB "\n).b) }.not_to raise_error
+        expect(notices.join).to include("prompt.toml")
+        expect(renderer).to be_a(Lain::Frontend::PromptComposer::Null)
+      end
     end
   end
 end
