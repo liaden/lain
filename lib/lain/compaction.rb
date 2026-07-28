@@ -9,6 +9,7 @@ require_relative "compaction/prepared"
 require_relative "compaction/summary_snapshot"
 require_relative "compaction/strategy"
 require_relative "compaction/derivation"
+require_relative "compaction/derivation_audit"
 require_relative "compaction/source"
 
 module Lain
