@@ -48,7 +48,12 @@ module Lain
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param output [#print, #puts, #flush] default $stdout, a StringIO in specs
       # @param input [#gets, #tty?] default $stdin, a StringIO in specs
-      # @param pastel [Pastel]
+      # @param pastel [Pastel] the raw palette, still handed to the nested
+      #   collaborators below
+      # @param theme [Frontend::Theme] the named style vocabulary this class
+      #   renders through -- derived from `pastel:` so an injected disabled
+      #   palette stays disabled, and injectable on its own so a caller can
+      #   restyle without restating the palette (T8)
       # @param history_path [String] durable reline history file, under
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
       #   instead of touching real XDG state (T12)
@@ -65,6 +70,7 @@ module Lain
       #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
       #   answers a different question (I3)
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
+                     theme: Theme.new(pastel:),
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                      state_path: File.join(Dir.pwd, ".lain", "state.json"),
@@ -73,6 +79,7 @@ module Lain
         @output = output
         @input = input
         @pastel = pastel
+        @theme = theme
         @history = History.new(path: history_path, notify: method(:render_warning))
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
@@ -144,13 +151,13 @@ module Lain
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
       def render_response(response)
-        @output.puts(@pastel.cyan(response.text))
+        @output.puts(@theme.paint(:response, response.text))
         @output.puts(rule)
         @output.flush
       end
 
       def render_error(message)
-        @output.puts(@pastel.red.bold("error: #{message}"))
+        @output.puts(@theme.paint(:error, "error: #{message}"))
         @output.flush
       end
 
@@ -159,8 +166,8 @@ module Lain
       # is: the reply-path shows the question and reads the answer inline, a
       # finished exchange rather than a concurrently-arriving stream.
       def render_question(question)
-        @output.puts(@pastel.yellow.bold("the agent asks:"))
-        @output.puts(@pastel.yellow(question))
+        @output.puts(@theme.paint(:question_label, "the agent asks:"))
+        @output.puts(@theme.paint(:question, question))
         @output.flush
       end
 
@@ -220,7 +227,7 @@ module Lain
       # `Reline::HISTORY`; {History#append} durably appends it too, before the
       # next prompt is drawn (T12 -- see History's comment).
       def read_line_with_history(text)
-        line = Reline.readline("#{warmth_prefix}#{@pastel.bold(text)}", true)
+        line = Reline.readline("#{warmth_prefix}#{@theme.paint(:prompt, text)}", true)
         @history.append(line) if line
         line
       end
@@ -239,7 +246,7 @@ module Lain
       # Presentation for a collaborator's degraded-path warning ({History}'s
       # `notify:` seam) -- the palette stays in TTY proper.
       def render_warning(message)
-        @output.puts(@pastel.yellow(message))
+        @output.puts(@theme.paint(:warning, message))
         @output.flush
       end
 
@@ -264,7 +271,7 @@ module Lain
       # never a torn splice. With no countdown active it degrades to the
       # pre-T21 raw print (live tool-output chunks are not line-shaped).
       def render(event)
-        rendered = Decorators.for(event)&.render(@pastel)
+        rendered = Decorators.for(event)&.render(@theme)
         @countdown.print_above(rendered) unless rendered.nil?
       end
 
@@ -273,7 +280,7 @@ module Lain
       # tty-screen gem's top-level module, since we are lexically inside a
       # class of the same name.
       def rule
-        @pastel.dim("-" * ::TTY::Screen.width)
+        @theme.paint(:rule, "-" * ::TTY::Screen.width)
       end
 
       def enter_alternate_screen

@@ -99,6 +99,10 @@ Gem::Specification.new do |spec|
   # and replayable, and a second would only diverge from it.
   spec.add_dependency "state_machines", "~> 0.201"
   spec.add_dependency "thor", "~> 1.3"
+  # Declared directly, not leaned on transitively: `Frontend::Theme` requires it
+  # for colour-depth detection, and pastel only happens to pull it in at `~> 0.5`.
+  # A pastel release that dropped it would turn into a LoadError at require time.
+  spec.add_dependency "tty-color", "~> 0.6"
   spec.add_dependency "tty-cursor", "~> 0.7"
   spec.add_dependency "tty-screen", "~> 0.8"
 

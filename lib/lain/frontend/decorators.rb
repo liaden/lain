@@ -36,19 +36,28 @@ module Lain
       # (`[tool_use_id stream]`) followed by the bytes, with stderr in red so a
       # failing command reads at a glance.
       class ToolOutput
+        # Which stream a chunk came from is THIS class's knowledge -- it is the
+        # only object here that knows {Telemetry::ToolOutput} has streams at all.
+        # The theme's vocabulary stays named for intent, so a new stream breaks
+        # this map (loudly, via fetch) rather than silently missing a token.
+        STREAM_TOKENS = { stdout: :tool_output, stderr: :tool_error }.freeze
+
         def initialize(event) = @event = event
 
-        # @param pastel [Pastel] the frontend's palette (color knowledge stays here)
-        # @return [String] one attributed, colorized line ready for the terminal
-        def render(pastel)
-          label = pastel.dim("[#{@event.tool_use_id} #{@event.stream}]")
-          "#{label} #{colorize_stream(pastel)}"
+        # @param theme [Frontend::Theme] resolves the tokens named below; the
+        #   decorator names intent, never a colour
+        # @return [String] one attributed, styled line ready for the terminal
+        def render(theme)
+          label = theme.paint(:label, "[#{@event.tool_use_id} #{@event.stream}]")
+          "#{label} #{styled_stream(theme)}"
         end
 
         private
 
-        def colorize_stream(pastel)
-          @event.stream == :stderr ? pastel.red(@event.bytes) : @event.bytes
+        # Both streams go through a token rather than one branch naming red and
+        # the other naming nothing.
+        def styled_stream(theme)
+          theme.paint(STREAM_TOKENS.fetch(@event.stream), @event.bytes)
         end
       end
     end

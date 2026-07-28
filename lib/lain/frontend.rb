@@ -11,6 +11,7 @@ module Lain
   end
 end
 
+require_relative "frontend/theme"
 require_relative "frontend/decorators"
 require_relative "frontend/approval_policy"
 require_relative "frontend/tty"
