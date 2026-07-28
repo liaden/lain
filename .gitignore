@@ -26,3 +26,13 @@ target/
 
 # git submodules: external reference repos — not mined into memory palace (use git add -f to update)
 references/repos/
+
+# Claude Code's per-agent worktrees: 60+ FULL copies of this repo, tens of GB.
+# Already excluded from git via .git/info/exclude -- this line exists for
+# MemPalace, whose miner reads `.gitignore` files ONLY and never
+# `.git/info/exclude` (mempalace/miner.py: `dir_path / ".gitignore"`), and whose
+# SKIP_DIRS knows nothing about `.claude`. So the info/exclude entry looks
+# correct to every git command while the miner walks all of it, refiling the
+# whole repo once per worktree. That is what put ~1.2M drawers in the `lain`
+# wing and OOM-killed the hourly refresh.
+.claude/worktrees/
