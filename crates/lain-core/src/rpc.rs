@@ -23,6 +23,7 @@
 //! second contract to maintain for nobody.
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::io;
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -30,6 +31,7 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use rmpv::Value;
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder, Framed};
@@ -108,13 +110,64 @@ const RESPONSE_BUFFER: usize = 64;
 /// error arm is a busy-loop pegging a core while serving nobody.
 const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// A duplex byte stream the codec can frame. Named because the same five
+/// bounds are otherwise repeated at every signature below; nothing about the
+/// protocol cares which address family delivered the bytes. `Send + 'static`
+/// is what lets one connection become an independent task.
+pub(crate) trait Wire: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+
+impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Wire for T {}
+
+/// The listener half of the transport seam: something that yields connections,
+/// forever. The address is dropped here because `serve` has never used it.
+///
+/// `accept` must be cancel-safe: `serve`'s future is dropped mid-poll when it
+/// loses `main`'s shutdown race, so an impl must not take a connection off the
+/// kernel's queue and then await something that may never resolve -- that
+/// connection is lost with no error anywhere.
+///
+/// WHY a local trait rather than `tokio_util::net::Listener`, which is exactly
+/// this shape: it lives behind tokio-util's `net` feature, which this crate
+/// does not carry (`Cargo.toml` takes `codec` only) -- and enabling it would
+/// not be enough anyway, because `VsockListener` is a foreign type and
+/// `Listener` a foreign trait, so the orphan rule forbids the impl the vsock
+/// work needs. A local trait is implementable for anything.
+///
+/// `-> impl Future + Send` rather than `async fn`: the accept future is polled
+/// inside `serve`'s, which is spawned, so the `Send` bound has to be part of
+/// the contract instead of something each caller re-proves. The cost is an
+/// implicit `Self: Sync` on any impl that holds `&self` across an await --
+/// every listener here is `Sync`, but a listener with interior mutability is
+/// rejected at its impl with a `future cannot be sent between threads` error
+/// that names neither this bound nor the `&self` capture that needs it.
+pub(crate) trait Accept {
+    type Connection: Wire;
+
+    fn accept(&self) -> impl Future<Output = io::Result<Self::Connection>> + Send;
+}
+
+impl Accept for UnixListener {
+    type Connection = UnixStream;
+
+    // Fully qualified: the inherent `accept` would otherwise be the one a
+    // reader has to prove this is not calling.
+    async fn accept(&self) -> io::Result<UnixStream> {
+        UnixListener::accept(self)
+            .await
+            .map(|(stream, _address)| stream)
+    }
+}
+
 /// Accept loop: one task per connection, forever. A failed accept is logged
 /// and retried after a pause -- a bad client (or a full fd table) must never
 /// take the daemon down.
-pub(crate) async fn serve(listener: UnixListener) -> Infallible {
+///
+/// Generic, not `dyn`: one monomorphized loop per listener type, so the seam
+/// costs no allocation on the per-connection path.
+pub(crate) async fn serve(listener: impl Accept) -> Infallible {
     loop {
         match listener.accept().await {
-            Ok((stream, _addr)) => {
+            Ok(stream) => {
                 tokio::spawn(serve_connection(stream));
             }
             Err(error) => {
@@ -125,14 +178,14 @@ pub(crate) async fn serve(listener: UnixListener) -> Infallible {
     }
 }
 
-type Sink = SplitSink<Framed<UnixStream, Codec>, Value>;
-type Stream = SplitStream<Framed<UnixStream, Codec>>;
+type Sink<C> = SplitSink<Framed<C, Codec>, Value>;
+type Stream<C> = SplitStream<Framed<C, Codec>>;
 
 /// One connection: a reader that spawns an independent task per request, and
 /// a writer that sends responses in whatever order the tasks finish. On EOF
 /// the writer drains in-flight responses before closing; on poison it is
 /// aborted -- the connection dies immediately and takes no response with it.
-async fn serve_connection(stream: UnixStream) {
+async fn serve_connection<C: Wire>(stream: C) {
     let (sink, mut inbound) = Framed::new(stream, Codec).split();
     let (responses, inbox) = mpsc::channel(RESPONSE_BUFFER);
     let writer = tokio::spawn(write_responses(sink, inbox));
@@ -146,7 +199,7 @@ async fn serve_connection(stream: UnixStream) {
 
 /// Returns true when the stream was poisoned by undecodable bytes, false on a
 /// clean EOF.
-async fn read_requests(inbound: &mut Stream, responses: &mpsc::Sender<Value>) -> bool {
+async fn read_requests<C: Wire>(inbound: &mut Stream<C>, responses: &mpsc::Sender<Value>) -> bool {
     loop {
         match inbound.next().await {
             Some(Ok(frame)) => {
@@ -161,7 +214,7 @@ async fn read_requests(inbound: &mut Stream, responses: &mpsc::Sender<Value>) ->
     }
 }
 
-async fn write_responses(mut sink: Sink, mut inbox: mpsc::Receiver<Value>) {
+async fn write_responses<C: Wire>(mut sink: Sink<C>, mut inbox: mpsc::Receiver<Value>) {
     while let Some(response) = inbox.recv().await {
         if sink.send(response).await.is_err() {
             return;
@@ -298,19 +351,29 @@ pub(crate) enum RpcError {
 
 #[cfg(test)]
 pub(crate) mod support {
+    use std::io;
+    use std::net::SocketAddr;
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use futures_util::{SinkExt, StreamExt};
     use rmpv::Value;
-    use tokio::net::UnixStream;
+    use tokio::net::{TcpListener, TcpStream, UnixStream};
     use tokio_util::codec::Framed;
 
-    use super::Codec;
+    use super::{Accept, Codec, Wire};
 
     /// Long enough for a loaded CI box; a red-phase server that never answers
     /// fails here rather than hanging the suite.
     pub(crate) const RESPONSE_WAIT: Duration = Duration::from_secs(5);
+
+    /// Every starter below hands its listener to the SAME `serve`; that is the
+    /// claim the seam makes, so the harness must not fork per transport.
+    fn spawn_server<L: Accept + Send + 'static>(listener: L) {
+        tokio::spawn(async move { match super::serve(listener).await {} });
+    }
 
     /// A server on a tempdir socket. The `TempDir` guard must outlive the
     /// test, or the socket path vanishes underneath the server.
@@ -318,15 +381,75 @@ pub(crate) mod support {
         let dir = tempfile::tempdir().expect("tempdir for the test socket");
         let path = dir.path().join("core.sock");
         let listener = tokio::net::UnixListener::bind(&path).expect("bind the test socket");
-        tokio::spawn(async move { match super::serve(listener).await {} });
+        spawn_server(listener);
         (dir, path)
     }
 
-    pub(crate) struct TestClient {
-        framed: Framed<UnixStream, Codec>,
+    /// A listener of an unrelated concrete type, wired into the same serve
+    /// loop: the compile-level proof that [`Accept`] is a seam and not a
+    /// rename. TCP is the cheapest witness available -- tokio's `net` feature
+    /// is already on, so it costs no dependency, and unlike the AF_VSOCK
+    /// listener this seam exists for it needs no kernel module or hypervisor.
+    pub(crate) async fn start_tcp_server() -> SocketAddr {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind the test tcp listener");
+        let address = listener.local_addr().expect("the bound address");
+        spawn_server(listener);
+        address
     }
 
-    impl TestClient {
+    impl Accept for TcpListener {
+        type Connection = TcpStream;
+
+        async fn accept(&self) -> io::Result<TcpStream> {
+            TcpListener::accept(self)
+                .await
+                .map(|(stream, _address)| stream)
+        }
+    }
+
+    /// Fails its first accept, then delegates. The accept-error arm is a
+    /// behavioural invariant (log, pause, never crash) with no natural trigger
+    /// -- EMFILE cannot be arranged in-process -- so the seam supplies one.
+    struct FlakyOnce<L> {
+        inner: L,
+        errored: Arc<AtomicBool>,
+    }
+
+    impl<L: Accept + Sync> Accept for FlakyOnce<L> {
+        type Connection = L::Connection;
+
+        async fn accept(&self) -> io::Result<Self::Connection> {
+            // The swap flips the flag on the error branch and nowhere else, so
+            // a test reading it knows the error arm ran -- not merely that
+            // `accept` was called.
+            if self.errored.swap(true, Ordering::SeqCst) {
+                self.inner.accept().await
+            } else {
+                Err(io::Error::other("synthetic accept failure"))
+            }
+        }
+    }
+
+    /// The flag reads true once the synthetic failure has fired.
+    pub(crate) async fn start_flaky_server() -> (tempfile::TempDir, PathBuf, Arc<AtomicBool>) {
+        let dir = tempfile::tempdir().expect("tempdir for the test socket");
+        let path = dir.path().join("core.sock");
+        let inner = tokio::net::UnixListener::bind(&path).expect("bind the test socket");
+        let errored = Arc::new(AtomicBool::new(false));
+        spawn_server(FlakyOnce {
+            inner,
+            errored: Arc::clone(&errored),
+        });
+        (dir, path, errored)
+    }
+
+    pub(crate) struct TestClient<C> {
+        framed: Framed<C, Codec>,
+    }
+
+    impl TestClient<UnixStream> {
         pub(crate) async fn connect(path: &Path) -> Self {
             let stream = UnixStream::connect(path)
                 .await
@@ -335,7 +458,20 @@ pub(crate) mod support {
                 framed: Framed::new(stream, Codec),
             }
         }
+    }
 
+    impl TestClient<TcpStream> {
+        pub(crate) async fn connect_tcp(address: SocketAddr) -> Self {
+            let stream = TcpStream::connect(address)
+                .await
+                .expect("connect to the tcp server");
+            Self {
+                framed: Framed::new(stream, Codec),
+            }
+        }
+    }
+
+    impl<C: Wire> TestClient<C> {
         pub(crate) async fn send(&mut self, frame: Value) {
             self.framed.send(frame).await.expect("send a frame");
         }
@@ -445,13 +581,91 @@ pub(crate) mod support {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+    use std::time::Instant;
+
     use rmpv::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::support::{
         RESPONSE_WAIT, TestClient, exec_params, field, raw_response_parts, request, response_parts,
-        start_server,
+        start_flaky_server, start_server, start_tcp_server,
     };
+    use super::{ACCEPT_RETRY_DELAY, Wire};
+
+    /// The whole protocol surface a transport has to carry, as one value: a
+    /// ping's version and an exec's stdout. Two transports agreeing on this
+    /// pair is the differential the seam is judged by.
+    async fn ping_and_exec<C: Wire>(client: &mut TestClient<C>) -> (Value, Value) {
+        let (msgid, error, result) = client.call(1, "ping", vec![]).await;
+        assert_eq!(1, msgid);
+        assert!(error.is_nil(), "unexpected ping error: {error:?}");
+        let version = field(&result, "version");
+
+        let (msgid, error, result) = client
+            .call(2, "exec", exec_params(&["sh", "-c", "echo hi"]))
+            .await;
+        assert_eq!(2, msgid);
+        assert!(error.is_nil(), "unexpected exec error: {error:?}");
+        (version, field(&result, "stdout"))
+    }
+
+    #[tokio::test]
+    async fn the_unix_path_pings_and_execs_unchanged() {
+        let (_dir, path) = start_server().await;
+        let mut client = TestClient::connect(&path).await;
+        assert_eq!(
+            (
+                Value::from(env!("CARGO_PKG_VERSION")),
+                Value::Binary(b"hi\n".to_vec())
+            ),
+            ping_and_exec(&mut client).await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_listener_of_another_type_serves_the_same_protocol() {
+        let (_dir, path) = start_server().await;
+        let mut unix = TestClient::connect(&path).await;
+        let mut tcp = TestClient::connect_tcp(start_tcp_server().await).await;
+        // Same `serve`, same `serve_connection`: nothing was duplicated to
+        // make TCP work, so the two answers must be indistinguishable.
+        assert_eq!(
+            ping_and_exec(&mut unix).await,
+            ping_and_exec(&mut tcp).await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transient_accept_error_does_not_kill_the_daemon() {
+        let (_dir, path, errored) = start_flaky_server().await;
+
+        // The connection sits in the backlog across the retry delay, so this
+        // client is served by the accept AFTER the synthetic failure.
+        let dialed = Instant::now();
+        let mut client = TestClient::connect(&path).await;
+        let (msgid, error, _) = client.call(1, "ping", vec![]).await;
+        assert_eq!(1, msgid);
+        assert!(error.is_nil(), "unexpected error: {error:?}");
+        assert!(
+            errored.load(Ordering::SeqCst),
+            "the error arm never ran, so this exercised the happy path only"
+        );
+        // Not a timing race: the backlogged connection cannot be served until
+        // the sleep completes, so a busy-retry (no pause, a core pegged on a
+        // persistent EMFILE) answers measurably sooner and fails here.
+        assert!(
+            dialed.elapsed() >= ACCEPT_RETRY_DELAY,
+            "the retry skipped its delay: answered in {:?}",
+            dialed.elapsed()
+        );
+
+        // Still accepting: the error arm retried rather than left the loop.
+        let mut later = TestClient::connect(&path).await;
+        let (msgid, error, _) = later.call(2, "ping", vec![]).await;
+        assert_eq!(2, msgid);
+        assert!(error.is_nil(), "unexpected error: {error:?}");
+    }
 
     #[tokio::test]
     async fn ping_answers_version_and_pid() {
