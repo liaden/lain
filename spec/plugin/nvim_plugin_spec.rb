@@ -268,7 +268,10 @@ RSpec.describe "lain nvim plugin", :nvim do
       channel = Lain::Channel.new
       frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @control)
       frontend.run do
-        wait_until { lua("return vim.g.lain_rpc_version") == "3" }
+        # The CONSTANT, not a literal: this example is about a bare nvim
+        # attaching at all, and a hardcoded token turns every protocol bump
+        # into a false failure here (T15's did).
+        wait_until { lua("return vim.g.lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }
         expect(lua("return vim.fn.exists(':LainSend')")).to eq(2)
         expect(lua("return vim.fn.exists(':LainStart')")).to eq(0)
       end

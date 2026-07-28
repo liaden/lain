@@ -11,11 +11,13 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 3) .. |lain-contract|
+  6. The attach contract (protocol 4) .. |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
      6.4 Runtime commands .............. |lain-runtime-commands|
+     6.5 Composing a message ........... |lain-compose|
+     6.6 Folds ......................... |lain-folds|
   7. Without the plugin ................ |lain-zero-install|
 
 ==============================================================================
@@ -122,7 +124,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 3)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 4)                            *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -172,7 +174,8 @@ LainRender              Fires after every landed render; `ev.data` carries
 The runtime owns six buffers: `lain://journal` (append-only tool journal),
 `lain://timeline`, `lain://workspace`, `lain://diff`, `lain://inbox` (all
 read-only projections), and `lain://request`, the one editable buffer (edit
-it, then `:LainResend`).
+it, then `:LainResend`). A seventh, `lain://compose`, appears only while you
+are composing -- see |lain-compose|.
 
 The read-only record views share the single `lain` filetype; `b:lain_view`
 names the specific view on EVERY lain:// buffer, and is set before the
@@ -213,7 +216,41 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainVersion`. In
 `lain://inbox`, `r` and <CR> prompt for and submit a reply.
 
-6.5 FOLDS                                                         *lain-folds*
+6.5 COMPOSING A MESSAGE (PROTOCOL 4)                            *lain-compose*
+                                                              *lain://compose*
+
+Press CTRL-G at lain's terminal prompt and whatever you have typed so far
+opens here, in a split, focused. Write it back with `:w`; the edited text
+becomes the text at the prompt, where YOU press <CR> to send it. lain never
+submits it for you.
+
+`lain://compose` is the one lain:// buffer you can `:write`. It is 'acwrite'
+and named, so `:w` fires a |BufWriteCmd| that hands the bytes back over RPC
+rather than touching any file -- nothing is ever written to disk. It is not
+in the |User-LainAttach| buffer set and is not created at attach: it exists
+only between CTRL-G and the round trip finishing.
+
+                                                          *lain-compose-abandon*
+Close it without writing (`:bd`, `:bw`, or quitting) and NOTHING is sent.
+Your draft is kept, not dispatched -- deciding against a draft in the editor
+must never put it in front of the model. The same holds if the round trip
+times out.
+
+If the write cannot reach lain, `:w` FAILS and the buffer stays 'modified',
+so nvim refuses to discard text nobody received: `:bdelete` and `:bwipeout`
+answer |E89|, and a last-window quit is refused. A plain `:q` still works --
+the buffer is hidden, not abandoned -- so your text is still there under
+`:buffer lain://compose`.
+
+Note: `:wall`, and autosave plugins that issue a timed `:w`, DO fire the
+write and settle the round trip -- on whatever is in the buffer at that
+moment, half-typed or not. `:w` being the gesture is the point, so this is a
+known limitation rather than a bug. Switching away from the buffer is safe
+even with 'autowriteall': the buffer is hidden, not abandoned, so no write
+fires.
+
+------------------------------------------------------------------------------
+6.6 FOLDS                                                         *lain-folds*
 
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one

@@ -27,7 +27,10 @@ module Lain
       # "3": T5 added the User LainAttach/LainRender events, b:lain_view on
       #   every lain:// buffer, lain://workspace in the runtime's buffer set,
       #   and the six documented lain* syntax groups.
-      PROTOCOL = "3"
+      # "4": T15 added the lain://compose round trip -- the set_compose render
+      #   entry point, and the "compose"/"compose_abandon" commands its
+      #   BufWriteCmd/BufUnload autocmds send back.
+      PROTOCOL = "4"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model
@@ -71,10 +74,17 @@ module Lain
       #   offers each rebuilt Request here after journaling the projection.
       #   {Unbridged} by default, so plain --nvim keeps the pure
       #   projection-only resend.
+      # @param compose_notify [#call] where {Compose}'s notices go (T15). The
+      #   TERMINAL's warning renderer, not the editor's journal: every notice
+      #   it can produce -- a timed-out round trip, an editor that stopped
+      #   taking the draft -- is news for the human sitting at the prompt, and
+      #   the editor is by definition the thing that just failed to answer.
+      #   Silent by default, so an un-wired frontend reports nowhere.
       # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
                      journal: Channel::Null.instance, resend_bridge: Unbridged,
+                     compose_notify: Compose::SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
         @buffers = Buffers.new(store:, session:)
@@ -86,14 +96,20 @@ module Lain
         # human can't flood single :LainResend invocations, so unbounded is safe.
         @resend_inbox = Thread::Queue.new
         @resend_failure = nil
-        # on_death makes RPC-thread death observable: the channel closes, so the
-        # drainer exits and producers meet ClosedQueueError instead of feeding a
-        # zombie; {#run} then re-raises the recorded failure.
-        @rpc = RpcThread.new(socket_path:, version:, protocol:, render_capacity:,
-                             on_death: -> { @channel.close unless @channel.closed? },
-                             on_resend: ->(lines) { post_resend(lines) })
+        @rpc = build_rpc(socket_path:, version:, protocol:, render_capacity:)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge, request_buffer: @request_buffer)
+        # Constructed here because it needs the RPC thread as its editor inlet,
+        # and handed out through {#compose} for the prompt to bind C-g to. The
+        # RPC thread's compose callbacks close over it rather than take it, so
+        # the two can be built in either order.
+        @compose = Compose.new(rpc: @rpc, notify: compose_notify)
       end
+
+      # The C-g compose round trip's Ruby end (T15), for the terminal prompt to
+      # register a key action against and to settle in its own loop. Exposed
+      # like {#command_inbox}: a collaborator, never the session.
+      # @return [Compose]
+      attr_reader :compose
 
       # Commands the editor invoked, enqueue-and-acked by the RpcThread, for an
       # agent-side consumer to drain. Exposed as a queue, never the session.
@@ -119,6 +135,21 @@ module Lain
       end
 
       private
+
+      # Every hand-off the RPC thread makes back into this frontend, in one
+      # place. on_death makes RPC-thread death observable: the channel closes,
+      # so the drainer exits and producers meet ClosedQueueError instead of
+      # feeding a zombie; {#run} then re-raises the recorded failure. The
+      # compose pair is T15's round trip -- the editor writing or abandoning
+      # lain://compose -- and both only ever push onto a queue, because a
+      # callback that blocked here would block the editor's whole session.
+      def build_rpc(socket_path:, version:, protocol:, render_capacity:)
+        RpcThread.new(socket_path:, version:, protocol:, render_capacity:,
+                      on_death: -> { @channel.close unless @channel.closed? },
+                      on_resend: ->(lines) { post_resend(lines) },
+                      on_compose_write: ->(lines, generation) { @compose.wrote(lines, generation) },
+                      on_compose_abandon: ->(generation) { @compose.abandoned(generation) })
+      end
 
       # Post every projection's at-rest state so the full lain:// buffer set is
       # in `:buffers` from attach -- an idle session that shows no buffers reads
@@ -279,6 +310,7 @@ module Lain
 end
 
 require_relative "neovim/unbridged"
+require_relative "neovim/compose"
 require_relative "neovim/resender"
 require_relative "neovim/inbox_view"
 require_relative "neovim/buffers"

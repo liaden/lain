@@ -27,11 +27,19 @@ module Lain
         # skips the nomodifiable flip); same not-yet-injected guard.
         SET_REQUEST = "local name, lines = ...; if _G.__lain then _G.__lain.set_request(name, lines) end"
 
-        # One queued command: `name` nil means "append to the journal"
-        # ({APPEND}); any other value names a buffer to replace wholesale, and
-        # `lua` is the entry point that does it ({SET_VIEW} for a read-only view,
-        # {SET_REQUEST} for the editable one). One shape, one queue.
-        Command = Data.define(:name, :lines, :lua)
+        # Open lain://compose on the human's draft (T15). A third entry point
+        # rather than a flag on {SET_REQUEST}: that buffer is `nofile` and
+        # never written, this one is `acwrite`, named, and SHOWN -- the two
+        # have nothing in common but the word "editable".
+        SET_COMPOSE = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_compose(name, lines, gen) end"
+
+        # One queued command: `args` is exactly what the entry point named by
+        # `lua` takes, already in order -- `[lines]` for the journal append,
+        # `[name, lines]` for a view replace, `[name, lines, generation]` for
+        # the compose open. Holding the argument LIST rather than named fields
+        # is what lets a third entry point with a third arity share one queue
+        # and one sender.
+        Command = Data.define(:args, :lua)
         private_constant :Command
 
         # Default cap on outstanding commands (journal appends AND view
@@ -54,7 +62,7 @@ module Lain
         # {Neovim#post} rescues that (see its comment).
         # @param lines [Array<String>]
         def post_render(lines)
-          @queue.push(Command.new(name: nil, lines:, lua: APPEND))
+          @queue.push(Command.new(args: [lines], lua: APPEND))
         end
 
         # Queue a whole-buffer replace for a named buffer. `editable:` picks the
@@ -66,7 +74,22 @@ module Lain
         # @param lines [Array<String>]
         # @param editable [Boolean]
         def post_view(name, lines, editable: false)
-          @queue.push(Command.new(name:, lines:, lua: editable ? SET_REQUEST : SET_VIEW))
+          @queue.push(Command.new(args: [name, lines], lua: editable ? SET_REQUEST : SET_VIEW))
+        end
+
+        # The ONE non-blocking post (T15). Every other producer is a background
+        # thread that can afford to be back-pressured; this one is queued from
+        # Reline's INPUT LOOP, inside keypress dispatch, where a blocked push
+        # would freeze the prompt's rendering with the human given no feedback
+        # at all. A full queue means nvim has stopped draining, which is the
+        # same fact as "no editor took the draft" -- so it raises ThreadError
+        # here and {RpcThread#open_compose} turns that into the honest answer.
+        # @param name [String] the lain:// buffer name
+        # @param lines [Array<String>]
+        # @param generation [Integer] stamped onto the buffer so the editor's
+        #   answer says WHICH compose it is answering
+        def post_compose(name, lines, generation)
+          @queue.push(Command.new(args: [name, lines, generation], lua: SET_COMPOSE), true)
         end
 
         # Send everything currently queued, one nvim_exec_lua notify per
@@ -87,9 +110,44 @@ module Lain
         private
 
         def send_command(client, command)
-          args = command.name.nil? ? [command.lines] : [command.name, command.lines]
-          client.session.notify("nvim_exec_lua", command.lua, args)
+          client.session.notify("nvim_exec_lua", command.lua, command.args)
         end
+      end
+
+      # Which of the frontend's OWN reactions an inbound editor command
+      # triggers. Split out of {RpcThread} when the compose round trip made it
+      # the third verb it had to know about: routing is a table of verbs, the
+      # RPC thread is a socket and a select loop, and the two only ever met
+      # because both were in the same class.
+      #
+      # Every command still lands in {RpcThread#command_inbox} regardless of
+      # what happens here (a future agent-side consumer may want it), and every
+      # route runs AFTER the ack, so a slow hand-off never delays the editor.
+      # A verb no route claims falls through silently -- the editor's commands
+      # are not this object's to validate.
+      class Router
+        # Each route is handed the WHOLE command and destructures it itself,
+        # because the verbs genuinely differ in what they carry: resend sends
+        # lines, a compose write sends lines plus the generation it answers, an
+        # abandon sends only that generation.
+        #
+        # @param on_resend [#call] the edited lain://request lines (4-2.3)
+        # @param on_compose_write [#call] the edited lain://compose lines and
+        #   the generation they answer (T15)
+        # @param on_compose_abandon [#call] the generation whose lain://compose
+        #   was unloaded unwritten
+        def initialize(on_resend: ->(_lines) {}, on_compose_write: ->(_lines, _gen) {},
+                       on_compose_abandon: ->(_gen) {})
+          @routes = {
+            "resend" => ->(args) { on_resend.call(args[1] || []) },
+            "compose" => ->(args) { on_compose_write.call(args[1] || [], args[2]) },
+            "compose_abandon" => ->(args) { on_compose_abandon.call(args[1]) }
+          }.freeze
+        end
+
+        # @param arguments [Array] the command as the editor sent it: the verb,
+        #   then whatever that verb carries
+        def call(arguments) = @routes[arguments.first]&.call(arguments)
       end
 
       # The single thread that owns the nvim RPC session -- exactly one, because the
@@ -138,15 +196,26 @@ module Lain
         #   inline after the microsecond ack, so the owner hands the lines to a
         #   worker via a non-blocking queue (never straight onto a bounded
         #   Channel, which could wedge this thread against a full render queue).
+        # @param on_compose_write [#call] invoked with the edited
+        #   lain://compose lines and the generation they answer when the human
+        #   writes that buffer (T15). Same must-not-block rule as `on_resend`,
+        #   for the same reason.
+        # @param on_compose_abandon [#call] invoked with the generation whose
+        #   lain://compose was unloaded without being written. Two callbacks
+        #   rather than one with a verb argument: they are two different things
+        #   that happened, and a caller made to branch on a symbol would only be
+        #   re-deriving what {Router} already knows.
         # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
         #   overridable so a spec can saturate the queue at a scale that runs fast
         def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL, on_death: -> {},
-                       on_resend: ->(_lines) {}, render_capacity: RenderQueue::DEFAULT_CAPACITY)
+                       on_resend: ->(_lines) {}, on_compose_write: ->(_lines, _gen) {},
+                       on_compose_abandon: ->(_gen) {},
+                       render_capacity: RenderQueue::DEFAULT_CAPACITY)
           @socket_path = socket_path
           @version = version
           @protocol = protocol
           @on_death = on_death
-          @on_resend = on_resend
+          @router = Router.new(on_resend:, on_compose_write:, on_compose_abandon:)
           @render_queue = RenderQueue.new(capacity: render_capacity)
           @command_inbox = Thread::Queue.new
           @wake_read, @wake_write = IO.pipe
@@ -197,6 +266,26 @@ module Lain
         def post_view(name, lines, editable: false)
           @render_queue.post_view(name, lines, editable:)
           wake
+        end
+
+        # {Compose}'s editor inlet (T15): open lain://compose on the human's
+        # draft. Called from Reline's input loop, so BOTH steps are
+        # non-blocking -- {RenderQueue#post_compose} refuses to block on a full
+        # queue, and {#wake} never blocks by construction.
+        #
+        # @param lines [Array<String>] the draft, one entry per line
+        # @param generation [Integer] see {RenderQueue#post_compose}
+        # @return [String, nil] nil when the draft landed, else the notice
+        #   saying it did not. This thread being dead (closed queue) and its
+        #   editor having stopped draining (full queue) are one fact from the
+        #   prompt's side -- there is no editor taking drafts -- so they share
+        #   {Compose::DETACHED} with the never-attached case.
+        def open_compose(lines, generation)
+          @render_queue.post_compose(Compose::BUFFER, lines, generation)
+          wake
+          nil
+        rescue ClosedQueueError, ThreadError
+          Compose::DETACHED
         end
 
         # Stop the loop, wake it out of its select, join, and close the fds this
@@ -292,20 +381,15 @@ module Lain
           if request.method_name == "lain_command"
             @command_inbox.push(request.arguments)
             respond(request.id, true)
-            route_resend(request.arguments)
+            # The frontend's own reaction, driven AFTER the ack ({Router}).
+            # Every editor command reaches this thread as an ordinary
+            # `lain_command` rpcREQUEST -- the compose round trip's return leg
+            # (T15) included -- so nothing here handles notifications and this
+            # thread's single-owner discipline is untouched.
+            @router.call(request.arguments)
           else
             respond(request.id, nil, "lain: unknown request #{request.method_name}")
           end
-        end
-
-        # A resend command carries the edited lain://request lines as its second
-        # argument (4-2.3). It still lands in {#command_inbox} above like every
-        # command (a future agent-side consumer may want it); the {#on_resend}
-        # hand-off is the frontend's OWN reaction, driven AFTER the ack so a slow
-        # hand-off never delays the editor. Non-resend commands fall through
-        # untouched.
-        def route_resend(arguments)
-          @on_resend.call(arguments[1] || []) if arguments.first == "resend"
         end
 
         # Answer an inbound request, then flush by hand -- the gem otherwise defers

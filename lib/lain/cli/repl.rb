@@ -54,7 +54,7 @@ module Lain
       # read: the seeded question dispatches straight away, then next_text
       # resumes reading the terminal exactly as an unseeded chat does.
       def converse(first_prompt: nil)
-        text = first_prompt || @conductor.read_prompt(@tty, "you> ")
+        text = first_prompt || prompt.read
         text = next_text(dispatch(text)) while continue?(text)
       end
 
@@ -72,13 +72,9 @@ module Lain
       # the child chat /btw opens with its --prompt question, threaded to
       # converse so the very first read is the side-question, not the terminal.
       def run(nvim:, store:, session:, first_prompt: nil)
-        # T18: the bridge over the agent's own override slot, sharing the nvim
-        # views' journal so the resend_dispatched marker lands beside the
-        # request_resent projection it promotes.
-        bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
-                                          journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
-        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge, **nvim)
+        frontend = attach_editor(nvim, store:, session:)
         @replies.bind_editor(frontend&.command_inbox)
+        @prompt = composed_prompt(frontend)
         Sync do |task|
           @supervisor.run(task)
           @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
@@ -88,6 +84,37 @@ module Lain
       end
 
       private
+
+      # T18: the bridge over the agent's own override slot, sharing the nvim
+      # views' journal so the resend_dispatched marker lands beside the
+      # request_resent projection it promotes. `compose_notify:` is what makes
+      # the compose round trip's notices reachable -- its default is silent, so
+      # without it an abandoned compose ends with no signal at all.
+      def attach_editor(nvim, store:, session:)
+        bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
+                                          journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
+        nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge,
+                                           compose_notify: @tty.method(:render_warning), **nvim)
+      end
+
+      # A prompt that reads and nothing more, for the paths that never build a
+      # frontend. {Compose}'s own defaults are a detached editor and a silent
+      # notifier, so this is the no-editor path rather than a special case of
+      # it. Lazy so that constructing a Repl neither builds a frontend nor --
+      # crucially -- rebinds the human's keyboard; #run overwrites `@prompt`
+      # before any read, and binding happens only there.
+      def prompt
+        @prompt ||= ComposedPrompt.new(conductor: @conductor, tty: @tty,
+                                       compose: Lain::Frontend::Neovim::Compose.new)
+      end
+
+      # Built here rather than injected: the compose object hangs off the
+      # frontend, and #run is the first thing to hold one.
+      def composed_prompt(frontend)
+        compose = frontend&.compose ||
+                  Lain::Frontend::Neovim::Compose.new(notify: @tty.method(:render_warning))
+        ComposedPrompt.new(conductor: @conductor, tty: @tty, compose:).tap(&:bind_key)
+      end
 
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
@@ -103,7 +130,7 @@ module Lain
       def next_text(action)
         return if action == :quit || @conductor.closed?
 
-        @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || @conductor.read_prompt(@tty, "you> ")
+        @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
       end
 
       # Routes one typed line: the command registry FIRST (T9) -- a registered
