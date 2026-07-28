@@ -31,9 +31,16 @@ module Lain
         # The layout is armed via -c, tmux-keystroke-free: :LainStart (guarded
         # -- the plugin is sugar, a bare nvim must not error) lays out now if
         # attached, else one-shots on LainAttach, so the standard view layout
-        # opens the moment the sibling pane's `chat --nvim` lands.
+        # opens the moment the sibling pane's `chat --nvim` lands. T2's rtp
+        # injection (`--cmd`, evaluated before nvim sources rtp `plugin/`
+        # files -- the same seam `spec/plugin/nvim_plugin_spec.rb`'s
+        # `boot_nvim` uses to load the plugin headless) is what makes
+        # :LainStart exist with zero user config; the exists() guard is what
+        # keeps a bare `nvim --listen` unharmed either way, plugin present or
+        # not.
         def nvim_pane_command
-          Shellwords.join(["nvim", "--listen", socket, "-c", "if exists(':LainStart') | LainStart | endif"])
+          Shellwords.join(["nvim", *rtp_flag, "--listen", socket,
+                           "-c", "if exists(':LainStart') | LainStart | endif"])
         end
 
         def chat_flags = ["--nvim", socket]
@@ -42,7 +49,20 @@ module Lain
           @socket ||= @option.empty? ? derived_socket : @option
         end
 
+        # T2 degrade AC: the shipped plugin cannot be located. {Up} probes
+        # this once, on the create path only, to report the named warning --
+        # the cockpit still opens either way (see {#rtp_flag}).
+        def plugin_missing? = !Dir.exist?(@paths.nvim_plugin_root)
+
+        def nvim_plugin_root = @paths.nvim_plugin_root
+
         private
+
+        def rtp_flag
+          return [] if plugin_missing?
+
+          ["--cmd", "set rtp+=#{nvim_plugin_root}"]
+        end
 
         # The plugin's own convention, byte-for-byte ($XDG_RUNTIME_DIR/lain/
         # nvim-<sha256(cwd)[:12]>.sock -- Paths#project_hash is the Ruby twin

@@ -386,9 +386,41 @@ RSpec.describe Lain::CLI::Up do
         cockpit_up(calls, nvim: "", paths:).call
 
         expect(new_session_call(calls).last)
-          .to eq(Shellwords.join(["nvim", "--listen", socket, "-c", "if exists(':LainStart') | LainStart | endif"]))
+          .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
+                                  "-c", "if exists(':LainStart') | LainStart | endif"]))
         expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
       end
+    end
+
+    # T2: the gem's own plugin/nvim ships the layout sugar this AC is about --
+    # putting it on the pane's runtimepath is what makes :LainStart exist with
+    # zero user config, and the exists() guard (asserted above) is what keeps
+    # a bare `nvim --listen` unharmed either way.
+    it "puts the gem's plugin/nvim directory on the runtimepath, guarded ahead of --listen" do
+      calls = []
+
+      cockpit_up(calls, nvim: "/x/explicit.sock").call
+
+      expect(new_session_call(calls).last)
+        .to include("--cmd #{Shellwords.escape("set rtp+=#{Lain::Paths::NVIM_PLUGIN_ROOT}")} --listen")
+    end
+
+    # T2 degrade AC: a shipped plugin directory that cannot be located is a
+    # runtimepath-sugar loss, not a cockpit failure -- the split still
+    # happens (mirrors the missing-nvim-binary fallback's "never silent"
+    # rule, but the fallback itself differs: THAT one drops to a single
+    # pane, this one keeps both and just skips --cmd).
+    it "still opens the cockpit with a plain nvim pane, warning namedly, when the shipped plugin is missing" do
+      calls = []
+      missing_root = "/nonexistent/lain-plugin-nvim"
+      paths = Lain::Paths.new(env: {}, nvim_plugin_root: missing_root)
+
+      report = cockpit_up(calls, nvim: "", paths:).call
+
+      expect(new_session_call(calls).last).not_to include("--cmd")
+      expect(new_session_call(calls).last).to include("--listen")
+      expect(split_call(calls)).not_to be_nil
+      expect(report.warnings.join).to include(missing_root)
     end
 
     it "creates the derived socket's directory, private to the user, so nvim --listen can bind" do
@@ -449,7 +481,7 @@ RSpec.describe Lain::CLI::Up do
     # request is being ignored -- degraded is never silent, so it warns
     # namedly. A window already carrying the cockpit's two panes has nothing
     # to warn about.
-    def reattaching_up(calls, pane_lines:)
+    def reattaching_up(calls, pane_lines:, paths: Lain::Paths.new(env: {}))
       spy = lambda do |*args|
         calls << args
         # has-session hits (the session already exists); list-panes answers
@@ -457,7 +489,7 @@ RSpec.describe Lain::CLI::Up do
         FakeShellOut.new(0, "", args[1] == "list-panes" ? pane_lines : "")
       end
       described_class.new(session: "lain", state_path:, nvim: "", cwd:,
-                          paths: Lain::Paths.new(env: {}), shell_out_factory: spy)
+                          paths:, shell_out_factory: spy)
     end
 
     it "leaves an already-running session alone, warning that the un-split window has no cockpit" do
@@ -475,6 +507,20 @@ RSpec.describe Lain::CLI::Up do
       calls = []
 
       report = reattaching_up(calls, pane_lines: "0: nvim\n1: chat\n").call
+
+      expect(report.created).to be(false)
+      expect(report.warnings).to be_empty
+    end
+
+    # T2 escalation trigger: the plugin-root probe must be create-path only --
+    # a reattach that finds the cockpit already there must stay silent even
+    # when the shipped plugin cannot be located, because #call never rebuilds
+    # the pane commands on that path.
+    it "stays silent on reattach even when the shipped plugin is missing" do
+      calls = []
+      paths = Lain::Paths.new(env: {}, nvim_plugin_root: "/nonexistent/lain-plugin-nvim")
+
+      report = reattaching_up(calls, pane_lines: "0: nvim\n1: chat\n", paths:).call
 
       expect(report.created).to be(false)
       expect(report.warnings).to be_empty

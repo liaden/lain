@@ -138,9 +138,21 @@ module Lain
       end
     end
 
-    def initialize(env: ENV)
+    # Where the gem ships its own nvim plugin (`plugin/nvim`) -- the same
+    # "locate a shipped non-lib/ file via File.expand_path(..., __dir__)"
+    # shape as {Core::Child::BINARY}. `paths.rb` sits at `lib/lain/paths.rb`,
+    # so two levels up from `__dir__` (`lib/lain`) is the repo/gem root.
+    NVIM_PLUGIN_ROOT = File.expand_path("../../plugin/nvim", __dir__)
+
+    # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`,
+    # so a spec can point at a path that does not exist without disturbing
+    # the real gem tree.
+    def initialize(env: ENV, nvim_plugin_root: NVIM_PLUGIN_ROOT)
       @env = env
+      @nvim_plugin_root = nvim_plugin_root
     end
+
+    attr_reader :nvim_plugin_root
 
     def config_home = xdg_dir("XDG_CONFIG_HOME", ".config")
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")

@@ -201,9 +201,21 @@ module Lain
       # (tmux -c) and handed ONE socket, so the convention cannot silently
       # diverge between the editor and the chat that attaches to it.
       def create_cockpit_session
+        warn_missing_plugin
         act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cockpit.cwd, @cockpit.nvim_pane_command)
         act("split-window", "-h", "-t", "#{@session}:#{CHAT_WINDOW}", "-c", @cockpit.cwd,
             self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
+      end
+
+      # T2 degrade AC: probed only on the create path (mirrors
+      # {#warn_unsplit_reattach}'s own create-vs-reattach split) -- a
+      # reattach never rebuilds the pane commands, so it has nothing new to
+      # warn about even when the shipped plugin cannot be located.
+      def warn_missing_plugin
+        return unless @cockpit.plugin_missing?
+
+        @warnings << "lain's nvim plugin directory not found at #{@cockpit.nvim_plugin_root} -- cockpit opening " \
+                     "with a plain nvim pane (reinstall the gem, or run :LainStart yourself once attached)"
       end
 
       def configure_session
