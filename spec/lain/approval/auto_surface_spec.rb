@@ -5,8 +5,9 @@ require "stringio"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module AutoSurfaceSpecSupport
-  # The minimal effect a {Approval::Queue::Pending} reads: a name and an input.
-  Effect = Struct.new(:name, :input)
+  # The minimal effect a {Approval::Queue::Pending} reads: a name, an input, and
+  # the tool_use_id the park's journal record correlates on.
+  Effect = Struct.new(:name, :input, :tool_use_id)
 
   # A {Skill::RoleSpawn} stand-in: records every spawn and answers each prompt
   # through the injected block, returning a {Tool::Result}. Injecting the seam
@@ -32,8 +33,8 @@ RSpec.describe Lain::Approval::AutoSurface do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
-  def effect(name = "bash", input = { "command" => "ls" })
-    AutoSurfaceSpecSupport::Effect.new(name, input)
+  def effect(name = "bash", input = { "command" => "ls" }, tool_use_id = "tu_#{name}")
+    AutoSurfaceSpecSupport::Effect.new(name, input, tool_use_id)
   end
 
   def decisions

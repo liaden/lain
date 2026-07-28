@@ -47,7 +47,8 @@ RSpec.describe Lain::CLI::Switchboard do
     tty = instance_double(Lain::Frontend::TTY)
     prompt = switchboard.surface_kwargs(conductor:, tty:).fetch(:approval_prompt)
     pending = Lain::Approval::Queue::Pending.new(
-      effect: Struct.new(:name, :input).new("bash", { "command" => "ls" }), requester: "agent", clock: -> { 0.0 }
+      effect: Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu_1"),
+      requester: "agent", clock: -> { 0.0 }
     )
     allow(conductor).to receive(:read_reply).with(tty, /bash/).and_return("y")
 

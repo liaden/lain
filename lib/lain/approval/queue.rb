@@ -47,10 +47,11 @@ module Lain
       # so the loser's answer is a quiet no-op here, NOT the coordination bug
       # {Promise::AlreadyResolved} names.
       class Pending
-        attr_reader :requester, :tool, :input, :surface, :decision, :latency
+        attr_reader :requester, :tool, :tool_use_id, :input, :surface, :decision, :latency
 
         def initialize(effect:, requester:, clock:)
           @tool = effect.name
+          @tool_use_id = effect.tool_use_id
           @input = effect.input
           @requester = requester
           @clock = clock
@@ -146,8 +147,15 @@ module Lain
 
       private
 
+      # The ASKED half of the lifecycle's evidence, journaled BEFORE the
+      # pending is parked rather than between the two mutations below: the
+      # record is a write, a write can yield the fiber, and @parked's
+      # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
+      # yield point between them (see #initialize). Announcing first keeps that
+      # claim exactly as it was.
       def admit(effect)
         pending = Pending.new(effect:, requester: @requester, clock: @clock)
+        record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)
         pending
@@ -164,7 +172,46 @@ module Lain
       ensure
         pending.deny(surface: ABANDONED_SURFACE)
         @parked.delete(pending)
-        @journal.record(pending)
+        record_evidence(Pending) { pending }
+      end
+
+      # Evidence about a turn must never be able to COST the turn. Both writes
+      # here sit on {Gate}'s policy seam, and Gate sits ABOVE
+      # {Effect::Handler::Live} -- nothing below is left to turn an exception
+      # into a {Tool::Result}, so a closed Journal or a full disk would unwind
+      # through the agent loop and hand the user a dead turn instead of the
+      # denial an unanswerable approval is owed. That is precisely the wedge
+      # gate.rb's doctrine forbids: an unattended gate refuses, it never wedges.
+      # (On the settle path the raise would land inside `ensure` and REPLACE the
+      # verdict, which is the same defect one step worse.)
+      #
+      # Loud, then, means a denial plus a recorded reason -- not an unrescued
+      # raise. The reason wears the Journal's OWN `journal_error` shape, the
+      # self-describing record {Journal#encode} already writes for a value it
+      # cannot serialize, so a reader has one failure record to know rather than
+      # two.
+      #
+      # The entry is BUILT IN THE BLOCK, never passed as an argument, and that
+      # is not a style choice: an argument is evaluated before control enters
+      # this method, so a record whose own construction raises -- a
+      # {Telemetry::Guards::ApprovalPending} refusing a park it cannot name,
+      # which a `tool_use_id` of nil or "" reaches -- would escape past the very
+      # protection this method exists to give. `kind` names what was being
+      # recorded, because a raise mid-construction leaves no instance to name.
+      def record_evidence(kind, &entry)
+        @journal.record(entry.call)
+      rescue StandardError => e
+        degrade(kind, e)
+      end
+
+      # When even the degraded write fails, the journal is simply gone and there
+      # is nowhere left to be honest to. Swallowing is the only option that
+      # still refuses rather than wedging.
+      def degrade(kind, error)
+        @journal.record("type" => "journal_error", "error" => "#{error.class}: #{error.message}",
+                        "entry_class" => kind.name)
+      rescue StandardError
+        nil
       end
 
       # The expired window IS a decision -- a denial signed by the clock --

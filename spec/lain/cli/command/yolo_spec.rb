@@ -22,8 +22,9 @@ module YoloSpecSupport
     def each(&block) = [].each(&block)
   end
 
-  # The minimal effect a {Approval::Queue::Pending} reads: a name and an input.
-  Effect = Struct.new(:name, :input)
+  # The minimal effect a {Approval::Queue::Pending} reads: a name, an input, and
+  # the tool_use_id the park's journal record correlates on.
+  Effect = Struct.new(:name, :input, :tool_use_id)
 end
 
 RSpec.describe Lain::CLI::Command::Yolo do
@@ -60,7 +61,7 @@ RSpec.describe Lain::CLI::Command::Yolo do
 
     it "counts parked pendings in the confirmation -- they stay fail-closed until /approve drains them" do
       parked = Array.new(2) do
-        Lain::Approval::Queue::Pending.new(effect: YoloSpecSupport::Effect.new("bash", {}),
+        Lain::Approval::Queue::Pending.new(effect: YoloSpecSupport::Effect.new("bash", {}, "tu_1"),
                                            requester: "agent", clock: -> { 0.0 })
       end
       crowded = instance_double(Lain::CLI::Command::Env, policy_switch: switch, approvals: parked)
