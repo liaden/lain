@@ -145,7 +145,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     expect(dispatch(repl, "/garbage")).to be_nil
     expect { dispatch(repl, "/garbage") }.not_to raise_error
 
-    expect(tty).to have_received(:render_error).with(a_string_including("neither rendered text")).twice
+    expect(tty).to have_received(:render_error).with(a_string_including("neither a renderable")).twice
     expect(tty).not_to have_received(:render_response)
     expect(agent).not_to have_received(:ask)
   end

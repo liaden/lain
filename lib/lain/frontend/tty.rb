@@ -151,9 +151,17 @@ module Lain
       # Render the model's finished turn. Not Channel-sourced -- see the class
       # comment on why a synchronous Response bypasses the Channel entirely.
       def render_response(response)
-        @output.puts(@theme.paint(:response, response.text))
-        @output.puts(rule)
-        @output.flush
+        render_turn(@theme.paint(:response, response.text))
+      end
+
+      # A command's structured answer. One paint call PER SEGMENT, each under
+      # the token that segment named, rather than one call over the whole line
+      # -- the difference between "/status shows a warm marker" and "/status is
+      # cyan". It closes through {#render_turn}, so a command's answer and a
+      # model's turn end the same way BY CONSTRUCTION rather than by two copies
+      # that happen to agree.
+      def render_renderable(renderable)
+        render_turn(renderable.paint(@theme))
       end
 
       def render_error(message)
@@ -279,6 +287,16 @@ module Lain
       # `TTY` to this very class (Lain::Frontend::TTY) rather than the
       # tty-screen gem's top-level module, since we are lexically inside a
       # class of the same name.
+      # How a finished turn ENDS: the already-styled body, the rule beneath it,
+      # then flush. One method rather than one copy per renderer, so a change to
+      # the ending reaches every turn that has one -- a model's and a command's
+      # alike -- instead of silently reaching only the copy that was edited.
+      def render_turn(styled)
+        @output.puts(styled)
+        @output.puts(rule)
+        @output.flush
+      end
+
       def rule
         @theme.paint(:rule, "-" * ::TTY::Screen.width)
       end

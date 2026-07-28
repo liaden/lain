@@ -42,8 +42,9 @@ RSpec.describe Lain::CLI::Command::Surface do
     with_project do |root|
       surface = build_surface(root)
 
+      # T9: /help answers a Renderable now -- the WORDS are what this asserts.
       listing = surface.commands.dispatch("/help") { raise "fallthrough must not run" }
-      expect(listing).to include("/help", "/quit", "/rewind", "/greet")
+      expect(listing.text).to include("/help", "/quit", "/rewind", "/greet")
       expect(surface.commands.dispatch("/quit") { raise "fallthrough must not run" }).to eq(:quit)
     end
   end
@@ -65,7 +66,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       end
 
       expect(seen.fetch(:text)).to start_with("# Greet")
-      expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }).to include("/greet")
+      expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text).to include("/greet")
     end
   end
 end

@@ -52,9 +52,12 @@ module Lain
       # frozen: this is public, callers `merge` into it, and a mutable value
       # array would let one caller permanently restyle every theme in the
       # process. The deep freeze is also what makes it `Ractor.shareable?`.
-      # `:tool_output` is registered with NO style on purpose -- the decorator
-      # names the stream it is printing either way, so both branches go through a
-      # token instead of one naming red and the other naming nothing.
+      # `:tool_output` and `:plain` are registered with NO style on purpose --
+      # their renderer names a token either way, so both branches go through the
+      # vocabulary instead of one naming red and the other naming nothing, and a
+      # misspelled token still raises rather than quietly rendering as prose.
+      # `:warm`/`:cold` are the cache's own two states ({CLI::Command::Status},
+      # {TTY::Warmth}), a single intent with two values -- not a colour pair.
       DEFAULT_TOKENS = {
         response: %i[cyan],              # TTY#render_response
         rule: %i[dim],                   # TTY#rule
@@ -65,7 +68,10 @@ module Lain
         prompt: %i[bold],                # TTY#read_line_with_history
         label: %i[dim],                  # Decorators::ToolOutput's attribution
         tool_error: %i[red],             # a tool subprocess's stderr bytes
-        tool_output: []                  # a tool subprocess's stdout bytes
+        tool_output: [],                 # a tool subprocess's stdout bytes
+        plain: [],                       # a Renderable's own unstyled prose
+        warm: %i[green],                 # the prompt cache is still inside its TTL
+        cold: %i[dim]                    # the cache went cold, or never warmed
       }.transform_values(&:freeze).freeze
 
       # Colour is off unless the stream is a real terminal, matching {TTY}'s own

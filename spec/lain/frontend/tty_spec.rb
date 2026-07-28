@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "pastel"
 require "stringio"
 require "tmpdir"
 
@@ -326,6 +327,39 @@ RSpec.describe Lain::Frontend::TTY do
       tty.render_response(response)
 
       expect(output.string).to include("the answer is 4")
+    end
+  end
+
+  # T9: a command's structured answer. Each segment is painted under the token
+  # IT named, so the frontend never has to know what a command's parts mean.
+  describe "#render_renderable" do
+    let(:colored) { Pastel.new(enabled: true) }
+    let(:styling_tty) do
+      described_class.new(channel:, output:, input:, pastel: colored,
+                          theme: Lain::Frontend::Theme.new(pastel: colored, detect: -> { 256 }))
+    end
+
+    it "prints the renderable's words" do
+      tty.render_renderable(Lain::Renderable.new.plain("cache ").with(:warm, "warm"))
+
+      expect(output.string).to include("cache warm")
+    end
+
+    it "paints each segment under its own token, never one style over them all" do
+      styling_tty.render_renderable(Lain::Renderable.new.plain("cache ").with(:warm, "warm"))
+
+      expect(output.string).to include("cache #{colored.green("warm")}")
+    end
+
+    it "closes a command's answer exactly as it closes a model's turn" do
+      response = Lain::Response.new(content: [{ "type" => "text", "text" => "same words" }],
+                                    stop_reason: :end_turn)
+      turn = StringIO.new
+      described_class.new(channel:, output: turn, input:).render_response(response)
+
+      tty.render_renderable(Lain::Renderable.new.with(:response, "same words"))
+
+      expect(output.string).to eq(turn.string)
     end
   end
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "json"
+require "pastel"
 require "stringio"
 require "tmpdir"
 
@@ -87,6 +88,79 @@ RSpec.describe Lain::CLI::Repl do
         expect(mock_provider.call_count).to eq(0)
         expect(output).not_to include("hello from the mock")
       end
+    end
+  end
+
+  # T9: what a command may hand the Repl back. A String stays a first-class
+  # return forever; a {Lain::Renderable} is the second, structured one. Driven
+  # through the PUBLIC #converse (a conductor whose next read is nil ends the
+  # loop), never a send(:settle_command) -- the same no-ivar-pokes discipline
+  # the round trip above keeps.
+  describe "what a command returns (T9)" do
+    let(:colored) { Pastel.new(enabled: true) }
+    let(:conductor) { instance_double(Lain::CLI::Conductor, read_prompt: nil, closed?: false) }
+
+    def tty_over(output, enabled:, dir:)
+      pastel = Pastel.new(enabled:)
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new, pastel:,
+                              theme: Lain::Frontend::Theme.new(pastel:, detect: -> { 256 }),
+                              history_path: File.join(dir, "history"))
+    end
+
+    def settle(outcome, tty:)
+      commands = Struct.new(:outcome) do
+        def dispatch(_text) = outcome
+      end.new(outcome)
+      Lain::CLI::Repl.new(agent: instance_double(Lain::Agent, timeline: nil), tty:,
+                          replies: instance_double(Lain::CLI::HumanReplies), commands:,
+                          chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
+                     .converse(first_prompt: "/anything")
+    end
+
+    def settled_output(outcome, enabled: true)
+      Dir.mktmpdir do |dir|
+        output = StringIO.new
+        settle(outcome, tty: tty_over(output, enabled:, dir:))
+        output.string
+      end
+    end
+
+    it "renders a renderable's named segment in the theme's own style for that token" do
+      warm = Lain::Renderable.new.plain("cache ").with(:warm, "warm")
+
+      expect(settled_output(warm)).to include(colored.green("warm"))
+    end
+
+    it "leaves the surrounding text out of that segment's colour" do
+      warm = Lain::Renderable.new.plain("cache ").with(:warm, "warm")
+
+      expect(settled_output(warm)).to include("cache #{colored.green("warm")}")
+    end
+
+    it "still delivers a plain String exactly as it does today" do
+      expect(settled_output("just words")).to include(colored.cyan("just words"))
+    end
+
+    it "ends the conversation on :quit -- the next prompt is never read" do
+      Dir.mktmpdir do |dir|
+        settle(:quit, tty: tty_over(StringIO.new, enabled: false, dir:))
+
+        expect(conductor).not_to have_received(:read_prompt)
+      end
+    end
+
+    it "names an unrecognised return loudly, and recoverably" do
+      expect(settled_output(42, enabled: false)).to include("error:", "42")
+    end
+
+    it "names the COMMAND in that breach, not only what it returned" do
+      expect(settled_output(42, enabled: false)).to include("command /anything returned")
+    end
+
+    it "carries no ANSI escapes when the stream is not a terminal" do
+      warm = Lain::Renderable.new.plain("cache ").with(:warm, "warm")
+
+      expect(settled_output(warm, enabled: false)).not_to include("\e[")
     end
   end
 end

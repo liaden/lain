@@ -114,7 +114,7 @@ module Lain
       # the skill middleware's alike): render it and return, so `converse`
       # loops to the next prompt instead of dying.
       def dispatch(text)
-        settle_command(@commands.dispatch(text) { middleware_turn(text) })
+        settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
       rescue Lain::Error => e
         @tty.render_error(e.message)
         # Explicit: dispatch's return is #converse's ACTION position, and
@@ -124,19 +124,33 @@ module Lain
 
       # A command's contract ({Command::Registry}): rendered TEXT -- a String,
       # delivered through the same boundary renderer a model turn uses, because
-      # commands return text and never print -- or a Repl ACTION (:quit today),
-      # handed up for #converse to act on. The middleware fallthrough settles
-      # its own delivery and returns nil. Anything else is that command's bug;
-      # name the breach loudly and RECOVERABLY, the render_missing_response
-      # discipline.
-      def settle_command(outcome)
+      # commands return text and never print -- a {Lain::Renderable}, the same
+      # answer given as STRUCTURE (T9), or a Repl ACTION (:quit today), handed
+      # up for #converse to act on. The middleware fallthrough settles its own
+      # delivery and returns nil. Anything else is that command's bug; name the
+      # breach loudly and RECOVERABLY, the render_missing_response discipline.
+      #
+      # String stays first-class forever: a command with no structure worth
+      # showing has nothing to gain from a renderable, and migrating one is
+      # never the price of adding one.
+      def settle_command(outcome, text)
         return outcome if outcome.nil? || outcome == :quit
         return deliver_text(outcome) if outcome.is_a?(String)
+        return deliver_rendered(outcome) if outcome.is_a?(Renderable)
 
-        @tty.render_error("command returned neither rendered text nor a Repl action: #{outcome.inspect}")
+        @tty.render_error("command #{called(text)} returned neither a renderable, " \
+                          "rendered text, nor a Repl action: #{outcome.inspect}")
         # Explicit nil, as in dispatch's rescue: never render_error's return.
         nil
       end
+
+      # The `/word` the human typed, so a breach says WHICH command misbehaved
+      # and not merely what came back -- the same attribution
+      # {Command::Registry#invoke} gives a command that RAISES. Split off the
+      # typed line rather than re-run {Skill::Invocation.parse}: only a line the
+      # registry already matched reaches here, so its leading word is the
+      # command by construction, and a second parse could only disagree.
+      def called(text) = text.to_s.split.first
 
       # A command's String rides the same Response shape SkillDispatch's
       # short-circuit uses, so render_response stays the single delivery
@@ -146,6 +160,17 @@ module Lain
       # boundary owes the record nothing.
       def deliver_text(text)
         @tty.render_response(Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn))
+        nil
+      end
+
+      # A renderable does NOT ride deliver_text's synthetic Response: a Response
+      # carries text blocks, so wrapping one would flatten the segments back
+      # into the single string render_response paints with one token -- exactly
+      # the information the renderable exists to keep. So the frontend gets the
+      # value itself and paints it segment by segment. Same shape otherwise:
+      # returns nil, so only a Repl action ever reaches #converse.
+      def deliver_rendered(renderable)
+        @tty.render_renderable(renderable)
         nil
       end
 

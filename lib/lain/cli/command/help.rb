@@ -21,11 +21,23 @@ module Lain
 
         def usage = "/help -- list commands and skills"
 
+        # T9: a {Lain::Renderable}, not a String -- the same words, with each
+        # section HEADER naming a token so the listing beneath it reads as
+        # content rather than as one flat colour.
         def call(_args, _env)
-          ["commands:", *command_lines, "", "skills:", *skill_lines].join("\n")
+          section("commands:", command_lines).plain("\n\n") + section("skills:", skill_lines)
         end
 
         private
+
+        # A header and its lines: the header names `:label`, every entry is the
+        # renderable's own plain token, and the newlines belong to the entries
+        # so no style ever wraps a line ending.
+        def section(header, lines)
+          lines.inject(Lain::Renderable.new.with(:label, header)) do |rendered, line|
+            rendered.plain("\n#{line}")
+          end
+        end
 
         def command_lines = @registry.map { |command| "  #{command.usage}" }
 
