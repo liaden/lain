@@ -932,6 +932,25 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    Firecracker-specific transport (six proven lines, but no consumer until a hypervisor is chosen,
    and the research favours libkrun for its virtio-fs and TSI) — `Child` *spawning* and
    `Transport::Vsock` *attaching* already exercise the contract in both shapes.
+   **✅ Landed 2026-07-28** (`048f935`, `c338bf3`, `1c8734e`, `0e07a5f`, `8fa9058`, `f844d6c`). The
+   same `Tools::Bash`-vs-`Tools::CoreExec` differential that pins the Unix path now passes across
+   the vsock boundary, and `--tag vsock` is 19 examples that **skip rather than fail** where the
+   kernel or the binary is missing. **The plan's premise was wrong in one respect and it changed
+   the work:** the two spikes it rests on do not exist — no commit, no branch, no dangling object,
+   no stash — so their results survive only as prose in
+   `references/firecracker-microvm-isolation.md` §6, and T6 was re-rated from medium to high risk
+   as the chunk's *only* end-to-end proof rather than a wiring exercise. Four grounding facts were
+   re-measured and corrected in flight: `VMADDR_PORT_ANY` is `0xFFFFFFFF`, **not 0** (port 0 and
+   everything under 1024 raise `EACCES`); `connect(2)` to a dead vsock port **succeeds** 4 runs in
+   5 on `vsock_loopback`, so nothing detects "nothing is listening" at connect time and
+   `ECONNREFUSED` never fires; `CID_HOST` and `CID_LOCAL` are indistinguishable against a live
+   listener; and the kernel **reuses** a just-freed ephemeral port. The panel's most valuable
+   catches were all of one kind — green tests not testing their subject: the daemon's readiness
+   file **outlived the daemon that wrote it**, so a reused tracing path handed a reader a dead
+   daemon's port (undetectable, because connect succeeds); the port write was not atomic, and every
+   prefix of a 10-digit port parses cleanly, so a torn read yields a *wrong port* rather than an
+   error; and T6's first draft had six of seven examples that would have passed identically over a
+   Unix socket.
 
 19. **Planned (2026-07-28, panel-reviewed)** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
