@@ -19,9 +19,14 @@ require "fileutils"
 # Fixture-only constants kept out of the RSpec block (Lint/ConstantDefinitionInBlock;
 # spec/lain/tools/core_exec_spec.rb:7 does the same for the same reason).
 
-# VMADDR_CID_LOCAL -- dialing the loopback CID from the host, per the plan's
-# grounding (dialing CID_HOST connects then fails ENOTCONN on write). Test-local:
-# T5's real Transport::Vsock defines its own.
+# VMADDR_CID_LOCAL -- the loopback CID, dialed from the host. Convention and
+# legibility, NOT necessity: an earlier draft of this comment claimed CID_HOST(2)
+# "connects then fails ENOTCONN on write", and that was measured against a port
+# with nothing listening, so the ENOTCONN came from the dead port rather than the
+# CID. Re-measured against a live CID_ANY listener, LOCAL(1) and HOST(2) are
+# behaviourally indistinguishable -- ping, binary bytes, 1 MiB and 8-way demux all
+# pass on both; only CID_ANY fails, with ENODEV. Test-local: T5's real
+# Transport::Vsock defines its own.
 VSOCK_SPEC_CID_LOCAL = 1
 
 # A stand-in "lain-core" honoring this card's ASSUMED T4 contract (see
