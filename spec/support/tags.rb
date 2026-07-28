@@ -125,6 +125,34 @@ RSpec.configure do |config|
   end
 end
 
+# :vsock specs drive the REAL compiled lain-core daemon over AF_VSOCK. They cost
+# no money and touch no network beyond the kernel's loopback vsock transport, but
+# they need BOTH a host that can bind AF_VSOCK and the compiled binary, so they
+# are excluded by default. The way in is the tag itself, exactly as for :core:
+#
+#     bundle exec rake core:build && bundle exec rspec --tag vsock
+#
+# :vsock examples carry ONLY that tag, never :core as well. A command-line --tag
+# lifts the config-level exclusion for the tag it names and no other, so an
+# example tagged `:vsock, :core` would stay excluded under `--tag vsock` -- and the
+# run would pass GREEN having executed nothing. That failure is silent, which is
+# why it is spelled out here and reproduced in spec/support_vsock_availability_spec.rb.
+#
+# When opted in but a precondition is missing, an example SKIPS (never fails),
+# mirroring :core -- and the message names WHICH precondition, because "no vsock"
+# and "no binary" have completely different fixes.
+RSpec.configure do |config|
+  config.filter_run_excluding(:vsock)
+
+  config.before(:each, :vsock) do
+    skip("host cannot bind AF_VSOCK -- the kernel's vsock_loopback transport is unavailable") unless
+      VsockAvailability.available?
+    unless File.executable?(Lain::Core::Child::BINARY)
+      skip("lain-core binary not built -- run `bundle exec rake core:build` to run :vsock specs")
+    end
+  end
+end
+
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
     NetworkAccess.permit { example.run }
