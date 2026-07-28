@@ -82,8 +82,8 @@ RSpec.describe Lain::CLI::Conductor do
     Lain::Agent.new(provider: ParkProvider.new(entered:, release:, responses:), toolset:, context:)
   end
 
-  def build_conductor(grace:, clock:, signals:, tick: 0.005)
-    described_class.new(tty:, chronicle:, signals:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new)
+  def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new)
+    described_class.new(tty:, chronicle:, signals:, grace:, clock:, tick:, budget: Lain::Agent::Budget.new, run_clock:)
   end
 
   # Delivers `os_name` once the run is provably parked, then lets the supervised
@@ -285,6 +285,73 @@ RSpec.describe Lain::CLI::Conductor do
       expect(line).to be_nil
       expect(conductor).to be_closed
       expect(chronicle.events).to eq([%i[close exit]])
+    end
+  end
+
+  # T5: Conductor is the one place a user prompt is answered, so #read_prompt
+  # is the run clock's one write site -- a signal-ended (Break) or EOF (nil)
+  # prompt is NOT user input and must not record.
+  describe "the run clock's one write site" do
+    def build_with_run_clock(run_clock:, signals: Lain::CLI::Signals.new)
+      build_conductor(grace: 60, clock: clock_returning(1000.0), signals:, run_clock:)
+    end
+
+    it "records input when a real line is read" do
+      run_clock = instance_double(Lain::RunClock, record_input: nil)
+      conductor = build_with_run_clock(run_clock:)
+      plain_tty = Class.new { def prompt(_text) = "hello" }.new
+
+      conductor.read_prompt(plain_tty, "you> ")
+
+      expect(run_clock).to have_received(:record_input)
+    end
+
+    it "does not record on a nil (EOF) return" do
+      run_clock = instance_double(Lain::RunClock, record_input: nil)
+      conductor = build_with_run_clock(run_clock:)
+      eof_tty = Class.new { def prompt(_text) = nil }.new
+
+      conductor.read_prompt(eof_tty, "you> ")
+
+      expect(run_clock).not_to have_received(:record_input)
+    end
+
+    it "does not record when the prompt breaks on a signal (PromptBreaker::Break)" do
+      run_clock = instance_double(Lain::RunClock, record_input: nil)
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_with_run_clock(run_clock:, signals:)
+      entered = Thread::Queue.new
+      blocking_tty = Class.new do
+        def initialize(entered) = @entered = entered
+
+        def prompt(_text)
+          @entered << true
+          sleep
+        end
+      end.new(entered)
+      killer = Thread.new do
+        entered.pop
+        Process.kill("TERM", Process.pid)
+      end
+
+      conductor.read_prompt(blocking_tty, "you> ")
+      killer.join
+
+      expect(run_clock).not_to have_received(:record_input)
+    ensure
+      signals.uninstall
+    end
+
+    it "answering a prompt resets a REAL RunClock's idle measure (the AC, end to end)" do
+      now = 1000.0
+      run_clock = Lain::RunClock.new(clock: -> { now })
+      conductor = build_with_run_clock(run_clock:)
+      plain_tty = Class.new { def prompt(_text) = "hello" }.new
+
+      conductor.read_prompt(plain_tty, "you> ")
+      now = 1030.0
+
+      expect(run_clock.idle).to eq(30.0)
     end
   end
 

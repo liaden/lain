@@ -43,16 +43,23 @@ module Lain
       # The one factory the exe calls: a conductor over a fresh {Signals}
       # installer it also owns, so the exe carries neither the installer nor its
       # lifecycle (see {#guard}).
-      def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null)
-        new(tty:, chronicle:, signals: Signals.new, grace:, supervisor:)
+      def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
+                    run_clock: RunClock.new)
+        new(tty:, chronicle:, signals: Signals.new, grace:, supervisor:, run_clock:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
       # {Shutdown}'s `#settle` drain duck -- in production the OM-6
       # {Lain::Supervisor}, whose bounded view settles the fleet within the
       # window; {Supervisor::Null} (nothing to drain) by default.
+      #
+      # `run_clock:` defaults to a fresh, private {RunClock} so a caller that
+      # does not yet care about it (most specs) pays nothing; production
+      # wants ONE shared instance injected here AND handed to whatever also
+      # reads it or feeds it compaction events (T7/T13), never a second
+      # Conductor-local clock the reader could drift from.
       def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
-                     budget: Agent::Budget.new, supervisor: Supervisor::Null,
+                     budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, tick: DEFAULT_TICK)
         @tty = tty
         @chronicle = chronicle
@@ -60,6 +67,7 @@ module Lain
         @grace = grace
         @budget = budget
         @supervisor = supervisor
+        @run_clock = run_clock
         @clock = clock
         @ticker = CountdownTicker.new(tty:, tick:, suppressed: -> { @reply_outstanding })
         seed_ask_state
@@ -106,10 +114,18 @@ module Lain
       # therefore no run_interrupted; an idle SIGTERM is the operator's "quit").
       # Growing the enum is a deliberate follow-up, not this card.
       #
+      # A read line records {RunClock#record_input} -- this IS the one place a
+      # user prompt is answered (the class doc), so it is the clock's one
+      # write site. A `nil` return is EOF, and the rescued {PromptBreaker::Break}
+      # is a signal breaking the prompt -- neither is the user answering
+      # anything, so neither records.
+      #
       # @param tty [#prompt]
       # @return [String, nil] the line, or nil at EOF or on a signal-close
       def read_prompt(tty, text)
-        read_breakable(tty, text)
+        line = read_breakable(tty, text)
+        @run_clock.record_input if line
+        line
       rescue PromptBreaker::Break
         close(reason: :exit)
         nil
