@@ -96,6 +96,14 @@ class VsockDaemon
   # @raise [Unreachable]
   # @raise [Died]
   def start
+    # Unlink BEFORE the spawn, not after: the daemon clears this file too, but it
+    # cannot do so until fork/exec completes, and #wait_for_port's first pass runs
+    # inside that window -- measured, the stale file still held the dead daemon's
+    # port at t=0 and only turned over by t=10ms. A stale port is undetectable
+    # downstream, because connect(2) to a dead vsock port SUCCEEDS on
+    # vsock_loopback, so the reader gets a handshake timeout rather than a
+    # refusal. Only the spawner can close that window.
+    FileUtils.rm_f(ready_path)
     @pid = ::Process.spawn(@binary, scheme, tracing_path, in: :close, out: :close, err: :close)
     @port = wait_for_port
     self

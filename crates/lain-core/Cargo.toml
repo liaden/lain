@@ -46,6 +46,15 @@ thiserror = "2"
 # Mature-crate-over-unsafe per house rule -- this crate forbids unsafe, and
 # libc's kill(2) wrapper would need an unsafe block; nix abstracts it safely.
 nix = { version = "0.31", default-features = false, features = ["signal"] }
+# AF_VSOCK listener, so the exec boundary can serve a guest across a
+# hypervisor's virtio-vsock channel with no shared filesystem and no network
+# stack -- the isolation story a Unix socket cannot tell. Same tokio 1.53 pin,
+# no feature bump. Its `VsockListener::accept` yields (VsockStream, VsockAddr),
+# structurally what `UnixListener::accept` yields, which is why rpc's `Accept`
+# trait covers both without reshaping. Trap for TCP habits: the ephemeral port
+# is VMADDR_PORT_ANY (u32::MAX), NOT 0 -- port 0 and every port under 1024 are
+# privileged and raise EACCES.
+tokio-vsock = "0.7"
 
 [dev-dependencies]
 # Tempdir-scoped test sockets and scratch files, auto-cleaned.
