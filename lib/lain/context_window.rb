@@ -77,6 +77,104 @@ module Lain
     # `fallback:` rather than rely on this one.
     CONSERVATIVE_FALLBACK = 8_192
 
+    # How full a context is: tokens used over the window they are measured
+    # against. {Compaction::Need::ApproachingWindow} computed this ratio inside
+    # its own `#fired?` and threw it away; as a value, the number a status line
+    # shows a human and the number the compaction trigger compares are the same
+    # number, and cannot drift apart.
+    Occupancy = Data.define(:used_tokens, :window_tokens)
+
+    # Reopened rather than filled in through `Data.define`'s block: constants
+    # declared inside that block are lexically scoped to the ENCLOSING module,
+    # and {None} has to hang off Occupancy itself (CLAUDE.md's trap list).
+    class Occupancy
+      # The window, coerced and checked. Zero and negative windows never raise
+      # on their own -- they read as Infinity and NaN, and a NaN ratio also
+      # breaks `==` for a caller holding two readings -- so a bad denominator
+      # has to be refused where it ARRIVES. {Compaction::Need#window!} does the
+      # same on its own path and keeps its own message; this is the guard for
+      # everyone who never goes through a Need.
+      #
+      # @return [Integer]
+      # @raise [ArgumentError]
+      def self.window!(window_tokens)
+        tokens = Integer(window_tokens, exception: false)
+        return tokens if tokens&.positive?
+
+        raise ArgumentError, "window_tokens must be a positive Integer, got #{window_tokens.inspect} -- " \
+                             "an occupancy measured against it is Infinity or NaN, never a reading"
+      end
+
+      # No turn has been observed yet. Absence, never zero -- a resumed
+      # session's Accounting is fresh while its Timeline is not, so a zero here
+      # would read as an empty context and clear every threshold from below.
+      #
+      # It carries the WINDOW, and answers every reader a real reading answers:
+      # a Null Object is only worth the name if it substitutes ({Sink::Null} is
+      # the exemplar), and the denominator is exactly what a status line still
+      # needs before the first turn -- "-- / 1,000,000" is a render, not a
+      # missing value. The book has already resolved that number by the time
+      # absence is known; throwing it away would send the caller back for it.
+      class None
+        attr_reader :window_tokens
+
+        def initialize(window_tokens:)
+          @window_tokens = Occupancy.window!(window_tokens)
+          freeze
+        end
+
+        def used_tokens = nil
+        def ratio = nil
+        def at_least?(_fraction) = false
+        def to_h = { used_tokens: nil, window_tokens: }
+
+        # Value equality, which {Occupancy.window!} above already treats as
+        # something a reading owes its caller: it refuses a NaN denominator
+        # precisely because a NaN ratio breaks `==` for anyone holding two
+        # readings, and absence breaking the same `==` unconditionally would be
+        # the identical defect with none of the noise -- a status line
+        # redrawing on `reading != @last` repaints forever before the first
+        # turn. A Data gets these three for free; a hand-written Null Object
+        # has to say them, or it is only half-substitutable again.
+        def ==(other) = other.instance_of?(self.class) && other.window_tokens == window_tokens
+        alias eql? ==
+        def hash = [self.class, window_tokens].hash
+
+        # Deconstructs on the same keys a real reading does, so one `case ... in`
+        # reads both.
+        def deconstruct_keys(keys) = keys.nil? ? to_h : to_h.slice(*keys)
+      end
+
+      # @param used_tokens [Integer, nil] nil is absence, and answers {None}
+      # @return [Occupancy, Occupancy::None]
+      def self.of(used_tokens:, window_tokens:)
+        used_tokens.nil? ? None.new(window_tokens:) : new(used_tokens:, window_tokens:)
+      end
+
+      # `.of` is not the only door -- `.new` and `Data#with` are two more, and a
+      # nil arriving through either used to survive construction and fail late
+      # as `undefined method 'fdiv' for nil`, from inside a frozen value object
+      # with nothing left to name who built it. The invariant belongs here,
+      # where both doors pass, and `#with` keeps working for every rewrite that
+      # is not a nil.
+      def initialize(used_tokens:, window_tokens:)
+        if used_tokens.nil?
+          raise ArgumentError, "used_tokens must not be nil -- absence is Occupancy::None, which .of builds"
+        end
+
+        super(used_tokens:, window_tokens: Occupancy.window!(window_tokens))
+      end
+
+      # @return [Float] 0.5 means half the window is spoken for
+      def ratio = used_tokens.fdiv(window_tokens)
+
+      # The MULTIPLIED form (`used >= window * fraction`), deliberately, and
+      # not `ratio >= fraction`: the two disagree wherever the division rounds,
+      # and this is the compaction trigger's comparison, which must land on
+      # exactly the token it landed on before the ratio became a value.
+      def at_least?(fraction) = used_tokens >= window_tokens * fraction
+    end
+
     # @return [ContextWindow] the bench's default book, degrading gracefully
     def self.default = DEFAULT
 
@@ -109,6 +207,25 @@ module Lain
 
       name = model.to_s
       @windows.fetch(name) { matched(name) || @fallback || unknown!(model) }
+    end
+
+    # How full a model's context is, given what the last turn was billed for.
+    # The book owns the denominator, so the book is where a model name becomes
+    # an occupancy -- a caller holding a token count never has to know which
+    # table resolves it.
+    #
+    # The window resolves BEFORE absence is considered, so a blank model raises
+    # on turn zero rather than staying silent until the first turn that carries
+    # usage -- the same reason {Compaction::Need} coerces its window outside the
+    # detector that short-circuits on a nil count.
+    #
+    # @param used_tokens [Integer, nil] the last turn's input tokens; nil before
+    #   any turn
+    # @param model [String, Symbol]
+    # @return [Occupancy, Occupancy::None]
+    # @raise [UnknownModel] on a blank model, or an unmatched one with no fallback
+    def occupancy(used_tokens, model:)
+      Occupancy.of(used_tokens:, window_tokens: window_tokens(model))
     end
 
     # The bench's default book as a shared value -- a constant, not a

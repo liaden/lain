@@ -62,6 +62,35 @@ RSpec.describe Lain::Compaction::Need do
       end
     end
 
+    # The boundary itself, pinned. The comparison now lives in a shared
+    # {ContextWindow::Occupancy} so a status line and this detector read one
+    # number, and the whole point of the extraction is that it moves the
+    # threshold by nothing: `used >= window * ratio`, evaluated in that form,
+    # including on a window whose ratio has no exact Float.
+    describe "the boundary the ratio names" do
+      it "fires at exactly the ratio of the window" do
+        expect(check(used_tokens: 900).signals).to include(:approaching_window)
+      end
+
+      it "does not fire one token below it" do
+        expect(check(used_tokens: 899).signals).not_to include(:approaching_window)
+      end
+
+      it "fires at the same token on a window the ratio does not divide evenly" do
+        expect(check(used_tokens: 900, window_tokens: 1001).signals).not_to include(:approaching_window)
+        expect(check(used_tokens: 901, window_tokens: 1001).signals).to include(:approaching_window)
+      end
+
+      # Zero usage is a measurable occupancy, not the absence nil stands for --
+      # a 0.0 ratio would clear a 0.0 threshold, and nil never does.
+      it "distinguishes a zero-token turn from no turn at all" do
+        zero = described_class.new(byte_threshold: 100, approaching_ratio: 0.0)
+
+        expect(zero.check(window_tokens: 1000, used_tokens: 0).signals).to include(:approaching_window)
+        expect(zero.check(window_tokens: 1000, used_tokens: nil).signals).not_to include(:approaching_window)
+      end
+    end
+
     # The coercion the window kept when it was a constructor argument, moved to
     # where the value now arrives. It has to be HERE and not inside the
     # detector: #fired? short-circuits on a nil `used_tokens`, so a garbage

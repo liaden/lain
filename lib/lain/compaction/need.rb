@@ -66,6 +66,12 @@ module Lain
       # state (a fact about this turn's model, which can change under a running
       # session). That split is what keeps this detector frozen and shareable
       # while still following a `/model` switch.
+      #
+      # The occupancy it measures is {ContextWindow::Occupancy}, the same value
+      # a chat status line reads: the comparison and the number shown to a human
+      # are one calculation, so "90% full" and "fired" cannot disagree. Absence
+      # (no turn yet) is the Null {Occupancy::None}, which never fires -- what
+      # the explicit nil check here used to say.
       class ApproachingWindow
         KIND = :approaching_window
 
@@ -75,7 +81,9 @@ module Lain
         end
 
         def fired?(state)
-          !state.used_tokens.nil? && state.used_tokens >= state.window_tokens * @ratio
+          occupancy = ContextWindow::Occupancy.of(used_tokens: state.used_tokens,
+                                                  window_tokens: state.window_tokens)
+          occupancy.at_least?(@ratio)
         end
       end
 

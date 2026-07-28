@@ -365,6 +365,59 @@ RSpec.describe Lain::Agent do
     end
   end
 
+  # The one number a chat status line wants -- how full the context is right
+  # now -- read off the SAME last-turn usage the compaction trigger measures,
+  # through the same window book.
+  describe "#occupancy" do
+    def spent(input) = text_response("hello", usage: Lain::Usage.new(input_tokens: input, output_tokens: 1))
+
+    it "is nil before any turn: absence, not an empty context" do
+      expect(agent(text_response).occupancy).to be_nil
+    end
+
+    it "reports the last turn's input tokens as a fraction of the model's window" do
+      a = agent(spent(4096))
+      a.ask("hi")
+
+      expect(a.occupancy(context_window: Lain::ContextWindow.new(windows: { "opus" => 8192 }))).to eq(0.5)
+    end
+
+    it "measures the LAST turn, not the run's cumulative input" do
+      first = Lain::Response.new(content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                             "input" => { "text" => "x" } }],
+                                 stop_reason: :tool_use,
+                                 usage: Lain::Usage.new(input_tokens: 4096, output_tokens: 1))
+      a = agent([first, spent(2048)])
+      a.ask("hi")
+
+      expect(a.occupancy(context_window: Lain::ContextWindow.new(windows: { "opus" => 8192 }))).to eq(0.25)
+    end
+
+    context "with a model the default book does not carry" do
+      let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 1024) }
+
+      it "measures against the conservative fallback window" do
+        a = agent(spent(4096))
+        a.ask("hi")
+
+        expect(a.occupancy).to eq(0.5)
+      end
+    end
+
+    # The reader is as loud as the book it asks, and this is PART of its
+    # published contract: T13 renders it per prompt, so a caller that cannot
+    # afford a raise on a blank model slot has to know it can happen rather
+    # than discovering it as a REPL crash.
+    context "with a blank model slot" do
+      let(:context) { Lain::Context.new(model: "  ", max_tokens: 1024) }
+
+      it "raises UnknownModel rather than reporting an occupancy nobody chose" do
+        expect { agent(text_response).occupancy }
+          .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
+      end
+    end
+  end
+
   describe "state machine" do
     it "starts awaiting_user" do
       expect(agent(text_response).state).to eq(:awaiting_user)
