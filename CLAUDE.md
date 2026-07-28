@@ -21,7 +21,8 @@ export PATH="$HOME/.rubies/ruby-4.0.5/bin:$PATH"
 a deleted Homebrew `gmkdir`/`ginstall`.
 
 ```bash
-bundle exec rspec              # 297 examples; :integration excluded by default
+bundle exec rspec              # :integration and :core excluded by default; measure the count,
+                               # do not trust a number written down here
 bundle exec rubocop -a         # safe autocorrect; see the warning below
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so
 cargo test && cargo clippy --all-targets -- -D warnings
@@ -165,20 +166,25 @@ is the object of study.
 Timeline. Subagents get a *fresh* Timeline root whose `meta["spawned_from"]` names the parent's
 head, so causal lineage survives while the child never inherits the parent's prompt.
 
-## Rust, and which data structures earn a binding
+## Rust, and which capabilities earn a binding
 
-**Rust is here for its data model, not for speed.** Ownership, cheap immutability, and richer
-structures than Ruby's `Hash`/`Array` are the reason; a benchmark is how we *check* the reason,
-never the reason itself. See `ext/lain/CLAUDE.md` before writing any Rust.
+**Rust is here for its data model and for capabilities Ruby has no good answer to, not for
+speed.** Ownership, cheap immutability, richer structures than Ruby's `Hash`/`Array`, and mature
+crates with no Ruby equivalent are the reasons; a benchmark is how we *check* the reason, never
+the reason itself. See `ext/lain/CLAUDE.md` before writing any Rust, and survey lib.rs/crates.io
+before hand-rolling anything a crate already does well.
 
-The placement rule: **anything async, I/O-bound, or isolation-relevant lives out of process
-(`crates/lain-core`, msgpack-RPC over a Unix socket); data-structure work lives in-process
-(`ext/lain`, magnus, pure and synchronous).** Driving an async runtime from inside an FFI call
-while holding the GVL is a known footgun, and an "in-process sandbox" is not a sandbox.
+The placement rule is unchanged and is the one that actually binds: **anything async, I/O-bound,
+or isolation-relevant lives out of process (`crates/lain-core`, msgpack-RPC over a Unix socket);
+in-process work (`ext/lain`, magnus) must be pure, synchronous, and must not own the terminal.**
+Driving an async runtime from inside an FFI call while holding the GVL is a known footgun, and an
+"in-process sandbox" is not a sandbox. A crate that reaches for `isatty` or `NO_COLOR` owns the
+terminal and fails this test — Ruby owns the stream, so colour arrives as a resolved argument.
 
-Before binding a structure, all five must hold. If any fails, keep it in Ruby.
+Before binding, all five must hold. If any fails, keep it in Ruby.
 
-1. **It is a data-structure problem**, not IO, async, or confinement.
+1. **It is pure, synchronous work** — a data structure, a parser, a matcher — not IO, async, or
+   confinement. Data structures are the original case, not the only one.
 2. **Ruby's object model makes it asymptotically worse.** A persistent map with structural
    sharing forks in O(1); `Hash#dup` is O(n). That gap is the argument. "Rust is faster" is not.
 3. **It is hot per-turn**, not per-session. Per-session work is never worth a boundary.
