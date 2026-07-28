@@ -71,7 +71,7 @@ RSpec.describe Lain::Tools::CoreExec do
 
     def with_client
       Sync do
-        client = Lain::Core::Client.start(paths:)
+        client = Lain::Core::Client.start(transport: Lain::Core::Child.new(paths:))
         begin
           yield client
         ensure
@@ -169,11 +169,15 @@ RSpec.describe Lain::Tools::CoreExec do
 
     it "turns boundary death into a Tool::Result.error naming Core::Died -- no hang, no raise" do
       Sync do
-        client = Lain::Core::Client.start(paths:)
+        # The Child is held here, not reached through the client: {Client#pid}
+        # is gone now that the transport is injected, and the caller that built
+        # the transport is the one that can kill its daemon.
+        child = Lain::Core::Child.new(paths:)
+        client = Lain::Core::Client.start(transport: child)
         tool = described_class.new(client:)
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         in_flight = Async { tool.call({ command: "sleep 5" }, invocation(Lain::WorkerEnv.default)) }
-        Process.kill("KILL", client.pid)
+        Process.kill("KILL", child.pid)
         result = in_flight.wait
         expect(result).to be_error
         expect(result.content).to include("Lain::Core::Died")

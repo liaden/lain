@@ -14,11 +14,20 @@ RSpec.describe Lain::Core::Client, :core do
 
   after { FileUtils.rm_rf(runtime_base) }
 
-  def with_client(**options)
+  # Every .start in this file injects its transport now; only the daemon binary
+  # varies (the real compiled one, or a misbehaving stand-in).
+  def transport(binary: Lain::Core::Child::BINARY)
+    Lain::Core::Child.new(paths:, binary:)
+  end
+
+  # The Child is yielded alongside the client because {Client#pid} is gone: a
+  # spec that wants to SIGKILL the daemon asks the transport it already holds.
+  def with_client(binary: Lain::Core::Child::BINARY, **options)
     Sync do
-      client = Lain::Core::Client.start(paths:, **options)
+      child = transport(binary:)
+      client = Lain::Core::Client.start(transport: child, **options)
       begin
-        yield client
+        yield client, child
       ensure
         client.stop
       end
@@ -65,14 +74,14 @@ RSpec.describe Lain::Core::Client, :core do
   end
 
   it "fails in-flight and subsequent calls with Core::Died naming the signal" do
-    with_client do |client|
+    with_client do |client, child|
       in_flight = Async do
         # The expectation lives INSIDE the task so the raise is consumed here,
         # not re-raised (with a console warning) out of task.wait.
         expect { client.call("exec", exec_params("sleep", "5")) }
           .to raise_error(Lain::Core::Died, /SIGKILL|signal 9/)
       end
-      Process.kill("KILL", client.pid)
+      Process.kill("KILL", child.pid)
       in_flight.wait
       expect { client.call("ping") }.to raise_error(Lain::Core::Died, /SIGKILL|signal 9/)
     end
@@ -111,7 +120,7 @@ RSpec.describe Lain::Core::Client, :core do
     BODY
     captured = capturing_parent_stderr do
       Sync do
-        expect { Lain::Core::Client.start(paths:, binary: garbage) }
+        expect { Lain::Core::Client.start(transport: transport(binary: garbage)) }
           .to raise_error(Lain::Core::Died, /SIGTERM|signal 15/)
       end
     end
@@ -127,7 +136,7 @@ RSpec.describe Lain::Core::Client, :core do
       sleep 60
     BODY
     Sync do
-      expect { Lain::Core::Client.start(paths:, binary: close_alive) }
+      expect { Lain::Core::Client.start(transport: transport(binary: close_alive)) }
         .to raise_error(Lain::Core::Died, /SIGTERM|signal 15/)
     end
   end
@@ -142,7 +151,7 @@ RSpec.describe Lain::Core::Client, :core do
     BODY
     Sync do
       started = monotonic_now
-      expect { Lain::Core::Client.start(paths:, binary: mute, handshake_budget: 0.3) }
+      expect { Lain::Core::Client.start(transport: transport(binary: mute), handshake_budget: 0.3) }
         .to raise_error(Lain::Core::Client::HandshakeTimeout, /0\.3/)
       expect(monotonic_now - started).to be < 2.0
     end
@@ -161,7 +170,7 @@ RSpec.describe Lain::Core::Client, :core do
       # The raise must also have stopped the child and its reader fiber, or
       # this Sync block would hang on the orphaned reader -- the example
       # finishing at all is the cleanup assertion.
-      expect { Lain::Core::Client.start(paths:, version: "999.0.0") }
+      expect { Lain::Core::Client.start(transport: transport(binary: Lain::Core::Child::BINARY), version: "999.0.0") }
         .to raise_error(Lain::Core::Client::VersionMismatch) do |error|
           expect(error.message).to include("999.0.0", Lain::Core::Client::PROTOCOL_VERSION)
         end
