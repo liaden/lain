@@ -12,7 +12,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 170/170 today; must not regress
+cargo test                                  # 186/186 today; must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -143,3 +143,59 @@ and its proof.
 tests that merely characterize an implementation choice (`a_re_put_returns_early_without_revalidating_edges`
 pins `put_into`'s `contains_key` shortcut) sit *outside* that fence, labelled as characterization.
 A reader must never inherit a house rule as though it were one of the declared laws.
+
+## Scratch buffers go in a thread-local, not in the wrapped object
+
+Plenty of good crates hand you a reusable scratch allocation and take `&mut self` for it.
+`nucleo`'s `Matcher` is the case in hand: ~135 KB allocated eagerly, every matching method
+`&mut self`, and upstream's own guidance is to hold one and reuse it rather than pay the
+allocation per call. Put it in a field and the handle now reaches interior mutability, and
+`frozen_shareable` — which is an *unchecked promise*, not a checked one — becomes a lie.
+
+The answer is not to choose between reuse and shareability. Put the scratch in a
+`thread_local!` static, keep the wrapped struct plain owned data, and both hold at once: the
+allocation happens once per thread instead of once per call, and nothing mutable is reachable
+*from the object*. `fuzzy.rs`'s `with_matcher` is the exemplar.
+
+**What makes that safe today is the GVL plus `try_borrow_mut`, not Ractors.** Say it that way,
+because the Ractor version of the argument is not available to us yet: no binding in this crate
+calls `rb_ext_ractor_safe`, so while `Ractor.shareable?(handle)` is `true`, *calling any method
+on it* from a non-main Ractor raises `Ractor::UnsafeError` — `Bm25#search` included. Shareable
+and callable are different properties, and only the first one is true here. The thread-local is
+the right shape for the day the second becomes true, since each Ractor is its own thread; do
+not write that down as the reason it is correct now.
+
+Three obligations come with it, and they are what make it honest rather than clever:
+
+- **Reach the thread-local through `try_with` and `try_borrow_mut`, never `with`/`borrow_mut`.**
+  Those panic — on TLS teardown and on re-entrancy respectively — and a panic unwinding into
+  Ruby is undefined behaviour. The fallback allocates a fresh one; taking an `FnMut` is what
+  lets both paths share the body.
+- **Prove that reuse is observationally pure**, with a test that runs the same input through a
+  reused scratch and a fresh one and asserts the same answer
+  (`a_reused_matcher_agrees_with_a_fresh_one`). Without it, "the slab carries no semantic
+  state" is a remembered claim about someone else's crate.
+- **Do not let a `Send + Sync` assertion stand in for the interior-mutability audit.** A
+  `const _: () = { assert_send::<T>(); assert_sync::<T>(); }` block is worth keeping — it
+  catches `Rc`, `RefCell` and raw pointers — but it proves far less than it looks like it
+  proves: `Mutex<T>`, `AtomicUsize` and `OnceLock` are all `Send + Sync` *and* interior-mutable,
+  and sail straight through. `frozen_shareable` still rests on a written audit that a human
+  read. Comment the block with what it actually catches, because a false mechanical claim is
+  worse than no claim at all — the next person trusts it.
+
+## An upstream constructor is not a contract; pin the index space with a test
+
+Anything that hands back positions — match indices, spans, offsets — has an index space, and
+the caller has to know whether it counts bytes, codepoints, or grapheme clusters. Upstream may
+not be consistent about it. `nucleo`'s `Utf32Str::new` returns grapheme indices, *except* for a
+string that is not ASCII but whose clusters all lead with an ASCII char (`"ne\u{301}on"`),
+where it silently falls back to `Ascii(str.as_bytes())` and reports byte offsets. Verified, not
+suspected; it would have mis-highlighted every accented candidate, and nothing would have
+failed.
+
+So: build the haystack yourself when the constructor branches, choose one index space, and
+write the test that *states* it (`positions_index_grapheme_clusters_even_when_every_cluster_leads_with_ascii`)
+rather than one that merely exercises the happy path. Then say which space it is in the doc
+comment, in the Ruby terms the consumer will use — `String#grapheme_clusters` here, byte
+offsets in `astgrep.rs`. Two bindings in this crate already disagree on that question, which is
+fine as long as each says so.

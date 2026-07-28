@@ -93,3 +93,27 @@ serde = { version = "1", features = ["derive"] }
 # is exactly the correction we need and the reason the version floor matters.
 # `no_std`, zero dependencies.
 unicode-width = "0.2"
+# fzf-quality fuzzy matching for completion, headless. Upstream-documented as
+# "purely functional with no I/O or threading", and its whole dependency set is
+# `memchr` + `unicode-segmentation` -- which is the reason it is here rather
+# than `skim`, whose LIBRARY crate installs a `#[global_allocator]` and
+# hard-depends on `crossterm`/`tokio`/`ratatui`. Ruby owns the terminal; we want
+# the matcher, not a picker. MPL-2.0 is this workspace's first non-permissive
+# licence and is already allowed in `deny.toml`.
+#
+# `unicode-segmentation` is in the crate's `default` set; it is named EXPLICITLY
+# because it is not cosmetic -- it is what makes `chars::graphemes` collapse a
+# cluster to one index, and therefore what makes the match positions we hand
+# Ruby line up with `String#grapheme_clusters`. If upstream ever drops it from
+# `default`, this line is what keeps the index space from silently shifting.
+nucleo-matcher = { version = "0.3.1", features = ["unicode-segmentation"] }
+# UAX#29 grapheme segmentation, so `fuzzy.rs` can build its own haystack instead
+# of `Utf32Str::new`. That constructor is not index-space stable: for a string
+# that is not ASCII but whose grapheme-leading chars all are (`"ne\u{301}on"`),
+# it falls back to `Ascii(str.as_bytes())` and starts reporting BYTE offsets
+# where it otherwise reports grapheme indices -- verified, and it would have
+# mis-highlighted every accented candidate. Building the buffer ourselves gives
+# one index space unconditionally. Already in the tree (nucleo-matcher's own
+# `unicode-segmentation` feature pulls it), so this adds no transitive
+# dependency and no new licence.
+unicode-segmentation = "1"

@@ -42,6 +42,7 @@ mod dag;
 #[deny(clippy::missing_docs_in_private_items)]
 mod digest;
 mod event;
+mod fuzzy;
 mod prompt;
 mod treesitter;
 
@@ -1598,6 +1599,11 @@ mod ffi {
         // because grammar, style vocabulary and FFI surface belong in one file;
         // this line is the registration, not the definition.
         crate::prompt::ffi::define(ruby, ext, lain_error)?;
+
+        // The completion fuzzy matcher, on the same registration-not-definition
+        // pattern: class, errors and methods all live in `fuzzy::ffi`, so the
+        // matcher and its FFI surface stay in one file.
+        crate::fuzzy::ffi::define(ruby, ext, lain_error)?;
 
         // Stateless structural search: no wrapped handle, so `AstGrep` is a bare
         // class with two singleton methods and one named error. `BadPattern`
