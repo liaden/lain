@@ -16,10 +16,16 @@ module Lain
     #    prints everything above the last line itself and hands the editor only
     #    the last -- see {Rendering}.
     # 2. **Contain.** A renderer reads live run state, and live run state
-    #    raises: {Agent#occupancy} raises on a blank model, so one wiring
-    #    mistake in a renderer is one raise per prompt, which is an unusable
-    #    REPL rather than an ugly one. A renderer that fails degrades to the
-    #    text it was given and the human keeps typing.
+    #    raises -- {Agent#occupancy} raises on a blank model, {Ext::Prompt}
+    #    raises on an unknown style word at RENDER time. A renderer is called
+    #    once per prompt, so one such mistake is not an ugly REPL but an
+    #    unusable one. A renderer that fails degrades to the text it was given
+    #    and the human keeps typing.
+    #
+    #    The shipped renderer contains those two cases itself, closer to where
+    #    it knows what they mean -- so this net catches nothing it can produce,
+    #    and that is the intended end state, not a gap. It is here for the
+    #    renderer nobody has written yet.
     #
     # Containment is total but never silent, which is the same trade
     # {TTY::History} makes for an unwritable history file: the fallback is a
