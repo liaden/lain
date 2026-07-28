@@ -235,6 +235,81 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  # The prompt string is composed through a {Lain::Frontend::PromptComposer} seam. The
+  # default renderer is the null one, and the five `"> "` assertions above are
+  # its contract: with nobody composing anything, the bytes the line editor
+  # receives are exactly the ones it received before the seam existed.
+  describe "prompt composition" do
+    around do |example|
+      Dir.mktmpdir { |dir| @prompt_dir = dir and example.run }
+    end
+
+    def tty_with_renderer(renderer)
+      described_class.new(channel:, output:, input: tty_input, prompt_renderer: renderer,
+                          history_path: File.join(@prompt_dir, "history"))
+    end
+
+    it "hands the composed line to the line editor" do
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_renderer(->(text:, **) { "opus 42% #{text}" }).prompt("> ")
+
+      expect(Reline).to have_received(:readline).with("opus 42% > ", true)
+    end
+
+    it "writes every line but the final one to the screen BEFORE the editor takes over" do
+      seen = nil
+      allow(Reline).to receive(:readline) { seen = output.string.dup and "hi" }
+
+      tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
+
+      expect(seen).to eq("model: opus\ncontext: 42%\n")
+    end
+
+    # Reline escapes a newline in its prompt to a literal backslash-n
+    # (line_editor.rb), so a multi-line rendering has to be split here or it
+    # arrives mangled.
+    it "never lets a newline reach the line editor" do
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_renderer(->(text:, **) { "model: opus\ncontext: 42%\n#{text}" }).prompt("> ")
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    it "shows today's prompt, and no header, when the renderer raises" do
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
+
+      expect(Reline).to have_received(:readline).with("> ", true)
+    end
+
+    # A degraded renderer is reported through the same warning line an
+    # unwritable history file uses -- once, above the prompt, never instead
+    # of it.
+    it "renders a warning line for a broken renderer rather than failing silently" do
+      allow(Reline).to receive(:readline).and_return("hi")
+
+      tty_with_renderer(->(**) { raise Lain::ContextWindow::UnknownModel, "no model configured" }).prompt("> ")
+
+      expect(output.string).to eq("warning: prompt renderer unavailable (no model configured)\n")
+    end
+
+    it "still prepends the warmth glyph the null renderer was handed" do
+      allow(Reline).to receive(:readline).and_return("hi")
+      allow(output).to receive(:tty?).and_return(true)
+      state = File.join(@prompt_dir, "state.json")
+      File.write(state, JSON.generate({ "cache_deadline" => Time.at(1_500).utc.iso8601 }))
+
+      described_class.new(channel:, output:, input: tty_input, state_path: state, pastel: Pastel.new(enabled: false),
+                          wall_clock: -> { Time.at(1_000) }, history_path: File.join(@prompt_dir, "history"))
+                     .prompt("> ")
+
+      expect(Reline).to have_received(:readline).with("#{described_class::Warmth::WARM} > ", true)
+    end
+  end
+
   describe "history (XDG state, T12)" do
     around do |example|
       Dir.mktmpdir { |dir| @history_dir = dir and example.run }

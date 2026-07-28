@@ -54,6 +54,12 @@ module Lain
       #   renders through -- derived from `pastel:` so an injected disabled
       #   palette stays disabled, and injectable on its own so a caller can
       #   restyle without restating the palette (T8)
+      # @param prompt_renderer [#call] composes the prompt string from run
+      #   state -- `call(text:, theme:) -> String`, newlines allowed. The
+      #   default composes nothing, which is what keeps the bytes the line
+      #   editor receives identical to the pre-seam prompt. Only the renderer
+      #   is injectable, not the {PromptComposer} around it: the theme is this class's
+      #   to hand over, and a second one passed in could disagree with it
       # @param history_path [String] durable reline history file, under
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
       #   instead of touching real XDG state (T12)
@@ -70,7 +76,7 @@ module Lain
       #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
       #   answers a different question (I3)
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
-                     theme: Theme.new(pastel:),
+                     theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
                      state_path: File.join(Dir.pwd, ".lain", "state.json"),
@@ -80,6 +86,7 @@ module Lain
         @input = input
         @pastel = pastel
         @theme = theme
+        @composer = PromptComposer.new(theme:, renderer: prompt_renderer, notify: method(:render_warning))
         @history = History.new(path: history_path, notify: method(:render_warning))
         @countdown = Countdown.new(output:, input:, pastel:, clock:)
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
@@ -234,8 +241,15 @@ module Lain
       # `reline(…, true)` already feeds an accepted line into the in-memory
       # `Reline::HISTORY`; {History#append} durably appends it too, before the
       # next prompt is drawn (T12 -- see History's comment).
+      #
+      # The bare prompt this class builds -- warmth glyph plus painted text --
+      # is what {PromptComposer} is asked to compose, and is also what it falls back to
+      # when a renderer raises. Everything the rendering puts ABOVE the editor's
+      # line is printed here, because Reline's prompt is one line and it mangles
+      # a newline into a literal backslash-n rather than wrapping.
       def read_line_with_history(text)
-        line = Reline.readline("#{warmth_prefix}#{@theme.paint(:prompt, text)}", true)
+        composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
+        line = Reline.readline(composed.editor_line(@output), true)
         @history.append(line) if line
         line
       end
