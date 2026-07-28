@@ -25,8 +25,23 @@ desc "Run the spec suite across physical CPU cores"
 task :pspec do
   runtime_log = "tmp/parallel_runtime_rspec.log"
   group_by = File.exist?(runtime_log) ? "--group-by runtime " : ""
-  sh "bundle exec parallel_rspec spec -n #{physical_cores} #{group_by}--test-options " \
+  sh "bundle exec parallel_rspec spec -n #{spec_workers} #{group_by}--test-options " \
      "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
+end
+
+# One fewer worker than we have physical cores, because the constraint here is
+# MEMORY, not CPU. Each worker loads the whole suite (ActiveSupport, the
+# compiled extension, the fixture corpora), and a developer box also carries an
+# editor's language servers and whatever else. When the OOM killer takes a
+# worker, parallel_tests does not fail loudly -- the run reports only the
+# examples that survived (4523 of 5518 on the run that prompted this) and exits
+# non-zero, which reads as a broken commit rather than a starved machine.
+# `LAIN_SPEC_WORKERS` overrides it when you know what your box can hold.
+def spec_workers
+  override = Integer(ENV.fetch("LAIN_SPEC_WORKERS", ""), exception: false)
+  return override if override&.positive?
+
+  [physical_cores - 1, 1].max
 end
 
 # `lscpu -p=core` yields one line per LOGICAL cpu naming its physical core;

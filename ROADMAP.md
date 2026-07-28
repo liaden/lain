@@ -163,6 +163,19 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   record); cassettes under `spec/fixtures/vcr_cassettes/`; shared example groups for provider parity
   and monoid laws. Lands first — the transport fork is a test-driven port.
 
+- **`[exp]` The parallel spec run fails silently when a worker is killed.** Observed 2026-07-28:
+  `rake pspec` reported `4523 examples, 0 failures` where a serial `rspec` reported `5518` — the
+  OOM killer took a worker and `parallel_tests` exited non-zero **without naming the ~1000
+  examples that never ran**. It reads as a broken commit; it is a starved machine. Three commits
+  in one session were blocked by this, plus two runs that surfaced as Ruby crash dumps in
+  unrelated specs (`improvement_spec`, `derivation_audit_spec`) rather than as failures.
+  Mitigated for now by `Rakefile#spec_workers` — one fewer worker than physical cores, overridable
+  with `LAIN_SPEC_WORKERS`. **Not fixed:** a dead worker should fail *loudly and specifically*.
+  Worth having the hook compare the reported example count against a recorded floor, so a
+  vanished worker is an error naming itself rather than a mystery. Context from the same box:
+  each worker loads the whole suite (ActiveSupport + the compiled extension + fixture corpora),
+  and `mempalace` was resident at 3.7 GB with `rust-analyzer` at 1.2 GB of 15.9 GB total.
+
 ### M3b — transport fork `[built]`
 - Vendor the RubyLLM slice into `lib/lain/provider/http/` with provenance; their 5 non-VCR unit specs
   must pass unchanged; bootstrap their anthropic cassettes.
@@ -778,6 +791,162 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    via `lain up`, queue-backed approvals with dunstify actions, the `lain://inbox` surface,
    buffer ergonomics). Record: the plan spec above and
    `planning/dominator-meet-research-2026-07.md`.
+
+11. **Planned (2026-07-21, panel-reviewed)** — two independent chunks authored via
+   `/create-plan`, executable in either order: `planning/specs/chunk-parallel-tools-core-skeleton.md`
+   (M6: parallel tool execution widened past `Subagent` with barrier semantics + the
+   `crates/lain-core` msgpack-RPC exec skeleton, `forbid(unsafe_code)`, confinement
+   explicitly out of scope) and `planning/specs/chunk-gherkin-meta-agents-plan-compaction.md`
+   (grader-from-Gherkin GG-1..5; the four meta-agents — court-clerk consolidation,
+   friction-observer, harness-improver with the XDG improvements sink, and the auto-approver
+   as an attributed approval surface; plan-shaped compaction PC-1..7 closed by the
+   shape × density sweep; plus the owed `cache_profile` and `NonStringSlot` fixes as
+   prerequisite cards).
+
+12. **Planned (2026-07-23, panel-reviewed)** — `planning/specs/chunk-ui-ux-tmux-nvim.md`:
+   the UI/UX chunk — in-repo tmux + Neovim plugins, the `you>` command registry
+   (/help /status /sessions /inbox /approve /yolo /model /rewind /fork /btw /quit /goal
+   /ruby /meta), session forking with ephemeral journal-and-reap, the M4-2 provider
+   round-trip of an edited `lain://request`, auto-approver wiring (`--auto-approve`),
+   read-only per-subagent tmux windows (`lain watch`), `lain up` flag passthrough +
+   `--nvim` cockpit, ARCHITECTURE.md, and the README/xmonad cleanup.
+
+13. **Planned (2026-07-25, panel-reviewed)** — `planning/specs/chunk-live-wiring.md`: the
+   live-wiring chunk, closing the gap between five chunks of landed bench machinery and a chat
+   session that uses almost none of it. Per-turn `Context` construction on the Agent
+   (`PipelineSource`) with `Compaction::Scheduler`/`Need`/`Cold` **on by default**, backed by a
+   frozen per-turn summary snapshot and eager summaries fired from the agent loop's long-lived
+   reactor (not the reaping gather task); a per-model context-window book; the secret-write guard
+   finally journaled, its oracle declines separated from credential-pattern hits, the memory-save
+   heuristic recalibrated off unbroken-token shape, and `Oracle::MemorySave::Gate` wired live;
+   plus two leaf gaps — four tools that ignore `worker_env.cwd`, and `causal_parents` dropped
+   from journaled turn records (writer **and** the digest-verifying reader). Ruled out during
+   planning with citations: `Plan::Runner` live wiring (a second execution mode, not wiring) and
+   the tool-disclosure arms. **✅ Landed 2026-07-25** (`fddc8e3..56a7815`, 15 commits).
+
+14. **Planned (2026-07-25, panel-reviewed)** —
+   `planning/specs/chunk-compaction-tiers-pins-isolation.md`: compaction tiers, pinned history,
+   and isolation invocation. The summarizer becomes a *tier* (selectable provider/model, spend
+   journaled through `Telemetry::OracleAnswer`, and a **custom deterministic tier** of user
+   summarizer classes answering `suitable?`/`compact` from `.lain/summarizers.rb`, consulted
+   before any model call); a human can **pin** history the compactor may not touch, with `/goal`
+   objectives auto-pinned, which discharges the binding pre-ruling that `Compaction::Head` must
+   become protected-aware in the same change; and the isolation backends built in chunk 11 become
+   invocable from both `lain chat` and the bench, with a worker's commits preserved to a private
+   ref before its worktree is reclaimed and conflicts resolved by a forked subagent. Folds in
+   live-wiring follow-ups 13 and 14 (per-turn `Need` from the live model, and a compaction cost
+   record that refuses to quote figures it cannot stand behind). Ruled out during planning with
+   citations: the `name:verb` command-modifier grammar, and the conversational **span**
+   summarizer (distinct from the per-result eager tier — a span's boundaries move every turn, so
+   its cache key and invalidation are unsolved).
+   **✅ Landed 2026-07-25** (`ad72d5d..2e828a6`, 15 commits), with two scope corrections found
+   during execution and recorded as tickets rather than quietly dropped: **isolation reached no
+   consumer** — the bench has no `arms` subcommand to attach `--isolation` to (Deviation 8, spec
+   ticket 7) and nothing on the chat path constructs an actor-mode subagent (Deviation 9, spec
+   ticket 13), so deliverable (C) landed as a wired seam ahead of both callers; and the chat fleet
+   has no per-actor completion seam, so chat isolates workers without handing their commits back
+   (spec ticket 6). Closed out **2026-07-26**: the four `exe/lain` flags the chunk's own cards
+   assigned to the orchestrator (`--isolation`, `--summarizer-provider`, `--summarizer-model`,
+   `--summarizer-max-tokens`) had never landed, so tiers A and C were unreachable from the command
+   line; `spec/lain/cli/chat_flags_spec.rb` now parses the CLI subtree and fails when a flag the
+   code reads is declared by no command, and the README, `docs/commands.md`, and
+   `docs/providers/ollama.md` describe three summarizer tiers, pins, and isolation's real reach.
+
+15. **Planned (2026-07-27, panel-reviewed)** —
+   `planning/specs/chunk-algebra-vocabulary.md`: the algebra vocabulary. Lain already maintains a
+   monoid (`Context::Combinator#>>`), a commutative monoid (`Usage#+`), and a meet-semilattice on two
+   of `Timeline`'s three meet-ish operations — and every one of those facts is evidenced only by how a
+   method behaves plus an `include_examples` call in a spec, with nothing in `lib/` saying so. This
+   chunk names the properties as modules (following `Lain::ContentAddressed`), declares them
+   **per-operation** where the structures live (so `#causal_meets` can be declared *not* a
+   semilattice, with its reason), and makes the declarations load-bearing via a registry-driven law
+   sweep that refuses any claim with no means of proof and proves every refutation by asserting the
+   law actually fails. Applies the same vocabulary to existing code: `DedupeToolCalls` and
+   `PurgeFailedInputs` already analyze-then-map, and naming that factoring makes their analysis
+   inspectable and their output traceable to its input. Closes a Rust gap too — `ext/lain/src/dag.rs`
+   claims a meet-semilattice in its module doc and tests 2 of the 4 laws. Ruled out with citations:
+   algebra traits in Rust (no production caller, and a second Rust-native parity suite would fork the
+   differential oracle), and declaring `Regular` / `Store` idempotence / `Canonical` determinism (each
+   needs a generator under the sweep's contract).
+
+16. **Planned (2026-07-27, panel-reviewed)** —
+   `planning/specs/chunk-derived-context-timeline.md` (**requires chunk 15**): the derived context timeline. Compaction
+   stops being a render-time projection and becomes a **second lineage** — a derived `Timeline` in
+   the same content-addressed Store whose replacement events name the source events they subsume
+   via `causal_parents`, so the session timeline stays the lossless record while the derived chain
+   is what the provider sees. Promotes the Context-as-IVM lens (this file, above) from
+   implementation guidance to a materialized, addressable, diffable artifact, and discharges
+   `chunk-compaction-tiers-pins-isolation.md` follow-up 2 (the deferred span summarizer): its
+   "a span's boundaries move every turn, so its cache key is unsolved" objection is answered by a
+   derived chain having a content address. Carries a **pluggable strategy seam** — model
+   summarization through a replayable oracle, and a deterministic zero-cost elision — because
+   collapsing a span by asking a model, dropping it, and marking a finished plan step are three
+   policies over one span and should be swappable like every other axis. Also fixes a correctness
+   bug the planning probes found: the shipped compacting render is **Anthropic-invalid** at every
+   `keep_last` (the assistant summary lands at `messages[0]`, the default `--compact-keep 20` adds
+   a second consecutive assistant, and the boundary splits `tool_use`/`tool_result` pairs), which
+   nothing downstream normalizes and no spec pinned. Ruled out during planning with citations:
+   hierarchical/recursive derivation, the plan-step strategy, exchange-level reordering, and
+   retiring `Context::Compact`.
+
+17. **Planned (2026-07-28, panel-reviewed)** —
+   `planning/specs/chunk-chat-ux-and-ui-fixes.md`, grounded by
+   `planning/chat-ux-research-2026-07.md`: the chat-window UX chunk, plus the four defects a live
+   `lain up --nvim` run against the ollama arm surfaced. The defects: `lain://journal` can never
+   fill (tool output rides the TTY channel, the editor's channel sits behind the tee, nothing
+   bridges them); `lain up --nvim`'s `:LainStart` guard no-ops **silently** when the shipped plugin
+   is not on the runtimepath; `Approval::Queue#admit` emits nothing, so no surface — HUD, editor,
+   or bell — can report a blocked approval; and a zero-byte session file (the designed-in artifact
+   of `Journal.open` preceding the header write) **breaks bare `--resume`** and makes `lain watch`
+   poll forever. The UX: a starship-compatible prompt formatter in `ext/lain` (the grammar is
+   1,712 bytes, four productions — starship itself is unlinkable, `mod modules` is private), the
+   six metrics a prompt needs (**none** published today — context occupancy's ratio is computed
+   inside `Need::ApproachingWindow#fired?` and discarded as a boolean), a `Theme` of named style
+   tokens over the nine literal Pastel calls, a command render API so `/status` can be more than a
+   String wrapped in cyan, Reline vi-mode + multiline, `C-g`→Neovim compose returning on `:wq`,
+   and `/`+`@` completion over a `nucleo-matcher` binding — Reline's own completion being
+   prefix-only and hard-coded. Ruled out during research with citations: shelling out to starship
+   (four traps, and no config layering), `skim` as a library (installs a global allocator from its
+   library crate), a full firenvim-style UI embed (~600–1000 lines, and UI-attaching to the user's
+   nvim collapses their editor to the smallest client), and a ticking TTY status line (revisits the
+   2026-07-11 tmux-primary ruling; the seam is left, the behaviour is not built).
+
+18. **Planned (2026-07-28, panel-reviewed)** —
+   `planning/specs/chunk-vsock-exec-transport.md`, grounded by
+   `references/firecracker-microvm-isolation.md` and two executed spikes: the **vsock-native exec
+   transport**. `lain-core` learns to listen on `AF_VSOCK`, and `Core::Client` learns to take an
+   injected transport, so the exec boundary can cross a hypervisor without a protocol change.
+   Deliberately **backend-agnostic**: the guest-side listener is identical for Firecracker,
+   libkrun, QEMU/KVM, and Cloud Hypervisor, so the chunk commits to no hypervisor and defers the
+   libkrun-vs-Firecracker decision. Two spikes already de-risked the central claim — an unmodified
+   `Core::Client` runs the boundary through a faked Firecracker `CONNECT`/`OK` handshake (6/6) and
+   over real `AF_VSOCK` via `vsock_loopback`, which **autoloads unprivileged** so the whole chunk
+   runs on hardware with no `/dev/kvm` (this desktop's SVM is off in BIOS). Static musl `lain-core`
+   is 1.2 MB stripped, ~2.5% of Firecracker's rootfs budget. Panel review reversed three first-draft
+   decisions: the "every transport's `#stop` must EOF the wire" contract clause was an accident of
+   statement ordering in `Client#stop` promoted to an obligation — the client now collapses its own
+   read side instead; `Client#pid` is deleted rather than widened to nil (its only readers are two
+   specs that `Process.kill`); and the Rust generalization is larger than claimed, since
+   `serve_connection` and both `Sink`/`Stream` aliases are hard-typed to `UnixStream` and the orphan
+   rule forbids the off-the-shelf `tokio_util::net::Listener`. Ruled out during planning: a
+   Firecracker-specific transport (six proven lines, but no consumer until a hypervisor is chosen,
+   and the research favours libkrun for its virtio-fs and TSI) — `Child` *spawning* and
+   `Transport::Vsock` *attaching* already exercise the contract in both shapes.
+
+19. **Planned (2026-07-28, panel-reviewed)** —
+   `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
+   out of chunk 18 during panel review — zero shared files, zero dependency edges, and unlike the
+   transport work it spends real API money and carries a human-gated manual pass. `Bench::CLI#arm_report`
+   has been fully implemented and spec-tested since the orchestration chunk but is reachable from no
+   Thor subcommand, so the arm comparison can only be run by specs. Narrows (does **not** close)
+   ROADMAP Deviation 8: the chat half was closed by the 2026-07-26 `--isolation` follow-up, and
+   `Bench::CLI#arm_sweep_report` remains a second doorless report. Grounding corrected a claim the
+   first draft made and acted on — `lib/` *does* construct a spawn seam
+   (`bench/arm_sweep/recordings.rb:80`), and `ArmTasks` + `ArmSweep` supply the tasks, graders, and
+   arms the entry point assembles. The sharp edge the plan exists to avoid: `--isolation` must carry
+   **no Thor `default:`** — copying `chat`'s declaration would make `options[:isolation]` never nil
+   and silently collapse the unset-vs-`"none"` distinction `#arm_isolation` documents and
+   `spec/lain/bench/cli_spec.rb:223` pins.
 
 ---
 
