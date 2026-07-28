@@ -947,6 +947,22 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    **no Thor `default:`** — copying `chat`'s declaration would make `options[:isolation]` never nil
    and silently collapse the unset-vs-`"none"` distinction `#arm_isolation` documents and
    `spec/lain/bench/cli_spec.rb:223` pins.
+   **✅ Landed 2026-07-28** (`ea9b0eb`, `30ff8de`, `16fc6be`). `lain bench arms FIXTURE` exists,
+   declares that it spends real API money, and refuses an unknown backend naming the advertised
+   set before any arm runs. **Deviation 8 is narrowed, not closed** — `#arm_sweep_report` is still
+   doorless. Three things the panel caught that the specs had not: the orchestrator-worker arm was
+   **structurally inert** — built without a `decompose:`, so the default line-splitter met the
+   fixture's folded YAML scalars and every task decomposed to exactly one subtask, meaning the four
+   `category: parallel` tasks could not test the hypothesis they exist for, and the report rendered
+   a clean null result (orchestrator tokens were byte-identical to the control at a flat `100.0`;
+   after the fix, `mean 212.5 / max 300`). The per-task grader dispatched by **matching prompt
+   text**, and `ArmTasks` enforces unique ids but not unique prompts, so two tasks sharing a prompt
+   both graded against the first one's gold and scored a false `1.000` — now refused loudly, though
+   the underlying seam (`Arm::Driver` takes `tasks: Array<String>` and discards identity) wants a
+   real per-task identifier. And the lease journal was first written to **stderr**, violating
+   `journal.rb:23`'s "NEVER stderr" and interleaving Thor's own error output into the NDJSON — now
+   an explicit `--journal PATH` through `Journal.open`, which is what makes the manual pass's
+   "confirm the lease telemetry" step meaningful at all.
 
 ---
 
