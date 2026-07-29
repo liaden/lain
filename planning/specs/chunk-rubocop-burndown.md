@@ -1,6 +1,58 @@
 # RuboCop plugin burn-down
 
-**Status:** planned, not started. The plugins and the TODO landed in `a89bfc5`.
+**Status: DONE, 2026-07-29.** Six commits, `41183b2`..`0afd058`. `.rubocop_todo.yml` no longer
+exists: every cop is enabled and clean, or ruled off in `.rubocop.yml` with the reason attached.
+Suite unchanged at 6672 examples, 0 failures.
+
+## What the plan got wrong
+
+Kept for calibration, since the errors were more instructive than the plan.
+
+1. **`IncludeExamples` is not a free RSpec 4 migration** (§3, B3 called it "worth doing for that
+   reason alone"). `include_examples` INLINES shared examples into the calling group;
+   `it_behaves_like` nests them in a child. `algebra_laws_spec.rb` reads
+   `examples.map(&:description)` on the line after the include to learn which laws the shared
+   group just defined, so the conversion reads the wrong set and the file goes red. All 44
+   reverted, cop disabled. The example count is identical either way, so a green suite could not
+   have vouched for the other 43.
+2. **`IdenticalEqualityAssertion` was called a bug-finder, then correctly ruled a false positive**
+   (§1) — the reversal happened during planning, from sampling, which is the process working.
+3. **`SpecFilePathFormat` (28) was filed as real work** in B4; it is a policy call. A spec here is
+   named for the concept it covers, and `core/grep_parity_spec` pins two implementations against
+   each other rather than describing any class.
+4. **`LeakyLocalVariable` (63), flagged unsampled, ruled a false positive** on sampling: the group
+   locals are build-once values, and in `algebra_laws_spec.rb` one GENERATES the examples, which
+   `let` cannot do.
+5. **The 405 estimate held** — 412 after the config rulings, and the real fix count was smaller
+   still, because ~60% of the remainder was deliberate shape rather than debt.
+
+## Three safe-marked autocorrects that were wrong
+
+The `-a`/`-A` distinction in CLAUDE.md tracks RuboCop's `Safe:` metadata, and that metadata was
+wrong three times in roughly 200 corrections. All three were caught by the suite or by reading
+the diff, none by the cop.
+
+| Cop | What it did |
+|---|---|
+| `Performance/Detect` | `select.last` → `reverse.find`, but `Enumerable` defines `reverse_each`, not `reverse`. Broke on `File.foreach`, an Enumerator. |
+| `RSpec/VerifiedDoubleReference` | Stripped the quotes in place, so `instance_double("isolation", ...)` became `instance_double(isolation, ...)` — the variable being assigned on that line, i.e. `nil`. |
+| `RSpec/ScatteredSetup` | Merged two `before` hooks and inserted the second body TWICE, duplicating 15 lines. Behaviourally inert, so it shipped in `a89bfc5` and was found later by eye. |
+
+## The defect the doubles found
+
+Three arm specs asserted an isolation lease is "acquired and released exactly once" through
+`instance_double("isolation", acquire: lease)`. A lowercase string is not a class name, so RSpec
+loaded no constant and verified nothing — plain doubles wearing a verifying spelling, which would
+have kept passing through any change to the isolation duck. They now name `Isolation::Null`.
+
+This is the pattern the review panels keep finding, and it is worth noting which cop caught it:
+`VerifiedDoubles`, not `IdenticalEqualityAssertion` or `NoExpectationExample`. Neither of those
+found a single real defect here.
+
+---
+
+## Original plan follows
+
 **Prerequisite:** the concurrent session's spec edits are merged. This chunk rewrites spec
 files broadly, so it conflicts with anything in flight.
 
