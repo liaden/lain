@@ -203,8 +203,13 @@ RSpec.describe "lain bench arms" do
   describe "the declared flags cover what the executable reads" do
     let(:reads) { ArmsCommand.reads }
     let(:literal) { reads.filter_map(&:key) }
+    # Derived from Thor's own subcommand registry rather than a hand list of
+    # classes: `epic` joining `bench` is what proved a written-out list can only
+    # lag the executable it claims to cover -- it read `options[:reason]` from a
+    # class the list did not name, and the miss looked like an undeclared flag.
     let(:declared_anywhere) do
-      (LainCLI.commands.values + LainCLI::Bench.commands.values).flat_map { |cmd| cmd.options.keys }.to_set
+      classes = [LainCLI, *LainCLI.subcommand_classes.values]
+      classes.flat_map { |klass| klass.commands.values }.flat_map { |cmd| cmd.options.keys }.to_set
     end
 
     it "declares every literal option key the executable reads" do

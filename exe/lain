@@ -88,6 +88,17 @@ class LainCLI < Thor
 
     desc "status [SLUG]", "Where one epic stands: ready issues and remaining waves, folded from the Journal"
     def status(slug = nil) = render { Lain::CLI::Epic.new.status(slug) }
+
+    desc "queue [SLUG]", "Artifacts parked for sign-off, ready-to-review first (offline, deterministic)"
+    def queue(slug = nil) = render { Lain::CLI::EpicQueue.new.listing(slug) }
+
+    method_option :reason, type: :string, desc: "Why -- journaled with the decision"
+    desc "approve DIGEST", "Sign off a parked artifact -- journals a terminal gate_decision"
+    def approve(digest) = render { Lain::CLI::EpicQueue.new.approve(digest, reason: options[:reason]) }
+
+    method_option :reason, type: :string, desc: "Why -- journaled with the decision"
+    desc "deny DIGEST", "Refuse a parked artifact -- journals a terminal gate_decision"
+    def deny(digest) = render { Lain::CLI::EpicQueue.new.deny(digest, reason: options[:reason]) }
   end
 
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI

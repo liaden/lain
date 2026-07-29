@@ -72,11 +72,11 @@ module Lain
       # at the file rather than at the record. {Epic::Home::UnreadableArtifact}
       # is the same idea on the artifact side; this walk was the last read path
       # without it.
-      class UnreadableJournal < Error
-        def initialize(path, cause)
-          super("cannot read the session journal #{path}: #{cause.message}")
-        end
-      end
+      # The refusal now belongs to {SessionJournals}, which owns the read. Kept
+      # as a name here because it is this command's documented failure and its
+      # specs rescue it by this constant -- one name, one class, no second
+      # definition to drift.
+      UnreadableJournal = SessionJournals::Unreadable
 
       # Whether git ignores a path, answered by git itself.
       #
@@ -270,21 +270,24 @@ module Lain
           self
         end
 
-        # Every journal in this project's session directory, ephemeral
-        # `.btw.ndjson` sessions included. An epic transition journaled during a
-        # `--btw` session is a thing that happened, and excluding it would drop
-        # real history to tidy a listing; a reaped ephemeral journal is already
-        # gone from disk, so nothing stale survives here either.
+        # Which files, in what order, is {SessionJournals}' contract and no
+        # longer restated here -- `lain epic queue` folds the same directory for
+        # the same reason, and two statements of one rule is how this chunk
+        # already produced a silent bug. What stays here is the part that is
+        # genuinely this command's: WHICH RECORDS ARE THIS EPIC'S.
         #
-        # No explicit sort: `Dir.glob` has returned sorted results since Ruby
-        # 3.0 (Lint/RedundantDirGlobSort refuses one), and that is what makes the
-        # concatenation order below -- and so the tie-break in #ordered -- a
-        # function of the directory rather than of readdir order.
-        def files
-          Dir.glob(File.join(@paths.sessions_dir(project: @paths.project_hash(@root)), "*.ndjson"))
-        end
+        # The extraction also fixed a real defect this method had: `Dir.glob`
+        # treats the DIRECTORY name as a pattern, so a `$XDG_STATE_HOME`
+        # containing `[` matched nothing -- silently. {SessionJournals} uses
+        # `Dir.children`, the house idiom, and pins the case.
+        def files = walk.files
 
         private
+
+        def walk
+          @walk ||= SessionJournals.new(dir: @paths.sessions_dir(project: @paths.project_hash(@root)),
+                                        types: epic_types)
+        end
 
         # A method rather than a constant: a constant's value is evaluated when
         # this file LOADS, and the epic unit loads after the CLI unit (see the
@@ -292,54 +295,22 @@ module Lain
         #
         # What this list is for, stated accurately because it is easy to
         # overclaim: it bounds WHAT GETS MATERIALIZED, not what gets believed.
-        # #ordered has to sort, so #mine calls `to_a`; without this filter every
-        # record of every session this project ever ran -- months of turns and
-        # messages -- lands in one Array to be sorted, for the sake of a handful
-        # of epic records. It is not a correctness guard, and a probe proved it:
-        # opening this filter to everything changes no output, because the fold
-        # dispatches by type itself (`Journal.records(records, type:)`) and
-        # ignores whatever it does not recognize. Closed anyway, because the
-        # volume argument is real and because a filter that says which types
-        # this walk is about documents the walk.
+        # Ordering has to sort, so the kept records become an Array; without this
+        # filter every record of every session this project ever ran -- months of
+        # turns and messages -- lands in one Array to be sorted, for the sake of
+        # a handful of epic records. It is not a correctness guard, and a probe
+        # proved it: opening this filter to everything changes no output, because
+        # the fold dispatches by type itself (`Journal.records(records, type:)`)
+        # and ignores whatever it does not recognize.
         def epic_types
           [Lain::Epic::IssueTransition::JOURNAL_TYPE,
            Lain::Epic::StageTransition::JOURNAL_TYPE,
            Approval::SignoffQueue::JOURNAL_TYPE]
         end
 
-        # Ordered by `ts`, with the position in the concatenation breaking ties,
-        # because `sort_by` is not stable and the walk must be a function of the
-        # bytes on disk rather than of the sort's internals.
-        #
-        # What the tie-break actually means, stated precisely because an earlier
-        # comment here overclaimed it: WITHIN one file it is write order, since
-        # a journal is appended. ACROSS files it is the alphabetical order
-        # `Dir.glob` returns, which is not write order and does not pretend to
-        # be -- two sessions can stamp the same second and no timestamp
-        # distinguishes them. It is deterministic, which is the property the
-        # projection needs; it is not a claim about which happened first.
-        def ordered
-          mine.each_with_index.sort_by { |record, index| [record["ts"].to_s, index] }.map(&:first)
-        end
-
-        def mine
-          files.flat_map { |path| read(path) }
-        end
-
-        # The rescue wraps the whole enumeration, not just the open: `File.foreach`
-        # without a block is lazy, so EISDIR and EACCES both surface on the first
-        # `each`, inside `epic_records`, rather than here.
-        def read(path)
-          epic_records(File.foreach(path))
-        rescue SystemCallError => e
-          raise UnreadableJournal.new(path, e)
-        end
-
-        def epic_records(lines)
-          Journal.records(lines).select { |record| epic_type?(record) && attributable?(record) }.to_a
-        end
-
-        def epic_type?(record) = epic_types.include?(record["type"].to_s)
+        # {SessionJournals} has already put every epic record in `ts` order; the
+        # only narrowing left is to this epic.
+        def ordered = walk.select { |record| attributable?(record) }
 
         # Ours, or unattributable.
         #
