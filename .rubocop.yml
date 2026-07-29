@@ -138,3 +138,57 @@ Performance/Sum:
 Performance/MethodObjectAsBlock:
   Exclude:
     - "lib/lain/cli/composed_prompt.rb"
+
+# --- ThreadSafety: audited sites, kept ON for everything else ---------------
+#
+# These cops stay enabled because their VALUE is the next site, not this list: a
+# new class-level ivar or a new Thread.new now has to be argued for. Every entry
+# below was read once, and the exclusion is the verdict.
+
+# All of these are class-level memoization of immutable, idempotently-computed
+# values: Algebra and Reline registries, ActiveModel::Name, the shipped prompt
+# templates read off disk, a digest format String, and Tool/Contracts declarations.
+# Two shapes, both safe. The declaration-time ones (tool.rb's @input_model,
+# contracts.rb's @own_pre/postconditions, input.rb's @fields) run inside a class
+# body, so they are single-threaded by construction. The lazy `||=` ones are warmed
+# during `require` -- Algebra.registry, for instance, is reached from the `refute`
+# calls sitting in class bodies in purge_failed_inputs.rb and summarizing.rb, so the
+# memo is populated before any thread exists. Where one could still race, both
+# racers compute an equal frozen value and one is discarded: wasted work, not
+# corruption.
+ThreadSafety/ClassInstanceVariable:
+  Exclude:
+    - "exe/lain"
+    - "lib/lain/algebra.rb"
+    - "lib/lain/compaction/summary_snapshot.rb"
+    - "lib/lain/frontend/completion.rb"
+    - "lib/lain/frontend/reline.rb"
+    - "lib/lain/guard.rb"
+    - "lib/lain/prompt/slots.rb"
+    - "lib/lain/provider/http/configuration.rb"
+    - "lib/lain/provider/http/streaming.rb"
+    - "lib/lain/tool.rb"
+    - "lib/lain/tool/contracts.rb"
+    - "lib/lain/tool/input.rb"
+    - "spec/support/algebra_generators.rb"
+
+# The five deliberate threads: the neovim RPC drain/resend pair and its rpc_thread,
+# the TTY reader, the notifier, and prompt_breaker's watchdog. Each is a supervised
+# reader owned by the frontend, which is the one layer allowed to own the terminal.
+# Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
+# subject, not an accident -- so spec/ is excluded wholesale.
+ThreadSafety/NewThread:
+  Exclude:
+    - "lib/lain/cli/prompt_breaker.rb"
+    - "lib/lain/frontend/neovim.rb"
+    - "lib/lain/frontend/neovim/rpc_thread.rb"
+    - "lib/lain/frontend/tty.rb"
+    - "lib/lain/notify.rb"
+    - "spec/**/*"
+
+# `rake pspec` forks one process per core (parallel_tests), so a spec's Dir.chdir is
+# process-local and not the cross-thread hazard this cop assumes. It stays ON for
+# lib/, where a chdir would be exactly that hazard.
+ThreadSafety/DirChdir:
+  Exclude:
+    - "spec/**/*"
