@@ -3,23 +3,29 @@
 module Lain
   module CLI
     # `lain consolidate <session> [--dry-run]`: resolves a session identifier
-    # the same way {CLI::Friction} and `lain chat --resume` do -- an explicit
-    # path, or a bare filename under this project's session dir -- and runs the
-    # {Lain::Consolidation} court-clerk pass over it. `--dry-run` reports which
-    # lineages WOULD be clerked without touching the provider. Returns a String;
-    # only the frontend prints (output discipline, {CLI::Friction}'s precedent).
+    # through {CLI::SessionFile} -- the same three resolutions `lain friction`
+    # and `lain improve` accept, and NOT `lain chat --resume`'s, which is a
+    # different contract (see {CLI::SessionFile}) -- and runs the
+    # {Lain::Consolidation} court-clerk pass over it. Returns a String; only the
+    # frontend prints (output discipline, {CLI::Friction}'s precedent).
+    #
+    # == Two methods, not one boolean
+    #
+    # {#report} runs the pass; {#dry_report} names the lineages that WOULD be
+    # clerked. They are separate because `report_for(dry_run: true)` was a flag
+    # that changed what the method MEANT -- different work, different sentence,
+    # one signature covering both. The exe's `--dry-run` picks the method, and
+    # the boolean stops at the flag it came from.
     class Consolidate
-      # No file on disk answers to the given selector, under any resolution.
-      class SessionNotFound < Error; end
-
       # The exe's assembly seam: build the pass from Thor options via {Backend}.
-      # Only `provider` reaches the network, and under --dry-run it is skipped
-      # entirely, so a dry pass needs no API key -- a live run without one
-      # fails loudly at Consolidation's own MissingCollaborator, never silently.
+      # Under `--dry-run` the provider is {Provider::Unreachable} instead of
+      # {Backend#provider}, so no API key is fetched and nothing can quietly
+      # reach a model -- which is what lets {Lain::Consolidation} require every
+      # collaborator, since "no model here" is now a thing this wiring SAYS.
       def self.from_options(options)
         backend = Backend.new(options)
         new(consolidation: Lain::Consolidation.new(
-          provider: (backend.provider unless options[:dry_run]),
+          provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,
           recorder: Memory::Recorder.new,
           context: backend.context, slots: backend.slots
         ))
@@ -34,33 +40,29 @@ module Lain
         @paths = paths
       end
 
+      # Run one court_clerk pass per completed subagent lineage.
+      #
       # @param selector [String] an explicit path, a bare filename, or a
       #   filename missing its ".ndjson" suffix
-      # @param dry_run [Boolean] report what would run instead of running it
       # @return [String]
-      # @raise [SessionNotFound]
-      def report_for(selector, dry_run: false)
-        entries = Journal.records(File.foreach(resolve(selector)))
-        dry_run ? @consolidation.dry_run(entries) : render_run(entries)
-      end
-
-      private
-
-      def render_run(entries)
-        outcomes = @consolidation.call(entries)
+      # @raise [SessionFile::SessionNotFound]
+      def report(selector)
+        outcomes = @consolidation.call(entries(selector))
         return "consolidate: no completed subagent lineages found." if outcomes.empty?
 
         ["consolidate: ran a court_clerk pass over #{outcomes.size} lineage(s)",
          *outcomes.map { |outcome| "  - lineage #{outcome.root}: #{outcome.result}" }].join("\n")
       end
 
-      def dir = @dir ||= @paths.sessions_dir
+      # Which lineages the pass WOULD clerk, spawning nothing.
+      #
+      # @return [String]
+      # @raise [SessionFile::SessionNotFound]
+      def dry_report(selector) = @consolidation.dry_run(entries(selector))
 
-      def resolve(selector)
-        candidates = [selector, File.join(dir, selector), File.join(dir, "#{selector}.ndjson")]
-        candidates.find { |path| File.file?(path) } ||
-          raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{candidates.join(", ")}")
-      end
+      private
+
+      def entries(selector) = Journal.records(File.foreach(SessionFile.resolve(selector, paths: @paths)))
     end
   end
 end

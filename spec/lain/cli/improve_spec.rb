@@ -69,7 +69,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("recorded two improvements")
                                           ])
 
-      report = improve(provider).report_for("s1")
+      report = improve(provider).report("s1")
 
       records = written_improvements
       expect(records.size).to eq(2)
@@ -86,7 +86,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("done")
                                           ])
 
-      improve(provider).report_for("s1")
+      improve(provider).report("s1")
 
       seen = prompts_seen(provider)
       expect(seen.any? { |text| text.include?("rephrase_loop") }).to be(true)
@@ -136,7 +136,7 @@ RSpec.describe Lain::CLI::Improve do
                                             text_response("done")
                                           ])
 
-      improve(provider).report_for("s1")
+      improve(provider).report("s1")
 
       # The PEM write was withheld before the sink; the clean note landed.
       expect(written_improvements.map { |record| record["note"] }).to eq(["a clean knob note"])
@@ -149,23 +149,49 @@ RSpec.describe Lain::CLI::Improve do
     end
   end
 
-  describe "#report_for --dry-run" do
-    it "renders the scaffold the improver would see without touching the provider" do
-      provider = Lain::Provider::Mock.new(responses: [])
-
-      report = improve(provider).report_for("s1", dry_run: true)
+  # A separate METHOD, not `report(dry_run: true)`: a boolean that changes what a
+  # method means is the smell, and the dry surface renders a different sentence
+  # from a different half of the pass.
+  describe "#dry_report" do
+    it "renders the scaffold the improver would see, through a provider that cannot be reached" do
+      report = improve(Lain::Provider::Unreachable.new).dry_report("s1")
 
       expect(report).to include("would review session s1")
       expect(report).to include("rephrase_loop") # the friction render is present
-      expect(provider.call_count).to eq(0)
       expect(written_improvements).to be_empty
     end
   end
 
+  # The four-nils smell, removed: a dry run wires a REAL Null provider, so every
+  # collaborator can be required and a mis-wire is loud where it happened.
+  describe "the collaborators are required at construction" do
+    it "raises ArgumentError naming the keyword the wiring forgot" do
+      expect { described_class.new(context:, slots:) }.to raise_error(ArgumentError, /provider/)
+    end
+
+    it "keeps no MissingCollaborator: there is no nil left to check at use" do
+      expect(described_class.const_defined?(:MissingCollaborator, false)).to be(false)
+    end
+  end
+
+  describe ".from_options" do
+    it "assembles Provider::Unreachable for --dry-run, so a dry pass needs no API key" do
+      pass = described_class.from_options({ dry_run: true, provider: "anthropic", max_tokens: 64 })
+
+      # The ivar directly: the point is WHICH provider the assembly chose, and
+      # the object refuses every message that would otherwise reveal it.
+      expect(pass.instance_variable_get(:@provider)).to be_a(Lain::Provider::Unreachable)
+    end
+  end
+
   describe "resolution" do
-    it "raises a loud, listing error when no session file resolves" do
-      expect { improve(Lain::Provider::Mock.new).report_for("nope") }
-        .to raise_error(Lain::CLI::Improve::SessionNotFound, /nope/)
+    it "raises the shared SessionFile refusal, listing what it looked at" do
+      expect { improve(Lain::Provider::Mock.new).report("nope") }
+        .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
+    end
+
+    it "keeps no per-class SessionNotFound of its own" do
+      expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
     end
   end
 end

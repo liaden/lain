@@ -22,8 +22,9 @@ module Lain
     #    unlike {CLI::Sessions}' default listing. A gate decided during a
     #    `--btw` session is still decided, and dropping a record is unsafe in
     #    BOTH directions: a lost terminal decision leaves an answered item
-    #    parked, a lost deferral reads as drained. There is no newest-file
-    #    shortcut ({CLI::Friction}'s resolution) for the same reason -- it would
+    #    parked, a lost deferral reads as drained. There is no single-file
+    #    shortcut ({CLI::SessionFile}'s resolution, which the report commands
+    #    read through) and no newest-file one for the same reason -- either would
     #    silently drop last week's deferrals.
     # 2. `Dir.children`, never `Dir.glob`. A directory NAME carrying glob
     #    metacharacters is a name, not a pattern: `Dir.glob` finds nothing under

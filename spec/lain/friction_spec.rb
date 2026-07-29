@@ -159,20 +159,28 @@ RSpec.describe Lain::CLI::Friction do
   after { FileUtils.remove_entry(tmpdir) }
 
   it "resolves a bare filename under this project's session dir and renders the report" do
-    expect(cli.report_for("20260721T000000-1.ndjson")).to include("no friction found")
+    expect(cli.report("20260721T000000-1.ndjson")).to include("no friction found")
   end
 
   it "resolves a filename missing its .ndjson suffix" do
-    expect(cli.report_for("20260721T000000-1")).to include("no friction found")
+    expect(cli.report("20260721T000000-1")).to include("no friction found")
   end
 
   it "resolves an explicit path directly" do
     explicit = File.join(sessions_dir, "20260721T000000-1.ndjson")
 
-    expect(cli.report_for(explicit)).to include("no friction found")
+    expect(cli.report(explicit)).to include("no friction found")
   end
 
-  it "raises SessionNotFound, naming what it looked at, for an unresolvable selector" do
-    expect { cli.report_for("does-not-exist") }.to raise_error(described_class::SessionNotFound, /does-not-exist/)
+  # The ONE session-resolution refusal, shared with `lain consolidate` and
+  # `lain improve` ({CLI::SessionFile}) -- this class no longer owns a copy, so
+  # a rescuer naming the type catches all three surfaces.
+  it "raises SessionFile::SessionNotFound, naming what it looked at, for an unresolvable selector" do
+    expect { cli.report("does-not-exist") }
+      .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /does-not-exist/)
+  end
+
+  it "keeps no per-class SessionNotFound of its own" do
+    expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
   end
 end

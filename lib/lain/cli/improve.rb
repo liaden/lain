@@ -3,8 +3,10 @@
 module Lain
   module CLI
     # `lain improve <session> [--dry-run]`: the harness-improver pass (M6).
-    # Offline, it resolves a session file the same way {CLI::Friction} and
-    # {CLI::Consolidate} do, renders that session's {Friction::Report} plus a
+    # Offline, it resolves a session file through {CLI::SessionFile} -- the one
+    # resolver {CLI::Friction} and {CLI::Consolidate} also read through, so all
+    # three accept the same shorthands and raise the same refusal -- renders
+    # that session's {Friction::Report} plus a
     # per-turn digest summary into the `harness_improver` role scaffold, and
     # spawns the role ONCE (a one-shot, not one-per-lineage like the court
     # clerk). The improver's notes land in M2's cross-project {Improvement::Sink},
@@ -35,14 +37,14 @@ module Lain
     # The improver READS the session's record; it must never INHERIT the parent's
     # prompt, so it spawns over a FRESH Timeline root ({Role#spawn_policy}'s
     # default `:fresh` prefix), the same non-negotiable the clerk holds.
+    #
+    # == Two methods, not one boolean
+    #
+    # {#report} spawns the improver; {#dry_report} renders the scaffold it WOULD
+    # have seen. Separate methods, because `report_for(dry_run: true)` was a flag
+    # that changed what the method MEANT. Both read the session ONCE, through the
+    # same private {Review}.
     class Improve
-      # No file on disk answers to the given selector, under any resolution.
-      class SessionNotFound < Error; end
-
-      # A spawn collaborator was needed for a live run but never injected -- loud,
-      # naming which. A `--dry-run` needs none of them (no provider is touched).
-      class MissingCollaborator < Error; end
-
       # The role every session is handed to (shipped: read_file/list_files/glob/
       # grep/improvement_write -- no memory tools, by design).
       ROLE = :harness_improver
@@ -99,30 +101,40 @@ module Lain
         end
       end
 
+      # The session under review: the id every improvement record is stamped with,
+      # and the one-shot scaffold. One object rather than a pair, so {#report}
+      # and {#dry_report} each read the journal once and cannot disagree about
+      # which session they are describing.
+      Review = Data.define(:session, :scaffold)
+
       # The exe's assembly seam: build the pass from Thor options via {Backend}.
-      # Only `provider` reaches the network, and under --dry-run it is skipped
-      # entirely, so a dry pass needs no API key -- a live run without one fails
-      # loudly at {MissingCollaborator}, never silently. Mirrors
-      # {CLI::Consolidate.from_options}; the assembly lives here (not in the exe)
-      # so it carries specs.
+      # Under `--dry-run` the provider is {Provider::Unreachable} instead of
+      # {Backend#provider}, so no API key is fetched and nothing can quietly
+      # reach a model -- which is what lets every collaborator below be required.
+      # Mirrors {CLI::Consolidate.from_options}; the assembly lives here (not in
+      # the exe) so it carries specs.
       def self.from_options(options)
         backend = Backend.new(options)
-        new(provider: (backend.provider unless options[:dry_run]),
+        new(provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,
             context: backend.context, slots: backend.slots)
       end
 
-      # @param provider [Lain::Provider] the improver's model; required for a live
-      #   {#report_for}, untouched by a dry run (so `--dry-run` needs no API key)
+      # The spawn collaborators are REQUIRED: a forgotten one is a loud
+      # ArgumentError here rather than a nil checked at the spawn, and a dry run
+      # has a real thing to pass ({Provider::Unreachable}).
+      #
+      # @param provider [Lain::Provider] the improver's model;
+      #   {Provider::Unreachable} for a `--dry-run`, which touches no provider
       # @param context [Lain::Context] the factory context the persona reshapes
       #   (model/max_tokens ride through; its system is REPLACED by the role
       #   prelude)
       # @param slots [Prompt::Slots] the session slots the persona renders through
       # @param journal [#<<] where the improver's turn usage and any
-      #   {Telemetry::WriteRefused} land; the Null channel by default
+      #   {Telemetry::WriteRefused} land; the Null channel by default -- a real
+      #   Null object, not a nil, so it stays a default rather than a mis-wire
       # @param paths [Paths] resolves the session dir AND the improvements sink's
       #   destination/project hash; injectable for specs
-      def initialize(provider: nil, context: nil, slots: nil,
-                     journal: Channel::Null.instance, paths: Paths.new)
+      def initialize(provider:, context:, slots:, journal: Channel::Null.instance, paths: Paths.new)
         @provider = provider
         @context = context
         @slots = slots
@@ -130,28 +142,37 @@ module Lain
         @paths = paths
       end
 
+      # Spawn the improver once over one session's record.
+      #
       # @param selector [String] an explicit path, a bare filename, or a
       #   filename missing its ".ndjson" suffix
-      # @param dry_run [Boolean] render the scaffold the improver WOULD see
-      #   instead of spawning it (no provider touched)
       # @return [String]
-      # @raise [SessionNotFound]
-      def report_for(selector, dry_run: false)
-        path = resolve(selector)
-        session = File.basename(path, ".ndjson")
-        scaffold = Scaffold.new(Journal.records(File.foreach(path)).to_a)
-        dry_run ? dry_render(session, scaffold) : render_run(session, scaffold)
+      # @raise [SessionFile::SessionNotFound]
+      def report(selector)
+        review = review_of(selector)
+        result = build_improver(review.session).ask(review.scaffold.render).text
+        "improve: ran a harness_improver pass over session #{review.session}\n#{result}"
+      end
+
+      # The scaffold the improver WOULD see, spawning nothing.
+      #
+      # @return [String]
+      # @raise [SessionFile::SessionNotFound]
+      def dry_report(selector)
+        review = review_of(selector)
+        "improve: harness_improver would review session #{review.session} " \
+          "(provider untouched)\n\n#{review.scaffold.render}"
       end
 
       private
 
-      def render_run(session, scaffold)
-        result = build_improver(session).ask(scaffold.render).text
-        "improve: ran a harness_improver pass over session #{session}\n#{result}"
-      end
-
-      def dry_render(session, scaffold)
-        "improve: harness_improver would review session #{session} (provider untouched)\n\n#{scaffold.render}"
+      # A pure function of the journal -- no provider touched -- so the dry
+      # surface and the live spawn read the SAME session id and the SAME
+      # scaffold.
+      def review_of(selector)
+        path = SessionFile.resolve(selector, paths: @paths)
+        Review.new(session: File.basename(path, ".ndjson"),
+                   scaffold: Scaffold.new(Journal.records(File.foreach(path)).to_a))
       end
 
       # The improver's own Agent: a fresh root, the role persona for a system, the
@@ -160,7 +181,7 @@ module Lain
       def build_improver(session)
         allowed = role.attenuate(improver_union(session))
         Agent.new(
-          provider: require!(@provider, "provider"), context: improver_context, toolset: allowed,
+          provider: @provider, context: improver_context, toolset: allowed,
           handler: Effect::Handler::Live.new(toolset: allowed), timeline: fresh_root,
           session: Session.new(worker_env: WorkerEnv.default), journal: @journal, tool_middleware: guard_stack
         )
@@ -181,28 +202,13 @@ module Lain
       # `Timeline.empty` that could drift from it.
       def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
 
-      def improver_context
-        role.child_context(require!(@context, "context"), slots: require!(@slots, "slots"))
-      end
+      def improver_context = role.child_context(@context, slots: @slots)
 
       # The point of this class: the tool-phase guard the spawn seam omits. It
       # journals {Telemetry::WriteRefused} to the raw `@journal`.
       def guard_stack = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)])
 
       def role = @role ||= Role::Catalog.fetch(ROLE)
-
-      def dir = @dir ||= @paths.sessions_dir
-
-      def resolve(selector)
-        candidates = [selector, File.join(dir, selector), File.join(dir, "#{selector}.ndjson")]
-        candidates.find { |path| File.file?(path) } ||
-          raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{candidates.join(", ")}")
-      end
-
-      def require!(value, name)
-        value || raise(MissingCollaborator,
-                       "Improve#report_for needs #{name}:; none was injected (a live run, not --dry-run)")
-      end
     end
   end
 end

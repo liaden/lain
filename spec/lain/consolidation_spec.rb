@@ -151,20 +151,18 @@ RSpec.describe Lain::Consolidation do
   end
 
   describe "#dry_run" do
-    it "names the lineages that would be clerked without touching the provider" do
-      provider = Lain::Provider::Mock.new(responses: [])
-
-      report = consolidation(provider).dry_run(records)
+    it "names the lineages that would be clerked, through a provider that cannot be reached" do
+      report = consolidation(Lain::Provider::Unreachable.new).dry_run(records)
 
       expect(report).to include(root_a, root_b)
       expect(report).to include("2 lineage")
-      expect(provider.call_count).to eq(0)
     end
 
     it "says so when a journal holds no completed subagent lineages" do
       main_only = turn_records(main)
 
-      expect(consolidation(Lain::Provider::Mock.new).dry_run(main_only)).to include("no completed subagent lineages")
+      expect(consolidation(Lain::Provider::Unreachable.new).dry_run(main_only))
+        .to include("no completed subagent lineages")
     end
   end
 
@@ -189,21 +187,57 @@ RSpec.describe Lain::Consolidation do
                                             tool_response(memory_write("lineage-b", "b")), text_response("B done")
                                           ])
 
-      report = cli(provider).report_for("s1")
+      report = cli(provider).report("s1")
 
       expect(report).to include("2 lineage", root_a, root_b, "A done", "B done")
     end
 
-    it "renders the dry-run plan without touching the provider" do
-      provider = Lain::Provider::Mock.new(responses: [])
-
-      expect(cli(provider).report_for("s1", dry_run: true)).to include("would each get one court_clerk pass")
-      expect(provider.call_count).to eq(0)
+    # A separate METHOD, not `report(dry_run: true)`: the dry surface reports on
+    # a different half of the pass, and a provider that CANNOT be reached proves
+    # "no spawn" by construction rather than by counting calls afterwards.
+    it "renders the dry-run plan through a provider that cannot be reached" do
+      expect(cli(Lain::Provider::Unreachable.new).dry_report("s1"))
+        .to include("would each get one court_clerk pass")
     end
 
-    it "raises a loud, listing error when no session file resolves" do
-      expect { cli(Lain::Provider::Mock.new).report_for("nope") }
-        .to raise_error(Lain::CLI::Consolidate::SessionNotFound, /nope/)
+    it "raises the shared SessionFile refusal, listing what it looked at" do
+      expect { cli(Lain::Provider::Mock.new).report("nope") }
+        .to raise_error(Lain::CLI::SessionFile::SessionNotFound, /nope/)
+    end
+
+    it "keeps no per-class SessionNotFound of its own" do
+      expect(described_class.const_defined?(:SessionNotFound, false)).to be(false)
+    end
+
+    describe ".from_options" do
+      it "assembles Provider::Unreachable for --dry-run, so a dry pass needs no API key" do
+        pass = described_class.from_options({ dry_run: true, provider: "anthropic", max_tokens: 64 })
+
+        # Through the pass it holds: the assembly's choice of provider is the
+        # thing under test, and the object refuses every message that would
+        # otherwise reveal it.
+        inner = pass.instance_variable_get(:@consolidation)
+        expect(inner.instance_variable_get(:@provider)).to be_a(Lain::Provider::Unreachable)
+      end
+    end
+  end
+
+  # The four-nils smell, removed: a dry run wires a REAL Null provider
+  # ({Provider::Unreachable}), so every collaborator can be required and a
+  # mis-wire is a loud ArgumentError where the wiring happened -- not a
+  # NoMethodError, or a MissingCollaborator, one spawn later.
+  describe "the collaborators are required at construction" do
+    it "raises ArgumentError naming the keyword the wiring forgot" do
+      expect { described_class.new(recorder:, context:, slots:) }.to raise_error(ArgumentError, /provider/)
+    end
+
+    it "raises for a forgotten recorder too, before any lineage is walked" do
+      expect { described_class.new(provider: Lain::Provider::Mock.new, context:, slots:) }
+        .to raise_error(ArgumentError, /recorder/)
+    end
+
+    it "keeps no MissingCollaborator: there is no nil left to check at use" do
+      expect(described_class.const_defined?(:MissingCollaborator, false)).to be(false)
     end
   end
 end

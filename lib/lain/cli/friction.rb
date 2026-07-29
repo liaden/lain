@@ -2,16 +2,14 @@
 
 module Lain
   module CLI
-    # `lain friction <session>`: resolves a session identifier the same way a
-    # user names one to `lain sessions`/`lain chat --resume` -- an explicit
-    # path, or a bare filename under this project's session dir -- and prints
-    # {Friction::Report}'s rendering. Returns a String; only the frontend
-    # prints (output discipline, {Bench::CLI}'s precedent).
+    # `lain friction <session>`: resolves a session identifier through
+    # {CLI::SessionFile} -- a name as `lain sessions` printed it, with or without
+    # its suffix, or an explicit path -- and prints {Friction::Report}'s
+    # rendering. `lain consolidate` and `lain improve` read through the same
+    # resolver and raise the same refusal; `lain chat --resume` does NOT (it
+    # prefix-matches instead, see {CLI::SessionFile}). Returns a String; only the
+    # frontend prints (output discipline, {Bench::CLI}'s precedent).
     class Friction
-      # No file on disk answers to the given selector, under any of the
-      # resolutions this class tries.
-      class SessionNotFound < Error; end
-
       def initialize(paths: Paths.new)
         @paths = paths
       end
@@ -21,19 +19,10 @@ module Lain
       #   project's session dir ({CLI::Sessions}' `dir` accessor, the same
       #   `Paths#sessions_dir` root)
       # @return [String] the rendered friction report
-      # @raise [SessionNotFound]
-      def report_for(selector)
-        Lain::Friction::Report.new(Journal.records(File.foreach(resolve(selector)))).render
-      end
-
-      private
-
-      def dir = @dir ||= @paths.sessions_dir
-
-      def resolve(selector)
-        candidates = [selector, File.join(dir, selector), File.join(dir, "#{selector}.ndjson")]
-        candidates.find { |path| File.file?(path) } ||
-          raise(SessionNotFound, "no session found for #{selector.inspect} -- looked at #{candidates.join(", ")}")
+      # @raise [SessionFile::SessionNotFound]
+      def report(selector)
+        records = Journal.records(File.foreach(SessionFile.resolve(selector, paths: @paths)))
+        Lain::Friction::Report.new(records).render
       end
     end
   end

@@ -35,23 +35,28 @@ module Lain
     # memory_read/memory_write).
     ROLE = :court_clerk
 
-    # A spawn collaborator was needed but never injected -- loud, naming which.
-    class MissingCollaborator < Error; end
-
     # One lineage's outcome: its root (the evidence a memory cites) and the
     # clerk's final text.
     Outcome = Data.define(:root, :result)
 
-    # @param provider [Lain::Provider] the clerk's model; required for {#call},
-    #   untouched by {#dry_run} (so `--dry-run` runs with no API key)
+    # Every spawn collaborator is REQUIRED, so a forgotten one is a loud
+    # ArgumentError at the wiring site rather than a nil checked one spawn
+    # later. That is affordable only because a dry pass has a real thing to
+    # pass: {Provider::Unreachable}, which says "no model here" and raises if
+    # anything asks it for one. When `provider:` was optional, four nils were
+    # indistinguishable from a deliberate dry run.
+    #
+    # @param provider [Lain::Provider] the clerk's model; {Provider::Unreachable}
+    #   for a `--dry-run`, which touches no provider and so needs no API key
     # @param recorder [Memory::Recorder] the shared index the clerk writes into
     # @param context [Lain::Context] the factory context the clerk persona
     #   reshapes (model/max_tokens ride through; its system is REPLACED by the
     #   role prelude)
     # @param slots [Prompt::Slots] the session slots the persona renders through
     # @param journal [#<<] where the clerk's turn usage, memory roots, and any
-    #   {Telemetry::WriteRefused} land; the Null channel by default
-    def initialize(provider: nil, recorder: nil, context: nil, slots: nil,
+    #   {Telemetry::WriteRefused} land; the Null channel by default -- a real
+    #   Null object, not a nil, so it stays a default rather than a mis-wire
+    def initialize(provider:, recorder:, context:, slots:,
                    journal: Channel::Null.instance)
       @provider = provider
       @recorder = recorder
@@ -90,6 +95,10 @@ module Lain
 
     private
 
+    # A reader, not `@recorder`, so the keyword shorthand reads at its three
+    # senders below.
+    attr_reader :recorder
+
     def spawn_clerk(lineage)
       Outcome.new(root: lineage.root, result: build_clerk.ask(lineage.scaffold).text)
     end
@@ -100,7 +109,7 @@ module Lain
     def build_clerk
       allowed = role.attenuate(clerk_union)
       Agent.new(
-        provider: require!(@provider, "provider"), context: clerk_context, toolset: allowed,
+        provider: @provider, context: clerk_context, toolset: allowed,
         handler: Effect::Handler::Live.new(toolset: allowed),
         timeline: fresh_root, session: clerk_session, journal: clerk_journal, tool_middleware: guard_stack
       )
@@ -134,17 +143,9 @@ module Lain
                    Tools::MemoryRead.new(index: recorder), Tools::MemoryWrite.new(recorder:)])
     end
 
-    def clerk_context
-      role.child_context(require!(@context, "context"), slots: require!(@slots, "slots"))
-    end
-
-    def recorder = require!(@recorder, "recorder")
+    def clerk_context = role.child_context(@context, slots: @slots)
 
     def role = @role ||= Role::Catalog.fetch(ROLE)
-
-    def require!(value, name)
-      value || raise(MissingCollaborator, "Consolidation#call needs #{name}:; none was injected")
-    end
   end
 
   # Reopened rather than nested in a `Data.define ... do` block: a constant or
