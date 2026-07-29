@@ -71,8 +71,7 @@ end
 
 # :nvim specs drive a REAL headless nvim over msgpack-RPC (spec/lain/frontend/neovim_spec.rb).
 # They cost no money and touch no network. Opt-OUT, not opt-in: they run on a plain `rspec`,
-# and `LAIN_NVIM=0` skips them. When nvim is absent an example SKIPS (never fails), so a machine
-# without an editor is an environment gap rather than a red build.
+# and `LAIN_NVIM=0` skips them.
 #
 #     LAIN_NVIM=0 bundle exec rspec        # skip them
 #
@@ -82,16 +81,18 @@ end
 # flipping: the entire :nvim set is 13.3s wall, against a ~70s serial suite. That is not slow
 # enough to buy invisibility with, and the tag stays only so a machine with no nvim, or a run that
 # wants the fast path, can still say no.
-NVIM_ENABLED = ENV["LAIN_NVIM"] != "0"
+#
+# ⚠️ The missing-nvim guard is a FILTER, not a per-example `skip`, and it has to be. These specs
+# spawn their editor in `around` hooks, and an `around` wraps every `before` -- including a
+# config-level one -- so a `before(:each, :nvim) { skip }` never runs early enough: the spawn has
+# already raised Errno::ENOENT, and the ensure that reaps the pid then dies a second time on
+# `Process.kill("TERM", nil)`. Measured on a PATH with no nvim: 81 failures, zero skips. Excluding
+# the tag outright is the only guard that fires before an `around` can.
+NVIM_ENABLED = ENV["LAIN_NVIM"] != "0" &&
+               system("nvim", "--version", out: File::NULL, err: File::NULL)
 
 RSpec.configure do |config|
   config.filter_run_excluding(:nvim) unless NVIM_ENABLED
-
-  config.before(:each, :nvim) do
-    unless system("nvim", "--version", out: File::NULL, err: File::NULL)
-      skip("nvim not found on PATH -- install neovim to run :nvim specs")
-    end
-  end
 end
 
 # :services specs provision REAL Postgres/Redis for the DB-index isolation
