@@ -71,3 +71,51 @@ Style/HashSyntax:
   EnforcedShorthandSyntax: always
   Exclude:
     - "lib/lain/provider/http/**/*"
+
+# --- RSpec cops ruled OFF deliberately -------------------------------------
+#
+# These live here rather than in .rubocop_todo.yml on purpose. The TODO is a work
+# queue, and an entry that will never be burned down makes the queue lie about its
+# own size. Each of these is a decision with a reason, so it belongs in config.
+
+# `expect(x).to eq(x)` reads as a tautology to the AST, and here it is usually the
+# point: this bench asserts purity, determinism, memoization and idempotent folds,
+# and every one of those looks identical on both sides. Sampled five sites across
+# five unrelated subsystems -- `driver.report == driver.report` (byte-identical
+# reports), `replay(over:) == replay(over:)` (determinism, named in the example),
+# `backend.eager` under `be` (memoized, built once per run), `log.to_a == log.to_a`
+# (the fold consumed nothing), and `ANTHROPIC == ANTHROPIC` (Data equality) -- and
+# all five were deliberate. The cop cannot distinguish "asserts a pure function is
+# pure" from "forgot what to assert". RSpec/NoExpectationExample is the cop that
+# actually catches an example asserting nothing, and it stays on.
+RSpec/IdenticalEqualityAssertion:
+  Enabled: false
+
+# Group-level locals here are build-once values read (never mutated) by examples:
+# anonymous stand-in classes, fixture paths, and registry-derived data. In
+# `algebra_laws_spec.rb` the local also GENERATES the examples, which `let` cannot
+# do -- `let` does not exist at class-definition time. Rebuilding an anonymous
+# Class per example would be strictly worse. The trade this makes is real: a spec
+# that mutates a shared local gets cross-example bleed and the cop would have said
+# so. House style is deeply-frozen read-only values, so that trade is consistent.
+RSpec/LeakyLocalVariable:
+  Enabled: false
+
+# The same argument Metrics/BlockLength already makes above: these cops measure the
+# RSpec DSL, not complexity. A 40-line example is usually one Gherkin-shaped
+# scenario, and splitting an example to satisfy a counter buys nothing and costs the
+# scenario its name. CLAUDE.md's "never loosen a Metrics/* limit" is about lib/
+# objects, where a tripped cop means a missing collaborator; counting `expect` calls
+# in a spec is not that. `@ivar`-over-`let` (InstanceVariable) is a 341-site house
+# style, not a defect, and describing a PROPERTY by string rather than a class
+# (DescribeClass) is exactly what output_discipline_spec.rb and its kin are for.
+RSpec/ExampleLength:
+  Enabled: false
+RSpec/MultipleExpectations:
+  Enabled: false
+RSpec/MultipleMemoizedHelpers:
+  Enabled: false
+RSpec/InstanceVariable:
+  Enabled: false
+RSpec/DescribeClass:
+  Enabled: false

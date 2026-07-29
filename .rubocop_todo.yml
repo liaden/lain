@@ -123,11 +123,6 @@ RSpec/ContextWording:
     - 'spec/support/shared_examples/monoid_homomorphism.rb'
     - 'spec/support/shared_examples/pure.rb'
 
-# Offense count: 54
-# Configuration parameters: IgnoredMetadata.
-RSpec/DescribeClass:
-  Enabled: false
-
 # Offense count: 2
 RSpec/DescribeMethod:
   Exclude:
@@ -154,11 +149,6 @@ RSpec/DescribedClass:
     - 'spec/network_posture_spec.rb'
     - 'spec/support_vsock_availability_spec.rb'
 
-# Offense count: 1716
-# Configuration parameters: CountAsOne.
-RSpec/ExampleLength:
-  Max: 46
-
 # Offense count: 3
 # This cop supports safe autocorrection (--autocorrect).
 RSpec/ExpectActual:
@@ -175,10 +165,6 @@ RSpec/ExpectChange:
   Exclude:
     - 'spec/lain/tool/spawn_policy_spec.rb'
 
-# Offense count: 66
-RSpec/IdenticalEqualityAssertion:
-  Enabled: false
-
 # Offense count: 44
 # This cop supports unsafe autocorrection (--autocorrect-all).
 RSpec/IncludeExamples:
@@ -191,21 +177,12 @@ RSpec/IndexedLet:
     - 'spec/lain/memory/index_spec.rb'
     - 'spec/lain/plan/calibration_spec.rb'
 
-# Offense count: 341
-# Configuration parameters: AssignmentOnly.
-RSpec/InstanceVariable:
-  Enabled: false
-
 # Offense count: 2
 # This cop supports safe autocorrection (--autocorrect).
 RSpec/IteratedExpectation:
   Exclude:
     - 'spec/lain/compaction/need_spec.rb'
     - 'spec/lain/skill/shipped_skills_spec.rb'
-
-# Offense count: 63
-RSpec/LeakyLocalVariable:
-  Enabled: false
 
 # Offense count: 18
 # Configuration parameters: EnforcedStyle.
@@ -243,15 +220,6 @@ RSpec/MultipleDescribes:
     - 'spec/lain/session_record_spec.rb'
     - 'spec/lain/tool/input_spec.rb'
     - 'spec/network_posture_spec.rb'
-
-# Offense count: 2610
-RSpec/MultipleExpectations:
-  Max: 22
-
-# Offense count: 309
-# Configuration parameters: AllowSubject.
-RSpec/MultipleMemoizedHelpers:
-  Max: 14
 
 # Offense count: 7
 # Configuration parameters: Max, AllowedGroups.
