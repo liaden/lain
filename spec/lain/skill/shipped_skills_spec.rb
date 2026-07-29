@@ -2,15 +2,41 @@
 
 require "tmpdir"
 
-# The three skills Lain SHIPS -- create-plan, execute-plan, critique -- exercised
-# against the REAL templates/skill tree (not a fixture), so this spec is the
-# acceptance test that the shipped scaffolds genuinely load, render, and encode
-# process. Loaded once from disk, composed in memory: the same session-fixed,
-# pure render every other slot uses.
+# Every skill Lain SHIPS, exercised against the REAL templates/skill tree (not a
+# fixture), so this spec is the acceptance test that the shipped scaffolds
+# genuinely load, render, and encode process. Loaded once from disk, composed in
+# memory: the same session-fixed, pure render every other slot uses.
+#
+# "Every" is meant literally -- the roster below is derived from the catalog
+# rather than listed, so this spec cannot fall behind the directory it guards.
 RSpec.describe "shipped skills" do
-  # The names Lain ships. A method, not a constant in the example-group class,
-  # so re-loading the spec never warns on a constant redefinition.
-  def shipped_names = %i[create-plan execute-plan critique]
+  # The roster is DERIVED from the shipped tree, never written down. The catalog
+  # is a directory scan ({Skill::Catalog.read_dir}), so a hand-maintained list
+  # can only lag it -- a newly shipped skill would be unpinned by exactly the
+  # spec that exists to pin it, which is how `gherkin-tests` went unnoticed.
+  # An empty tmpdir for `root:` so no project skill leaks into "as shipped".
+  #
+  # Methods, not constants in the example-group class, so re-loading the spec
+  # never warns on a constant redefinition.
+  def shipped_catalog = Dir.mktmpdir { |root| Lain::Skill::Catalog.load(root:) }
+
+  def shipped_names = shipped_catalog.names
+
+  # The epic tier, also derived: the assertions that are ABOUT the epic grammar
+  # iterate this rather than the whole catalog. A fifth epic skill joins it by
+  # being named like one, so it cannot ship unpinned either.
+  def epic_names = shipped_names.grep(/epic/)
+
+  # Epic-markdown examples embedded in a scaffold, as source strings.
+  #
+  # The convention these templates keep, and the reason this can be a regex: an
+  # example that is claimed to PARSE is fenced with FOUR backticks tagged
+  # `markdown`, so it can hold the three-backtick ```gherkin fence an issue
+  # carries. A COUNTER-example -- a shape the grammar refuses -- is never fenced
+  # that way, so nothing here asserts that a deliberate refusal parses.
+  def epic_examples(scaffold)
+    scaffold.scan(/^````markdown\r?\n(.*?)^````[ \t]*$/m).flatten
+  end
 
   # A renderer over the REAL shipped skills. `root` is where the project's
   # `.lain/` overrides live; default it at an empty tmpdir so no stray user skill
@@ -32,12 +58,12 @@ RSpec.describe "shipped skills" do
     File.write(path, body)
   end
 
-  describe "the three skills load and render" do
-    it "presents create-plan, execute-plan, and critique in the shipped catalog" do
-      Dir.mktmpdir do |root|
-        catalog = Lain::Skill::Catalog.load(root:)
-        shipped_names.each { |name| expect(catalog.names).to include(name) }
-      end
+  describe "every shipped skill loads and renders" do
+    # The derived roster is the guard, so this example is the floor under it:
+    # a rename or a deletion still has to be loud somewhere.
+    it "ships the process skills, gherkin-tests, and the four epic-tier skills" do
+      expect(shipped_names).to include(:"create-plan", :"execute-plan", :critique, :"gherkin-tests")
+      expect(epic_names).to match_array(%i[research-epic plan-epic iterate-epic create-epic-issues])
     end
 
     it "renders each shipped skill to non-empty scaffold text" do
@@ -50,20 +76,26 @@ RSpec.describe "shipped skills" do
       end
     end
 
-    it "declares at least the named slots each skill's front-matter promises, all resolvable" do
+    # "Lain ships this" and "a project may extend this" are different facts, and
+    # conflating them is what made the roster un-derivable. `gherkin-tests`
+    # correctly declares NO slots -- it is dispatched by Gherkin::TestGeneration
+    # and was never meant to be user-extended -- so slot-emptiness cannot be a
+    # whole-catalog assertion. What holds for EVERY skill is that each hole it
+    # does promise resolves.
+    it "resolves every hole every shipped skill promises" do
       Dir.mktmpdir do |root|
-        catalog = Lain::Skill::Catalog.load(root:)
         renderer = shipped_renderer(root:)
 
-        shipped_names.each do |name|
-          skill = catalog.fetch(name)
-          expect(skill.slots).not_to be_empty
-          # Every promised hole must resolve (a shipped default exists) -- a
-          # declared slot with no default is a broken skill, and render would
-          # raise UnknownSlot rather than splice silence.
-          expect { renderer.render(name) }.not_to raise_error
+        # A declared slot with no shipped default is a broken skill: render
+        # raises UnknownSlot rather than splicing silence.
+        Lain::Skill::Catalog.load(root:).all.each do |skill|
+          expect { renderer.render(skill.name) }.not_to raise_error
         end
       end
+    end
+
+    it "has at least one extensible skill, so the slot machinery is genuinely exercised" do
+      expect(shipped_catalog.all.select { |skill| skill.slots.any? }).not_to be_empty
     end
   end
 
@@ -130,6 +162,220 @@ RSpec.describe "shipped skills" do
         expect(scaffold).to match(/SOLID/)
         expect(scaffold.downcase).to match(/duplicat/)
         expect(scaffold.downcase).to match(/blocker|should-fix|nit|rank/)
+      end
+    end
+  end
+
+  describe "the four epic-tier skills are catalog-visible and render" do
+    it "presents each of them in the shipped catalog with a conventions slot that resolves" do
+      Dir.mktmpdir do |root|
+        catalog = Lain::Skill::Catalog.load(root:)
+        renderer = shipped_renderer(root:)
+
+        epic_names.each do |name|
+          expect(catalog.names).to include(name)
+          expect(catalog.fetch(name).slots).to include(:conventions)
+          expect { renderer.render(name) }.not_to raise_error
+          expect(renderer.render(name).strip).not_to be_empty
+        end
+      end
+    end
+
+    it "encodes the phase each one owns" do
+      with_empty_project do |renderer|
+        # Each scaffold must actually teach its own step of the pipeline rather
+        # than being four copies of one epic preamble.
+        expect(renderer.render("research-epic")).to match(/research\.md/)
+        expect(renderer.render("plan-epic")).to match(/epic\.md/)
+        expect(renderer.render("iterate-epic").downcase).to match(/split/)
+        expect(renderer.render("create-epic-issues")).to match(%r{issues/<id>\.md})
+      end
+    end
+
+    it "teaches the filename grammar as a refusal rather than a guarantee, and agrees across skills" do
+      with_empty_project do |renderer|
+        plan = renderer.render("plan-epic")
+        issues = renderer.render("create-epic-issues")
+
+        # Both scaffolds quote the SAME constant, so a change to Home::NAME goes
+        # red here rather than leaving two skills teaching different rules.
+        [plan, issues].each { |scaffold| expect(scaffold).to include(Lain::Epic::Home::NAME.source) }
+
+        # Epic::ID_RESERVED forbids only backticks and line breaks, so `epic.md`
+        # legally carries (and round-trips) `Export_Schema`. Home::NAME is the
+        # stricter grammar and it REFUSES, at write time, via
+        # Home#issue -> checked_name -> MalformedName. A scaffold that says an id
+        # reaching it "is already a legal filename" has the implication backwards.
+        expect(issues).to match(/MalformedName/),
+                          "create-epic-issues must name the failure a bad id actually produces"
+        expect(issues).not_to match(/already a legal filename/i)
+      end
+    end
+
+    it "warns that an abandoned blocker still blocks, and names the edge edit that clears it" do
+      with_empty_project do |renderer|
+        # The domain fact first, so the prose assertion below is pinned to
+        # behaviour rather than to a phrase. Graph#ready selects on
+        # `status == "done"`, and `abandoned` is not `done`.
+        graph = Lain::Epic::Document.parse_markdown(
+          "### [ ] `alpha` Alpha\n\nBlocks: `beta`\n\n### [ ] `beta` Beta\n"
+        )
+        abandoned = Lain::Epic::Graph.new(
+          issues: graph.map { |issue| issue.id == "alpha" ? issue.with_status("abandoned") : issue }
+        )
+        # Silently: nothing raises, `beta` simply never becomes ready.
+        expect(abandoned.ready).to be_empty
+        expect(abandoned.blocked_by("beta")).to eq(["alpha"])
+
+        # Dropping the edge is what actually unblocks it -- a status change never will.
+        cleared = Lain::Epic::Graph.new(
+          issues: abandoned.map { |issue| issue.id == "alpha" ? issue.with(blocks: []) : issue }
+        )
+        expect(cleared.ready.map(&:id)).to eq(["beta"])
+
+        scaffold = renderer.render("iterate-epic")
+        expect(scaffold.downcase).to match(/abandon/),
+                                     "iterate-epic must warn that abandoning a blocker does not unblock"
+        expect(scaffold).to match(/edge edit/i)
+      end
+    end
+
+    it "names only stages, statuses, and marks the domain actually carries" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("plan-epic")
+
+        Lain::Epic::STAGES.take(2).each { |stage| expect(scaffold).to include(stage) }
+        Lain::Epic::STORED_STATUSES.each { |status| expect(scaffold).to include(status) }
+        # `ready` is derived, so the scaffold must say so rather than offer it as
+        # something an author writes.
+        expect(scaffold).to match(/`?ready`? is NOT one of them|`ready` is/i)
+        # Blocked by: is refused by the grammar; the epic-side scaffold must not
+        # teach it as writable.
+        expect(scaffold).to match(/`Blocked by:` is not writable/)
+      end
+    end
+  end
+
+  # The failure this whole card exists to police: prose that states INTENT as
+  # BEHAVIOUR. Two landed objects can read like one feature -- {Gate::Policy::Deferred}
+  # parks, {Gate::Adjudicator} spikes-then-adjudicates -- and describing their
+  # union teaches a gate nobody has wired.
+  describe "the epic scaffolds describe gate behaviour that has actually landed" do
+    # Pinned against the DOMAIN, not against the source text. The first attempt
+    # here grepped `lib/` for `Adjudicator.new` -- a property of files this spec
+    # does not govern, standing in for one it does -- and that came apart in
+    # three directions: an aliased or injected construction slipped past it
+    # (injection being this repo's house style), an `Adjudicator.new` anywhere
+    # unrelated would have fired it falsely, and the cwd-relative glob passed
+    # vacuously when rspec ran from another directory.
+    #
+    # Policy's closed family IS the fact the scaffolds rest on: `deferred`
+    # refuses and parks because Deferred is the only deferring policy there is.
+    # A Policy::Adjudicated fires this the day it lands, however it obtains its
+    # collaborator, because it has to subclass Policy to be one. NAME rather
+    # than the class name, because NAME is the durable journal label the
+    # scaffolds actually quote.
+    it "pins the closed policy family the deferred prose depends on" do
+      expect(Lain::Approval::Gate::Policy.subclasses.map { |policy| policy::NAME })
+        .to match_array(%w[interactive hands_off deferred]),
+            "The gate policy family has changed. research-epic, plan-epic and create-epic-issues " \
+            "each describe `deferred` as a refusal that parks the question and gathers no evidence; " \
+            "re-check all three against the policy that moved before relaxing this."
+    end
+
+    it "describes deferred as the refusal-and-park it is, gathering nothing and asking no model" do
+      with_empty_project do |renderer|
+        %w[research-epic plan-epic create-epic-issues].each do |name|
+          scaffold = renderer.render(name)
+          deferred = scaffold.split(/\n\n+/).grep(/`deferred`/)
+          expect(deferred).not_to be_empty, "#{name} never describes the deferred policy"
+
+          deferred.each do |paragraph|
+            expect(paragraph).to match(/refus/i), "#{name}: deferring is a refusal, not a soft yes"
+            expect(paragraph).to match(/park/i), "#{name}: a deferred gate parks for later sign-off"
+            # The substantive half of the correction, pinned rather than left to
+            # prose drift: Policy::Deferred parks the artifact's digest and
+            # question and NOTHING else -- no spike, no evidence, no verdict.
+            # `\s+` rather than a literal space: these are wrapped markdown
+            # paragraphs, and a phrase that reflows across a line break is the
+            # same sentence.
+            expect(paragraph).to match(/no\s+evidence\s+is\s+gathered/i),
+                                 "#{name}: must say plainly that deferring gathers no evidence"
+          end
+
+          expect(scaffold).not_to match(/adjudicat/i),
+                                  "#{name} describes adjudication, which no policy performs today"
+        end
+      end
+    end
+  end
+
+  describe "a project override replaces an epic skill's conventions fill" do
+    it "renders plan-epic with the project's override in place of the shipped default" do
+      with_empty_project do |_renderer, root|
+        marker = "EPIC-CONVENTIONS-MARKER-77: ids are prefixed by the subsystem."
+        write_override(root, "plan-epic", "conventions", marker)
+
+        rendered = shipped_renderer(root:).render("plan-epic")
+        expect(rendered).to include(marker)
+        # The shipped default's own sentence is GONE, not merely joined -- an
+        # override replaces a fill, it does not append to it.
+        expect(rendered).not_to include(".lain/slots/skill/plan-epic/conventions.md")
+      end
+    end
+  end
+
+  # The third acceptance criterion, and the one that keeps the prose honest: an
+  # example of the grammar that the grammar itself refuses would teach a shape
+  # nobody can write. Epic::Document is the arbiter, not a restatement of it here.
+  describe "the epic grammar the templates teach parses" do
+    it "parses plan-epic's embedded example into a graph whose ids are legal filenames" do
+      with_empty_project do |renderer|
+        examples = epic_examples(renderer.render("plan-epic"))
+        expect(examples).not_to be_empty
+
+        examples.each do |source|
+          graph = Lain::Epic::Document.parse_markdown(source)
+          expect(graph.ids).not_to be_empty
+          # An id is both a grammar token and a filename, and the filename
+          # grammar is the stricter of the two -- the scaffold claims ids that
+          # satisfy both, so every id it shows must survive this.
+          graph.ids.each { |id| expect { Lain::Epic::Home.checked_name(id, "issue id") }.not_to raise_error }
+        end
+      end
+    end
+
+    it "round-trips every embedded example byte-for-byte through the emitter" do
+      with_empty_project do |renderer|
+        epic_names.flat_map { |name| epic_examples(renderer.render(name)) }.each do |source|
+          graph = Lain::Epic::Document.parse_markdown(source)
+          # Byte-identical, not merely digest-equal: the scaffold tells an author
+          # that a document shaped like the example survives later edits
+          # unchanged, and that claim is only true if the emitter agrees.
+          expect(Lain::Epic::Document.to_markdown(graph)).to eq(source)
+        end
+      end
+    end
+
+    it "shows every status mark the grammar defines across the epic-tier examples" do
+      with_empty_project do |renderer|
+        statuses = epic_names.flat_map { |name| epic_examples(renderer.render(name)) }
+                             .flat_map { |source| Lain::Epic::Document.parse_markdown(source).map(&:status) }
+        expect(statuses.uniq).to match_array(Lain::Epic::STORED_STATUSES)
+      end
+    end
+
+    it "teaches the derived provenance edge by showing one that names a vanished issue" do
+      with_empty_project do |renderer|
+        graphs = epic_names.flat_map { |name| epic_examples(renderer.render(name)) }
+                           .map { |source| Lain::Epic::Document.parse_markdown(source) }
+        # `Discovered from:` outliving its target is the one dangling reference
+        # the grammar allows, and a split is why. An example that never shows it
+        # would leave an author believing every id in a link line must resolve.
+        vanished = graphs.any? do |graph|
+          graph.any? { |issue| issue.discovered_from && !graph.ids.include?(issue.discovered_from) }
+        end
+        expect(vanished).to be(true)
       end
     end
   end
