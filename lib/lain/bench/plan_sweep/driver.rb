@@ -72,11 +72,22 @@ module Lain
         REACTIVE_SUMMARY = "[reactive compaction: earlier turns summarized to protect the warm prefix]"
         private_constant :REACTIVE_SUMMARY
 
+        # The Context an unstated sweep renders through: the arm's own model and
+        # max_tokens, no system prompt. Built once at load time -- a Context
+        # freezes itself at construction, so there is nothing per-instance about
+        # it, and one shared default is one fewer place the arms can differ.
+        DEFAULT_CONTEXT = Context.new(model: "plan-sweep", max_tokens: 1024)
+        private_constant :DEFAULT_CONTEXT
+
         # @param fixture [Fixture] the loaded plan + scripted runs + gold
-        def initialize(fixture:, model: "plan-sweep", max_tokens: 1024)
+        # @param context [Context] what every render -- the {Plan::Runner}'s
+        #   per-step renders and this Driver's own mainline projection alike --
+        #   renders through. ONE Context rather than loose primitives each side
+        #   rebuilds from: the churn numbers only mean anything if both sides
+        #   measured the same prompt, and only the pipeline is ever swapped.
+        def initialize(fixture:, context: DEFAULT_CONTEXT)
           @fixture = fixture
-          @model = model
-          @max_tokens = max_tokens
+          @context = context
           @toolset = Toolset.new([])
         end
 
@@ -106,7 +117,7 @@ module Lain
 
         def runner(shape, density, store, step)
           Plan::Runner.new(document: @fixture.document_for(density), policy: policy_for(shape, store),
-                           agent_step: step, model: @model, max_tokens: @max_tokens)
+                           agent_step: step, context: @context)
         end
 
         def policy_for(shape, store)
@@ -177,9 +188,11 @@ module Lain
           Rewrites.new(chains: chain).count
         end
 
+        # The arm's own Context with only the pipeline swapped -- the same move
+        # {Plan::Runner} makes per chunk, which is what keeps the churn this
+        # projects and the tokens the Runner measures on ONE prompt.
         def render(timeline, pipeline)
-          Context.new(model: @model, max_tokens: @max_tokens, pipeline:)
-                 .render(timeline:, toolset: @toolset, workspace: Workspace.empty)
+          @context.with_pipeline(pipeline).render(timeline:, toolset: @toolset, workspace: Workspace.empty)
         end
 
         def step_ids = @fixture.document_for(:none).map(&:id)

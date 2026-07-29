@@ -9,10 +9,11 @@ module Lain
     # Lain owns the loop because the loop is the object of study, and live
     # +agent.rb+ wiring is a deliberate later follow-up, not this driver.
     #
-    # The Runner owns per-turn {Context} construction -- it builds
-    # +Context.new(pipeline: continuation.pipeline)+ for every step, so a seam's
-    # pipeline swap takes effect on the very next render -- and it owns seam
-    # detection off the document's {Document#chunks}. Everything shape-specific
+    # The Runner owns the per-chunk pipeline swap -- it takes the caller's
+    # {Context} and rebuilds it with +#with_pipeline(continuation.pipeline)+, so
+    # a seam's pipeline swap takes effect on the very next render while the
+    # caller's model/max_tokens/system reach the provider untouched -- and it
+    # owns seam detection off the document's {Document#chunks}. Everything shape-specific
     # is behind the injected +policy+'s +at_seam+; the loop itself is identical
     # for both shapes.
     #
@@ -61,18 +62,17 @@ module Lain
       #   +call(step:, timeline:, context:, workspace:) -> #timeline, #grade, #snapshot+;
       #   it renders through the Runner-built +context+, drives the provider, and
       #   commits the step's turns
-      # @param model [String, Symbol] the Context model
-      # @param max_tokens [Integer] the Context max_tokens
-      # @param system [String, Array, nil] the Context system prompt
+      # @param context [Context] the render Context every step renders through.
+      #   Taken whole rather than rebuilt from +(model:, max_tokens:, system:)+
+      #   primitives: the Runner swaps only the pipeline, so there is no set of
+      #   parts a caller can forget to pass on and no second place for the
+      #   prompt to drift from the one the caller stated.
       # @param journal [#<<] where each closure's {Telemetry::ClosureRecord} lands
-      def initialize(document:, policy:, agent_step:, model:, max_tokens:, system: nil,
-                     journal: Channel::Null.instance)
+      def initialize(document:, policy:, agent_step:, context:, journal: Channel::Null.instance)
         @document = document
         @policy = policy
         @agent_step = agent_step
-        @model = model
-        @max_tokens = max_tokens
-        @system = system
+        @context = context
         @journal = journal
       end
 
@@ -127,17 +127,13 @@ module Lain
       # Run every step of one chunk on a fork of the current mainline, appending
       # each step's Closure to +closures+. Returns the fork as the chunk left it.
       def run_chunk(chunk, continuation, store, workspace, closures)
+        context = @context.with_pipeline(continuation.pipeline)
         chunk.inject(continuation.timeline(store)) do |fork, step|
           before = fork.length
-          outcome = step_outcome(step, fork, continuation.pipeline, workspace)
+          outcome = @agent_step.call(step:, timeline: fork, context:, workspace:)
           closures << close(step, outcome, before, store)
           outcome.timeline
         end
-      end
-
-      def step_outcome(step, fork, pipeline, workspace)
-        context = Context.new(model: @model, max_tokens: @max_tokens, system: @system, pipeline:)
-        @agent_step.call(step:, timeline: fork, context:, workspace:)
       end
 
       # Fold the step's chunk of turns into a deterministic Closure and record it

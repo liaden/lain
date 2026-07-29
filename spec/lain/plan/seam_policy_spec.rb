@@ -64,9 +64,12 @@ RSpec.describe "Lain::Plan seam policies" do
     PLAN
   end
 
+  # The Runner takes a Context whole and swaps only its pipeline per chunk, so
+  # one Context serves the run and the churn projection below alike.
+  def context = Lain::Context.new(model: "m", max_tokens: 16)
+
   def run_under(policy, store, pipeline: SeamPolicyFixtures::DEFAULT)
-    Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new,
-                           model: "m", max_tokens: 16)
+    Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
                       .run(timeline: Lain::Timeline.empty(store:), pipeline:)
   end
 
@@ -79,9 +82,9 @@ RSpec.describe "Lain::Plan seam policies" do
   # projects rewrites over.
   def prefix_chain(continuations, store)
     continuations.map do |continuation|
-      request = Lain::Context.new(model: "m", max_tokens: 16, pipeline: continuation.pipeline)
-                             .render(timeline: continuation.timeline(store), toolset: Lain::Toolset.new([]),
-                                     workspace: Lain::Workspace.empty)
+      request = context.with_pipeline(continuation.pipeline)
+                       .render(timeline: continuation.timeline(store), toolset: Lain::Toolset.new([]),
+                               workspace: Lain::Workspace.empty)
       [Lain::Request::PREFIX_CHAIN_VERSION, request.prefix_digests]
     end
   end
@@ -250,13 +253,13 @@ RSpec.describe "Lain::Plan seam policies" do
     it "renders all four closures into one summary while the closed chunks' turns are elided" do
       store = Lain::Store.new
       report = Lain::Plan::Runner.new(document: four_chunk_document, policy: Lain::Plan::LinearRewrite.new,
-                                      agent_step: SeamPolicyFixtures::FixtureStep.new, model: "m", max_tokens: 16)
+                                      agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
                                  .run(timeline: Lain::Timeline.empty(store:), pipeline: SeamPolicyFixtures::DEFAULT)
 
       final = report.continuations.last
-      request = Lain::Context.new(model: "m", max_tokens: 16, pipeline: final.pipeline)
-                             .render(timeline: final.timeline(store), toolset: Lain::Toolset.new([]),
-                                     workspace: Lain::Workspace.empty)
+      request = context.with_pipeline(final.pipeline)
+                       .render(timeline: final.timeline(store), toolset: Lain::Toolset.new([]),
+                               workspace: Lain::Workspace.empty)
       texts = request.messages.flat_map { |m| Array(m["content"]).grep(Hash).filter_map { |b| b["text"] } }
       summaries = texts.select { |text| text.start_with?("[closure ") }
 
@@ -274,8 +277,7 @@ RSpec.describe "Lain::Plan seam policies" do
       store = Lain::Store.new
       seeded = Lain::Timeline.empty(store:).commit(role: "user", content: [{ "type" => "text", "text" => "pre" }])
       policy = Lain::Plan::ForkPerStep.new(mainline: seeded)
-      runner = Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new,
-                                      model: "m", max_tokens: 16)
+      runner = Lain::Plan::Runner.new(document:, policy:, agent_step: SeamPolicyFixtures::FixtureStep.new, context:)
 
       expect { runner.run(timeline: Lain::Timeline.empty(store:), pipeline: SeamPolicyFixtures::DEFAULT) }
         .to raise_error(Lain::Plan::Runner::MainlineMismatch, /does not match run root/)

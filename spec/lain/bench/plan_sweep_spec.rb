@@ -99,6 +99,39 @@ RSpec.describe Lain::Bench::PlanSweep do
     end
   end
 
+  describe "Scenario: the sweep driver renders with the same system prompt as the runner it drives" do
+    # ONE Context, handed to the Driver and through it to the Plan::Runner the
+    # Driver drives. Both used to take loose (model:, max_tokens:, system:)
+    # primitives and rebuild a Context internally, and the Driver's rebuild
+    # dropped the system prompt -- so the sweep measured a different prompt than
+    # the runner it claims to model.
+    def bench_context = Lain::Context.new(model: "plan-sweep", max_tokens: 1024, system: "the bench system prompt")
+
+    # Every Request built while one cell is measured: runner-side (the per-step
+    # Context the Runner hands the agent) and driver-side (the mainline churn
+    # projection) alike. Wrapping the constructor, not the renderers, is what
+    # makes the assertion a PARITY one -- it cannot tell the two sides apart, so
+    # a single distinct system prompt anywhere fails it.
+    def systems_while_measuring(context)
+      fixture = Lain::Bench::PlanSweep::Fixture.new(**fixtures)
+      captured = []
+      allow(Lain::Request).to receive(:new).and_wrap_original do |original, **kwargs|
+        original.call(**kwargs).tap { |request| captured << request }
+      end
+      Lain::Bench::PlanSweep::Driver.new(fixture:, context:)
+                                    .measure(shape: :linear, density: :every, run: fixture.runs.first)
+      captured.map(&:system)
+    end
+
+    it "carries the Context's system prompt into every render it measures" do
+      systems = systems_while_measuring(bench_context)
+
+      expect(systems.size).to be > 1
+      expect(systems.uniq.size).to eq(1)
+      expect(systems.first.map { |block| block["text"] }).to eq(["the bench system prompt"])
+    end
+  end
+
   describe "Scenario: byte-identical reruns" do
     it "renders two independent sweeps byte-for-byte identically" do
       expect(described_class.new(**fixtures).report).to eq(described_class.new(**fixtures).report)
