@@ -28,6 +28,13 @@ module Lain
         Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep]),
+        # {Approval::Gate::Adjudicator}'s sibling of `auto_approver`: the same
+        # read-only capabilities and the same one-word verdict contract, but it
+        # judges an ARTIFACT against gathered evidence rather than one waiting
+        # tool call. The two personas differ, so they are two roles -- reusing
+        # auto-approver.md would tell the model a tool call is pending on every
+        # artifact gate it ever sees.
+        Role.new(name: :gate_adjudicator, only: %i[read_file list_files glob grep]),
         Role.new(name: :harness_improver, only: %i[read_file list_files glob grep improvement_write]),
         Role.new(name: :meta_harness, only: %i[read_file list_files glob grep]),
         Role.new(name: :meta_summarizer, only: %i[read_file list_files glob grep]),

@@ -262,8 +262,14 @@ module Lain
       # @param epic_slug [#to_s] the epic it belongs to; with `stage`, the
       #   partition key a sign-off queue folds decisions on
       # @param policy [String] how the verdict was reached, journaled verbatim
+      # @param evidence_digest [String, nil] the content address of the evidence
+      #   this verdict was reached ON, for a caller that gathered any
+      #   ({Adjudicator}); nil means none was gathered, which is the honest
+      #   answer on every asker-delegating path
+      # @param reason [String, nil] the prose beside the verdict -- the note a
+      #   deferred gate parks with, or why a denial denied
       # @return [Boolean] whether the artifact was approved
-      def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY)
+      def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil)
         digest = artifact.digest
         answer, latency = await(asker.ask(artifact.gate_question))
 
@@ -273,7 +279,7 @@ module Lain
         # behind, or `ensure_approved!` would open for a digest with no record of
         # anyone approving it. Fail-closed is not only about the timeout; it is
         # also about this ordering.
-        record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:)
+        record(answer, artifact_digest: digest, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:)
         @approved << digest if answer.approved?
         answer.approved?
       end
@@ -303,13 +309,16 @@ module Lain
 
       private
 
-      # `evidence_digest`/`reason` are left at their nil defaults, which is this
-      # path's honest answer and not a placeholder: an interactive gate gathers
-      # no evidence and the surface gives no prose. The fields exist so an
-      # evidence-bearing path adds a VALUE rather than a column.
-      def record(answer, artifact_digest:, epic_slug:, stage:, policy:, latency:)
+      # `evidence_digest`/`reason` are FORWARDED, never derived: this class
+      # gathers nothing and judges nothing, so the only honest value is the one
+      # its caller handed down, and nil ("nothing was gathered", "no rationale
+      # was given") is the answer on every asker-delegating path. That the
+      # fields are populated here rather than declared here is the whole point
+      # of {GateDecision}'s closed nine-member shape -- a later path adds a
+      # VALUE, never a column.
+      def record(answer, artifact_digest:, epic_slug:, stage:, policy:, latency:, evidence_digest:, reason:)
         @journal.record(GateDecision.new(artifact_digest:, epic_slug:, stage:, approved: answer.approved?,
-                                         answered_by: answer.surface, policy:, latency:))
+                                         answered_by: answer.surface, policy:, latency:, evidence_digest:, reason:))
       end
 
       # Await the answer, or -- on an expired window -- a denial signed by the
@@ -340,3 +349,4 @@ module Lain
   end
 end
 require_relative "gate/policy"
+require_relative "gate/adjudicator"
