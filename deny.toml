@@ -47,6 +47,16 @@ highlight = "all"
 # holding a tty. `onig_sys` is here for a different reason -- it is a C
 # dependency that arrives transitively via `syntect`'s default `regex-onig`
 # feature, and `regex-fancy` is the pure-Rust alternative we would take instead.
+#
+# `nu-ansi-term` is the one entry that is not itself a terminal-owner: it is
+# style value types, much like the sanctioned `anstyle`. It is here because a
+# ban list cannot express a FEATURE ban, and `ansi = ["fmt", "nu-ansi-term"]` is
+# the only edge that pulls it. Enabling that feature is what makes
+# `tracing-subscriber`'s fmt layer default its colour decision to
+# `env::var("NO_COLOR")` (`fmt_layer.rs:743`) -- the environment read this whole
+# list exists to keep out of the process Ruby does not own. Banning the crate
+# therefore bans the feature by proxy: a `default-features = true` regression in
+# either Cargo.toml fails `cargo deny` instead of silently re-arming it.
 deny = [
     { crate = "crossterm", reason = "owns the terminal; Ruby does" },
     { crate = "termion", reason = "owns the terminal; Ruby does" },
@@ -55,6 +65,7 @@ deny = [
     { crate = "termcolor", reason = "reads the environment to decide color; use anstyle" },
     { crate = "terminal_size", reason = "interrogates the tty; Ruby measures its own stream" },
     { crate = "onig_sys", reason = "C oniguruma; prefer the pure-Rust regex-fancy path" },
+    { crate = "nu-ansi-term", reason = "arrives only via tracing-subscriber's `ansi` default feature; colour is a resolved argument" },
 ]
 
 [sources]

@@ -365,8 +365,18 @@ mod ffi {
         // level and the current span's fields are included, so a Rust span can
         // later be merged into Lain's Journal event stream alongside Ruby-side
         // events.
+        //
+        // `with_ansi(false)` states what the trimmed `ansi` feature already
+        // enforces (see Cargo.toml), and it is the same statement
+        // `crates/lain-core`'s own subscriber makes. Left implicit, the default
+        // is `cfg!(feature = "ansi") && NO_COLOR is unset` -- a colour decision
+        // read from the environment, in the process that is not entitled to
+        // make it, whose escapes would land mid-line in the experiment record.
+        // The method is available with the feature off precisely so that a
+        // writer which must never colour can say so.
         let installed = tracing_subscriber::fmt()
             .json()
+            .with_ansi(false)
             .flatten_event(true)
             .with_current_span(true)
             .with_span_list(false)

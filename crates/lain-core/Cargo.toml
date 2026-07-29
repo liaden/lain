@@ -37,7 +37,22 @@ bytes = "1.12"
 # a file path given by argv, /dev/null when absent (the Journal-interleaving
 # wound stays closed).
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt"] }
+# `default-features = false` because the default `ansi` feature pulls
+# `nu-ansi-term` and makes the fmt layer read `NO_COLOR` to decide colour --
+# the terminal-ownership rule in `ext/lain/CLAUDE.md` ("no crate here may own,
+# drive, or interrogate a terminal ... none may read the environment to decide
+# colour"), which is workspace-wide and binds the daemon hardest: it is the
+# isolation boundary and has even less business holding a tty. `deny.toml`'s
+# ban on `nu-ansi-term` is the mechanical half; `main.rs`'s `.with_ansi(false)`
+# is the stated half. Features unify across the workspace's single lock file,
+# so the ban only holds if BOTH crates opt out. `fmt` (+ its `registry`), `std` and
+# `smallvec` are the rest of `default`, named back because this crate's
+# subscriber is a plain `fmt()` to a file -- no `json`, no `env-filter`.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+  "fmt",
+  "std",
+  "smallvec",
+] }
 # Idiomatic std::error::Error + Display derives for the request/param/exec
 # error enums; their Display text is the RPC error string a client sees.
 thiserror = "2"

@@ -12,7 +12,36 @@ crate-type = ["cdylib"]
 [dependencies]
 magnus = { version = "0.8.2" }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+# `default-features = false` to drop `ansi`, which is the whole point of the
+# line: that feature pulls `nu-ansi-term` AND makes the fmt layer's default
+# colour decision `env::var("NO_COLOR")` -- a crate in this process reading the
+# environment to decide how RUBY's stream should look, and emitting ESC bytes
+# mid-line into an NDJSON experiment record if it guesses colour. `deny.toml`
+# cannot express a feature ban, so it bans `nu-ansi-term` BY NAME instead --
+# `ansi = ["fmt", "nu-ansi-term"]` is the only edge that pulls it, which makes
+# the crate ban a feature ban by proxy. `init_tracing`'s `.with_ansi(false)`
+# then states the same property in code, and survives another workspace member
+# re-unifying the feature.
+#
+# Dropping the defaults also drops `tracing-log`, and that IS an intentional
+# instrumentation change rather than a no-op: `log` is in this crate's graph
+# (`ast-grep-language -> ignore -> globset -> log`), and with that feature on,
+# `try_init` installs `LogTracer` (`util.rs:43`), so `ignore`/`globset`'s
+# internal `log` records became `tracing` events and landed in the Journal as
+# experiment record. They are not experiment record -- this crate's own spans
+# are, and they are emitted through `tracing` directly and unaffected. The
+# bridge goes; nothing we author stops being logged.
+# The rest of `default` is named back explicitly: `fmt` (+ its
+# `registry`) is the subscriber, `std` its allocator/thread story, `smallvec`
+# its per-span field storage. `json` and `env-filter` were already the reason
+# this dep is here at all.
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+  "fmt",
+  "json",
+  "env-filter",
+  "std",
+  "smallvec",
+] }
 # Used only for `dup(2)` so the tracing subscriber can own an independent copy
 # of a caller-supplied fd. Pinned (not `*`) to satisfy `cargo deny`'s wildcard
 # ban.
