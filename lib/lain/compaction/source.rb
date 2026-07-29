@@ -190,9 +190,8 @@ module Lain
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
       def context_for(base:, timeline:, usage:, session:)
         observe_idle
-        turns = timeline.to_a
-        messages = projected(turns)
-        decide(base:, timeline:, messages:, usage:, session:, pins: pinned(turns, messages, session))
+        walk = Derivation::Walk.of(timeline)
+        decide(base:, timeline:, walk:, usage:, session:, pins: pinned(walk, session))
       end
 
       private
@@ -224,12 +223,6 @@ module Lain
       # zero cache-read confirms or cancels it (see {Cold}).
       def observe_idle = @cold.idle!(@idle.elapsed)
 
-      # {Context#render}'s projection, which is also {Head.from_timeline}'s. The
-      # full list is built ONCE here because both halves of the decision need
-      # it: {Head} slices the candidate span out of it, and {Scheduler} measures
-      # its before/after accounting over the whole thing.
-      def projected(turns) = turns.map { |turn| { "role" => turn.role, "content" => turn.content } }
-
       # The pin-set, translated once. A pin is a turn DIGEST and {Context::Compact}
       # only ever sees projected TEXT -- a turn's content address folds `meta`
       # and `causal_parents` that no projection carries, so the two are not
@@ -241,9 +234,9 @@ module Lain
       #
       # `#pinned?` and never `#pins`: the latter sorts the whole set on every
       # call (session.rb:164) and this is a per-turn membership test.
-      def pinned(turns, messages, session)
+      def pinned(walk, session)
         Context::PinnedMessages.new(
-          turns.zip(messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
+          walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
         )
       end
 
@@ -254,13 +247,13 @@ module Lain
       # droppable turn is PINNED declines here rather than reaching Compact's
       # empty-summarizable path and paying a cache break for
       # {SummarySnapshot::NOTHING}.
-      def decide(base:, timeline:, messages:, usage:, session:, pins:)
-        head = Head.new(messages:, keep_last: @derived.keep_last, pins:)
-        need = @need.check(messages: head.messages, used_tokens: usage, window_tokens: window_for(base),
+      def decide(base:, timeline:, walk:, usage:, session:, pins:)
+        head = Head.new(messages: walk.messages, keep_last: @derived.keep_last, pins:)
+        need = @need.check(head_bytes: head.bytesize, used_tokens: usage, window_tokens: window_for(base),
                            plan_step_completed: session.plan_step_completed?)
         return defer(base:, need:, head:) if head.empty? || !need.needed?
 
-        weigh(base:, timeline:, messages:, head:, need:, pins:)
+        weigh(base:, timeline:, walk:, head:, need:, pins:)
       end
 
       # Off the LIVE Context, every turn, never captured at construction:
@@ -285,15 +278,35 @@ module Lain
       # scheduler was going to defer regardless, and a turn deferred on TIMING
       # would have been journaled as an inflation refusal, over-counting the
       # refusals a bench reads by the whole warm-defer population.
-      def weigh(base:, timeline:, messages:, head:, need:, pins:)
+      # THE FLOOR is the last of the three questions: a rewrite that would not
+      # SHRINK the rendered history is refused however loudly the signals fired.
+      # It measures the DERIVED chain's own projection -- the very array a
+      # render will send -- through the scheduler that would journal it, so the
+      # refusal and the accounting read one {Scheduler::Rewrite} rather than two
+      # measurements that happen to agree.
+      #
+      # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
+      # digest, byte counts, a line per block) costs ~230 bytes, so over small
+      # messages the summary is BIGGER than what it replaces -- six of them go
+      # 571 -> 1,144 bytes -- and it breaks the cache prefix to do it. That is
+      # not a hypothetical: {Need::PlanStepCompletion} is a plain boolean
+      # independent of history size, so a completed plan step on a short history
+      # with a cold cache reaches it in an ordinary chat, with compaction on by
+      # default. It asks the real question rather than a proxy for it, at the
+      # price of two `Canonical.dump`s -- paid once now, and only on a turn the
+      # scheduler has already committed to.
+      def weigh(base:, timeline:, walk:, head:, need:, pins:)
         return defer(base:, need:, head:) unless timely?(need, head)
 
-        outcome = @derived.over(timeline, pins:, snapshot: SummarySnapshot.take(messages: head.messages,
-                                                                                eager: @eager))
+        snapshot = SummarySnapshot.take(messages: head.messages, eager: @eager)
+        outcome = @derived.over(timeline, walk:, pins:, snapshot:)
         return defer(base:, need:, head:, outcome:) if outcome.refused?
-        return defer(base:, need:, head:, outcome:, would_not_shrink: true) unless shrinks?(outcome.replay, messages)
 
-        commit(base:, messages:, head:, need:, outcome:)
+        scheduler = scheduler_for(outcome.replay)
+        rewrite = scheduler.measure(walk.messages)
+        return defer(base:, need:, head:, outcome:, would_not_shrink: true) unless rewrite.shrinks?
+
+        commit(base:, head:, need:, outcome:, scheduler:, rewrite:)
       end
 
       # {Scheduler#evaluate} is the PURE half of the policy and never reads the
@@ -317,37 +330,11 @@ module Lain
         base
       end
 
-      # The floor: a rewrite that would not SHRINK the rendered history is
-      # refused however loudly the signals fired -- and it now measures the
-      # DERIVED chain's own projection, which is the very array a render will
-      # send, rather than a second computation of it.
-      #
-      # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
-      # digest, byte counts, a line per block) costs ~230 bytes, so over small
-      # messages the summary is BIGGER than what it replaces -- six of them go
-      # 571 -> 1,144 bytes -- and it breaks the cache prefix to do it. That is
-      # not a hypothetical: {Need::PlanStepCompletion} is a plain boolean
-      # independent of history size, so a completed plan step on a short history
-      # with a cold cache reaches it in an ordinary chat, with compaction on by
-      # default.
-      #
-      # It asks the real question rather than a proxy for it -- the very rewrite
-      # that would ship, measured -- at the price of two `Canonical.dump`s, paid
-      # only on a turn the scheduler has already committed to (see {#weigh}).
-      #
-      # STRICT: a byte-NEUTRAL rewrite is declined too. It buys nothing and
-      # still breaks the cache prefix, so `<=` would be a rewrite that costs a
-      # full cache write to change nothing. Pinned at the crossover, byte for
-      # byte, in the spec.
-      def shrinks?(replay, messages)
-        Canonical.dump(replay.call(messages)).bytesize < Canonical.dump(messages).bytesize
-      end
-
-      # `head.messages` to {Need} (a {Head} itself is not dumpable), the WHOLE
-      # message list to {Scheduler} (its accounting re-slices whatever it is
-      # handed, so a head would journal a before/after for a head OF the head),
-      # and `head.bytesize` for the hard-cap comparison rather than a third
-      # `Canonical.dump` of bytes already measured.
+      # `head.bytesize` to {Need} and to the hard-cap comparison -- the count
+      # {Head} took when it sliced the span, never a second `Canonical.dump` of
+      # bytes already measured -- and the WHOLE history's measurement to
+      # {Scheduler}, since its accounting reports the before/after a render
+      # actually sends rather than a head OF the head.
       #
       # The scheduler answers `base` ITSELF when it defers, so identity -- not
       # equivalence -- is what decides whether this turn's Context is a copy.
@@ -360,10 +347,10 @@ module Lain
       # scheduler is priced for `@model` at CONSTRUCTION, so naming what is
       # actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
-      def commit(base:, messages:, head:, need:, outcome:)
+      def commit(base:, head:, need:, outcome:, scheduler:, rewrite:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
-        pipeline = scheduler_for(outcome.replay).pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
-                                                          base: provider, messages:, ran_under: base.model)
+        pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
+                                      base: provider, rewrite:, ran_under: base.model)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, outcome:)
         compacted ? base.with_pipeline(pipeline) : base

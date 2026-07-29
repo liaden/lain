@@ -159,9 +159,13 @@ module Lain
         # never disagree about whether this turn compacts.
         def reactive_pipeline(timeline, scheduler, need)
           candidate = timeline_messages(timeline)[0...-REACTIVE_KEEP_LAST]
-          scheduler.pipeline(need: need.check(messages: candidate, window_tokens: REACTIVE_WINDOW), cold: false,
-                             history_size: Canonical.dump(candidate).bytesize,
-                             base: BASE_PIPELINE, messages: candidate)
+          # ONE measurement of the candidate span, which the threshold, the
+          # force check and the journalled accounting all read -- the same
+          # single-measurement discipline {Compaction::Source} follows, where
+          # {Compaction::Head} is what holds the number.
+          rewrite = scheduler.measure(candidate)
+          scheduler.pipeline(need: need.check(head_bytes: rewrite.before, window_tokens: REACTIVE_WINDOW),
+                             cold: false, history_size: rewrite.before, base: BASE_PIPELINE, rewrite:)
         end
 
         def reactive_scheduler

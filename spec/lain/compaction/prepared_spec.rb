@@ -188,6 +188,44 @@ RSpec.describe Lain::Compaction::Prepared do
 
       expect(Ractor.shareable?(context)).to be(true)
     end
+
+    # T17 review fix 2. This Replay substitutes the held compaction and drops
+    # whatever `#render` projected, exactly as {Compaction::Source::Derived}'s
+    # does -- so it declares the same thing, and the resume path stops walking a
+    # chain it is about to discard. Asserted through a real Timeline, because the
+    # declaration is worth nothing unless it reaches the COMPOSED pipeline.
+    describe "the walk it no longer pays for" do
+      def timeline_of(store, messages)
+        messages.inject(Lain::Timeline.empty(store:)) do |line, message|
+          line.commit(role: message["role"], content: message["content"])
+        end
+      end
+
+      it "renders the held compaction without walking the timeline it discards" do
+        store = Lain::Store.new
+        line = timeline_of(store, history)
+        instance = prepared
+        instance.idle(head_digest: line.head_digest, messages: history)
+        context = Lain::Context.new(
+          model: "claude-opus-4-8", max_tokens: 1024,
+          pipeline: instance.pipeline(head_digest: line.head_digest, base: PreparedShareableFixtures::BASE)
+        )
+
+        tally = count_store_fetches(store) { context.render(timeline: line, toolset: Lain::Toolset.new) }
+
+        expect(tally.count).to be_zero
+      end
+
+      it "renders exactly the held compaction either way" do
+        store = Lain::Store.new
+        line = timeline_of(store, history)
+        instance = prepared
+        held = instance.idle(head_digest: line.head_digest, messages: history)
+        pipeline = instance.pipeline(head_digest: line.head_digest, base: PreparedShareableFixtures::BASE)
+
+        expect(rendered(pipeline, history)).to eq(held)
+      end
+    end
   end
 
   describe "the default journal" do

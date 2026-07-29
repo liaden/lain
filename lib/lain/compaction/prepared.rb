@@ -143,6 +143,13 @@ module Lain
         end
 
         def call(_messages) = @messages
+
+        # The same declaration {Source::Derived}'s Replay makes, and for the
+        # same reason: `#call` ignores its argument, so {Context#render} builds
+        # no projection for it. Both substituting stages say so, because "which
+        # stages substitute" is a fact about each stage and splitting it across
+        # a list somewhere else is how the two drift.
+        def reads_messages? = false
       end
       private_constant :Replay
 

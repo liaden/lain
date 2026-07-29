@@ -154,13 +154,13 @@ module Lain
     # strategy is one point in that same space, not a parallel
     # implementation of it.
     def render(timeline:, toolset:, workspace: Workspace.empty)
-      messages = timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+      pipeline = pipeline_for(workspace)
 
       Request.new(
         model:,
         system: cache_marked(system_blocks),
         tools: toolset.to_schema,
-        messages: pipeline_for(workspace).call(messages),
+        messages: pipeline.call(projected(timeline, pipeline)),
         max_tokens:,
         stream:,
         extra:
@@ -195,6 +195,45 @@ module Lain
     end
 
     private
+
+    # Hoisted, because a `[].freeze` literal allocates a fresh Array per read
+    # and this one is read on every turn of a compacting session.
+    NO_MESSAGES = [].freeze
+    private_constant :NO_MESSAGES
+
+    # The Timeline as the message list a Provider sees. {Compaction::Head} and
+    # {Compaction::Derivation.projected} project the same two keys the same
+    # way, deliberately: a head must be measured, and a derived chain
+    # validated, in the very bytes this line produces.
+    #
+    # NOT MADE AT ALL for a pipeline whose first stage substitutes its own
+    # list. That walk is O(n) in history length and its result is then
+    # discarded unread on every turn a compaction renders through a derived
+    # chain -- and since nothing downstream of a substituting stage can
+    # observe the argument, skipping it cannot move a byte. `#render` stays
+    # the pure function it was: the same (timeline, toolset, workspace) still
+    # renders the same Request, and the pipeline is asked, never told.
+    def projected(timeline, pipeline)
+      return NO_MESSAGES if substituting?(pipeline)
+
+      timeline.to_a.map { |turn| { "role" => turn.role, "content" => turn.content } }
+    end
+
+    # `respond_to?` and not a bare send, because the injected-pipeline duck is
+    # PUBLIC and older than this question: an object answering `#call` and
+    # `#requires` is a pipeline -- that pair is what `#pipeline_for` tests, what
+    # {Compaction::Scheduler#pipeline} and {Plan::LinearRewrite} document, and
+    # what a bench user writing their own strategy implements. Widening the duck
+    # in place would have broken every one of them with a `NoMethodError` from
+    # inside `#render`, which is a poor trade for a projection nobody was going
+    # to skip anyway.
+    #
+    # Silence therefore means "reads its messages": the projection is made, and
+    # a stage only opts OUT by saying so. The saving belongs to the stage that
+    # claims it.
+    def substituting?(pipeline)
+      pipeline.respond_to?(:reads_messages?) && !pipeline.reads_messages?
+    end
 
     # The system prompt in Anthropic's block form, normalized ONCE. A String
     # prompt becomes a single text block; a caller who already passed blocks is

@@ -91,12 +91,15 @@ module Lain
         # @param timeline [Timeline] the SOURCE timeline; the derived chain is
         #   built in its own Store, which is the only store whose objects its
         #   replacements' causal edges can name
+        # @param walk [Derivation::Walk] that timeline already walked and
+        #   projected -- the caller decided on this very projection, so the
+        #   derivation reads it rather than walking the chain a second time
         # @param pins [Context::PinnedMessages] this turn's pin set, the very
         #   value {Head} was measured with
         # @param snapshot [SummarySnapshot] the eager tier, frozen for this
         #   turn; read only by the un-flagged default policy
         # @return [Outcome]
-        def over(timeline, pins:, snapshot:)
+        def over(timeline, walk:, pins:, snapshot:)
           policy = PinCuts.new(inner: @strategy || Held.new(snapshot), pins:)
           # BOUND FIRST, DELIBERATELY. `#replayed` is the only thing that runs
           # the strategy, so it is the only thing that moves its counters --
@@ -107,7 +110,7 @@ module Lain
           # suite still green. That is the hazard {SummarySnapshot} warns about
           # ("invisible EXCEPT as a count that never rises") reproduced at the
           # site that READS the count. The local makes the ordering a statement.
-          replay = replayed(policy, timeline)
+          replay = replayed(policy, timeline, walk)
 
           Outcome.new(replay:, hits: policy.hits, misses: policy.misses)
         end
@@ -120,8 +123,8 @@ module Lain
         # `rescue` sees `policy` as nil whenever anything ahead of it raises,
         # and the handler then dies of `NoMethodError` while reporting -- the
         # real error lost behind the reporting of it.
-        def replayed(policy, timeline)
-          derived = derivation(policy).derive(timeline)
+        def replayed(policy, timeline, walk)
+          derived = derivation(policy).derive(timeline, walk:)
           @consecutive = 0
           Replay.new(Derivation.projected(derived.to_a))
         rescue Derivation::Invalid => e
@@ -186,6 +189,13 @@ module Lain
           end
 
           def call(_messages) = @messages
+
+          # The parameter `#call` ignores, declared so {Context#render} stops
+          # BUILDING it: without this the render walks the whole source chain
+          # and projects every turn of it, on every compacting turn, to hand
+          # this method an argument it drops on the floor -- a third full walk
+          # of a lineage this turn has already walked twice.
+          def reads_messages? = false
         end
         private_constant :Replay
 

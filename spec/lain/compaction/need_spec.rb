@@ -14,20 +14,47 @@ RSpec.describe Lain::Compaction::Need do
   # the approaching-window examples below are sized against.
   def check(window_tokens: 1000, **state) = need.check(window_tokens:, **state)
 
+  # The proxy the caller measures its candidate span in, which is what
+  # {Lain::Compaction::Head#bytesize} answers on the shipped path.
+  def bytes_of(messages) = Lain::Canonical.dump(messages).bytesize
+
   # Scenario: Each need-signal raises the flag without compacting
   describe "the token-threshold signal" do
     it "raises the need flag once the candidate messages cross the byte-length proxy" do
-      result = check(messages: [message("user", "a" * 200)])
+      result = check(head_bytes: bytes_of([message("user", "a" * 200)]))
 
       expect(result.needed?).to be(true)
       expect(result.signals).to include(:token_threshold)
     end
 
     it "does not raise the flag under threshold" do
-      result = check(messages: [message("user", "a")])
+      result = check(head_bytes: bytes_of([message("user", "a")]))
 
       expect(result.needed?).to be(false)
       expect(result.signals).not_to include(:token_threshold)
+    end
+
+    # T17. The candidate span arrives ALREADY MEASURED, because the object that
+    # owns it measured it: {Lain::Compaction::Head} dumps its messages at
+    # construction and holds the count, and dumping the same list again here was
+    # a second full Canonical pass over the history's droppable span -- paid on
+    # every turn, including the ones that then defer.
+    it "reads the measurement it is handed rather than dumping the messages again" do
+      allow(Lain::Canonical).to receive(:dump).and_call_original
+
+      result = check(head_bytes: 200)
+
+      expect(result.signals).to include(:token_threshold)
+      expect(Lain::Canonical).not_to have_received(:dump)
+    end
+
+    # One measurement, two consumers: the number Need thresholds on is the very
+    # number the Head measured, so "what Need fired over" and "what the
+    # compaction would drop" cannot drift apart.
+    it "thresholds on the number a Head measured" do
+      head = Lain::Compaction::Head.new(messages: [message("user", "a" * 200), message("user", "b")], keep_last: 1)
+
+      expect(check(head_bytes: head.bytesize).signals).to include(:token_threshold)
     end
   end
 
@@ -175,7 +202,7 @@ RSpec.describe Lain::Compaction::Need do
   end
 
   it "collects every signal that fires, not just the first" do
-    result = check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
+    result = check(head_bytes: bytes_of([message("user", "a" * 200)]), manual: true, plan_step_completed: true)
 
     expect(result.signals).to contain_exactly(:token_threshold, :manual, :plan_step_completion)
   end
@@ -185,7 +212,7 @@ RSpec.describe Lain::Compaction::Need do
   # object for a signal to reach, so raising a flag structurally cannot also
   # execute a rewrite.
   it "never summarizes or rewrites -- the result carries flags, not content" do
-    result = check(messages: [message("user", "a" * 200)], manual: true)
+    result = check(head_bytes: bytes_of([message("user", "a" * 200)]), manual: true)
 
     expect(result).to respond_to(:signals)
     expect(result).not_to respond_to(:messages)
@@ -209,7 +236,7 @@ RSpec.describe Lain::Compaction::Need do
     end
 
     it "produces a deeply frozen, Ractor-shareable Result" do
-      result = check(messages: [message("user", "a" * 200)], manual: true, plan_step_completed: true)
+      result = check(head_bytes: bytes_of([message("user", "a" * 200)]), manual: true, plan_step_completed: true)
 
       expect(result).to be_deeply_frozen
       expect(result).to be_ractor_shareable

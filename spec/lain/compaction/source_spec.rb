@@ -1253,4 +1253,58 @@ RSpec.describe Lain::Compaction::Source do
         .to eq(Lain::Compaction::Head.new(messages: messages_of(line), keep_last:).bytesize)
     end
   end
+
+  # T17. A walk and its projection are O(n) in history length, and a compacting
+  # turn used to pay for THREE of each over the source chain: this object's own,
+  # the {Lain::Compaction::Derivation}'s, and -- built, discarded unread --
+  # {Lain::Context#render}'s. The rendered bytes are identical either way, so no
+  # assertion over the messages can tell the two apart; the fetch count is the
+  # only observable that can.
+  describe "what one rendered turn costs" do
+    def forcing = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+    it "walks the source chain once and the derived chain once" do
+      line = timeline
+      built = forcing
+
+      tally = count_store_fetches(line.store) { render(context_for(built, line), line) }
+
+      # One fetch per source turn (6) as the decision is made; one per derived
+      # event (3: a summary and the two retained) as the chain is projected into
+      # the messages a render sends; and one per derived commit that had a head
+      # to take its correlation from (2 -- the first lands on the empty Timeline
+      # and reads nothing).
+      expect(tally.count).to eq(6 + 3 + 2)
+    end
+
+    # The DEFERRING path still walks twice, and that is the pure seam's price
+    # rather than an oversight left behind: `Context#render` is a function of
+    # (timeline, toolset, workspace) and projects the timeline itself, so the
+    # only way to hand it a walk this object already made is to change that
+    # signature. A compacting turn escapes the second walk because its pipeline
+    # substitutes and reads NO messages -- not because one was threaded in.
+    it "walks the source chain twice on a deferring turn: once to decide, once to render" do
+      line = timeline
+
+      tally = count_store_fetches(line.store) { render(context_for(source, line), line) }
+
+      expect(tally.count).to eq(6 * 2)
+    end
+
+    # The same duplication in `Canonical.dump`: {Lain::Compaction::Head}
+    # measures the candidate span at construction and {Lain::Compaction::Need}
+    # used to dump the very same list again, while the floor's before/after
+    # measurement was thrown away and re-taken inside the scheduler's accounting.
+    it "dumps the candidate head once and the whole history once" do
+      line = timeline
+      messages = messages_of(line)
+      head = Lain::Compaction::Head.new(messages:, keep_last:)
+      allow(Lain::Canonical).to receive(:dump).and_call_original
+
+      context_for(forcing, line)
+
+      expect(Lain::Canonical).to have_received(:dump).with(head.messages).once
+      expect(Lain::Canonical).to have_received(:dump).with(messages).once
+    end
+  end
 end

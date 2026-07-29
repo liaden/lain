@@ -115,10 +115,16 @@ module Lain
       #   a strategy that collapses nothing would build a whole chain in the
       #   wrong store in silence, since only a replacement carries an edge that
       #   would dangle.
+      # @param walk [Walk, nil] `source` already walked and projected, for a
+      #   caller that has done both -- {Compaction::Source} decides on the very
+      #   same projection before it gets here. nil is "nothing to thread", and
+      #   the walk is then made below, AFTER the refusal: `walk: Walk.of(source)`
+      #   as a default argument is evaluated before the method body, so a
+      #   foreign-store call would walk the entire chain and only then raise.
       # @return [Timeline] the derived chain, in `into`
-      def derive(source, into: source.store)
+      def derive(source, into: source.store, walk: nil)
         refuse_foreign(source, into)
-        plan = Plan.over(strategy: @strategy, source:, keep_last: @keep_last)
+        plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last)
         writes = plan.writes
         refuse_invalid(writes)
         derived = writes.inject(Timeline.empty(store: into)) { |chain, write| write.onto(chain) }
@@ -132,6 +138,54 @@ module Lain
       # belongs, and the only `meta` key anywhere in `lib/` is `spawned_from`.
       def self.projected(turns)
         turns.map { |turn| { "role" => turn.role, "content" => turn.content } }
+      end
+
+      # ONE walk of a chain, as a value: the turns it yielded and the projection
+      # of them. Both are O(n) in history length and every consumer on the
+      # render path needs both -- {Head} slices the projection, {Need} and
+      # {Scheduler} measure it, the digests come off the turns -- so walking per
+      # consumer is how a turn came to read the same Store three times and
+      # project the same messages three times over.
+      #
+      # A VALUE rather than two arguments threaded side by side: turns and their
+      # projection are index-aligned, {Plan} and {Compaction::Source} both zip
+      # them, and a pair passed separately is a pair that can be passed
+      # mismatched. There is no memo anywhere here -- a Timeline is a new value
+      # on every commit, so a per-instance cache would be a fresh miss every
+      # turn; the walk's owner makes it once and hands it down.
+      Walk = Data.define(:turns, :messages) do
+        def self.of(timeline)
+          turns = timeline.to_a
+          new(turns:, messages: Derivation.projected(turns))
+        end
+
+        # Both invariants live in the OBJECT and not in `.of`, so no Walk can
+        # exist without them however it was built.
+        #
+        # The PAIRING, because a mismatched pair is the one way this value can
+        # lie, and it would lie quietly: `#zip` pads with nil, so a short
+        # projection pairs a turn's digest with another turn's text and nothing
+        # raises. Claiming "index-aligned" in a docstring while accepting
+        # `Walk.new(turns:, messages: [])` leaves the claim to the constructor
+        # that happens to be careful.
+        #
+        # DEEPLY FROZEN BY COPY, {Head}'s discipline and for {Head}'s reasons: a
+        # value object whose elements a caller can still mutate is one whose
+        # consumers' measurements go stale, and freezing in place would reach
+        # back into an array the caller may still own and leave it frozen under
+        # them. `Ractor.shareable?` then holds, which is what CLAUDE.md asks of
+        # a value object and what the docstring above would otherwise only be
+        # asserting. Measured: 0.35 ms on an 800-turn history, against the
+        # ~18 ms per compacting turn the threading saves.
+        def initialize(turns:, messages:)
+          unless turns.size == messages.size
+            raise ArgumentError, "a Walk pairs one projected message per turn, got #{turns.size} " \
+                                 "turns and #{messages.size} messages"
+          end
+
+          super(turns: Ractor.make_shareable(turns, copy: true),
+                messages: Ractor.make_shareable(messages, copy: true))
+        end
       end
 
       private
@@ -200,13 +254,17 @@ module Lain
       #
       # The ranges are asked for ONCE and held, never recomputed: a strategy may
       # hold an oracle, and asking it twice is a second payment.
-      Plan = Data.define(:strategy, :turns, :messages, :boundary, :ranges) do
-        def self.over(strategy:, source:, keep_last:)
-          turns = source.to_a
-          messages = Derivation.projected(turns)
-          boundary = Boundary.new(messages:, keep_last:)
-          new(strategy:, turns:, messages:, boundary:, ranges: proposed(strategy, messages, boundary))
+      Plan = Data.define(:strategy, :walk, :boundary, :ranges) do
+        def self.over(strategy:, walk:, keep_last:)
+          boundary = Boundary.new(messages: walk.messages, keep_last:)
+          new(strategy:, walk:, boundary:, ranges: proposed(strategy, walk.messages, boundary))
         end
+
+        # The walk's two halves, named where the rest of this object reads them:
+        # the source turns it plans over, and the projection it plans FROM.
+        def turns = walk.turns
+
+        def messages = walk.messages
 
         # A strategy is asked only about a span there is something to collapse
         # in, and the two reasons there might not be are asked SEPARATELY --

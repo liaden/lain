@@ -67,6 +67,30 @@ RSpec.describe Lain::Context::Combinator do
       requiring_y = Class.new(described_class) { def requires = %i[y] }.new
       expect((requiring_x >> requiring_y).requires).to contain_exactly(:x, :y)
     end
+
+    # NOT the union #requires takes, and the asymmetry is the point: `second`
+    # is handed `first`'s output and can never see what the composition was
+    # called with, so a substituting stage blinds everything behind it while a
+    # reading stage in front of one still reads.
+    it "reads its messages exactly when the FIRST stage does" do
+      substituting = Class.new(described_class) { def reads_messages? = false }.new
+
+      expect((substituting >> described_class.new).reads_messages?).to be(false)
+      expect((described_class.new >> substituting).reads_messages?).to be(true)
+    end
+
+    # NESTED, because `>>` is associative and a composition's first stage is
+    # itself often a composition -- which is exactly the shape a compacting turn
+    # builds (Replay composed ahead of an already-composed base pipeline). The
+    # recursion has to reach the leftmost LEAF, not just the outer pair.
+    it "reaches the leftmost leaf through nested compositions" do
+      substituting = Class.new(described_class) { def reads_messages? = false }.new
+      reading = described_class.new
+
+      expect(((substituting >> reading) >> reading).reads_messages?).to be(false)
+      expect((substituting >> (reading >> reading)).reads_messages?).to be(false)
+      expect(((reading >> substituting) >> reading).reads_messages?).to be(true)
+    end
   end
 
   describe Lain::Context::Identity do
@@ -84,6 +108,13 @@ RSpec.describe Lain::Context::Combinator do
     it "is the identity by default" do
       messages = [{ "role" => "user", "content" => [] }]
       expect(described_class.new.call(messages)).to eq(messages)
+    end
+
+    # A transform reads what it is handed; only a stage that substitutes a list
+    # of its own says otherwise, so the default is what every shipped
+    # combinator inherits without declaring anything.
+    it "reads the messages it is handed" do
+      expect(described_class.new.reads_messages?).to be(true)
     end
   end
 end

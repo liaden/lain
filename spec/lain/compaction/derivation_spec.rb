@@ -184,6 +184,82 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(measured).to eq([[21, 22], [21, 22], [21, 22]])
     end
 
+    # T17. The caller on the render path has already walked this chain and
+    # projected it -- that is how it decided a compaction was warranted at all
+    # -- so walking it a second time here reads the whole Store again for a
+    # projection byte-identical to the one it was holding. Handed the walk, this
+    # object reads only the chain it WRITES.
+    describe "a walk it is handed" do
+      it "derives from it rather than walking the source again" do
+        source = fixtures.history(9)
+        walk = Lain::Compaction::Derivation::Walk.of(source)
+        derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+        derived = nil
+
+        tally = count_store_fetches(source.store) { derived = derivation.derive(source, walk:) }
+
+        # The chain it WRITES, and nothing else: one head read per commit that
+        # had a predecessor to take its correlation from. Not one read of the
+        # nine source turns, which is what walking again would have cost.
+        expect(tally.count).to eq(derived.length - 1)
+      end
+
+      it "derives exactly what walking itself would have derived" do
+        source = fixtures.history(9)
+        derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+
+        threaded = derivation.derive(source, walk: Lain::Compaction::Derivation::Walk.of(source))
+
+        expect(threaded.head_digest).to eq(derivation.derive(source).head_digest)
+      end
+
+      # T17 review fix 6. `walk: Walk.of(source)` as a DEFAULT ARGUMENT is
+      # evaluated before the method body, so the refusal below it charged a full
+      # walk of the chain for a call that was never going to derive anything.
+      it "refuses a foreign store before paying for a walk" do
+        source = fixtures.history(9)
+        derivation = described_class.new(strategy: fixtures.summarizing, keep_last: 3)
+
+        tally = count_store_fetches(source.store) do
+          expect { derivation.derive(source, into: Lain::Store.new) }
+            .to raise_error(Lain::Store::MissingObject)
+        end
+
+        expect(tally.count).to be_zero
+      end
+    end
+
+    # T17 review fix 5. The docstring claims turns and messages are
+    # index-aligned and that the value is safe to hand to shareable code; both
+    # are the OBJECT's to guarantee, not its one careful constructor's.
+    describe Lain::Compaction::Derivation::Walk do
+      def walk_of(size) = described_class.of(fixtures.history(size))
+
+      it "pairs one projected message per turn" do
+        walk = walk_of(9)
+
+        expect(walk.messages.size).to eq(walk.turns.size)
+      end
+
+      it "refuses a mismatched pair rather than zipping nil onto a turn" do
+        expect { described_class.new(turns: fixtures.history(9).to_a, messages: []) }
+          .to raise_error(ArgumentError, /one projected message per turn/)
+      end
+
+      it "is deeply frozen and Ractor-shareable, like every other value here" do
+        expect(walk_of(9)).to be_deeply_frozen
+        expect(walk_of(9)).to be_ractor_shareable
+      end
+
+      it "snapshots by copy, so a caller's array cannot be frozen under it" do
+        caller_owned = [{ "role" => "user", "content" => [] }]
+        described_class.new(turns: [:one], messages: caller_owned)
+
+        expect(caller_owned).not_to be_frozen
+        expect(caller_owned.first).not_to be_frozen
+      end
+    end
+
     it "derives a valid conversation from every strategy this chunk ships" do
       source = fixtures.history(13)
       strategies = [Lain::Compaction::Strategy::Identity.new, fixtures.summarizing,

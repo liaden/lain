@@ -46,6 +46,23 @@ module Lain
         [].freeze
       end
 
+      # Does this stage READ the list it is handed, or substitute one of its
+      # own? A transform reads (this default, which every combinator here
+      # inherits); a stage that discards its argument and answers a list it
+      # already holds -- a compacting turn's derived chain -- does not, and
+      # says so by overriding.
+      #
+      # It is a declaration about `#call`, not a second policy: the answer
+      # changes nothing about what a pipeline renders. What it buys is that
+      # {Context#render} can skip PROJECTING a Timeline whose projection
+      # nothing downstream will look at, and that walk is O(n) in history
+      # length on every turn of a compacting session.
+      #
+      # @return [Boolean]
+      def reads_messages?
+        true
+      end
+
       # `a >> b` composes into a combinator that runs `a`, then `b`. Returning
       # a fresh {Composed} rather than mutating is exactly Ruby's own Proc#>>
       # idiom -- composition builds a new callable, it never rewrites either
@@ -89,6 +106,15 @@ module Lain
       # The union: a composed pipeline needs whatever either stage needs.
       def requires
         (@first.requires | @second.requires).freeze
+      end
+
+      # The FIRST stage alone decides, unlike #requires: `second` is handed
+      # `first`'s output and can never see the list this composition was
+      # called with, so a substituting stage blinds everything behind it. The
+      # converse is what makes the union wrong here -- a reading stage in
+      # front of a substituting one still reads.
+      def reads_messages?
+        @first.reads_messages?
       end
     end
   end

@@ -89,6 +89,33 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
   end
 
+  # T17. What a scheduled rewrite would cost, as a value: the bytes the messages
+  # dump to now and the bytes they dump to once this scheduler's Compact has had
+  # them. It is the ONE object holding the Compact, so it is the only one that
+  # can measure -- and taking the measurement once is what lets the caller's
+  # "is this rewrite worth making" and this object's journalled accounting read
+  # the same two numbers instead of computing them twice.
+  describe "#measure" do
+    it "measures the messages as they are and as its Compact leaves them" do
+      measured = scheduler.measure(history)
+
+      expect(measured.before).to eq(Lain::Canonical.dump(history).bytesize)
+      expect(measured.after).to eq(Lain::Canonical.dump(compact.call(history)).bytesize)
+    end
+
+    it "answers whether the rewrite shrinks the rendered history" do
+      expect(scheduler.measure(history).shrinks?).to be(true)
+    end
+
+    # STRICT, the floor {Compaction::Source} applies: a byte-neutral rewrite
+    # buys nothing and still breaks the cache prefix.
+    it "declines a rewrite that changes nothing" do
+      neutral = described_class.new(compact: Lain::Context::Identity, hard_cap: 1, journal:)
+
+      expect(neutral.measure(history).shrinks?).to be(false)
+    end
+  end
+
   describe "#pipeline" do
     it "hands the base back UNTOUCHED (same object) when it defers -- a non-compacting turn is unchanged" do
       pipeline = scheduler.pipeline(need: need(:token_threshold), cold: false, history_size: 10, base:)
@@ -106,8 +133,9 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
 
     it "crossing the hard cap while warm runs the compaction and notes forced-warm, message-tier only" do
-      pipeline = scheduler(hard_cap: 100).pipeline(need: need(:token_threshold), cold: false, history_size: 100,
-                                                   base:, messages: history)
+      built = scheduler(hard_cap: 100)
+      pipeline = built.pipeline(need: need(:token_threshold), cold: false, history_size: 100,
+                                base:, rewrite: built.measure(history))
 
       result = rendered(pipeline, history)
 
@@ -119,8 +147,9 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
 
     it "runs a needed compaction for free while the cache is cold" do
-      pipeline = scheduler.pipeline(need: need(:token_threshold), cold: true, history_size: 10,
-                                    base:, messages: history)
+      built = scheduler
+      pipeline = built.pipeline(need: need(:token_threshold), cold: true, history_size: 10,
+                                base:, rewrite: built.measure(history))
 
       result = rendered(pipeline, history)
 
@@ -133,15 +162,62 @@ RSpec.describe Lain::Compaction::Scheduler do
     # captured at construction -- which is also what keeps the Scheduler frozen
     # and everything it hands back shareable.
     it "takes the model in force per turn and never lets it move the decision" do
-      pipeline = scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history,
-        ran_under: "claude-opus-4-8"
+      built = scheduler(hard_cap: 100, model: "claude-sonnet-4-6")
+      pipeline = built.pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:,
+        rewrite: built.measure(history), ran_under: "claude-opus-4-8"
       )
 
       expect(rendered(pipeline, history)).to include(
         a_hash_including("content" => [a_hash_including("text" => "SUMMARY")])
       )
       expect(records.map { |r| r["cache_state"] }).to eq(["forced"])
+    end
+
+    # T17. The accounting used to run the compact and dump both sides ITSELF,
+    # and its caller had already done exactly that to decide whether the rewrite
+    # was worth making at all -- two Canonical passes over the whole history,
+    # per compacting turn, for two numbers that were already known. The
+    # measurement is a value now, taken once and handed in.
+    it "journals the measurement it is handed rather than taking its own" do
+      built = scheduler(hard_cap: 100)
+      measured = built.measure(history)
+      allow(Lain::Canonical).to receive(:dump).and_call_original
+
+      built.pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:, rewrite: measured)
+
+      expect(Lain::Canonical).not_to have_received(:dump)
+      expect(records.first)
+        .to include("tokens_before" => measured.before, "tokens_after" => measured.after)
+    end
+
+    # T17 review fix 3, and the card's own sin caught: the measurement must not
+    # be a DEFAULT ARGUMENT. A default is evaluated on every call, so measuring
+    # there runs the Compact and both dumps on the deferring turns -- the steady
+    # state -- which `if decision.compact?` had always kept free. New
+    # unconditional work, on a card whose whole point is deleting it.
+    #
+    # Counted through `Canonical.dump` rather than by proxying the Compact: a
+    # Compact is a frozen value and rspec-mocks cannot proxy one, which is
+    # itself the reason a measurement has to be threaded rather than spied on.
+    it "measures nothing at all on a turn it defers" do
+      allow(Lain::Canonical).to receive(:dump).and_call_original
+
+      scheduler.pipeline(need: need(:token_threshold), cold: false, history_size: 10, base:)
+
+      expect(Lain::Canonical).not_to have_received(:dump)
+    end
+
+    # The other half of that fix: a caller that names no rewrite still journals
+    # exactly the bytes it always did, so moving the measurement off the
+    # signature moved no figure.
+    it "measures the empty history for a caller that names no rewrite, as it always did" do
+      built = scheduler(hard_cap: 100)
+
+      built.pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:)
+
+      expect(records.first).to include("tokens_before" => built.measure([]).before,
+                                       "tokens_after" => built.measure([]).after)
     end
 
     it "leaves the injected base pipeline unmutated across a compacting decision (renders stay pure)" do

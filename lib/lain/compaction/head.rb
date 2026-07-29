@@ -45,13 +45,20 @@ module Lain
       attr_reader :messages
 
       # Canonical bytes of {#messages} -- the same proxy Compact thresholds
-      # against and Need's TokenThreshold fires on (see {Context::Compact}'s
-      # header for why a proxy and not a tokenizer). Unconditional, so an EMPTY
-      # head measures 2, the bytes of `"[]"`, rather than 0: special-casing it
-      # made this object answer its own question two ways, and bought nothing
-      # (`Need::TokenThreshold` re-dumps the messages itself at `need.rb:51` and
-      # never reads this, while `Compact` declines at `compact.rb:50` whatever
-      # the number says). Ask {#empty?} for emptiness.
+      # against, and, since T17, the very number {Need::TokenThreshold} fires
+      # ON: it reads this measurement instead of dumping the same list a second
+      # time, so "what Need fired over" and "what a compaction would drop" are
+      # one measurement rather than two that have to agree. (See
+      # {Context::Compact}'s header for why a proxy and not a tokenizer.)
+      #
+      # Unconditional, so an EMPTY head measures 2, the bytes of `"[]"`, rather
+      # than 0: special-casing it made this object answer its own question two
+      # ways and bought nothing. Now that {Need} reads the number, that costs
+      # one honest oddity -- a byte threshold of 1 or 2 fires
+      # `:token_threshold` over a head holding nothing -- and it stays harmless
+      # because {Compaction::Source#decide} defers on {#empty?} in the same
+      # breath, so the signal is journalled and never acted on. Ask {#empty?}
+      # for emptiness.
       # @return [Integer]
       attr_reader :bytesize
 

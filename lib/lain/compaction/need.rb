@@ -28,7 +28,7 @@ module Lain
       # ({Context::ModelSwitch}), so a window fixed when the Need was built
       # would keep measuring occupancy against the model the run began with.
       # Per-turn state travels here; it does not make Need mutable.
-      State = Data.define(:messages, :used_tokens, :window_tokens, :manual, :plan_step_completed)
+      State = Data.define(:head_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed)
       private_constant :State
 
       # Which signals fired, as a frozen list of Symbols; empty means "not
@@ -47,6 +47,13 @@ module Lain
       # the candidate messages, not a real tokenizer (see that class's header
       # comment for why -- a deterministic proxy is the only property this
       # detector needs).
+      #
+      # It READS that length rather than measuring it. The candidate span
+      # arrives from an object that already dumped it -- {Compaction::Head}
+      # measures itself at construction and holds the count -- so dumping it
+      # again here was a second full Canonical pass over the droppable
+      # history, on every turn, including every turn that then deferred. One
+      # measurement, two consumers, which is the whole reason {Head} exists.
       class TokenThreshold
         KIND = :token_threshold
 
@@ -55,7 +62,7 @@ module Lain
           freeze
         end
 
-        def fired?(state) = Canonical.dump(state.messages).bytesize >= @byte_threshold
+        def fired?(state) = state.head_bytes >= @byte_threshold
       end
 
       # Fires once usage crosses a configurable fraction of the model's
@@ -127,14 +134,17 @@ module Lain
       #   renders through. Required, and deliberately not defaulted: a guessed
       #   window is a silently wrong threshold, and the one thing worse than
       #   compacting early is never compacting at all.
-      # @param messages [Array<Hash>] the candidate-for-drop head, sized the
-      #   same way {Context::Compact} sizes it
+      # @param head_bytes [Integer] the candidate-for-drop head in
+      #   {Context::Compact}'s byte proxy, ALREADY MEASURED -- {Head#bytesize},
+      #   on the shipped path. Defaults to nothing droppable, which is the
+      #   honest reading for a caller naming no head at all and which no
+      #   threshold anyone would configure can cross.
       # @param used_tokens [Integer, nil] current usage against the context window
       # @param manual [Boolean] an explicit, on-demand trigger
       # @param plan_step_completed [Boolean] {Session#plan_step_completed?}'s signal
       # @return [Result]
-      def check(window_tokens:, messages: [], used_tokens: nil, manual: false, plan_step_completed: false)
-        state = State.new(messages:, used_tokens:, window_tokens: window!(window_tokens),
+      def check(window_tokens:, head_bytes: 0, used_tokens: nil, manual: false, plan_step_completed: false)
+        state = State.new(head_bytes:, used_tokens:, window_tokens: window!(window_tokens),
                           manual:, plan_step_completed:)
         fired = @detectors.select { |detector| detector.fired?(state) }.map { |detector| detector.class::KIND }
         Result.new(signals: fired)

@@ -54,6 +54,26 @@ module Lain
         COLD_FREE = new(action: :cold_free, tier: :message)
       end
 
+      # What a rewrite would cost, in the byte proxy: the messages as they are,
+      # and as this scheduler's Compact leaves them. Taken ONCE, by {#measure},
+      # and then read by everyone who asks a question about it.
+      #
+      # It exists because the two numbers had two independent owners. The floor
+      # in {Compaction::Source} decides "is this rewrite worth making" by
+      # dumping both sides; the accounting below journals "before" and "after"
+      # by dumping both sides again -- the same two Canonical passes over the
+      # whole history, twice per compacting turn, for figures that were already
+      # known. A pair that always travels together and is always derived at
+      # once is an object (CLAUDE.md), and making it one is what lets the
+      # decision and the record read the SAME measurement rather than two that
+      # happen to agree.
+      Rewrite = Data.define(:before, :after) do
+        # STRICT: a byte-NEUTRAL rewrite is declined too. It buys nothing and
+        # still breaks the cache prefix, so `<=` would be a rewrite that costs
+        # a full cache write to change nothing.
+        def shrinks? = after < before
+      end
+
       # WHOSE rates this compaction's dollars may be quoted at, and whether they
       # may be quoted at all.
       #
@@ -145,9 +165,11 @@ module Lain
       # @param base [#call, #requires] the strategy `#render` would use
       #   otherwise -- a Combinator, or a `->(workspace)` provider (T21's
       #   injected-pipeline shape)
-      # @param messages [Array<Hash>] the candidate-for-drop head, the same
-      #   messages {Need#check} was run against -- used ONLY here, to measure
-      #   T20/CAC-6's before/after accounting; never captured into the
+      # @param rewrite [Rewrite, nil] what this turn's rewrite costs, from
+      #   {#measure} -- T20/CAC-6's before/after accounting, measured by
+      #   whoever needed the numbers first rather than a second time here. nil
+      #   is "the caller measured nothing", and it is measured for them INSIDE
+      #   the compacting branch (see {#record}). Never captured into the
       #   returned pipeline (see {COMPOSE}'s shareability comment -- nothing
       #   this method closes over may ride along).
       # @param ran_under [String, Symbol, nil] the model in force on THIS turn.
@@ -159,10 +181,28 @@ module Lain
       #   contract is untouched. nil means "the caller did not say", which
       #   journals exactly as it did before {Quote} existed.
       # @return the base itself, or a provider riding Compact ahead of it
-      def pipeline(need:, cold:, history_size:, base:, messages: [], ran_under: nil)
+      def pipeline(need:, cold:, history_size:, base:, rewrite: nil, ran_under: nil)
         decision = evaluate(need:, cold:, history_size:)
-        @journal << accounting(decision, need, messages, Quote.new(priced: @model, ran_under:)) if decision.compact?
+        record(decision, need, rewrite, ran_under) if decision.compact?
         pipeline_for(decision, base)
+      end
+
+      # What rewriting `messages` through this scheduler's Compact would cost,
+      # as a {Rewrite}. PUBLIC, and the one place the measurement is taken:
+      # this object holds the Compact, so it is the only one that can apply it,
+      # and a caller deciding whether the rewrite is worth making
+      # ({Compaction::Source}'s floor) needs the very numbers the accounting
+      # journals. Asking here and threading the answer into {#pipeline} is what
+      # collapses two identical pairs of `Canonical.dump`s into one.
+      #
+      # It runs `@compact` OFF the pipeline, as the accounting always did: the
+      # pipeline reruns it later, deterministically, when `#render` calls it.
+      #
+      # @param messages [Array<Hash>] the history this turn would rewrite
+      # @return [Rewrite]
+      def measure(messages)
+        Rewrite.new(before: Canonical.dump(messages).bytesize,
+                    after: Canonical.dump(@compact.call(messages)).bytesize)
       end
 
       # Compact rides AHEAD of the base so the head is summarized before the
@@ -184,6 +224,11 @@ module Lain
       # a caller who injects a Compact whose summarizer -- or a base provider --
       # is not itself shareable gets an IsolationError HERE, not a silently
       # non-shareable Context downstream.
+      # Hoisted, because a `[].freeze` literal allocates a fresh Array per read,
+      # and {#pipeline}'s default measures one on every call that names none.
+      NO_MESSAGES = [].freeze
+      private_constant :NO_MESSAGES
+
       COMPOSE = lambda do |compact, base|
         Ractor.make_shareable(
           ->(workspace) { compact >> (base.respond_to?(:requires) ? base : base.call(workspace)) }
@@ -203,19 +248,23 @@ module Lain
         COMPOSE.call(@compact, base)
       end
 
-      # Runs `@compact` HERE, off the pipeline, purely to measure the
-      # before/after byte-proxy T20/CAC-6 wants journaled -- the returned
-      # pipeline reruns it later, deterministically, when `#render` actually
-      # calls it (see {COMPOSE}'s shareability comment for why this method's
-      # `messages` cannot ride along inside that closure instead).
-      def accounting(decision, need, messages, quote)
-        before = Canonical.dump(messages).bytesize
-        after = Canonical.dump(@compact.call(messages)).bytesize
+      # The unmeasured caller's fallback, and the reason it is HERE rather than
+      # in {#pipeline}'s signature: a default argument is evaluated on every
+      # call, so `rewrite: measure(NO_MESSAGES)` would run the Compact and both
+      # dumps on the DEFERRING turns -- the steady state -- that
+      # `if decision.compact?` has always kept free. Same figures as ever for a
+      # caller that names nothing; no work at all for one that defers.
+      def record(decision, need, rewrite, ran_under)
+        quote = Quote.new(priced: @model, ran_under:)
+        @journal << accounting(decision, need, rewrite || measure(NO_MESSAGES), quote)
+      end
 
+      # The measurement, journaled -- taken by {#measure}, not retaken here.
+      def accounting(decision, need, rewrite, quote)
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,
-          tokens_before: before, tokens_after: after, model: quote.model,
-          **costs(quote, decision, before, after)
+          tokens_before: rewrite.before, tokens_after: rewrite.after, model: quote.model,
+          **costs(quote, decision, rewrite.before, rewrite.after)
         )
       end
 

@@ -39,15 +39,25 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
 
   def need(*signals) = Lain::Compaction::Need::Result.new(signals:)
 
+  # T17. #pipeline is handed a MEASUREMENT rather than a message list -- the
+  # floor deciding whether the rewrite is worth making took it already, and the
+  # accounting reports that one measurement instead of retaking it -- so a spec
+  # wanting a real before/after asks the SAME scheduler to measure the history
+  # it is about to schedule.
+  def scheduling(need:, cold:, history_size:, ran_under: nil, **built)
+    scheduler(**built).then do |sched|
+      sched.pipeline(need:, cold:, history_size:, base:, rewrite: sched.measure(history), ran_under:)
+    end
+  end
+
   def scheduler(hard_cap: 1_000_000, model: nil, price_book: Lain::PriceBook.default)
     Lain::Compaction::Scheduler.new(compact:, hard_cap:, journal:, model:, price_book:)
   end
 
   describe "a compacting decision journals its full accounting" do
     it "carries trigger, cache-state, tokens before/after, and cost saved vs spent" do
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       expect(records.size).to eq(1)
       record = records.first
@@ -60,9 +70,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "Compare can read the cost delta attributed to the policy" do
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       record = records.first
       delta = BigDecimal(record["cost_saved"]) - BigDecimal(record["cost_spent"])
@@ -70,9 +79,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "prices a forced-warm rewrite's message-tier cache write as cost_spent" do
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       record = records.first
       expected_spent = Lain::PriceBook.default.cost(
@@ -82,9 +90,7 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "a cold compaction runs for free -- cost_spent is zero, matching the scheduler's own rationale" do
-      scheduler(model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: true, history_size: 10, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: true, history_size: 10, model: "claude-sonnet-4-6")
 
       record = records.first
       expect(record["cache_state"]).to eq("cold")
@@ -93,9 +99,7 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "journals zero cost, not a raise, when the scheduler carries no model" do
-      scheduler(hard_cap: 100).pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100)
 
       record = records.first
       expect(BigDecimal(record["cost_saved"])).to eq(BigDecimal(0))
@@ -103,13 +107,13 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "a deferring decision journals nothing -- a non-compacting turn stays silent" do
-      scheduler.pipeline(need: need(:token_threshold), cold: false, history_size: 10, base:, messages: history)
+      scheduling(need: need(:token_threshold), cold: false, history_size: 10)
 
       expect(records).to be_empty
     end
 
     it "approaching-window is one of the Need signals a forced compaction can carry as trigger" do
-      scheduler.pipeline(need: need(:approaching_window), cold: false, history_size: 10, base:, messages: history)
+      scheduling(need: need(:approaching_window), cold: false, history_size: 10)
 
       expect(records.first["trigger"]).to eq(["approaching_window"])
     end
@@ -123,17 +127,14 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     # actually ran. Naming the tier here is what lets a reader see the
     # mismatch instead of being lied to about the dollars.
     it "names the model its cost figures are quoted in" do
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       expect(records.first["model"]).to eq("claude-sonnet-4-6")
     end
 
     it "journals a nil model beside its zero costs, so an unpriced run says so" do
-      scheduler(hard_cap: 100).pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100)
 
       expect(records.first).to include("model" => nil, "cost_saved" => "0.0", "cost_spent" => "0.0")
     end
@@ -147,8 +148,10 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
   # one tier up.
   describe "a compaction priced against a model that is no longer in force" do
     def compacting(model:, ran_under:)
-      scheduler(hard_cap: 100, model:).pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history, ran_under:
+      built = scheduler(hard_cap: 100, model:)
+      built.pipeline(
+        need: need(:token_threshold), cold: false, history_size: 100, base:,
+        rewrite: built.measure(history), ran_under:
       )
       records.first
     end
@@ -178,10 +181,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     # LEGITIMATELY on a cold cache, so a switched run reporting zero would be
     # indistinguishable from a compaction that genuinely ran for free.
     it "is distinguishable from the real zero a cold compaction reports" do
-      scheduler(model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: true, history_size: 10, base:, messages: history,
-        ran_under: "claude-sonnet-4-6"
-      )
+      scheduling(need: need(:token_threshold), cold: true, history_size: 10, ran_under: "claude-sonnet-4-6",
+                 model: "claude-sonnet-4-6")
       compacting(model: "claude-sonnet-4-6", ran_under: "claude-opus-4-8")
       free, refused = records
 
@@ -223,24 +224,18 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     end
 
     it "renders byte-identically whether the quote is honoured or refused" do
-      honoured = scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history,
-        ran_under: "claude-sonnet-4-6"
-      )
-      refused = scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history,
-        ran_under: "claude-opus-4-8"
-      )
+      honoured = scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                            ran_under: "claude-sonnet-4-6", model: "claude-sonnet-4-6")
+      refused = scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                           ran_under: "claude-opus-4-8", model: "claude-sonnet-4-6")
 
       expect(Lain::Canonical.dump(rendered(refused, history)))
         .to eq(Lain::Canonical.dump(rendered(honoured, history)))
     end
 
     it "still hands the base back UNTOUCHED when it defers, whatever the models say" do
-      pipeline = scheduler(model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 10, base:, messages: history,
-        ran_under: "claude-opus-4-8"
-      )
+      pipeline = scheduling(need: need(:token_threshold), cold: false, history_size: 10, model: "claude-sonnet-4-6",
+                            ran_under: "claude-opus-4-8")
 
       expect(pipeline).to equal(base)
       expect(records).to be_empty
@@ -385,9 +380,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
 
   describe "NDJSON discipline (a stray write corrupts the experiment record)" do
     it "journals the compaction as exactly one JSON object per line" do
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       lines = journal_io.string.each_line.to_a
       expect(lines.size).to eq(1)
@@ -397,9 +391,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     it "does not disturb an existing Verdict record already on the journal" do
       journal << Lain::Telemetry::Verdict.new(digest: "abc", survived: true, score: 0.9, why: "matched")
 
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       expect(records.map { |r| r["type"] }).to eq(%w[verdict compaction])
       expect(records.first).to include("digest" => "abc", "survived" => true)
@@ -408,9 +401,8 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     it "does not disturb an existing OracleAnswer record already on the journal" do
       journal << Lain::Telemetry::OracleAnswer.new(oracle_digest: "def", question: "q?", answer: { "a" => 1 })
 
-      scheduler(hard_cap: 100, model: "claude-sonnet-4-6").pipeline(
-        need: need(:token_threshold), cold: false, history_size: 100, base:, messages: history
-      )
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
 
       expect(records.map { |r| r["type"] }).to eq(%w[oracle_answer compaction])
     end

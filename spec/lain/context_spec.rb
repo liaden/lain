@@ -53,6 +53,42 @@ module WithPipelineBases
   CACHE_ONLY = Ractor.make_shareable(->(_workspace) { Lain::Context::CacheBreakpoints.new })
 end
 
+# T17. The shape a compacting turn's pipeline has: a first stage that discards
+# whatever #render projected and substitutes a list of its own -- the derived
+# chain, in production ({Lain::Compaction::Source::Derived}'s Replay). It says so
+# through #reads_messages?, which is the only thing that lets #render skip a
+# projection nothing downstream can see.
+class ContextSpecSubstitute < Lain::Context::Combinator
+  def initialize(messages)
+    super()
+    @messages = Ractor.make_shareable(messages)
+    freeze
+  end
+
+  def call(_messages) = @messages
+
+  def reads_messages? = false
+end
+
+# The same substitution WITHOUT the declaration: it still discards its input, so
+# it must render byte-identically -- the projection is merely paid for.
+class ContextSpecSilentSubstitute < ContextSpecSubstitute
+  def reads_messages? = true
+end
+
+# The injected-pipeline duck AS DOCUMENTED: `#call` and `#requires`, and nothing
+# else. That pair is what `#pipeline_for` tests, what
+# {Lain::Compaction::Scheduler#pipeline} and {Lain::Plan::LinearRewrite} name as
+# "the same duck #render resolves", and what a bench user writing their own
+# strategy implements. It has never heard of `#reads_messages?` and must not have
+# to: T17 widened what #render asks a pipeline, and a bare send would have broken
+# every such object with a NoMethodError from inside #render.
+class ContextSpecPipelineDuck
+  def call(messages) = messages + [{ "role" => "user", "content" => [{ "type" => "text", "text" => "DUCKED" }] }]
+
+  def requires = [].freeze
+end
+
 RSpec.describe Lain::Context do
   subject(:context) { described_class.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
 
@@ -425,6 +461,66 @@ RSpec.describe Lain::Context do
           .not_to include("REMEMBER-ME")
         expect(built.render(timeline:, toolset:, workspace: live).messages.to_s).to include("REMEMBER-ME")
       end
+    end
+  end
+
+  # T17. A compacting turn renders through a pipeline whose first stage
+  # substitutes the derived chain, so #render's own projection of the timeline is
+  # built, walked over the whole Store, and thrown away unread. It is skipped
+  # now, and what must not move is the BYTES: skipping a projection nothing reads
+  # is only sound if the request is byte-identical either way.
+  describe "a pipeline that substitutes its own message list" do
+    let(:substituted) { [{ "role" => "user", "content" => text("substituted") }] }
+
+    it "renders what it substitutes, not the timeline's projection" do
+      rendered = context.with_pipeline(ContextSpecSubstitute.new(substituted)).render(timeline:, toolset:)
+
+      expect(rendered.messages).to eq(substituted)
+    end
+
+    # The parity that makes the skip invisible: the SAME substitution, once
+    # declaring it reads nothing and once not. `Identity >> substitute` reads its
+    # input (Identity does), so the projection is still made and still discarded.
+    it "renders byte-identically whether or not the projection was made" do
+      declared = context.with_pipeline(ContextSpecSubstitute.new(substituted))
+      undeclared = context.with_pipeline(ContextSpecSilentSubstitute.new(substituted))
+      composed = context.with_pipeline(Lain::Context::Identity >> ContextSpecSubstitute.new(substituted))
+
+      expect(declared.render(timeline:, toolset:)).to have_same_digest_as(undeclared.render(timeline:, toolset:))
+      expect(declared.render(timeline:, toolset:)).to have_same_digest_as(composed.render(timeline:, toolset:))
+    end
+
+    # The default is to READ, so every combinator that transforms rather than
+    # substitutes -- including the shipped pipeline -- goes on being handed the
+    # projection without declaring anything.
+    it "still projects the timeline for a pipeline that reads its messages" do
+      expect(Lain::Context::Identity.reads_messages?).to be(true)
+      expect(described_class.pipeline(Lain::Workspace.empty).reads_messages?).to be(true)
+      expect(context.render(timeline:, toolset:).messages.map { |message| message["role"] })
+        .to eq(%w[user assistant user])
+    end
+
+    # T17 review fix 1. The question #render asks a pipeline widened; the DUCK it
+    # accepts did not. Silence means "reads its messages", so an object that
+    # answers only the documented `#call`/`#requires` pair still renders, and a
+    # stage opts out of the projection only by claiming the saving itself.
+    it "renders through a pipeline duck that answers only #call and #requires" do
+      ducked = context.with_pipeline(ContextSpecPipelineDuck.new)
+
+      messages = ducked.render(timeline:, toolset:).messages
+
+      expect(messages.size).to eq(4)
+      expect(messages.last["content"].first["text"]).to eq("DUCKED")
+    end
+
+    # A composition is only as blind as its FIRST stage: nothing downstream of a
+    # substituting stage can see #render's projection, and a reading stage in
+    # front of one still needs it.
+    it "reads the messages when the first stage does, whatever follows it" do
+      substitute = ContextSpecSubstitute.new(substituted)
+
+      expect((substitute >> Lain::Context::Identity).reads_messages?).to be(false)
+      expect((Lain::Context::Identity >> substitute).reads_messages?).to be(true)
     end
   end
 end
