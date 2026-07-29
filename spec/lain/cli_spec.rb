@@ -29,13 +29,13 @@ RSpec.describe LainCLI do
       expect(provider.instance_variable_get(:@config).ollama_api_base).to eq("http://localhost:11434")
     end
 
-    it "constructs a Provider::AnthropicRaw for --provider anthropic" do
-      # AnthropicRaw reads ANTHROPIC_API_KEY at construction too (offline, no
+    it "constructs a Provider::Anthropic for --provider anthropic" do
+      # Anthropic reads ANTHROPIC_API_KEY at construction too (offline, no
       # request); a placeholder is enough to build the object.
       provider = with_env("ANTHROPIC_API_KEY" => "sk-test") do
         backend(provider: "anthropic").provider
       end
-      expect(provider).to be_a(Lain::Provider::AnthropicRaw)
+      expect(provider).to be_a(Lain::Provider::Anthropic)
     end
 
     it "fails loudly on an unknown provider, naming the valid set" do
@@ -44,10 +44,10 @@ RSpec.describe LainCLI do
     end
 
     it "constructs a Provider::Bedrock for --provider bedrock" do
-      # Bedrock is env-configured, same as Anthropic above: the Mantle client
-      # reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION at construction (offline,
-      # no request); stub them so the real client can be built without the
-      # developer's shell leaking in or the run failing for a missing region.
+      # Bedrock is env-configured, same as Anthropic above: Bedrock reads
+      # AWS_BEARER_TOKEN_BEDROCK / AWS_REGION at construction (offline, no
+      # request); stub them so the object can be built without the developer's
+      # shell leaking in or the run failing for a missing region.
       provider = with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
         backend(provider: "bedrock").provider
       end
@@ -105,7 +105,7 @@ RSpec.describe LainCLI do
   describe "the chat toolset" do
     let(:recorder) { Lain::Memory::Recorder.new }
     # The research subagent this toolset wires in builds its own provider
-    # eagerly (AnthropicRaw validates ANTHROPIC_API_KEY at construction, unlike
+    # eagerly (Anthropic validates ANTHROPIC_API_KEY at construction, unlike
     # the SDK client it replaced there -- see T17w), so building the toolset
     # at all needs a key present even though nothing here makes a request.
     let(:chat_toolset) do

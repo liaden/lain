@@ -43,7 +43,7 @@ toolset = Lain::Toolset.new([
   Lain::Tools::ListFiles.new
 ])
 
-provider = Lain::Provider::Anthropic.new
+provider = Lain::Provider::AnthropicReference.new
 
 agent = Lain::Agent.new(
   provider:,

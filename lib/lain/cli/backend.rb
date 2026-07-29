@@ -117,11 +117,11 @@ module Lain
       end
 
       # Anthropic reads its key from the environment; Ollama is local and takes an
-      # optional `--api-base` override; Bedrock is also env-configured (the
-      # Mantle client reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION itself, so no
-      # flag threads through here). An unknown name fails loudly, naming the
-      # valid set, as {UnknownProvider} (a bad flag is user error, surfaced by
-      # the exe as a clean Thor::Error, not a bug with a backtrace).
+      # optional `--api-base` override; Bedrock is also env-configured
+      # ({Provider::Bedrock} reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION
+      # itself, so no flag threads through here). An unknown name fails loudly,
+      # naming the valid set, as {UnknownProvider} (a bad flag is user error,
+      # surfaced by the exe as a clean Thor::Error, not a bug with a backtrace).
       #
       # @param name [String] WHICH provider to build, already validated against
       #   PROVIDERS -- the chat's by default. {#summarizer_provider} passes its
@@ -131,27 +131,30 @@ module Lain
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
       #   answers {Provider::Spool::Null}, never nil, so this is never an `if
-      #   spool` guard). Threaded straight into {Provider::AnthropicRaw}, the
+      #   spool` guard). Threaded straight into {Provider::Anthropic}, the
       #   only backend wired to tee to it: the Null spool -- no chronicle
       #   asked, e.g. bench (never passes spool: at all) or --no-journal chat
       #   -- just means nothing gets teed. Ollama and Bedrock never see the
       #   keyword at all: neither constructor accepts it, so nothing here
       #   risks handing it to them.
       #
-      # "anthropic" always means {Provider::AnthropicRaw} here: uniform retry
-      # telemetry and one spool-teeing transport regardless of --journal, same
-      # call bench already made; {Provider::Anthropic} (the SDK client) stays
-      # in the library as the #encode differential oracle, just not on this path.
+      # Both hosted names mean a RAW (vendored-transport) provider here:
+      # "anthropic" is {Provider::Anthropic} and "bedrock" is
+      # {Provider::Bedrock} -- uniform retry telemetry over one Faraday
+      # stack, the same call bench already made. The official-SDK classes are
+      # the `#encode` differential ORACLES and live in spec/support, so no run
+      # constructs one and the `anthropic` gem is not a runtime dependency.
       #
-      # @param channel [Lain::Channel] where {Provider::AnthropicRaw}'s retry
-      #   and CE-5 stream_started events land -- chat's live TTY Channel, so a
-      #   stream start actually reaches the frontend. Like spool it defaults to
-      #   the Null instance (headless/bench pass nothing, so their events land
-      #   nowhere) and Ollama/Bedrock never receive the keyword.
+      # @param channel [Lain::Channel] where a raw provider's retry and CE-5
+      #   stream_started events land -- chat's live TTY Channel, so a stream
+      #   start actually reaches the frontend. Like spool it defaults to the
+      #   Null instance (headless/bench pass nothing, so their events land
+      #   nowhere). Ollama does not accept it; Bedrock does, and gets it, so
+      #   its retries are as visible as the Anthropic arm's.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
         case name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
-        when "bedrock" then Provider::Bedrock.new
+        when "bedrock" then Provider::Bedrock.new(channel:)
         else anthropic_provider(spool, channel)
         end
       end
@@ -279,7 +282,7 @@ module Lain
 
       private
 
-      # Refuses BEFORE construction: {Provider::AnthropicRaw} validates the key
+      # Refuses BEFORE construction: {Provider::Anthropic} validates the key
       # eagerly too, but as {Provider::HTTP::ConfigurationError}, which is not a
       # {Lain::Error} and so reaches the operator as a raw backtrace instead of
       # the exe's clean Thor::Error mapping. Checking here keeps that mapping
@@ -289,7 +292,7 @@ module Lain
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::AnthropicRaw.new(spool:, channel:)
+        Provider::Anthropic.new(spool:, channel:)
       end
 
       # Validated once, so #provider and #default_model both key off a name
@@ -311,7 +314,7 @@ module Lain
         case name
         when "ollama" then Provider::Ollama::DEFAULT_MODEL
         when "bedrock" then Provider::Bedrock::DEFAULT_MODEL
-        else Provider::AnthropicRaw::DEFAULT_MODEL
+        else Provider::Anthropic::DEFAULT_MODEL
         end
       end
 

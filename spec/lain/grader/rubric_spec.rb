@@ -76,7 +76,7 @@ RSpec.describe Lain::Grader::Rubric do
 
       grade = described_class.new(
         criteria: "The answer must state that the capital of France is Paris.",
-        provider: Lain::Provider::Anthropic.new,
+        provider: Lain::Provider::AnthropicReference.new,
         model: "claude-opus-4-8"
       ).grade("The capital of France is Paris.")
 

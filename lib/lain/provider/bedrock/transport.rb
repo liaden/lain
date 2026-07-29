@@ -2,10 +2,10 @@
 
 module Lain
   class Provider
-    class BedrockRaw < Provider
+    class Bedrock < Provider
       # A thin subclass of the vendored Bedrock HTTP provider that exposes the
-      # two round trips {BedrockRaw} needs, while REUSING the vendored Faraday
-      # stack and SSE engine. It is a near-copy of {AnthropicRaw::Transport}, but
+      # two round trips {Bedrock} needs, while REUSING the vendored Faraday
+      # stack and SSE engine. It is a near-copy of {Anthropic::Transport}, but
       # that one is `class Transport < Provider::HTTP::Providers::Anthropic` --
       # bound by inheritance to the direct-Anthropic backend (api.anthropic.com,
       # x-api-key). This one subclasses {Provider::HTTP::Providers::Bedrock} so it
@@ -15,7 +15,7 @@ module Lain
       # Like its sibling it deliberately does NOT go through the vendored
       # `complete`/`render_payload` or `stream_response`: the payload is already
       # rendered by {AnthropicEncoding} and each parsed SSE event is handed
-      # straight out, so the block-preserving {AnthropicRaw::StreamAssembler} can
+      # straight out, so the block-preserving {Anthropic::StreamAssembler} can
       # do the reassembly.
       class Transport < Provider::HTTP::Providers::Bedrock
         # One non-streaming round trip. `faraday.response :json` has already parsed

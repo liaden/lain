@@ -1,60 +1,83 @@
 # frozen_string_literal: true
 
+require "faraday"
 require "json"
-require "anthropic"
+require "time"
+
+require_relative "anthropic/retry_tap"
+require_relative "anthropic/stream_assembler"
+require_relative "anthropic/transport"
 
 module Lain
   class Provider
-    # The reference provider, on the official `anthropic` gem (net/http, no
-    # Faraday). This is where Lain's neutral vocabulary is reconciled with the
-    # one wire format we treat as canonical; RubyLLM is measured against it.
+    # The forked provider: Lain's own HTTP transport instead of the official SDK.
     #
-    # == Why the streaming path is the default, and what it costs
+    # It shares {AnthropicEncoding} with {Provider::AnthropicReference}, so `#encode`
+    # produces byte-identical kwargs (the dry differential proves it), and drives
+    # the vendored Faraday/SSE stack through {Transport}. What it does NOT share is
+    # the SDK's -- or RubyLLM's -- response model: both flatten the content array,
+    # and this returns a {Lain::Response} carrying the FULL, ordered block list
+    # with every extended-thinking signature intact (gate 1).
     #
-    # Agentic turns want a large `max_tokens`, which exceeds the SDK's
-    # non-streaming ceiling, so {#complete} streams unless a Request opts out.
-    # Streaming buys one sharp asymmetry we have to pay for here rather than
-    # leaking upward: with raw-hash tool schemas (ours), the SDK never coerces a
-    # `tool_use` block's `input` -- it hands back the raw JSON *String* it
-    # accumulated. Non-streaming `create` returns it already parsed. Correctness
-    # gate 5 forbids anything above the Provider from string-matching serialized
-    # JSON, so {#complete} parses that String itself and both paths emerge
-    # identical: a Response whose `tool_use` inputs are parsed Hashes.
+    # == encode vs. the wire
+    #
+    # `#encode` returns the SDK's `system_:` kwargs so the dry-diff can compare it
+    # against the oracle. {#complete} rewrites that one key to the wire `system`
+    # and adds the top-level `stream` flag -- the only two places the neutral
+    # kwargs and the actual JSON body differ.
     class Anthropic < Provider
       include AnthropicEncoding
       include StreamStartedSignal
 
-      # A short prompt will not cache (Opus 4.8's minimum cacheable prefix is
-      # 4096 tokens), but that is silent rather than an error, so the default is
-      # generous enough to be worth caching when the caller does not say.
       DEFAULT_MODEL = "claude-opus-4-8"
+      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
 
-      # Only what this provider can actually demonstrate. Notably absent:
-      # server-side compaction and context editing live on the Beta message
-      # family, which this class deliberately does not target.
-      # `structured_output` here means tool-FORCING (force one tool, its input schema
-      # is the answer shape) -- a weaker guarantee than Ollama's grammar-constrained
-      # decoding under the same capability name. Argument-schema conformance rides on
-      # the model unless `strict_tools` is also engaged.
-      CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use structured_output].freeze
-
-      # Wraps every `Anthropic::Errors::*` so nothing above the Provider ever
-      # rescues an SDK class. The original is preserved as `#cause` (Ruby sets it
-      # automatically when we re-raise inside the rescue), so a caller that wants
-      # the wire details can still reach them without depending on the SDK type.
+      # Which Anthropic rate-limit reset header feeds faraday-retry's backoff.
+      # Anthropic returns several `anthropic-ratelimit-*-reset` headers as RFC3339
+      # timestamps; the exact one to honor should be confirmed against a live 429
+      # (see the plan's open questions) -- token limits bind first on large
+      # agentic prompts, so the tokens reset is the default until then.
       #
-      # UNRELATED to {AnthropicRaw::APIError}: same name, same shape, no shared
+      # T17w widens the stakes on this open question: this class used to be
+      # bench-only (a money-gated, explicitly opt-in recording path), so an
+      # unconfirmed backoff header was a contained risk. Backend now hands it
+      # live default --journal chat traffic, so a wrong header here throttles
+      # (or fails to throttle) ordinary conversations, not just `bench record`
+      # runs. Still not confirmed against a live 429 -- that confirmation is a
+      # named follow-up ticket, not something to chase in this fix round.
+      RATE_LIMIT_RESET_HEADER = "anthropic-ratelimit-tokens-reset"
+
+      NUMERIC_SECONDS = /\A\d+(\.\d+)?\z/
+
+      # faraday-retry's default header parser understands only seconds or an
+      # RFC2822 date. Anthropic's reset headers are RFC3339, and its `retry-after`
+      # is plain seconds, so one parser must handle both: a bare number is seconds,
+      # anything else is a timestamp turned into seconds-from-now (never negative).
+      RESET_HEADER_PARSER = lambda do |value|
+        string = value.to_s
+        return if string.empty?
+        return string.to_f if string.match?(NUMERIC_SECONDS)
+
+        [Time.iso8601(string) - Time.now, 0.0].max
+      rescue ArgumentError
+        nil
+      end
+
+      # Wraps a vendored transport error so nothing above the Provider rescues a
+      # Provider::HTTP class. The original is preserved as `#cause`.
+      #
+      # UNRELATED to {Anthropic::APIError}: same name, same shape, no shared
       # ancestor besides {Lain::Error} -- verified nothing above the Provider
       # rescues either by name today (Backend can now hand chat either backend
       # depending on whether journaling is on, see T17w). A future caller that
       # wants to rescue "an Anthropic API error" regardless of which backend
       # produced it must handle both explicitly, or a shared marker module must
-      # be introduced first -- do not assume `rescue Anthropic::APIError` catches
-      # an {AnthropicRaw} failure, or vice versa.
+      # be introduced first -- do not assume `rescue Anthropic::APIError`
+      # catches an {Anthropic} (SDK) failure, or vice versa.
       class APIError < Lain::Error; end
 
-      # A non-2xx response. `#status` is the HTTP status Integer, lifted out of
-      # the SDK error so callers can branch on it without unwrapping `#cause`.
+      # A non-2xx response; `#status` is lifted out so callers branch on it
+      # without unwrapping `#cause`.
       class APIStatusError < APIError
         attr_reader :status
 
@@ -64,111 +87,141 @@ module Lain
         end
       end
 
-      # @param client [Anthropic::Client, nil] injected in specs; a real client
-      #   reading ANTHROPIC_API_KEY from the environment otherwise.
-      # @param channel [Lain::Channel] where CE-5's stream_started event lands
-      def initialize(client: nil, channel: Channel::Null.instance, **client_options)
+      # @param transport [#sync_post, #stream] injected in specs; a real
+      #   {Transport} over the vendored connection otherwise.
+      # @param channel [Lain::Channel] where retry and stream_started (CE-5) events land
+      # @param sink [Lain::Sink] where the transport's debug/log lines go
+      # @param spool [#open_frame] where the raw response bytes are teed; the Null
+      #   spool by default, so no WAL file exists unless a session opts in
+      def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
+                     spool: Spool::Null.new, api_key: nil, api_base: nil)
         super()
-        @client = client || ::Anthropic::Client.new(**client_options)
         @channel = channel
+        @retries = RetryTap.new(spool:, channel:)
+        @config = config || build_config(api_key:, api_base:)
+        @transport = transport || Transport.new(@config, sink:)
       end
 
       def capabilities = CAPABILITIES
 
-      # The oracle's cache economics -- every other Anthropic-shaped backend
-      # (AnthropicRaw, Bedrock, BedrockRaw) answers with this exact object,
-      # promoted off what used to be a per-provider `CACHE_PROFILE` Hash
-      # constant here (CAC-2/F1) into {Lain::CacheProfile}, the neutral home.
+      # Same wire, same cache economics as the SDK oracle -- the dry
+      # differential proves #encode is byte-identical, so this must not drift.
       def cache_profile = CacheProfile::ANTHROPIC
 
-      # #encode is supplied by {AnthropicEncoding}, shared verbatim with
-      # {AnthropicRaw} so the two backends cannot drift apart on the wire.
-
-      # One round trip into a neutral Response. Streaming by default; both paths
-      # converge on parsed tool inputs and the FULL block list (text, thinking,
-      # tool_use), because dropping thinking or tool_use blocks corrupts the very
-      # next turn (correctness gate 1). `on_stream_started` is CE-5's signal --
-      # see {StreamStartedSignal}.
+      # One round trip into a neutral Response. Streaming by default (Context
+      # renders `stream: true`); both paths converge on the full block list and
+      # parsed tool inputs. `on_stream_started` is CE-5's signal -- see
+      # {StreamStartedSignal} -- never called on the non-streaming path.
       def complete(request, on_stream_started: nil)
         build_response(dispatch(request, on_stream_started))
-      rescue ::Anthropic::Errors::APIStatusError => e
-        raise APIStatusError.new(e.message, status: e.status)
-      rescue ::Anthropic::Errors::Error => e
+      rescue Provider::HTTP::Error => e
+        raise wrap_error(e)
+      rescue Faraday::Error => e
+        # Exhausted retries re-raise the last connection-level failure
+        # (ConnectionFailed, a timeout) as a bare Faraday class; nothing above
+        # the Provider rescues a transport class, so it wraps like the rest.
         raise APIError, e.message
       end
 
       private
 
+      def build_config(api_key:, api_base:)
+        config = Provider::HTTP::Configuration.new
+        config.anthropic_api_key = api_key || ENV.fetch("ANTHROPIC_API_KEY", nil)
+        config.anthropic_api_base = api_base unless api_base.nil?
+        # HTTP::Configuration's own request_timeout/max_retries (300 / 3) are
+        # vendored ruby_llm generic defaults, not Anthropic's -- T17w's fix round:
+        # Backend now hands this transport live --journal chat traffic where the
+        # SDK client (Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS = 600,
+        # DEFAULT_MAX_RETRIES = 2) used to sit, so the effective envelope must
+        # match those, not silently trade timeout/retry budget for a WAL. Set
+        # HERE, not on Configuration's own default, so Ollama/Bedrock (their own
+        # constructors, their own Configuration) are untouched; bench's raw
+        # provider inherits these too, which only tightens its fidelity.
+        config.request_timeout = 600
+        config.max_retries = 2
+        config.retry_block = @retries.retry_block
+        config.exhausted_retries_block = @retries.exhausted_block
+        config.rate_limit_reset_header = RATE_LIMIT_RESET_HEADER
+        config.header_parser_block = RESET_HEADER_PARSER
+        config
+      end
+
+      # The wire body: encode's `system_` kwarg becomes `system`, and `stream` is
+      # added as the top-level field the SDK expressed by method choice instead.
+      def wire_payload(request)
+        payload = encode(request)
+        payload[:system] = payload.delete(:system_) if payload.key?(:system_)
+        payload[:stream] = request.stream
+        payload
+      end
+
+      # The Provider owns frame opening (it computes the digest) AND attempt
+      # boundaries: the frame is threaded onto the request context so a retry
+      # rotates THIS request's frame rather than concatenating two attempts into
+      # one -- reentrant across parallel subagents sharing one Provider (see
+      # {RetryTap}).
       def dispatch(request, on_stream_started)
-        params = encode(request)
-        return @client.messages.create(params) unless request.stream
-
-        stream_dispatch(@client.messages.stream(params), request, on_stream_started)
+        payload = wire_payload(request)
+        frame = @retries.open_frame(request_digest: request.digest)
+        request.stream ? stream_dispatch(payload, frame, request, on_stream_started) : sync_dispatch(payload, frame)
       end
 
-      # The stream is single-pass: `MessageStream#each` drains the ONE
-      # memoized Enumerator `accumulated_message` also drains via its own
-      # `each {}` (see `MessageStream#until_done`), so this is that one pass,
-      # driven by us instead of by `accumulated_message` -- not a second one.
-      # The SDK's `fused_enum` guards its generator with a `fused` flag
-      # closed over the Enumerator itself, so calling `#each` again (inside
-      # `accumulated_message`, right after) is a documented-safe no-op that
-      # just returns the snapshot our pass already built, then applies
-      # `parse_content_blocks!` -- the ordinary, blessed way to finish. CE-5
-      # needs to see the moment the first event arrives (`message_start`,
-      # BEFORE any content_block event), and this is the only pass allowed,
-      # so it is also where the signal has to fire.
-      def stream_dispatch(stream, request, on_stream_started)
-        stream.each_with_index do |_event, index|
-          emit_stream_started(request, on_stream_started) if index.zero?
+      # CE-5: the FIRST data chunk the transport hands back is always the
+      # response's own first SSE event (`message_start`, ahead of any
+      # `content_block_start`), so signaling before handing it to the
+      # assembler is signaling before any content_block event -- no need to
+      # inspect `data["type"]` here. `signaled` covers the whole round trip,
+      # not just one attempt: a retry (see {RetryTap}) is still the SAME
+      # logical request, and a stagger scheduler awaiting `request.digest`
+      # wants exactly one signal for it, not one per attempt.
+      def stream_dispatch(payload, frame, request, on_stream_started)
+        assembler = StreamAssembler.new
+        signaled = false
+        @transport.stream(payload, frame:) do |data|
+          unless signaled
+            signaled = true
+            emit_stream_started(request, on_stream_started)
+          end
+          assembler.add(data)
         end
-        stream.accumulated_message
+        assembler.result
       end
 
-      def build_response(message)
-        Response.new(
-          id: message.id,
-          model: message.model,
-          content: message.content.map { |block| encode_block(block) },
-          stop_reason: message.stop_reason,
-          usage: build_usage(message.usage),
-          raw: message
-        )
+      def sync_dispatch(payload, frame)
+        body = @transport.sync_post(payload, frame:).body || {}
+        StreamAssembler::Assembled.new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
+                                       content: body["content"] || [], usage: body["usage"] || {})
       end
 
-      # Block `.type` is a Symbol on responses. We rebuild each block as a plain
-      # Hash rather than trusting `#to_h`, because the tool_use case must reparse
-      # a streamed String input; Canonical.normalize downstream stringifies the
-      # keys, which is intended.
-      def encode_block(block)
-        case block.type
-        when :text then { "type" => "text", "text" => block.text }
-        when :thinking then { "type" => "thinking", "thinking" => block.thinking, "signature" => block.signature }
-        when :redacted_thinking then { "type" => "redacted_thinking", "data" => block.data }
-        when :tool_use then encode_tool_use(block)
-        # Unknown block types survive as their raw payload rather than being
-        # dropped; the enums are non-exhaustive by contract.
-        else block.to_h
-        end
+      def build_response(assembled)
+        Response.new(id: assembled.id, model: assembled.model,
+                     content: normalize_tool_inputs(assembled.content),
+                     stop_reason: assembled.stop_reason, usage: build_usage(assembled.usage), raw: assembled)
       end
 
-      def encode_tool_use(block)
-        { "type" => "tool_use", "id" => block.id, "name" => block.name, "input" => parse_input(block.input) }
+      def normalize_tool_inputs(content)
+        content.map { |block| normalize_tool_input(block) }
       end
 
-      # The streaming trap, resolved: raw-hash tools yield `input` as a JSON
-      # String; `create` yields a parsed Hash. Parse only the former.
-      def parse_input(input)
-        input.is_a?(String) ? JSON.parse(input, symbolize_names: false) : input
+      # Belt-and-suspenders on the Response#tool_uses contract: the streaming
+      # assembler already parses tool inputs and the sync body arrives parsed, but
+      # a String must never reach the Timeline.
+      def normalize_tool_input(block)
+        return block unless block.is_a?(Hash) && block["type"] == "tool_use" && block["input"].is_a?(String)
+
+        block.merge("input" => JSON.parse(block["input"]))
       end
 
       def build_usage(usage)
-        Usage.new(
-          input_tokens: usage.input_tokens,
-          output_tokens: usage.output_tokens,
-          cache_creation_input_tokens: usage.cache_creation_input_tokens,
-          cache_read_input_tokens: usage.cache_read_input_tokens
-        )
+        Usage.new(input_tokens: usage["input_tokens"], output_tokens: usage["output_tokens"],
+                  cache_creation_input_tokens: usage["cache_creation_input_tokens"],
+                  cache_read_input_tokens: usage["cache_read_input_tokens"])
+      end
+
+      def wrap_error(error)
+        status = error.response.respond_to?(:status) ? error.response.status : nil
+        status ? APIStatusError.new(error.message, status:) : APIError.new(error.message)
       end
     end
   end

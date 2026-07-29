@@ -35,20 +35,20 @@ module Lain
     #
     # == Reassembly reuses the accumulator, not the transport
     #
-    # A complete frame holds the EXACT bytes {Provider::AnthropicRaw::Transport}
+    # A complete frame holds the EXACT bytes {Provider::Anthropic::Transport}
     # teed off the wire -- raw SSE lines, verbatim (see {Provider::ResponseWal}'s
     # header comment). `EventStreamParser::Parser` is the very parser class the
     # live streaming path drives (`Provider::HTTP::Streaming`); it is pure text
     # -- no socket, no Faraday -- so feeding it one recorded blob in a single
     # `#feed` call is indistinguishable to it from many small chunks off a
     # wire. The events it yields go straight into
-    # {Provider::AnthropicRaw::StreamAssembler}, the SAME block-preserving
+    # {Provider::Anthropic::StreamAssembler}, the SAME block-preserving
     # accumulator a live call uses, so a recovered {Response} is exactly what
     # the original call would have produced -- not a second, parallel parser.
     #
     # A frame the Reader marks complete cannot hold an in-band SSE error
     # event: {Provider::HTTP::Streaming::ErrorHandling} raises on one, which
-    # unwinds {Provider::AnthropicRaw::Transport#stream} before it ever reaches
+    # unwinds {Provider::Anthropic::Transport#stream} before it ever reaches
     # `frame.close(complete: true)`. So a complete frame is trusted to be a
     # clean, fully-terminated stream, with no error-event branch to reproduce
     # here.
@@ -214,14 +214,14 @@ module Lain
         Incomplete.new(request_digest: digest, bytes: frame.nil? ? 0 : frame.bytes.bytesize, corruption:)
       end
 
-      # A fresh {Provider::AnthropicRaw::StreamAssembler} for exactly one
+      # A fresh {Provider::Anthropic::StreamAssembler} for exactly one
       # frame -- the same lifetime a live round trip gives it. Referenced
       # lazily, inside a method body rather than at load time: `session_record.rb`
       # loads before `provider.rb` in `lain.rb`'s topological order, the same
       # lazy cross-unit reach {Replay#memory} already documents for
       # `Bench::Session::MemoryReplay`.
       def reassemble(frame)
-        assembler = Provider::AnthropicRaw::StreamAssembler.new
+        assembler = Provider::Anthropic::StreamAssembler.new
         sse_events(frame.bytes).each { |event| assembler.add(event) }
         build_response(assembler.result)
       end

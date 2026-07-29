@@ -2,7 +2,7 @@
 
 # T18: recovering a paid-for-but-uncommitted response from the response WAL
 # when a session resumes open. `frames` are built through the REAL
-# Provider::ResponseWal / Provider::AnthropicRaw pair wherever fidelity to
+# Provider::ResponseWal / Provider::Anthropic pair wherever fidelity to
 # production bytes matters (response_wal_spec's own precedent), rather than
 # hand-authored fixtures -- what proves this class works is that it reassembles
 # EXACTLY what the live streaming path would have produced.
@@ -36,13 +36,13 @@ RSpec.describe Lain::SessionRecord::Salvage do
       .to_return(status:, body:, headers: { "Content-Type" => "text/event-stream" })
   end
 
-  # Spools ONE response through the real AnthropicRaw provider, so the WAL
+  # Spools ONE response through the real Anthropic provider, so the WAL
   # frame left behind is byte-for-byte what a live crashed run would have
   # written (response_wal_spec's own "spools a streamed response verbatim"
   # precedent) -- the highest-fidelity input this spec can hand Salvage.
   def spool(response, request = anthropic_request)
     stub_stream(AnthropicSSE.body(response))
-    provider = Lain::Provider::AnthropicRaw.new(spool: Lain::Provider::ResponseWal.new(@wal_path), api_key: "test")
+    provider = Lain::Provider::Anthropic.new(spool: Lain::Provider::ResponseWal.new(@wal_path), api_key: "test")
     provider.complete(request)
     request.digest
   end
@@ -124,7 +124,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
       stub_request(:post, "https://api.anthropic.com/v1/messages")
         .to_raise(Faraday::ConnectionFailed)
         .to_return(status: 200, body: AnthropicSSE.body(canned), headers: { "Content-Type" => "text/event-stream" })
-      provider = Lain::Provider::AnthropicRaw.new(spool: Lain::Provider::ResponseWal.new(@wal_path), api_key: "test")
+      provider = Lain::Provider::Anthropic.new(spool: Lain::Provider::ResponseWal.new(@wal_path), api_key: "test")
       provider.complete(request)
 
       outcome = described_class.new(entries: [request_sent(request.digest)], frames:, timeline:).call

@@ -8,7 +8,7 @@ require "json"
 # and done_reason -> stop_reason normalization -- with no cassette and no
 # network. This is the Ollama analogue of spec/support/anthropic_sse.rb, and it
 # is what lets the shared "a Lain::Provider" parity group run against
-# Provider::Ollama exactly the way it runs against Mock and AnthropicRaw.
+# Provider::Ollama exactly the way it runs against Mock and Anthropic.
 #
 # Two Ollama-specific wrinkles the serializer bridges deliberately:
 #

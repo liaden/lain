@@ -18,7 +18,7 @@ module Lain
   #   forced-warm compaction pays a partial rebuild, not a full one.
   #
   # This is the neutral home for what used to be two separate per-provider
-  # Hash constants (`Provider::Anthropic::CACHE_PROFILE`,
+  # Hash constants (`Provider::AnthropicReference::CACHE_PROFILE`,
   # `Provider::Ollama::NO_CACHING_PROFILE`); every {Provider} now answers
   # `#cache_profile` with one of the instances below instead.
   CacheProfile = Data.define(:ttl, :min_prefix_tokens, :write_multiplier, :read_multiplier, :tiered_invalidation)
@@ -56,7 +56,7 @@ module Lain
     def to_hash = to_h
 
     # A CacheProfile and a plain Hash carrying the same fields are the SAME
-    # fact about a provider's cache economics: `Provider::Anthropic`'s and
+    # fact about a provider's cache economics: `Provider::AnthropicReference`'s and
     # `Provider::Ollama`'s specs were written against the old per-provider
     # Hash constants and compare `#cache_profile` to a Hash literal via `eq`
     # -- promoting the return value to this first-class type must not force
@@ -78,8 +78,8 @@ module Lain
     # The Anthropic Messages API shape: default 5-minute sliding TTL, 1.25x to
     # write, ~0.1x to read, tiered (tools -> system -> messages) so a
     # message-only rewrite survives the tools+system prefix. Shared verbatim
-    # by every Anthropic-wire-compatible backend (AnthropicRaw, Bedrock,
-    # BedrockRaw) so their numbers cannot drift from the oracle's -- same
+    # by every Anthropic-wire-compatible backend (Anthropic, Bedrock,
+    # Bedrock) so their numbers cannot drift from the oracle's -- same
     # constant, not a copy. Data instances are already frozen on
     # construction, so no explicit `.freeze` is needed here or below.
     ANTHROPIC = new(

@@ -13,7 +13,7 @@ require "webmock/rspec"
 #
 #   2. Path parity -- the same canned exchange served as a stream and as a single
 #      non-streaming body yields EQUAL Responses. This is the dry analogue of the
-#      SDK-oracle differential AnthropicRaw leans on.
+#      SDK-oracle differential Anthropic leans on.
 RSpec.describe Lain::Provider::Ollama, "streaming" do
   def request(**overrides)
     Lain::Request.new(model: "qwen3:4b", max_tokens: 64,

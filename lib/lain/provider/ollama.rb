@@ -45,7 +45,7 @@ module Lain
       # designed.
       # `structured_output` here is grammar-CONSTRAINED decoding (the native `format`
       # field) -- a stronger guarantee than Anthropic's tool-forcing under the same
-      # capability name. See Provider::Anthropic::CAPABILITIES.
+      # capability name. See Provider::AnthropicReference::CAPABILITIES.
       CAPABILITIES = %i[streaming thinking structured_output].freeze
 
       # Wraps a vendored transport error so nothing above the Provider rescues a
@@ -91,7 +91,7 @@ module Lain
       rescue Provider::HTTP::Error => e
         raise wrap_error(e)
       rescue Faraday::Error => e
-        # {Provider::AnthropicRaw#complete}'s second arm, and it was missing
+        # {Provider::Anthropic#complete}'s second arm, and it was missing
         # here. A non-2xx passes through the vendored ErrorMiddleware and
         # arrives as a {Provider::HTTP::Error}; a CONNECTION-level failure never
         # reaches that middleware at all, so exhausted retries re-raise the last

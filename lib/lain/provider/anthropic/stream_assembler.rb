@@ -4,7 +4,7 @@ require "json"
 
 module Lain
   class Provider
-    class AnthropicRaw < Provider
+    class Anthropic < Provider
       # Reassembles Anthropic's SSE events into the FULL, ordered content-block
       # list -- text, thinking, and tool_use alike -- keyed by the wire `index`.
       #

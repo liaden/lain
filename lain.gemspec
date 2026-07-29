@@ -52,16 +52,17 @@ Gem::Specification.new do |spec|
   # parking for ask_human promises and within-turn subagent fan-out. Promoted from the
   # spike-only dev group once adoption landed, exactly as the spike note promised.
   spec.add_dependency "async", "~> 2.34"
-  # The official SDK is kept as a correctness ORACLE, not as the default path: the
-  # forked transport is byte-diffed against `Provider::Anthropic#encode`, and one
-  # live differential run must produce an identical Lain::Response. It is retired
-  # only once the forked path has held. Retiring it costs us the dry-diff.
-  spec.add_dependency "anthropic", "~> 1.55"
-  # The SDK's Bedrock Mantle client requires aws-sdk-core BEFORE branching on auth
-  # mode, so even bearer-token auth -- which never touches SigV4 at runtime -- cannot
-  # construct a client without it. This satisfies that eager require and nothing more;
-  # SigV4 signing stays out of scope (planning/specs/bedrock-provider.md).
-  spec.add_dependency "aws-sdk-core", "~> 3"
+  # `anthropic` (the official SDK) and `aws-sdk-core` are deliberately NOT runtime
+  # dependencies -- see the `:test` group in the Gemfile.
+  #
+  # Both hosted provider names now resolve to a RAW arm over the vendored Faraday
+  # transport: `--provider anthropic` builds Provider::AnthropicRaw and
+  # `--provider bedrock` builds Provider::BedrockRaw (see CLI::Backend#provider).
+  # The SDK classes survive only as the `#encode` differential ORACLES those two
+  # are byte-diffed against, so they live in spec/support/provider_oracles/ and
+  # nothing a user installs ever loads them. Retiring the oracles entirely would
+  # cost us the dry-diff, so they stay -- as a test dependency.
+  #
   # The transport. Lain forks RubyLLM's HTTP layer (see lib/lain/provider/http/),
   # so Faraday is ours directly. The adapter is pinned rather than inferred, because
   # a bench that silently changed its HTTP client would silently change its timings.

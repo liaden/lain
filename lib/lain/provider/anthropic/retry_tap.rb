@@ -2,7 +2,7 @@
 
 module Lain
   class Provider
-    class AnthropicRaw < Provider
+    class Anthropic < Provider
       # The Provider's side of the faraday-retry seam: it journals every retry
       # as a {Telemetry::ProviderRetry}, and it owns the ATTEMPT BOUNDARIES of
       # the one in-flight round trip -- the live {Spool::RotatingFrame} is held

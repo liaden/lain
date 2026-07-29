@@ -83,7 +83,7 @@ RSpec.describe Lain::Bench::LiveReplay do
       require "lain/provider/anthropic"
 
       replay = described_class.new(
-        provider: Lain::Provider::Anthropic.new,
+        provider: Lain::Provider::AnthropicReference.new,
         toolset: Lain::Toolset.new([]),
         context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16, system: "Reply with one word."),
         journal:

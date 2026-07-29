@@ -4,9 +4,9 @@ require "json"
 
 # Turns a Lain::Response back into the Anthropic SSE events (and body) that would
 # have produced it, so a canned response can be replayed through the REAL
-# AnthropicRaw parsing path -- the block-preserving StreamAssembler and the
+# Anthropic parsing path -- the block-preserving StreamAssembler and the
 # response builder -- with no cassette and no network. This is what lets the
-# shared "a Lain::Provider" parity group run against AnthropicRaw exactly the way
+# shared "a Lain::Provider" parity group run against Anthropic exactly the way
 # it runs against Mock: hand it a sequence of Responses, get a provider that
 # yields them in order when driven through a real Agent loop.
 #

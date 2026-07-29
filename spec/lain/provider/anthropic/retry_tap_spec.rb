@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-RSpec.describe Lain::Provider::AnthropicRaw::RetryTap do
+RSpec.describe Lain::Provider::Anthropic::RetryTap do
   let(:channel) { RecordingChannel.new }
   let(:tap) { described_class.new(spool: Lain::Provider::Spool::Null.new, channel:) }
 

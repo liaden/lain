@@ -4,9 +4,9 @@
 #
 #   :vcr   replays a committed cassette through the REAL Faraday/SSE stack,
 #          proving the parse against a full recorded body -- free, offline.
-#   :live  one call each against the API, asserting AnthropicRaw and the SDK
+#   :live  one call each against the API, asserting Anthropic and the SDK
 #          oracle agree. Real money, opt-in (LAIN_LIVE=1), skipped otherwise.
-RSpec.describe Lain::Provider::AnthropicRaw do
+RSpec.describe Lain::Provider::Anthropic do
   def prompt
     Lain::Request.new(model: "claude-opus-4-8", max_tokens: 64,
                       system: "You are a terse assistant.",
@@ -17,7 +17,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
     # A synthetic, committed cassette (never real content). It carries a thinking
     # block with a signature, text, a tool_use, and usage with null cache fields.
     it "retains every block, the thinking signature, and maps null cache usage to zero",
-       vcr: { cassette_name: "anthropic_raw_streaming_tool_use" } do
+       vcr: { cassette_name: "anthropic_streaming_tool_use" } do
       response = described_class.new(api_key: "test").complete(prompt)
 
       expect(response.content.map { |block| block["type"] }).to eq(%w[thinking text tool_use])
@@ -38,7 +38,7 @@ RSpec.describe Lain::Provider::AnthropicRaw do
   describe "live differential against the SDK oracle", :live do
     it "yields the same content shape and stop_reason from both providers" do
       forked = described_class.new
-      oracle = Lain::Provider::Anthropic.new
+      oracle = Lain::Provider::AnthropicReference.new
 
       raw = forked.complete(prompt)
       ref = oracle.complete(prompt)

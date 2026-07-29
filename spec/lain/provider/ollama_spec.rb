@@ -278,7 +278,7 @@ RSpec.describe Lain::Provider::Ollama do
     # {Compaction::Strategy::Summarizing} rescues {Lain::Error} on purpose (a
     # NoMethodError from inside a tier is a defect to surface, not an outage to
     # absorb), so the containment has to be established HERE, exactly as
-    # {Provider::AnthropicRaw#complete} already establishes it.
+    # {Provider::Anthropic#complete} already establishes it.
     it "wraps an exhausted connection failure into APIError, not a bare Faraday class" do
       stub_request(:post, "http://localhost:11434/api/chat").to_raise(Faraday::ConnectionFailed)
 

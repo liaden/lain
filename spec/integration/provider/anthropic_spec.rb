@@ -5,7 +5,7 @@
 # and tiny max_tokens -- these cost money. Their job is to catch the things a
 # stub cannot: that the live streaming API really does hand back a JSON String
 # tool input, and that a real round trip lands as a neutral Response.
-RSpec.describe Lain::Provider::Anthropic, :integration do
+RSpec.describe Lain::Provider::AnthropicReference, :integration do
   subject(:provider) { described_class.new }
 
   it "completes a plain text round trip" do

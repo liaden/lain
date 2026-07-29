@@ -23,7 +23,7 @@ module Lain
       # exe/lain's method_options both read from here, so the flag help and
       # the library behavior cannot drift.
       RECORD_DEFAULTS = {
-        runs: 2, model: Provider::AnthropicRaw::DEFAULT_MODEL, max_tokens: 1024
+        runs: 2, model: Provider::Anthropic::DEFAULT_MODEL, max_tokens: 1024
       }.freeze
 
       # The three-section {Variance} report over recorded session files.
@@ -187,7 +187,7 @@ module Lain
       # to stub.
       #
       # @param provider [Lain::Provider, nil] injected in specs; nil resolves the
-      #   real recording provider (AnthropicRaw is key-gated; ollama/bedrock come
+      #   real recording provider (Anthropic is key-gated; ollama/bedrock come
       #   from {Lain::CLI::Backend})
       # @return [Array<String>] the written session paths, in run order
       def record(taskfile:, out:, runs: RECORD_DEFAULTS.fetch(:runs),
@@ -350,7 +350,7 @@ module Lain
         raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::AnthropicRaw.new
+        Provider::Anthropic.new
       end
 
       # Grades a run against THE TASK IT WAS GIVEN. {Arm::Driver} threads ONE

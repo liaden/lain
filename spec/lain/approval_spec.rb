@@ -300,7 +300,7 @@ RSpec.describe Lain::Approval::Queue do
     # park it cannot name. Building it as an ARGUMENT would evaluate it before
     # control entered the rescue, putting the guard's ArgumentError right back
     # outside the protection -- the same wedge, one line above the fix for it.
-    # Reachable: anthropic_raw/stream_assembler.rb:104 seeds "id" from a
+    # Reachable: anthropic/stream_assembler.rb:104 seeds "id" from a
     # skeleton that a content_block_start may omit, and Effect::ToolCall interns
     # `-nil.to_s` into "", which fails presence.
     it "denies rather than raising when the gated call carries no id to correlate on" do

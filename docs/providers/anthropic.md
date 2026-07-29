@@ -2,7 +2,7 @@
 
 The default provider, and the only one with two implementations on the same seam.
 
-| | `Provider::AnthropicRaw` | `Provider::Anthropic` |
+| | `Provider::Anthropic` | `Provider::AnthropicReference` |
 |---|---|---|
 | Transport | vendored Faraday + SSE (`lib/lain/provider/http/`) | the official `anthropic` gem (`net/http`, `connection_pool`) |
 | Role | the default path for `lain chat` and `lain bench record` | the correctness oracle |
@@ -46,7 +46,7 @@ cache by accident.
 because token limits bind first on large agentic prompts.
 
 **This is not yet confirmed against a live 429.** It used to be a contained risk when
-`AnthropicRaw` was bench-only, but it now carries live default chat traffic, so a wrong header
+`Anthropic` was bench-only, but it now carries live default chat traffic, so a wrong header
 here throttles ordinary conversations. Confirming it is a named follow-up ticket.
 
 `RESET_HEADER_PARSER` handles both formats faraday-retry needs: a bare number is seconds,
@@ -59,7 +59,7 @@ Each of these cost real debugging. They are verified, not remembered.
 - The stream accumulator is **`accumulated_message`**, not `get_final_message`. The stream is
   single-pass and `accumulated_message` mutates its snapshot.
 - On the **streaming** path with raw-hash tool schemas, `tool_use.input` arrives as a raw JSON
-  **String**. `Provider::AnthropicRaw` parses it, and nothing above the Provider may ever see it
+  **String**. `Provider::Anthropic` parses it, and nothing above the Provider may ever see it
   unparsed.
 - The system keyword is `system_:`, with a trailing underscore. `#encode` returns that form so
   the dry-diff can compare against the oracle; `#complete` rewrites it to the wire `system` and

@@ -130,4 +130,4 @@ against a WebMock-delivered event stream, including the error-event path
 What this branch still deliberately does **not** do (all `transport`'s job,
 stacked on top): stop `parse_completion_response` from flattening text/thinking
 blocks, map the vendored `Message`/`Content` onto `Lain::Response`/`Lain::Request`,
-and build `Provider::AnthropicRaw`.
+and build `Provider::Anthropic`.

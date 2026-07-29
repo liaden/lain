@@ -94,7 +94,7 @@ module Lain
             faraday.response :json
             # BELOW :json so its on_complete sees the wire body before the parse;
             # a strict no-op unless a request carries a WAL frame on its context
-            # (see AnthropicRaw::WalResponseTee), so every other request is
+            # (see Anthropic::WalResponseTee), so every other request is
             # untouched. Registered by that provider's transport at load.
             faraday.response :lain_wal_response_tee
             adapter = @config.respond_to?(:faraday_adapter) ? @config.faraday_adapter : :net_http

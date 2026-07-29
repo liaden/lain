@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Provider::Ollama against the SAME seven-gate group Mock and AnthropicRaw pass
+# Provider::Ollama against the SAME seven-gate group Mock and Anthropic pass
 # -- a new backend cannot land half-working. The canned Responses are replayed
 # through the REAL Ollama decode (OllamaWire serializes them into `/api/chat`
 # bodies), so every gate exercises the actual content reassembly, tool-call

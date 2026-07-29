@@ -81,7 +81,7 @@ RSpec.describe Lain::Agent do
   #
   # Gates 1-7 are verified provider-agnostically by the shared "a Lain::Provider"
   # group (spec/support/shared_examples/provider_parity.rb), driven against
-  # Provider::Mock in provider/mock_spec.rb and against AnthropicRaw. What stays
+  # Provider::Mock in provider/mock_spec.rb and against Anthropic. What stays
   # here is only what is Agent-specific and NOT in that group: the parallel-call
   # role sequence, the surfaced error/failure messages, usage accumulation, the
   # token ceiling, #rewind, and the state machine.

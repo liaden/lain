@@ -51,7 +51,7 @@ module Lain
         end
 
         # --no-journal's answer to {Chronicle#spool}: the same Null spool
-        # {Provider::AnthropicRaw} already defaults to, so a provider built
+        # {Provider::Anthropic} already defaults to, so a provider built
         # with it opens no `.wal` and creates no file -- the Null Object
         # duck, not a caller-side `if journal`.
         def spool = Provider::Spool::Null.new

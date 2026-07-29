@@ -3,172 +3,151 @@
 require "webmock/rspec"
 
 RSpec.describe Lain::Provider::Bedrock do
-  # A response content block, faked at the shape the SDK actually returns:
-  # `.type` is a Symbol, and a streamed tool_use's `.input` is a raw String.
-  def block(**attrs)
-    Struct.new(*attrs.keys, keyword_init: true).new(**attrs)
+  def request(**overrides)
+    Lain::Request.new(model: "anthropic.claude-opus-4-8", max_tokens: 64,
+                      messages: [{ role: "user", content: "hi" }], **overrides)
   end
 
-  def text_block(text) = block(type: :text, text:)
-
-  def tool_use_block(input:, id: "toolu_1", name: "read_file")
-    block(type: :tool_use, id:, name:, input:)
+  # A transport double that only needs to exist so no real Transport/Connection
+  # is built; the config is still constructed by #build_config.
+  def null_transport
+    Class.new do
+      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new({}) }
+    end.new
   end
 
-  def usage_double(input: 10, output: 5)
-    block(input_tokens: input, output_tokens: output,
-          cache_creation_input_tokens: nil, cache_read_input_tokens: nil)
-  end
-
-  def message_double(content:, stop_reason: :end_turn)
-    block(id: "msg_1", model: "anthropic.claude-opus-4-8", content:, stop_reason:, usage: usage_double)
-  end
-
-  # A doubled Mantle client: a single-pass stream whose `accumulated_message`
-  # yields the message. Injected so no unit test touches the network.
-  def client_returning(message)
-    stream = instance_double("Anthropic::Streaming::MessageStream", accumulated_message: message)
-    messages = instance_double("Anthropic::Resources::Messages", stream:)
-    instance_double("Anthropic::BedrockMantleClient", messages:)
-  end
-
-  subject(:provider) { described_class.new(client:) }
-
-  let(:client) { client_returning(message_double(content: [text_block("hi")])) }
-
-  describe "provider contract subset" do
-    it "claims exactly the Bedrock feature mask, as its own literal list" do
-      expect(provider.capabilities).to eq(%i[streaming prompt_caching thinking parallel_tool_use])
+  describe "the wire payload" do
+    let(:rich_request) do
+      Lain::Request.new(
+        model: "anthropic.claude-opus-4-8", max_tokens: 1024, stream: true,
+        system: [{ type: "text", text: "be terse", "cache" => true }],
+        tools: [{ name: "read_file", description: "read", strict: true,
+                  input_schema: { type: "object", properties: {}, required: [] } }],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi", "cache" => true }] }]
+      )
     end
 
-    it "owns its CAPABILITIES constant rather than aliasing another provider's" do
-      expect(described_class::CAPABILITIES).not_to be(Lain::Provider::Anthropic::CAPABILITIES)
+    it "keeps model in the body, rewrites system_ to system, and sets stream" do
+      provider = described_class.new(transport: null_transport)
+      payload = provider.send(:wire_payload, rich_request)
+
+      expect(payload[:model]).to eq("anthropic.claude-opus-4-8")
+      expect(payload).to have_key(:system)
+      expect(payload).not_to have_key(:system_)
+      expect(payload[:stream]).to be(true)
     end
+  end
 
-    # Mantle's request validator rejects tools' `strict` as an extra input
-    # (a live 400: "tools.0.custom.strict: Extra inputs are not permitted"),
-    # so the shared encoding must keep the field off Bedrock's wire while
-    # Anthropic -- which claims :strict_tools -- still emits it.
-    it "masks the strict field out of every encoded tool" do
-      request = Lain::Request.new(model: "m", max_tokens: 1,
-                                  tools: [{ name: "t", description: "d", strict: true,
-                                            input_schema: { type: :object, properties: {}, required: [] } }],
-                                  messages: [{ role: "user", content: "hi" }])
-
-      expect(provider.encode(request)[:tools].first).not_to have_key("strict")
-    end
-
-    it "encodes deterministically across Hashes built with keys in opposite order" do
-      one = Lain::Request.new(model: "m", max_tokens: 1,
-                              tools: [{ name: "t", description: "d",
-                                        input_schema: { type: :object, properties: {}, required: [] } }],
-                              messages: [{ role: "user", content: [{ type: "text", text: "x" }] }])
-      two = Lain::Request.new(max_tokens: 1, model: "m",
-                              messages: [{ content: [{ text: "x", type: "text" }], role: "user" }],
-                              tools: [{ input_schema: { required: [], properties: {}, type: :object },
-                                        description: "d", name: "t" }])
-
-      expect(JSON.generate(provider.encode(one))).to eq(JSON.generate(provider.encode(two)))
+  describe "DEFAULT_MODEL and encode parity with the oracle" do
+    let(:shared_request) do
+      Lain::Request.new(
+        model: "anthropic.claude-opus-4-8", max_tokens: 512,
+        system: [{ type: "text", text: "be terse", "cache" => true }],
+        tools: [{ name: "read_file", description: "read", strict: true,
+                  input_schema: { type: "object", properties: {}, required: [] } }],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi", "cache" => true }] }],
+        extra: { temperature: 0.2 }
+      )
     end
 
     it "defaults to the anthropic.-prefixed Bedrock model id" do
       expect(described_class::DEFAULT_MODEL).to eq("anthropic.claude-opus-4-8")
     end
-  end
 
-  describe "default client" do
-    it "is an Anthropic::BedrockMantleClient, constructed in bearer mode without aws-sdk-core complaints" do
-      provider = nil
-      expect { provider = described_class.new(api_key: "tok", aws_region: "us-east-1") }.not_to raise_error
-      expect(provider.instance_variable_get(:@client)).to be_a(Anthropic::BedrockMantleClient)
+    it "encodes byte-identically to the Provider::BedrockReference SDK oracle" do
+      forked = described_class.new(transport: null_transport)
+      oracle = Lain::Provider::BedrockReference.new(client: Object.new)
+
+      expect(forked.encode(shared_request)).to eq(oracle.encode(shared_request))
     end
   end
 
-  # The one test that exercises the real SDK end-to-end over a stubbed socket:
-  # it proves the derived Mantle URL, the bearer Authorization header, the model
-  # riding in the JSON body, and that a streamed tool_use `input` genuinely
-  # arrives as a JSON String from the accumulator before we parse it.
-  describe "over the wire (webmock)" do
+  describe "#build_config env fallbacks at the provider layer" do
+    it "reads bedrock_api_key and bedrock_region from AWS_BEARER_TOKEN_BEDROCK and AWS_REGION" do
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with("AWS_BEARER_TOKEN_BEDROCK", nil).and_return("env-token")
+      allow(ENV).to receive(:fetch).with("AWS_REGION", nil).and_return("us-west-2")
+
+      provider = described_class.new(transport: null_transport)
+      config = provider.instance_variable_get(:@config)
+
+      expect(config.bedrock_api_key).to eq("env-token")
+      expect(config.bedrock_region).to eq("us-west-2")
+    end
+
+    it "prefers explicit kwargs over the environment" do
+      allow(ENV).to receive(:fetch).and_call_original
+      allow(ENV).to receive(:fetch).with("AWS_BEARER_TOKEN_BEDROCK", nil).and_return("env-token")
+      allow(ENV).to receive(:fetch).with("AWS_REGION", nil).and_return("us-west-2")
+
+      provider = described_class.new(transport: null_transport, api_key: "explicit", region: "eu-central-1")
+      config = provider.instance_variable_get(:@config)
+
+      expect(config.bedrock_api_key).to eq("explicit")
+      expect(config.bedrock_region).to eq("eu-central-1")
+    end
+  end
+
+  # The real Connection reaches the Mantle endpoint intact: the /anthropic path
+  # suffix of the derived base URL must survive Faraday's URL join (the named
+  # join trap), and bearer auth must ride, never x-api-key.
+  describe "the real Connection reaches the Mantle endpoint (webmock, offline)" do
     let(:endpoint) { "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages" }
 
     let(:sse) do
-      <<~SSE
-        event: message_start
-        data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"anthropic.claude-opus-4-8","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_creation_input_tokens":null,"cache_read_input_tokens":null}}}
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"let me look"}}
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"read_file","input":{}}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\": \\"lib/x.rb\\"}"}}
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1}
-
-        event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":15}}
-
-        event: message_stop
-        data: {"type":"message_stop"}
-      SSE
+      AnthropicSSE.body(Lain::Response.new(id: "msg_1", model: "anthropic.claude-opus-4-8",
+                                           stop_reason: :end_turn,
+                                           content: [{ "type" => "text", "text" => "ok" }]))
     end
 
-    let(:request) do
-      Lain::Request.new(
-        model: "anthropic.claude-opus-4-8", max_tokens: 10, stream: true,
-        tools: [{ name: "read_file", description: "read",
-                  input_schema: { type: "object", properties: {}, required: [] } }],
-        messages: [{ role: "user", content: "hi" }]
-      )
-    end
-
-    it "POSTs to the derived Mantle endpoint with bearer auth and keeps every block, inputs parsed" do
+    it "POSTs to the derived Mantle endpoint with bearer auth and no x-api-key" do
       stub_request(:post, endpoint)
         .to_return(status: 200, body: sse, headers: { "Content-Type" => "text/event-stream" })
 
-      provider = described_class.new(api_key: "tok", aws_region: "us-east-1")
-      response = provider.complete(request)
+      provider = described_class.new(api_key: "tok", region: "us-east-1")
+      provider.complete(request(stream: true))
 
-      expect(a_request(:post, endpoint).with(headers: { "Authorization" => "Bearer tok" }) do |req|
-        expect(JSON.parse(req.body)).to include("model" => "anthropic.claude-opus-4-8")
-      end).to have_been_made
-      expect(response.content.map { |b| b["type"] }).to eq(%w[text tool_use])
-      expect(response.tool_uses.first["input"]).to eq("path" => "lib/x.rb")
-      expect(response).to stop_with(:tool_use)
+      expect(a_request(:post, endpoint).with(headers: { "Authorization" => "Bearer tok" }))
+        .to have_been_made
+      expect(a_request(:post, endpoint).with { |req| req.headers.key?("X-Api-Key") })
+        .not_to have_been_made
     end
   end
 
-  describe "errors and prices" do
-    let(:request) { Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }]) }
+  # Step C, end to end through the REAL vendored Faraday stack + faraday-retry:
+  # a 429 carrying a reset header must journal exactly ONE retry event. A silent
+  # retry hides real spend.
+  describe "retry journaling over the real transport" do
+    let(:channel) { RecordingChannel.new }
+    let(:endpoint) { "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages" }
 
-    it "wraps an SDK APIStatusError in its own, preserving the Integer status and the cause" do
-      sdk_error = Anthropic::Errors::RateLimitError.new(
-        url: URI("https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages"), status: 429,
-        headers: nil, body: nil, request: nil, response: nil, message: "slow down"
-      )
-      messages = instance_double("Anthropic::Resources::Messages")
-      allow(messages).to receive(:stream).and_raise(sdk_error)
-      provider = described_class.new(client: instance_double("Anthropic::BedrockMantleClient", messages:))
-
-      expect { provider.complete(request) }.to raise_error(Lain::Provider::Bedrock::APIStatusError) do |wrapped|
-        expect(wrapped.status).to eq(429)
-        expect(wrapped.cause).to be(sdk_error)
-        expect(wrapped).to be_a(Lain::Error)
-      end
+    let(:success_body) do
+      JSON.generate("id" => "msg_1", "model" => "anthropic.claude-opus-4-8", "stop_reason" => "end_turn",
+                    "content" => [{ "type" => "text", "text" => "ok" }],
+                    "usage" => { "input_tokens" => 1, "output_tokens" => 1 })
     end
 
-    it "resolves the anthropic.-prefixed model id to the opus price row" do
-      expect(Lain::PriceBook::DEFAULT.price("anthropic.claude-opus-4-8"))
-        .to eq(Lain::PriceBook::DEFAULTS.fetch("opus"))
+    let(:error_body) do
+      JSON.generate("type" => "error", "error" => { "type" => "rate_limit_error", "message" => "x" })
+    end
+
+    before do
+      allow_any_instance_of(Faraday::Retry::Middleware).to receive(:sleep)
+      stub_request(:post, endpoint)
+        .to_return(status: 429, body: error_body,
+                   headers: { "anthropic-ratelimit-tokens-reset" => "2", "Content-Type" => "application/json" })
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: success_body)
+    end
+
+    it "journals exactly one ProviderRetry" do
+      provider = described_class.new(channel:, api_key: "tok", region: "us-east-1")
+
+      provider.complete(request(stream: false))
+
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
+      expect(retries.size).to eq(1)
+      expect(retries.first.status).to eq(429)
+      expect(retries.first.attempt).to eq(1)
     end
   end
 end

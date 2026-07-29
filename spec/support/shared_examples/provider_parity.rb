@@ -15,10 +15,10 @@
 #     them in order when driven through a real Lain::Agent loop.
 #     Lain::Provider::Mock satisfies this directly:
 #       ->(responses) { Lain::Provider::Mock.new(responses: responses) }
-#     A live/cassette-backed provider (Provider::AnthropicRaw, landing on the
+#     A live/cassette-backed provider (Provider::Anthropic, landing on the
 #     `transport` branch) needs a cassette recorded to reproduce the same
 #     Response sequence -- this group deliberately does NOT run against
-#     Provider::Anthropic yet, but any provider handed through
+#     Provider::AnthropicReference yet, but any provider handed through
 #     provider_factory slots in unchanged. The seam is here, waiting.
 #
 # Example:

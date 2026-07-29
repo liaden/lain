@@ -1,11 +1,17 @@
 # Bedrock
 
-Anthropic models through AWS Bedrock's Mantle endpoint, on the official SDK's
-`Anthropic::BedrockMantleClient`.
+Anthropic models through AWS Bedrock's Mantle endpoint. `--provider bedrock` builds
+`Provider::Bedrock`, which reaches Mantle over Lain's own vendored Faraday transport — the same
+stack `Provider::Anthropic` uses for the direct API.
+
+`Provider::BedrockReference`, on the official SDK's `Anthropic::BedrockMantleClient`, is the
+`#encode` differential ORACLE that arm is byte-diffed against. It lives in
+`spec/support/provider_oracles/` and no run constructs it, which is why neither `anthropic` nor
+`aws-sdk-core` is a runtime dependency.
 
 Mantle speaks the plain Anthropic Messages API over SSE (model in the body, ordinary streaming),
 so `AnthropicEncoding` is shared verbatim with [`Provider::Anthropic`](anthropic.md). Only the
-client, the model ids, and the endpoint differ.
+endpoint, the credentials, and the model ids differ.
 
 ## Setup
 
@@ -18,11 +24,13 @@ export AWS_REGION=us-east-1
 lain --provider bedrock
 ```
 
-There is no `--api-key` or `--region` flag. The Mantle client reads both from the environment
-itself, or from `api_key:` / `aws_region:` when you construct `Provider::Bedrock` directly.
+There is no `--api-key` or `--region` flag. `Provider::Bedrock` reads both from the environment
+itself, or from `api_key:` / `region:` when you construct it directly. (The
+`Provider::BedrockReference` oracle takes `aws_region:` instead — the SDK's own keyword.)
 
-`aws-sdk-core` is a gem dependency for exactly one reason: the SDK requires it eagerly at client
-construction, before it branches on auth mode. Bearer mode never uses it.
+`aws-sdk-core` is a **test** dependency for exactly one reason: the SDK requires it eagerly at
+client construction, before it branches on auth mode, so the oracle cannot be built without it.
+Bearer mode never uses it, and the shipped arm never loads it.
 
 ## Model ids
 
@@ -60,9 +68,12 @@ minimum cacheable prefix applies here too.
 
 ## Errors
 
-Every `Anthropic::Errors::*` is wrapped so nothing above the Provider ever rescues an SDK class.
-The original survives as `#cause`.
+Every transport failure is wrapped so nothing above the Provider ever rescues a Faraday (or, in
+the oracle's case, an SDK) class. The original survives as `#cause`.
 
 - `Provider::Bedrock::APIError` is the base, and it is a `Lain::Error`.
-- `Provider::Bedrock::APIStatusError` carries `#status` as an Integer, lifted out of the SDK
-  error so you can branch on the HTTP status without unwrapping `#cause`.
+- `Provider::Bedrock::APIStatusError` carries `#status` as an Integer, so you can branch on the
+  HTTP status without unwrapping `#cause`.
+
+`Provider::BedrockReference` defines its own same-named pair with no shared ancestor beyond
+`Lain::Error`. Rescuing "a Bedrock API error" across both means handling both explicitly.

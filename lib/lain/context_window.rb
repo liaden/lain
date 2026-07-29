@@ -19,8 +19,8 @@ module Lain
     class UnknownModel < Error; end
 
     # Context windows in tokens, for the Anthropic model families this bench
-    # actually targets (`Provider::AnthropicRaw::DEFAULT_MODEL` is
-    # "claude-opus-4-8"; `Provider::Bedrock::DEFAULT_MODEL` is
+    # actually targets (`Provider::Anthropic::DEFAULT_MODEL` is
+    # "claude-opus-4-8"; `Provider::BedrockReference::DEFAULT_MODEL` is
     # "anthropic.claude-opus-4-8", which still resolves through the "opus"
     # token). Figures are Anthropic's published context windows: Opus
     # (4.6/4.7/4.8) and Sonnet 4.6 are 1,000,000 tokens at standard pricing

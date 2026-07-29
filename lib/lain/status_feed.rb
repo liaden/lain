@@ -166,7 +166,7 @@ module Lain
     # The TTL used when no caller injects a provider's own `#cache_profile`
     # (CAC-2, planning/specs/cache-aware-compaction.md) -- Anthropic's default
     # 5-minute sliding window (planning/interface-integration.md § 1). Kept
-    # here rather than reaching into `Provider::Anthropic::CACHE_PROFILE`
+    # here rather than reaching into `Provider::AnthropicReference::CACHE_PROFILE`
     # because `lib/lain.rb` loads this file BEFORE `lib/lain/provider.rb`;
     # depending forward on a not-yet-loaded unit would invert that order.
     DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze

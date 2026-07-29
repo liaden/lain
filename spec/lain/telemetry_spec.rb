@@ -505,7 +505,7 @@ RSpec.describe Lain::Telemetry do
   end
 
   # A raising `on_stream_started` observer must not cost #complete its
-  # response (see Provider::Anthropic/AnthropicRaw specs for that half); this
+  # response (see Provider::AnthropicReference/Anthropic specs for that half); this
   # is the loud, attributed record of the failure instead of a swallowed one.
   describe Lain::Telemetry::ObserverFailed do
     subject(:event) { described_class.new(hook: :stream_started, digest: "blake3:req", message: "boom") }

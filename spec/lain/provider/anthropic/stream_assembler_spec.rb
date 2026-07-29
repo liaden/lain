@@ -4,7 +4,7 @@
 # used to live. These assertions are exactly what the vendored StreamAccumulator
 # CANNOT satisfy: every block survives in order, and every thinking signature
 # survives -- not just the first.
-RSpec.describe Lain::Provider::AnthropicRaw::StreamAssembler do
+RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
   # Feed a full, ordered turn one event at a time, the way the transport does.
   def feed(assembler, events)
     events.each { |event| assembler.add(event) }

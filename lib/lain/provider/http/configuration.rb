@@ -70,7 +70,7 @@ module Lain
         option :faraday_adapter, :net_http
         # faraday-retry callbacks and rate-limit knobs. Left nil so the vendored
         # default retry stays silent; a provider that wants retries JOURNALED
-        # (see Provider::AnthropicRaw) sets these, and MiddlewareStack forwards
+        # (see Provider::Anthropic) sets these, and MiddlewareStack forwards
         # them so the retry becomes visible instead of invisible spend.
         option :retry_block, nil
         option :exhausted_retries_block, nil

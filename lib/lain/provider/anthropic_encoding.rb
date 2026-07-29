@@ -5,7 +5,7 @@ module Lain
     # The neutral-Request -> Anthropic-kwargs encoding, shared by both Anthropic
     # backends so it cannot drift between them.
     #
-    # {Provider::Anthropic} (the SDK oracle) and {Provider::AnthropicRaw} (the
+    # {Provider::AnthropicReference} (the SDK oracle) and {Provider::Anthropic} (the
     # forked HTTP transport) must send byte-identical payloads -- that is the
     # whole point of the dry differential `raw.encode(req) == sdk.encode(req)`,
     # which VCR structurally cannot prove because cassettes match on method+URI,
@@ -14,7 +14,7 @@ module Lain
     # the encoder lives here, not inside the SDK class.
     #
     # The output uses the SDK's `system_:` keyword (trailing underscore), because
-    # the dry-diff compares against the SDK's kwargs. {AnthropicRaw} rewrites that
+    # the dry-diff compares against the SDK's kwargs. {Anthropic} rewrites that
     # to the wire `system` key on the way out; see its `#complete`.
     #
     # The encoder consults the includer's `#supports?` for capability-gated

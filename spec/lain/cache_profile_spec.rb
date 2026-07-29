@@ -14,10 +14,10 @@ RSpec.describe Lain::CacheProfile do
   # not nil -- a scheduler (CAC-3/4) reads real numbers off it.
   describe "every shipped provider answers cache_profile" do
     {
-      "Anthropic" => -> { Lain::Provider::Anthropic.new(client: Object.new) },
-      "AnthropicRaw" => -> { Lain::Provider::AnthropicRaw.new(transport: Object.new) },
-      "Bedrock" => -> { Lain::Provider::Bedrock.new(client: Object.new) },
-      "BedrockRaw" => -> { Lain::Provider::BedrockRaw.new(transport: Object.new) },
+      "AnthropicReference" => -> { Lain::Provider::AnthropicReference.new(client: Object.new) },
+      "Anthropic" => -> { Lain::Provider::Anthropic.new(transport: Object.new) },
+      "BedrockReference" => -> { Lain::Provider::BedrockReference.new(client: Object.new) },
+      "Bedrock" => -> { Lain::Provider::Bedrock.new(transport: Object.new) },
       "Ollama" => -> { Lain::Provider::Ollama.new(transport: Object.new) },
       "Mock" => -> { Lain::Provider::Mock.new }
     }.each do |name, build|
@@ -28,20 +28,21 @@ RSpec.describe Lain::CacheProfile do
   end
 
   describe "the Anthropic-wire profile" do
-    # AnthropicRaw/Bedrock/BedrockRaw share Anthropic's numbers verbatim --
-    # same wire, same cache economics -- so this asserts they are the
-    # IDENTICAL object, not merely equal values that could drift apart later.
+    # The shipped arms (Anthropic, Bedrock) and the SDK references they are
+    # diffed against all share Anthropic's numbers verbatim -- same wire, same
+    # cache economics -- so this asserts they are the IDENTICAL object, not
+    # merely equal values that could drift apart later.
     it "is the same object across every Anthropic-shaped backend" do
-      anthropic = Lain::Provider::Anthropic.new(client: Object.new).cache_profile
-      raw = Lain::Provider::AnthropicRaw.new(transport: Object.new).cache_profile
-      bedrock = Lain::Provider::Bedrock.new(client: Object.new).cache_profile
-      bedrock_raw = Lain::Provider::BedrockRaw.new(transport: Object.new).cache_profile
+      reference = Lain::Provider::AnthropicReference.new(client: Object.new).cache_profile
+      anthropic = Lain::Provider::Anthropic.new(transport: Object.new).cache_profile
+      bedrock_reference = Lain::Provider::BedrockReference.new(client: Object.new).cache_profile
+      bedrock = Lain::Provider::Bedrock.new(transport: Object.new).cache_profile
 
-      expect([raw, bedrock, bedrock_raw]).to all(equal(anthropic))
+      expect([anthropic, bedrock_reference, bedrock]).to all(equal(reference))
     end
 
     it "reports Opus's real numbers: 5-minute sliding TTL and a 4096-token floor" do
-      profile = Lain::Provider::Anthropic.new(client: Object.new).cache_profile
+      profile = Lain::Provider::AnthropicReference.new(client: Object.new).cache_profile
 
       expect(profile.ttl).to eq(300)
       expect(profile.min_prefix_tokens).to eq(described_class::MINIMUM_CACHEABLE_TOKENS)
@@ -73,7 +74,7 @@ RSpec.describe Lain::CacheProfile do
   end
 
   # A CacheProfile stands in for the two per-provider Hash constants it
-  # replaced (`Provider::Anthropic::CACHE_PROFILE`,
+  # replaced (`Provider::AnthropicReference::CACHE_PROFILE`,
   # `Provider::Ollama::NO_CACHING_PROFILE`) at every call site that predates
   # it: StatusFeed and Compaction::Cold both read `profile[:ttl]` without
   # knowing the concrete type, and the pre-existing anthropic_spec.rb /

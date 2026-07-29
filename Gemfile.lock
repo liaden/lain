@@ -3,9 +3,7 @@ PATH
   specs:
     lain (0.1.0)
       activemodel (~> 8.0)
-      anthropic (~> 1.55)
       async (~> 2.34)
-      aws-sdk-core (~> 3)
       event_stream_parser (~> 1.0)
       faraday (~> 2.14)
       faraday-net_http (~> 3.4)
@@ -283,6 +281,8 @@ PLATFORMS
   x86_64-linux
 
 DEPENDENCIES
+  anthropic (~> 1.55)
+  aws-sdk-core (~> 3)
   benchmark-ips (~> 2.15)
   bootsnap (~> 1.18)
   debug (~> 1.11)

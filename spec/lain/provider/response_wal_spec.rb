@@ -360,7 +360,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
     sse = AnthropicSSE.body(canned)
     stub_messages(status: 200, body: sse, content_type: "text/event-stream")
     spool = Lain::Provider::ResponseWal.new(path("stream"))
-    provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+    provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
     req = request(stream: true)
     provider.complete(req)
@@ -378,7 +378,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
                          "usage" => { "input_tokens" => 3, "output_tokens" => 2 })
     stub_messages(status: 200, body:, content_type: "application/json")
     spool = Lain::Provider::ResponseWal.new(path("sync"))
-    provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+    provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
     req = request(stream: false)
     response = provider.complete(req)
@@ -404,7 +404,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
         .to_raise(Faraday::ConnectionFailed)
         .to_return(status: 200, body: sse, headers: { "Content-Type" => "text/event-stream" })
       spool = Lain::Provider::ResponseWal.new(path("stream-retry"))
-      provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+      provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
       req = request(stream: true)
       provider.complete(req)
@@ -421,12 +421,12 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
       sse = AnthropicSSE.body(canned)
       stub_request(:post, "https://api.anthropic.com/v1/messages").to_raise(Faraday::ConnectionFailed)
       spool = Lain::Provider::ResponseWal.new(path("exhaust"))
-      provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+      provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
       first = request(stream: true)
       # Nothing above the Provider rescues a transport class: exhaustion must
       # surface as the provider's own error, with the Faraday cause preserved.
-      expect { provider.complete(first) }.to raise_error(Lain::Provider::AnthropicRaw::APIError) do |error|
+      expect { provider.complete(first) }.to raise_error(Lain::Provider::Anthropic::APIError) do |error|
         expect(error.cause).to be_a(Faraday::ConnectionFailed)
       end
 
@@ -456,10 +456,10 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
         .to_return(status: 401, body: error_body, headers: { "Content-Type" => "application/json" })
         .to_return(status: 200, body: sse, headers: { "Content-Type" => "text/event-stream" })
       spool = Lain::Provider::ResponseWal.new(path("terminal"))
-      provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+      provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
       first = request(stream: false)
-      expect { provider.complete(first) }.to raise_error(Lain::Provider::AnthropicRaw::APIStatusError)
+      expect { provider.complete(first) }.to raise_error(Lain::Provider::Anthropic::APIStatusError)
       second = request(stream: true, max_tokens: 65)
       provider.complete(second)
       spool.close
@@ -481,7 +481,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
         .to_return(status: 429, body: error_body, headers: { "Content-Type" => "application/json" })
         .to_return(status: 200, body: success_body, headers: { "Content-Type" => "application/json" })
       spool = Lain::Provider::ResponseWal.new(path("sync-retry"))
-      provider = Lain::Provider::AnthropicRaw.new(spool:, api_key: "test")
+      provider = Lain::Provider::Anthropic.new(spool:, api_key: "test")
 
       req = request(stream: false)
       provider.complete(req)
@@ -501,7 +501,7 @@ RSpec.describe "spooling a provider response into a ResponseWal", :aggregate_fai
                          "content" => [{ "type" => "text", "text" => "hello" }],
                          "usage" => { "input_tokens" => 3, "output_tokens" => 2 })
     stub_messages(status: 200, body:, content_type: "application/json")
-    provider = Lain::Provider::AnthropicRaw.new(api_key: "test")
+    provider = Lain::Provider::Anthropic.new(api_key: "test")
 
     response = provider.complete(request(stream: false))
 

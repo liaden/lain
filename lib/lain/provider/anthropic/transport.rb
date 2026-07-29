@@ -4,9 +4,9 @@ require "faraday"
 
 module Lain
   class Provider
-    class AnthropicRaw < Provider
+    class Anthropic < Provider
       # A thin subclass of the vendored Anthropic HTTP provider that exposes the
-      # two round trips {AnthropicRaw} needs, while REUSING the vendored Faraday
+      # two round trips {Anthropic} needs, while REUSING the vendored Faraday
       # stack (faraday-retry, error mapping, the injected-Sink logger) and the SSE
       # engine (EventStreamParser feeding, chunk-boundary handling, streaming
       # error recognition).
@@ -118,4 +118,4 @@ module Lain
   end
 end
 
-Faraday::Response.register_middleware(lain_wal_response_tee: Lain::Provider::AnthropicRaw::WalResponseTee)
+Faraday::Response.register_middleware(lain_wal_response_tee: Lain::Provider::Anthropic::WalResponseTee)
