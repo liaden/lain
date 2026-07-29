@@ -10,3 +10,4 @@
 require_relative "epic/issue"
 require_relative "epic/graph"
 require_relative "epic/stage"
+require_relative "epic/document"
