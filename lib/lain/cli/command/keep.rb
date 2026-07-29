@@ -50,7 +50,7 @@ module Lain
         # domain reads as policy, never as a wrapped ArgumentError from the
         # rename machinery.
         def promotable(env)
-          path = env.chronicle.journal_path
+          path = env.journal_path
           raise Error, "no session record to promote (--no-journal)" if path.nil?
           raise Error, "#{File.basename(path)} is not ephemeral; only a --btw session needs /keep" unless
             Paths.ephemeral?(path)

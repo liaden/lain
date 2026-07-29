@@ -46,8 +46,8 @@ module Lain
         def call(args, env)
           target = args.to_s.strip
           return target_refusal(target, env) unless target.empty?
-          return NO_JOURNAL if env.chronicle.journal_path.nil?
-          return NO_TURNS if env.agent.timeline.head_digest.nil?
+          return NO_JOURNAL if env.journal_path.nil?
+          return NO_TURNS if env.head_digest.nil?
 
           anchor!(env)
           open_fork(env)
@@ -63,8 +63,8 @@ module Lain
         # the same now-durable record -- beats opening a window that flashes
         # and dies.
         def anchor!(env)
-          env.chronicle.catch_up(env.agent.timeline)
-          Resume.refuse_mid_tool!(env.chronicle.journal_path, env.agent.timeline)
+          env.checkpoint
+          Resume.refuse_mid_tool!(env.journal_path, env.timeline)
         end
 
         # Journal, prove, place -- and degrade to the printed command when no
@@ -98,7 +98,7 @@ module Lain
         # loudly instead of opening a doomed window. Runs after {#anchor!},
         # so the head it proves is already durable.
         def anchored_selector(env)
-          selector = "#{File.basename(env.chronicle.journal_path)}@#{env.agent.timeline.head_digest}"
+          selector = "#{File.basename(env.journal_path)}@#{env.head_digest}"
           env.fork_point.call(selector)
           selector
         end

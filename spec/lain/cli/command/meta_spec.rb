@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Command::Meta do
     allow(surface).to receive(:window).and_return(placement)
     surface
   end
-  let(:env) { instance_double(Lain::CLI::Command::Env, role_spawn:, agent:, tmux_surface:) }
+  let(:env) { build_command_env(role_spawn:, agent:, tmux_surface:) }
 
   after { FileUtils.remove_entry(root) }
 

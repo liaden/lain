@@ -17,7 +17,7 @@ RSpec.describe Lain::CLI::Command::Ruby do
   let(:supervisor) { instance_double(Lain::Supervisor) }
   let(:status) { instance_double(Lain::StatusFeed) }
   let(:agent) { instance_double(Lain::Agent, timeline:, session:) }
-  let(:env) { instance_double(Lain::CLI::Command::Env, agent:, supervisor:, status:) }
+  let(:env) { build_command_env(agent:, supervisor:, status:) }
 
   it "is the /ruby command" do
     expect(described_class.new.name).to eq("ruby")

@@ -21,7 +21,7 @@ module Lain
       # frozen at wiring time), the supervisor and status straight off the
       # frozen {Command::Env}.
       def self.for(env)
-        new(timeline: env.agent.timeline, session: env.agent.session,
+        new(timeline: env.timeline, session: env.agent.session,
             supervisor: env.supervisor, status: env.status)
       end
 

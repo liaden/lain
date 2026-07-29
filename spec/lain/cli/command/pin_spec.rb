@@ -20,7 +20,7 @@ RSpec.describe Lain::CLI::Command::Pin do
       built.ask("second")
     end
   end
-  let(:env) { instance_double(Lain::CLI::Command::Env, agent:) }
+  let(:env) { build_command_env(agent:) }
 
   def hex(digest) = digest.delete_prefix("blake3:")
 
@@ -48,7 +48,7 @@ RSpec.describe Lain::CLI::Command::Pin do
     it "refuses on a session with no committed turns, and pins nothing" do
       empty = Lain::Agent.new(provider:, toolset:, context:, session:)
 
-      expect { command.call("", instance_double(Lain::CLI::Command::Env, agent: empty)) }
+      expect { command.call("", build_command_env(agent: empty)) }
         .to raise_error(Lain::Error, /no committed turns/)
       expect(session.pins).to eq([])
     end
@@ -152,7 +152,7 @@ RSpec.describe Lain::CLI::Command::Unpin do
   let(:provider) { Lain::Provider::Mock.new(responses: [text_response("one")]) }
   let(:session) { Lain::Session.new }
   let(:agent) { Lain::Agent.new(provider:, toolset:, context:, session:).tap { |built| built.ask("first") } }
-  let(:env) { instance_double(Lain::CLI::Command::Env, agent:) }
+  let(:env) { build_command_env(agent:) }
 
   it "is the /unpin command and describes itself" do
     expect(command.name).to eq("unpin")
@@ -197,8 +197,7 @@ RSpec.describe Lain::CLI::Command::Unpin do
     it "journals nothing for the no-op, so the replay log stays free of empty retractions" do
       journal_io = StringIO.new
       journaled = Lain::Session::Journaled.new(session:, journal: Lain::Journal.new(io: journal_io))
-      wired = instance_double(Lain::CLI::Command::Env,
-                              agent: instance_double(Lain::Agent, timeline: agent.timeline, session: journaled))
+      wired = build_command_env(agent: instance_double(Lain::Agent, timeline: agent.timeline, session: journaled))
 
       command.call("", wired)
 

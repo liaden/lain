@@ -27,7 +27,7 @@ module Lain
         def usage = "/rewind [N|digest] -- move this session back N turns (default 1), or to a recorded turn"
 
         def call(args, env)
-          from = env.agent.timeline
+          from = env.timeline
           count = count_for(args.to_s.strip, from)
           settled_target!(count, from)
           moved(env, count, from:)
@@ -43,6 +43,15 @@ module Lain
         # chronicle failure here leaves the machine unmoved, never a
         # machine-at-A/record-at-H wedge every later catch_up would report as
         # Diverged, far from the actual bug.
+        #
+        # `env.chronicle.catch_up(from)`, deliberately not {Env#checkpoint}:
+        # `from` is THIS rewind's pre-move head, captured once in {#call}.
+        # `#checkpoint` re-reads `agent.timeline` live on every call, which is
+        # right where "the timeline to journal" and "the current timeline"
+        # are the same fact -- but this command's whole job is to change what
+        # "current" means, so a live re-read here is one statement-reorder
+        # away from catching up on the ALREADY-SHORTENED chain instead of the
+        # one being moved away from.
         def moved(env, count, from:)
           env.chronicle.catch_up(from)
           to = from.rewind(count)

@@ -106,7 +106,7 @@ module Lain
         def usage = "/pin [digest] -- keep a turn out of compaction (default: the last assistant turn)"
 
         def call(args, env)
-          digest = Target.new(timeline: env.agent.timeline, verb: name).resolve(args.to_s.strip)
+          digest = Target.new(timeline: env.timeline, verb: name).resolve(args.to_s.strip)
           env.agent.session.record_pin(digest)
           "pinned #{digest[0, 19]}... -- compaction keeps this turn (/unpin to release it)"
         end

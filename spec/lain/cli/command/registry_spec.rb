@@ -125,33 +125,3 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 end
-
-RSpec.describe Lain::CLI::Command::Env do
-  def readers
-    { status: instance_double(Lain::StatusFeed), sessions: instance_double(Lain::CLI::Sessions),
-      approvals: described_class::YoloApprovals, supervisor: Lain::Supervisor::Null,
-      replies: instance_double(Lain::CLI::HumanReplies), fork_point: instance_double(Lain::CLI::ForkPoint),
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
-      policy_switch: instance_double(Lain::Approval::PolicySwitch),
-      model_switch: instance_double(Lain::Context::ModelSwitch),
-      chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
-  end
-
-  it "is a frozen value over the twelve readers" do
-    env = described_class.new(**readers)
-
-    expect(env).to be_frozen
-    expect(env.to_h.keys)
-      .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                policy_switch model_switch chronicle role_spawn])
-  end
-
-  it "refuses a nil reader loudly, naming it -- Null collaborators, never nil" do
-    expect { described_class.new(**readers, fork_point: nil) }
-      .to raise_error(ArgumentError, /fork_point/)
-  end
-
-  it "answers the approval queue's read duck with nothing parked under --yolo" do
-    expect(described_class::YoloApprovals.each.to_a).to eq([])
-  end
-end

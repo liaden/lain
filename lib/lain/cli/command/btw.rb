@@ -68,17 +68,17 @@ module Lain
           raise Error, NESTED if Paths.ephemeral?(path)
 
           digest = head(env)
-          env.chronicle.catch_up(env.agent.timeline)
+          env.checkpoint
           "#{File.basename(path)}@#{digest}"
         end
 
         def head(env)
-          env.agent.timeline.head_digest or
+          env.head_digest or
             raise Error, "nothing to fork yet -- no turn is committed; ask something first, then /btw"
         end
 
         def session_path(env)
-          env.chronicle.journal_path or
+          env.journal_path or
             raise Error, "no session record to fork from (--no-journal); /btw needs a journaled session"
         end
 

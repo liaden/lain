@@ -48,7 +48,7 @@ RSpec.describe Lain::CLI::InspectionBinding do
   describe ".for(env)" do
     it "reads timeline and session off the agent, supervisor and status off the env" do
       agent = instance_double(Lain::Agent, timeline:, session:)
-      env = instance_double(Lain::CLI::Command::Env, agent:, supervisor:, status:)
+      env = build_command_env(agent:, supervisor:, status:)
 
       inspection = described_class.for(env)
 

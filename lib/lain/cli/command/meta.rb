@@ -124,7 +124,7 @@ module Lain
           return generation_failed(artifact, result) if result.error?
 
           contents = compose(artifact, body: body_of(result), prompt:,
-                                       digest: env.agent.timeline.head_digest)
+                                       digest: env.head_digest)
           slug = slugify(artifact, prompt)
           generated(artifact, write(artifact, slug, contents), slug)
         end

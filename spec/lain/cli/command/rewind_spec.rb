@@ -30,7 +30,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
       chronicle.catch_up(built.timeline)
     end
   end
-  let(:env) { instance_double(Lain::CLI::Command::Env, agent:, chronicle:) }
+  let(:env) { build_command_env(agent:, chronicle:) }
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }
@@ -124,7 +124,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
     it "refuses on an empty session -- no committed turn to rewind past" do
       fresh = Lain::Agent.new(provider:, toolset:, context:)
       chronicle
-      empty_env = instance_double(Lain::CLI::Command::Env, agent: fresh, chronicle:)
+      empty_env = build_command_env(agent: fresh, chronicle:)
 
       expect { command.call("1", empty_env) }.to raise_error(Lain::Error, /no committed turns/)
     end
@@ -175,10 +175,33 @@ RSpec.describe Lain::CLI::Command::Rewind do
       broken = instance_double(Lain::CLI::Chronicle)
       allow(broken).to receive(:catch_up)
       allow(broken).to receive(:rewound).and_raise(IOError, "journal fd closed")
-      broken_env = instance_double(Lain::CLI::Command::Env, agent:, chronicle: broken)
+      broken_env = build_command_env(agent:, chronicle: broken)
 
       expect { command.call("2", broken_env) }.to raise_error(IOError)
       expect(agent.timeline.head_digest).to eq(pre)
+    end
+  end
+
+  # Panel: `#moved` must journal the head THIS call is rewinding FROM, not a
+  # second, later read off the agent -- `Env#checkpoint` re-reads
+  # `agent.timeline` live on every call, which is one statement-reorder away
+  # from catching up on the already-shortened post-rewind chain instead.
+  # Pinned with a double whose `#timeline` answers DIFFERENTLY on a second
+  # call, so a captured `from` and a fresh re-read are provably distinct
+  # objects rather than accidentally equal because nothing mutated between
+  # them yet.
+  describe "catch_up receives the captured pre-rewind timeline, never a second live read" do
+    it "journals the timeline this rewind moved FROM -- not whatever a later agent.timeline read answers" do
+      pre = agent.timeline
+      post = pre.rewind(1)
+      stub_agent = instance_double(Lain::Agent, rewind: nil)
+      allow(stub_agent).to receive(:timeline).and_return(pre, post)
+      stub_chronicle = instance_double(Lain::CLI::Chronicle, catch_up: nil, rewound: nil)
+      stub_env = build_command_env(agent: stub_agent, chronicle: stub_chronicle)
+
+      command.call("1", stub_env)
+
+      expect(stub_chronicle).to have_received(:catch_up).with(pre)
     end
   end
 

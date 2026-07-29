@@ -39,6 +39,25 @@ module Lain
         module YoloApprovals
           def self.each(&block) = [].each(&block)
         end
+
+        # The class doc's Demeter point, made real: four thin delegations, not
+        # memoized -- `agent`'s own `@timeline` is reassigned every
+        # commit/rewind, so caching here would go stale mid-run.
+        def head_digest = timeline.head_digest
+
+        def timeline = agent.timeline
+
+        def journal_path = chronicle.journal_path
+
+        # Journal the CURRENT live Timeline durably -- what {Fork} and {Btw}
+        # both did as a duplicated `chronicle.catch_up(agent.timeline)`
+        # protocol before this landed. Answers the {Chronicle} itself (its
+        # own `#catch_up` does the same), so a caller chaining off the result
+        # reads the same way. NOT the right tool for a caller that has
+        # already captured a Timeline of its own to journal -- see
+        # {Rewind#moved}, the one site that calls `chronicle.catch_up`
+        # directly instead.
+        def checkpoint = chronicle.catch_up(timeline)
       end
     end
   end

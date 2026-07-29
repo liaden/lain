@@ -34,10 +34,7 @@ RSpec.describe Lain::CLI::Command::Fork do
     surface
   end
   let(:supervisor) { Lain::Supervisor::Null }
-  let(:env) do
-    instance_double(Lain::CLI::Command::Env,
-                    agent:, chronicle:, fork_point:, tmux_surface:, supervisor:)
-  end
+  let(:env) { build_command_env(agent:, chronicle:, fork_point:, tmux_surface:, supervisor:) }
 
   it "registers as /fork with a one-line usage" do
     expect(fork_command.name).to eq("fork")

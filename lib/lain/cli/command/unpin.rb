@@ -25,7 +25,7 @@ module Lain
         def usage = "/unpin [digest] -- release a pin (default: the last assistant turn)"
 
         def call(args, env)
-          digest = Pin::Target.new(timeline: env.agent.timeline, verb: name).resolve(args.to_s.strip)
+          digest = Pin::Target.new(timeline: env.timeline, verb: name).resolve(args.to_s.strip)
           session = env.agent.session
           return "#{digest[0, 19]}... was not pinned -- nothing to release" unless session.pinned?(digest)
 
