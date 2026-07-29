@@ -15,22 +15,22 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     #
-    # ⚠️ THIS CLASS IS AT 107 OF ITS 110-LINE Metrics/ClassLength BUDGET --
-    # THREE LINES. T15 spent what it took to thread the run's one catalog/slots
-    # pair (and paid an ABC trip for it, which is why {#assemble_surface} is
-    # its own method), and bought two back by folding {#goal_journal} out of
-    # {#goal_driver}. Three lines is not room for a feature: EXTRACT FIRST.
+    # ⚠️ THIS CLASS IS NEAR ITS 110-LINE Metrics/ClassLength BUDGET. Measure it
+    # (`rubocop --only Metrics/ClassLength`) rather than trusting a number
+    # written here; the last two cards left it in single-digit headroom, which is
+    # not room for a feature: EXTRACT FIRST.
     #
-    # It had already been through this once: it sat a year at 109, reached 110
-    # exactly, and that is what finally forced {ToolsetBuild} out of it (T1
-    # review). "What capabilities this run holds, and how a child inherits
-    # them" was never this object's question, and the tell was a
-    # `(backend:, parent:, journal:)` triple threaded verbatim through three
-    # private methods -- a repeated parameter list is the state of an object
-    # that has not been named yet. The SAME tell is now visible on the
-    # `(catalog:, slots:)` pair this class threads into {Command::Surface} and
-    # {ToolsetBuild}: one `.lain/` snapshot, loaded once, wearing two keywords.
-    # Naming it is Chunk B's, and it would give this class its headroom back.
+    # It has been through that twice. It sat a year at 109, reached 110 exactly,
+    # and that is what forced {ToolsetBuild} out of it (T1 review): "what
+    # capabilities this run holds, and how a child inherits them" was never this
+    # object's question, and the tell was a `(backend:, parent:, journal:)`
+    # triple threaded verbatim through three private methods -- a repeated
+    # parameter list is the state of an object that has not been named yet. The
+    # same tell then appeared on the `(catalog:, slots:)` pair T15 threaded into
+    # {Command::Surface} and {ToolsetBuild}, and T40 named it {Skill::Library}:
+    # one `.lain/` read, owned by {Backend#library} because {Backend#context}
+    # renders the slots half into the system prompt. This class now loads
+    # neither half and threads one keyword.
     #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
@@ -139,13 +139,6 @@ module Lain
 
       attr_reader :options, :chronicle, :run_clock
 
-      # The run's ONE {Skill::Catalog}: /help lists it, the repl stack
-      # dispatches over it, and {Tools::RunSkill} renders through it. Loaded
-      # HERE because this is the only object all three readers hang off -- the
-      # {Prompt::Slots} half of the same pair is {Backend#slots}, memoized
-      # there for the same reason, and taking the same implicit `Dir.pwd`.
-      def catalog = @catalog ||= Skill::Catalog.load
-
       # D2: `--isolation`, read at its construction site (the --auto-approve
       # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv
       # from. Only actor-mode subagents lease: #run_state builds the main chat's
@@ -211,7 +204,7 @@ module Lain
 
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
-                                          supervisor: @supervisor, parent:, journal:, catalog:)
+                                          supervisor: @supervisor, parent:, journal:, library: backend.library)
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -293,22 +286,38 @@ module Lain
       # {HumanReplies} drain is built HERE (not inside Repl) so the Env's
       # replies reader and the Repl's collaborator are one object; everything a
       # typed line dispatches through -- command registry, frozen Env, skill
-      # middleware, one shared catalog -- is {Command::Surface}'s (T9).
+      # middleware, the run's one skill library -- is {Command::Surface}'s (T9).
       def build_repl(tty:, agent:, backend:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
-        @command_surface = assemble_surface(agent:, backend:, tty:)
+        @command_surface = assemble_surface(agent:, library: backend.library, tty:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
                  auto_surface:, goal_driver:)
       end
 
-      # The surface assembly, its own method because it is its own job -- the
-      # ABC trip said so when T15 threaded the run's ONE catalog and ONE slots
-      # through it (extract, do not loosen). `backend.slots` is the Backend's
-      # memoized load, the same instance {ToolsetBuild} frames children with.
-      def assemble_surface(agent:, backend:, tty:)
-        Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:,
-                             chronicle: @chronicle, status_feed: @status_feed, catalog:, slots: backend.slots,
+      # The surface assembly, its own method because T15's ABC trip said so when
+      # it threaded the run's catalog and slots through here -- which the T40
+      # panel read as silencing the cop rather than answering it. Naming the pair
+      # MOVED that number without clearing it, and the measurements are worth
+      # keeping because the next reader will otherwise re-derive them: this
+      # method fell 8 -> 6, and build_repl inlined measures 18.11 against a limit
+      # of 17 (17.12 with the Repl's two surface kwargs folded into one splat).
+      #
+      # What holds it over is a DIFFERENT unnamed object, and the arithmetic says
+      # so plainly: `approvals`, `goal_driver` and `supervisor` are each read
+      # TWICE in the inlined body, once for the Surface and once for the Repl,
+      # because both are built from the same six collaborators this class holds.
+      # That is the repeated parameter list that named {ToolsetBuild} and named
+      # the library, showing up a third time. Naming it is what would finally let
+      # this method go, and it is written down as a card rather than left in a
+      # comment -- see the follow-ups in
+      # planning/specs/chunk-review-missing-objects.md. Do NOT clear the number by
+      # hoisting the three duplicate reads into locals: that measures 15.81 and
+      # passes the cop by bending the method to the limit, which is this
+      # comment's whole complaint, one layer down.
+      def assemble_surface(agent:, library:, tty:)
+        Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
+                             chronicle: @chronicle, status_feed: @status_feed,
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 

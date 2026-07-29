@@ -210,7 +210,7 @@ RSpec.describe "the /btw and /keep registration (T17 wiring)" do
         status_feed: instance_double(Lain::StatusFeed),
         policy_switch: instance_double(Lain::Approval::PolicySwitch),
         model_switch: instance_double(Lain::Context::ModelSwitch),
-        catalog: Lain::Skill::Catalog.load(root:), slots: Lain::Prompt::Slots.load(root:)
+        library: Lain::Skill::Library.load(root:)
       )
 
       # A Null chronicle refuses loudly (no journal_path) -- but the REFUSAL

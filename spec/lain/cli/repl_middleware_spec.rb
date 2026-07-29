@@ -35,32 +35,25 @@ RSpec.describe Lain::CLI::ReplMiddleware do
     File.write(path, body)
   end
 
-  describe ".renderer" do
-    it "composes the injected catalog and slots, loading neither of its own" do
-      with_project do |root|
-        catalog = Lain::Skill::Catalog.load(root:)
-        slots = Lain::Prompt::Slots.load(root:)
-        renderer = described_class.renderer(root:, catalog:, slots:)
-
-        expect(renderer.instance_variable_get(:@catalog)).to be(catalog)
-        expect(renderer.instance_variable_get(:@slots)).to be(slots)
-      end
-    end
-  end
+  # The session's one library, which every caller now hands over: T40 took
+  # `root:` off this module entirely, because it was only ever here to feed the
+  # from-disk defaults -- and a from-disk default is the second read the whole
+  # threading exists to remove.
+  def library_for(root) = Lain::Skill::Library.load(root:)
 
   describe ".build" do
     it "returns a Middleware::Stack carrying a SkillDispatch" do
       with_project do |root|
-        stack = described_class.build(root:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
 
         expect(stack).to be_a(Lain::Middleware::Stack)
         expect(stack.to_a).to include(an_instance_of(Lain::Middleware::SkillDispatch))
       end
     end
 
-    it "loads the catalog once so an in-line invocation expands through the stack" do
+    it "expands an in-line invocation through the stack" do
       with_project do |root|
-        stack = described_class.build(root:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
 
         seen = nil
         stack.call({ text: "/greet warmly", agent: :the_agent }) do |env|
@@ -74,7 +67,7 @@ RSpec.describe Lain::CLI::ReplMiddleware do
 
     it "reports an unknown skill without spending a downstream turn" do
       with_project do |root|
-        stack = described_class.build(root:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        stack = described_class.build(library: library_for(root), role_spawn: ReplMiddlewareStubRoleSpawn.new)
 
         ran = false
         result = stack.call({ text: "/nope", agent: :the_agent }) do |env|
@@ -87,41 +80,34 @@ RSpec.describe Lain::CLI::ReplMiddleware do
       end
     end
 
-    it "dispatches over an injected catalog -- the same snapshot Wiring hands /help (T9)" do
+    # T15 injected the catalog and the slots separately; T40 makes them one
+    # library, so dispatch, /help, Backend#context and Tools::RunSkill read one
+    # object rather than four reads of the same tree.
+    it "dispatches and renders through the INJECTED library, reading no disk of its own" do
       with_project do |root|
-        catalog = Lain::Skill::Catalog.load(root:)
-        stack = described_class.build(root:, catalog:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        library = library_for(root)
+        stack = described_class.build(library:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+        dispatch = stack.to_a.first
 
-        seen = nil
-        stack.call({ text: "/greet warmly", agent: :the_agent }) do |env|
-          seen = env
-          env.merge(response: "ran")
-        end
-
-        expect(seen.fetch(:text)).to start_with("# Greet")
+        expect(dispatch.instance_variable_get(:@catalog)).to be(library.catalog)
+        renderer = dispatch.instance_variable_get(:@renderer)
+        expect(renderer.instance_variable_get(:@catalog)).to be(library.catalog)
+        expect(renderer.instance_variable_get(:@slots)).to be(library.slots)
       end
     end
 
-    # T15: `slots:` is the `catalog:` precedent, one level down. Without it
-    # `.build` loaded a SECOND Prompt::Slots off disk (and `.renderer`, called
-    # from ToolsetBuild, a third), so the repl stack, Backend#context and
-    # Tools::RunSkill each framed against their own snapshot of the same tree.
-    it "renders through an injected slots -- the session's one snapshot, not a second disk read" do
-      with_project do |root|
-        slots = Lain::Prompt::Slots.load(root:)
-        stack = described_class.build(root:, slots:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
-
-        dispatch = stack.to_a.first
-        renderer = dispatch.instance_variable_get(:@renderer)
-
-        expect(renderer.instance_variable_get(:@slots)).to be(slots)
-      end
+    # The keyword is required, not defaulted, for the reason Command::Surface's
+    # is: a forgotten library must be a loud ArgumentError, never a quiet second
+    # read of the tree far from the bug.
+    it "refuses to build without one" do
+      expect { described_class.build(role_spawn: ReplMiddlewareStubRoleSpawn.new) }
+        .to raise_error(ArgumentError, /library/)
     end
 
     it "threads the role-spawn seam through so a role-bound line reaches it" do
       with_project do |root|
         fake = ReplMiddlewareStubRoleSpawn.new
-        stack = described_class.build(root:, role_spawn: fake)
+        stack = described_class.build(library: library_for(root), role_spawn: fake)
 
         result = stack.call({ text: "@researcher/greet warmly", agent: :the_agent }) do |env|
           env.merge(response: "ran")

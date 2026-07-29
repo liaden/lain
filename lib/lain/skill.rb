@@ -39,3 +39,6 @@ require_relative "skill/catalog"
 require_relative "skill/invocation"
 require_relative "skill/role_spawn"
 require_relative "skill/renderer"
+# Library pairs the Catalog above with Prompt::Slots (loaded at lain.rb:16, well
+# ahead of this subtree) and composes the Renderer above, so it loads last.
+require_relative "skill/library"

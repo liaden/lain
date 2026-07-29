@@ -16,33 +16,35 @@ module Lain
       # * the skill middleware ({#middleware}) over the SAME catalog snapshot
       #   the registry's /help lists, so listing and dispatch can never drift.
       #
-      # `catalog:` and `slots:` are the run's ONE loaded pair, injected by
-      # Wiring (T15) so this surface, {Tools::RunSkill} and {Backend#context}
-      # are three readers of one `.lain/` read rather than three separate reads
-      # of the same tree.
+      # `library:` is the run's ONE {Skill::Library}, loaded at
+      # {Backend#library} and injected by Wiring, so this surface,
+      # {Tools::RunSkill} and {Backend#context}'s system prompt are readers of
+      # one `.lain/` read rather than separate reads of the same tree. It
+      # arrived as a `(catalog:, slots:)` pair until T40 named it.
       #
       # A later command card lands as one require in cli/command.rb, one
       # register line in {#registry}, and -- when it needs a new Env reader --
       # one line in the {Env} assembly here.
       class Surface
         # `chronicle:`, `status_feed:`, `policy_switch:`, `model_switch:`,
-        # `role_spawn:`, `catalog:` and `slots:` are all required, not
-        # defaulted -- each is always wired in the live path, so a defaulted
-        # Null here would only mask a mis-wire (a permissive
-        # policy_switch/model_switch would even fail OPEN: a silently
-        # disconnected gate). A forgotten keyword must be a loud ArgumentError
-        # at construction, not a quiet degrade far from the bug. That applies
-        # to the snapshot pair exactly as it does to the rest: a from-disk
-        # default here would silently be a SECOND read of the same tree, which
-        # is the bug T15 removed.
+        # `role_spawn:` and `library:` are all required, not defaulted -- each is
+        # always wired in the live path, so a defaulted Null here would only mask
+        # a mis-wire (a permissive policy_switch/model_switch would even fail
+        # OPEN: a silently disconnected gate). A forgotten keyword must be a loud
+        # ArgumentError at construction, not a quiet degrade far from the bug.
+        # That applies to the library exactly as it does to the rest: a from-disk
+        # default here would silently be a SECOND read of the same tree, which is
+        # the bug T15 removed.
+        #
+        # `root:` survives the library, on its own business: {Meta} reads the
+        # project's `.lain/` config from it. It no longer feeds a snapshot load.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
-                       model_switch:, catalog:, slots:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
+                       model_switch:, library:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
                        goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
           @root = root
-          @catalog = catalog
-          @slots = slots
+          @library = library
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
@@ -60,14 +62,11 @@ module Lain
         # disjoint registries (panel fix 1).
         def commands = @commands ||= registry.bind(@env)
 
-        # The repl phase for every line no command claims, over the SAME catalog
-        # and slots snapshots /help lists and the run's other renderers hold
-        # (T15). No `root:`: both snapshots are handed over, so the builder has
-        # nothing left to read from disk. Memoized for the one-assembly reason
-        # {#commands} gives.
-        def middleware
-          @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, catalog: @catalog, slots: @slots)
-        end
+        # The repl phase for every line no command claims, over the SAME library
+        # /help lists and the run's other renderers hold. No `root:`: the
+        # snapshot is handed over, so the builder has nothing left to read from
+        # disk. Memoized for the one-assembly reason {#commands} gives.
+        def middleware = @middleware ||= ReplMiddleware.build(role_spawn: @role_spawn, library: @library)
 
         private
 
@@ -92,7 +91,7 @@ module Lain
         # edit of its own.
         def registry
           @registry ||= Registry.new(builtins).tap do |registry|
-            registry.register(Help.new(registry:, catalog: @catalog))
+            registry.register(Help.new(registry:, catalog: @library.catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
             registry.register(Yolo.new)
             registry.register(Model.new)

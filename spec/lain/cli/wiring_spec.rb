@@ -825,6 +825,35 @@ RSpec.describe Lain::CLI::Wiring do
         expect(run_skill_renderer(wiring).instance_variable_get(:@slots)).to be(slots)
         expect(stack_renderer(wiring.command_surface).instance_variable_get(:@slots)).to be(slots)
       end
+
+      # T40: the pair had TWO owners -- Wiring loaded the catalog, Backend the
+      # slots -- and travelled onward as two keywords, which is the state of an
+      # object nobody had named. It is one {Skill::Library} now, owned by the
+      # Backend (the lowest point above every reader, since #context renders the
+      # slots into the system prompt). Both halves of the run therefore come out
+      # of the SAME library instance, not merely out of equal snapshots.
+      it "reads both halves out of the Backend's ONE library" do
+        wiring = run_wiring
+        library = backend.library
+
+        expect(help_catalog(wiring.command_surface)).to be(library.catalog)
+        expect(wiring.role_spawn.instance_variable_get(:@slots)).to be(library.slots)
+        expect(run_skill_renderer(wiring).instance_variable_get(:@catalog)).to be(library.catalog)
+      end
+
+      # What the threading BUYS, stated as a count rather than as identity: five
+      # reads of the project tree before T15, two after it (one per owner), and
+      # one apiece now. Identity alone would still pass if some reader loaded a
+      # snapshot it then threw away, so the count is its own assertion.
+      it "loads the catalog exactly once and the slots exactly once for the whole session" do
+        allow(Lain::Skill::Catalog).to receive(:load).and_call_original
+        allow(Lain::Prompt::Slots).to receive(:load).and_call_original
+
+        run_wiring
+
+        expect(Lain::Skill::Catalog).to have_received(:load).once
+        expect(Lain::Prompt::Slots).to have_received(:load).once
+      end
     end
 
     it "wires the queue-shaped YoloApprovals under --yolo, so the env reader stays nil-free" do

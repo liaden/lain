@@ -35,16 +35,18 @@ module Lain
         # construction sites would be two answers to "which spool do round
         # trips tee into", and the pairing is not allowed to come apart.
         #
-        # `catalog:` is injected for the same reason and is REQUIRED, not
-        # defaulted: the run has ONE {Skill::Catalog}, and a default here would
+        # `library:` is injected for the same reason and is REQUIRED, not
+        # defaulted: the run has ONE {Skill::Library}, and a default here would
         # be a second read of the same tree that nothing would ever notice
-        # disagreeing with /help's.
+        # disagreeing with /help's. It arrived as a `catalog:` keyword beside a
+        # `backend.slots` reach-through until T40 named the pair -- one keyword
+        # cannot be half-forgotten, which two could.
         #
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, catalog:)
-          @catalog = catalog
+        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:)
+          @library = library
           @backend = backend
           @provider = provider
           @chronicle = chronicle
@@ -72,14 +74,14 @@ module Lain
 
         private
 
-        attr_reader :backend, :catalog, :chronicle, :options, :supervisor
+        attr_reader :backend, :library, :chronicle, :options, :supervisor
 
         # One seam serves every role: the role, policy, and persona are chosen
         # PER CALL from the parsed role name and context mode, so what is
         # fixed here is only what they all share. `slots:` is the session's
-        # rendered-persona source ({Backend#slots}, loaded once).
+        # rendered-persona source -- the library's half, loaded once.
         def role_spawn_seam(base)
-          Lain::Skill::RoleSpawn.new(toolset: base, slots: backend.slots, **child_seam_kwargs)
+          Lain::Skill::RoleSpawn.new(toolset: base, slots: library.slots, **child_seam_kwargs)
         end
 
         # The collaborators BOTH child seams attenuate over -- the same
@@ -93,13 +95,13 @@ module Lain
 
         # The in-agent composition primitive: it renders a skill's scaffold
         # back to the SAME agent as a tool_result -- a continuation, not a
-        # spawn. Built over the same catalog + slots the repl's ReplMiddleware
-        # composes: the run's ONE catalog, and the ONE {Prompt::Slots} the
-        # Backend loaded and #role_spawn_seam frames children with. It called
-        # `ReplMiddleware.renderer` argument-less until T15, which read the
-        # project tree twice more -- a claim of "loaded once" that the loads
-        # did not keep.
-        def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer(catalog:, slots: backend.slots))
+        # spawn. Built off the run's ONE library, so it and the repl's
+        # ReplMiddleware compose the same pair #role_spawn_seam frames children
+        # with. It called `ReplMiddleware.renderer` argument-less until T15,
+        # which read the project tree twice more -- a claim of "loaded once"
+        # that the loads did not keep; the shared composition seam that fixed
+        # then lives on the library now ({Skill::Library#renderer}).
+        def run_skill = Lain::Tools::RunSkill.new(renderer: library.renderer)
 
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1). The observer routes its :spawn/:message lineage events

@@ -244,6 +244,41 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # T40: the slots are HALF a pair. This object is the one owner of both halves
+  # now -- before, it owned the slots while Wiring separately owned the catalog,
+  # and the two travelled onward as two keywords. One library, one read, one
+  # owner; #slots is the library's, so the bench path's reader is unchanged.
+  describe "#library" do
+    it "exposes the session's ONE Skill::Library, memoized" do
+      expect(backend.library).to be_a(Lain::Skill::Library)
+      expect(backend.library).to be(backend.library)
+    end
+
+    it "answers #slots out of that library, so there is only one read of the tree" do
+      expect(backend.slots).to be(backend.library.slots)
+    end
+
+    # Why the library cannot live in Wiring: the system prompt is rendered HERE,
+    # from the slots half, at a point above every other reader.
+    #
+    # Asserted as the CHAIN (#context -> #slots -> library.slots) and not as `eq`
+    # against a second render, because the two are not the same claim and the
+    # weaker one is worthless here: the tree does not change between two reads,
+    # so `eq` holds just as well when #context does its OWN Prompt::Slots.load --
+    # which is precisely the bug this example's name denies. The T40 panel caught
+    # that; the example survived the mutation it is named for.
+    #
+    # The reader is stubbed rather than the Slots instance because a Slots is
+    # frozen and rspec-mocks refuses to proxy a frozen object. The last link of
+    # the chain is pinned by the example above.
+    it "renders the system prompt from the library's slots" do
+      wired = backend_for(provider: "ollama", max_tokens: 1024)
+      allow(wired).to receive(:slots).and_return(instance_double(Lain::Prompt::Slots, render: "SENTINEL-T40"))
+
+      expect(wired.context.system).to eq("SENTINEL-T40")
+    end
+  end
+
   # A8: everything the live-wiring chunk built converges here. `lain chat`
   # compacts by DEFAULT -- eager summaries when the local tier answers, honest
   # elision when it does not -- so these pin the factories the exe's flags

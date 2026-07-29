@@ -15,11 +15,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }) }
   let(:options) { {} }
 
-  let(:catalog) { Lain::Skill::Catalog.load }
+  # The session's ONE library, injected -- what T40 replaced the `catalog:`
+  # keyword and the `backend.slots` reach-through with. The live path hands in
+  # the Backend's, which is where the run's single load lives.
+  let(:library) { backend.library }
 
   def build_with(options)
     described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
-                        supervisor:, parent: -> { Lain::Timeline.new }, journal:, catalog:)
+                        supervisor:, parent: -> { Lain::Timeline.new }, journal:, library:)
   end
 
   describe "#build" do
@@ -44,21 +47,29 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # T15: run_skill's renderer used to call ReplMiddleware.renderer with NO
     # arguments, which loaded a catalog AND a slots of its own off `Dir.pwd`.
     # The comment above it claimed "loaded once from the project root"; it was
-    # the third Slots of the session. Both now arrive as the session's one
-    # instance -- the catalog injected, the slots the Backend's memoized load,
-    # which is also what the role_spawn seam frames a child against.
-    it "renders run_skill through the session's ONE catalog and the Backend's ONE slots" do
+    # the third Slots of the session. T40 made the pair ONE injected library, so
+    # this object no longer reaches through the Backend for the other half.
+    it "renders run_skill through the injected library's catalog and slots" do
       toolset = toolset_build.build(recorder, ask_human:)
       renderer = toolset.fetch("run_skill").instance_variable_get(:@renderer)
 
-      expect(renderer.instance_variable_get(:@catalog)).to be(catalog)
-      expect(renderer.instance_variable_get(:@slots)).to be(backend.slots)
+      expect(renderer.instance_variable_get(:@catalog)).to be(library.catalog)
+      expect(renderer.instance_variable_get(:@slots)).to be(library.slots)
     end
 
-    it "frames the role_spawn seam against that same Backend slots" do
+    it "frames the role_spawn seam against that same library's slots" do
       toolset_build.build(recorder, ask_human:)
 
-      expect(toolset_build.role_spawn.instance_variable_get(:@slots)).to be(backend.slots)
+      expect(toolset_build.role_spawn.instance_variable_get(:@slots)).to be(library.slots)
+    end
+
+    # The pair arrives as one keyword and it is required: a forgotten library
+    # must be a loud ArgumentError, not a quiet second read of the tree.
+    it "refuses to construct without the library" do
+      expect do
+        described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
+                            supervisor:, parent: -> { Lain::Timeline.new }, journal:)
+      end.to raise_error(ArgumentError, /library/)
     end
   end
 

@@ -8,36 +8,26 @@ module Lain
     # in what order, over what collaborators -- lives here where it can be tested
     # without a Thor instance.
     #
-    # The repl phase composes over a {Skill::Catalog} and a {Prompt::Slots} --
-    # both session-fixed snapshots of the project's `.lain/` tree. BOTH are
-    # injectable, and a live session injects both: the catalog is loaded once
-    # by {Wiring}, the slots once by {Backend#slots}, and each instance is
-    # threaded to every reader (T15), so /help's listing, this stack's
-    # dispatch, {Tools::RunSkill}'s render and {Backend#context}'s system
-    # prompt cannot be looking at four different reads of one tree. (Two owners
-    # for one pair is the seam Chunk B is expected to name.)
-    # `root` is where the defaults read their overrides; it defaults to
-    # `Dir.pwd`, the project root the rest of the CLI already keys off, so a
-    # caller holding neither snapshot still gets one in a single line.
+    # The repl phase composes over the run's ONE {Skill::Library} -- the
+    # project's skills and the prompt slots they render through, read once at
+    # {Backend#library}. T15 threaded the two halves separately and T40 named
+    # the pair, which is what took `root:` off this module: it was here only to
+    # feed the from-disk defaults, and a from-disk default is exactly the second
+    # read of one tree the threading exists to remove.
     #
-    # `role_spawn` is the {Skill::RoleSpawn} seam a `@role/skill` line folds
-    # through -- the exe's Wiring constructs it from the session's
-    # provider/toolset/parent/journal/supervisor and hands it in. It is REQUIRED,
-    # not defaulted: a defaulted Null would let a role-bound line silently degrade
-    # to a "not wired" message with no error at the wiring site, and the whole
-    # point of injecting it is that a real session always has one.
+    # BOTH keywords are REQUIRED, for one reason. `library` is the run's
+    # snapshot: defaulting it would let /help's listing, this stack's dispatch,
+    # {Tools::RunSkill}'s render and {Backend#context}'s system prompt look at
+    # different reads of one tree -- silently, since the tree rarely changes
+    # mid-session. `role_spawn` is the {Skill::RoleSpawn} seam a `@role/skill`
+    # line folds through: a defaulted Null would let a role-bound line degrade
+    # to a "not wired" message with no error at the wiring site. Either way a
+    # forgotten keyword must be a loud ArgumentError here, not a quiet degrade
+    # far from the bug.
     module ReplMiddleware
-      def self.build(role_spawn:, root: Dir.pwd, catalog: Skill::Catalog.load(root:),
-                     slots: Prompt::Slots.load(root:))
-        Middleware::Stack.new([Middleware::SkillDispatch.new(catalog:, renderer: renderer(catalog:, slots:),
+      def self.build(role_spawn:, library:)
+        Middleware::Stack.new([Middleware::SkillDispatch.new(catalog: library.catalog, renderer: library.renderer,
                                                              role_spawn:)])
-      end
-
-      # The catalog-and-slots composition seam, shared: this stack's
-      # SkillDispatch and Wiring's run_skill tool render through the SAME
-      # construction, so the two scaffold paths cannot drift.
-      def self.renderer(root: Dir.pwd, catalog: Skill::Catalog.load(root:), slots: Prompt::Slots.load(root:))
-        Skill::Renderer.new(catalog:, slots:)
       end
     end
   end

@@ -261,13 +261,23 @@ module Lain
       #   `--no-compact` turned it off
       def compaction? = @options.fetch(:compact, true)
 
-      # The loaded prompt slots, memoized -- exposed (not just the rendered
-      # String {#context} produces) so a caller can emit ONE Telemetry::SlotFills
-      # built from the exact slots this Backend rendered, with no second disk
-      # read.
-      def slots
-        @slots ||= Prompt::Slots.load
-      end
+      # The run's ONE {Skill::Library} -- the project's skills and the prompt
+      # slots they render through, read once. Owned HERE because {#context}
+      # renders the slots half into the system prompt, which makes this the
+      # lowest object above every reader: the repl's command surface, the skill
+      # middleware, {Tools::RunSkill} and {Skill::RoleSpawn} are all wired from
+      # {Wiring}, which is handed a Backend and cannot be handed a library it
+      # would then have to load itself. Before T40 the halves had two owners --
+      # Wiring loaded the catalog, this loaded the slots -- and travelled onward
+      # as two keywords.
+      def library = @library ||= Skill::Library.load
+
+      # The loaded prompt slots -- exposed (not just the rendered String
+      # {#context} produces) so a caller can emit ONE Telemetry::SlotFills built
+      # from the exact slots this Backend rendered, with no second disk read.
+      # The library's, so `bench record`'s attribution and the chat's system
+      # prompt cannot be reading two snapshots of one tree.
+      def slots = library.slots
 
       # RES4: the {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
       # {Role::Catalog} rather than hand-assembled at the call site -- the same
