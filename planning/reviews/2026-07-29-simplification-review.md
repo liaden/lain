@@ -564,6 +564,18 @@ reproductions) is applied consistently. The findings are the two inverses:
   executable version of this bug is §2.4).
 - ROADMAP: no entry for the epic tier (§1.2) — the highest-priority doc fix.
 
+**Landed** (chunk A, T39), with two counts corrected against the code on the way in:
+`compaction.rb` has **eleven** members, not twelve (`Lain::Compaction.constants` — the list is
+`Boundary Cold Derivation DerivationAudit Head Need Prepared Scheduler Source Strategy
+SummarySnapshot`, matching the eleven `require_relative`s in `compaction.rb`); and `telemetry.rb`
+defines **34** journalable kinds, not 33 (the 33rd count misses `RequestResent`, which subclasses
+the `RequestSent` *event* at `telemetry.rb:275` and journals its own `request_resent` type). The
+21-guard figure is right. `ARCHITECTURE.md:956` also claimed every journal record is one of them,
+which is false: `SessionRecord` writes `session`/`turn`/`rewound` (`session_record.rb:31-33`) and
+`Journal` writes `journal_error` (`journal.rb:261`). The three ROADMAP entries are items 22–24,
+and the parity work is grounded in `planning/rust-parity-gap.md`. The
+`cli/wiring/toolset_build.rb` clause is a code fix (T15), not a doc one.
+
 ---
 
 ## 9. Idiomatic Ruby, idiomatic Rust, and the gem question
@@ -700,6 +712,12 @@ the biggest measurable per-turn wins are Ruby-side memoizations needing no FFI (
   lock-across-Ruby fix (§10.1 item 6) should land first. The honest trigger is the roadmap item
   `Cargo.toml` already names: speculative branching with per-branch snapshots, which is what
   turns the HAMT from latent into rule 2's actual argument.
+  **Followed up in `planning/rust-parity-gap.md`** (ROADMAP item 23's grounding), which walks the
+  two surfaces method by method and finds the gap wider than three blockers: `Ext::Store#put` is
+  monomorphic where production stores six other duck-typed kinds, `Ext::Timeline#commit` takes no
+  `causal_parents:` (five `lib/` sites pass one), the payload is inline rather than a second
+  stored object, and `Ext::Timeline#ancestors` has no block form — so `Ledger`'s
+  `timeline.ancestors { … }` (`ledger.rb:117`) would price every timeline at zero in silence.
 - **`Request#prefix_digests`, `Compaction::Head`'s deep copy: Ruby caching problems, not ports**
   (§3.6; and `head.rb:81`'s `copy: true` may be buying nothing since `Canonical.normalize`
   already freezes every node — worth one measurement).

@@ -722,7 +722,7 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 > ✅ **Verified 2026-07-11** (probe: `planning/rpc_direction_probe.rb`, nvim 0.12.3 + neovim gem
 > 0.10.0): a `Neovim.attach_unix` client **can serve inbound `rpcrequest`** — no `jobstart` host
 > needed. `session.run` surfaces `Message::Request`; answer via `session.respond(id, value)`. Gem
-> traps, all load-bearing: writes **flush only on the loop's next read** (never
+> traps, every one of which the design had to bend around: writes **flush only on the loop's next read** (never
 > respond-then-shutdown); `Message::Request` has no `#respond`; `session.run` blocks its thread; and
 > `Session#main_thread_only` **raises off-thread**, so `Frontend::Neovim` owns ONE thread that both
 > serves and sends, fed by an inbox queue (nested calls inside a callback ride the gem's
@@ -859,7 +859,7 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    method behaves plus an `include_examples` call in a spec, with nothing in `lib/` saying so. This
    chunk names the properties as modules (following `Lain::ContentAddressed`), declares them
    **per-operation** where the structures live (so `#causal_meets` can be declared *not* a
-   semilattice, with its reason), and makes the declarations load-bearing via a registry-driven law
+   semilattice, with its reason), and makes the declarations do real work via a registry-driven law
    sweep that refuses any claim with no means of proof and proves every refutation by asserting the
    law actually fails. Applies the same vocabulary to existing code: `DedupeToolCalls` and
    `PurgeFailedInputs` already analyze-then-map, and naming that factoring makes their analysis
@@ -1010,6 +1010,76 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    monotonic only, there is no single wall clock), the `telemetry.rb` index split, `Compare::Run`
    widened to a `metrics:` hash collapsing five hand-rolled sweep folds, and the audited
    low-value-test deletions plus the two coverage gaps (`Core::Child`, `Repl::ApprovalSurfaces`).
+
+22. **Built (2026-07-28) — the epic tier, ahead of its own approval gate.** Twelve commits, all
+   on 2026-07-28, earliest `3053e49` and latest `3d16d55`
+   (`git log --oneline 3053e49^..3d16d55 -- lib/lain/epic.rb lib/lain/epic lib/lain/cli/epic.rb
+   lib/lain/cli/epic_queue.rb lib/lain/approval` — the plain `3053e49..3d16d55` range is 41
+   commits and excludes `3053e49` itself, so it is not the thing to cite). They landed a
+   content-addressed issue graph and the sign-off machinery over it: `Epic::Issue` (an issue value that cannot be addressed until it parses, carrying the
+   unit's `STORED_STATUSES` and grammar), `Epic::Graph` (blocking / related / discovered-from
+   edges and the queries that schedule them), `Epic::Stage`, `Epic::Document` (the markdown an
+   author edits, and the digest it must preserve), `Epic::Records`, `Epic::Progress` (runtime
+   truth is the journal, folded over the document), `Epic::Home` (where an epic's artifacts live
+   and what may name them); plus `Approval::Gate` with `Gate::Policy` and `Gate::Adjudicator`
+   (fail-closed over any artifact digest, and a deferred gate that tries to answer itself before
+   parking), `Approval::SignoffQueue`, and the CLI doors `lain epic status|queue|approve|deny`
+   (`exe/lain:89-100`). Measured: `lib/lain/epic.rb` + `lib/lain/epic/` 1,837 lines,
+   `cli/epic.rb` 441, `cli/epic_queue.rb` 353, the sign-off half of `approval/` 1,347 — **3,978
+   lines, 6.6% of `lib/`**.
+   **It waits on a review that has not happened.** Its grounding doc,
+   `planning/epic-orchestration.md:3`, still reads "Status: **draft — awaiting Joel's review**
+   (gate 1 of the very flow it describes)", and its own next step is "`/critique`, then
+   `/create-plan` for the first chunk" — neither of which ran. The open decisions that review
+   owes a ruling on are recorded there: the bench-native altitude axis, deferred gates,
+   default-outside artifacts, and not over-fitting work's PR process. A quarter of what shipped
+   is also unwired — `Approval::Gate` + `Gate::Policy` + `Gate::Adjudicator` (+ `Evidence`,
+   `Outcome`) is 1,051 lines whose only non-comment references in `lib/`+`exe/` are its own
+   files, so the epic CLI does not call it either (see item 24). Until this entry has a ruling
+   behind it, no single-implementation seam in the repo can be defended as "committed
+   direction", which is why the record comes first
+   (`planning/reviews/2026-07-29-simplification-review.md` §1.2).
+
+23. **Next chunk — the Rust `Timeline`/`Store` parity gap, and the wiring decision.** Grounding:
+   `planning/rust-parity-gap.md` (method-by-method Ruby↔`Lain::Ext`, written against the code,
+   `file:line` throughout). `lib/lain.rb:77` requires the compiled extension **unconditionally**,
+   so the question was never "is the extension present" — it is *which implementation a caller
+   gets*, which makes this a design decision rather than an optionality problem. The gap is
+   wider than "not wired": `Ext::Store#put` is monomorphic (`ext/lain/src/lib.rs:1007` takes
+   `&Turn`) while the production `Store` holds six other duck-typed kinds; `Ext::Timeline#commit`
+   accepts no `causal_parents:` (`lib.rs:1150-1155`, hard-coded `Vec::new()` at `:1169`) while
+   four `lib/` sites pass one and a fifth splats it in; the Ext store carries an event's payload
+   inline where Ruby stores two objects per turn, which the same shared-prefix spec pins at 8
+   (`spec/lain/timeline_spec.rb:150`) and 4 (`spec/lain/rust/timeline_spec.rb:77`); and
+   `Ext::Timeline#ancestors` returns an Array with no block form, so `Ledger`'s
+   `timeline.ancestors { … }` (`ledger.rb:117`) would silently accumulate nothing. Ruby's
+   `causal_meets`, `dominator_meet`, and `correlation` have no Ext counterpart at all. **Ruled
+   this chunk (item 20): the dag/canonical/event bindings stay unwired.** Timeline construction
+   is scattered across **16 sites in 12 files** with no factory to swap, so a wiring decision has
+   to name a seam before it can name an implementation.
+
+24. **Triage — the 30 unwired seams (the review's count; ~4,300 lines with zero production
+   callers).** Inventory and per-unit line counts:
+   `planning/reviews/2026-07-29-simplification-review.md` §1.1 — **re-measure before acting on
+   the total**: its `compaction/prepared.rb` row says 230 where `wc -l` says 167, so the 4,353
+   figure has at least one bad summand and the per-unit numbers are what to trust after a
+   `wc -l`. **Confirm
+   each is still needed before wiring or deleting** — this is a review item, not a build item,
+   and the answer per unit is a door, a deletion, or a dated reason to keep it dark. The two
+   shapes it splits into: **doors for roadmapped seams** — the sweeps are the clearest case, with
+   `Bench::CLI#arm_sweep_report` (`bench/cli.rb:66`) fully implemented and reachable from no Thor
+   subcommand (item 19 narrowed Deviation 8 and left this half open), and `Bench::DeciderSweep`
+   (422 lines, which this file calls "the headline experiment" at § M5, above) and `Bench::DisclosureSweep`
+   (332 lines with `Toolset::Disclosure` and `Tools::ToolSearch`) having no `Bench::CLI` method
+   at all, so neither runs without throwaway Ruby. And **deletion candidates where a ruling
+   already went the other way** — chunk 13 ruled the tool-disclosure arms out during planning and
+   the machinery shipped anyway, and `Compaction::Prepared` (**167** lines by `wc -l`; the review's
+   §1.1 table says 230, which does not reproduce) was built to pair with
+   `Context::Compact` and was orphaned by chunk 16's migration to the derived chain; the specs
+   and git history are the record either way. Also owed: a lint spec that fails a `lib/` class
+   with zero `lib/`+`exe/` references and no explicit marker, so the inventory cannot silently
+   regrow — `planning/specs/chunk-derived-context-timeline.md:171`'s F7 catalogue tracked nine of
+   these and the count roughly doubled since.
 
 ---
 

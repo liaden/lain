@@ -579,10 +579,20 @@ safety-critical:
   (sent-not-stored, exactly like `Workspace`) and never reach a turn's content or a digest. A
   provisioned service's journalable identity is its name plus the worker key, never its URL.
 
-**Wiring status.** The seam is injection-only today. `Supervisor` defaults to `Isolation::Null`
-and `Arm#run` defaults to `Arm::NoIsolation`; nothing under `lib/lain/cli/` constructs `Worktree`,
-`DbIndex`, or `Compose`, and no CLI flag selects one. Reaching a non-Null backend means
-constructing it in Ruby and injecting it, as `spec/lain/isolation/` and the arm driver do.
+**Wiring status.** `--isolation` has a door at both entry points. `CLI::IsolationBackend`
+(`lib/lain/cli/isolation_backend.rb`) is the one resolver: it turns a flag name into a concrete
+backend and constructs `Worktree` (`:126`), `DbIndex` (`:164`), and `Compose` (`:173`),
+decorating by need. `lain chat` declares the flag at `exe/lain:378` and `CLI::Wiring`
+(`cli/wiring.rb:150`) hands the resolved backend to the `Supervisor` it builds at `:122`;
+`lain bench arms` declares it at `exe/lain:182` and resolves through `Bench::CLI#arm_isolation`
+(`bench/cli.rb:247`).
+
+What is still short of a consumer is the **reach on the chat side**: only an actor-mode subagent
+leases, and no chat path constructs one, which `exe/lain:377-381` says in its own help text — so
+the flag resolves a real backend that nothing in chat asks for a lease from. The library
+defaults are unchanged, and describe the un-flagged caller rather than the CLI: `Supervisor`
+defaults to `Isolation::Null` (`supervisor.rb:44`), and `Arm#run` to `Arm::NoIsolation`
+(`arm/single_thread.rb:46` and its three siblings; `arm/driver.rb:39`).
 
 Where the cancellation guarantees come from is covered in
 [`docs/concurrency.md`](docs/concurrency.md), alongside the fibers-not-threads argument.
@@ -953,7 +963,36 @@ Subsystems without a section above, each self-documented in its own index file:
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
 | Desktop notify | `lib/lain/notify.rb` | the `dunstify` approval surface, and why its `-A` blocking behavior forced a backstop timeout |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
-| Telemetry | `lib/lain/telemetry.rb` | the ~20 guarded event kinds every journal record is one of |
+| Telemetry | `lib/lain/telemetry.rb` | the `Journalable` duck and 34 of the kinds that answer it, 21 of those with a `Telemetry::Guards` construction contract. **This file is not the whole vocabulary** — see below |
+
+**How many journal record types there are, and how to re-derive it.** Two mechanisms produce
+NDJSON records, so any single number needs its criterion stated.
+
+*Classes answering `#to_journal` through `Telemetry::Journalable`* — the criterion is
+`klass < Lain::Telemetry::Journalable`, which counts inheritance and not just `include`
+(`Telemetry::RequestResent` subclasses the `RequestSent` **event** at `telemetry.rb:275` and is
+the one a grep for `include` misses). That is **53** classes, each with a distinct `journal_type`
+string: 34 inside `lib/lain/telemetry.rb` and **19 defined elsewhere** — `Approval::GateDecision`,
+`Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
+`Compaction::Source::CompactionDecision`, `Compaction::Source::DerivationRefused`,
+`Compaction::Cold::CacheColdConfirmed`, `Compaction::Prepared::CompactionPrepared`,
+`Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
+`Supervisor::Restart::WorkspaceBlob`, `Tools::Subagent::Refused`,
+`Tools::Subagent::Stagger::{Dispatched,Released}`, `Arm::DualLedger::LedgerTransition`,
+`CLI::FleetWindows::WindowsCapped`, `Improvement`, and the two
+`Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate` records. Re-derive with
+`ObjectSpace.each_object(Class).select { |k| k < Lain::Telemetry::Journalable }` after
+`require "lain"`.
+
+*Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
+`session` / `turn` / `rewound` (`session_record.rb:31-33`, and `bench/session.rb:73-74` writes the
+first two for the bench), `journal_error` (`journal.rb:261`, `approval/queue.rb:211`),
+`approval_decision` (a hand-written `#to_journal` at `approval/queue.rb:88-93`),
+`goal_iteration` / `goal_pin` / `goal_pin_missed` (`cli/goal_driver.rb:244,318,310`), and
+`live_replay` / `live_replay_turn` (`bench/live_replay.rb:95,84`). That list is a **floor**: it is
+what a sweep of `"type" =>` literals in `lib/` turned up once content blocks and JSON Schema
+fragments were excluded, not a proof of completeness. A reader of the NDJSON should discriminate
+on the `type` string and always have an `else`.
 
 ## `ext/lain` vs `crates/lain-core`: the placement rule
 
