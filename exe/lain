@@ -77,6 +77,19 @@ class LainCLI < Thor
 
   def self.double_dash? = !!@double_dash
 
+  # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
+  # resolves the home, folds the Journal, and returns a String; this class parses
+  # argv, `say`s what comes back, and presents the lib's own refusals -- all
+  # Lain::Error -- as Thor::Error, message to stderr, nonzero exit, no backtrace.
+  class Epic < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    desc "status [SLUG]", "Where one epic stands: ready issues and remaining waves, folded from the Journal"
+    def status(slug = nil) = render { Lain::CLI::Epic.new.status(slug) }
+  end
+
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -222,6 +235,9 @@ class LainCLI < Thor
       def lease_journal = options[:journal] && Lain::Journal.open(options[:journal])
     end
   end
+
+  desc "epic SUBCOMMAND ...ARGS", "The epic tier: artifact home, issue graph, and sign-off queue"
+  subcommand "epic", Epic
 
   desc "bench SUBCOMMAND ...ARGS",
        "Bench drivers over recorded sessions, and the live arm comparison " \

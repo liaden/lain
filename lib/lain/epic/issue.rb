@@ -9,6 +9,15 @@ module Lain
     # set closed and the derivation discoverable.
     STORED_STATUSES = %w[pending in_flight done abandoned].freeze
     DERIVED_STATUSES = %w[ready].freeze
+    # The one member of that set that means FINISHED, named because three
+    # separate readers already turn on it as a bare literal -- {Graph#ready}
+    # (only a done blocker is satisfied), {Progress#summary}'s tally, and
+    # {Document::STATUS_MARKS}' glyph -- and a fourth arrived with
+    # `lain epic status`, whose whole remaining-work rule is "not done is
+    # remaining". `abandoned` is deliberately NOT this: it is work somebody
+    # stopped, it still blocks, and only an edge edit gets past it. A status the
+    # tier's semantics hinge on deserves a name beside the set it belongs to.
+    DONE = "done"
 
     # The characters an id reserves for the epic-markdown grammar (see
     # Document), where an issue is headed `### [<mark>] `<id>` <title>`. This is
