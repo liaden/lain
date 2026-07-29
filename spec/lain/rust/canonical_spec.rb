@@ -57,4 +57,83 @@ RSpec.describe "Lain::Ext canonical (Rust)" do
     # "canonical determinism" group already proves the dump is order-independent,
     # and the digest is a deterministic blake3 of that dump.
   end
+
+  # The Rust reader recurses per nesting level, and an unbounded recursion over
+  # a hostile structure is a stack overflow -- which Ruby's guard page turns
+  # into a SystemStackError that longjmps through live Rust frames, running no
+  # destructor (the failure prompt.rs's MAX_DEPTH was added for, measured there
+  # at 16 MB leaked over 200 overflows). The bound is set where RUBY's own
+  # boundary already is: `Canonical.dump` ends in `JSON.generate`, whose default
+  # `max_nesting` is 100, so 100 containers is exactly the deepest structure the
+  # Ruby implementation can serialize. Pinning both sides here is what makes the
+  # bound a parity fact rather than a Rust-side preference -- if a JSON gem
+  # upgrade moves Ruby's limit, the first example below fails and the constant
+  # gets revisited.
+  describe "nesting depth" do
+    # `nest(n)` wraps `1` in n containers, so n IS the nesting depth.
+    def nest_arrays(depth) = depth.zero? ? 1 : [nest_arrays(depth - 1)]
+
+    def nest_hashes(depth) = depth.zero? ? 1 : { "a" => nest_hashes(depth - 1) }
+
+    it "accepts the deepest structure the Ruby canonicalizer can dump" do
+      expect(Lain::Canonical.dump(nest_arrays(100))).to eq("#{"[" * 100}1#{"]" * 100}")
+      expect(Lain::Ext.canonical_dump(nest_arrays(100))).to eq(Lain::Canonical.dump(nest_arrays(100)))
+    end
+
+    it "refuses one level past that, where Ruby's own JSON.generate refuses too" do
+      expect { Lain::Canonical.dump(nest_arrays(101)) }.to raise_error(JSON::NestingError)
+      expect { Lain::Ext.canonical_dump(nest_arrays(101)) }
+        .to raise_error(Lain::Canonical::UnsupportedType, /nested deeper than 100/)
+    end
+
+    it "bounds Hash nesting by the same count" do
+      expect(Lain::Ext.canonical_dump(nest_hashes(100))).to eq(Lain::Canonical.dump(nest_hashes(100)))
+      expect { Lain::Ext.canonical_dump(nest_hashes(101)) }
+        .to raise_error(Lain::Canonical::UnsupportedType, /nested deeper than 100/)
+    end
+
+    it "bounds the digest entry point too, not only the dump" do
+      expect { Lain::Ext.canonical_digest(nest_arrays(101)) }
+        .to raise_error(Lain::Canonical::UnsupportedType, /nested deeper than 100/)
+    end
+
+    # The refusal must unwind Rust frames normally -- a returned Error, never an
+    # overflow -- so repeating it reclaims everything. Mirrors prompt_spec.rb's
+    # "leaks nothing across repeated refusals", with the RSS measurement the
+    # card's AC names: a leaked frame per call would be visible over 100 of them.
+    #
+    # 101 levels, not a headroom number: the reader refuses at 101 and never
+    # visits anything below it, so a deeper input exercises nothing extra while
+    # making the fixture the expensive part.
+    #
+    # Sensitivity comes from the call COUNT, not from a tight threshold. RSS is
+    # process-global, and inside a 6500-example suite the measured window picks
+    # up unrelated allocation -- a 512 KiB bound over 100 calls failed once and
+    # passed once here, which is a flaky test, not a sensitive one. 1000 calls
+    # against a 2 MiB bound tolerates that noise while catching a leak of 2 KiB
+    # per call; the leak this guards against (Rust frames abandoned by a
+    # longjmp through ~100 recursion levels) would be an order of magnitude
+    # above that. Both batches run before the measured one so nothing here is
+    # measuring first-call warmup.
+    it "leaks nothing across 1000 repeated refusals" do
+      deep = nest_arrays(101)
+      1_000.times { expect { Lain::Ext.canonical_dump(deep) }.to raise_error(Lain::Canonical::UnsupportedType) }
+      GC.start
+      before = resident_bytes
+
+      1_000.times { expect { Lain::Ext.canonical_dump(deep) }.to raise_error(Lain::Canonical::UnsupportedType) }
+      GC.start
+
+      growth = resident_bytes - before
+      expect(growth).to(be < 2 * 1024 * 1024, "RSS grew #{growth} bytes")
+      expect(Lain::Ext.canonical_dump({ "a" => 1 })).to eq('{"a":1}')
+    end
+
+    # Resident pages, from procfs -- the same number `ps rss` reports.
+    def resident_bytes
+      File.read("/proc/self/statm").split[1].to_i * 4096
+    rescue Errno::ENOENT
+      skip "no /proc/self/statm on this platform"
+    end
+  end
 end

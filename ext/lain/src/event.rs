@@ -20,7 +20,7 @@
 //! Ruby VM; the FFI wrapper in `lib.rs` reads Ruby values into an `EventData`
 //! and hands the frozen, `Ractor.shareable?` handle back.
 
-use crate::canonical::{self, Canon, build_object};
+use crate::canonical::{self, Canon};
 use crate::digest::Digest;
 use std::sync::Arc;
 
@@ -159,13 +159,13 @@ impl PayloadData {
 }
 
 fn payload_canon(kind: Kind, body: &Canon) -> Canon {
-    let pairs = vec![
-        ("kind".to_string(), Canon::Str(kind.as_str().to_string())),
-        ("body".to_string(), body.clone()),
-    ];
-    // The two keys are literals and distinct, so build_object cannot report an
-    // ambiguous key here.
-    Canon::Object(build_object(pairs).expect("payload keys are distinct"))
+    // Keys are literals, written in the sorted order `Canonical.dump` requires,
+    // so this needs neither the duplicate scan nor the `.expect()` that
+    // discharged its impossible `Err`. See `Canon::object_from_sorted`.
+    Canon::object_from_sorted([
+        ("body", body.clone()),
+        ("kind", Canon::Str(kind.as_str().to_string())),
+    ])
 }
 
 /// An immutable node of the Timeline DAG, now wearing the full envelope. Two
@@ -214,13 +214,12 @@ impl EventData {
         correlation: Option<Digest>,
         causal_parents: Vec<Digest>,
     ) -> Arc<Self> {
-        let body_pairs = vec![
-            ("role".to_string(), Canon::Str(role.as_str().to_string())),
-            ("content".to_string(), content),
-            ("meta".to_string(), meta),
-        ];
-        // Literal, distinct keys -- see payload_canon.
-        let body = Canon::Object(build_object(body_pairs).expect("body keys are distinct"));
+        // Literal keys in sorted order -- see payload_canon.
+        let body = Canon::object_from_sorted([
+            ("content", content),
+            ("meta", meta),
+            ("role", Canon::Str(role.as_str().to_string())),
+        ]);
         Self::new(
             None,
             None,
@@ -356,26 +355,22 @@ fn envelope_canon(
             .map(|digest| Canon::Str(digest.to_string()))
             .collect(),
     );
-    let pairs = vec![
-        ("kind".to_string(), Canon::Str(kind.as_str().to_string())),
-        ("from".to_string(), optional_text(from)),
-        ("to".to_string(), optional_text(to)),
-        ("render_parent".to_string(), optional_digest(render_parent)),
-        ("causal_parents".to_string(), causal),
-        ("correlation".to_string(), optional_digest(correlation)),
-        (
-            "payload_digest".to_string(),
-            Canon::Str(payload_digest.to_string()),
-        ),
-    ];
-    // The seven keys are literals and distinct, so build_object cannot report
-    // an ambiguous key here.
-    Canon::Object(build_object(pairs).expect("envelope keys are distinct"))
+    // The seven keys are literals in sorted order -- see payload_canon.
+    Canon::object_from_sorted([
+        ("causal_parents", causal),
+        ("correlation", optional_digest(correlation)),
+        ("from", optional_text(from)),
+        ("kind", Canon::Str(kind.as_str().to_string())),
+        ("payload_digest", Canon::Str(payload_digest.to_string())),
+        ("render_parent", optional_digest(render_parent)),
+        ("to", optional_text(to)),
+    ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canonical::build_object;
 
     fn text(body: &str) -> Canon {
         Canon::Array(vec![Canon::Object(
@@ -554,6 +549,50 @@ mod tests {
             node.digest.as_str(),
             "blake3:46c1b458bc6aa2e197ae24dfa416fdeb1eac59cce48050298fb19a3dafaa9b9f"
         );
+    }
+
+    fn keys_of(canon: &Canon) -> Vec<&str> {
+        match canon {
+            Canon::Object(pairs) => pairs.iter().map(|(key, _)| key.as_str()).collect(),
+            other => panic!("expected an object, got {other:?}"),
+        }
+    }
+
+    // `Canon::object_from_sorted` trusts its caller to write keys in sorted
+    // order, and these three constructors ARE that caller. The golden-bytes
+    // test above would catch a mis-sort for the turn shape it happens to build;
+    // this states each key list directly, so the precondition is a named,
+    // readable assertion rather than a side effect of a digest vector.
+    #[test]
+    fn the_three_literal_key_lists_are_written_in_sorted_order() {
+        let node = turn(Role::User, "hi");
+        let payload = payload_canon(node.payload.kind, &node.payload.body);
+        let envelope = node.payload_canon();
+        let lists = [
+            keys_of(&payload),
+            keys_of(&node.payload.body),
+            keys_of(&envelope),
+        ];
+        assert_eq!(lists[0], ["body", "kind"]);
+        assert_eq!(lists[1], ["content", "meta", "role"]);
+        assert_eq!(
+            lists[2],
+            [
+                "causal_parents",
+                "correlation",
+                "from",
+                "kind",
+                "payload_digest",
+                "render_parent",
+                "to"
+            ]
+        );
+        for list in &lists {
+            assert!(
+                list.windows(2).all(|pair| pair[0] < pair[1]),
+                "keys must be strictly increasing: {list:?}"
+            );
+        }
     }
 
     // Same Ruby-computed vector, exercising the correlation and causal-parent

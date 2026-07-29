@@ -62,8 +62,8 @@ fn build_env_filter(level: &str) -> Result<EnvFilter, String> {
 
 /// Duplicate a caller-owned file descriptor into an independent [`std::fs::File`].
 ///
-/// This is the load-bearing half of output discipline on the Rust side. Ruby
-/// hands us an `IO#fileno` for where tracing should write (its real stderr, or
+/// This is the half of output discipline that keeps Ruby's own descriptor open.
+/// Ruby hands us an `IO#fileno` for where tracing should write (its real stderr, or
 /// an open Journal file). We must NOT wrap that fd directly: when the resulting
 /// `File` is dropped it would `close(2)` the descriptor, silently closing
 /// Ruby's log file or, worse, its stderr. Instead we `dup(2)` first and own
@@ -93,6 +93,51 @@ fn dup_writer(fd: std::os::unix::io::RawFd) -> std::io::Result<std::fs::File> {
 /// under test.
 fn blake3_hex(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
+}
+
+/// How deeply a Ruby structure may nest before the canonical reader refuses it.
+///
+/// This is a SAFETY bound, the same class of bound as `prompt.rs`'s `MAX_DEPTH`
+/// and for the same measured reason: the reader recurses per container, and an
+/// unbounded recursion over a hostile structure overflows the stack. Ruby's
+/// guard-page handler turns that into a `SystemStackError`, which longjmps
+/// through live Rust frames -- no destructor runs, and every allocation below
+/// the jump leaks (measured on the prompt parser at 16 MB over 200 overflows).
+/// Bounding the READ bounds everything downstream, because a `Canon` reaches
+/// this crate only through the reader: `canonical::dump`, `canonical::digest`,
+/// `canon_to_ruby`, and the `Canon` drop glue all recurse over the same tree, so
+/// there is one limit here rather than four.
+///
+/// **100 is Ruby's own boundary, not a round number.** `Canonical.dump` ends in
+/// `JSON.generate`, whose default `max_nesting` is 100, so 100 nested containers
+/// is exactly the deepest structure the Ruby implementation can serialize --
+/// verified on 4.0.6: depth 100 dumps, depth 101 raises `JSON::NestingError`.
+/// Matching it makes the two implementations accept and refuse the same set of
+/// structures, which is what parity means here; a lower bound would refuse
+/// payloads Ruby serializes fine, and a higher one would accept structures Ruby
+/// cannot dump at all. The deepest tree the canonical parity corpus builds is 3
+/// (`spec/lain/rust/canonical_spec.rb`), so the bound is nowhere near real
+/// payloads. `spec/lain/rust/canonical_spec.rb`'s "nesting depth" group pins
+/// both sides of the boundary, so a JSON-gem change that moves Ruby's limit
+/// fails there rather than drifting silently.
+const MAX_CANON_DEPTH: usize = 100;
+
+/// Enter one more container, answering the new depth -- or a message naming the
+/// bound, when that would be one level too far.
+///
+/// Plain Rust with no `magnus` in its signature (the `build_env_filter` shape),
+/// so `cargo test` covers the arithmetic the FFI reader depends on. The message
+/// opens with `cannot canonicalize` because it is raised as
+/// `Lain::Canonical::UnsupportedType`, whose whole family of messages -- and the
+/// shared determinism group's `/cannot canonicalize/` matcher -- read that way.
+fn descend(depth: usize) -> Result<usize, String> {
+    let entered = depth + 1;
+    if entered > MAX_CANON_DEPTH {
+        return Err(format!(
+            "cannot canonicalize a structure nested deeper than {MAX_CANON_DEPTH} levels"
+        ));
+    }
+    Ok(entered)
 }
 
 /// How a [`Canon::Num`] text must be rebuilt as a Ruby value. `Canon::Num`
@@ -225,6 +270,45 @@ fn put_into(
     validate_put(map, node)?;
     let inserted = map.insert(digest.clone(), std::sync::Arc::clone(node));
     Ok((inserted, digest))
+}
+
+/// Walk `count` render-parent edges back from `head`. `None` absorbs -- rewinding
+/// past the root lands on the empty Timeline, exactly as Ruby's
+/// `Timeline#rewind` does -- while a digest that is present but absent from the
+/// map is corruption and answers `Err`, kept distinct from a root.
+///
+/// Split out of [`ffi::Timeline::rewind`] for the reason `put_into` was split
+/// out of `Store::put`, and for one more: the whole walk must run under ONE
+/// lock (re-locking per step would let another thread's `commit` interleave
+/// mid-rewind), and a pure function is what lets the caller hold that lock
+/// across the walk and translate the failure into a Ruby exception only after
+/// the guard has dropped. A `magnus::Error` built under a held guard means a
+/// `const_get` -- Ruby code, which can raise and unwind through the guard --
+/// inside the critical section.
+///
+/// **`digest.is_some()` is what bounds the walk by the CHAIN, not by the
+/// caller's argument, and holding one lock across it is why that matters.**
+/// `None` absorbs, so every step past the root is already a no-op -- but a bare
+/// `remaining > 0` still spins through all of them, inside the critical section
+/// and under the GVL, uninterruptible by any other thread. Measured at 2.06e9
+/// steps/s, `rewind(2**62)` would hold the Store's mutex for roughly 71 years.
+/// The extra condition costs one branch per step and makes the walk terminate at
+/// the chain's length, which is the only number that was ever meaningful here.
+fn rewind_to(
+    map: &dag::StoreMap,
+    head: Option<crate::digest::Digest>,
+    count: i64,
+) -> Result<Option<crate::digest::Digest>, dag::DanglingDigest> {
+    let mut digest = head;
+    let mut remaining = count;
+    while remaining > 0 && digest.is_some() {
+        digest = match digest {
+            None => None,
+            Some(current) => dag::parent_of(map, &current)?,
+        };
+        remaining -= 1;
+    }
+    Ok(digest)
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +556,14 @@ mod ffi {
     /// Integer via `#to_s`, a Float via `JSON.generate`, so the bytes match
     /// Ruby's exactly even where Rust's float formatting would diverge.
     fn ruby_to_canon(ruby: &Ruby, value: Value) -> Result<Canon, Error> {
+        read_canon(ruby, value, 0)
+    }
+
+    /// The recursive half of [`ruby_to_canon`]. `depth` counts the containers
+    /// already entered, so the top-level value is read at 0 and every Array or
+    /// Hash costs one level -- see [`super::MAX_CANON_DEPTH`] for why the count
+    /// is bounded at all and why the bound is Ruby's own.
+    fn read_canon(ruby: &Ruby, value: Value, depth: usize) -> Result<Canon, Error> {
         // `equal` calls Ruby's `#==`, which a hostile or buggy class can
         // override to raise. Propagated with `?` rather than swallowed to
         // `false`: falling through would misreport a raising `==` as "not
@@ -490,13 +582,14 @@ mod ffi {
         } else if let Some(text) = coerce_text(ruby, value)? {
             Ok(Canon::Str(text))
         } else if let Some(array) = RArray::from_value(value) {
+            let inner = enter_container(ruby, depth)?;
             let items = array
                 .into_iter()
-                .map(|element| ruby_to_canon(ruby, element))
+                .map(|element| read_canon(ruby, element, inner))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Canon::Array(items))
         } else if let Some(hash) = RHash::from_value(value) {
-            canon_hash(ruby, hash)
+            canon_hash(ruby, hash, enter_container(ruby, depth)?)
         } else {
             // SAFETY: classname reads the object's class name; no Ruby code runs
             // meanwhile.
@@ -523,10 +616,28 @@ mod ffi {
         Ok(Canon::Num(json.funcall("generate", (value,))?))
     }
 
-    fn canon_hash(ruby: &Ruby, hash: RHash) -> Result<Canon, Error> {
+    /// One level deeper, or the refusal [`super::descend`] worded. Raised as
+    /// `Lain::Canonical::UnsupportedType`: the value genuinely cannot be
+    /// canonicalized, it is the class every other "JSON cannot represent this"
+    /// refusal in this reader uses, and it is a `Lain::Error` a caller can
+    /// rescue (`Lain::Canonical` defines no `Error` of its own, so
+    /// `UnsupportedType < Error` resolves lexically to `Lain::Error`).
+    ///
+    /// Ruby's own limit surfaces instead as the JSON gem's `JSON::NestingError`,
+    /// whose text is the gem's to change -- so the two implementations refuse
+    /// the same SET of structures but not with the same class hierarchy, and
+    /// `rescue Lain::Error` sees only this one. Closing that is a `Canonical`
+    /// change, tracked outside this crate.
+    fn enter_container(ruby: &Ruby, depth: usize) -> Result<usize, Error> {
+        super::descend(depth).map_err(|too_deep| {
+            lookup_error(ruby, &["Lain", "Canonical", "UnsupportedType"], too_deep)
+        })
+    }
+
+    fn canon_hash(ruby: &Ruby, hash: RHash, depth: usize) -> Result<Canon, Error> {
         let mut pairs: Vec<(String, Canon)> = Vec::new();
         hash.foreach(|key: Value, val: Value| {
-            pairs.push((canon_key(ruby, key)?, ruby_to_canon(ruby, val)?));
+            pairs.push((canon_key(ruby, key)?, read_canon(ruby, val, depth)?));
             Ok(ForEach::Continue)
         })?;
         let object = canonical::build_object(pairs).map_err(|ambiguous| {
@@ -613,6 +724,17 @@ mod ffi {
     /// Map a pure-layer [`dag::DanglingDigest`] onto `Lain::Ext::Store::MissingObject`.
     /// The struct's `Display` is byte-equal to Ruby `Store#fetch`, so a corrupt
     /// chain raises the same class and the same message from every walk.
+    ///
+    /// **Never call this -- or anything else that reaches Ruby -- while a
+    /// `Store` guard is held.** It ends in `const_get`, which runs Ruby code:
+    /// that can raise (unwinding through a live `MutexGuard`, which is how a
+    /// mutex gets left in a state no Rust code chose), allocate, and trigger GC
+    /// with the store's own lock held. Every walk in this module therefore has
+    /// the same three-step shape -- compute a pure `Result` under the guard, let
+    /// the guard drop, then translate -- and the walks that read a single node
+    /// (`Store::fetch`, `Timeline::head`) bind the `Option` to a `let` for
+    /// exactly that reason, since a temporary guard in a `?`-terminated
+    /// expression lives to the end of the whole statement.
     fn missing_object(ruby: &Ruby, dangling: dag::DanglingDigest) -> Error {
         lookup_error(
             ruby,
@@ -621,13 +743,24 @@ mod ffi {
         )
     }
 
-    /// The `&Store` a `Lain::Ext::Store` Ruby value names. Collapses the
-    /// repeated `store_ref(rb_self.store_value(ruby))` (and its
-    /// `store_ref(store_value)` reuse form, when a caller already
-    /// holds the `Value`) at every DAG-walking `Timeline` method into one
-    /// named site.
-    fn store_ref<'a>(store_value: Value) -> Result<&'a Store, Error> {
-        TryConvert::try_convert(store_value)
+    /// The `&Store` a `Timeline` names. Collapses the `store_ref(...)` call at
+    /// every DAG-walking `Timeline` method into one named site.
+    ///
+    /// The lifetime is tied to the `&'a Timeline`, not left free, and that is
+    /// the whole point of the signature. `TryConvert` hands back a reference
+    /// into a Ruby object with an UNBOUNDED lifetime -- it will unify with
+    /// whatever the call site asks for, `'static` included -- so the borrow is
+    /// checked against nothing. Naming `'a` narrows it to the Timeline the
+    /// store was reached through, which is the object whose `mark` roots that
+    /// store `Value` in the first place.
+    ///
+    /// It narrows the claim rather than proving it: the `&Timeline` is itself
+    /// derived from a `Value`, so what keeps the `Store` alive is still `mark`
+    /// plus Ruby's conservative stack scanning, not the borrow checker. The
+    /// signature makes a `&Store` outliving its Timeline unwritable; it does
+    /// not make GC reachability a compile-time fact.
+    fn store_ref<'a>(ruby: &Ruby, timeline: &'a Timeline) -> Result<&'a Store, Error> {
+        TryConvert::try_convert(timeline.store_value(ruby))
     }
 
     /// A frozen Ruby String. Digests, roles, and reconstructed content strings
@@ -1013,17 +1146,23 @@ mod ffi {
         /// whose parent digest the store does not hold, else insert if absent)
         /// and carries the idempotence law's `cargo test` proof with it.
         /// One lock held across check AND insert -- no TOCTOU window for a
-        /// concurrent put.
+        /// concurrent put -- and DROPPED before the failure becomes a Ruby
+        /// exception (see the guard-discipline note on `missing_object`).
         fn put(ruby: &Ruby, rb_self: &Store, turn: &Turn) -> Result<String, Error> {
-            let mut map = rb_self.locked();
-            let (updated, digest) = put_into(&map, &turn.inner).map_err(|dangling| {
+            let written = {
+                let mut map = rb_self.locked();
+                put_into(&map, &turn.inner).map(|(updated, digest)| {
+                    *map = updated;
+                    digest
+                })
+            };
+            let digest = written.map_err(|dangling| {
                 lookup_error(
                     ruby,
                     &["Lain", "Ext", "Store", "MissingObject"],
                     dangling.to_string(),
                 )
             })?;
-            *map = updated;
             // FFI-out boundary: the digest returns to Ruby as a String.
             Ok(digest.into())
         }
@@ -1118,9 +1257,13 @@ mod ffi {
                     }
                 }
             };
-            // A non-Store store must fail loudly at construction, not on first walk.
-            let _: &Store = store_ref(store_value)?;
-            Ok(Timeline::wrap(ruby, None, store_value))
+            // A non-Store store must fail loudly at construction, not on first
+            // walk -- and the check runs through the same lifetime-tied
+            // accessor every walk uses, which is why the handle is wrapped
+            // first. A handle that raises here is discarded unreferenced.
+            let timeline = Timeline::wrap(ruby, None, store_value);
+            store_ref(ruby, &timeline)?;
+            Ok(timeline)
         }
 
         fn empty_p(&self) -> bool {
@@ -1142,7 +1285,9 @@ mod ffi {
             match &rb_self.head {
                 None => Ok(ruby.qnil().as_value()),
                 Some(digest) => {
-                    let store: &Store = store_ref(rb_self.store_value(ruby))?;
+                    let store: &Store = store_ref(ruby, rb_self)?;
+                    // Bound to a `let` so the guard drops before the `match`:
+                    // the `None` arm calls into Ruby (see `missing_object`).
                     let found = store.locked().get(digest).map(Arc::clone);
                     match found {
                         Some(inner) => Ok(Turn::wrap(ruby, inner).as_value()),
@@ -1168,7 +1313,7 @@ mod ffi {
             let content = ruby_to_canon(ruby, content_value)?;
             let meta = read_meta(ruby, args.optional.0)?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(store_value)?;
+            let store: &Store = store_ref(ruby, &rb_self)?;
             let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
             let turn = EventData::turn(
                 role,
@@ -1198,14 +1343,14 @@ mod ffi {
             match head {
                 None => Ok(None),
                 Some(head_digest) => {
-                    let node =
-                        store
-                            .locked()
-                            .get(head_digest)
-                            .map(Arc::clone)
-                            .ok_or_else(|| {
-                                missing_object(ruby, dag::DanglingDigest(head_digest.clone()))
-                            })?;
+                    // The lookup is its own statement so the guard drops before
+                    // `ok_or_else` reaches Ruby (see `missing_object`); chained
+                    // onto the same expression, the temporary guard would still
+                    // be alive when `const_get` ran.
+                    let found = store.locked().get(head_digest).map(Arc::clone);
+                    let node = found.ok_or_else(|| {
+                        missing_object(ruby, dag::DanglingDigest(head_digest.clone()))
+                    })?;
                     Ok(Some(
                         node.correlation
                             .clone()
@@ -1231,7 +1376,7 @@ mod ffi {
         ) -> Result<Obj<Timeline>, Error> {
             let head = read_optional_digest(ruby, Some(digest))?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(store_value)?;
+            let store: &Store = store_ref(ruby, &rb_self)?;
             validate_head(ruby, store, &head)?;
             Ok(Timeline::wrap(ruby, head, store_value))
         }
@@ -1249,29 +1394,18 @@ mod ffi {
             let parsed = scan_args::<(), (Option<i64>,), (), (), (), ()>(args)?;
             let count = parsed.optional.0.unwrap_or(1);
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(store_value)?;
+            let store: &Store = store_ref(ruby, &rb_self)?;
             // One locked read for the whole walk, matching dag.rs's own
             // single-locked-read doctrine: re-acquiring the Mutex per step
-            // would let another thread's `commit` interleave mid-rewind.
-            let digest = {
+            // would let another thread's `commit` interleave mid-rewind. The
+            // walk itself is `super::rewind_to`, a pure function, so the guard
+            // drops with the block and the corruption case becomes a Ruby
+            // exception only afterwards (see `missing_object`).
+            let walked = {
                 let map = store.locked();
-                let mut digest = rb_self.head.clone();
-                let mut remaining = count;
-                while remaining > 0 {
-                    // `None` absorbs (rewinding past the root lands on empty,
-                    // per Ruby `Timeline#rewind`); a digest that is present but
-                    // absent from the store is corruption and raises, distinct
-                    // from a root.
-                    digest = match digest {
-                        None => None,
-                        Some(current) => {
-                            dag::parent_of(&map, &current).map_err(|e| missing_object(ruby, e))?
-                        }
-                    };
-                    remaining -= 1;
-                }
-                digest
+                super::rewind_to(&map, rb_self.head.clone(), count)
             };
+            let digest = walked.map_err(|e| missing_object(ruby, e))?;
             // `parent_of` validates the node stepped FROM, never the digest
             // landed ON: landing exactly on a dangle would hand back a poisoned
             // Timeline whose head the store does not hold. Ruby's rewind lands
@@ -1287,25 +1421,30 @@ mod ffi {
             Ok(Timeline::wrap(ruby, digest, store_value))
         }
 
+        /// Every walk below reads `store.locked()` in a statement of its own and
+        /// translates on the NEXT line. That is not a style choice: written as
+        /// one chained expression, the temporary `MutexGuard` outlives the
+        /// `map_err` closure, so `missing_object`'s `const_get` would run --
+        /// raising, allocating, and inviting GC -- with the store locked.
         fn ancestors(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            let arcs = walked.map_err(|e| missing_object(ruby, e))?;
             turns_to_array(ruby, arcs)
         }
 
         fn to_a(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let mut arcs = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            let mut arcs = walked.map_err(|e| missing_object(ruby, e))?;
             arcs.reverse();
             turns_to_array(ruby, arcs)
         }
 
         fn ancestor_digests(ruby: &Ruby, rb_self: &Timeline) -> Result<RArray, Error> {
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let digests = dag::ancestor_digests(&store.locked(), rb_self.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::ancestor_digests(&store.locked(), rb_self.head.as_ref());
+            let digests = walked.map_err(|e| missing_object(ruby, e))?;
             let array = ruby.ary_new_capa(digests.len());
             for digest in digests {
                 array.push(frozen_str(ruby, digest.as_str()))?;
@@ -1314,16 +1453,16 @@ mod ffi {
         }
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?
-                .len())
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            Ok(walked.map_err(|e| missing_object(ruby, e))?.len())
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
             let needle: Digest = digest.into();
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            Ok(dag::ancestor_turns(&store.locked(), rb_self.head.as_ref())
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
+            Ok(walked
                 .map_err(|e| missing_object(ruby, e))?
                 .iter()
                 .any(|turn| turn.digest == needle))
@@ -1331,9 +1470,10 @@ mod ffi {
 
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
             ensure_same_store(ruby, rb_self, other)?;
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            dag::ancestor_of(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked =
+                dag::ancestor_of(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            walked.map_err(|e| missing_object(ruby, e))
         }
 
         fn meet(
@@ -1343,9 +1483,9 @@ mod ffi {
         ) -> Result<Obj<Timeline>, Error> {
             ensure_same_store(ruby, &rb_self, other)?;
             let store_value = rb_self.store_value(ruby);
-            let store: &Store = store_ref(store_value)?;
-            let common = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?;
+            let store: &Store = store_ref(ruby, &rb_self)?;
+            let walked = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let common = walked.map_err(|e| missing_object(ruby, e))?;
             Ok(Timeline::wrap(ruby, common, store_value))
         }
 
@@ -1355,9 +1495,9 @@ mod ffi {
             other: &Timeline,
         ) -> Result<Value, Error> {
             ensure_same_store(ruby, &rb_self, other)?;
-            let store: &Store = store_ref(rb_self.store_value(ruby))?;
-            let common = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref())
-                .map_err(|e| missing_object(ruby, e))?;
+            let store: &Store = store_ref(ruby, &rb_self)?;
+            let walked = dag::meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let common = walked.map_err(|e| missing_object(ruby, e))?;
             match common {
                 None => Ok(ruby.qnil().as_value()),
                 // `dag::meet` only ever returns a digest it found walking the
@@ -1370,10 +1510,11 @@ mod ffi {
                 // other dangling-digest site in this module gives, not a
                 // second, silent failure mode of its own.
                 Some(digest) => {
-                    let inner =
-                        store.locked().get(&digest).map(Arc::clone).ok_or_else(|| {
-                            missing_object(ruby, dag::DanglingDigest(digest.clone()))
-                        })?;
+                    // Its own statement, so the guard is gone before the loud
+                    // arm reaches Ruby (see `missing_object`).
+                    let found = store.locked().get(&digest).map(Arc::clone);
+                    let inner = found
+                        .ok_or_else(|| missing_object(ruby, dag::DanglingDigest(digest.clone())))?;
                     Ok(Turn::wrap(ruby, inner).as_value())
                 }
             }
@@ -1390,7 +1531,7 @@ mod ffi {
                     // `to_s`/`inspect` is not a loud walk site: a debug string
                     // must not raise. But a corrupt chain's length is unknowable,
                     // not zero, so it renders as `(?)` rather than a false `(0)`.
-                    let length = store_ref(rb_self.store_value(ruby))
+                    let length = store_ref(ruby, rb_self)
                         .ok()
                         .and_then(|store: &Store| {
                             dag::ancestor_turns(&store.locked(), Some(digest)).ok()
@@ -1879,8 +2020,9 @@ mod put_tests {
     // pins an implementation choice, not a property of the store. It is NOT a
     // third store law: `store_laws.rb` declares two, and Rust asserts that same
     // two (see `ext/lain/CLAUDE.md`, "a ported structure inherits the Ruby
-    // declaration"). Kept because the shortcut is load-bearing for idempotence
-    // and a future refactor that dropped it would otherwise go unnoticed.
+    // declaration"). Kept because the shortcut is what makes a re-put idempotent
+    // against a map whose edges have since changed, and a future refactor that
+    // dropped it would otherwise go unnoticed.
     #[test]
     fn a_re_put_returns_early_without_revalidating_edges() {
         let root = node("a", None);
@@ -1948,6 +2090,129 @@ mod tests {
             err.contains("invalid log level"),
             "unexpected message: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod rewind_tests {
+    use super::rewind_to;
+    use crate::canonical::Canon;
+    use crate::dag::{DanglingDigest, StoreMap};
+    use crate::digest::Digest;
+    use crate::event::{EventData, Role};
+    use std::sync::Arc;
+
+    fn node(body: &str, parent: Option<&Digest>) -> Arc<EventData> {
+        EventData::turn(
+            Role::User,
+            Canon::Str(body.to_string()),
+            parent.cloned(),
+            Canon::Object(vec![]),
+            None,
+            Vec::new(),
+        )
+    }
+
+    /// A three-node chain, root first.
+    fn chain() -> (StoreMap, Vec<Arc<EventData>>) {
+        let root = node("a", None);
+        let middle = node("b", Some(&root.digest));
+        let head = node("c", Some(&middle.digest));
+        let map = [&root, &middle, &head]
+            .into_iter()
+            .fold(StoreMap::new_sync(), |map: StoreMap, event| {
+                map.insert(event.digest.clone(), Arc::clone(event))
+            });
+        (map, vec![root, middle, head])
+    }
+
+    #[test]
+    fn zero_steps_is_the_identity() {
+        let (map, nodes) = chain();
+        let head = Some(nodes[2].digest.clone());
+        assert_eq!(rewind_to(&map, head.clone(), 0), Ok(head));
+    }
+
+    #[test]
+    fn one_step_lands_on_the_render_parent() {
+        let (map, nodes) = chain();
+        assert_eq!(
+            rewind_to(&map, Some(nodes[2].digest.clone()), 1),
+            Ok(Some(nodes[1].digest.clone()))
+        );
+    }
+
+    // Rewinding past the root lands on the empty Timeline rather than raising,
+    // exactly as Ruby's `Timeline#rewind` does -- `None` absorbs further steps.
+    #[test]
+    fn rewinding_past_the_root_absorbs_to_empty() {
+        let (map, nodes) = chain();
+        assert_eq!(rewind_to(&map, Some(nodes[2].digest.clone()), 3), Ok(None));
+        assert_eq!(rewind_to(&map, Some(nodes[2].digest.clone()), 99), Ok(None));
+        assert_eq!(rewind_to(&map, None, 1), Ok(None));
+    }
+
+    // The question the four tests above do not ask: what does TERMINATION cost?
+    // The walk runs under the Store's mutex and the GVL, so a loop bounded by
+    // the caller's count rather than by the chain is a mutex held for as long as
+    // the caller cares to ask for -- `i64::MAX` steps at ~2e9 steps/s is on the
+    // order of a century. Bounded by the chain, this returns in three steps. A
+    // regression does not fail this test, it HANGS it, which is the loudest
+    // signal available for a liveness property.
+    #[test]
+    fn a_rewind_far_past_the_root_terminates_at_the_chain_length() {
+        let (map, nodes) = chain();
+        assert_eq!(
+            rewind_to(&map, Some(nodes[2].digest.clone()), i64::MAX),
+            Ok(None)
+        );
+    }
+
+    // A corrupt chain is NOT a root: the step off a digest the map does not hold
+    // answers `Err`, which the FFI caller turns into `Store::MissingObject`
+    // after its lock has dropped.
+    #[test]
+    fn a_dangling_edge_is_an_error_not_an_empty_timeline() {
+        let absent = Digest::from("blake3:absent".to_string());
+        assert_eq!(
+            rewind_to(&StoreMap::new_sync(), Some(absent.clone()), 1),
+            Err(DanglingDigest(absent))
+        );
+    }
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::{MAX_CANON_DEPTH, descend};
+
+    #[test]
+    fn descends_to_the_bound() {
+        assert_eq!(descend(0), Ok(1));
+        assert_eq!(descend(MAX_CANON_DEPTH - 1), Ok(MAX_CANON_DEPTH));
+    }
+
+    #[test]
+    fn refuses_the_level_past_the_bound() {
+        let err = descend(MAX_CANON_DEPTH).expect_err("one past the bound must be refused");
+        assert_eq!(
+            err,
+            "cannot canonicalize a structure nested deeper than 100 levels"
+        );
+    }
+
+    // The number is Ruby's, not ours: `JSON.generate`'s default `max_nesting`
+    // is 100, so `Canonical.dump` refuses at 101 too (verified on 4.0.6, and
+    // pinned live from both sides in rust/canonical_spec.rb). Restating it here
+    // means a change to the constant has to be a deliberate edit to a test that
+    // says where the number came from.
+    #[test]
+    fn the_bound_is_ruby_json_generates_own_max_nesting() {
+        assert_eq!(MAX_CANON_DEPTH, 100);
+    }
+
+    #[test]
+    fn refusal_stays_refusal_however_far_past_the_bound() {
+        descend(MAX_CANON_DEPTH * 10).expect_err("a much deeper structure is refused too");
     }
 }
 

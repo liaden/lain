@@ -45,6 +45,39 @@ pub enum Canon {
     Object(Vec<(String, Canon)>),
 }
 
+impl Canon {
+    /// An object built from keys that are string LITERALS, already written in
+    /// sorted order. Infallible by construction, and that is the point: the
+    /// three envelope/payload/body constructors in `event.rs` run per event --
+    /// so per turn -- and every one of them was paying [`build_object`]'s
+    /// `IndexMap` allocation and duplicate scan to answer a question their own
+    /// source text already settles, then discharging the impossible `Err` with
+    /// an `.expect()` (a panic path across the FFI boundary, where unwinding
+    /// into Ruby is undefined behaviour).
+    ///
+    /// The precondition is `&'static str` keys in strictly increasing byte
+    /// order, which is exactly the order [`build_object`]'s `sort_keys` would
+    /// have produced, so the emitted bytes -- and therefore every digest -- are
+    /// unchanged. It is checked three ways, none of them a runtime cost in
+    /// release: `&'static str` keeps a caller from passing a value it computed,
+    /// the `debug_assert` below fires under `cargo test`, and `event.rs`'s
+    /// `envelope_canon_matches_the_ruby_bytes` pins the resulting bytes and
+    /// digests against Ruby's.
+    pub fn object_from_sorted<const N: usize>(pairs: [(&'static str, Canon); N]) -> Self {
+        debug_assert!(
+            pairs.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "object_from_sorted needs strictly increasing literal keys, got {:?}",
+            pairs.iter().map(|(key, _)| *key).collect::<Vec<_>>()
+        );
+        Canon::Object(
+            pairs
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect(),
+        )
+    }
+}
+
 /// `dump` stays the named domain entry point; this just gives `Canon` a free
 /// `to_string()` for anything (logging, error interpolation) that wants one.
 impl std::fmt::Display for Canon {
@@ -227,6 +260,31 @@ mod tests {
     #[test]
     fn keeps_integer_and_float_text_distinct() {
         assert_ne!(dump(&num("1")), dump(&num("1.0")));
+    }
+
+    // `object_from_sorted` is a shortcut around `build_object`, so what has to
+    // hold is that it produces the SAME object -- not merely a plausible one.
+    #[test]
+    fn object_from_sorted_agrees_with_build_object() {
+        let sorted = Canon::object_from_sorted([("a", num("1")), ("b", s("x"))]);
+        assert_eq!(sorted, obj(vec![("b", s("x")), ("a", num("1"))]));
+        assert_eq!(dump(&sorted), r#"{"a":1,"b":"x"}"#);
+    }
+
+    #[test]
+    fn object_from_sorted_builds_an_empty_object() {
+        assert_eq!(dump(&Canon::object_from_sorted([])), "{}");
+    }
+
+    // The precondition is checked, not merely documented. Gated on
+    // `debug_assertions` because that is precisely when `debug_assert!` fires;
+    // in release the guarantee comes from `&'static str` keys plus the
+    // byte-parity tests in `event.rs`.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "strictly increasing")]
+    fn object_from_sorted_refuses_unsorted_literal_keys() {
+        Canon::object_from_sorted([("b", num("1")), ("a", num("2"))]);
     }
 
     #[test]
