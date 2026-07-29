@@ -185,43 +185,23 @@ impl std::error::Error for ParseError {}
 /// A style word that only became visible once a `$variable` supplied it, so it
 /// could not be caught at parse time. Carries no offset: the offending word did
 /// not come from the format source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown style word {word:?} supplied by a variable at render time")]
 pub struct StyleError {
     /// The word that is not in the vocabulary.
     pub word: String,
 }
 
-impl fmt::Display for StyleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown style word {:?} supplied by a variable at render time",
-            self.word
-        )
-    }
-}
-
-impl std::error::Error for StyleError {}
-
 /// A refusal to load a TOML config.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ConfigError {
     /// The source is not valid TOML, or is missing/mistyping a field.
+    #[error("invalid prompt config: {0}")]
     Toml(String),
     /// The TOML was fine but its `format` did not compile.
+    #[error("invalid prompt config format: {0}")]
     Format(ParseError),
 }
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConfigError::Toml(message) => write!(f, "invalid prompt config: {message}"),
-            ConfigError::Format(err) => write!(f, "invalid prompt config format: {err}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {}
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1410,6 +1390,45 @@ mod tests {
             config.settings["l"],
             Setting::List(vec![Setting::Int(1), Setting::Int(2)])
         );
+    }
+
+    // -- error messages ----------------------------------------------------
+    //
+    // Display IS the FFI-visible message for both: `ffi::style_error` and
+    // `ffi::config_error` raise `err.to_string()` into the named Ruby error.
+    // Pinned so a derive cannot drift a byte of it.
+
+    #[test]
+    fn style_and_config_error_displays_are_the_exact_ffi_messages() {
+        assert_eq!(
+            StyleError {
+                word: "chartreuse".to_string()
+            }
+            .to_string(),
+            r#"unknown style word "chartreuse" supplied by a variable at render time"#
+        );
+        assert_eq!(
+            ConfigError::Toml("expected an equals".to_string()).to_string(),
+            "invalid prompt config: expected an equals"
+        );
+        let refused = Format::parse("[unclosed").expect_err("refused");
+        assert_eq!(
+            ConfigError::Format(refused.clone()).to_string(),
+            format!("invalid prompt config format: {refused}")
+        );
+    }
+
+    #[test]
+    fn style_and_config_errors_are_std_errors() {
+        let style: Box<dyn std::error::Error> = Box::new(StyleError {
+            word: "chartreuse".to_string(),
+        });
+        assert_eq!(
+            style.to_string(),
+            r#"unknown style word "chartreuse" supplied by a variable at render time"#
+        );
+        let config: Box<dyn std::error::Error> = Box::new(ConfigError::Toml("bad".to_string()));
+        assert_eq!(config.to_string(), "invalid prompt config: bad");
     }
 
     // -- purity ------------------------------------------------------------

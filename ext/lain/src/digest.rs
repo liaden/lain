@@ -17,10 +17,11 @@
 use std::borrow::Borrow;
 use std::ops::Deref;
 
-/// A `"blake3:<hex>"` content address. Transparent over its `String` -- see the
-/// hand-written `Debug` below, which is the load-bearing piece of the byte-parity
-/// contract.
-#[derive(Clone, PartialEq, Eq, Hash)]
+/// A `"blake3:<hex>"` content address. Transparent over its `String`: the
+/// hand-written `Debug` below keeps every `{digest:?}` message byte-identical
+/// to Ruby's `String#inspect`, and the derived `Ord` sorts by exactly the bytes
+/// `String#<=>` sorts by, which is what `Event#normalize_causal` pins.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest(String);
 
 /// Hand-written, NOT derived. A derived `Debug` would render `Digest("blake3:x")`;
@@ -105,9 +106,9 @@ mod tests {
         assert_eq!(back, original);
     }
 
-    // The load-bearing property: `{:?}` must render exactly as the inner String's
-    // `Debug`, so every `no object {digest:?}` message stays byte-identical to
-    // Ruby `String#inspect` (quoting and escaping a contained double-quote).
+    // `{:?}` must render exactly as the inner String's `Debug`: that is what
+    // holds every `no object {digest:?}` message byte-identical to Ruby
+    // `String#inspect` (quoting, and escaping a contained double-quote).
     #[test]
     fn debug_is_transparent_to_the_inner_string() {
         let digest = Digest::from(r#"blake3:a"b"#.to_string());
@@ -125,6 +126,27 @@ mod tests {
         assert_eq!(&*digest, "blake3:abc");
         // A `str` method reached through `Deref`.
         assert!(digest.starts_with("blake3:"));
+    }
+
+    // The pinned byte order: Ruby's `normalize_causal` sorts with
+    // `String#<=>`, so a derived `Ord` over the inner `String` is the same
+    // order and `Vec<Digest>::sort` needs no comparator.
+    #[test]
+    fn ordering_is_the_inner_strings_byte_order() {
+        let mut digests = [
+            Digest::from("blake3:b".to_string()),
+            Digest::from("blake3:A".to_string()),
+            Digest::from("blake3:a".to_string()),
+        ];
+        digests.sort();
+        assert_eq!(
+            digests.iter().map(Digest::as_str).collect::<Vec<_>>(),
+            ["blake3:A", "blake3:a", "blake3:b"]
+        );
+        assert_eq!(
+            Digest::from("blake3:A".to_string()).cmp(&Digest::from("blake3:a".to_string())),
+            "blake3:A".cmp("blake3:a")
+        );
     }
 
     #[test]

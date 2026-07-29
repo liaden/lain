@@ -48,15 +48,20 @@ impl Role {
         }
     }
 
-    /// The comma-joined role list an error message names (`user, assistant`),
-    /// derived from [`Role::ALL`] rather than hardcoded, so a third role added to
-    /// the enum shows up in the message with no second edit.
-    pub fn names() -> String {
-        Self::ALL
-            .iter()
-            .map(|role| role.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+    /// The comma-joined role list an error message names (`user, assistant`).
+    ///
+    /// A constant rather than a join over [`Role::ALL`], because the list is
+    /// fixed at compile time and rebuilding a `Vec` and a `String` per raised
+    /// error bought nothing. It stays a *function* because both call sites
+    /// spell it `Role::names()`, and a bare `pub const NAMES` does not answer
+    /// to that syntax; `const` on the `fn` adds nothing today beyond stating
+    /// that the value is available at compile time -- a plain `fn` compiles
+    /// identically, and nothing calls this in a const context. It is still
+    /// single-sourced from the enum -- by `role_names_is_the_comma_joined_list`,
+    /// which joins [`Role::ALL`] and fails the moment a variant is added here
+    /// without being named below.
+    pub const fn names() -> &'static str {
+        "user, assistant"
     }
 }
 
@@ -77,10 +82,11 @@ impl TryFrom<&str> for Role {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvalidRole(pub String);
 
-/// Hand-implemented rather than `#[derive(thiserror::Error)]`: the message
-/// interpolates [`Role::names`], and a derive's `#[error(...)]` attribute can
-/// only hold a literal format string -- hardcoding "user, assistant" there would
-/// double-source the role list against the enum. This Display text IS the
+/// Hand-implemented rather than `#[derive(thiserror::Error)]`, and that is a
+/// deferral, not a reason: `#[error("role must be one of {}, got {:?}",
+/// Role::names(), .0)]` takes trailing format arguments and would produce these
+/// exact bytes. It is left alone because the card that converted `prompt.rs`
+/// scoped itself there and asked for a tight diff here. This Display text IS the
 /// FFI-visible message: `lib.rs`'s `read_role` raise site passes
 /// `invalid.to_string()` straight into the raised `Turn::InvalidRole`.
 impl std::fmt::Display for InvalidRole {
@@ -311,9 +317,10 @@ impl EventData {
 /// A set, deduplicated and sorted so insertion order cannot change the digest
 /// -- the same pinned order Ruby's `Event#normalize_causal` establishes
 /// (`uniq.sort`; sort-then-dedup is the same set in the same order). Byte
-/// order: Ruby sorts `String#<=>`, which is exactly `str`'s `Ord`.
+/// order: Ruby sorts `String#<=>`, which is exactly what `Digest`'s derived
+/// `Ord` delegates to.
 fn normalize_causal(mut causal_parents: Vec<Digest>) -> Vec<Digest> {
-    causal_parents.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    causal_parents.sort();
     causal_parents.dedup();
     causal_parents
 }
@@ -629,9 +636,21 @@ mod tests {
         assert_eq!(Role::Assistant.as_str(), "assistant");
     }
 
+    // The join over `Role::ALL` that used to run at every raise site lives
+    // HERE instead, so the list stays single-sourced from the enum without
+    // rebuilding it per error: a third variant fails this test until the
+    // constant names it too.
     #[test]
     fn role_names_is_the_comma_joined_list() {
         assert_eq!(Role::names(), "user, assistant");
+        assert_eq!(
+            Role::names(),
+            Role::ALL
+                .iter()
+                .map(|role| role.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 
     // Display IS the FFI-visible message: `lib.rs`'s `read_role` raise site

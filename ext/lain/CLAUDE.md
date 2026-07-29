@@ -12,7 +12,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 186/186 today; must not regress
+cargo test                                  # 190/190 today; must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`
@@ -22,6 +22,26 @@ bundle exec rake compile                    # builds into lib/lain/lain.so (giti
 
 All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is unset and
 `.git/hooks` is shared. There is no "I'll format it later."
+
+> ⚠️ **`cargo test` never compiles the magnus surface, so a green `cargo test` is not a
+> building crate.** Every `ffi` module here is `#[cfg(not(test))]` — `lib.rs:242`,
+> `prompt.rs:1447`, `fuzzy.rs:304`, `astgrep.rs:356`, `treesitter.rs:261` — and there is no
+> `tests/` directory and no doctest target, so under `--cfg test` the entire FFI layer is
+> absent from the build graph. `lib.rs:236` explains *why* the modules are gated (a magnus
+> item needs an embedded Ruby VM that `cargo test` has no way to start) but never says what
+> it costs you.
+>
+> What it costs: change a pure module's public shape and `cargo test` will pass while the
+> crate does not build. Verified, not suspected — renaming one variant of `bm25.rs`'s
+> `BuildError` gave `cargo test` 190 passed and `cargo check -p lain --lib`
+> `error[E0599]`. It bites hardest on **error enums**, because `lib.rs`'s FFI match arms are
+> exhaustive with no fallback, so adding a variant is an `E0004` that only the real build
+> sees.
+>
+> So `cargo test` alone never clears a change to an enum, a `pub fn` signature, or anything
+> `ffi` names. Run `cargo clippy --all-targets -- -D warnings` (which builds the lib without
+> `--cfg test`) or `bundle exec rake compile` before believing you are green. This is exactly
+> why a task card can say "shared-file wiring: none" and be wrong.
 
 ## Hard rules
 

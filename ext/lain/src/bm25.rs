@@ -78,7 +78,12 @@ pub enum BuildError {
 pub struct Bm25Index {
     engine: SearchEngine<String, u32, SurfaceTokenizer>,
     /// id -> build-batch insertion index, the pinned equal-score tie-breaker.
-    order: HashMap<String, u32>,
+    ///
+    /// A `usize`, which is what `enumerate` hands us, so there is no cast that
+    /// could wrap two documents onto the same key. (The `u32` in `SearchEngine`
+    /// above is the crate's per-document term-count type, not a corpus bound --
+    /// narrowing this map to match it was our own choice, and a mistake.)
+    order: HashMap<String, usize>,
     /// id -> the document's surface token set, for the query intersection that
     /// explains each hit. Stored at build so search never re-tokenizes documents.
     doc_tokens: HashMap<String, BTreeSet<String>>,
@@ -112,7 +117,7 @@ impl Bm25Index {
                 return Err(BuildError::DuplicateId(id));
             }
             let tokens: BTreeSet<String> = tokenize(&text).into_iter().collect();
-            order.insert(id.clone(), position as u32);
+            order.insert(id.clone(), position);
             doc_tokens.insert(id.clone(), tokens);
             documents.push(Document::new(id, text));
         }
@@ -164,9 +169,10 @@ impl Bm25Index {
 
     /// The insertion index of an id known to be in the corpus. Every id the
     /// engine returns was inserted at build, so the fallback is unreachable;
-    /// `u32::MAX` sorts an impossible stray id last rather than panicking.
-    fn insertion(&self, id: &str) -> u32 {
-        self.order.get(id).copied().unwrap_or(u32::MAX)
+    /// `usize::MAX` sorts an impossible stray id last rather than panicking,
+    /// and no position `enumerate` can produce collides with it.
+    fn insertion(&self, id: &str) -> usize {
+        self.order.get(id).copied().unwrap_or(usize::MAX)
     }
 }
 
@@ -295,6 +301,23 @@ mod tests {
             boxed.to_string(),
             "cannot build a BM25 index from an empty corpus"
         );
+    }
+
+    // The tie-break key is the `usize` `enumerate` produced, so there is no
+    // cast to wrap and no corpus bound to refuse. `position as u32` used to
+    // restart at 0 past 2^32 documents, handing two documents the same key and
+    // making the pinned insertion order silently not an order.
+    #[test]
+    fn the_tie_break_key_is_the_usize_position() {
+        let index = Bm25Index::build(corpus()).expect("builds");
+        let position: usize = index.insertion("dact");
+        assert_eq!(position, 1);
+        assert_eq!(index.insertion("mat"), 0);
+        assert_eq!(index.insertion("aspirin"), 3);
+        // The stray-id sentinel sorts last and is now genuinely out of reach:
+        // no `enumerate` over a `Vec` can produce `usize::MAX`, whereas
+        // `u32::MAX` was a legal position for a corpus that big.
+        assert_eq!(index.insertion("not in the corpus"), usize::MAX);
     }
 
     #[test]

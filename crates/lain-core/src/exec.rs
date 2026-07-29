@@ -172,10 +172,23 @@ pub(crate) async fn run_with_base_env(
     // Capture ends HERE, at direct-child exit -- see the drain doc for why.
     let _ = exited.send(true);
     Ok(Outcome {
-        stdout: stdout.await.unwrap_or_default(),
-        stderr: stderr.await.unwrap_or_default(),
+        stdout: captured(stdout.await, "stdout"),
+        stderr: captured(stderr.await, "stderr"),
         exit_status: exit_status_of(status),
         timed_out,
+    })
+}
+
+/// What a drain task collected, or no bytes if it panicked or was cancelled.
+///
+/// The reply has to carry something either way, so the empty capture stands --
+/// but "the child printed nothing" and "we lost the capture" are different
+/// facts, and `unwrap_or_default` reported them identically. The `JoinError`
+/// goes to the log so the second one is visible in the Journal.
+fn captured(joined: Result<Vec<u8>, tokio::task::JoinError>, stream: &str) -> Vec<u8> {
+    joined.unwrap_or_else(|error| {
+        tracing::error!(%error, stream, "capture task failed; reporting no output");
+        Vec::new()
     })
 }
 
@@ -368,8 +381,9 @@ mod tests {
     use std::ffi::OsString;
 
     use rmpv::Value;
+    use tokio::task::JoinHandle;
 
-    use super::{ExecParams, Outcome, run_with_base_env};
+    use super::{ExecParams, Outcome, captured, run_with_base_env};
     use crate::rpc::support::{TestClient, exec_map, exec_params, field, start_server};
 
     fn sh(script: &str) -> Vec<String> {
@@ -389,6 +403,96 @@ mod tests {
         run_with_base_env(params, base)
             .await
             .expect("exec succeeds")
+    }
+
+    // A drain task that panicked or was cancelled is NOT a child that printed
+    // nothing, and `unwrap_or_default` reported the two identically. The reply
+    // still has to carry some bytes, so the empty capture stays -- what changes
+    // is that the `JoinError` reaches the log instead of the floor.
+    //
+    // Asserting the empty `Vec` alone would NOT test that: the assertion holds
+    // just as well with the `tracing::error!` deleted. So these two capture the
+    // subscriber's output and assert the line is really there, which is the only
+    // way the log survives a later refactor.
+
+    /// A `MakeWriter` that keeps everything written to it, so a test can read
+    /// back what the subscriber emitted.
+    #[derive(Clone, Default)]
+    struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Capture {
+        /// Run `body` with a subscriber writing here, and return what it logged.
+        fn logging<T>(body: impl FnOnce() -> T) -> (T, String) {
+            let sink = Capture::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(sink.clone())
+                .with_ansi(false)
+                .finish();
+            let value = tracing::subscriber::with_default(subscriber, body);
+            let logged = String::from_utf8(sink.0.lock().expect("sink lock").clone())
+                .expect("the subscriber writes UTF-8");
+            (value, logged)
+        }
+    }
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("sink lock").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+        type Writer = Capture;
+
+        fn make_writer(&'a self) -> Capture {
+            self.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_capture_task_reaches_the_log_and_yields_no_bytes() {
+        let handle: JoinHandle<Vec<u8>> =
+            tokio::spawn(async { std::future::pending::<Vec<u8>>().await });
+        handle.abort();
+        let joined = handle.await;
+        assert!(joined.is_err(), "the aborted task joins with an error");
+        let (bytes, logged) = Capture::logging(|| captured(joined, "stderr"));
+        assert!(bytes.is_empty());
+        assert!(logged.contains("ERROR"), "logged: {logged}");
+        assert!(logged.contains("capture task failed"), "logged: {logged}");
+        assert!(logged.contains("stream=\"stderr\""), "logged: {logged}");
+        assert!(logged.contains("cancelled"), "logged: {logged}");
+    }
+
+    // The other half of `JoinError`, and the one that loses real bytes. The
+    // panic message tokio catches still reaches the process's stderr through
+    // the default panic hook -- that noise in `cargo test` output is the hook,
+    // not this crate.
+    #[tokio::test]
+    async fn a_panicking_capture_task_reaches_the_log_too() {
+        let handle: JoinHandle<Vec<u8>> = tokio::spawn(async { panic!("drain blew up") });
+        let joined = handle.await;
+        assert!(joined.is_err(), "the panicking task joins with an error");
+        let (bytes, logged) = Capture::logging(|| captured(joined, "stdout"));
+        assert!(bytes.is_empty());
+        assert!(logged.contains("capture task failed"), "logged: {logged}");
+        assert!(logged.contains("stream=\"stdout\""), "logged: {logged}");
+    }
+
+    // The success path is untouched: exactly what `unwrap_or_default` returned,
+    // and nothing logged.
+    #[tokio::test]
+    async fn a_capture_task_that_finished_returns_its_bytes_and_logs_nothing() {
+        let handle: JoinHandle<Vec<u8>> = tokio::spawn(async { b"hello".to_vec() });
+        let joined = handle.await;
+        let (bytes, logged) = Capture::logging(|| captured(joined, "stdout"));
+        assert_eq!(bytes, b"hello".to_vec());
+        assert!(logged.is_empty(), "logged: {logged}");
     }
 
     #[tokio::test]
