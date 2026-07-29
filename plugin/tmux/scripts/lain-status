@@ -33,15 +33,16 @@ if [ ! -s "$state" ]; then
   exit 0
 fi
 
-# This is a jq filter; $warmth is jq's variable syntax, not a shell
-# expansion. Single quotes are the point (byte-for-byte pinned against
-# Lain::CLI::Up::JQ_FILTER by the spec).
+# This is a jq filter, byte-for-byte pinned against Lain::CLI::Up::Hud::JQ_FILTER
+# by the spec; single quotes keep the shell out of it. It uses NO jq variable
+# (`$name`) on purpose -- see that constant's comment: tmux 3.4 escapes a `$` in
+# an option value and the other renderer then feeds jq a broken filter. `\(...)`
+# below is jq's interpolation, not a shell expansion.
 # shellcheck disable=SC2016
-JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
-then "🔥" else "❄" end) as $warmth
-| (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
-| (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
-| "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"'
+JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
++ " fleet:\(.fleet | length) inbox:\(.inbox_count)"
++ (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
++ (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)'
 
 if command -v jq >/dev/null 2>&1; then
   jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"

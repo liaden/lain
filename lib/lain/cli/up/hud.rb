@@ -44,20 +44,28 @@ module Lain
         # reading it wants the truth); the status bar is where nonsense gets
         # trimmed, because a pegged 100% reads as "full", which is the one
         # thing a human can act on.
-        # The parentheses around the first `if` are REQUIRED, not style: jq 1.8
-        # relaxed the grammar to accept a bare `if ... end as $var`, and 1.7
-        # does not -- it is a compile error ("unexpected as"), jq exits 3, and
-        # both renderers fall back to "lain: no state yet" with the reason
-        # thrown away by their own `2>/dev/null`. So a jq-1.7 box (Ubuntu
-        # 24.04's, and every GitHub runner) showed a permanently empty HUD and
-        # nothing said why. The other three `if`s were already parenthesized;
-        # only this one was relying on the newer grammar.
+        # ⚠️ NO jq VARIABLES, and no `if ... end as $x`. Both are deliberate,
+        # and each was a live bug this filter shipped with:
+        #
+        # * `$` cannot appear here at all. tmux 3.4 ESCAPES a `$` in an option
+        #   value to `\$` and stores it escaped (tmux 3.8 does not), so the job
+        #   tmux later hands the shell contained `\$warmth` -- a jq syntax
+        #   error, swallowed by {#jq_status_right}'s own `2>/dev/null`, leaving
+        #   a permanent "lain: no state yet" on every tmux 3.4 (Ubuntu 24.04's,
+        #   and every GitHub runner). Concatenating with `+` says the same thing
+        #   with nothing for tmux to escape.
+        # * The bare `if ... end as $warmth` it used before ALSO needed jq 1.8's
+        #   relaxed grammar; jq 1.7 rejects it outright ("unexpected as"), for
+        #   the same silent result. Ubuntu 24.04 ships jq 1.7.
+        #
+        # So it renders identically under jq 1.7 and 1.8, and survives a tmux
+        # 3.4 round trip. Verified against both, warm and cold, with and
+        # without the optional keys, including the clamp and a zero occupancy.
         JQ_FILTER = <<~'JQ'.strip
-          (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
-          then "🔥" else "❄" end) as $warmth
-          | (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
-          | (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
-          | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"
+          (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
+          + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
+          + (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
+          + (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
         JQ
 
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \
