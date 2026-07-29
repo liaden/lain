@@ -13,6 +13,31 @@ require "tmpdir"
 # Timeline walk can never see (their edges point backward, the Store has no
 # forward enumerator), reach the scribe by observing the ChainWriter and land as
 # a distinct `message` record that the turn loader skips.
+# A journal that lands `fail_after` records and then dies, the shape ENOSPC and
+# EIO arrive in: the writes before it are on disk and stay there. `#recover`
+# ends the outage so the same object can serve the retry, which is what makes
+# the append point's position observable.
+class FlakySessionJournal
+  def initialize(fail_after:)
+    @fail_after = fail_after
+    @records = []
+    @failing = true
+  end
+
+  def recover = @failing = false
+
+  def <<(record)
+    raise IOError, "no space left on device" if @failing && @records.size >= @fail_after
+
+    @records << record
+    self
+  end
+
+  def turn_digests
+    @records.select { |record| record["type"] == "turn" }.map { |record| record["digest"] }
+  end
+end
+
 RSpec.describe Lain::SessionRecord::Scribe do
   subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
 
@@ -23,7 +48,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # A user ask, an assistant tool_use, a user tool_result, an assistant reply --
-  # the four render-chain turns one ask completes as.
+  # the four render-chain turns one ask completes as. `text` is defined below:
+  # a let body resolves it at example time, not here.
   let(:timeline) do
     Lain::Timeline.empty(store:)
                   .commit(role: :user, content: text("hello"))
@@ -35,7 +61,6 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 
   def text(body) = [{ "type" => "text", "text" => body }]
-
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }
 
@@ -100,6 +125,196 @@ RSpec.describe Lain::SessionRecord::Scribe do
       scribe.catch_up(grown)
 
       expect(of_type("turn").map { |record| record.fetch("digest") }).to eq(grown.to_a.map(&:digest))
+    end
+  end
+
+  # T14: the walk is BOUNDED, not merely correct. catch_up used to read the
+  # whole ancestor chain and filter out what it had already written -- O(n) per
+  # commit, so O(n^2) over a session, on the durability path every ask waits on.
+  # The records are identical either way, so only the fetch count can tell a
+  # bounded walk from a full one (spec/support/store_fetch_count.rb).
+  describe "the catch_up walk is bounded by what is new" do
+    it "visits only the new turn on a second catch_up, not the whole chain" do
+      scribe.catch_up(timeline)
+      grown = timeline.commit(role: :user, content: text("more"))
+      fetches = count_store_fetches(store)
+
+      scribe.catch_up(grown)
+
+      # The new turn, then the last-written head the walk stops on.
+      expect(fetches.count).to eq(2)
+    end
+
+    it "costs the same on a chain of forty as on a chain of four -- O(1) in the prefix" do
+      expect(fetches_for_one_more_turn(40)).to eq(fetches_for_one_more_turn(4))
+    end
+
+    it "still visits the whole chain when there is no written head yet" do
+      timeline # built BEFORE the count starts: every commit derives a correlation, which fetches
+      fetches = count_store_fetches(store)
+
+      scribe.catch_up(timeline)
+
+      expect(fetches.count).to eq(4)
+    end
+
+    # A caught-up scribe on a chain `length` long, then the cost of catching it
+    # up on exactly one more turn. Its own store and journal, so the two calls
+    # this compares cannot see each other.
+    def fetches_for_one_more_turn(length)
+      chain = chain_of(length)
+      caught_up = described_class.new(journal: Lain::Journal.new(io: StringIO.new), context:, toolset:, workspace:)
+      caught_up.catch_up(chain)
+      grown = chain.commit(role: :assistant, content: text("one more"))
+
+      count_store_fetches(chain.store) { caught_up.catch_up(grown) }.count
+    end
+
+    def chain_of(length)
+      (1..length).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |built, index|
+        built.commit(role: :user, content: text("turn #{index}"))
+      end
+    end
+  end
+
+  # The bounded walk stops at the append point and never looks below it, which
+  # is sound only while the written chain really IS the chain ending there --
+  # in order, with no holes. Every move this class makes preserves that; the
+  # `written:` seed is the one input that can arrive violating it, and a resume
+  # is what supplies it (CLI::Resume::Result#written). So the seed is a CLAIM,
+  # checked once against the first chain that can adjudicate it, rather than an
+  # assumption four methods quietly share.
+  describe "the written: seed is a claim, and it is checked" do
+    let(:digests) { timeline.to_a.map(&:digest) }
+
+    def seeded(written) = described_class.new(journal:, context:, toolset:, workspace:, written:)
+
+    it "refuses a head that is not on the chain at all, journaling nothing" do
+      scribe = seeded(["blake3:#{"a" * 64}"])
+      before = journal_io.string.dup
+
+      expect { scribe.catch_up(timeline) }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /does not extend the written chain/)
+      expect(journal_io.string).to eq(before)
+    end
+
+    # Panel probe P2d (Evans): the reversed seed's LAST entry is the root, which
+    # is genuinely on-chain -- so the extends-check alone passes it, and every
+    # turn the prior file already holds gets journaled a second time. That is
+    # the doubling the `written:` doc warns about, arriving through the door
+    # the doc did not guard.
+    it "refuses a seed in the wrong order, even though its last entry is on-chain" do
+      scribe = seeded(digests.reverse)
+      before = journal_io.string.dup
+
+      expect { scribe.catch_up(timeline) }.to raise_error(Lain::SessionRecord::Scribe::Diverged, /prefix/)
+      expect(journal_io.string).to eq(before)
+    end
+
+    # Panel probe P2g: a holed seed reads as caught-up, and then #rewound prunes
+    # it by INSERTION index and keeps a turn above the target -- a later rewind
+    # to that turn would be a forward move wearing a rewind's name.
+    it "refuses a seed with a hole in it, before a rewind can prune it wrongly" do
+      scribe = seeded([digests[1], digests[0], digests[3]])
+
+      expect { scribe.catch_up(timeline) }.to raise_error(Lain::SessionRecord::Scribe::Diverged, /prefix/)
+    end
+
+    # Re-review 3: order and holes are not the whole claim. A chain SUFFIX is in
+    # order and unholed, and its head really is on the chain -- but the head is
+    # then NOT the maximal written ancestor, because unwritten turns sit below
+    # it. Costs one extra ancestor to catch: the head must be exactly `length`
+    # deep, not merely `length` deep or more.
+    it "refuses a seed that is a chain suffix, since the head must be the MAXIMAL written ancestor" do
+      scribe = seeded(digests.last(2))
+      before = journal_io.string.dup
+
+      expect { scribe.catch_up(timeline) }.to raise_error(Lain::SessionRecord::Scribe::Diverged, /prefix/)
+      expect(journal_io.string).to eq(before)
+    end
+
+    # Re-review 4: the seed is adjudicated by #catch_up, so every OTHER move has
+    # to refuse while it is still a claim. #rewound is the sharp one -- it
+    # journals a backward move whose `from:` comes from the unchecked seed, and
+    # retreats the chain, both before any catch_up could have turned it down.
+    # Today only call order stops that, and call order is a convention; the seed
+    # being unvalidated was a convention too, which is how this card found it.
+    it "refuses a rewind announced against a seed nothing has adjudicated yet" do
+      scribe = seeded(digests.first(2))
+      before = journal_io.string.dup
+
+      expect { scribe.rewound(to: digests.first) }
+        .to raise_error(Lain::SessionRecord::Scribe::Diverged, /never checked against a timeline/)
+      expect(journal_io.string).to eq(before)
+    end
+
+    # The other half of that decision, pinned because it is the tempting fix
+    # and it is wrong: `lain chat --resume` then quit-without-asking closes on
+    # an unadjudicated seed, and it must NOT raise. Chronicle#close runs in
+    # chat's `ensure`, so a refusal here turns a clean quit into a crash and
+    # masks whatever was already unwinding. Nothing is risked -- no turn record
+    # hangs off the anchor, because this record wrote none.
+    it "closes on an unadjudicated seed rather than crashing a resumed session that asked nothing" do
+      scribe = seeded(digests.first(2))
+
+      scribe.close(reason: :exit)
+
+      expect(of_type("session_closed").first).to include("head" => digests[1], "reason" => "exit")
+    end
+
+    it "marks run_interrupted on an unadjudicated seed for the same reason" do
+      scribe = seeded(digests.first(2))
+
+      scribe.interrupted
+
+      expect(of_type("run_interrupted").first).to include("head" => digests[1])
+    end
+
+    # Panel probe P2e: the legitimate resume. A seed naming a mid-chain head is
+    # a PREFIX, so it stands, and only the tail is journaled.
+    it "accepts a seed that is a genuine prefix, journaling only the turns above it" do
+      scribe = seeded(digests.first(2))
+
+      scribe.catch_up(timeline)
+
+      expect(of_type("turn").map { |record| record.fetch("digest") }).to eq(digests.last(2))
+    end
+
+    # The check walks the seed, so it has to be worth its cost: it runs against
+    # the FIRST chain that can adjudicate it and never again. Per session, not
+    # per ask -- which is exactly the budget the old filtered walk blew.
+    it "checks the seed once, leaving later catch_ups at the bounded cost" do
+      chain = chain_of(40)
+      scribe = described_class.new(journal:, context:, toolset:, workspace:,
+                                   written: chain.to_a.map(&:digest))
+      scribe.catch_up(chain)
+      grown = chain.commit(role: :user, content: text("more"))
+
+      expect(count_store_fetches(chain.store) { scribe.catch_up(grown) }.count).to eq(2)
+    end
+
+    def chain_of(length)
+      (1..length).inject(Lain::Timeline.empty(store: Lain::Store.new)) do |built, index|
+        built.commit(role: :user, content: text("turn #{index}"))
+      end
+    end
+  end
+
+  # Panel probe P5 (Evans): the append point must track the last record that
+  # LANDED, not the last one the batch intended to write. A journal that dies
+  # partway -- ENOSPC, EIO -- is a live path, not a thought experiment: a
+  # {Middleware::JournalTurns} failure tears the ask into {CLI::Repl}'s
+  # `record_interruption`, which catches the same scribe up again.
+  describe "a journal that dies partway through a catch_up" do
+    it "leaves the append point on the last landed turn, so the retry re-writes none of them" do
+      flaky = FlakySessionJournal.new(fail_after: 3) # the header and two turns land; the third raises
+      scribe = described_class.new(journal: flaky, context:, toolset:, workspace:)
+      expect { scribe.catch_up(timeline) }.to raise_error(IOError)
+      flaky.recover
+
+      scribe.catch_up(timeline)
+
+      expect(flaky.turn_digests).to eq(timeline.to_a.map(&:digest))
     end
   end
 

@@ -30,6 +30,89 @@ module Lain
       # the bug (panel probe D).
       class Diverged < Error; end
 
+      # What this record has on disk: the turn digests it has written, in chain
+      # order, ending at the append point ({#head}). One object because it is
+      # one invariant -- *the written digests are an ancestor PREFIX of the
+      # chain, so the head is the maximal written ancestor* -- and that
+      # invariant was previously hand-maintained across four Scribe methods and
+      # seedable inconsistently from outside, which is the shape of a missing
+      # object.
+      #
+      # Mutable on purpose: it tracks a file being appended to, and each move it
+      # allows mirrors a record that has already landed.
+      #
+      # Membership is a linear scan. That is deliberate -- ordered IS the point
+      # here, and the only caller ({Scribe#written_target!}) runs once per
+      # human-driven rewind, not per turn.
+      class WrittenChain
+        def initialize(digests = [])
+          @digests = digests.dup
+          # Nothing to doubt: an empty seed cannot be out of order or holed.
+          @verified = @digests.empty?
+        end
+
+        # The append point. nil for a record with no turns yet, which is the
+        # honest answer for "append from the empty session".
+        def head = @digests.last
+
+        def length = @digests.length
+
+        def include?(digest) = @digests.include?(digest)
+
+        # Has a real chain judged this yet? False only while an unchecked seed
+        # is still a claim -- everything this class builds for itself is true by
+        # construction, so it starts and stays adjudicated.
+        def adjudicated? = @verified
+
+        # One journaled turn, now on disk. The head advances HERE, per turn,
+        # rather than once after a batch: a journal that raises mid-catch_up
+        # (ENOSPC, EIO) must leave the append point on the last record that
+        # actually landed, or the retry -- and there is one, a
+        # {Middleware::JournalTurns} failure tears the ask into {CLI::Repl}'s
+        # `record_interruption`, which catches up again -- re-writes turns the
+        # file already holds. A loader re-committing that file dies as
+        # {Bench::Session::Corrupt}, far from the bug.
+        def append(digest)
+          @digests << digest
+          self
+        end
+
+        # Drop everything above `to`, an announced rewind's other half. Chain
+        # order is insertion order (that is this class's whole claim), so
+        # slicing at the target prunes exactly the turns above it.
+        def retreat_to(to)
+          @digests = to.nil? ? [] : @digests[..@digests.index(to)]
+          self
+        end
+
+        # Is this really the chain ending at {#head} -- in order, no holes, and
+        # nothing unwritten BELOW it?
+        #
+        # That last clause is why the walk takes one more ancestor than it
+        # compares. Matching `length` ancestors below the head proves order and
+        # no holes, but a chain SUFFIX passes that too, and a suffix means
+        # unwritten turns sit below the head -- so the head is not the maximal
+        # written ancestor and the class doc above would be a claim nothing
+        # enforces. Demanding the walk RUN OUT at `length` is the whole fix, and
+        # it costs one fetch.
+        #
+        # Only a SEED can be wrong. {#append} extends by a turn the walk just
+        # proved is the head's child, and {#retreat_to} keeps a prefix of a
+        # prefix, so once true this stays true: hence the memo, and hence the
+        # O(length) walk runs at most ONCE per record. Per session, not per
+        # ask -- which is the budget the filtered walk this replaced blew.
+        #
+        # Requires the head to be on `timeline` already; {Scribe} checks that
+        # first, and checking out a digest the store lacks would raise the
+        # wrong error.
+        def prefix_of?(timeline)
+          return true if @verified
+
+          walked = timeline.checkout(head).ancestors.take(length + 1)
+          @verified = walked.length == length && walked.map(&:digest).reverse == @digests
+        end
+      end
+
       # @param journal [#<<] the open session Journal (fsync for durability)
       # @param context [Lain::Context] the context this session renders under
       # @param toolset [#to_schema] the toolset in effect
@@ -37,10 +120,11 @@ module Lain
       # @param resumed_from [Hash, nil] `{"file" =>, "head" =>}` naming the
       #   prior file this session chains to (T19); header-only, absent when nil
       # @param written [Array<String>] the resumed chain's already-recorded
-      #   turn digests. Seeding them is load-bearing: they live in the PRIOR
-      #   file, so catch_up must skip them (re-recording the whole chain here
-      #   would double every turn a chain loader folds in), and the
-      #   extends-check must anchor on the resumed head, not nil.
+      #   turn digests, in chain order (root first). Seeding them matters:
+      #   they live in the PRIOR file, so catch_up must not re-record them
+      #   (that would double every turn a chain loader folds in), and the
+      #   extends-check must anchor on the resumed head, not nil. The ORDER is
+      #   part of the claim and {WrittenChain} checks it -- see there.
       # @param message_journal [#<<, nil] where {#call}'s message records land
       #   -- the telemetry tee under --nvim (I6), so the live inbox surfaces
       #   (lain://inbox, {StatusFeed}) fold the same Q/A records the file
@@ -52,8 +136,7 @@ module Lain
                      message_journal: nil)
         @journal = journal
         @message_journal = message_journal || journal
-        @written = Set.new(written)
-        @head = written.last
+        @written = WrittenChain.new(written)
         @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:)
       end
 
@@ -70,33 +153,42 @@ module Lain
       end
 
       # Append a `turn` record for every render-chain turn above the last one
-      # written. Idempotent across calls: already-written turns are skipped, so
+      # written. Idempotent across calls: a caught-up timeline yields nothing, so
       # calling it once per ask writes only that ask's new turns, in root-to-head
       # order. The timeline must EXTEND the written chain -- see {Diverged}.
       #
+      # Walk, then both refusals, then write: nothing lands until the timeline
+      # and the seed have both been judged, so a refused catch_up leaves the
+      # file unchanged past its last good record.
+      #
       # @param timeline [Lain::Timeline]
       # @return [self]
-      # @raise [Diverged] for a rewound or diverged timeline; nothing is written
+      # @raise [Diverged] for a rewound or diverged timeline, or a seed that was
+      #   never the chain it claimed to be; nothing is written
       def catch_up(timeline)
-        fresh = timeline.to_a.reject { |turn| @written.include?(turn.digest) }
+        fresh = turns_above_append_point(timeline)
         extends_written_chain!(timeline, fresh)
+        written_chain_is_a_prefix!(timeline)
         fresh.each do |turn|
           @journal << SessionRecord.turn(turn)
-          @written.add(turn.digest)
+          @written.append(turn.digest)
         end
-        @head = timeline.head_digest
         self
       end
 
       # T15: the ONE sanctioned backward move. Announces a rewind as its own
       # `rewound` record, then retreats the append point so the next
       # {#catch_up} extends from `to` -- the {Diverged} raise keeps guarding
-      # every divergence NOT announced through here. The skip-set above the
-      # target is pruned, not kept: a rewind-and-retry that re-commits
-      # identical content yields an identical digest, which the skip-set
-      # would otherwise swallow -- the re-made turn would never re-land after
-      # the rewound record, leaving a parent-hole in the file order a loader
-      # folds. Checked BEFORE anything lands, like {#catch_up}.
+      # every divergence NOT announced through here.
+      #
+      # The written chain retreats WITH the append point, because it is what
+      # {#written_target!} judges a later rewind against: a target ABOVE the
+      # append point is a forward move wearing a rewind's name, and only a
+      # pruned chain refuses it. That a rewind-and-retry which re-commits
+      # identical content -- an identical DIGEST -- still re-lands after this
+      # record is {#turns_above_append_point}'s doing: it stops at the append
+      # point, never at "some digest already written". Checked BEFORE anything
+      # lands, like {#catch_up}.
       #
       # @param to [String, nil] a turn digest this record already wrote
       #   (nil rewinds to the empty session)
@@ -104,8 +196,8 @@ module Lain
       # @raise [Diverged] for a target never written; nothing is written
       def rewound(to:)
         written_target!(to)
-        @journal << SessionRecord.rewound(from: @head, to:)
-        retreat_to(to)
+        @journal << SessionRecord.rewound(from: @written.head, to:)
+        @written.retreat_to(to)
         self
       end
 
@@ -113,52 +205,104 @@ module Lain
       # the last head {#catch_up} saw, so a caller that caught up first need not
       # repeat it.
       #
+      # Deliberately does NOT demand an adjudicated seed, unlike {#rewound}.
+      # `lain chat --resume` then quit-without-asking reaches here with the seed
+      # still a claim, and refusing would turn a clean quit into a crash --
+      # inside chat's `ensure`, where it would also mask whatever error was
+      # already unwinding. Nothing is risked by allowing it: this record wrote
+      # no turns, so the anchor is the resume's own claim about the PRIOR file
+      # and no turn record hangs off it.
+      #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
       # @param head [String, nil] the final head anchor
       # @return [self]
-      def close(reason:, head: @head)
+      def close(reason:, head: @written.head)
         @journal << Telemetry::SessionClosed.new(head:, reason:)
         self
       end
 
       # Mark a run stopped before its response committed. `head:` names the last
-      # committed turn the interrupted run was generating from.
+      # committed turn the interrupted run was generating from. Unguarded for
+      # the reason {#close} gives.
       #
       # @param head [String, nil]
       # @return [self]
-      def interrupted(head: @head)
+      def interrupted(head: @written.head)
         @journal << Telemetry::RunInterrupted.new(head:)
         self
       end
 
       private
 
+      # The turns above the append point, root-to-head: {Timeline#ancestors}
+      # walked head-first and stopped AT the append point, so a catch_up reads
+      # the new turns and one more. Filtering a full walk instead cost O(n) per
+      # ask -- O(n^2) over a session, on the durability path every ask waits on.
+      #
+      # Bounded only where there IS an append point, and that is the honest
+      # claim: an un-seeded first catch_up has none, so it walks to the root
+      # once, and a refusal walks the whole chain before {#extends_written_chain!}
+      # turns it down. Both are per session, not per ask.
+      #
+      # Stopping at the append point rather than at any already-written digest
+      # is what keeps {#rewound} correct: a rewind-and-retry that re-commits
+      # identical content yields an identical DIGEST, and that turn has to
+      # re-land after the `rewound` record, which a stop-at-anything-written
+      # walk would eat.
+      def turns_above_append_point(timeline)
+        timeline.ancestors.take_while { |turn| turn.digest != @written.head }.reverse
+      end
+
       # The append point must BE the last-written head: the first fresh turn's
-      # render parent, or -- with nothing new -- the timeline's own head. Checked
-      # BEFORE anything lands, so a refused catch_up leaves the file unchanged
-      # past the last good record.
+      # render parent, or -- with nothing new -- the timeline's own head.
+      #
+      # This is also half of what the walk above depends on. An append point
+      # that is not on the walked chain sends the take-while off the root, so
+      # `fresh` is the whole chain and its root's nil parent cannot equal a
+      # non-nil append point: the mismatch below IS that assertion failing,
+      # loudly, instead of turns journaled under a wrong parent. The other half
+      # -- that the written chain is a PREFIX and not merely on-chain -- is
+      # {WrittenChain#prefix_of?}, checked next.
       def extends_written_chain!(timeline, fresh)
         anchor = fresh.empty? ? timeline.head_digest : fresh.first.parent
-        return if anchor == @head
+        return if anchor == @written.head
 
         raise Diverged, "timeline #{timeline.head_digest.inspect} does not extend the written chain " \
-                        "(last-written head #{@head.inspect}); the session record appends, never rewrites"
+                        "(last-written head #{@written.head.inspect}); the session record appends, never rewrites"
+      end
+
+      # Runs AFTER {#extends_written_chain!}, which is what makes the append
+      # point safe to check out here.
+      def written_chain_is_a_prefix!(timeline)
+        return if @written.prefix_of?(timeline)
+
+        raise Diverged, "the written chain is not a prefix of timeline #{timeline.head_digest.inspect} " \
+                        "(#{@written.length} digests ending at #{@written.head.inspect}); a `written:` seed " \
+                        "must be the prior file's turns in chain order, root first"
       end
 
       def written_target!(to)
+        adjudicated_seed!
         return if to.nil? || @written.include?(to)
 
         raise Diverged, "rewind target #{to.inspect} was never written to this record; " \
                         "a rewound record can only name a recorded turn"
       end
 
-      # Insertion order IS chain order here: {#catch_up} appends root-to-head
-      # and only ever extends, and the resumed seed arrives the same way -- so
-      # slicing the Set at the target prunes exactly the turns above it.
-      def retreat_to(to)
-        kept = @written.to_a
-        @written = Set.new(to.nil? ? [] : kept[..kept.index(to)])
-        @head = to
+      # Only {#catch_up} carries a timeline, so it is the only move that can
+      # adjudicate a seed -- which leaves {#rewound} announcing a backward move
+      # whose `from:` comes from the unchecked seed, and retreating the chain,
+      # both before any catch_up could turn it down. Call order prevents that
+      # today ({CLI::Command::Rewind} catches up first, so does the {CLI::Repl}),
+      # but call order is a convention, and an unvalidated `written:` seed was a
+      # convention too -- which is how this card found it.
+      #
+      # {#close} and {#interrupted} are deliberately NOT guarded; see #close.
+      def adjudicated_seed!
+        return if @written.adjudicated?
+
+        raise Diverged, "the `written:` seed was never checked against a timeline; #catch_up is what " \
+                        "adjudicates it, and until it has, this record cannot speak for a head of its own"
       end
     end
   end
