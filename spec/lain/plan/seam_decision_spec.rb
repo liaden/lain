@@ -27,7 +27,7 @@ RSpec.describe Lain::Plan::SeamDecision do
   #   rewrite_cost = tokens_after * input * write_multiplier(1.25)
   #   payback      = tokens_removed * input * read_multiplier(0.1) * turns
   describe "#call" do
-    context "an L chunk whose payback dominates the rewrite" do
+    context "with an L chunk whose payback dominates the rewrite" do
       let(:chunk) { build_chunk(size: "L", before: 10_000, after: 2_000) }
 
       it "answers rewrite-now and journals both sides' inputs" do
@@ -57,7 +57,7 @@ RSpec.describe Lain::Plan::SeamDecision do
       end
     end
 
-    context "a priced model under a NO_CACHING provider" do
+    context "with a priced model under a NO_CACHING provider" do
       let(:profile) { Lain::CacheProfile::NO_CACHING } # write 1.0x, read 1.0x
       let(:chunk) { build_chunk(size: "L", before: 10_000, after: 2_000) }
 
@@ -74,7 +74,7 @@ RSpec.describe Lain::Plan::SeamDecision do
       end
     end
 
-    context "a tiny chunk whose rewrite outweighs the payback" do
+    context "with a tiny chunk whose rewrite outweighs the payback" do
       let(:chunk) { build_chunk(size: "S", before: 3_000, after: 2_900) }
 
       it "defers" do
@@ -108,7 +108,7 @@ RSpec.describe Lain::Plan::SeamDecision do
       end
     end
 
-    context "an unpriced arm (no model)" do
+    context "with an unpriced arm (no model)" do
       let(:chunk) { build_chunk(size: "L", before: 10_000, after: 2_000) }
 
       it "prices both sides at zero and defers, still recording the estimate" do

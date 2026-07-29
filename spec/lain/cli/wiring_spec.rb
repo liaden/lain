@@ -152,7 +152,7 @@ RSpec.describe Lain::CLI::Wiring do
       [wiring.wire_agent(channel:, recorder:, session:, backend:), recorder]
     end
 
-    context "a wired chat whose journal is capturing" do
+    context "when the wired chat journal is capturing" do
       let(:journal) { RecordingChannel.new }
       # journal_path: a bogus-but-harmless NDJSON name -- Chronicle#spool
       # derives the WAL path from it via pure string manipulation
@@ -170,7 +170,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "a wired chat started with --no-journal" do
+    context "when the chat started with --no-journal" do
       let(:chronicle) { Lain::CLI::Chronicle::Null.new }
 
       it "still refuses a credential-shaped memory_write, and nothing raises" do
@@ -219,7 +219,7 @@ RSpec.describe Lain::CLI::Wiring do
            .select { |block| block["type"] == "tool_result" }.map { |block| block["content"] }.join("\n")
     end
 
-    context "a memory_write whose body is a git commit SHA" do
+    context "with a memory_write whose body is a git commit SHA" do
       let(:sha) { "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567" }
       let(:tool_use) do
         { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
@@ -234,7 +234,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "a memory_write carrying an API-key-shaped body" do
+    context "with a memory_write carrying an API-key-shaped body" do
       let(:tool_use) do
         { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
           "input" => { "id" => "creds", "description" => "oops", "body" => "sk-#{"a" * 20}" } }
@@ -249,7 +249,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "a memory_write with a blank body" do
+    context "with a memory_write whose body is blank" do
       let(:tool_use) do
         { "type" => "tool_use", "id" => "tu_1", "name" => "memory_write",
           "input" => { "id" => "nothing", "description" => "empty", "body" => "  \n\t " } }
@@ -274,7 +274,7 @@ RSpec.describe Lain::CLI::Wiring do
     # wiring refuses EVERY improvement note. The chat toolset does not carry the
     # tool, so reaching Handler::Live's unknown-tool answer is the proof the
     # guard let it through rather than withholding it.
-    context "an improvement_write, which carries no body for the gate to judge" do
+    context "with an improvement_write, which carries no body for the gate to judge" do
       let(:tool_use) do
         { "type" => "tool_use", "id" => "tu_1", "name" => "improvement_write",
           "input" => { "note" => "the guard should not judge this", "kind" => "insight",
@@ -537,7 +537,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(accounting.map(&:cost_saved).uniq).to eq(["0.0"])
     end
 
-    context "--no-compact" do
+    context "with --no-compact" do
       let(:compaction_options) { super().merge(compact: false) }
 
       it "leaves the Agent on the Null source, rendering exactly as an unwired chat would" do
@@ -595,7 +595,7 @@ RSpec.describe Lain::CLI::Wiring do
       Dir.mktmpdir("lain-d2-chat") { |dir| Dir.chdir(File.realpath(dir), &block) }
     end
 
-    context "wired with no isolation option" do
+    context "without an isolation option" do
       it "leases the chat's own process environment -- the shared-process default" do
         chat_cwd = nil
         worker = in_throwaway_chat_dir do |dir|
@@ -618,7 +618,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "wired with the worktree isolation option" do
+    context "with the worktree isolation option" do
       # The spec's own git calls reuse the backend's pinned scrub set, so the
       # throwaway repo is built hermetically under a GIT_*-polluted env (a
       # pre-commit hook) exactly as the backend runs.
@@ -676,7 +676,7 @@ RSpec.describe Lain::CLI::Wiring do
     # Resolved BEFORE {Lain::CLI::Chronicle#start} pins the header, so the
     # refusal lands while the session record is still empty -- the same
     # refusal-before-journal ordering --resume and --fork already keep.
-    context "wired with an unrecognized isolation option" do
+    context "with an unrecognized isolation option" do
       it "raises a Lain::Error and leaves no session record behind" do
         Dir.mktmpdir("lain-d2-state") do |state|
           paths = Lain::Paths.new(env: { "HOME" => "/home/nobody", "XDG_STATE_HOME" => state })

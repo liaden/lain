@@ -126,7 +126,7 @@ RSpec.shared_examples "an elementwise map" do |config|
 
   # Nested, so the including group's own `examples` are exactly the two laws
   # above -- which is what spec/algebra_laws_spec.rb's battery/group pin reads.
-  context "the spans those laws are read over" do
+  context "when reading those laws over these spans" do
     it "includes one the call genuinely rewrites" do
       expect(battery.rewritten).not_to be_empty
     end

@@ -130,7 +130,7 @@ RSpec.shared_examples "a pure operation" do |config|
 
   # Nested, so the including group's own `examples` are exactly the three laws
   # above -- which is what spec/algebra_laws_spec.rb's battery/group pin reads.
-  context "the inputs those laws are read over" do
+  context "when reading those laws over these inputs" do
     it "includes more than one distinct input" do
       expect(battery.distinct.size).to be > 1
     end

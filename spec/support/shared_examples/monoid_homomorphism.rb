@@ -83,7 +83,7 @@ RSpec.shared_examples "a monoid homomorphism" do |config|
   # Nested, so the including group's own `examples` are exactly the two laws
   # above -- the shape elementwise.rb uses, kept here so the two files read the
   # same way even though no registry sweep pins this one.
-  context "the spans those laws are read over" do
+  context "when reading those laws over these spans" do
     it "includes more than one, so a concatenation is a real one" do
       expect(battery.spans.size).to be > 1
     end
@@ -102,7 +102,7 @@ RSpec.shared_examples "not a monoid homomorphism" do |config|
                                                 -> { "every drawn pair of spans agreed; nothing exhibits the negative" }
   end
 
-  context "the spans that law is read over" do
+  context "when reading that law over these spans" do
     it "includes one the collapse answers content for" do
       expect(battery.contentful).not_to be_empty
     end

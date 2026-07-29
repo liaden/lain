@@ -1,4 +1,6 @@
-inherit_from: .rubocop_todo.yml
+# There is no .rubocop_todo.yml. Every cop is either enabled and clean, or ruled off
+# below with the reason attached -- a generated TODO would let an exemption re-enter
+# as a silent line in a file nobody reads.
 
 # Without this, the AllCops/Exclude below REPLACES RuboCop's default exclude
 # list (tmp/, vendor/, node_modules/) rather than adding to it, and the build
@@ -273,3 +275,74 @@ RSpec/ExpectActual:
 RSpec/IteratedExpectation:
   Exclude:
     - "spec/lain/skill/shipped_skills_spec.rb"
+
+# --- Spec layout and grouping ---------------------------------------------
+
+# `include_examples` INLINES the shared examples into the calling group;
+# `it_behaves_like` nests them in a child. This codebase depends on the difference
+# and says so in two places (strategy_spec.rb's header, algebra_generators.rb): a
+# config Hash written in a group body closes over `self` = the example group, where
+# no `let` exists yet. algebra_laws_spec.rb proves it -- the line after the include
+# reads `examples.map(&:description)` to learn which laws the shared group just
+# defined, and under `it_behaves_like` those examples belong to a child group, so it
+# reads the wrong set. Converting all 44 sites turned that file red. The example
+# COUNT is identical either way, so a green suite cannot vouch for the other 43.
+RSpec/IncludeExamples:
+  Enabled: false
+
+# A spec file is named for the concept it covers, not by mirroring a class path. Some
+# describe one member of a subsystem (approval_spec covers Approval::Queue,
+# pipeline_source_spec covers its Null), some describe a relationship rather than a
+# class (core/grep_parity_spec pins the Rust and Ruby greps against each other), and
+# spec/integration/ is a deliberate second tree. Renaming 28 files to satisfy a
+# mirror rule would cost every one of those names its meaning.
+RSpec/SpecFilePathFormat:
+  Enabled: false
+
+# A fixture project that deliberately holds a spec-shaped file NOT named *_spec.rb,
+# so the grader's own discovery has a negative case to find.
+RSpec/SpecFilePathSuffix:
+  Exclude:
+    - "spec/fixtures/**/*"
+
+# One file per concept, which sometimes covers two collaborating classes: btw_spec
+# holds /btw and /keep, registry_spec holds the registry and Command::Env. Nesting a
+# describe of a DIFFERENT class inside the first would misreport where each example
+# lives.
+RSpec/MultipleDescribes:
+  Enabled: false
+
+# `describe Klass, "streaming"` names the SCOPE under test, and RSpec composes it
+# into the full description. The cop wants only `#method`/`.class`, which cannot say
+# "the streaming path of this provider".
+RSpec/DescribeMethod:
+  Enabled: false
+
+# The digits are domain labels, not sequence indices: s1/s2/s3 and m1/m2/m3 are the
+# short and medium SESSIONS whose turn counts the comment above them tabulates, and
+# after_v1/after_v2 are the index states after writing version 1 and version 2.
+# Renaming them would delete the mapping to the fixture data they stand for.
+RSpec/IndexedLet:
+  Exclude:
+    - "spec/lain/memory/index_spec.rb"
+    - "spec/lain/plan/calibration_spec.rb"
+
+# describe class -> describe method -> context when -> context with is four levels and
+# reads correctly. Raised one step rather than flattening a nesting that carries
+# meaning; this cop counts DSL depth, not complexity, so CLAUDE.md's Metrics/* rule
+# (a tripped cop means a missing object) does not transfer.
+RSpec/NestedGroups:
+  Max: 4
+
+# `stub_const` cannot express a constant's ABSENCE, and the example needs exactly
+# that: a host whose Ruby was built without Socket::AF_VSOCK. It removes and restores
+# the real constant in an ensure.
+RSpec/RemoveConst:
+  Exclude:
+    - "spec/support_vsock_availability_spec.rb"
+
+# `task build: :compile` adds a prerequisite to the `build` task bundler/gem_tasks
+# already defined and described. A `desc` here would retitle someone else's task.
+Rake/Desc:
+  Exclude:
+    - "Rakefile"
