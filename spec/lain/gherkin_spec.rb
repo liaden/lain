@@ -244,6 +244,30 @@ RSpec.describe Lain::Gherkin::Criteria do
     end
   end
 
+  # The rendering back OUT to the house format, on the value that holds the
+  # clauses. Two consumers quote a scenario -- the approval question and the
+  # test-generation prompt -- and each held its own copy of these three lines.
+  describe "Scenario#render" do
+    it "renders the header unindented and one clause per line, indented two spaces" do
+      scenario = described_class.parse(markdown).first
+
+      expect(scenario.render).to eq(<<~GHERKIN.chomp)
+        Scenario: mechanical one
+          Given a fixture project
+          When the suite runs
+          Then it passes
+          And the digest is stable
+      GHERKIN
+    end
+
+    it "round-trips through the parser: the rendering is itself house format" do
+      scenario = described_class.parse(markdown).first
+      reparsed = described_class.parse("```gherkin\n#{scenario.render}\n```")
+
+      expect(reparsed.first).to eq(scenario)
+    end
+  end
+
   describe "the real plan-doc corpus (house-format smoke check)" do
     corpus = Dir.glob(File.expand_path("../../planning/specs/*.md", __dir__))
 

@@ -644,7 +644,7 @@ RSpec.describe Lain::CLI::Backend do
     # then swallows that BY DESIGN, so the only symptom a user ever sees is
     # "compaction quietly stopped summarizing" -- exactly the silent failure
     # this card exists to end. Refused at the seam, the shape
-    # {Compaction::Head#validated} already uses for keep_last.
+    # {Lain::Compaction.validate_keep_last} already uses for keep_last.
     it "refuses a non-positive summarizer ceiling rather than 400ing silently later" do
       expect { summarizer_for(summarizer_max_tokens: 0) }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--summarizer-max-tokens must be positive, got 0/)

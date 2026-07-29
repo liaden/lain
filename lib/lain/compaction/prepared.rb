@@ -153,7 +153,9 @@ module Lain
       end
       private_constant :Replay
 
-      # Mirrors {Scheduler}'s own COMPOSE exactly, including WHY it must be
+      # Mirrors {Scheduler}'s own COMPOSE exactly -- including what the injected
+      # base MEANS, which is {Context.combinator_for}'s one answer rather than a
+      # third copy of the same duck-check -- and including WHY it must be
       # a module-scope lambda rather than built inside an instance method: a
       # Proc's binding captures its DEFINITION `self`, so a provider built
       # in an instance method here would carry this Prepared instance --
@@ -164,9 +166,7 @@ module Lain
       # shareable `messages`/`base` arrive as explicit arguments, so the
       # composed pipeline stays shareable exactly when they are.
       COMPOSE = lambda do |messages, base|
-        Ractor.make_shareable(
-          ->(workspace) { Replay.new(messages) >> (base.respond_to?(:requires) ? base : base.call(workspace)) }
-        )
+        Ractor.make_shareable(->(workspace) { Replay.new(messages) >> Context.combinator_for(base, workspace) })
       end
       private_constant :COMPOSE
     end

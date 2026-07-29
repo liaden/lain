@@ -462,6 +462,40 @@ RSpec.describe Lain::Context do
         expect(built.render(timeline:, toolset:, workspace: live).messages.to_s).to include("REMEMBER-ME")
       end
     end
+
+    # The rule #pipeline_for applies, as its own function -- because three other
+    # objects apply it too. Compaction::Scheduler, Compaction::Prepared and
+    # Plan::LinearRewrite each compose a stage ahead of an injected base, and
+    # each held its own copy of this expression with a comment telling the next
+    # reader to keep it in sync by hand.
+    describe ".combinator_for, the pipeline duck's one resolution rule" do
+      it "hands a Combinator straight back, whatever workspace it is offered" do
+        expect(described_class.combinator_for(Lain::Context::Identity, Lain::Workspace.new(reminders: ["LIVE"])))
+          .to be(Lain::Context::Identity)
+      end
+
+      it "asks a provider for its combinator against the workspace it was given" do
+        seen = []
+        provider = lambda do |workspace|
+          seen << workspace
+          Lain::Context::Identity
+        end
+        live = Lain::Workspace.new(reminders: ["LIVE"])
+
+        expect(described_class.combinator_for(provider, live)).to be(Lain::Context::Identity)
+        expect(seen).to eq([live])
+      end
+
+      it "is what #pipeline_for resolves an injected pipeline through" do
+        ctx = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                  pipeline: T21PipelineProviders::DEFAULT)
+        live = Lain::Workspace.new(reminders: ["LIVE"])
+
+        resolved = described_class.combinator_for(T21PipelineProviders::DEFAULT, live)
+
+        expect(ctx.pipeline_for(live).call([])).to eq(resolved.call([]))
+      end
+    end
   end
 
   # T17. A compacting turn renders through a pipeline whose first stage

@@ -44,6 +44,19 @@ module Lain
       def canonical
         { "name" => name, "mechanical" => mechanical, "clauses" => clauses.map(&:canonical) }
       end
+
+      # Back OUT to the house format the parser accepts: the `Scenario:` header,
+      # then one clause per line indented two spaces. It lives on the value
+      # because the two consumers that quote a scenario -- {Approval}'s question
+      # to the human and {TestGeneration}'s prompt to `test_engineer` -- each held
+      # their own copy of these lines, and a scenario asked in one wording and
+      # generated from in another is a difference nothing would report.
+      #
+      # NOT {#canonical}'s business, which is the digest's wire form: this one is
+      # read by people, so it may be reformatted without changing an address.
+      def render
+        (["Scenario: #{name}"] + clauses.map { |clause| "  #{clause.keyword} #{clause.text}" }).join("\n")
+      end
     end
 
     # The whole IR: the ordered scenarios parsed out of a markdown document, plus

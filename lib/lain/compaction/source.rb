@@ -117,7 +117,15 @@ module Lain
       # @param hard_cap [Integer] the history size, in {Head#bytesize}'s byte
       #   proxy, that forces a compaction even while the cache is warm
       # @param keep_last [Integer] trailing messages kept verbatim -- the ONE
-      #   number {Head} and {Context::Compact} must agree on
+      #   number {Head} and {Context::Compact} must agree on. Checked HERE, at
+      #   wiring time, against the module's rule ({Compaction.validate_keep_last}
+      #   -- a keep_last of 0 makes a derivation replace the ENTIRE history with a
+      #   summary of nothing), so a bad wiring fails at construction rather than
+      #   on the first turn of a live chat. The validated number is then held by
+      #   {Derived} and asked back for the {Head}, never kept in a second ivar
+      #   here: the {Boundary} the derivation cuts at and the {Head} {Need}
+      #   measures must be computed from the SAME keep_last, and two copies is
+      #   how they drift.
       # @param eager [#held] the live summary store; the Null holds nothing
       # @param strategy [Strategy::Base, nil] which policy collapses a span,
       #   `--compact-strategy`'s answer. nil is the un-flagged wiring, which
@@ -149,7 +157,7 @@ module Lain
         @model = model
         @price_book = price_book
         @idle = IdleGap.new(clock:)
-        @derived = Derived.new(keep_last: validated_keep_last(keep_last), strategy:, journal:)
+        @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy:, journal:)
       end
 
       # The observe half's response leg. A turn's own usage carries the
@@ -195,20 +203,6 @@ module Lain
       end
 
       private
-
-      # {Head} owns the rule -- a keep_last of 0 makes a derivation replace the
-      # ENTIRE history with a summary of nothing -- and asking it against an
-      # empty history is how a bad wiring fails HERE rather than on the first
-      # turn of a live chat.
-      #
-      # The validated number is then held by {Derived} and asked back for the
-      # Head, rather than kept in a second ivar here. One number, one owner: the
-      # {Boundary} the derivation cuts at and the {Head} {Need} measures have to
-      # be computed from the SAME keep_last, and two copies is how they drift.
-      def validated_keep_last(keep_last)
-        Head.new(messages: [], keep_last:)
-        keep_last
-      end
 
       # A turn's own usage, and only that. `#usage` ALONE is not the duck:
       # {Telemetry::OracleAnswer} answers it too and its usage Hash carries no

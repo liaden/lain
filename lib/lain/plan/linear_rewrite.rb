@@ -86,7 +86,9 @@ module Lain
     # instance method captures that instance as its +self+, and would drag it
     # (and anything it holds) into the pipeline, failing +Ractor.make_shareable+;
     # here +self+ is the class and the shareable +compact+/+base+ arrive as
-    # explicit arguments.
+    # explicit arguments. What the base MEANS is {Lain::Context.combinator_for}'s
+    # answer, asked rather than re-derived -- this file used to hold a fourth copy
+    # of that duck-check.
     class CompactRewrite
       # @param threshold [Integer] byte-length proxy above which Compact fires
       # @param keep_last [Integer] trailing messages kept verbatim under Compact
@@ -124,9 +126,7 @@ module Lain
       end
 
       COMPOSE = lambda do |compact, base|
-        Ractor.make_shareable(
-          ->(workspace) { compact >> (base.respond_to?(:requires) ? base : base.call(workspace)) }
-        )
+        Ractor.make_shareable(->(workspace) { compact >> Context.combinator_for(base, workspace) })
       end
       private_constant :COMPOSE
     end

@@ -61,6 +61,10 @@ module Lain
       # hurry, matching {Approval::Queue::DEFAULT_TIMEOUT}.
       DEFAULT_TIMEOUT = 300
 
+      # Inline until there is a shared clock unit to name: **T33** creates
+      # `RunClock::MONOTONIC` in wave 2, and this default is one of the copies it
+      # collects. Inventing the unit here, for a single default, would put the
+      # seam in the wrong place.
       MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 
       # A generation (or closure record) that would consume an un-approved
@@ -165,13 +169,8 @@ module Lain
         <<~QUESTION
           Approve these acceptance criteria for test generation? Reply approve or deny.
 
-          #{criteria.map { |scenario| render_scenario(scenario) }.join("\n\n")}
+          #{criteria.map(&:render).join("\n\n")}
         QUESTION
-      end
-
-      def render_scenario(scenario)
-        clauses = scenario.clauses.map { |clause| "  #{clause.keyword} #{clause.text}" }
-        (["Scenario: #{scenario.name}"] + clauses).join("\n")
       end
     end
   end

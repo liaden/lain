@@ -79,8 +79,14 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
       expect(cuttings.map { |cut| bytes(cut) }.uniq).to eq([bytes(elide.collapse(span))])
     end
 
+    # Stated by REFUSAL rather than by `initialize`'s arity: the freeze now comes
+    # from a prepended {Lain::Freezable}, whose `(...)` signature reflects as
+    # arity -1 while forwarding everything it is handed -- so a construction that
+    # names a collaborator is what has to fail, and that also covers the keyword
+    # collaborator an arity of 0 never did.
     it "consults no model, oracle or journal, holding no collaborator to consult" do
-      expect(described_class.instance_method(:initialize).arity).to eq(0)
+      expect { described_class.new(Lain::Channel::Null.instance) }.to raise_error(ArgumentError)
+      expect { described_class.new(journal: Lain::Channel::Null.instance) }.to raise_error(ArgumentError)
       expect(elide.instance_variables).to be_empty
       expect(texts(elide.collapse(span))).not_to be_empty
     end

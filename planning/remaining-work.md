@@ -156,6 +156,19 @@ deliberately deferred, not dropped:
   the legitimate composition sites. **Why deferred:** T29's card was explicitly the state feed plus
   the two DSL loaders and said not to sweep wider; the seven are each one line, but the scan widening
   is the real work and wants its own red/green.
+- **R.10 — `Composed#reads_messages?` is tolerant only one level deep.** Found by T32's review
+  panel; **inherited from T17, not introduced by chunk B** — it reproduces identically on
+  `30e82b4`. `Context#substituting?` probes the `#reads_messages?` duck with `respond_to?`
+  precisely so a bench user's own `#call`/`#requires` combinator does not blow up inside
+  `#render`. `Context::Composed#reads_messages?` (`context/base.rb:117`) then bare-sends that
+  same message to `@first`, and `Composed` is public — so `Composed.new(BenchDuck.new, Identity)`
+  raises `NoMethodError` from inside `#render`, which is exactly the failure the tolerant check
+  was written to prevent, one composition level up. The tolerance guards the direct case and not
+  the composed one. **Scope if taken:** decide where the default lives — a `Combinator#reads_messages?`
+  default of `true` that every duck inherits is one answer, tolerating the send in `Composed` is
+  another, and they differ for an object that is not a Combinator at all. **Acceptance:**
+  composing a `#call`/`#requires`-only duck into a pipeline renders rather than raising, and the
+  projection-skip still fires for a declared substituting stage in either position.
 
 ---
 

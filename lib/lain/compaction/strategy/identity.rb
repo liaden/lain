@@ -18,14 +18,14 @@ module Lain
       # the loud refusal is the honest answer to a question it cannot be asked in
       # the first place.
       class Identity < Base
+        # It holds nothing, so the whole of its construction is the freeze every
+        # value object repeats (see {Lain::Freezable}). Not on {Base}, for the
+        # reason {Elide} states.
+        prepend Freezable
+
         include Algebra::Pure
 
         NO_RANGES = [].freeze
-
-        def initialize
-          super
-          freeze
-        end
 
         # Anonymous keywords rather than `span:`: this answers the same thing
         # whatever span it is offered, and naming an argument it does not read

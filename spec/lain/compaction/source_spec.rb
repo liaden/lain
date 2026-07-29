@@ -990,7 +990,18 @@ RSpec.describe Lain::Compaction::Source do
 
   describe "construction" do
     it "refuses a keep_last that would destroy the whole history" do
-      expect { source(keep_last: 0) }.to raise_error(ArgumentError, /keep_last must be positive/)
+      expect { source(keep_last: 0) }.to raise_error(ArgumentError, "keep_last must be positive, got 0")
+    end
+
+    # The rule is CONSULTED, not re-enacted: it used to be applied by building a
+    # throwaway Head over an empty message list purely for its constructor's
+    # refusal, which is an object allocated for its side effect and discarded.
+    it "applies the rule without building a throwaway Head" do
+      allow(Lain::Compaction::Head).to receive(:new).and_call_original
+
+      source
+
+      expect(Lain::Compaction::Head).not_to have_received(:new)
     end
   end
 

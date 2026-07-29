@@ -56,6 +56,12 @@ module Lain
       # into the free monoid has a real unit instead, and it is the unit law the
       # homomorphism rests on.
       class Elide < Base
+        # It holds nothing, so the whole of its construction is the freeze every
+        # value object repeats (see {Lain::Freezable}). Not on {Base}: a strategy
+        # may hold a live oracle and a memo ({Summarizing}), and freezing every
+        # strategy is the one thing that would break.
+        prepend Freezable
+
         include Algebra::Elementwise
         include Algebra::Pure
 
@@ -64,11 +70,6 @@ module Lain
         # says only that the bytes are gone. Its own prose because the reason
         # differs -- there was never a summary to hold, by design.
         ELIDED = "(elided -- no summary was taken)"
-
-        def initialize
-          super
-          freeze
-        end
 
         # The whole span, in one range. There is no cut this strategy could
         # prefer: it answers the same bytes under every partition of the span,

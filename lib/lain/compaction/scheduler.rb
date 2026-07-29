@@ -206,9 +206,10 @@ module Lain
       end
 
       # Compact rides AHEAD of the base so the head is summarized before the
-      # base's reminders inject and its cache marks land. The duck-check mirrors
-      # Context#pipeline_for EXACTLY (a Combinator used as-is, else a
-      # `->(workspace)` provider called per render) -- keep the two in sync.
+      # base's reminders inject and its cache marks land. What the injected base
+      # MEANS is {Context.combinator_for}'s answer, asked rather than re-derived:
+      # this used to carry its own copy of that duck-check under a comment asking
+      # the next reader to keep the two in sync by hand.
       #
       # It is a module-scope lambda, NOT one built inside an instance method, on
       # purpose: a Proc's binding captures its DEFINITION `self`, so a provider
@@ -230,9 +231,7 @@ module Lain
       private_constant :NO_MESSAGES
 
       COMPOSE = lambda do |compact, base|
-        Ractor.make_shareable(
-          ->(workspace) { compact >> (base.respond_to?(:requires) ? base : base.call(workspace)) }
-        )
+        Ractor.make_shareable(->(workspace) { compact >> Context.combinator_for(base, workspace) })
       end
       private_constant :COMPOSE
 

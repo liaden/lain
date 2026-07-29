@@ -191,7 +191,37 @@ module Lain
     def pipeline_for(workspace)
       return self.class.pipeline(workspace) if @pipeline.nil?
 
-      @pipeline.respond_to?(:requires) ? @pipeline : @pipeline.call(workspace)
+      Context.combinator_for(@pipeline, workspace)
+    end
+
+    # What an injected pipeline MEANS for one render: a Combinator (it answers
+    # `#requires`) is the pipeline itself, and anything else is a pure
+    # `->(workspace)` provider asked for one per render. The duck is PUBLIC --
+    # {Compaction::Scheduler}, {Compaction::Prepared} and {Plan::LinearRewrite}
+    # each compose a stage ahead of a base injected by a caller, and each of them
+    # used to hold this same expression under a comment telling the next reader to
+    # keep it in sync by hand. One rule, one definition, four consumers.
+    #
+    # It probes with `respond_to?` rather than rescuing a `NoMethodError`, and
+    # tests for `#requires` rather than for `#call`: both shapes answer `#call`,
+    # so `#requires` is the only thing that tells them apart.
+    #
+    # `Context.` and not `self.class.`: this is the published duck's resolution
+    # rule, not a subclass hook. A subclass chooses its default strategy by
+    # overriding `self.pipeline`; what an INJECTED pipeline means must be the same
+    # answer everywhere, or a bench user's own combinator resolves differently
+    # depending on which Context received it.
+    #
+    # Note this is not the only tolerant probe on the pipeline duck -- see
+    # {#substituting?}, which asks a different question of an already-resolved
+    # combinator -- and the two are deliberately separate.
+    #
+    # @param pipeline [#requires, #call] a Combinator, or a `->(workspace)`
+    #   provider of one
+    # @param workspace [Workspace] this render's Workspace, live
+    # @return [Context::Combinator]
+    def self.combinator_for(pipeline, workspace)
+      pipeline.respond_to?(:requires) ? pipeline : pipeline.call(workspace)
     end
 
     private
@@ -231,6 +261,14 @@ module Lain
     # Silence therefore means "reads its messages": the projection is made, and
     # a stage only opts OUT by saying so. The saving belongs to the stage that
     # claims it.
+    #
+    # Kept apart from {.combinator_for} although both probe the same published
+    # duck tolerantly: that one RESOLVES a pipeline value against a workspace and
+    # is asked by four objects, while this asks a property of an ALREADY-resolved
+    # combinator and is asked here only -- `#render` is the one place a projection
+    # is built. Folding them together would name an abstraction whose two members
+    # share nothing but the word `respond_to?`, and would move this reasoning away
+    # from {#projected}, its only reader.
     def substituting?(pipeline)
       pipeline.respond_to?(:reads_messages?) && !pipeline.reads_messages?
     end

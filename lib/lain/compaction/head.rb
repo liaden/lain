@@ -64,16 +64,24 @@ module Lain
 
       # @param messages [Array<Hash>] the full rendered message list. Only READ
       #   -- the caller keeps its array, untouched and unfrozen.
-      # @param keep_last [Integer] must be positive; see {#validated}
+      # @param keep_last [Integer] must be positive. This object does NOT check
+      #   that itself: {Boundary}, built on the first line below, applies
+      #   {Compaction.validate_keep_last} to whatever it is handed before it
+      #   reads a single message, so a `Head.new` with a degenerate `keep_last`
+      #   raises from there with the module's own message. A call here as well
+      #   would be unreachable-by-construction, which is worse than absent --
+      #   a spec aimed at it passes whether or not it is there.
       # @param pins [Context::PinnedMessages] see {.from_timeline}
       def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE)
-        # The cut RULE, consulted rather than restated. {Context::Compact} asks
-        # the same object the same question with the same arguments, and a
-        # `Boundary` is a pure function of `(messages, keep_last)` -- which is
-        # what makes "one answer, two consumers" hold across two objects that
-        # cannot pass an instance between them (Compact receives its messages
-        # per `#call`, long after it was frozen).
-        @boundary = Boundary.new(messages:, keep_last: validated(keep_last))
+        # The cut RULE, consulted rather than restated -- and with it the
+        # `keep_last` refusal, since a Boundary cannot be built around a value the
+        # rule rejects. {Context::Compact} asks the same object the same question
+        # with the same arguments, and a `Boundary` is a pure function of
+        # `(messages, keep_last)` -- which is what makes "one answer, two
+        # consumers" hold across two objects that cannot pass an instance between
+        # them (Compact receives its messages per `#call`, long after it was
+        # frozen).
+        @boundary = Boundary.new(messages:, keep_last:)
         # A deeply frozen SNAPSHOT, taken by copy. Deep, because a value object
         # whose elements a caller can still mutate is one whose @bytesize goes
         # stale, and being the single answer is this object's whole job; it also
@@ -124,32 +132,6 @@ module Lain
       def declined? = @boundary.declined?
 
       private
-
-      # Both degenerate values USED TO diverge from Compact silently, which is
-      # why they are refused rather than measured (panel probe, 2026-07-25):
-      #
-      #   0 -- `messages[0...0]` and `messages.last(0)` are both empty, so above
-      #     threshold Compact replaced the ENTIRE history with a summary of ZERO
-      #     messages while this head reported nothing droppable. Total history
-      #     loss, and the disagreement ran opposite to the one that motivated
-      #     the class.
-      #   negative -- this head sliced happily; `messages.last(-1)` raised
-      #     `ArgumentError: negative array size` inside `Compact#call`, which
-      #     means inside `Context#render`.
-      #
-      # T4 closed the divergence at its source: {Context::Compact} now asks
-      # {Boundary}, which refuses both values by this very rule (it borrows this
-      # method), so the two objects agree at the degenerate values instead of
-      # one refusing what the other silently mishandles. The rule stays HERE
-      # because this is where its reasons are, and because
-      # {Compaction::Source#validated_keep_last} builds a throwaway Head to
-      # apply it at wiring time.
-      def validated(keep_last)
-        integer = Integer(keep_last)
-        raise ArgumentError, "keep_last must be positive, got #{integer}" unless integer.positive?
-
-        integer
-      end
 
       # Slices at {Boundary}'s index, which is what {Context::Compact#call} also
       # slices at -- the coupling is now one shared rule rather than two copies

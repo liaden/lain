@@ -75,6 +75,25 @@ RSpec.describe Lain::Gherkin::Approval do
       expect(approvals.first["answered_by"]).to eq("human")
     end
 
+    # The question quotes each scenario through Scenario#render, the one rendering
+    # TestGeneration's prompt also uses -- so a human approves the exact text the
+    # test_engineer is later handed. It used to be a private copy here, and a
+    # criteria asked about in one wording and generated from in another is a
+    # difference nothing would have reported.
+    it "renders every scenario into the question through the value's own rendering" do
+      asked = nil
+      gate = described_class.new(journal:)
+      asker = scripted_asker do |promise, question|
+        asked = question
+        promise.resolve(described_class::Answer.approve("human"))
+      end
+
+      Sync { gate.call(criteria, asker:) }
+
+      expect(asked).to include(criteria.first.render)
+      expect(asked).to include("Scenario: adds two numbers\n  Given a calculator")
+    end
+
     it "stamps the elapsed latency from the injected clock" do
       ticks = [10.0, 10.5].each
       gate = described_class.new(journal:, clock: -> { ticks.next })

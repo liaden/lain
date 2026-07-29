@@ -175,9 +175,10 @@ module Lain
       # compressed, so the knob is worth exposing rather than inheriting the
       # chat's (which is sized for a turn, not for a paragraph).
       #
-      # Non-positive is refused rather than measured, mirroring
-      # {Compaction::Head#validated} line for line (see {InvalidCeiling} for
-      # what stays silent otherwise).
+      # Non-positive is refused rather than measured, the shape
+      # {Compaction.validate_keep_last} uses for its own knob -- a separate rule
+      # and a separate error, because this is a different number with a different
+      # failure (see {InvalidCeiling} for what stays silent otherwise).
       def summarizer_max_tokens
         ceiling = Integer(knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS))
         raise InvalidCeiling, "--summarizer-max-tokens must be positive, got #{ceiling}" unless ceiling.positive?

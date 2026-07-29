@@ -339,22 +339,26 @@ RSpec.describe Lain::Compaction::Head do
   describe "the keep_last boundary" do
     let(:summarizer) { ->(dropped) { "summary of #{dropped.size}" } }
 
+    # Through the {Lain::Compaction::Boundary} this object builds first, which is
+    # where the rule is applied -- so what these two pin is that a Head cannot be
+    # constructed around a degenerate keep_last, and that the module's message is
+    # what a caller reads. The exact string, not `/keep_last/`: a door quietly
+    # relaxing to different wording is the same defect as one relaxing the rule.
     it "refuses zero, which Compact turns into total history loss" do
       expect { described_class.new(messages:, keep_last: 0) }
-        .to raise_error(ArgumentError, /keep_last/)
+        .to raise_error(ArgumentError, "keep_last must be positive, got 0")
     end
 
     # UPDATED BY T4, not deleted. This used to record the divergence itself --
     # Compact replacing the entire history with a summary of zero messages while
-    # the head reported nothing droppable. Compact now asks
-    # {Lain::Compaction::Boundary}, which borrows THIS object's rule, so the two
-    # refuse the same values with the same message and the total-history-loss
-    # path is unreachable rather than merely guarded one level up.
-    # At CONSTRUCTION, like this object's own refusal and like
-    # {Lain::Compaction::Source#validated_keep_last}: a wiring error must fail
-    # at wiring time, because the alternative is raising inside `Context#render`
-    # on the first turn of a live chat -- which `Boundary`'s doc argues is worse
-    # than not compacting at all.
+    # the head reported nothing droppable. Every consumer now asks
+    # {Lain::Compaction.validate_keep_last}, so they refuse the same values with
+    # the same message and the total-history-loss path is unreachable rather than
+    # merely guarded one level up (`compaction_spec.rb` sweeps the doors).
+    # At CONSTRUCTION, everywhere: a wiring error must fail at wiring time,
+    # because the alternative is raising inside `Context#render` on the first turn
+    # of a live chat -- which `Boundary`'s doc argues is worse than not compacting
+    # at all.
     it "documents that Compact now refuses zero by the same rule, instead of losing the whole history" do
       expect { Lain::Context::Compact.new(threshold: 1, keep_last: 0, summarizer:) }
         .to raise_error(ArgumentError, /keep_last must be positive, got 0/)
@@ -362,7 +366,7 @@ RSpec.describe Lain::Compaction::Head do
 
     it "refuses a negative keep_last, which Compact cannot even run" do
       expect { described_class.new(messages:, keep_last: -1) }
-        .to raise_error(ArgumentError, /keep_last/)
+        .to raise_error(ArgumentError, "keep_last must be positive, got -1")
     end
 
     # Also updated by T4: Compact still raises, but on the RULE rather than on

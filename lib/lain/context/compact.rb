@@ -40,17 +40,14 @@ module Lain
       def initialize(threshold:, keep_last:, summarizer:, protected_patterns: ProtectedPatterns::NONE)
         super()
         @threshold = Integer(threshold)
-        # A throwaway {Compaction::Boundary} applies the `keep_last` rule HERE,
-        # at construction, rather than leaving it to fire from inside `#call` --
-        # the same move `Compaction::Source#validated_keep_last` makes with a
-        # throwaway {Compaction::Head} (`source.rb:190-193`), and for the same
-        # reason: a wiring error must fail at wiring time. Boundary's own doc
-        # argues that raising inside `Context#render` is worse than not
-        # compacting, and a non-positive `keep_last` would do exactly that,
-        # mid-turn, on the first render. Reusing the rule rather than restating
-        # it is what keeps this object from drifting onto a third copy of it.
-        Compaction::Boundary.new(messages: [], keep_last:)
-        @keep_last = Integer(keep_last)
+        # The `keep_last` rule is applied HERE, at construction, rather than left
+        # to fire from inside `#call`: {Compaction::Boundary}'s own doc argues
+        # that raising inside `Context#render` is worse than not compacting, and
+        # a non-positive `keep_last` would do exactly that, mid-turn, on the
+        # first render. It is the module's one rule and not a copy of it -- this
+        # used to reach it by building a throwaway Boundary over an empty message
+        # list purely for its constructor's refusal.
+        @keep_last = Compaction.validate_keep_last(keep_last)
         @summarizer = summarizer
         @protected_patterns = protected_patterns
         freeze

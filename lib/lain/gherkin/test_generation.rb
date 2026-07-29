@@ -78,13 +78,8 @@ module Lain
 
           ## Scenarios
 
-          #{mechanical_scenarios.map { |scenario| render_scenario(scenario) }.join("\n\n")}
+          #{mechanical_scenarios.map(&:render).join("\n\n")}
         PROMPT
-      end
-
-      def render_scenario(scenario)
-        clauses = scenario.clauses.map { |clause| "  #{clause.keyword} #{clause.text}" }
-        (["Scenario: #{scenario.name}"] + clauses).join("\n")
       end
     end
   end

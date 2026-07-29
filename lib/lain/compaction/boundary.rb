@@ -105,8 +105,9 @@ module Lain
       #   all: the cut rule stopped depending on roles when the replacement's
       #   role became fixed, so a role-less projection is not this object's
       #   business.
-      # @param keep_last [Integer] must be positive; see {#validated}, which
-      #   borrows {Head}'s refusal rather than inventing a second.
+      # @param keep_last [Integer] must be positive; the module's rule
+      #   ({Compaction.validate_keep_last}), consulted rather than restated so
+      #   this object and {Head} cannot drift onto two refusals for one question.
       # @param pins [Context::PinnedMessages] accepted for interface parity
       #   with {Head} and {Context::Compact}, which both take the SAME pins
       #   object (F3). It is never consulted: pin exemption is applied
@@ -117,7 +118,7 @@ module Lain
       #   collaborator would have made this object fail its own
       #   `Ractor.shareable?` AC.
       def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE) # rubocop:disable Lint/UnusedMethodArgument
-        @keep_last = validated(keep_last)
+        @keep_last = Compaction.validate_keep_last(keep_last)
         @index, @declined, @moved = snapped(messages)
         freeze
       end
@@ -144,17 +145,6 @@ module Lain
       def declined? = @declined
 
       private
-
-      # Mirrors {Head#validated} line for line: the same refusal, for the
-      # same reasons (`head.rb:86-96`), borrowed rather than reinvented so
-      # the two objects cannot drift onto different rules for the same
-      # question.
-      def validated(keep_last)
-        integer = Integer(keep_last)
-        raise ArgumentError, "keep_last must be positive, got #{integer}" unless integer.positive?
-
-        integer
-      end
 
       # @return [Array(Integer, bool, Integer)] index, declined?, moved
       #
