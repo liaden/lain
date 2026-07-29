@@ -38,7 +38,7 @@ module Lain
         def engage(env)
           env.policy_switch.switch(Effect::Handler::Gate::ApproveAll.new, surface: SURFACE)
           confirmation = "yolo on -- gated tool calls auto-approve until /yolo off"
-          parked = env.approvals.each.reject(&:decided?).size
+          parked = env.approvals.each.count { |element| !element.decided? }
           parked.zero? ? confirmation : "#{confirmation}\n#{parked} parked approvals remain -- /approve to drain"
         end
 

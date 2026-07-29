@@ -154,7 +154,7 @@ RSpec.describe Lain::Isolation::Worktree do
   describe "concurrent acquire of the same worker_id" do
     it "leases the path to exactly one caller and refuses the other LOUDLY" do
       results = Queue.new
-      threads = 2.times.map do
+      threads = Array.new(2) do
         Thread.new do
           results << [:ok, backend.acquire("dup")]
         rescue described_class::Refused => e

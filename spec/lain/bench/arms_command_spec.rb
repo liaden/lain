@@ -233,7 +233,7 @@ RSpec.describe "lain bench arms" do
 
     it "leaves the map-driven reads exactly where they are pinned" do
       dynamic = reads.select { |read| read.key.nil? }
-      expect(dynamic.map(&:site).map(&:to_s).uniq.sort).to eq(ArmsCommand::MAPS.keys.sort)
+      expect(dynamic.map { |read| read.site.to_s }.uniq.sort).to eq(ArmsCommand::MAPS.keys.sort)
     end
 
     # Keys from three different commands, so a scan that silently stopped

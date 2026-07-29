@@ -39,7 +39,7 @@ module Lain
 
         def self.jest_root?(root)
           package = File.join(root, "package.json")
-          File.exist?(package) && File.read(package).match?(/"jest"/)
+          File.exist?(package) && File.read(package).include?('"jest"')
         end
 
         def self.pytest_root?(root)

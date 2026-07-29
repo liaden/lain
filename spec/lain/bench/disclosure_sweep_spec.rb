@@ -14,9 +14,10 @@ RSpec.describe Lain::Bench::DisclosureSweep do
   # rendered bytes (Compare::Table's two-space column rule), never a private
   # accessor -- spec/lain/bench/sweep_spec.rb's own precedent.
   def arm_rows(report)
+    arm_names = %w[upfront deferred]
     report.lines.map(&:chomp).filter_map do |line|
       cells = line.split(/\s{2,}/)
-      cells if %w[upfront deferred].include?(cells.first)
+      cells if arm_names.include?(cells.first)
     end
   end
 

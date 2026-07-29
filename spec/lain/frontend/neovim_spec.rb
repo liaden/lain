@@ -351,7 +351,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend = described_class.new(channel:, socket_path: @socket, protocol: "999")
 
       frontend.run do
-        wait_until { messages.match?(/mismatch/) }
+        wait_until { messages.include?("mismatch") }
         expect(messages).to include("mismatch")
         expect(inspector.evaluate("1 + 1")).to eq(2) # the editor is alive, not crashed
       end

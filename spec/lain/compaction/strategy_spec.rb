@@ -176,8 +176,9 @@ RSpec.describe Lain::Compaction::Strategy do
                     *Lain::Algebra.registry.map(&:subject)]
 
       sealed = strategies.uniq.select { |subject| subject.is_a?(Class) && subject <= described_class::Base }
+      questions = %i[ranges collapse]
       owners = sealed.flat_map do |subject|
-        %i[ranges collapse].map { |question| subject.instance_method(question).owner }
+        questions.map { |question| subject.instance_method(question).owner }
       end
 
       expect(owners.uniq).to eq([described_class::Base])
@@ -402,8 +403,8 @@ RSpec.describe Lain::Compaction::Strategy do
     # The fold `#+` invites -- `inject(:+)` over a span's replacements -- used to
     # deep-copy the whole accumulated content at every step.
     it "copies nothing when folding replacements whose content is already shareable" do
-      folded = 4.times.map { |i| described_class::Replacement.text("block #{i}") }
-                      .inject(described_class::DROP, :+)
+      folded = Array.new(4) { |i| described_class::Replacement.text("block #{i}") }
+                    .inject(described_class::DROP, :+)
 
       expect(folded.content.size).to eq(4)
       expect(Ractor.shareable?(folded)).to be(true)

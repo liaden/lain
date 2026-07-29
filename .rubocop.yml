@@ -119,3 +119,22 @@ RSpec/InstanceVariable:
   Enabled: false
 RSpec/DescribeClass:
   Enabled: false
+
+# --- Performance cops ruled OFF for a named site ---------------------------
+
+# Both of these examples have an explicit fold AS their subject. usage_spec asserts
+# the monoid folds the same in any order, and strategy_spec's own comment names
+# `inject(:+)` as the shape that invited a deep-copy bug. `sum` gives the same answer
+# and hides the fold being tested, so the spec would stop exercising what it
+# documents. The populations are 4 and a Rantly sample; the allocation is noise.
+Performance/Sum:
+  Exclude:
+    - "spec/lain/compaction/strategy_spec.rb"
+    - "spec/lain/usage_spec.rb"
+
+# `&method(:keep)` names the collaborator; the block form repeats the argument to say
+# less. This runs once per human prompt read, so the Method allocation the cop is
+# counting is not on any hot path.
+Performance/MethodObjectAsBlock:
+  Exclude:
+    - "lib/lain/cli/composed_prompt.rb"

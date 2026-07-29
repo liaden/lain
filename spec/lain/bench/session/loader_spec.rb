@@ -95,22 +95,22 @@ RSpec.describe Lain::Bench::Session::Loader do
   describe "integrity" do
     def forge(type)
       records = entries.map { |line| JSON.parse(line) }
-      target = records.select { |record| record["type"] == type }.last
+      target = records.reverse.find { |record| record["type"] == type }
       yield target
       records
     end
 
     it "raises Corrupt naming the recorded digest when a turn's content was edited under it" do
       records = forge("turn") { |turn| turn["content"] = [{ "type" => "text", "text" => "forged" }] }
-      digest = records.select { |r| r["type"] == "turn" }.last.fetch("digest")
+      digest = records.reverse.find { |r| r["type"] == "turn" }.fetch("digest")
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt, /#{Regexp.escape(digest)}/)
     end
 
     it "raises Corrupt naming the expected head when the tail turn is truncated" do
       records = entries.map { |line| JSON.parse(line) }
-      records.delete(records.select { |r| r["type"] == "turn" }.last)
-      records.delete(records.select { |r| r["type"] == "request_sent" }.last)
+      records.delete(records.reverse.find { |r| r["type"] == "turn" })
+      records.delete(records.reverse.find { |r| r["type"] == "request_sent" })
       expect { described_class.new(records).recording }
         .to raise_error(Lain::Bench::Session::Corrupt, /#{Regexp.escape(agent.timeline.head_digest)}/)
     end

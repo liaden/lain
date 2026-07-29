@@ -363,7 +363,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
 
     it "refuses findings that survive no readable encoding at all" do
-      approved, spawn = blank_spike("\xff\xfe".dup.force_encoding(Encoding::BINARY))
+      approved, spawn = blank_spike((+"\xff\xfe").force_encoding(Encoding::BINARY))
 
       expect(approved).to be(false)
       expect(spawn.roles).to eq([:researcher])

@@ -97,7 +97,7 @@ RSpec.shared_examples "canonical determinism" do |config|
     end
 
     it "raises on a String tagged UTF-8 that holds invalid bytes" do
-      expect { canonical_call(dump, "\xff".dup.force_encoding(Encoding::UTF_8)) }
+      expect { canonical_call(dump, (+"\xff").force_encoding(Encoding::UTF_8)) }
         .to raise_error(unsupported_type_error, /not valid UTF-8/)
     end
   end

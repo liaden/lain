@@ -117,7 +117,7 @@ module Lain
         # session, which no tool_use can occupy.
         def nearest_valid(count, heads)
           valid = (1..heads.length).reject { |candidate| pending_tool_use?(heads[candidate]) }
-          [valid.select { |candidate| candidate < count }.last, valid.find { |candidate| candidate > count }].compact
+          [valid.reverse.find { |candidate| candidate < count }, valid.find { |candidate| candidate > count }].compact
         end
 
         # T3's ForkPoint rule, restated over the live chain: hex-only below a

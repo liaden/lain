@@ -39,7 +39,7 @@ RSpec.describe Lain::CLI::Up do
   # once, by hand, against a PTY-attached tmux 3.8; asserting on that timing
   # in the suite would be flaky where this is not).
   def eval_status_job(raw_value)
-    job = raw_value.strip.sub(/\A#\(/, "").sub(/\)\z/, "")
+    job = raw_value.strip.delete_prefix("#(").delete_suffix(")")
     out, = Open3.capture3("sh", "-c", job)
     out.strip
   end

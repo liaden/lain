@@ -167,7 +167,7 @@ module Lain
         def self.flatten(content)
           return content.to_s unless content.is_a?(Array)
 
-          content.map { |block| block.is_a?(Hash) ? block["text"] || block[:text] : block }.compact.join(" ")
+          content.filter_map { |block| block.is_a?(Hash) ? block["text"] || block[:text] : block }.join(" ")
         end
 
         def self.squeeze(text)

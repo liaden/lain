@@ -15,6 +15,10 @@ module Lain
 
       input_model Input
 
+      # Hoisted out of the reject block below: FNM_DOTMATCH yields these for every
+      # directory the glob walks, so a literal there allocates once per entry.
+      DOTS = %w[. ..].freeze
+
       def name = "list_files"
 
       def description
@@ -62,7 +66,7 @@ module Lain
       def entries(path, recursive)
         pattern = recursive ? File.join(path, "**", "*") : File.join(path, "*")
         Dir.glob(pattern, File::FNM_DOTMATCH)
-           .reject { |entry| %w[. ..].include?(File.basename(entry)) }
+           .reject { |entry| DOTS.include?(File.basename(entry)) }
            .map { |entry| entry.delete_prefix("#{path}/") }
            .sort
       end

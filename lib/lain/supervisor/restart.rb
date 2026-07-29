@@ -160,7 +160,7 @@ module Lain
       # own re-put (already digest-verified) message events, or nil for a
       # read-only life.
       def latest_snapshot(recording)
-        recording.messages.select { |event| event.kind == :snapshot }.last
+        recording.messages.reverse.find { |event| event.kind == :snapshot }
       end
 
       # W2's restore, driven at the log's last snapshot ({Workspace::

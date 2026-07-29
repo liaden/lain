@@ -233,7 +233,7 @@ RSpec.describe Lain::Bench::Session do
     it "raises Session::Corrupt naming the recorded digest when a turn's content was edited under it" do
       write_session
       records = parsed_records
-      forged = records.select { |record| record["type"] == "turn" }.last
+      forged = records.reverse.find { |record| record["type"] == "turn" }
       forged["content"] = [{ "type" => "text", "text" => "forged" }]
 
       expect { described_class.load(records) }
@@ -243,7 +243,7 @@ RSpec.describe Lain::Bench::Session do
     it "raises Session::Corrupt at load time when a request_sent payload was edited under its digest" do
       write_session
       records = parsed_records
-      forged = records.select { |record| record["type"] == "request_sent" }.last
+      forged = records.reverse.find { |record| record["type"] == "request_sent" }
       forged["payload"] = forged["payload"].merge("max_tokens" => 999_999)
 
       expect { described_class.load(records) }
@@ -259,8 +259,8 @@ RSpec.describe Lain::Bench::Session do
     it "raises Session::Corrupt naming the expected head when the tail turn and its request_sent are deleted" do
       write_session
       records = parsed_records
-      records.delete(records.select { |record| record["type"] == "turn" }.last)
-      records.delete(records.select { |record| record["type"] == "request_sent" }.last)
+      records.delete(records.reverse.find { |record| record["type"] == "turn" })
+      records.delete(records.reverse.find { |record| record["type"] == "request_sent" })
 
       expect { described_class.load(records) }
         .to raise_error(described_class::Corrupt, /#{Regexp.escape(agent.timeline.head_digest)}/)

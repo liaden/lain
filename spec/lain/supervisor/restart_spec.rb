@@ -283,11 +283,12 @@ RSpec.describe Lain::Supervisor::Restart do
       Sync { |task| record_killed_actor(task, provider:) }
 
       tampered_yet = false
+      evil_blob = ["evil"].pack("m0")
       tampered = record_io.string.each_line.map do |line|
         record = JSON.parse(line)
         if record["type"] == "workspace_blob" && !tampered_yet
           tampered_yet = true
-          JSON.generate(record.merge("bytes_b64" => ["evil"].pack("m0")))
+          JSON.generate(record.merge("bytes_b64" => evil_blob))
         else
           line
         end

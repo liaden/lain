@@ -93,7 +93,7 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     # Force far more candidate breakpoints (every ~15 blocks) than the
     # message budget could ever hold, so the cap has to actually drop some.
     def fat_messages(turns:, blocks_per_turn: 4)
-      turns.times.map do |i|
+      Array.new(turns) do |i|
         message(i.even? ? "user" : "assistant", Array.new(blocks_per_turn) do |j|
           { "type" => "text", "text" => "t#{i}b#{j}" }
         end)

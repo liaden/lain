@@ -94,7 +94,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     heads = chains.map(&:first)
     expect(heads.map(&:first).uniq).to eq([Lain::Request::SYSTEM_PREFIX])
     expect(heads.map(&:last).uniq.size).to eq(1)
-    expect(chains.map(&:last).map(&:last).uniq.size).to eq(3)
+    expect(chains.map { |chain| chain.last.last }.uniq.size).to eq(3)
   end
 
   # ---- The T24 census, on the ACTUAL Anthropic wire encoding -----------------

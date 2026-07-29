@@ -102,7 +102,7 @@ RSpec.describe "Lain::Frontend::PromptComposer degradation" do
   describe "purity of #compose" do
     it "same input, same output, repeatedly" do
       p = prompt_for(->(text:, **) { "hdr\n#{text}" })
-      expect(3.times.map { p.compose("> ") }.uniq.size).to eq(1)
+      expect(Array.new(3) { p.compose("> ") }.uniq.size).to eq(1)
     end
 
     it "prints nothing by itself -- only editor_line touches the stream" do

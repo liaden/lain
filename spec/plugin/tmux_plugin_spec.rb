@@ -214,7 +214,7 @@ RSpec.describe "plugin/tmux" do
     # expansion, not the spec, decides what the shell sees.
     def eval_status_job(target)
       raw = tmux("show-options", "-gv", "status-right")
-      job = raw.strip.sub(/\A#\(/, "").sub(/\)\z/, "")
+      job = raw.strip.delete_prefix("#(").delete_suffix(")")
       expanded = tmux("display-message", "-p", "-t", target, job)
       out, = Open3.capture3("sh", "-c", expanded)
       out.strip

@@ -233,7 +233,7 @@ RSpec.describe Lain::Bench::Rewrites do
         # (the tool_result turn) and agree at the shared system marker (-1).
         second_requests = %w[one two].map do |name|
           File.foreach(File.join(corpus_dir, "#{name}.ndjson"))
-              .select { |line| line.include?('"type":"request_sent"') }.last
+              .reverse_each.find { |line| line.include?('"type":"request_sent"') }
         end
         rewrites = described_class.from_journal(second_requests)
 

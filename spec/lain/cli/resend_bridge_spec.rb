@@ -73,7 +73,7 @@ RSpec.describe Lain::CLI::ResendBridge do
       expect(journal_types).to eq(%w[request_sent turn_usage resend_dispatched request_sent turn_usage])
       marker = journal.find { |record| record.is_a?(Lain::Telemetry::ResendDispatched) }
       expect(marker.digest).to eq(edited.digest)
-      dispatched = journal.select { |record| record.instance_of?(Lain::Telemetry::RequestSent) }.last
+      dispatched = journal.reverse.find { |record| record.instance_of?(Lain::Telemetry::RequestSent) }
       expect(dispatched.digest).to eq(edited.digest)
     end
   end

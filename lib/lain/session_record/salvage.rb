@@ -143,7 +143,7 @@ module Lain
         return Nothing if digest.nil?
 
         matching = @frames.select { |frame| frame.request_digest == digest }
-        complete = matching.select(&:complete?).last
+        complete = matching.reverse.find(&:complete?)
         complete ? recover(digest, complete) : incomplete(digest, matching.last)
       end
 
