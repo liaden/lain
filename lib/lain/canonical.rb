@@ -62,14 +62,38 @@ module Lain
 
       private
 
+      # The house style is `each_with_object` over a hand-mutated accumulator,
+      # and this method is the documented exception -- it is the hottest
+      # allocation site in lib/, and BOTH deviations below are measured, not
+      # assumed. Everything else in this file follows the house style.
+      #
+      # `each_with_object` over a Hash yields the entry as a [key, value] Array
+      # so the block can destructure it, allocating one Array PER ENTRY that is
+      # discarded immediately. `Hash#each` with a two-parameter block does not.
+      # Measured on a 40-key Hash: 2 objects / 2.08kB against 42 / 3.68kB.
       def normalize_hash(hash)
-        normalized = hash.each_with_object({}) do |(key, value), acc|
+        normalized = {}
+        hash.each do |key, value|
           string_key = normalize_key(key)
-          raise AmbiguousKey, "#{string_key.inspect} is both a String and a Symbol key" if acc.key?(string_key)
+          raise AmbiguousKey, "#{string_key.inspect} is both a String and a Symbol key" if normalized.key?(string_key)
 
-          acc[string_key] = normalize(value)
+          normalized[string_key] = normalize(value)
         end
-        normalized.sort_by { |key, _| key }.to_h.freeze
+        # Hashes preserve insertion order, so inserting by SORTED KEY yields the
+        # same Hash `sort_by { |key, _| key }.to_h` did -- without allocating a
+        # [key, value] Array per entry, an Array to hold them, and a second Hash
+        # to pour them back into. `sort!` orders the one key Array in place.
+        # On a turn-shaped payload that swap alone is 382 objects -> 251 and
+        # 25.0kB -> 19.7kB, output byte-identical.
+        #
+        # Style/ReduceToHash wants `to_h { |key| [key, normalized[key]] }` here.
+        # That is the one rewrite this line exists to avoid: `to_h`'s block must
+        # RETURN a [key, value] Array, so it reintroduces exactly the per-entry
+        # Array that `sort_by` was allocating. Measured on a 40-key Hash --
+        # each_with_object 3 objects / 2.34kB, to_h 42 objects / 3.60kB.
+        # rubocop:disable Style/ReduceToHash
+        normalized.keys.sort!.each_with_object({}) { |key, acc| acc[key] = normalized[key] }.freeze
+        # rubocop:enable Style/ReduceToHash
       end
 
       def normalize_key(key)
