@@ -81,14 +81,6 @@ RSpec.describe Lain::Tools::CoreExec do
       expect(described_class.input_model).to be(Lain::Tools::Bash::Input)
       expect(tool.input_schema).to eq(Lain::Tools::Bash.new.input_schema)
     end
-
-    it "is tier 3: the model controls the command string, so approval is required" do
-      expect(tool.requires_approval?).to be(true)
-    end
-
-    it "names itself core_exec" do
-      expect(tool.name).to eq("core_exec")
-    end
   end
 
   describe "the client-side deadline backstop" do
@@ -130,69 +122,7 @@ RSpec.describe Lain::Tools::CoreExec do
       end
     end
 
-    it "matches bash byte-for-byte on a text command, cwd threaded through the WorkerEnv" do
-      worker_env = Lain::WorkerEnv.new(cwd: workdir, env: {})
-      bash, core = differential("pwd -P; echo err >&2; exit 3", worker_env)
-      expect_identical(bash, core)
-      expect(core.content).to start_with("exit status: 3\n")
-      expect(core.content.b).to include(File.realpath(workdir).b, "err".b)
-    end
-
-    it "matches bash byte-for-byte on non-UTF-8 output -- the bin payload contract" do
-      bash, core = differential("printf '\\377\\000\\376'; printf '\\375' >&2", Lain::WorkerEnv.default)
-      expect_identical(bash, core)
-      expect(core.content.b).to include("\xFF\x00\xFE".b, "\xFD".b)
-    end
-
-    it "matches bash byte-for-byte on a nil-scrubbed-env command: nil removes the key, never empty-string" do
-      # Set BEFORE the daemon spawns, so BOTH children inherit it and "absent"
-      # can only mean the scrub worked. ${VAR-absent} (no colon) prints
-      # "absent" only when UNSET, keeping removal distinguishable from
-      # empty-string (the exec.rs contract).
-      ENV["LAIN_CORE_EXEC_PROBE"] = "sekrit"
-      worker_env = Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LAIN_CORE_EXEC_PROBE" => nil })
-      bash, core = differential("echo \"${LAIN_CORE_EXEC_PROBE-absent}\"", worker_env)
-      expect_identical(bash, core)
-      expect(core.content).to include("absent\n")
-    ensure
-      ENV.delete("LAIN_CORE_EXEC_PROBE")
-    end
-
-    # Byte-identity is structurally IMPOSSIBLE here (panel ruling, fix 1):
-    # mixlib fails INSIDE the forked child -- a ruby backtrace on stderr, exit
-    # 1, an ok result carrying that shape -- while the daemon fails AT SPAWN
-    # and refuses the call. So the differential pins POSTURE parity instead:
-    # both arms hand the model a readable result, and the core arm's error
-    # names the cwd that could not be entered.
-    it "pins posture parity on a nonexistent cwd: bash's exit-1 shape, core's spawn error naming the cwd" do
-      missing = File.join(workdir, "missing")
-      bash, core = differential("pwd", Lain::WorkerEnv.new(cwd: workdir, env: {}), cwd: missing)
-      expect(bash).to be_ok
-      expect(bash.content).to start_with("exit status: 1\n")
-      expect(core).to be_error
-      expect(core.content).to include("spawn failed", missing)
-    end
-
-    # Posture parity again (panel ruling, fix 2): the kill-time partial
-    # capture rides the daemon's reply, and mixlib embeds its own in the
-    # CommandTimeout message -- structurally different sources, so the pin is
-    # that NEITHER arm discards what the command said before the kill.
-    it "carries pre-timeout partial output in both arms' timeout error" do
-      bash, core = differential("echo before; echo eb >&2; sleep 5", Lain::WorkerEnv.default, timeout: 1)
-      expect(bash).to be_error
-      expect(core).to be_error
-      expect(bash.content.b).to include("before".b, "eb".b)
-      expect(core.content.b).to include("before".b, "eb".b)
-    end
-
-    it "reports a server-side kill as a timeout error result, mirroring bash's posture" do
-      with_client do |client|
-        tool = described_class.new(client:)
-        result = tool.call({ command: "sleep 5", timeout: 1 }, invocation(Lain::WorkerEnv.default))
-        expect(result).to be_error
-        expect(result.content).to include("timed out after 1s")
-      end
-    end
+    it_behaves_like "an exec boundary matching bash"
 
     it "turns boundary death into a Tool::Result.error naming Core::Died -- no hang, no raise" do
       Sync do
@@ -223,17 +153,15 @@ RSpec.describe Lain::Tools::CoreExec do
   # does not exist. So nothing here is a re-confirmation.
   #
   # The HARNESS is shared with the :core block (CoreExecSpecSupport::Differential)
-  # and the SETUP is duplicated, which is the split the card asked for: a shared
+  # and so are the CASES ("an exec boundary matching bash"), which both blocks
+  # were previously carrying as verbatim copies; identity that the two blocks
+  # depend on is now stated mechanically rather than by convention. Only the
+  # SETUP is duplicated, which is the split the card asked for: a shared
   # #with_client would have to know both transports and would change the :core
   # path to build it. Do not read the sharing as where the proof lives -- the
   # bash-vs-core comparison is redundant given each case's own literal byte
   # assertions, and it is those literals that have teeth over this wire (see
   # CoreExecSpecSupport::Differential, which measures both directions).
-  # The two blocks' cases are otherwise deliberately identical, including
-  # which ones pin POSTURE parity rather than byte identity -- the nonexistent
-  # cwd and the timeout partial capture are structurally impossible to make
-  # byte-identical (see the :core block's notes), and a transport swap does not
-  # change that.
   #
   # Tagged :vsock and NOTHING else: --tag lifts the exclusion for the tag it
   # names alone, so `:vsock, :core` would stay excluded under `--tag vsock` and
@@ -312,63 +240,7 @@ RSpec.describe Lain::Tools::CoreExec do
       expect(Integer(ppid.strip, 10)).to eq(daemon.pid)
     end
 
-    it "matches bash byte-for-byte on a text command, cwd threaded through the WorkerEnv" do
-      worker_env = Lain::WorkerEnv.new(cwd: workdir, env: {})
-      bash, core = differential("pwd -P; echo err >&2; exit 3", worker_env)
-      expect_identical(bash, core)
-      expect(core.content).to start_with("exit status: 3\n")
-      expect(core.content.b).to include(File.realpath(workdir).b, "err".b)
-    end
-
-    # `sh` is dash, whose printf implements POSIX \ooo but NOT bash's \xNN --
-    # with hex it emits the escape text verbatim on BOTH arms, which reads
-    # exactly like a transport corrupting bytes while proving nothing. The
-    # octal here is what makes this a real binary-payload assertion.
-    it "matches bash byte-for-byte on non-UTF-8 output -- the bin payload contract" do
-      bash, core = differential("printf '\\377\\000\\376'; printf '\\375' >&2", Lain::WorkerEnv.default)
-      expect_identical(bash, core)
-      expect(core.content.b).to include("\xFF\x00\xFE".b, "\xFD".b)
-    end
-
-    it "matches bash byte-for-byte on a nil-scrubbed-env command: nil removes the key, never empty-string" do
-      # Set BEFORE the daemon spawns -- and VsockDaemon spawns inside
-      # #with_client, i.e. inside #differential, so this ordering is the same
-      # one the :core block relies on. ${VAR-absent} (no colon) prints "absent"
-      # only when UNSET, keeping removal distinguishable from empty-string.
-      ENV["LAIN_CORE_EXEC_PROBE"] = "sekrit"
-      worker_env = Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LAIN_CORE_EXEC_PROBE" => nil })
-      bash, core = differential("echo \"${LAIN_CORE_EXEC_PROBE-absent}\"", worker_env)
-      expect_identical(bash, core)
-      expect(core.content).to include("absent\n")
-    ensure
-      ENV.delete("LAIN_CORE_EXEC_PROBE")
-    end
-
-    it "pins posture parity on a nonexistent cwd: bash's exit-1 shape, core's spawn error naming the cwd" do
-      missing = File.join(workdir, "missing")
-      bash, core = differential("pwd", Lain::WorkerEnv.new(cwd: workdir, env: {}), cwd: missing)
-      expect(bash).to be_ok
-      expect(bash.content).to start_with("exit status: 1\n")
-      expect(core).to be_error
-      expect(core.content).to include("spawn failed", missing)
-    end
-
-    it "carries pre-timeout partial output in both arms' timeout error" do
-      bash, core = differential("echo before; echo eb >&2; sleep 5", Lain::WorkerEnv.default, timeout: 1)
-      expect(bash).to be_error
-      expect(core).to be_error
-      expect(bash.content.b).to include("before".b, "eb".b)
-      expect(core.content.b).to include("before".b, "eb".b)
-    end
-
-    it "reports a server-side kill as a timeout error result, mirroring bash's posture" do
-      with_client do |client|
-        tool = described_class.new(client:)
-        result = tool.call({ command: "sleep 5", timeout: 1 }, invocation(Lain::WorkerEnv.default))
-        expect(result).to be_error
-        expect(result.content).to include("timed out after 1s")
-      end
-    end
+    it_behaves_like "an exec boundary matching bash"
 
     # The :core arm of this kills through {Child#pid}; there is no equivalent
     # here and none should be invented -- this transport ATTACHES, so the daemon
