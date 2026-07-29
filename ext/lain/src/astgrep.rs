@@ -41,9 +41,13 @@ pub struct Match {
     pub captures: Vec<Capture>,
 }
 
-/// Why a search could not run. `Display` IS the FFI-visible message: `BadPattern`
-/// maps to the named `AstGrep::BadPattern` (a `Lain::Error`); an unknown language
-/// is a plain argument error at the boundary.
+/// Why a search or a dump could not run. `Display` IS the FFI-visible message:
+/// `BadPattern` maps to the named `AstGrep::BadPattern`, and `DumpTooDeep` to
+/// `Lain::Structural::Matcher::DumpCapped` -- both `Lain::Error` subclasses,
+/// which is the crate's rule for every raise that is a DOMAIN refusal rather
+/// than a bad argument, since a class outside that tree is one no
+/// `rescue Lain::Error` site catches. An unknown language stays a plain
+/// `ArgumentError`, because it IS a bad argument.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SearchError {
     #[error("unknown language {0:?}")]
@@ -55,6 +59,13 @@ pub enum SearchError {
     /// rather than a silent zero-match.
     #[error("malformed pattern {pattern:?}: {reason}")]
     BadPattern { pattern: String, reason: String },
+    /// [`dump`] refused: the CST nests past [`MAX_DUMP_DEPTH`]. Only [`dump`]
+    /// returns this; [`search`]'s result is bounded by the match count, not by
+    /// the tree's shape. It is the ONE dump bound that refuses -- running out of
+    /// [`MAX_DUMP_BYTES`] truncates and discloses instead -- because depth is a
+    /// stack-safety bound and there is no safe prefix to hand back.
+    #[error("dump capped at {0} levels of nesting -- dump a smaller snippet")]
+    DumpTooDeep(usize),
 }
 
 /// Parse a language moniker (`"ruby"`, case-insensitive) into a `SupportLang`.
@@ -169,24 +180,125 @@ fn single_capture<D: Doc>(env: &MetaVarEnv<'_, D>, var: MetaVariable) -> Option<
     }
 }
 
+/// The most levels of CST nesting a dump will walk. Past it the dump is
+/// REFUSED, which is what makes this bound different in kind from
+/// [`MAX_DUMP_BYTES`].
+///
+/// This is a **stack safety** bound, not an output-size one -- exactly as
+/// `prompt.rs`'s `MAX_DEPTH` is. [`write_node`] recurses once per level, and one
+/// level costs about seven Rust frames (~1 KB of stack), so at the cap the walk
+/// is bounded to roughly 700 frames. Unbounded it overflows: measured, a
+/// 2000-level source aborts a debug `cargo test` thread outright ("has
+/// overflowed its stack", SIGABRT), which the ~1 KB/level figure corroborates --
+/// 2000 levels is 2-4 MB, the order of a test thread's whole stack. Under Ruby
+/// that is worse than a crash: Ruby's guard-page handler longjmps through live
+/// Rust frames, so no destructor runs and the `String` being built leaks.
+///
+/// There is no safe prefix to hand back from a walk that would blow the stack,
+/// which is why this one refuses where the byte budget truncates.
+///
+/// 100 is threefold past real code (measured: the deepest CST branch across all
+/// 877 Ruby files in this repository is 31), and low enough to fire BEFORE the
+/// byte budget on a deeply nested source -- a chain 100 deep dumps to some
+/// 25 KB, so a stack bound set where truncation would hit first would never
+/// fire, and a stack bound that never fires guards nothing.
+pub const MAX_DUMP_DEPTH: usize = 100;
+
+/// How many bytes of dump text are built before the walk stops and discloses
+/// the truncation. NOT a refusal: the caller gets the tree's outer structure
+/// plus a `... capped at N bytes` line, the same truncate-and-disclose contract
+/// `Tools::AstSearch`'s `MAX_MATCHES` has.
+///
+/// Truncating rather than refusing is deliberate and was got wrong once. Depth
+/// alone does not bound the output -- the indent is written once per node at its
+/// own depth, so the text is quadratic in depth and linear in node count, and a
+/// 4 KB source of 2000 nested parens dumped to 12 MB. But refusing everything
+/// past the budget took out ordinary files with it: 145 of this repo's 879 Ruby
+/// files dump past 64 KiB, the smallest being a 7 KB spec, and the
+/// dump-to-source ratio ranges from 3.5x to 11.8x, so a model cannot even tell
+/// from a file's size whether it will fit. "Dump a smaller snippet" was a dead
+/// end; the outer structure of the tree is the half that answers "what node
+/// kind is this?" anyway.
+///
+/// 64 KiB is already ~16k tokens of node kinds, which is as much of a diagnostic
+/// as a model's context should have to carry.
+pub const MAX_DUMP_BYTES: usize = 64 * 1024;
+
+/// One level of dump indentation. Written from a single reused buffer (see
+/// [`write_node`]), never re-`repeat`ed per node.
+const INDENT: &str = "  ";
+
 /// A newline-delimited, indented dump of the CST node kinds. It exists so an
 /// agent can SEE that `def self.x` is a `singleton_method` -- a different node
 /// than the `method` its `def $NAME` pattern matches -- and self-correct rather
 /// than trust a silent under-match.
+///
+/// Bounded at both ends, and the two bounds answer differently:
+/// [`MAX_DUMP_BYTES`] TRUNCATES, appending the `... capped at N bytes`
+/// disclosure that `Tools::AstSearch` also writes, while [`MAX_DUMP_DEPTH`]
+/// REFUSES, because it is a stack bound with no safe prefix to return. Either
+/// way, never a multi-megabyte `String` and never a blown stack.
 pub fn dump(src: &str, lang: &str) -> Result<String, SearchError> {
     let lang = parse_lang(lang)?;
     let ast = AstGrep::new(src, lang);
     let mut out = String::new();
-    write_node(&ast.root(), 0, &mut out);
-    Ok(out)
+    let mut indent = String::new();
+    match write_node(&ast.root(), &mut indent, &mut out) {
+        Ok(()) => Ok(out),
+        Err(Halt::Truncated) => {
+            out.push_str(&format!("... capped at {MAX_DUMP_BYTES} bytes\n"));
+            Ok(out)
+        }
+        Err(Halt::TooDeep) => Err(SearchError::DumpTooDeep(MAX_DUMP_DEPTH)),
+    }
 }
 
-fn write_node<D: Doc>(node: &Node<'_, D>, depth: usize, out: &mut String) {
-    out.push_str(&"  ".repeat(depth));
-    out.push_str(&node.kind());
+/// Why a CST walk stopped early. Internal control flow, not an error type: it
+/// is what lets one `try_for_each` unwind the recursion for both bounds, and
+/// [`dump`] decides which of the two becomes a refusal and which a disclosure.
+#[derive(Debug)]
+enum Halt {
+    /// [`MAX_DUMP_DEPTH`] reached -- the stack bound.
+    TooDeep,
+    /// [`MAX_DUMP_BYTES`] spent -- what is written so far is the answer.
+    Truncated,
+}
+
+/// Append `node`'s kind and every descendant's, one line each, indented by
+/// depth -- bounded at both ends, and allocation-free per node.
+///
+/// `indent` is ONE buffer threaded through the whole walk: it grows by
+/// [`INDENT`] on descent and truncates on ascent, including on the halt path,
+/// so its length IS the current depth and no node builds a `" ".repeat(depth)`
+/// of its own. Both bounds are checked BEFORE the node is written, so the text
+/// never exceeds [`MAX_DUMP_BYTES`] (the disclosure line [`dump`] appends
+/// afterwards is the one thing past it) and the recursion never goes deeper
+/// than [`MAX_DUMP_DEPTH`] levels.
+///
+/// The root is level 1, so the buffer already holds `MAX_DUMP_DEPTH - 1`
+/// indents when the deepest permitted node is written -- hence `>=` rather than
+/// `>`, which admitted 101 levels while the refusal message promised 100.
+fn write_node<D: Doc>(
+    node: &Node<'_, D>,
+    indent: &mut String,
+    out: &mut String,
+) -> Result<(), Halt> {
+    if indent.len() >= MAX_DUMP_DEPTH * INDENT.len() {
+        return Err(Halt::TooDeep);
+    }
+    let kind = node.kind();
+    if out.len() + indent.len() + kind.len() + 1 > MAX_DUMP_BYTES {
+        return Err(Halt::Truncated);
+    }
+    out.push_str(indent);
+    out.push_str(&kind);
     out.push('\n');
-    node.children()
-        .for_each(|child| write_node(&child, depth + 1, out));
+    indent.push_str(INDENT);
+    let walked = node
+        .children()
+        .try_for_each(|child| write_node(&child, indent, out));
+    indent.truncate(indent.len() - INDENT.len());
+    walked
 }
 
 #[cfg(test)]
@@ -318,6 +430,137 @@ mod tests {
         assert!(dumped.contains("singleton_method"), "dump was:\n{dumped}");
     }
 
+    /// A source nested past [`MAX_DUMP_DEPTH`]. 4 KB of it dumped to 12 MB
+    /// before the bound existed -- the indent alone is quadratic in depth.
+    fn deeply_nested() -> String {
+        format!("{}1{}", "(".repeat(2000), ")".repeat(2000))
+    }
+
+    #[test]
+    fn a_dump_past_the_depth_cap_is_an_error_not_a_multi_megabyte_string() {
+        assert!(matches!(
+            dump(&deeply_nested(), "ruby"),
+            Err(SearchError::DumpTooDeep(MAX_DUMP_DEPTH))
+        ));
+    }
+
+    /// A source `levels` parens deep, and the deepest indent its dump reaches.
+    fn nested(levels: usize) -> String {
+        format!("{}1{}", "(".repeat(levels), ")".repeat(levels))
+    }
+
+    fn deepest_level(dumped: &str) -> usize {
+        dumped
+            .lines()
+            .map(|line| (line.len() - line.trim_start().len()) / INDENT.len() + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn the_deepest_accepted_dump_holds_exactly_max_dump_depth_levels() {
+        // The cap's NUMBER is what the refusal message promises, so the boundary
+        // has to be the number itself and not one either side of it. Found by
+        // walking nesting upward rather than by hard-coding the parens-to-levels
+        // ratio of one grammar.
+        let deepest = (1..)
+            .map(nested)
+            .take_while(|src| dump(src, "ruby").is_ok())
+            .last()
+            .expect("some nesting is shallow enough to dump");
+
+        assert_eq!(
+            deepest_level(&dump(&deepest, "ruby").unwrap()),
+            MAX_DUMP_DEPTH
+        );
+    }
+
+    #[test]
+    fn a_dump_past_the_output_cap_is_truncated_and_says_so() {
+        // Shallow and wide: no branch is deep, so only the output budget bounds
+        // it -- and that budget TRUNCATES and discloses, mirroring
+        // `ast_search`'s "... capped at N matches" rather than refusing. The
+        // model keeps the tree's outer structure, which is the half that answers
+        // "what node kind is this?".
+        let dumped = dump(&"x = 1\n".repeat(20_000), "ruby").unwrap();
+
+        assert!(
+            dumped.starts_with("program\n"),
+            "dump began {:?}",
+            &dumped[..40.min(dumped.len())]
+        );
+        assert!(dumped.ends_with(&format!("... capped at {MAX_DUMP_BYTES} bytes\n")));
+        assert!(
+            dumped.len() <= MAX_DUMP_BYTES + DISCLOSURE_HEADROOM,
+            "dump was {} bytes",
+            dumped.len()
+        );
+    }
+
+    /// The disclosure line is appended AFTER the budget is spent, so a truncated
+    /// dump may exceed [`MAX_DUMP_BYTES`] by exactly that line.
+    const DISCLOSURE_HEADROOM: usize = 64;
+
+    #[test]
+    fn a_capped_dump_names_its_cap() {
+        // The refusal message reaches the model verbatim through `ast_dump`'s
+        // error Result, and the disclosure line through its ok one -- so the
+        // number has to be IN both, mirroring `ast_search`'s "capped at N".
+        let refusal = dump(&deeply_nested(), "ruby").unwrap_err().to_string();
+        let truncated = dump(&"x = 1\n".repeat(20_000), "ruby").unwrap();
+
+        assert!(refusal.starts_with("dump capped at "), "was {refusal:?}");
+        assert!(truncated.contains("... capped at "), "no disclosure line");
+    }
+
+    #[test]
+    fn the_walk_threads_one_indent_buffer_and_unwinds_it() {
+        // The indent is written from a single buffer that grows on descent and
+        // truncates on ascent -- never a fresh `" ".repeat(depth)` per node.
+        // Empty at the end is the mechanical statement of that discipline, and
+        // reusing the buffer for a second walk agrees with a fresh one.
+        let ast = AstGrep::new("def self.x; end", SupportLang::Ruby);
+        let mut indent = String::new();
+        let mut first = String::new();
+        write_node(&ast.root(), &mut indent, &mut first).unwrap();
+
+        assert!(indent.is_empty(), "indent was {indent:?}");
+
+        let mut second = String::new();
+        write_node(&ast.root(), &mut indent, &mut second).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_capped_walk_still_unwinds_its_indent_buffer() {
+        let ast = AstGrep::new(deeply_nested(), SupportLang::Ruby);
+        let mut indent = String::new();
+        let mut out = String::new();
+
+        assert!(write_node(&ast.root(), &mut indent, &mut out).is_err());
+        assert!(indent.is_empty(), "indent was {} bytes", indent.len());
+    }
+
+    #[test]
+    fn dump_indents_two_spaces_per_level_of_nesting() {
+        let dumped = dump("def self.x; end", "ruby").unwrap();
+        let indents: Vec<usize> = dumped
+            .lines()
+            .map(|line| line.len() - line.trim_start().len())
+            .collect();
+
+        assert_eq!(indents[0], 0, "the root sits flush left");
+        // Without this, a walk that never indented at all would pass.
+        assert!(
+            indents.iter().any(|width| *width == INDENT.len()),
+            "no node sat one level in: {indents:?}",
+        );
+        assert!(
+            indents.iter().all(|width| width % 2 == 0),
+            "indents were {indents:?}",
+        );
+    }
+
     #[test]
     fn has_metavariable_distinguishes_queries_from_literals() {
         [
@@ -369,19 +612,7 @@ pub mod ffi {
         lang: String,
         pattern: String,
     ) -> Result<RArray, Error> {
-        let matches = match pure_search(&src, &lang, &pattern) {
-            Ok(matches) => matches,
-            Err(err @ SearchError::BadPattern { .. }) => {
-                return Err(lookup_error(
-                    ruby,
-                    &["Lain", "Ext", "AstGrep", "BadPattern"],
-                    err.to_string(),
-                ));
-            }
-            Err(err @ SearchError::UnknownLanguage(_)) => {
-                return Err(Error::new(ruby.exception_arg_error(), err.to_string()));
-            }
-        };
+        let matches = pure_search(&src, &lang, &pattern).map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());
         for matched in matches {
             out.push(build_match(ruby, matched)?)?;
@@ -421,13 +652,43 @@ pub mod ffi {
     /// kinds, the companion capability that lets an agent inspect the tree and
     /// fix a pattern that silently under-matched.
     pub fn dump(ruby: &Ruby, src: String, lang: String) -> Result<RString, Error> {
-        match pure_dump(&src, &lang) {
-            Ok(text) => {
-                let string = ruby.str_new(&text);
-                string.freeze();
-                Ok(string)
+        let text = pure_dump(&src, &lang).map_err(|err| raised(ruby, err))?;
+        let string = ruby.str_new(&text);
+        string.freeze();
+        Ok(string)
+    }
+
+    /// The one place a [`SearchError`] becomes a Ruby exception, shared by both
+    /// entry points so the class a given failure raises cannot drift between
+    /// them. `Display` supplies every message (see [`SearchError`]).
+    ///
+    /// A bad pattern is the named `Lain::Ext::AstGrep::BadPattern`; an unknown
+    /// language is a plain `ArgumentError`, because it is a bad argument rather
+    /// than a domain refusal; and the depth cap is
+    /// `Lain::Structural::Matcher::DumpCapped`.
+    ///
+    /// **Why the depth refusal names a Ruby-side class rather than a Ruby
+    /// BUILTIN.** It first crossed as a `RangeError`, which was wrong twice
+    /// over: it is not a `Lain::Error`, so no `rescue Lain::Error` site catches
+    /// it, and a builtin cannot be told apart from an unrelated `RangeError`
+    /// out of the same call -- `rescue RangeError` in the seam laundered
+    /// "bignum too big to convert into 'long'" into a cap message naming no cap.
+    /// Naming the wrapper's own class is the same shape `canonical.rs` uses for
+    /// `Lain::Canonical::AmbiguousKey`: the vocabulary belongs to the Ruby unit
+    /// this code implements, and looking it up at raise time keeps the ext free
+    /// of any load-order dependency on it.
+    fn raised(ruby: &Ruby, err: SearchError) -> Error {
+        let message = err.to_string();
+        match err {
+            SearchError::BadPattern { .. } => {
+                lookup_error(ruby, &["Lain", "Ext", "AstGrep", "BadPattern"], message)
             }
-            Err(err) => Err(Error::new(ruby.exception_arg_error(), err.to_string())),
+            SearchError::UnknownLanguage(_) => Error::new(ruby.exception_arg_error(), message),
+            SearchError::DumpTooDeep(_) => lookup_error(
+                ruby,
+                &["Lain", "Structural", "Matcher", "DumpCapped"],
+                message,
+            ),
         }
     }
 }

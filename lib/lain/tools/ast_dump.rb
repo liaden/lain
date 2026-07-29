@@ -28,7 +28,9 @@ module Lain
           "an ast-grep pattern needs -- especially after test_pattern reports " \
           "fewer matches than expected, which usually means a construct you " \
           "assumed shared a node kind (e.g. a singleton method def) actually " \
-          "parses to a different one."
+          "parses to a different one. A large tree is truncated to the outer " \
+          "structure and says so on its last line; a source nested past the " \
+          "depth cap is refused outright, naming that cap."
       end
 
       # Audited: parses the given `code` String in-memory via a fresh, per-call
@@ -41,7 +43,7 @@ module Lain
       def perform(input, _invocation)
         dumped = Structural::Matcher.new.dump(source: input.code, language: language_of(input))
         Tool::Result.ok(dumped)
-      rescue Structural::Matcher::UnknownLanguage => e
+      rescue Structural::Matcher::UnknownLanguage, Structural::Matcher::DumpCapped => e
         Tool::Result.error(e.message)
       end
 

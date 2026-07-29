@@ -27,6 +27,22 @@ module Lain
       # unguarded ext ArgumentError leaking a foreign vocabulary.
       class UnknownLanguage < Error; end
 
+      # The ext refused to dump: the source nests past its depth cap, which is a
+      # stack bound with no safe prefix to return (a 4 KB deeply nested source
+      # dumped to 12 MB and overflowed the walk's stack before it existed). The
+      # message names the cap.
+      #
+      # The ext RAISES THIS CLASS DIRECTLY, looked up by name at raise time --
+      # the shape `Lain::Canonical`'s errors already have, where the Rust side
+      # of a capability raises the Ruby unit's own vocabulary. It is deliberately
+      # not a re-raise: mapping it here meant rescuing a Ruby builtin
+      # (`RangeError`), which caught unrelated failures out of the same call and
+      # reported them to the model as a cap that had not been hit.
+      #
+      # Running past the ext's OUTPUT cap is not this: that truncates the dump
+      # and discloses it inline, mirroring {Tools::AstSearch}'s "capped at N".
+      class DumpCapped < Error; end
+
       # ast-grep-core's own supported set is larger; this project's seam only
       # vouches for the languages it actually exercises (T2's catalog is
       # Ruby-only so far). Extend as a language grows real callers.
@@ -53,7 +69,8 @@ module Lain
       def match(source:, language:, pattern:)
         lang = checked_language(language)
         raw_matches = Ext::AstGrep.search(source, lang, pattern)
-        raw_matches.map { |raw| build_match(source, raw) }
+        lines = LineIndex.new(source)
+        raw_matches.map { |raw| build_match(lines, raw) }
       rescue Ext::AstGrep::BadPattern => e
         raise BadPattern, e.message
       end
@@ -62,8 +79,13 @@ module Lain
       # @param language [Symbol]
       # @return [String] the CST node kinds, newline-delimited and indented --
       #   how an agent sees that `def self.x` is a `singleton_method`, distinct
-      #   from the `method` node its `def $NAME` pattern actually matches.
+      #   from the `method` node its `def $NAME` pattern actually matches. A
+      #   dump past the ext's output cap ends with a `... capped at N bytes`
+      #   line rather than being refused.
       # @raise [UnknownLanguage] +language+ is outside {SUPPORTED_LANGUAGES}.
+      # @raise [DumpCapped] the source nests past the ext's depth cap. Raised BY
+      #   the ext as this class (see {DumpCapped}), so there is nothing to map
+      #   here and no builtin to rescue.
       def dump(source:, language:)
         Ext::AstGrep.dump(source, checked_language(language))
       end
@@ -79,23 +101,58 @@ module Lain
         language.to_s
       end
 
-      def build_match(source, raw)
-        Match.new(line: line_for(source, raw.fetch("start")), byte_range: raw.fetch("start")...raw.fetch("end"),
+      def build_match(lines, raw)
+        Match.new(line: lines.line_at(raw.fetch("start")), byte_range: raw.fetch("start")...raw.fetch("end"),
                   captures: captures_for(raw.fetch("captures")))
-      end
-
-      # 1-based line, computed here rather than trusted from the ext's own
-      # 0-based `line` -- counting newlines in the byte prefix is the pinned
-      # contract (byte offsets only); `.b` sidesteps a spurious "invalid byte
-      # sequence" if a boundary ever lands mid multi-byte character, since a
-      # newline is a single ASCII byte regardless of the string's encoding tag.
-      def line_for(source, start_byte)
-        source.byteslice(0, start_byte).b.count("\n") + 1
       end
 
       def captures_for(raw_captures)
         raw_captures.transform_values { |capture| capture.fetch("text") }.freeze
       end
+
+      # Byte offset -> 1-based line, for ONE source. The line number is computed
+      # here rather than trusted from the ext's own 0-based `line`, because byte
+      # offsets are the pinned contract (see the ext's module doc) and the line
+      # a human reads is wrapper work.
+      #
+      # It is an object because the derivation needs state the wrapper method
+      # cannot hold: the newline offsets, built ONCE per source and binary
+      # searched, so N matches cost O(bytes + N log lines) instead of the
+      # O(N x bytes) that counting newlines in a per-match byte prefix cost.
+      # Lazily, at that -- {Tools::AstSearch} calls {Matcher#match} once per
+      # pattern per file and most files match nothing, so an eager scan would
+      # spend on every file what the old derivation spent only on the ones that
+      # matched.
+      class LineIndex
+        def initialize(source)
+          @source = source
+        end
+
+        # The number of newlines strictly BEFORE +byte+, plus one -- byte for
+        # byte the answer `source.byteslice(0, byte).b.count("\n") + 1` gives.
+        def line_at(byte)
+          (offsets.bsearch_index { |offset| offset >= byte } || offsets.size) + 1
+        end
+
+        private
+
+        # The byte offset of every "\n". `.b` for the reason the byte-prefix
+        # count carried it: a newline is one ASCII byte whatever the string's
+        # encoding tag claims, so this cannot raise "invalid byte sequence" on a
+        # source whose tag lies. Only the LAST line can lack its "\n", so the
+        # `end_with?` guard drops that one non-offset and nothing else, and each
+        # offset is its predecessor plus the line's own bytes.
+        #
+        # The separator is passed EXPLICITLY: bare `each_line` honours `$/`, and
+        # the `count("\n")` this replaced did not, so a caller that had set `$/`
+        # would silently re-number every match.
+        def offsets
+          @offsets ||= @source.b.each_line("\n").with_object([]) do |line, found|
+            found << ((found.last || -1) + line.bytesize) if line.end_with?("\n")
+          end
+        end
+      end
+      private_constant :LineIndex
     end
   end
 end

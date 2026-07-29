@@ -66,5 +66,22 @@ RSpec.describe Lain::Ext::AstGrep do
       # `def $NAME` pattern matches -- the dump is how the agent self-corrects.
       expect(described_class.dump("def self.x; end", "ruby")).to include("singleton_method")
     end
+
+    it "refuses a source nested past its depth cap, rather than building a 12 MB String" do
+      # A 4 KB deeply nested source dumped to 12 MB (and overflowed the walk's
+      # stack): the per-node indent is quadratic in depth. The refusal crosses
+      # as Structural::Matcher::DumpCapped -- a Lain::Error, like every other
+      # error this crate raises, and NOT a Ruby builtin the seam would have to
+      # tell apart from an unrelated one.
+      expect { described_class.dump("#{"(" * 2000}1#{")" * 2000}", "ruby") }
+        .to raise_error(Lain::Structural::Matcher::DumpCapped, /capped at/)
+    end
+
+    it "truncates a dump past its output cap and discloses the cap in the text" do
+      dumped = described_class.dump("x = 1\n" * 20_000, "ruby")
+
+      expect(dumped).to start_with("program\n").and end_with("... capped at 65536 bytes\n")
+      expect(dumped).to be_frozen
+    end
   end
 end
