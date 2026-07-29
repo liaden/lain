@@ -34,7 +34,21 @@ module Lain
     # that reads it after a `Dir.chdir` still sees the current directory, which
     # is how {Session::Null} preserves each tool's "defaults to the current
     # directory" contract.
-    def self.default = new(cwd: Dir.pwd, env: ENV.to_h)
+    #
+    # `ENV.to_h` hands back FRESH, unfrozen Strings every call, so the
+    # `Ractor.make_shareable` below then has to walk and freeze all ~83 of them,
+    # every time. Interning with `-` instead means the second and later calls
+    # reuse one frozen String per key and per value, and make_shareable finds
+    # nothing left to do. This method was 10.4% of the whole spec suite's
+    # allocations -- the largest single site in lib/ after Canonical -- because
+    # `Session::Null` reaches for it on the default path of every tool call.
+    # Measured against an 83-var ENV: 55.9kB/334 objects -> 15.0kB/169, same
+    # content, still `Ractor.shareable?`.
+    def self.default
+      snapshot = {}
+      ENV.each { |key, value| snapshot[-key] = -value }
+      new(cwd: Dir.pwd, env: snapshot)
+    end
 
     def initialize(cwd:, env:)
       super(cwd: cwd.dup.freeze, env: Ractor.make_shareable(env.to_h))
