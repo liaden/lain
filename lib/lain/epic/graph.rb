@@ -160,6 +160,83 @@ module Lain
     # for a relation the graph never agreed to.
     private_constant :Blocking
 
+    # One structural edit to an epic's issue set: the issues leaving, the issues
+    # arriving in their place, and the edge rewrite that keeps every third party
+    # naming something the graph still holds. Split, merge, and add are all this
+    # object with different arguments.
+    #
+    # Held apart from {Graph} for the reason {Blocking} is: Graph is the VALUE,
+    # and this is an operation over it. That rewrite is the contract rather than
+    # a courtesy -- skipping it leaves a third party pointing at an id the edit
+    # removed, which surfaces as Graph's dangling-edge error and blames the
+    # author for a graph the operation malformed.
+    #
+    # Nothing here validates. #apply hands its issues back to Graph.new, so
+    # duplicate ids, dangling edges, and cycles are refused by exactly the
+    # construction that refuses them anywhere else.
+    class Revision
+      def initialize(removed, arriving, **overrides)
+        refuse_edge_overrides!(overrides)
+        @removed = removed
+        @arriving = arriving
+        @overrides = overrides
+        @replacements = removed.to_h { |issue| [issue.id, arriving.map(&:id)] }.freeze
+      end
+
+      # What +issues+ becomes under this edit.
+      def apply(issues)
+        kept = issues.reject { |issue| @replacements.key?(issue.id) }
+        (kept + @arriving.map { |arrival| inherit(arrival) }).map { |issue| substitute(issue) }
+      end
+
+      private
+
+      # An override naming an edge field would race the rewrite: #rebuild splats
+      # it after the computed edges, so it would win silently -- and swapping
+      # those two splats would make it lose just as silently. No operation passes
+      # one, so neither outcome would ever be caught. Unreachable through Graph's
+      # three operations and refused as a Lain::Error anyway, for the reason
+      # Blocking's #dangling! is: this file constructs the collaborator directly.
+      def refuse_edge_overrides!(overrides)
+        clash = overrides.keys & EDGE_FIELDS
+        return if clash.empty?
+
+        raise MalformedGraph, "a revision override may not name an edge field (got #{clash.inspect}) -- " \
+                              "edge sets come from the rewrite, never from an override"
+      end
+
+      # +issue+ with every edge field rebuilt by the block, plus any overrides.
+      # The one place the edge kinds are enumerated, so a third kind cannot be
+      # missed by being forgotten at one of the two call sites below.
+      def rebuild(issue, **overrides, &edges)
+        issue.with(**EDGE_FIELDS.to_h { |field| [field, edges.call(field)] }, **overrides)
+      end
+
+      # An arrival carrying the departing issues' edges alongside its own, which
+      # is what preserves reachability across a split: whoever waited on the
+      # whole waits on every part. Issue's constructor deduplicates and sorts
+      # each edge set, so the union needs no help here.
+      def inherit(arrival)
+        rebuild(arrival, **@overrides) do |field|
+          arrival.public_send(field) + @removed.flat_map { |issue| issue.public_send(field) }
+        end
+      end
+
+      def substitute(issue)
+        rebuild(issue) { |field| issue.public_send(field).flat_map { |target| replace(target, issue.id) } }
+      end
+
+      # The owner filter applies only on the replaced branch, because only there
+      # did the REWRITE create the self-reference -- that is merge's "minus
+      # self-references", and it is why a merged issue holds no edge to itself. A
+      # self-edge the AUTHOR wrote is not in the map, passes through untouched,
+      # and is refused as a one-hop cycle, which is the loud failure it deserves.
+      def replace(target, owner)
+        @replacements.key?(target) ? @replacements.fetch(target) - [owner] : [target]
+      end
+    end
+    private_constant :Revision
+
     # An epic's issues as one deeply frozen, content-addressed value, ordered by
     # id so that equal issue sets are equal graphs whatever order they were
     # built in.
@@ -216,6 +293,34 @@ module Lain
       # The derived inverse of `blocks`: the ids that must finish before +id+.
       def blocked_by(id) = Blocking.new(issues).blockers_of(fetch(id).id)
 
+      # This graph plus +issue+, carrying +discovered_from+ when one is named and
+      # the issue's own provenance otherwise. An addition removes nothing, so it
+      # is the Revision whose rewrite is empty.
+      def add(issue, discovered_from: nil)
+        arrival = clean_issue(issue, "an added issue")
+        revise([], [arrival], discovered_from: discovered_from || arrival.discovered_from)
+      end
+
+      # +id+ replaced by +into+. Every part inherits the original's outbound
+      # edges and names it as provenance, and every edge anywhere that named the
+      # original comes to name every part -- so whoever waited on the whole of
+      # +id+ now waits on all of it.
+      def split(id, into:)
+        original = fetch(id)
+        parts = clean_issues(into, "split parts")
+        refuse_empty_split!(parts, id)
+        revise([original], parts, discovered_from: id)
+      end
+
+      # +left+ and +right+ replaced by +as+, which inherits both their edge sets
+      # on top of its own. Provenance is whatever +as+ declares -- a merge has two
+      # parents and `discovered_from` holds one, so choosing between them here
+      # would be a guess the lineage carries forever.
+      def merge(left, right, as:)
+        refuse_self_merge!(left, right)
+        revise([fetch(left), fetch(right)], [clean_issue(as, "a merged issue")])
+      end
+
       def digest = Canonical.digest(canonical)
 
       def canonical = { "issues" => issues.map(&:canonical) }
@@ -229,15 +334,40 @@ module Lain
       # three frames down instead of a rendered Lain::Error, and a lookalike
       # that answers #canonical differently would hand back a digest that is not
       # this epic's -- the graph is defined over Issue values specifically.
-      def clean_issues(issues)
+      def clean_issues(issues, what = "epic graph issues")
         unless issues.is_a?(Array)
-          raise MalformedGraph, "epic graph issues must be an Array of Epic::Issue (got #{issues.inspect})"
+          raise MalformedGraph,
+                "#{what} must be an Array of Epic::Issue (got #{issues.inspect})"
         end
 
         stranger = issues.find { |issue| !issue.is_a?(Issue) }
-        raise MalformedGraph, "epic graph issues must all be Epic::Issue (got #{stranger.inspect})" if stranger
+        raise MalformedGraph, "#{what} must all be Epic::Issue (got #{stranger.inspect})" if stranger
 
         issues.sort_by(&:id).freeze
+      end
+
+      def clean_issue(value, what)
+        raise MalformedGraph, "#{what} must be an Epic::Issue (got #{value.inspect})" unless value.is_a?(Issue)
+
+        value
+      end
+
+      # Splitting into nothing is a deletion wearing a split's clothes: the
+      # rewrite would resolve every edge naming +id+ to nothing at all and hand
+      # back a graph that constructs cleanly, having quietly cut the dependencies
+      # the epic is scheduled by.
+      def refuse_empty_split!(parts, id)
+        raise MalformedGraph, "split parts for issue #{id.inspect} cannot be empty" if parts.empty?
+      end
+
+      # Merging an issue with itself is a rename in a merge's clothes: every rule
+      # merge states reads as a no-op, so it is refused rather than obliged.
+      def refuse_self_merge!(left, right)
+        raise MalformedGraph, "cannot merge an issue with itself (both sides name #{left.inspect})" if left == right
+      end
+
+      def revise(removed, arriving, **overrides)
+        Graph.new(issues: Revision.new(removed, arriving, **overrides).apply(issues))
       end
 
       # An id is the graph's join key, so two issues sharing one make every
