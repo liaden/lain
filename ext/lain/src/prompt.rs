@@ -1450,10 +1450,19 @@ pub mod ffi {
         Config, ConfigError, Format, ParseError, Setting, StyleError, Vars, display_width,
     };
     use crate::ffi::{frozen_str, lookup_error};
+    // The one string-boundary policy, shared with `fuzzy`, `astgrep` and
+    // `treesitter`. `compile`, `from_toml`, `width`, and every key and value of
+    // `render`'s Hash come through it, so this binding still has exactly one
+    // place text enters -- it is now the crate's place rather than its own.
+    // Two earlier defects are why it is one function rather than magnus's
+    // `String` conversion at each site: that conversion reinterpreted
+    // `"abc".encode("UTF-16LE")` as UTF-8, and the failures it did produce
+    // raised out of `Canonical`, so a caller nowhere near `Canonical` had to
+    // rescue a `Canonical` error. Both are why this does not reuse `lib.rs`'s
+    // `coerce_text`: that policy is laxer and its taxonomy is different.
+    use crate::read_text::read_text;
     use magnus::{
-        DataTypeFunctions, Error, ExceptionClass, RArray, RHash, RModule, RString, Ruby, Symbol,
-        TypedData, Value,
-        encoding::{EncodingCapable, RbEncoding},
+        DataTypeFunctions, Error, ExceptionClass, RArray, RHash, RModule, Ruby, TypedData, Value,
         function, method,
         prelude::*,
         r_hash::ForEach,
@@ -1571,85 +1580,6 @@ pub mod ffi {
             Ok(ForEach::Continue)
         })?;
         Ok(vars)
-    }
-
-    /// **The only way text enters this binding.** `compile`, `from_toml`,
-    /// `width`, and every key and value of `render`'s Hash all come through
-    /// here, so there is exactly one string-boundary policy to reason about.
-    ///
-    /// Two earlier defects are why it is one function rather than magnus's
-    /// `String` conversion at each site. First, that conversion accepted
-    /// `"abc".encode("UTF-16LE")` and reinterpreted its bytes `61 00 62 00 63 00`
-    /// as UTF-8 -- silent mangling, and NUL is valid UTF-8 so byte validation
-    /// alone would not have caught it; the ENCODING has to be checked. Second,
-    /// the failures it did produce raised out of `Canonical`, so a caller nowhere
-    /// near `Canonical` had to rescue a `Canonical` error. Both are why this does
-    /// not reuse `lib.rs`'s `coerce_text`: the policy here is strictly stricter
-    /// and the taxonomy is deliberately different.
-    ///
-    /// The accepted set is "encodings whose bytes ARE the text", so reading them
-    /// as UTF-8 is identity and never a transcode: UTF-8, US-ASCII, and BINARY
-    /// when its bytes happen to be valid UTF-8. UTF-16LE declares a different
-    /// meaning for the same bytes and is refused by name. Symbols are accepted
-    /// for the same reason `read_role` accepts them.
-    ///
-    /// `what` is a closure so the only caller that has to BUILD its label --
-    /// `read_vars`, once per variable per prompt -- pays for it on the error
-    /// path alone. The message deliberately does not offer `nil`: `nil` is legal
-    /// only as a variable value, and `read_vars` answers that before calling
-    /// here, so there is no reachable state in which this text could truthfully
-    /// advertise it.
-    fn read_text(ruby: &Ruby, value: Value, what: impl Fn() -> String) -> Result<String, Error> {
-        let symbol_text = Symbol::from_value(value)
-            .map(|symbol| symbol.funcall::<_, _, RString>("to_s", ()))
-            .transpose()?;
-        let string = RString::from_value(value).or(symbol_text).ok_or_else(|| {
-            // SAFETY: see `ruby_to_canon` in lib.rs -- `classname` borrows
-            // from the object, which is rooted for the duration of this call,
-            // and no Ruby code runs meanwhile.
-            let class = unsafe { value.classname() }.into_owned();
-            Error::new(
-                ruby.exception_type_error(),
-                format!(
-                    "{} must be a String or Symbol, got {}",
-                    what(),
-                    with_article(&class)
-                ),
-            )
-        })?;
-        let encoding = string.enc_get();
-        let byte_transparent = encoding == ruby.utf8_encindex()
-            || encoding == ruby.usascii_encindex()
-            || encoding == ruby.ascii8bit_encindex();
-        if !byte_transparent {
-            return Err(Error::new(
-                ruby.exception_encoding_error(),
-                format!(
-                    "{} must be UTF-8, got {}",
-                    what(),
-                    RbEncoding::from(encoding).name()
-                ),
-            ));
-        }
-        // SAFETY: `as_str` borrows the String's buffer, which is rooted by
-        // `value` for the duration of this call; the bytes are copied out before
-        // returning and no Ruby code runs meanwhile.
-        unsafe { string.as_str() }.map(str::to_owned).map_err(|_| {
-            Error::new(
-                ruby.exception_encoding_error(),
-                format!("{} is not valid UTF-8", what()),
-            )
-        })
-    }
-
-    /// `"Integer"` -> `"an Integer"`, `"Float"` -> `"a Float"`. Ruby class names
-    /// are always capitalised, so first-letter vowel is the whole rule.
-    fn with_article(class: &str) -> String {
-        let vowel = class
-            .chars()
-            .next()
-            .is_some_and(|first| "AEIOU".contains(first));
-        format!("{} {class}", if vowel { "an" } else { "a" })
     }
 
     /// Rebuild the `[settings]` table as a deeply frozen Ruby Hash, on demand.

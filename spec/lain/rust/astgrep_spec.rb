@@ -84,4 +84,74 @@ RSpec.describe Lain::Ext::AstGrep do
       expect(dumped).to be_frozen
     end
   end
+
+  # The shared `read_text` policy (ext/lain/src/read_text.rs), whose whole point
+  # HERE is the index space: this binding's contract is byte offsets into the
+  # caller's own String. magnus's `String` conversion transcodes a non-UTF-8
+  # String on the way in, so without this refusal every `start`/`end` would
+  # index a UTF-8 copy the caller never sees -- and `Structural::Matcher`'s
+  # `source.byteslice(0, start)` line counting would read the wrong bytes with
+  # nothing failing.
+  describe "string boundary" do
+    let(:utf16) { "record.save\n".encode("UTF-16LE") }
+
+    it "refuses a source whose encoding is not UTF-8 rather than reinterpreting its bytes" do
+      expect { described_class.search(utf16, "ruby", "$RECV.save") }
+        .to raise_error(EncodingError, /source must be UTF-8, got UTF-16LE/)
+      expect { described_class.dump(utf16, "ruby") }
+        .to raise_error(EncodingError, /source must be UTF-8, got UTF-16LE/)
+    end
+
+    it "refuses a non-UTF-8 pattern and language too, one policy for every text argument" do
+      expect { described_class.search("record.save\n", "ruby", "$RECV.save".encode("UTF-16LE")) }
+        .to raise_error(EncodingError, /pattern must be UTF-8, got UTF-16LE/)
+      expect { described_class.search("record.save\n", "ruby".encode("UTF-16LE"), "$RECV.save") }
+        .to raise_error(EncodingError, /language must be UTF-8, got UTF-16LE/)
+    end
+
+    it "refuses bytes that are not valid UTF-8, and says where the first bad byte is" do
+      # The offset is the only lever the message can offer: the bytes really are
+      # broken, so there is no encoding to re-tag them with -- but "byte 2" tells
+      # a caller which part of the file to look at.
+      expect { described_class.search("# \xff\xfe\nrecord.save\n".b, "ruby", "$RECV.save") }
+        .to raise_error(EncodingError, /source is not valid UTF-8 \(first invalid byte at offset 2\)/)
+      expect { described_class.dump("# \xff\xfe\n".b, "ruby") }
+        .to raise_error(EncodingError, /source is not valid UTF-8 \(first invalid byte at offset 2\)/)
+    end
+
+    # Deliberately MULTI-BYTE. A 7-bit fixture passes this example's name without
+    # testing it, and that is exactly how the gap went unnoticed: magnus's
+    # `RString::as_str` demands coderange SevenBit for an ASCII-8BIT string, so
+    # `"# café".b` was refused with "not valid UTF-8" -- a false statement about
+    # bytes that decode perfectly. read_text validates the bytes itself for this.
+    it "accepts BINARY whose bytes are already valid UTF-8, including multi-byte ones" do
+      binary = "# café\nrecord.save\n".b
+
+      expect(binary.encoding).to eq(Encoding::BINARY)
+      expect(described_class.search(binary, "ruby", "$RECV.save").size).to eq(1)
+      expect(described_class.dump(binary, "ruby")).to include("call")
+    end
+
+    # US-ASCII promises 7-bit. A high byte makes the string one Ruby itself calls
+    # invalid, so its bytes are UTF-8 only by accident -- refused by the same
+    # rule as UTF-16LE, and the message names the fix, because this is a
+    # MISLABELLED string rather than a broken one.
+    it "refuses a US-ASCII string carrying a high byte, and names force_encoding" do
+      mislabelled = (+"# café\nrecord.save\n").force_encoding(Encoding::US_ASCII)
+
+      expect(mislabelled.valid_encoding?).to be(false)
+      expect { described_class.search(mislabelled, "ruby", "$RECV.save") }
+        .to raise_error(EncodingError, /tagged US-ASCII but byte 5 is not ASCII.*force_encoding/m)
+    end
+
+    it "tells a caller of a refused encoding what to do about it" do
+      expect { described_class.search(utf16, "ruby", "$RECV.save") }
+        .to raise_error(EncodingError, /String#encode it first -- lain never transcodes for you/)
+    end
+
+    it "refuses a non-String, non-Symbol argument by naming what it got" do
+      expect { described_class.search(42, "ruby", "$RECV.save") }
+        .to raise_error(TypeError, /source must be a String or Symbol, got an Integer/)
+    end
+  end
 end

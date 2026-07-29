@@ -96,7 +96,12 @@ module Lain
         patterns = resolve_patterns(input, language)
         matches = capped_matches(path, input.path, language, patterns)
         Tool::Result.ok(RESULT_FORMATTER.call(matches, patterns:, path: input.path))
-      rescue Structural::Matcher::BadPattern, Structural::Matcher::UnknownLanguage, Structural::Patterns::Unknown => e
+      # `EncodingError` rides with the rest despite NOT being a Lain::Error: the
+      # ext refuses a source it would have to transcode (ext/lain/src/read_text.rs)
+      # and Ruby's own class is what comes back. {#each_structural_match} has
+      # already named the file, so the message needs no decoration here.
+      rescue Structural::Matcher::BadPattern, Structural::Matcher::UnknownLanguage,
+             Structural::Patterns::Unknown, EncodingError => e
         Tool::Result.error(e.message)
       end
 
@@ -203,21 +208,33 @@ module Lain
         entry.split("/").intersect?(%w[. .. .git])
       end
 
+      # `encoding:` is not decoration. A bare File.read tags its result with
+      # Encoding.default_external, which under a C locale (containers, systemd
+      # units) is US-ASCII -- so every ordinary UTF-8 source file would come back
+      # mislabelled and the ext would refuse it, truthfully but uselessly. The
+      # file is source code; source code is UTF-8; say so at the read.
       def each_structural_match(matcher, file, language, patterns)
-        source = File.read(file)
+        source = File.read(file, encoding: Encoding::UTF_8)
         patterns.each do |pattern|
           matcher.match(source:, language:, pattern:).each do |m|
             yield(m.line, line_text(source, m.line), m.captures)
           end
         end
       rescue ArgumentError, SystemCallError, IOError
-        # Invalid encoding (binary content) or a file that vanished/denies read
-        # between the walk and here -- skipped silently, same as
-        # {Grep#each_matching_line}. A {Structural::Matcher::BadPattern} is a
-        # DIFFERENT class and is deliberately NOT rescued here: it must escape
-        # to {#perform}'s rescue, naming the bad pattern, not be swallowed as
-        # if this file were merely unreadable.
+        # A file that vanished or denies read between the walk and here --
+        # skipped silently, same as {Grep#each_matching_line}. A
+        # {Structural::Matcher::BadPattern} is a DIFFERENT class and is
+        # deliberately NOT rescued here: it must escape to {#perform}'s rescue,
+        # naming the bad pattern, not be swallowed as if this file were merely
+        # unreadable.
         nil
+      rescue EncodingError => e
+        # NOT a silent skip. A `.rb` file whose bytes are not valid UTF-8 is
+        # anomalous enough to report, and the alternative reads to the model as
+        # "your pattern matched nothing" -- indistinguishable from a real
+        # no-match. Re-raised only to attach the FILE, which {#perform}'s
+        # rescue is too far from the walk to know.
+        raise EncodingError, "#{file}: #{e.message}"
       end
 
       def line_text(source, line_no)

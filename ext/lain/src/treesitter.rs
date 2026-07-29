@@ -262,6 +262,17 @@ mod tests {
 pub mod ffi {
     use super::{Capture, QueryFailure, query as pure_query};
     use crate::ffi::{frozen_str, int, lookup_error};
+    // The one string-boundary policy, shared with `fuzzy`, `prompt` and
+    // `astgrep`. Same reason as `astgrep`'s: this binding's pinned contract is
+    // byte offsets into the caller's own String, and magnus's `String`
+    // conversion would silently transcode anything that is not already UTF-8,
+    // leaving every `start`/`end` addressing a copy the caller cannot see.
+    //
+    // Same taxonomy split as `astgrep::ffi` documents at length: `BadQuery` is a
+    // `Lain::Error` because a malformed S-expression is lain's vocabulary, while
+    // the encoding refusal is Ruby's bare `EncodingError`. Rescuing `Lain::Error`
+    // alone will not catch it.
+    use crate::read_text::read_text;
     use magnus::{Error, RArray, Ruby, Value, prelude::*};
 
     /// `Lain::Ext::TreeSitter.query(src, lang, query)` -> a frozen Array of
@@ -269,12 +280,10 @@ pub mod ffi {
     /// `@capture` bound across every match, flat and in match-then-capture
     /// order. One FFI crossing: the whole result is materialized and frozen
     /// before returning, matching `AstGrep`'s frozen-hash style.
-    pub fn query(
-        ruby: &Ruby,
-        src: String,
-        lang: String,
-        query_src: String,
-    ) -> Result<RArray, Error> {
+    pub fn query(ruby: &Ruby, src: Value, lang: Value, query_src: Value) -> Result<RArray, Error> {
+        let src = read_text(ruby, src, || "source".to_string())?;
+        let lang = read_text(ruby, lang, || "language".to_string())?;
+        let query_src = read_text(ruby, query_src, || "query".to_string())?;
         let captures = match pure_query(&src, &lang, &query_src) {
             Ok(captures) => captures,
             Err(err @ QueryFailure::BadQuery { .. }) => {

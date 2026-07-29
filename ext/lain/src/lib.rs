@@ -44,6 +44,7 @@ mod digest;
 mod event;
 mod fuzzy;
 mod prompt;
+mod read_text;
 mod treesitter;
 
 /// Build a `tracing_subscriber` [`EnvFilter`] from a caller-supplied level or

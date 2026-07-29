@@ -57,11 +57,22 @@ module Lain
         return Tool::Result.error(problem) if problem
 
         language = input.language.downcase.to_sym
-        source = File.read(path)
+        # `encoding:` is not decoration: a bare File.read tags its result with
+        # Encoding.default_external, which under a C locale (containers, systemd
+        # units) is US-ASCII -- so every ordinary UTF-8 file would come back
+        # mislabelled and the ext would refuse it, truthfully but uselessly.
+        source = File.read(path, encoding: Encoding::UTF_8)
         Tool::Result.ok(render(occurrences(source, language)))
       rescue Structural::Queries::Unsupported, Structural::Queries::Missing, Ext::TreeSitter::BadQuery => e
         Tool::Result.error(e.message)
-      rescue SystemCallError, IOError => e
+      # `EncodingError` joins the unreadable-file arm rather than earning its
+      # own: the ext refuses a source it would have to transcode, because the
+      # byte offsets this tool turns into line numbers would then index a copy
+      # the caller never sees (ext/lain/src/read_text.rs). To the model that is
+      # the same answer as any other "this file cannot be read" -- and it must
+      # land here, not escape #call, which no Tool does with a question the
+      # model asked.
+      rescue SystemCallError, IOError, EncodingError => e
         Tool::Result.error("could not read #{path}: #{e.message}")
       end
 

@@ -600,18 +600,33 @@ mod tests {
 pub mod ffi {
     use super::{Capture, Match, SearchError, dump as pure_dump, search as pure_search};
     use crate::ffi::{frozen_str, int, lookup_error};
+    // The one string-boundary policy, shared with `fuzzy`, `prompt` and
+    // `treesitter`. It is not optional here: this binding's PINNED contract is
+    // byte offsets into the caller's own String (see the module doc), and
+    // magnus's `String` conversion silently hands Rust a transcoded copy for
+    // anything that is not already UTF-8 -- so every `start`/`end` would index
+    // a string the caller has no handle on, with nothing failing. `read_text`
+    // refuses the transcode instead, which is what keeps the offsets true.
+    //
+    // MIND THE TAXONOMY: this binding's two refusals are rooted differently on
+    // purpose. `BadPattern` is registered under `Lain::Error` (lib.rs) because a
+    // malformed ast-grep pattern is lain's own vocabulary; the encoding refusal
+    // raises Ruby's bare `EncodingError` because a String whose bytes are not
+    // its text breaks RUBY's contract, not one of ours -- and `read_text` is
+    // shared by four bindings in three namespaces, so it has no lain class to
+    // raise into without inventing one. A caller rescuing `Lain::Error` alone
+    // will NOT catch the encoding case; `Tools::AstSearch` names both.
+    use crate::read_text::read_text;
     use magnus::{Error, RArray, RString, Ruby, Value, prelude::*};
 
     /// `Lain::Ext::AstGrep.search(src, lang, pattern)` -> a frozen Array of
     /// frozen match Hashes `{ "start", "end", "line", "captures" }`, where
     /// `captures` maps each `$NAME` to `{ "text", "start", "end" }`. One FFI
     /// crossing: the whole result is materialized and frozen before returning.
-    pub fn search(
-        ruby: &Ruby,
-        src: String,
-        lang: String,
-        pattern: String,
-    ) -> Result<RArray, Error> {
+    pub fn search(ruby: &Ruby, src: Value, lang: Value, pattern: Value) -> Result<RArray, Error> {
+        let src = read_text(ruby, src, || "source".to_string())?;
+        let lang = read_text(ruby, lang, || "language".to_string())?;
+        let pattern = read_text(ruby, pattern, || "pattern".to_string())?;
         let matches = pure_search(&src, &lang, &pattern).map_err(|err| raised(ruby, err))?;
         let out = ruby.ary_new_capa(matches.len());
         for matched in matches {
@@ -651,7 +666,9 @@ pub mod ffi {
     /// `Lain::Ext::AstGrep.dump(src, lang)` -> a frozen String of the CST node
     /// kinds, the companion capability that lets an agent inspect the tree and
     /// fix a pattern that silently under-matched.
-    pub fn dump(ruby: &Ruby, src: String, lang: String) -> Result<RString, Error> {
+    pub fn dump(ruby: &Ruby, src: Value, lang: Value) -> Result<RString, Error> {
+        let src = read_text(ruby, src, || "source".to_string())?;
+        let lang = read_text(ruby, lang, || "language".to_string())?;
         let text = pure_dump(&src, &lang).map_err(|err| raised(ruby, err))?;
         let string = ruby.str_new(&text);
         string.freeze();

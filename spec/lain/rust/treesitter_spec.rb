@@ -55,4 +55,52 @@ RSpec.describe Lain::Ext::TreeSitter do
         .to be_deeply_frozen
     end
   end
+
+  # The shared `read_text` policy (ext/lain/src/read_text.rs). Same reason as
+  # `AstGrep`'s group: this binding's pinned contract is byte offsets into the
+  # caller's own String, and magnus's `String` conversion would transcode a
+  # non-UTF-8 String on the way in -- so every `start`/`end` would silently
+  # index a UTF-8 copy the caller has no handle on.
+  describe "string boundary" do
+    let(:query) { "(method name: (identifier) @name)" }
+
+    it "refuses a source whose encoding is not UTF-8 rather than reinterpreting its bytes" do
+      expect { described_class.query("def total(x)\n  x\nend".encode("UTF-16LE"), "ruby", query) }
+        .to raise_error(EncodingError, /source must be UTF-8, got UTF-16LE/)
+    end
+
+    it "refuses a non-UTF-8 query and language too, one policy for every text argument" do
+      expect { described_class.query("def x; end", "ruby", query.encode("UTF-16LE")) }
+        .to raise_error(EncodingError, /query must be UTF-8, got UTF-16LE/)
+      expect { described_class.query("def x; end", "ruby".encode("UTF-16LE"), query) }
+        .to raise_error(EncodingError, /language must be UTF-8, got UTF-16LE/)
+    end
+
+    it "refuses bytes that are not valid UTF-8, and says where the first bad byte is" do
+      expect { described_class.query("# \xff\xfe\ndef x; end".b, "ruby", query) }
+        .to raise_error(EncodingError, /source is not valid UTF-8 \(first invalid byte at offset 2\)/)
+    end
+
+    # Deliberately MULTI-BYTE -- a 7-bit fixture passes this example's name
+    # without testing it. See the twin in `astgrep_spec.rb` for what that hid.
+    it "accepts BINARY whose bytes are already valid UTF-8, including multi-byte ones" do
+      binary = "# café\ndef total(x)\n  x\nend".b
+
+      expect(binary.encoding).to eq(Encoding::BINARY)
+      expect(described_class.query(binary, "ruby", query).size).to eq(1)
+    end
+
+    it "refuses a US-ASCII string carrying a high byte, and names force_encoding" do
+      mislabelled = (+"# café\ndef total(x)\n  x\nend").force_encoding(Encoding::US_ASCII)
+
+      expect(mislabelled.valid_encoding?).to be(false)
+      expect { described_class.query(mislabelled, "ruby", query) }
+        .to raise_error(EncodingError, /tagged US-ASCII but byte 5 is not ASCII.*force_encoding/m)
+    end
+
+    it "refuses a non-String, non-Symbol argument by naming what it got" do
+      expect { described_class.query(42, "ruby", query) }
+        .to raise_error(TypeError, /source must be a String or Symbol, got an Integer/)
+    end
+  end
 end

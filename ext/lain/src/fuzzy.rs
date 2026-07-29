@@ -305,11 +305,14 @@ fn with_matcher<T>(mut f: impl FnMut(&mut Matcher) -> T) -> T {
 pub mod ffi {
     use super::{BuildError, Candidates, Hit, QueryError};
     use crate::ffi::{frozen_str, int, lookup_error};
+    // The one string-boundary policy, shared with `prompt`, `astgrep` and
+    // `treesitter`. Candidate positions here index GRAPHEME CLUSTERS (see
+    // `positions`), which only means anything because `read_text` guarantees the
+    // clusters are the caller's own bytes and not a transcoded copy.
+    use crate::read_text::read_text;
     use magnus::{
-        DataTypeFunctions, Error, ExceptionClass, Integer, RArray, RHash, RModule, RString, Ruby,
-        Symbol, TypedData, Value,
-        encoding::{EncodingCapable, RbEncoding},
-        function, method,
+        DataTypeFunctions, Error, ExceptionClass, Integer, RArray, RHash, RModule, Ruby, TypedData,
+        Value, function, method,
         prelude::*,
         scan_args::{get_kwargs, scan_args},
         typed_data::Obj,
@@ -489,61 +492,6 @@ pub mod ffi {
         out.aset(frozen_str(ruby, "positions"), positions.as_value())?;
         out.freeze();
         Ok(out.as_value())
-    }
-
-    /// **The only way text enters this binding.** Every candidate and every query
-    /// comes through here, so there is exactly one string-boundary policy.
-    ///
-    /// The accepted set is "encodings whose bytes ARE the text", so reading them
-    /// as UTF-8 is identity and never a transcode: UTF-8, US-ASCII, and BINARY
-    /// when its bytes happen to be valid UTF-8. The ENCODING has to be checked
-    /// and not merely the bytes -- `"abc".encode("UTF-16LE")` is `61 00 62 00 63
-    /// 00`, and NUL is valid UTF-8, so byte validation alone would accept it and
-    /// silently reinterpret the text.
-    ///
-    /// This states the same policy as `prompt::ffi::read_text`; the two are
-    /// separate today only because that one is private to its own module. Hoisting
-    /// one shared copy into `crate::ffi` is a filed follow-up -- until then, a
-    /// change to one is a change owed to the other.
-    fn read_text(ruby: &Ruby, value: Value, what: impl Fn() -> String) -> Result<String, Error> {
-        let symbol_text = Symbol::from_value(value)
-            .map(|symbol| symbol.funcall::<_, _, RString>("to_s", ()))
-            .transpose()?;
-        let string = RString::from_value(value).or(symbol_text).ok_or_else(|| {
-            // SAFETY: see `ruby_to_canon` in lib.rs -- `classname` borrows from
-            // the object, which is rooted for the duration of this call, and no
-            // Ruby code runs meanwhile.
-            let class = unsafe { value.classname() }.into_owned();
-            Error::new(
-                ruby.exception_type_error(),
-                format!("{} must be a String or Symbol, got {class}", what()),
-            )
-        })?;
-
-        let encoding = string.enc_get();
-        let byte_transparent = encoding == ruby.utf8_encindex()
-            || encoding == ruby.usascii_encindex()
-            || encoding == ruby.ascii8bit_encindex();
-        if !byte_transparent {
-            return Err(Error::new(
-                ruby.exception_encoding_error(),
-                format!(
-                    "{} must be UTF-8, got {}",
-                    what(),
-                    RbEncoding::from(encoding).name()
-                ),
-            ));
-        }
-
-        // SAFETY: `as_str` borrows the String's buffer, which is rooted by
-        // `value` for the duration of this call; the bytes are copied out before
-        // returning and no Ruby code runs meanwhile.
-        unsafe { string.as_str() }.map(str::to_owned).map_err(|_| {
-            Error::new(
-                ruby.exception_encoding_error(),
-                format!("{} is not valid UTF-8", what()),
-            )
-        })
     }
 
     /// Register `Lain::Ext::Fuzzy` and its two named errors. Called from

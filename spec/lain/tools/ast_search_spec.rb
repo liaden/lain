@@ -154,6 +154,58 @@ RSpec.describe Lain::Tools::AstSearch do
     expect(result.content).to include("real.rb:1:")
   end
 
+  # A `.rb` file whose bytes are not valid UTF-8 is refused at the ext boundary
+  # (ext/lain/src/read_text.rs), because byte offsets that index a transcoded
+  # copy are worse than no answer. It must reach the model as an error Result
+  # naming the file -- not as a raise out of #call, and not as a silent skip
+  # that reads identically to "your pattern matched nothing".
+  describe "a source file whose bytes are not valid UTF-8" do
+    def write_binary(relative_path, bytes)
+      path = File.join(tmpdir, relative_path)
+      File.binwrite(path, bytes)
+      path
+    end
+
+    it "reports the encoding problem as an error Result naming the file" do
+      path = write_binary("bad.rb", "# caf\xe9 \xff\xfe\ndef total(x)\nend\n")
+
+      result = tool.call(pattern: "def $NAME($$$A)", language: "ruby", path:)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include(path).and include("not valid UTF-8")
+    end
+
+    it "names the offending file when it turns up in a directory walk" do
+      write_binary("bad.rb", "# \xff\xfe\n")
+
+      result = tool.call(pattern: "def $NAME($$$A)", language: "ruby", path: tmpdir)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("bad.rb").and include("not valid UTF-8")
+    end
+
+    # The refusals above are only useful if they are TRUE. A bare File.read tags
+    # its result with Encoding.default_external, which a C locale makes US-ASCII
+    # -- so under `LC_ALL=C` every ordinary UTF-8 source file would be refused
+    # with a message saying it is not UTF-8, which it is. A model given that has
+    # no move. This pins the mechanism (the read names its encoding) rather than
+    # the locale, which is the part the tool actually controls.
+    it "searches an ordinary UTF-8 file even when the default external encoding is US-ASCII" do
+      write("accented.rb", "# a café comment\ndef total(items)\n  items.sum\nend\n")
+      previous = Encoding.default_external
+      Encoding.default_external = Encoding::US_ASCII
+
+      begin
+        result = tool.call(pattern: "def $NAME($$$A)", language: "ruby", path: tmpdir)
+      ensure
+        Encoding.default_external = previous
+      end
+
+      expect(result).to have_attributes(ok?: true)
+      expect(result.content).to include("accented.rb:2:")
+    end
+  end
+
   describe "resolving paths against the session WorkerEnv" do
     let(:pattern) { "def $NAME($$$A)" }
 
