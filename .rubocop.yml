@@ -224,3 +224,52 @@ RSpec/AnyInstance:
     - "spec/lain/provider/bedrock_spec.rb"
     - "spec/lain/provider/response_wal_spec.rb"
     - "spec/lain/session_record/salvage_spec.rb"
+
+# --- Assertion shape ------------------------------------------------------
+
+# The cop's premise is that a spy avoids arranging an expectation before the act.
+# That premise does not hold for any of the sites here, because the mock semantics
+# ARE the assertion: `.ordered` pairs pinning that /keep journals the head BEFORE the
+# popup opens, `.once.and_call_original` on a real collaborator pinning a memoized
+# build, and negatives like `expect(File).not_to receive(:open)` -- which cannot be a
+# spy at all, since allowing File.open to record it changes the behaviour under test.
+# Converting these would trade a precise assertion for a looser one.
+RSpec/MessageSpies:
+  Enabled: false
+
+# Three helpers hold the expectation for their callers: `refuses` (rewind_spec),
+# `refute_workspace_key` (workspace_spec), and `wait_until`, which RAISES on timeout
+# (neovim_runtime_spec.rb:59) and so fails the example with a description of the
+# editor state. Defaults are restated because AllowedPatterns replaces rather than
+# merges. support_vsock_availability_spec is a META-spec: it builds a nested example
+# group whose `it("probe")` deliberately asserts nothing, and the OUTER example
+# asserts on whether that probe ran.
+RSpec/NoExpectationExample:
+  AllowedPatterns:
+    - "^expect_"
+    - "^assert_"
+    - "^refute"
+    - "^refuses"
+    - "^wait_until"
+  Exclude:
+    - "spec/support_vsock_availability_spec.rb"
+
+# Table-driven examples: two loops over a model-to-window Hash generate bodies that
+# are identical ASTs closing over different data. The cop compares the body, so a
+# data-driven pair always reads as a repeat.
+RSpec/RepeatedExample:
+  Exclude:
+    - "spec/lain/context_window_spec.rb"
+
+# The literal IS the subject: `expect { expect(42).to be_valid_ndjson }` asserts the
+# matcher refuses an argument that is neither an IO nor a String.
+RSpec/ExpectActual:
+  Exclude:
+    - "spec/support_matchers_spec.rb"
+
+# Each iteration carries its own failure message ("#{name}: deferring is a refusal,
+# not a soft yes"), which names the offending skill. `all` reports the collection and
+# loses which paragraph failed.
+RSpec/IteratedExpectation:
+  Exclude:
+    - "spec/lain/skill/shipped_skills_spec.rb"

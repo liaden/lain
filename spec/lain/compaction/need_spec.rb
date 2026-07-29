@@ -219,10 +219,7 @@ RSpec.describe Lain::Compaction::Need do
       detectors = need.instance_variable_get(:@detectors)
 
       expect(detectors).not_to be_empty
-      detectors.each do |detector|
-        expect(detector).to be_deeply_frozen
-        expect(detector).to be_ractor_shareable
-      end
+      expect(detectors).to all(be_deeply_frozen.and(be_ractor_shareable))
     end
   end
 end

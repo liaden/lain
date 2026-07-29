@@ -60,7 +60,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
     it "answers true or false and never raises, on this host" do
       result = nil
       expect { result = VsockAvailability.available? }.not_to raise_error
-      expect([true, false]).to include(result)
+      expect(result).to be(true).or be(false)
     end
 
     it "leaks no descriptor across repeated probing" do

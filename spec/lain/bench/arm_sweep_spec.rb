@@ -28,7 +28,8 @@ RSpec.describe Lain::Bench::ArmSweep do
     end
 
     it "carries the pre-registered category on every cell" do
-      measurements.each { |m| expect(%i[procedural parallel]).to include(m.category) }
+      expect(measurements.map(&:category))
+        .to all(satisfy("a pre-registered category") { |category| %i[procedural parallel].include?(category) })
     end
 
     it "prices real tokens off each run's journal -- never zero for a run that spent" do

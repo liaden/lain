@@ -50,14 +50,6 @@ RSpec/DescribedClass:
     - 'spec/support_vsock_availability_spec.rb'
 
 # Offense count: 3
-# This cop supports safe autocorrection (--autocorrect).
-RSpec/ExpectActual:
-  Exclude:
-    - 'spec/lain/bench/arm_sweep_spec.rb'
-    - 'spec/support_matchers_spec.rb'
-    - 'spec/support_vsock_availability_spec.rb'
-
-# Offense count: 3
 # This cop supports unsafe autocorrection (--autocorrect-all).
 # Configuration parameters: EnforcedStyle, NegatedMatcher.
 # SupportedStyles: method_call, block
@@ -76,27 +68,6 @@ RSpec/IndexedLet:
   Exclude:
     - 'spec/lain/memory/index_spec.rb'
     - 'spec/lain/plan/calibration_spec.rb'
-
-# Offense count: 2
-# This cop supports safe autocorrection (--autocorrect).
-RSpec/IteratedExpectation:
-  Exclude:
-    - 'spec/lain/compaction/need_spec.rb'
-    - 'spec/lain/skill/shipped_skills_spec.rb'
-
-# Offense count: 18
-# Configuration parameters: EnforcedStyle.
-# SupportedStyles: have_received, receive
-RSpec/MessageSpies:
-  Exclude:
-    - 'spec/lain/cli/chronicle_spec.rb'
-    - 'spec/lain/cli/command/btw_spec.rb'
-    - 'spec/lain/cli/resume_spec.rb'
-    - 'spec/lain/cli_spec.rb'
-    - 'spec/lain/compaction/derivation_audit_spec.rb'
-    - 'spec/lain/frontend/tty_spec.rb'
-    - 'spec/lain/memory/bm25_cache_spec.rb'
-    - 'spec/lain/structural/matcher_spec.rb'
 
 # Offense count: 19
 RSpec/MultipleDescribes:
@@ -130,16 +101,6 @@ RSpec/NestedGroups:
     - 'spec/lain/paths_spec.rb'
     - 'spec/lain/tool/spawn_policy_spec.rb'
 
-# Offense count: 13
-# Configuration parameters: AllowedPatterns.
-# AllowedPatterns: ^expect_, ^assert_
-RSpec/NoExpectationExample:
-  Exclude:
-    - 'spec/lain/cli/command/rewind_spec.rb'
-    - 'spec/lain/frontend/neovim_runtime_spec.rb'
-    - 'spec/lain/workspace_spec.rb'
-    - 'spec/support_vsock_availability_spec.rb'
-
 # Offense count: 4
 # This cop supports unsafe autocorrection (--autocorrect-all).
 RSpec/ReceiveMessages:
@@ -150,11 +111,6 @@ RSpec/ReceiveMessages:
 RSpec/RemoveConst:
   Exclude:
     - 'spec/support_vsock_availability_spec.rb'
-
-# Offense count: 2
-RSpec/RepeatedExample:
-  Exclude:
-    - 'spec/lain/context_window_spec.rb'
 
 # Offense count: 26
 # Configuration parameters: CustomTransform, IgnoreMethods, IgnoreMetadata, InflectorPath, EnforcedInflector.
