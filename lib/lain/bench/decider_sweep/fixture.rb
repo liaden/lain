@@ -11,6 +11,13 @@ module Lain
       # proper), the same single-responsibility split {Sweep::Embeddings}
       # draws around its own fixture concern.
       class Fixture
+        # heuristic runs the real, live, zero-cost predicate ({DeciderSweep}'s
+        # own header comment) -- it is the one arm that answers without a
+        # recorded transcript, so it is the one arm this fixture's cases
+        # never carry a block for.
+        EXCLUDED_FROM_FIXTURE = %w[heuristic].freeze
+        private_constant :EXCLUDED_FROM_FIXTURE
+
         def initialize(path)
           @path = path
         end
@@ -38,21 +45,31 @@ module Lain
         end
 
         # Every `#fetch` a malformed case could trip -- its own top-level
-        # fields and each of its four per-arm blocks -- happens IN THIS
-        # METHOD, inside the one `rescue KeyError`, so every shape of
-        # malformed case gets the same named-and-located {MalformedCase}
-        # rather than a bare, case-less `KeyError` surfacing later at score
-        # time (the same reasoning {DisclosureSweep#build_task} documents).
+        # fields and each of its per-arm blocks -- happens IN THIS METHOD,
+        # inside the one `rescue KeyError`, so every shape of malformed case
+        # gets the same named-and-located {MalformedCase} rather than a bare,
+        # case-less `KeyError` surfacing later at score time (the same
+        # reasoning {DisclosureSweep#build_task} documents). The required-arm
+        # list is DERIVED from {ARMS} (minus {EXCLUDED_FROM_FIXTURE}), never
+        # a second hand-maintained literal -- so an arm {ARMS} gains is
+        # required here for free, and a case missing its block raises this
+        # same {MalformedCase} at load, not a bare `KeyError` at replay.
         def build_case(raw_case)
-          arm_blocks = %w[ollama haiku inline model_self_directed].to_h do |arm|
-            [arm, validated_arm(raw_case, arm)]
-          end
           { "id" => -raw_case.fetch("id").to_s, "age_turns" => Integer(raw_case.fetch("age_turns")),
             "content" => -raw_case.fetch("content").to_s, "gold_stale" => raw_case.fetch("gold_stale"),
-            **arm_blocks }
+            **arm_blocks(raw_case) }
         rescue KeyError => e
           raise MalformedCase,
                 "decider fixture case #{raw_case["id"].inspect} at #{@path} is missing #{e.key.inspect}"
+        end
+
+        # Split out of {#build_case} to keep its own ABC size within the
+        # Metrics budget (CLAUDE.md: never loosen the limit) -- the required
+        # arm list stays DERIVED from {ARMS} (minus {EXCLUDED_FROM_FIXTURE}),
+        # never a second hand-maintained literal, so an arm {ARMS} gains is
+        # required here for free.
+        def arm_blocks(raw_case)
+          (ARMS - EXCLUDED_FROM_FIXTURE).to_h { |arm| [arm, validated_arm(raw_case, arm)] }
         end
 
         # `answer` is the one field every downstream use of an arm block

@@ -149,4 +149,14 @@ RSpec.describe Lain::Bench::DeciderSweep do
         .to raise_error(described_class::MalformedCase, /answer/)
     end
   end
+
+  describe "the fixture's expected arm list derives from ARMS, not a hand-maintained duplicate" do
+    it "raises MalformedCase, not KeyError, when ARMS names an arm no case carries a block " \
+       "for -- the fixture must fail loudly at LOAD time, never at replay" do
+      stub_const("Lain::Bench::DeciderSweep::ARMS", described_class::ARMS + %w[extra_arm])
+
+      expect { described_class.new(fixture_path: fixture_path("cases")).timelines }
+        .to raise_error(described_class::MalformedCase, /extra_arm/)
+    end
+  end
 end
