@@ -10,15 +10,39 @@ cost real debugging to reach.
 
 ## Toolchain
 
-The shell's default `ruby` is the wrong one (system 3.2.3). This project needs 4.0.5:
+The shell's default `ruby` is the wrong one (system 3.2.3). This project needs 4.0.6:
 
 ```bash
-export PATH="$HOME/.rubies/ruby-4.0.5/bin:$PATH"
+export PATH="$HOME/.rubies/ruby-4.0.6/bin:$PATH"
+export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib   # see "OpenSSL" below
+```
+
+**4.0.6 is a floor, not a preference.** 4.0.5 crashes the VM intermittently under
+`rake pspec` — [Bug #22072](https://bugs.ruby-lang.org/issues/22072), `[BUG] should have cvar
+cache entry`: `rb_cvar_set` builds a new `RCLASS_CVC_TBL` without copying the old contents, so
+in a multi-Ractor process a later class-variable READ finds no cache entry and aborts. Our one
+`Ractor.new` (`spec/lain/rust/fuzzy_spec.rb`) is enough to arm it. It surfaces at whatever cvar
+gets read first — for us `i18n/config.rb:176`, which is a victim, not the cause. Fixed in 4.0.6,
+along with two more Ractor crashes (#22075, #22084).
+
+The failure is easy to misread: `parallel_tests` reports only the examples that SURVIVED, so a
+dead worker looks like "fewer examples, 0 failures, non-zero exit" — the same shape an OOM kill
+produces. Check the example COUNT against a serial run before blaming memory.
+
+**OpenSSL.** The installed 4.0.6 was configured against Homebrew's OpenSSL (3.6) but has no
+RPATH, so at runtime it resolves the system `libcrypto.so.3` (3.0.13) and dies with
+`version OPENSSL_3.4.0 not found`. `LD_LIBRARY_PATH` above is the workaround. The fix is to
+rebuild against the system OpenSSL, which is what the runtime linker picks anyway:
+
+```bash
+rm -rf ~/.rubies/ruby-4.0.6
+ruby-install ruby 4.0.6 -- --with-openssl-dir=/usr    # then: bundle install && rake compile
 ```
 
 `bundle install` and `gem` write outside the repo, so they need the sandbox disabled.
 `ruby-4.0.1` is also installed and is **unusable** for native gems — its `RbConfig` points at
-a deleted Homebrew `gmkdir`/`ginstall`.
+a deleted Homebrew `gmkdir`/`ginstall`. Both it and the OpenSSL breakage above are the same
+lesson: keep Homebrew out of the Ruby build.
 
 ```bash
 bundle exec rspec              # :integration and :core excluded by default; measure the count,

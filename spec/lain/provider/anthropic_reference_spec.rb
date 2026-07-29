@@ -2,6 +2,14 @@
 
 require "webmock/rspec"
 
+# The oracle defers `require "anthropic"` into #initialize so spec/support does
+# not load the SDK into every parallel worker. Examples below name
+# `Anthropic::Errors::*` BEFORE constructing a provider, though, so this file
+# needs it eagerly -- without it the first example to run in a worker that has
+# built no provider yet dies on NameError, which is order-dependent and so shows
+# up only under `rake pspec`. Only the worker owning this file pays for it.
+require "anthropic"
+
 RSpec.describe Lain::Provider::AnthropicReference do
   # A response content block, faked at the shape the SDK actually returns:
   # `.type` is a Symbol, and a streamed tool_use's `.input` is a raw String.

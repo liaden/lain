@@ -2,6 +2,11 @@
 
 require "webmock/rspec"
 
+# Eager, for the reason spelled out at the top of anthropic_reference_spec.rb:
+# the oracle's own require is deferred, and examples here name
+# `Anthropic::Errors::*` before any provider is constructed.
+require "anthropic"
+
 RSpec.describe Lain::Provider::BedrockReference do
   # A response content block, faked at the shape the SDK actually returns:
   # `.type` is a Symbol, and a streamed tool_use's `.input` is a raw String.
