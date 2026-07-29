@@ -89,18 +89,6 @@ RSpec.describe Lain::Tools::WebFetch do
     WebFetchStubConnection.new { |_url| WebFetchStubResponse.new(status: 200, headers: {}, body: "<h1>Example</h1>") }
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("web_fetch")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  # Tier 1 with structural bounds: safety is the byte-cap / redirect-cap / no
-  # auth headers, NOT an approval gate. requires_approval? MUST be false.
-  it "is not gated by approval (tier 1, bounded by structure)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "retrieves a URL's text content" do
     result = tool.call({ url: "https://example.com" }, nil)
     expect(result).to be_ok

@@ -22,16 +22,6 @@ RSpec.describe Lain::Tools::Grep do
     path
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("grep")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval and is tier 1 (no subprocess involved)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "returns matching lines with file:line locations and the matching text" do
     write("foo.rb", "one\ntwo\nthis has needle in it\n")
 

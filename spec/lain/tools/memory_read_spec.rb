@@ -12,16 +12,6 @@ RSpec.describe Lain::Tools::MemoryRead do
   end
   let(:index) { Lain::Memory::Index.empty.write(item) }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("memory_read")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval and is tier 1 (no subprocess involved)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "returns the item's body verbatim on a hit" do
     expect(tool.call(id: "dosage")).to eq(Lain::Tool::Result.ok(item.body))
   end

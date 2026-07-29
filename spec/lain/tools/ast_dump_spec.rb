@@ -3,16 +3,6 @@
 RSpec.describe Lain::Tools::AstDump do
   subject(:tool) { described_class.new }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("ast_dump")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval -- read-only, no subprocess" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "dumps the CST, naming the singleton_method node distinct from a plain method" do
     result = tool.call(code: "def self.x; end", language: "ruby")
 

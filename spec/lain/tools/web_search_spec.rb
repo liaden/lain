@@ -17,17 +17,6 @@ RSpec.describe Lain::Tools::WebSearch do
 
   subject(:tool) { described_class.new(backend:) }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("web_search")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  # Tier 1: bounded by the injected backend, not an approval gate.
-  it "is not gated by approval" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "returns titled, linked results from the injected backend" do
     result = tool.call({ query: "ruby frozen string" }, nil)
     expect(result).to be_ok

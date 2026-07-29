@@ -5,16 +5,6 @@ RSpec.describe Lain::Tools::MemoryWrite do
 
   let(:recorder) { Lain::Memory::Recorder.new }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("memory_write")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval and is tier 1 (no subprocess involved)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "declares id, description, and body as required string fields" do
     schema = tool.input_schema
     expect(schema["properties"].keys).to eq(%w[id description body])

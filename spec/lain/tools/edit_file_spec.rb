@@ -24,16 +24,6 @@ RSpec.describe Lain::Tools::EditFile do
     Lain::Tool::Invocation.new(tool_use_id:, context: session)
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("edit_file")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is a direct-Ruby, no-subprocess tool and is not gated by approval" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   describe "AC: writing blind is refused loudly" do
     it "raises ContractViolation when the session never read the path" do
       path = write("hello.txt", "hello world")

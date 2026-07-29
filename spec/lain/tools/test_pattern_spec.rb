@@ -3,16 +3,6 @@
 RSpec.describe Lain::Tools::TestPattern do
   subject(:tool) { described_class.new }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("test_pattern")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval -- read-only, no subprocess" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "reports the match count and, per match, the line and captures" do
     code = "def total(x)\n  x\nend"
 

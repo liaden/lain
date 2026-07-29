@@ -40,12 +40,6 @@ RSpec.describe Lain::Tools::AskHuman do
 
   let(:tool) { build_tool }
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("ask_human")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
   # ---- Scenario: ask does not block -----------------------------------------
 
   describe "#ask (the async-continue seam)" do

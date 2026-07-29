@@ -64,62 +64,12 @@ module ParallelSafetySpecSupport
   FALSE_TOOLS = %w[bash core_exec edit_file write_file todo_write memory_write improvement_write
                    run_skill ask_human web_fetch web_search tool_search].freeze
 
-  def self.build_subagent
-    Lain::Tools::Subagent.new(
-      provider: Lain::Provider::Mock.new,
-      context_factory: -> { Lain::Context.new(model: "child", max_tokens: 8) },
-      toolset: Lain::Toolset.new([]),
-      policy: Lain::Tool::SpawnPolicy.new,
-      parent: Lain::Timeline.empty(store: Lain::Store.new)
-    )
-  end
-
-  def self.build_run_skill
-    Lain::Tools::RunSkill.new(
-      renderer: Lain::Skill::Renderer.new(catalog: Lain::Skill::Catalog.new({}),
-                                          slots: Lain::Prompt::Slots.new(fills: {}))
-    )
-  end
-
-  # One minimal-but-real instance per tool name, built the same way each
-  # tool's own spec constructs it (see spec/lain/tools/*_spec.rb) -- never
-  # from a bare directory listing, since #parallel_safe? is a declaration on
-  # the CLASS actually wired into the toolset, not on a name assumed to exist.
-  # A Hash of thunks, not a case/when: #build_tool stays a lookup regardless
-  # of how many tools the toolset grows to.
-  BUILDERS = {
-    "read_file" => -> { Lain::Tools::ReadFile.new },
-    "list_files" => -> { Lain::Tools::ListFiles.new },
-    "glob" => -> { Lain::Tools::Glob.new },
-    "grep" => -> { Lain::Tools::Grep.new },
-    "memory_read" => -> { Lain::Tools::MemoryRead.new(index: Lain::Memory::Index.empty) },
-    "ast_search" => -> { Lain::Tools::AstSearch.new },
-    "ast_dump" => -> { Lain::Tools::AstDump.new },
-    "test_pattern" => -> { Lain::Tools::TestPattern.new },
-    "code_outline" => -> { Lain::Tools::CodeOutline.new },
-    "file_symbols" => -> { Lain::Tools::FileSymbols.new },
-    "subagent" => -> { build_subagent },
-    "bash" => -> { Lain::Tools::Bash.new },
-    # Construction-only: the partition asks #parallel_safe?, never #perform,
-    # and a nil client fails loudly if that ever changes.
-    "core_exec" => -> { Lain::Tools::CoreExec.new(client: nil) },
-    "edit_file" => -> { Lain::Tools::EditFile.new },
-    "write_file" => -> { Lain::Tools::WriteFile.new },
-    "todo_write" => -> { Lain::Tools::TodoWrite.new },
-    "memory_write" => -> { Lain::Tools::MemoryWrite.new(recorder: Lain::Memory::Recorder.new) },
-    "improvement_write" => lambda {
-      Lain::Tools::ImprovementWrite.new(sink: Lain::Improvement::Sink.new(paths: Lain::Paths.new, session: "test"))
-    },
-    "run_skill" => -> { build_run_skill },
-    "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
-    "web_fetch" => -> { Lain::Tools::WebFetch.new },
-    "web_search" => -> { Lain::Tools::WebSearch.new },
-    "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) }
-  }.freeze
-
-  def self.build_tool(name)
-    BUILDERS.fetch(name) { raise "unknown tool #{name.inspect} -- add it to ParallelSafetySpecSupport::BUILDERS" }.call
-  end
+  # The builder table moved to spec/support/tool_registry.rb once a second
+  # cross-tool property (the approval tier -- see
+  # spec/lain/tools/tool_surface_spec.rb) needed the same "one real instance per
+  # shipped tool" table. Both specs ask their own question of ONE roster, so
+  # neither can fall behind the directory while the other keeps up.
+  def self.build_tool(name) = ToolRegistry.build(name)
 end
 
 # E1: widens Tool#parallel_safe? opt-in beyond {Lain::Tools::Subagent} (the only
@@ -185,10 +135,7 @@ RSpec.describe "Tool#parallel_safe? across the shipped toolset" do
       false_tools = ParallelSafetySpecSupport::FALSE_TOOLS
       expect(true_tools & false_tools).to eq([])
 
-      shipped = Dir.glob(File.join(__dir__, "..", "..", "..", "lib", "lain", "tools", "*.rb"))
-                   .map { |path| File.basename(path, ".rb") }
-                   .sort
-      expect((true_tools + false_tools).sort).to match_array(shipped)
+      expect((true_tools + false_tools).sort).to match_array(ToolRegistry.shipped_names)
     end
   end
 

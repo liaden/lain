@@ -22,16 +22,6 @@ RSpec.describe Lain::Tools::AstSearch do
     path
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("ast_search")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval and is tier 1 (no subprocess involved)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "searches a directory for a raw structural pattern, reporting file:line and captures" do
     write("foo.rb", "one\ntwo\ndef total(items)\n  items.sum\nend\n")
 
@@ -135,8 +125,15 @@ RSpec.describe Lain::Tools::AstSearch do
     expect(both).to have_attributes(is_error: true)
   end
 
+  # Sized from the constant, not a round number: the cap fires on the
+  # MAX_MATCHES+1st match, so a handful past it proves everything a much larger
+  # file would. It used to build 5000 methods for a cap of 200, and parsing that
+  # tree cost +100MB RSS -- 92% of the whole suite's heap growth, in this one
+  # example, retained for the rest of the run. That is what forced `rake pspec`
+  # down to one worker fewer than the box has cores.
   it "caps output and reports the cap rather than flooding the result" do
-    source = (1..5000).map { |i| "def method_#{i}\nend" }.join("\n")
+    over_cap = described_class::MAX_MATCHES + 50
+    source = (1..over_cap).map { |i| "def method_#{i}\nend" }.join("\n")
     write("many.rb", source)
 
     result = tool.call(pattern: "def $NAME", language: "ruby", path: tmpdir)

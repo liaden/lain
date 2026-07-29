@@ -20,16 +20,6 @@ RSpec.describe Lain::Tools::ReadFile do
     path
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("read_file")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is not gated by approval and is tier 1 (no subprocess involved)" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   it "reads a file's full contents" do
     path = write("hello.txt", "hello\nworld\n")
     expect(tool.call(path:)).to eq(Lain::Tool::Result.ok("hello\nworld\n"))

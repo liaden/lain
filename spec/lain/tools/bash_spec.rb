@@ -11,18 +11,6 @@ RSpec.describe Lain::Tools::Bash do
     Lain::Tool::Invocation.new(tool_use_id:, channel:)
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("bash")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  # Tier 3: a String command goes through `sh -c`, and the model fully
-  # controls it. Effect::Handler::Gate gates on exactly this flag.
-  it "is gated by approval, being tier 3" do
-    expect(tool.requires_approval?).to be(true)
-  end
-
   it "runs a command and captures its stdout" do
     result = tool.call({ command: "echo hello" }, invocation)
     expect(result).to be_ok

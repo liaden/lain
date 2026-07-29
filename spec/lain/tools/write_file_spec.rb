@@ -24,16 +24,6 @@ RSpec.describe Lain::Tools::WriteFile do
     Lain::Tool::Invocation.new(tool_use_id:, context: session)
   end
 
-  it "has a model-facing name and description" do
-    expect(tool.name).to eq("write_file")
-    expect(tool.description).to be_a(String)
-    expect(tool.description).not_to be_empty
-  end
-
-  it "is a structured tier-1 tool and is not gated by approval" do
-    expect(tool.requires_approval?).to be(false)
-  end
-
   describe "AC: creating a brand-new file" do
     it "creates the file with the given content when the path does not exist" do
       path = File.join(tmpdir, "new.rb")
