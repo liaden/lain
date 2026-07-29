@@ -1,5 +1,13 @@
 # frozen_string_literal: true
 
+# {RpcThread} (and the {RpcThread::Listener} contract this file's
+# {Neovim::FrontendListener} subclasses) must exist before the `class Neovim`
+# body below opens, because that body defines FrontendListener against it --
+# the same "load it early" exception {Context::REQUIRES} documents, not a
+# departure from the index owning requires (this is still the index; only the
+# ORDER moved).
+require_relative "neovim/rpc_thread"
+
 module Lain
   module Frontend
     # The Neovim frontend: a second surface on the same {Lain::Channel} the {TTY}
@@ -92,16 +100,18 @@ module Lain
         @journal_view = JournalView.new
         # Edited lain://request lines land here from the RPC thread's inbound
         # dispatch and are drained by the resend worker ({#resend_loop}). An
-        # unbounded Thread::Queue so on_resend never blocks the RPC thread; a
-        # human can't flood single :LainResend invocations, so unbounded is safe.
+        # unbounded Thread::Queue so {FrontendListener#resend} never blocks the
+        # RPC thread; a human can't flood single :LainResend invocations, so
+        # unbounded is safe.
         @resend_inbox = Thread::Queue.new
         @resend_failure = nil
         @rpc = build_rpc(socket_path:, version:, protocol:, render_capacity:)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge, request_buffer: @request_buffer)
         # Constructed here because it needs the RPC thread as its editor inlet,
-        # and handed out through {#compose} for the prompt to bind C-g to. The
-        # RPC thread's compose callbacks close over it rather than take it, so
-        # the two can be built in either order.
+        # and handed out through {#compose} for the prompt to bind C-g to.
+        # {FrontendListener} holds a bound `method(:compose)` rather than this
+        # collaborator itself, so the two can still be built in either order
+        # (see {FrontendListener}'s own comment).
         @compose = Compose.new(rpc: @rpc, notify: compose_notify)
       end
 
@@ -136,19 +146,55 @@ module Lain
 
       private
 
-      # Every hand-off the RPC thread makes back into this frontend, in one
-      # place. on_death makes RPC-thread death observable: the channel closes,
-      # so the drainer exits and producers meet ClosedQueueError instead of
-      # feeding a zombie; {#run} then re-raises the recorded failure. The
-      # compose pair is T15's round trip -- the editor writing or abandoning
-      # lain://compose -- and both only ever push onto a queue, because a
-      # callback that blocked here would block the editor's whole session.
+      # {RpcThread::Listener}'s concrete implementation for this frontend
+      # (T34): every hand-off the RPC thread makes back into {Neovim}, in one
+      # object instead of four hand-defaulted lambdas. {#died} makes
+      # RPC-thread death observable: the channel closes, so the drainer exits
+      # and producers meet ClosedQueueError instead of feeding a zombie;
+      # {Neovim#run} then re-raises the recorded failure. The compose pair is
+      # T15's round trip -- the editor writing or abandoning lain://compose --
+      # and every method here only ever enqueues or forwards, because a
+      # listener method that blocked would block the editor's whole session
+      # (see {RpcThread::Listener}'s own must-not-block note).
+      class FrontendListener < RpcThread::Listener
+        # `compose:` is a bound accessor ({Object#method}), not the {Compose}
+        # collaborator itself: {Compose} is built AFTER the RPC thread (it
+        # takes the thread as ITS OWN editor inlet -- see {Neovim#initialize}'s
+        # @compose comment), so resolving it fresh on every call is what lets
+        # the two be constructed in either order, the same trick the closures
+        # this replaces relied on.
+        #
+        # @param channel [Lain::Channel] closed on RPC-thread death
+        # @param compose [#call] returns the live {Compose}
+        # @param resend [#call] hands edited lain://request lines to the resend worker
+        def initialize(channel:, compose:, resend:)
+          super()
+          @channel = channel
+          @compose = compose
+          @resend = resend
+        end
+
+        def died
+          @channel.close unless @channel.closed?
+        end
+
+        def resend(lines)
+          @resend.call(lines)
+        end
+
+        def compose_written(lines, generation)
+          @compose.call.wrote(lines, generation)
+        end
+
+        def compose_abandoned(generation)
+          @compose.call.abandoned(generation)
+        end
+      end
+      private_constant :FrontendListener
+
       def build_rpc(socket_path:, version:, protocol:, render_capacity:)
-        RpcThread.new(socket_path:, version:, protocol:, render_capacity:,
-                      on_death: -> { @channel.close unless @channel.closed? },
-                      on_resend: ->(lines) { post_resend(lines) },
-                      on_compose_write: ->(lines, generation) { @compose.wrote(lines, generation) },
-                      on_compose_abandon: ->(generation) { @compose.abandoned(generation) })
+        listener = FrontendListener.new(channel: @channel, compose: method(:compose), resend: method(:post_resend))
+        RpcThread.new(socket_path:, version:, protocol:, render_capacity:, listener:)
       end
 
       # Post every projection's at-rest state so the full lain:// buffer set is
@@ -156,7 +202,8 @@ module Lain
       # as "broken" (the first manual verification pass stumbled exactly there).
       # Runs FIRST on the drain thread ({#drain}), so priming strictly precedes
       # every event render. The rescue mirrors {#post}'s: an RPC thread dead
-      # this early is already loud through on_death and {#run}'s re-raise.
+      # this early is already loud through {FrontendListener#died} and
+      # {#run}'s re-raise.
       def prime_views
         [@journal_view, @buffers].each do |view|
           view.initial.each { |name, lines| @rpc.post_view(name, lines) }
@@ -277,10 +324,10 @@ module Lain
         error
       end
 
-      # {RpcThread}'s on_resend hand-off. A push onto a closed inbox (the worker
-      # already died) is dropped, not raised: this runs on the RPC thread inside
-      # inbound dispatch, and raising there would kill the whole editor session
-      # over a resend whose loss {#run} already re-raises loudly.
+      # {FrontendListener#resend}'s hand-off. A push onto a closed inbox (the
+      # worker already died) is dropped, not raised: this runs on the RPC
+      # thread inside inbound dispatch, and raising there would kill the whole
+      # editor session over a resend whose loss {#run} already re-raises loudly.
       def post_resend(lines)
         @resend_inbox.push(lines)
       rescue ClosedQueueError
@@ -316,4 +363,3 @@ require_relative "neovim/inbox_view"
 require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
-require_relative "neovim/rpc_thread"

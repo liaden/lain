@@ -130,7 +130,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # T12 panel fix (SUBSTANTIVE). A digest the store cannot resolve must not
     # kill the sole drain thread: Neovim#post rescues only ClosedQueueError and
-    # on_death fires only for RPC-thread death, so an uncaught
+    # FrontendListener#died fires only for RPC-thread death, so an uncaught
     # Store::MissingObject here would silently stop the Channel draining and
     # eventually wedge the agent's producer. The miss renders VISIBLY in the
     # timeline buffer rather than being swallowed, and later events still flow.

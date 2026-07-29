@@ -131,17 +131,15 @@ module Lain
         # lines, a compose write sends lines plus the generation it answers, an
         # abandon sends only that generation.
         #
-        # @param on_resend [#call] the edited lain://request lines (4-2.3)
-        # @param on_compose_write [#call] the edited lain://compose lines and
-        #   the generation they answer (T15)
-        # @param on_compose_abandon [#call] the generation whose lain://compose
-        #   was unloaded unwritten
-        def initialize(on_resend: ->(_lines) {}, on_compose_write: ->(_lines, _gen) {},
-                       on_compose_abandon: ->(_gen) {})
+        # @param listener [RpcThread::Listener] duck: #resend(lines),
+        #   #compose_written(lines, generation), #compose_abandoned(generation).
+        #   {RpcThread} is the only caller and always resolves one first (real
+        #   or {RpcThread::Listener::Null}), so there is no default here.
+        def initialize(listener:)
           @routes = {
-            "resend" => ->(args) { on_resend.call(args[1] || []) },
-            "compose" => ->(args) { on_compose_write.call(args[1] || [], args[2]) },
-            "compose_abandon" => ->(args) { on_compose_abandon.call(args[1]) }
+            "resend" => ->(args) { listener.resend(args[1] || []) },
+            "compose" => ->(args) { listener.compose_written(args[1] || [], args[2]) },
+            "compose_abandon" => ->(args) { listener.compose_abandoned(args[1]) }
           }.freeze
         end
 
@@ -175,6 +173,54 @@ module Lain
       # * Inbound requests are enqueue-and-acked in microseconds -- a slow response
       #   freezes the EDITOR -- so agent work never runs inline here.
       class RpcThread
+        # The four hand-offs this thread makes back to its owner: RPC-thread
+        # death, an edited lain://request, and lain://compose being written or
+        # abandoned. One object with four named methods rather than four
+        # positional callbacks -- a caller states its reaction to each as a
+        # method instead of a hand-defaulted lambda, and gets {Null} for free
+        # when it wants none of them (the {Sink::Null} shape).
+        #
+        # `compose_written`/`compose_abandoned` are deliberately two methods,
+        # not one taking a verb argument: they are two different things that
+        # happened -- a write and an abandon carry different data (lines
+        # plus a generation, vs. just a generation) -- and a caller forced to
+        # branch on a symbol would only be re-deriving what {Router} already
+        # knows from the wire.
+        class Listener
+          # RPC-thread death, after {RpcThread#start} has returned. An attach
+          # failure rides {#start}'s own return instead (see
+          # {RpcThread#record_death}), so this never fires for one.
+          def died
+            raise NotImplementedError, "#{self.class} must implement #died"
+          end
+
+          # @param lines [Array<String>] the edited lain://request lines (4-2.3)
+          def resend(_lines)
+            raise NotImplementedError, "#{self.class} must implement #resend"
+          end
+
+          # @param lines [Array<String>] the edited lain://compose lines (T15)
+          # @param generation [Integer] which compose the editor is answering
+          def compose_written(_lines, _generation)
+            raise NotImplementedError, "#{self.class} must implement #compose_written"
+          end
+
+          # @param generation [Integer] which compose was unloaded unwritten
+          def compose_abandoned(_generation)
+            raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
+          end
+
+          # The no-op Listener, mirroring {Sink::Null}: satisfies the same duck
+          # so an {RpcThread} (or {Router}) built with none of these reactions
+          # wired never needs an `if listener` guard. The default for both.
+          class Null < Listener
+            def died = nil
+            def resend(_lines) = nil
+            def compose_written(_lines, _generation) = nil
+            def compose_abandoned(_generation) = nil
+          end
+        end
+
         RUNTIME = File.expand_path("runtime.lua", __dir__)
 
         # How long the readable-wait may block before re-checking the stop flag and
@@ -189,33 +235,24 @@ module Lain
         # @param socket_path [String] a listening nvim's unix socket
         # @param version [String] the gem version, surfaced by :LainVersion
         # @param protocol [String] the runtime.lua handshake token (see {PROTOCOL})
-        # @param on_death [#call] invoked (on this thread) if the loop dies after
-        #   {#start} -- the owner's chance to make the loss observable
-        # @param on_resend [#call] invoked with the edited lain://request lines
-        #   when :LainResend fires (4-2.3). MUST NOT block this thread: it runs
-        #   inline after the microsecond ack, so the owner hands the lines to a
+        # @param listener [Listener] this thread's four hand-offs, bundled into
+        #   one object (see {Listener}'s own comment for why). Every method
+        #   MUST NOT block this thread: each runs inline after the microsecond
+        #   ack, so a listener that needs to do real work hands off to a
         #   worker via a non-blocking queue (never straight onto a bounded
-        #   Channel, which could wedge this thread against a full render queue).
-        # @param on_compose_write [#call] invoked with the edited
-        #   lain://compose lines and the generation they answer when the human
-        #   writes that buffer (T15). Same must-not-block rule as `on_resend`,
-        #   for the same reason.
-        # @param on_compose_abandon [#call] invoked with the generation whose
-        #   lain://compose was unloaded without being written. Two callbacks
-        #   rather than one with a verb argument: they are two different things
-        #   that happened, and a caller made to branch on a symbol would only be
-        #   re-deriving what {Router} already knows.
+        #   Channel, which could wedge this thread against a full render
+        #   queue). Defaults to {Listener::Null}, so a caller that wants none
+        #   of the four reactions wires nothing.
         # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
         #   overridable so a spec can saturate the queue at a scale that runs fast
-        def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL, on_death: -> {},
-                       on_resend: ->(_lines) {}, on_compose_write: ->(_lines, _gen) {},
-                       on_compose_abandon: ->(_gen) {},
+        def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
+                       listener: Listener::Null.new,
                        render_capacity: RenderQueue::DEFAULT_CAPACITY)
           @socket_path = socket_path
           @version = version
           @protocol = protocol
-          @on_death = on_death
-          @router = Router.new(on_resend:, on_compose_write:, on_compose_abandon:)
+          @listener = listener
+          @router = Router.new(listener:)
           @render_queue = RenderQueue.new(capacity: render_capacity)
           @command_inbox = Thread::Queue.new
           @wake_read, @wake_write = IO.pipe
@@ -335,7 +372,7 @@ module Lain
         def record_death(error)
           @failure = error
           @render_queue.close
-          @announced ? @on_death.call : @ready.push(error)
+          @announced ? @listener.died : @ready.push(error)
         end
 
         # Build the client by hand rather than via {::Neovim.attach_unix} so we keep

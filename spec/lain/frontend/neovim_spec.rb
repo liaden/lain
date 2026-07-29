@@ -542,3 +542,52 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
     end
   end
 end
+
+# T34 review fix (substantive #1): FrontendListener's four hand-offs, pinned
+# directly and in plain Ruby -- no editor, no :nvim tag, no 300-second
+# Compose::GRACE wait. Before this group existed, a `compose_abandoned`
+# mutated to a no-op survived the whole default suite and only reddened the
+# :nvim end-to-end spec (neovim_runtime_spec.rb's "sends nothing when the
+# buffer is unloaded without being written") after paying out the full grace
+# period. FrontendListener is `private_constant`, so this reaches the live
+# instance through Neovim's own construction rather than describing it by
+# name -- the same instance_variable_get idiom the rest of this file already
+# uses for @rpc/@render_queue.
+#
+# Construction alone is enough: {RpcThread#start} is what attaches over the
+# socket, and {Neovim#initialize} never calls it, so building a frontend here
+# is instant and touches no editor.
+RSpec.describe Lain::Frontend::Neovim do
+  let(:frontend) { described_class.new(channel: Lain::Channel.new, socket_path: "/nonexistent") }
+  let(:listener) { frontend.instance_variable_get(:@rpc).instance_variable_get(:@listener) }
+
+  describe "the listener RpcThread was built with" do
+    it "forwards #died by closing the channel" do
+      listener.died
+
+      expect(frontend.instance_variable_get(:@channel)).to be_closed
+    end
+
+    it "forwards #resend onto the resend inbox (via #post_resend)" do
+      listener.resend(["edited line"])
+
+      expect(frontend.instance_variable_get(:@resend_inbox).pop).to eq(["edited line"])
+    end
+
+    it "forwards #compose_written to Compose#wrote" do
+      allow(frontend.compose).to receive(:wrote)
+
+      listener.compose_written(["draft line"], 5)
+
+      expect(frontend.compose).to have_received(:wrote).with(["draft line"], 5)
+    end
+
+    it "forwards #compose_abandoned to Compose#abandoned" do
+      allow(frontend.compose).to receive(:abandoned)
+
+      listener.compose_abandoned(9)
+
+      expect(frontend.compose).to have_received(:abandoned).with(9)
+    end
+  end
+end
