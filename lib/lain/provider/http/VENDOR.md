@@ -40,7 +40,9 @@ each was missing from the brief): `thinking.rb`, `tokens.rb`, and the base
 SSE engine `streaming.rb` (`RubyLLM::Streaming`, at the top of `lib/ruby_llm/`,
 NOT under `providers/`) — it defines `stream_response`, which
 `Provider#complete(&block)` calls, and needs the `event_stream_parser` gem
-(added to the gemspec for exactly this). `models.rb`'s five
+(added to the gemspec for exactly this). It has since grown Lain's own
+`post_stream`/`flush_stream`, which the non-vendored transports depend on —
+see **Streaming** below before re-vendoring it. `models.rb`'s five
 streaming-usage-extraction methods were folded into
 `providers/anthropic/streaming.rb` rather than resurrecting a `Models` file
 — see that file's header.
@@ -126,6 +128,18 @@ deltas via `StreamAccumulator`, yields each `Chunk`, and returns one
 against a WebMock-delivered event stream, including the error-event path
 (an `overloaded_error` raises `OverloadedError` through
 `Streaming::ErrorHandling` and Anthropic's own `parse_streaming_error`).
+
+`Provider#complete(&block)` is **not** the path Lain runs, though:
+`Anthropic::Transport#stream` and `Bedrock::Transport#stream` (outside this
+directory) post their own requests and install their own `on_data` handler.
+They reach the vendored engine through `Streaming#post_stream`, which assigns
+the handler and then runs `flush_stream` — a blank line fed to the parser once
+the body is read, because the SSE spec discards an event that never got its
+terminating blank line, and a discarded `event: error` is an overload recorded
+as a successful empty turn. Both methods are Lain's, not upstream's: a
+re-vendor that drops them reintroduces that swallow in the two transports with
+nothing failing in this directory. `streaming.rb`'s header lists all three
+Lain-side additions.
 
 What this branch still deliberately does **not** do (all `transport`'s job,
 stacked on top): stop `parse_completion_response` from flattening text/thinking

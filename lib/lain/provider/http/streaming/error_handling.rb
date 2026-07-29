@@ -15,6 +15,12 @@
 # endorses -- two distinct modules mixed into one class -- not one oversized
 # module reopened across files. `stream_debug` / `faraday_1?` resolve back
 # through `self` onto {Streaming}, which is mixed into the same provider.
+#
+# Changed from upstream: `error_chunk?`/`handle_error_chunk` are deleted. They
+# read a raw `on_data` fragment and crashed on an error event split across two
+# of them; `handle_error_event`, reached through the buffering parser and
+# {Streaming#flush_stream}, covers both the fragmented and the truncated shape.
+# See streaming.rb's header.
 
 module Lain
   class Provider
@@ -24,21 +30,12 @@ module Lain
         module ErrorHandling
           module_function
 
-          def error_chunk?(chunk)
-            chunk.start_with?("event: error")
-          end
-
           def json_error_payload?(chunk)
             chunk.lstrip.start_with?("{") && chunk.include?('"error"')
           end
 
           def handle_json_error_chunk(chunk, env)
             parse_error_from_json(chunk, env, "Failed to parse JSON error chunk")
-          end
-
-          def handle_error_chunk(chunk, env)
-            error_data = chunk.split("\n")[1].delete_prefix("data: ")
-            parse_error_from_json(error_data, env, "Failed to parse error chunk")
           end
 
           def handle_failed_response(chunk, buffer, env)

@@ -359,4 +359,30 @@ RSpec.describe Lain::Provider::Anthropic do
       expect(retries.first.reason).to eq("Lain::Provider::HTTP::OverloadedError")
     end
   end
+
+  # This is the path `lain chat` runs: Provider::Anthropic -> Transport#stream,
+  # which installs its own on_data handler and never calls the vendored
+  # `stream_response`. A server that writes `event: error` and then drops the
+  # connection leaves that event one blank line short, and the SSE spec has the
+  # parser DISCARD an incomplete event -- so with no end-of-stream flush an
+  # overload arrives as a successful, empty turn. Real transport + webmock,
+  # because the swallow lives in the on_data/parser interplay a transport double
+  # cannot show.
+  describe "a streamed error event truncated before its terminating blank line" do
+    let(:truncated_error_sse) do
+      %(event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}\n)
+    end
+
+    it "raises the typed error rather than returning an empty response" do
+      stub_request(:post, "https://api.anthropic.com/v1/messages")
+        .to_return(status: 200, body: truncated_error_sse, headers: { "Content-Type" => "text/event-stream" })
+      returned = nil
+
+      # 529, not merely APIStatusError: the flushed event must still reach
+      # Anthropic's parse_streaming_error, which is what maps overloaded_error.
+      expect { returned = described_class.new(api_key: "test").complete(request(stream: true)) }
+        .to raise_error(an_instance_of(described_class::APIStatusError).and(having_attributes(status: 529))),
+            -> { "no error raised: complete returned content=#{returned&.content.inspect} -- an empty turn" }
+    end
+  end
 end

@@ -28,22 +28,14 @@ module Lain
 
         # One streaming round trip. Each parsed SSE `data` Hash is yielded to
         # `on_event`; the vendored `build_on_data_handler` still owns the byte
-        # feeding and the failed-response path.
+        # feeding and the failed-response path, and {Streaming#post_stream}
+        # owns the end-of-stream flush -- without which an `event: error` the
+        # server never terminated with a blank line stays buffered in the SSE
+        # parser and the overload comes back as an empty, successful turn.
         def stream(payload, headers = {}, &on_event)
-          connection.post(stream_url, payload) do |req|
+          on_data = build_on_data_handler { |data| yield data if data.is_a?(Hash) }
+          post_stream(connection, stream_url, payload, on_data) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
-            install_on_data(req, &on_event)
-          end
-        end
-
-        private
-
-        def install_on_data(req, &on_event)
-          handler = build_on_data_handler { |data| yield(data) if data.is_a?(Hash) }
-          if faraday_1?
-            req.options[:on_data] = handler
-          else
-            req.options.on_data = handler
           end
         end
       end

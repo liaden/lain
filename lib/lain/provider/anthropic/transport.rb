@@ -46,27 +46,29 @@ module Lain
         # `on_event`; the vendored `build_on_data_handler` still owns the byte
         # feeding and the failed-response path, and each raw chunk is teed to
         # `frame` on the way in.
+        #
+        # It posts through the vendored {Streaming#post_stream} rather than
+        # `connection.post` directly, because that is what performs the
+        # end-of-stream flush -- without it an `event: error` the server never
+        # terminated stays in the SSE parser and the overload is handed back as
+        # an empty, apparently successful turn. `flush:` is the UNTEED handler:
+        # the flush's blank line is ours, so it must not reach the WAL frame,
+        # which records only what came off the wire.
         def stream(payload, headers = {}, frame: Spool::Null::Frame.new, &on_event)
-          connection.post(stream_url, payload) do |req|
+          handler = sse_handler(&on_event)
+          post_stream(connection, stream_url, payload, tee_chunks(handler, frame), flush: handler) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
             # On the context so RetryTap#retry_block reaches THIS request's frame
             # off the retried env, exactly as the sync path already does.
             req.options.context = (req.options.context || {}).merge(wal_frame: frame)
-            install_on_data(req, frame, &on_event)
           end
           frame.close(complete: true)
         end
 
         private
 
-        def install_on_data(req, frame, &on_event)
-          handler = build_on_data_handler { |data| yield(data) if data.is_a?(Hash) }
-          teed = tee_chunks(handler, frame)
-          if faraday_1?
-            req.options[:on_data] = teed
-          else
-            req.options.on_data = teed
-          end
+        def sse_handler(&on_event)
+          build_on_data_handler { |data| yield data if data.is_a?(Hash) }
         end
 
         # Wraps the SSE on_data handler so the verbatim wire chunk reaches the WAL

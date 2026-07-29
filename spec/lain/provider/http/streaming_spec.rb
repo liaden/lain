@@ -43,17 +43,38 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
     Struct.new(:id, :max_tokens).new("claude-opus-4-8", 1024)
   end
 
-  before do
-    stub_request(:post, "https://api.anthropic.com/v1/messages")
-      .to_return(status: 200, headers: { "Content-Type" => "text/event-stream" }, body: sse_body)
+  def error_event_data
+    %({"type":"error","error":{"type":"overloaded_error","message":"overloaded"}})
   end
 
+  def stub_stream(body, content_type: "text/event-stream")
+    stub_request(:post, "https://api.anthropic.com/v1/messages")
+      .to_return(status: 200, headers: { "Content-Type" => content_type }, body:)
+  end
+
+  # Faraday's `on_data` proc, fed one fragment at a time.
+  def deliver_fragments(*fragments)
+    env = Faraday::Env.from(status: 200)
+    handler = anthropic_provider.send(:handle_stream) { |_chunk| nil }
+    fragments.each { |fragment| handler.call(fragment, 0, env) }
+  end
+
+  def swallowed(returned)
+    "no error raised: complete returned content=#{returned&.content.inspect}, " \
+      "input_tokens=#{returned&.input_tokens.inspect} -- a successful empty turn"
+  end
+
+  def complete_streaming(&block)
+    anthropic_provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
+                                tools: {}, temperature: nil, model:) { |chunk| block&.call(chunk) }
+  end
+
+  before { stub_stream(sse_body) }
+
   it "streams a block through Provider#complete rather than raising" do
-    provider = anthropic_provider
     yielded = []
 
-    message = provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                tools: {}, temperature: nil, model:) { |chunk| yielded << chunk }
+    message = complete_streaming { |chunk| yielded << chunk }
 
     expect(message).to be_a(Lain::Provider::HTTP::Message)
     expect(message.content).to eq("Hello world")
@@ -62,8 +83,7 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
   end
 
   it "accumulates streamed usage onto the returned message" do
-    message = anthropic_provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                          tools: {}, temperature: nil, model:) { |_chunk| nil }
+    message = complete_streaming
 
     expect(message.input_tokens).to eq(10)
     expect(message.output_tokens).to eq(5)
@@ -72,15 +92,99 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
   it "raises a typed error when the stream carries an error event" do
     # Exercises Streaming::ErrorHandling dispatching to Anthropic::Streaming's
     # own parse_streaming_error (overloaded_error -> 529 -> OverloadedError).
-    stub_request(:post, "https://api.anthropic.com/v1/messages").to_return(
-      status: 200,
-      headers: { "Content-Type" => "text/event-stream" },
-      body: %(event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}\n\n)
-    )
+    stub_stream("event: error\ndata: #{error_event_data}\n\n")
 
-    expect do
-      anthropic_provider.complete([Lain::Provider::HTTP::Message.new(role: :user, content: "hi")],
-                                  tools: {}, temperature: nil, model:) { |_chunk| nil }
-    end.to raise_error(Lain::Provider::HTTP::OverloadedError)
+    expect { complete_streaming }.to raise_error(Lain::Provider::HTTP::OverloadedError)
+  end
+
+  # The bug class a stubbed body cannot reach: WebMock's Net::HTTP adapter hands
+  # the whole body to `read_body` in ONE yield, so `on_data` never sees a
+  # fragment boundary. The boundary is what matters here -- the parser
+  # `handle_stream` closes over is the thing that buffers across feeds -- so
+  # drive that proc directly, as the Ollama streaming spec replays scripted byte
+  # chunks through its transport double.
+  it "raises the typed error when the error event is split across two chunks" do
+    expect { deliver_fragments("event: error\n", "data: #{error_event_data}\n\n") }
+      .to raise_error(Lain::Provider::HTTP::OverloadedError)
+  end
+
+  it "raises a typed error for a bare JSON error body with no SSE framing" do
+    # The non-SSE shape: some 200 responses carry a raw error object instead of
+    # an event stream, which never reaches the parser and so keeps its own
+    # branch (json_error_payload?).
+    stub_stream(error_event_data, content_type: "application/json")
+
+    expect { complete_streaming }.to raise_error(Lain::Provider::HTTP::OverloadedError)
+  end
+
+  # Truncation, not fragmentation: the server writes the error event and closes
+  # the connection before the terminating blank line. The SSE spec says an
+  # incomplete event is discarded, so without an end-of-stream flush the parser
+  # drops it -- and a dropped error is not an exception, it is a successful
+  # empty turn written into the Journal. The failure message names that, because
+  # "nothing was raised" is the whole defect.
+  it "raises the typed error when the stream ends before the event's blank line" do
+    stub_stream("event: error\ndata: #{error_event_data}\n")
+    returned = nil
+
+    expect { returned = complete_streaming }.to raise_error(Lain::Provider::HTTP::OverloadedError),
+                                                -> { swallowed(returned) }
+  end
+
+  it "raises the typed error when the stream ends with no trailing newline at all" do
+    stub_stream("event: error\ndata: #{error_event_data}")
+    returned = nil
+
+    expect { returned = complete_streaming }.to raise_error(Lain::Provider::HTTP::OverloadedError),
+                                                -> { swallowed(returned) }
+  end
+
+  # `post_stream`'s `flush:` keyword, pinned on its own contract rather than
+  # only through the four ResponseWal examples that fail downstream when it is
+  # wrong. A caller that WRAPS the handler to record what arrives -- Anthropic
+  # tees every wire chunk into the WAL frame -- must name the unwrapped handler,
+  # because the flush's blank line is ours and never came off the wire. The
+  # default is the unsafe direction for exactly that caller, so the next
+  # transport to wrap a handler should fail here, not in someone else's spec.
+  describe "#post_stream flush:" do
+    def streaming_host
+      Class.new { include Lain::Provider::HTTP::Streaming }.new
+    end
+
+    # Stands in for Faraday: runs the request-shaping block, returns a response
+    # carrying an env, and never touches the network.
+    def stub_connection
+      response = Struct.new(:env).new(Faraday::Env.from(status: 200))
+      Class.new do
+        define_method(:post) do |_url, _payload, &configure|
+          configure.call(Struct.new(:options, :headers).new(Faraday::RequestOptions.new, {}))
+          response
+        end
+      end.new
+    end
+
+    def post_through(on_data, **flush)
+      streaming_host.send(:post_stream, stub_connection, "/v1/messages", "{}", on_data, **flush)
+    end
+
+    def recording_wrapper(recorded)
+      proc { |chunk, *_rest| recorded << chunk }
+    end
+
+    it "keeps the flush out of a wrapper named by flush:" do
+      recorded = []
+
+      post_through(recording_wrapper(recorded), flush: ->(_chunk, _bytes, _env) {})
+
+      expect(recorded).to be_empty
+    end
+
+    it "sends the flush through the wrapper when flush: is omitted" do
+      recorded = []
+
+      post_through(recording_wrapper(recorded))
+
+      expect(recorded).to eq(["\n\n"])
+    end
   end
 end

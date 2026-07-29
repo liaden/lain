@@ -150,4 +150,29 @@ RSpec.describe Lain::Provider::Bedrock do
       expect(retries.first.attempt).to eq(1)
     end
   end
+
+  # Same hole as {Anthropic::Transport}, same cause: {Transport#stream} installs
+  # its own on_data handler, and an `event: error` the server never terminated
+  # with a blank line is DISCARDED by the SSE parser -- an overload recorded as a
+  # successful, empty turn. Real transport + webmock, for the same reason the
+  # Mantle endpoint group above uses one.
+  describe "a streamed error event truncated before its terminating blank line" do
+    let(:endpoint) { "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages" }
+
+    let(:truncated_error_sse) do
+      %(event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}\n)
+    end
+
+    it "raises the typed error rather than returning an empty response" do
+      stub_request(:post, endpoint)
+        .to_return(status: 200, body: truncated_error_sse, headers: { "Content-Type" => "text/event-stream" })
+      returned = nil
+
+      # 529 pins the classification too: the flushed event must still go through
+      # Anthropic's parse_streaming_error, which Mantle's SSE shares.
+      expect { returned = described_class.new(api_key: "tok", region: "us-east-1").complete(request(stream: true)) }
+        .to raise_error(an_instance_of(described_class::APIStatusError).and(having_attributes(status: 529))),
+            -> { "no error raised: complete returned content=#{returned&.content.inspect} -- an empty turn" }
+    end
+  end
 end
