@@ -147,6 +147,18 @@ module Lain
     # session's approvals (rebuilding the registry from journaled
     # `gate_decision` records is a later card's job, not this one's).
     #
+    # == The stage boundary is NOT this class's guarantee
+    #
+    # {Epic::Stage}'s rule -- a stage's gates may only open once every earlier
+    # stage of the same epic has its sign-off partition drained -- is enforced on
+    # the POLICY seam ({Gate::Policy#decide}), not here. {#call} is public and
+    # skips it entirely, so calling this directly can approve an
+    # implementation-stage artifact while that epic's research sign-offs are
+    # still parked. That is deliberate: the check needs {Epic}, and pulling the
+    # epic vocabulary into this class (and thus next to {Gherkin::Approval},
+    # which gates a Criteria and knows nothing of epics) would cost more than the
+    # hole does. Go through a Policy if you want the boundary.
+    #
     # == The asker duck, and where attribution lives
     #
     # The gate depends only on `#ask(question) -> Promise`. Who answered rides
@@ -327,3 +339,4 @@ module Lain
     end
   end
 end
+require_relative "gate/policy"
