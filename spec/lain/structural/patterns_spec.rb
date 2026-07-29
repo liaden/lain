@@ -14,12 +14,6 @@ RSpec.describe Lain::Structural::Patterns do
       expect(patterns).to eq(["$RECV.save", "save"])
     end
 
-    it "covers every ag_helpers-derived query for :ruby" do
-      %i[method_def class_def subclass_of mixin instance_var method_call].each do |query|
-        expect { described_class.fetch(:ruby, query) }.not_to raise_error
-      end
-    end
-
     it "resolves class_def to the class and module forms" do
       expect(described_class.fetch(:ruby, :class_def)).to eq(["class $N", "module $N"])
     end
@@ -39,6 +33,22 @@ RSpec.describe Lain::Structural::Patterns do
     it "resolves instance_var to the bare ivar form, and interpolates a literal name" do
       expect(described_class.fetch(:ruby, :instance_var)).to eq(["@$VAR"])
       expect(described_class.fetch(:ruby, :instance_var, name: "digest")).to eq(["@digest"])
+    end
+
+    it "keeps a value with backslash sequences verbatim across every interpolation path " \
+       "(gsub block form, no backreference expansion)" do
+      value = 'Foo\1Bar'
+
+      expect(described_class.fetch(:ruby, :method_def, name: value))
+        .to eq(["def #{value}($$$A)", "def self.#{value}($$$A)"])
+      expect(described_class.fetch(:ruby, :method_call, name: value))
+        .to eq(["$RECV.#{value}", value])
+      expect(described_class.fetch(:ruby, :subclass_of, super: value))
+        .to eq(["class $C < #{value}"])
+      expect(described_class.fetch(:ruby, :mixin, name: value))
+        .to eq(["include #{value}", "extend #{value}"])
+      expect(described_class.fetch(:ruby, :instance_var, name: value))
+        .to eq(["@#{value}"])
     end
 
     it "raises a named error for an unknown query, rather than returning nil" do

@@ -23,7 +23,8 @@
 ; a `constant` node, distinct from the `identifier` of a local assignment.
 (assignment left: (constant) @definition.constant)
 
-; A method call with an explicit receiver method name. A bare identifier is NOT
-; captured as a reference: at this grammar level a local read and a paren-less
-; call are indistinguishable, so binding it would flood definitions' own names.
+; A method call: any `call` node, receiver or not -- `foo.bar`, `bar(1)`, and
+; `bar { }` are all `call`; a paren-less, block-less bare identifier (`bar`)
+; is NOT, because at this grammar level it is indistinguishable from a local
+; variable read, so binding it would flood definitions' own names.
 (call method: (identifier) @reference.call)

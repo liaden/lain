@@ -40,7 +40,12 @@ module Lain
               raise ArgumentError, "#{self.class} has no metavariable for #{key.inspect}, " \
                                    "expected one of #{metavariables.keys.inspect}"
             end
-            pattern.gsub(token, value)
+            # Block form: the replacement is verbatim, no backslash-sequence
+            # expansion. The two-arg form treats \1, \&, etc. in +value+ as
+            # backreferences into the (nonexistent, since +token+ is a plain
+            # String) match groups, silently mangling any value that happens
+            # to contain one.
+            pattern.gsub(token) { value }
           end
         end
       end
