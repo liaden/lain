@@ -46,6 +46,9 @@ RSpec.describe Lain::CLI::JournalTee do
     expect(JSON.parse(journal_lines.first)).to include("type" => "turn_usage")
   end
 
+  # Also the "no consumer, no cost" AC: a caller that wires exactly what it
+  # always wired (journal, channel) sees byte-identical behavior -- the N-sink
+  # generalization is additive, never a behavior change for the 2-sink case.
   it "delivers to both legs while both are open" do
     channel = Lain::Channel::DropOldest.new
     tee = described_class.new(journal, channel)
@@ -71,19 +74,6 @@ RSpec.describe Lain::CLI::JournalTee do
     tee = described_class.new(journal, channel)
 
     expect { tee << { "type" => "turn_usage" } }.to raise_error(ArgumentError, "boom")
-  end
-
-  # AC: no consumer, no cost -- a caller that wires exactly what it always
-  # wired (journal, channel) sees byte-identical behavior; the N-sink
-  # generalization is additive, never a behavior change for the 2-sink case.
-  it "with no extra sink constructed, behaves exactly as the fixed journal+channel pair always did" do
-    channel = Lain::Channel::DropOldest.new
-    tee = described_class.new(journal, channel)
-
-    tee << { "type" => "turn_usage" }
-
-    expect(journal_lines.size).to eq(1)
-    expect(channel.size).to eq(1)
   end
 
   # AC: the tee fans out.

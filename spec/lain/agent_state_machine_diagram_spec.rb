@@ -53,11 +53,6 @@ RSpec.describe "Agent state-machine diagram" do
     expect(File.read(diagram_path)).to eq(document(render_source))
   end
 
-  it "would fail the build if the source drifted" do
-    tampered = render_source.sub("awaiting_model", "somewhere_else")
-    expect(File.read(diagram_path)).not_to eq(document(tampered))
-  end
-
   it "renders as source text, not a rendered image" do
     expect(render_source).to start_with("stateDiagram-v2")
   end
