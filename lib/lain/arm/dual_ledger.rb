@@ -29,18 +29,17 @@ module Lain
       #   the step's progress reading; defaults to {DEFAULT_PROGRESS}
       # @param replanner [#call] `call(ledger:, task:) -> LedgerState`, how a
       #   stall rewrites the plan; defaults to {DEFAULT_REPLANNER}
+      # @param instrument [Instrument] times the whole drive and prices the run's
+      #   journal -- the same measuring collaborator every arm is injected with
       def initialize(name: "dual-ledger", stall_limit: DEFAULT_STALL_LIMIT, max_steps: DEFAULT_MAX_STEPS,
-                     progress: DEFAULT_PROGRESS, replanner: DEFAULT_REPLANNER,
-                     clock: SingleThread::DEFAULT_CLOCK, price_book: PriceBook.default,
+                     progress: DEFAULT_PROGRESS, replanner: DEFAULT_REPLANNER, instrument: Instrument.new,
                      journal_factory: -> { Channel.new }, handoff: Isolation::WorkerHandoff::Null)
-        super(name:)
-        @handoff = handoff
+        super(name:, handoff:)
         @stall_limit = Integer(stall_limit)
         @max_steps = Integer(max_steps)
         @progress = progress
         @replanner = replanner
-        @clock = clock
-        @price_book = price_book
+        @instrument = instrument
         @journal_factory = journal_factory
       end
 
@@ -50,43 +49,37 @@ module Lain
       # `call(journal:, workspace:, timeline:) -> Agent`. This arm parametrizes
       # the child Workspace (the ledger) per step and threads the Timeline so the
       # conversation stays one linear, fully-reachable head.
+      #
+      # The lease lifecycle is the base's {Arm#leased} bracket.
+      #
+      # `Instrument#price` DRAINS the journal, which discards this arm's
+      # `ledger_transition` records from the Run's own view -- the returned {Run}
+      # carries a priced Ledger, not the raw transition stream. To count
+      # replans/stalls per run, inject a `journal_factory:` that TEES pushes into
+      # a caller-held sink (see the arm spec's `recording_journal`, and
+      # {Bench::ArmSweep}, which counts replans exactly that way) so the
+      # transitions are observed before that drain empties the channel.
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        lease = isolation.acquire(name)
-        journal = @journal_factory.call
-        state = nil
-        elapsed = timed { state = drive(task, spawn_seam:, grader:, journal:, planner: build_planner(journal)) }
-        graded = graded_run(state, grader:, elapsed:, ledger: price(journal))
-        @handoff.reclaim(lease, worker_id: name)
-        graded
-      ensure
-        # See {SingleThread#run} for the reclaim/surrender split: `#surrender`
-        # tries to anchor the worker's commits before the release destroys them
-        # and restores a parent left mid-merge, on every path INCLUDING the
-        # `Exception` classes no rescue here sees, and it spawns nothing.
-        @handoff.surrender(lease, worker_id: name)
+        leased(isolation:) do
+          journal = @journal_factory.call
+          # The planner build sits INSIDE the span, where it has always been.
+          # `elapsed` is a recorded bench number, so dropping a phase out of it
+          # would make past dual-ledger runs incomparable to future ones --
+          # narrowing the span is a methodology change with its own card, never a
+          # refactor's side effect.
+          elapsed, state = @instrument.timed do
+            drive(task, spawn_seam:, grader:, journal:, planner: build_planner(journal))
+          end
+          # Price BEFORE grading -- see {SingleThread#run}.
+          ledger = @instrument.price(journal)
+          Run.new(arm: name, timeline: state.timeline, grade: grader.grade(state.timeline), elapsed:, ledger:)
+        end
       end
 
       private
 
       def build_planner(journal)
         Planner.new(transition_listener: Journaling.new(journal))
-      end
-
-      # Fold the run's journal into a priced {Ledger} -- turn_usage records only;
-      # the ledger_transition records ride along and are ignored here.
-      #
-      # NOTE for B12: this DRAINS the journal, which discards the transition
-      # records from the Run's own view -- the returned {Run} carries a priced
-      # Ledger, not the raw transition stream. To count replans/stalls per run,
-      # inject a `journal_factory:` that TEES pushes into a caller-held sink
-      # (see the arm spec's `recording_journal`) so the transitions are observed
-      # before this drain empties the channel.
-      def price(journal)
-        Ledger.from_journal(journal.drain.map(&:to_journal), price_book: @price_book)
-      end
-
-      def graded_run(state, grader:, elapsed:, ledger:)
-        Run.new(arm: name, timeline: state.timeline, grade: grader.grade(state.timeline), elapsed:, ledger:)
       end
 
       # The outer loop, as a small mutable {Loop} folded step by step until it
@@ -127,12 +120,6 @@ module Lain
 
       def workspace_for(ledger)
         Workspace.empty.with(ledger.to_reminder)
-      end
-
-      def timed
-        started = @clock.call
-        yield
-        @clock.call - started
       end
     end
 

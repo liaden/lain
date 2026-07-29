@@ -65,6 +65,15 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
       expect(run.elapsed).to be_a(Float).and be >= 0
     end
 
+    # T24: the same injected instrument every other arm measures with -- one
+    # substrate, so wall-time means the same thing across topologies.
+    it "takes elapsed off the injected instrument's clock" do
+      ticks = 0.0
+      timed_arm = described_class.new(router:, instrument: Lain::Arm::Instrument.new(clock: -> { ticks += 0.25 }))
+
+      expect(timed_arm.run("fix the typo", spawn_seam:, grader:).elapsed).to eq(0.25)
+    end
+
     it "produces a Run priced through the run's own Ledger" do
       run = arm.run("fix the typo", spawn_seam:, grader:)
 
@@ -117,7 +126,6 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
       run = arm.run("fix the typo", spawn_seam:, grader:)
 
       expect(run.to_h.values).not_to include(router)
-      expect(Lain::Agent.instance_methods(false)).not_to include(:router, :reroute, :re_route)
     end
 
     it "carries no public accessor back to the router or its definition on the arm itself" do

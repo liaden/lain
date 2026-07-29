@@ -200,7 +200,11 @@ RSpec.describe Lain::Bench::CLI do
       book = Lain::PriceBook.new
       arms_report(price_book: book)
 
-      expect(built_arms.map { |arm| arm.instance_variable_get(:@price_book) }).to all(be(book))
+      # Each arm prices through its injected {Arm::Instrument}, so the book has
+      # to be the one THAT is carrying -- reading the arm for a price book of its
+      # own would pass on an arm that prices nothing.
+      instruments = built_arms.map { |arm| arm.instance_variable_get(:@instrument) }
+      expect(instruments.map(&:price_book)).to all(be(book))
     end
   end
 

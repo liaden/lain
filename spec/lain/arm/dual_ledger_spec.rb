@@ -73,6 +73,16 @@ RSpec.describe Lain::Arm::DualLedger do
     it "records a non-negative wall-clock elapsed" do
       expect(run.elapsed).to be_a(Float).and be >= 0
     end
+
+    # T24: the outer loop's whole drive is timed by the SAME injected instrument
+    # the other arms use -- and the block's value (the settled Loop) comes back
+    # from it, so no mutable capture is needed to reach it.
+    it "takes elapsed off the injected instrument's clock, over the whole drive" do
+      ticks = 0.0
+      arm = described_class.new(instrument: Lain::Arm::Instrument.new(clock: -> { ticks += 0.25 }))
+
+      expect(arm.run("summarize the paper", spawn_seam:, grader: settling_grader).elapsed).to eq(0.25)
+    end
   end
 
   # AC1: The ledger rides the Workspace, sent-not-stored.

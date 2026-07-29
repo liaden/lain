@@ -26,7 +26,7 @@ module Lain
     #
     # == The two process metrics, and their honest fidelity
     #
-    # REPLANS/STALLS are sourced exactly as {Arm::DualLedger}'s own `#price` NOTE
+    # REPLANS/STALLS are sourced exactly as {Arm::DualLedger#run}'s own NOTE
     # prescribes: the Run drains its journal for pricing and discards the
     # `ledger_transition` records, so the sweep injects a `journal_factory:` that
     # TEES every pushed event into a caller-held sink BEFORE that drain, and
@@ -126,20 +126,25 @@ module Lain
 
       def spawn_seam = @spawn_seam ||= @recordings.seam
 
+      # One instrument for all three arms: replayed history spends no wall-time
+      # (ZERO_CLOCK), and every arm prices through the sweep's own book -- which
+      # is exactly the cross-arm agreement {Arm::Instrument} exists to make
+      # structural.
+      def instrument = @instrument ||= Arm::Instrument.new(clock: ZERO_CLOCK, price_book: @price_book)
+
       def single_thread
-        @single_thread ||= Arm::SingleThread.new(name: "single-thread", clock: ZERO_CLOCK, price_book: @price_book)
+        @single_thread ||= Arm::SingleThread.new(name: "single-thread", instrument:)
       end
 
       def orchestrator
         @orchestrator ||= Arm::OrchestratorWorker.new(
-          name: "orchestrator-worker", clock: ZERO_CLOCK, price_book: @price_book,
+          name: "orchestrator-worker", instrument:,
           decompose: ->(task) { @recordings.subtasks_for(task) }
         )
       end
 
       def dual_ledger(sink)
-        Arm::DualLedger.new(name: "dual-ledger", clock: ZERO_CLOCK, price_book: @price_book,
-                            journal_factory: -> { Tee.new(sink) })
+        Arm::DualLedger.new(name: "dual-ledger", instrument:, journal_factory: -> { Tee.new(sink) })
       end
 
       # Grades a Timeline by parsing its produced files into the Trajectory

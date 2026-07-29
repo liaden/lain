@@ -31,10 +31,6 @@ module Lain
     # {Ledger}/{Compare} price every run through the real per-model rate --
     # nothing here averages or masks a cross-model run into one blended number.
     class AdaptiveRouter < Arm
-      # Monotonic wall-clock, the same choice and rationale as
-      # {SingleThread::DEFAULT_CLOCK}.
-      DEFAULT_CLOCK = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
-
       # @param name [String] the arm's label
       # @param router [#ask, #model, #usage] the live tier answering
       #   `definition`'s question -- {Oracle::Router.heuristic} or a model tier
@@ -44,17 +40,14 @@ module Lain
       #   matches, the same pairing {Oracle::Recorded::Journaling} already
       #   requires of ITS caller. Defaults to the heuristic-tier definition,
       #   matching {Oracle::Router.heuristic}'s own default tier.
-      # @param clock [#call] returns a monotonic seconds Float; injectable
-      # @param price_book [PriceBook] prices the run's journal into dollars
+      # @param instrument [Instrument] times the ask and prices the journal --
+      #   the same measuring collaborator every arm is injected with
       def initialize(router:, name: "adaptive-router", definition: Oracle::Router.definition,
-                     clock: DEFAULT_CLOCK, price_book: PriceBook.default,
-                     handoff: Isolation::WorkerHandoff::Null)
-        super(name:)
-        @handoff = handoff
+                     instrument: Instrument.new, handoff: Isolation::WorkerHandoff::Null)
+        super(name:, handoff:)
         @router = router
         @definition = definition
-        @clock = clock
-        @price_book = price_book
+        @instrument = instrument
       end
 
       # Route, THEN spawn, THEN run -- in that order, and only that order.
@@ -70,18 +63,13 @@ module Lain
       # @param isolation [#acquire] the injected backend (Null by default)
       # @return [Run]
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
-        lease = isolation.acquire(name)
-        journal = Channel.new
-        routed = route(task, journal:)
-        graded = graded_run(task, spawn_seam:, grader:, journal:, routed:)
-        @handoff.reclaim(lease, worker_id: name)
-        graded
-      ensure
-        # See {SingleThread#run} for the reclaim/surrender split: `#surrender`
-        # tries to anchor the worker's commits before the release destroys them
-        # and restores a parent left mid-merge, on every path INCLUDING the
-        # `Exception` classes no rescue here sees, and it spawns nothing.
-        @handoff.surrender(lease, worker_id: name)
+        leased(isolation:) do
+          journal = Channel.new
+          # Route, THEN run, as two statements: the ordering IS this arm's claim,
+          # so it is not left to argument-evaluation order to imply.
+          routed = route(task, journal:)
+          graded_run(task, spawn_seam:, grader:, journal:, routed:)
+        end
       end
 
       private
@@ -102,17 +90,11 @@ module Lain
       # executing the routed run) so neither method carries both.
       def graded_run(task, spawn_seam:, grader:, journal:, routed:)
         agent = spawn_seam.call(journal:, model: routed.model, template: routed.template)
-        elapsed = timed { agent.ask(task) }
-        ledger = Ledger.from_journal(journal.drain.map(&:to_journal), price_book: @price_book)
+        elapsed, = @instrument.timed { agent.ask(task) }
+        # Price BEFORE grading -- see {SingleThread#run}: `#price` drains, and
+        # inside an argument list evaluation order would reverse the two.
+        ledger = @instrument.price(journal)
         Run.new(arm: name, timeline: agent.timeline, grade: grader.grade(agent.timeline), elapsed:, ledger:)
-      end
-
-      # Run the block, returning the monotonic seconds it took -- see
-      # {SingleThread#timed} for the same shape and rationale.
-      def timed
-        started = @clock.call
-        yield
-        @clock.call - started
       end
     end
   end

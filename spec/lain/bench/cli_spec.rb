@@ -35,7 +35,7 @@ end
 # `isolation:` at all would still read as one defaulting to NoIsolation.
 # Required, that driver is a loud ArgumentError instead.
 class IsolationRecordingArm < Lain::Arm::SingleThread
-  def initialize(name:, clock: -> { 0.0 })
+  def initialize(name:, instrument: Lain::Arm::Instrument.new(clock: -> { 0.0 }))
     super
     @isolations = []
   end

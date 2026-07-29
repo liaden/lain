@@ -122,6 +122,67 @@ RSpec.describe Lain::Arm do
     end
   end
 
+  # The lease bracket lives ONCE, on the base: acquire under the arm's own name,
+  # run the arm's work under the lease, reclaim on the settled path, and
+  # surrender from an `ensure` whatever happened -- the sequencing every
+  # concrete arm's isolation spec pins, in the one place it is written.
+  describe "#leased -- the lease bracket, once" do
+    # A toy arm whose body is NOTHING but the bracket, so what is pinned here is
+    # the bracket rather than any topology's work.
+    bracket_arm = Class.new(described_class) do
+      def initialize(work:, **)
+        super(**)
+        @work = work
+      end
+
+      def run(_task = "t", isolation: Lain::Arm::NoIsolation, **)
+        leased(isolation:) { |lease| @work.call(lease) }
+      end
+    end
+
+    let(:handoff) { instance_double(Lain::Isolation::WorkerHandoff) }
+    let(:lease) { Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> {}) }
+    let(:isolation) { instance_double(Lain::Isolation::Null, acquire: lease) }
+
+    before do
+      allow(handoff).to receive_messages(reclaim: Lain::Isolation::WorkerHandoff::Report.nothing,
+                                         surrender: Lain::Isolation::WorkerHandoff::Report.nothing)
+    end
+
+    it "acquires under the arm's own name and yields the lease to the work" do
+      seen = []
+      bracket_arm.new(name: "bracketed", work: ->(acquired) { seen << acquired }, handoff:).run(isolation:)
+
+      expect(isolation).to have_received(:acquire).with("bracketed")
+      expect(seen).to eq([lease])
+    end
+
+    it "hands the block's own value back, so each arm assembles its own Run" do
+      arm = bracket_arm.new(name: "bracketed", work: ->(_lease) { :the_arms_own_run }, handoff:)
+
+      expect(arm.run(isolation:)).to eq(:the_arms_own_run)
+    end
+
+    it "reclaims on the settled path, then surrenders -- both under the arm's name" do
+      bracket_arm.new(name: "bracketed", work: ->(_lease) { :done }, handoff:).run(isolation:)
+
+      expect(handoff).to have_received(:reclaim).with(lease, worker_id: "bracketed").ordered
+      expect(handoff).to have_received(:surrender).with(lease, worker_id: "bracketed").ordered
+    end
+
+    # Interrupt and Async::Cancel are `< Exception`, so no rescue sees them --
+    # the `ensure` is the only thing that gets to try to anchor the work before
+    # the checkout is reclaimed.
+    it "surrenders and never reclaims when the work raises past every rescue" do
+      arm = bracket_arm.new(name: "bracketed", work: ->(_lease) { raise Interrupt }, handoff:)
+
+      expect { arm.run(isolation:) }.to raise_error(Interrupt)
+
+      expect(handoff).to have_received(:surrender).with(lease, worker_id: "bracketed")
+      expect(handoff).not_to have_received(:reclaim)
+    end
+  end
+
   describe "the default isolation backend leases nothing" do
     it "acquires a lease whose release is a no-op and whose worker_env is nil" do
       lease = Lain::Arm::NoIsolation.acquire("worker-1")

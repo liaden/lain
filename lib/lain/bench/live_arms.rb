@@ -56,9 +56,13 @@ module Lain
       #   split; the linear arms have nothing to decompose
       # @return [Array<Lain::Arm>] single-thread control first
       def self.build(price_book: PriceBook.default, decompose: DEFAULT_DECOMPOSE)
-        [Arm::SingleThread.new(name: "single-thread", price_book:),
-         Arm::OrchestratorWorker.new(name: "orchestrator-worker", price_book:, decompose:),
-         Arm::DualLedger.new(name: "dual-ledger", price_book:)]
+        # One instrument, so all three arms report wall-time off the same clock
+        # and dollars off the same book -- the comparison is only a comparison
+        # if the measuring is shared.
+        instrument = Arm::Instrument.new(price_book:)
+        [Arm::SingleThread.new(name: "single-thread", instrument:),
+         Arm::OrchestratorWorker.new(name: "orchestrator-worker", instrument:, decompose:),
+         Arm::DualLedger.new(name: "dual-ledger", instrument:)]
       end
     end
   end

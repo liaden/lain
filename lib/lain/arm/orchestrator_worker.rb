@@ -30,20 +30,19 @@ module Lain
       # @param name [String] the arm's label
       # @param decompose [#call] `call(task) -> Array<String>` subtasks
       # @param synthesis [Synthesis] the fan-in fold
-      # @param clock [#call] monotonic seconds, injectable for deterministic specs
-      # @param price_book [PriceBook] prices the run's journal into dollars
+      # @param instrument [Instrument] times the fan-out and prices the workers'
+      #   merged journals -- the same measuring collaborator every arm is
+      #   injected with
       # @param handoff [#reclaim] what a finished worker's completion point does
       #   with its lease -- hand the work back, resolve a conflict, release. The
       #   Null releases and nothing else, so an unwired arm is unchanged.
       def initialize(name: "orchestrator-worker", decompose: DEFAULT_DECOMPOSE,
-                     synthesis: Synthesis.new, clock: SingleThread::DEFAULT_CLOCK,
-                     price_book: PriceBook.default, handoff: Isolation::WorkerHandoff::Null)
-        super(name:)
+                     synthesis: Synthesis.new, instrument: Instrument.new,
+                     handoff: Isolation::WorkerHandoff::Null)
+        super(name:, handoff:)
         @decompose = decompose
         @synthesis = synthesis
-        @clock = clock
-        @price_book = price_book
-        @handoff = handoff
+        @instrument = instrument
       end
 
       # Decompose, fan the workers out, fold their results, and hand back the
@@ -62,10 +61,13 @@ module Lain
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
         lead = Timeline.empty(store: Store.new)
                        .commit(role: :user, content: [{ "type" => "text", "text" => task }])
-        results = nil
-        elapsed = timed { results = fan_out(@decompose.call(task), spawn_seam:, isolation:, lead:) }
+        elapsed, results = @instrument.timed { fan_out(@decompose.call(task), spawn_seam:, isolation:, lead:) }
         folded = @synthesis.fold(lead, results)
-        ledger = Ledger.from_journal(folded.ledger_entries, price_book: @price_book)
+        # Priced as its own statement before grading, matching the other arms.
+        # `#price_records` folds records the workers already drained, so nothing
+        # here depends on the order -- reading the same way everywhere is the
+        # point, since the three arms that DO drain cannot afford to differ.
+        ledger = @instrument.price_records(folded.ledger_entries)
         Run.new(arm: name, timeline: folded.timeline, grade: grader.grade(folded.timeline), elapsed:, ledger:)
       end
 
@@ -86,6 +88,13 @@ module Lain
       # lease, and release the lease whatever happens. The lease is this method's
       # whole responsibility; {#settle} owns the spawn and the outcome.
       #
+      # NOT the base's {Arm#leased}, and deliberately so: that bracket is the
+      # WHOLE-RUN one, keyed on the arm's name and discarding the reclaim's
+      # Report. This one leases per WORKER and FOLDS that Report into the
+      # worker's own result, so making the base serve both would mean a
+      # result-shaping hook out there -- the one thing `arm.rb`'s seam comment
+      # rules out. Same `@handoff`, two honest brackets.
+      #
       # `#reclaim` runs in the BODY, not the ensure, because its
       # {Isolation::WorkerHandoff::Report} is folded into the worker's result --
       # and it can, because {#settle} catches its own failures.
@@ -103,7 +112,13 @@ module Lain
       def work(subtask, index, spawn_seam:, isolation:, lead:)
         worker_id = "#{name}-worker-#{index}"
         lease = isolation.acquire(worker_id)
-        handed(settle(subtask, spawn_seam:, lease:, lead:), @handoff.reclaim(lease, worker_id:))
+        # Two named locals, in the order they must happen: the worker settles
+        # first, THEN its still-live lease is handed back. Packed as arguments
+        # this read as one expression whose correctness rested on Ruby's
+        # left-to-right argument evaluation.
+        result = settle(subtask, spawn_seam:, lease:, lead:)
+        report = @handoff.reclaim(lease, worker_id:)
+        handed(result, report)
       ensure
         @handoff.surrender(lease, worker_id:)
       end
@@ -141,13 +156,6 @@ module Lain
       # `journal` is bound before any spawn can raise (settle's first line), so
       # both the ok and rescue paths always have it -- no nil-guard.
       def drain(journal) = journal.drain.map(&:to_journal)
-
-      # Run the block, returning the monotonic seconds it took.
-      def timed
-        started = @clock.call
-        yield
-        @clock.call - started
-      end
     end
   end
 end

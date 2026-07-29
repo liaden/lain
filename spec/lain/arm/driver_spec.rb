@@ -31,9 +31,7 @@ RSpec.describe Lain::Arm::Driver do
   describe "#report — arms compared distributionally" do
     subject(:report) { described_class.new(arms, tasks:, spawn_seam:, grader:).report }
 
-    it "is a String -- never touches stdout" do
-      expect(report).to be_a(String)
-    end
+    it("is a String -- never touches stdout") { expect(report).to be_a(String) }
 
     it "reports grader, tokens, and wall-time distributions" do
       expect(report).to include("grader score").and include("total tokens").and include("wall-time")
@@ -45,11 +43,12 @@ RSpec.describe Lain::Arm::Driver do
     end
 
     it "folds each arm's suite into a distribution of n = the number of tasks" do
-      # Every metric section carries a per-arm `n` column == the suite size.
-      # A metric section is: title, header row, dashed rule, then one row per arm.
-      section = report.split("\n\n").find { |block| block.start_with?("total tokens") }
-      counts = section.lines.drop(3).map { |line| line.split(/\s{2,}/)[1] }
-      expect(counts).to all(eq(tasks.size.to_s))
+      # `n` is the suite size, and it sits beside the arm's own name on that
+      # arm's row. Matched as a regex NEXT TO the name rather than by column
+      # index, so this pins the number the Driver folded rather than
+      # {Compare::Table}'s current column layout.
+      expect(report).to match(/^single-thread\s+#{tasks.size}\s/)
+      expect(report).to match(/^control-b\s+#{tasks.size}\s/)
     end
 
     it "renders byte-identical reports when the same instance reports twice" do

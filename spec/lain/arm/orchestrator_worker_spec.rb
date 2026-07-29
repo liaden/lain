@@ -122,6 +122,31 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
       expect(run.elapsed).to be_a(Float).and be >= 0
     end
 
+    # T24: the fan-out is timed by the SAME injected instrument every other arm
+    # measures with, and its return pair carries the workers' results back --
+    # so the fan-out's value needs no mutable capture to escape the clock.
+    it "takes elapsed off the injected instrument's clock, over the fan-out" do
+      ticks = 0.0
+      arm = described_class.new(instrument: Lain::Arm::Instrument.new(clock: -> { ticks += 0.25 }))
+
+      expect(arm.run(task, spawn_seam: worker_seam, grader:).elapsed).to eq(0.25)
+    end
+
+    # Every worker's spend is priced through the instrument's OWN price book --
+    # the fan-out folds three journals, and all three take that one rate.
+    it "prices every worker through the instrument's price book" do
+      # Nothing in the map, so every model falls to a free fallback: what is
+      # pinned is WHOSE book priced the run, not the rate.
+      zero = Lain::Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
+      free = Lain::PriceBook.new(prices: {}, fallback: zero)
+      arm = described_class.new(instrument: Lain::Arm::Instrument.new(price_book: free))
+
+      priced = arm.run(task, spawn_seam: worker_seam, grader:)
+
+      expect(priced.total_tokens).to eq(120)
+      expect(priced.compare_run.cost).to eq(0)
+    end
+
     # The reachability contract (arm.rb): the returned head must price EVERY
     # worker the arm paid for. Three workers at 40 tokens each -> 120, not the
     # single-worker undercount a naive fan-out would report.

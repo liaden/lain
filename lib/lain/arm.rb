@@ -13,6 +13,12 @@ module Lain
   # spawn-time router -- those are ONE topology's needs and live on THAT concrete
   # arm, never on this base. That is the {Tool::SpawnPolicy} altitude mistake this
   # seam exists to avoid: a base that grows every child's knobs stops being a seam.
+  #
+  # What the base DOES own is the lease LIFECYCLE -- {#leased}, one bracket for
+  # every arm -- because acquire/reclaim/surrender is an obligation of the seam
+  # itself, identical across topologies, and getting it wrong destroys a worker's
+  # commits. What an arm MEASURES is the other half of that line and is INJECTED
+  # rather than inherited: see {Instrument}.
   class Arm
     # The default isolation backend. The real seam is a later card
     # (`Isolation#acquire(worker_id) -> a Lease carrying a WorkerEnv + #release`);
@@ -88,9 +94,18 @@ module Lain
       def score = grade.score
     end
 
+    # `handoff:` lives here and NOT on a child because {#leased} -- the base's
+    # own lease bracket -- is its only caller: an object holds what it uses. It
+    # is the one thing the seam's own lifecycle needs, which is a different claim
+    # from "every child's knobs"; how an arm MEASURES (its {Instrument}) belongs
+    # to the arms that measure, and stays out here.
+    #
     # @param name [String] what this arm is, in reports and Compare::Run names
-    def initialize(name:)
+    # @param handoff [#reclaim, #surrender] the worker-completion point: hand the
+    #   work back, resolve a conflict, release. The Null releases and nothing else.
+    def initialize(name:, handoff: Isolation::WorkerHandoff::Null)
       @name = -name.to_s
+      @handoff = handoff
     end
 
     attr_reader :name
@@ -118,12 +133,46 @@ module Lain
       raise NotImplementedError,
             "#{self.class} must implement #run(task, spawn_seam:, isolation:, grader:) -> Arm::Run"
     end
+
+    private
+
+    # The lease bracket, written ONCE. Acquire from the injected backend under
+    # this arm's own name, run the arm's work under the lease, and hand the
+    # worker back -- returning whatever the block returned, so each arm still
+    # assembles its own {Run}.
+    #
+    # `#reclaim` is the SETTLED completion (handback, resolver, release) and runs
+    # only when the block returned. `#surrender` in the `ensure` is what stops any
+    # exception class from releasing a `--detach`ed checkout without FIRST trying
+    # to anchor the worker's commits to a ref; it also restores a parent left
+    # mid-merge, and it spawns NOTHING, because an unbounded provider round trip
+    # inside an unwinding `ensure` would hold the worktree for as long as the
+    # provider hangs. `Async::Cancel` and `Interrupt` are `< Exception` and reach
+    # no rescue, which is exactly why the attempt lives in an `ensure`. Both
+    # no-op on an already-released lease, so the settled path pays one boolean.
+    #
+    # This is the WHOLE-RUN bracket. {OrchestratorWorker} leases per WORKER and
+    # folds each reclaim's {Isolation::WorkerHandoff::Report} into that worker's
+    # own result, so it keeps its own bracket over the same `@handoff` rather than
+    # growing a result-folding hook out here.
+    #
+    # @param isolation [#acquire] the injected backend
+    # @return [Object] the block's own value
+    def leased(isolation:)
+      lease = isolation.acquire(name)
+      result = yield lease
+      @handoff.reclaim(lease, worker_id: name)
+      result
+    ensure
+      @handoff.surrender(lease, worker_id: name)
+    end
   end
 end
 
 # After the class body: the concrete arm and the driver both reference Arm and
 # Arm::Run, so they load once the class exists (the children-after-the-class-body
 # order effect/handler.rb uses).
+require_relative "arm/instrument"
 require_relative "arm/ledger_state"
 require_relative "arm/single_thread"
 require_relative "arm/adaptive_router"

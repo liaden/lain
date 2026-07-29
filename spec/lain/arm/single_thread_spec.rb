@@ -60,6 +60,32 @@ RSpec.describe Lain::Arm::SingleThread do
     end
   end
 
+  # T24: elapsed and cost come off ONE injected instrument, shared by every arm,
+  # so the two headline bench metrics cannot drift apart per topology.
+  describe "the injected instrument" do
+    it "takes elapsed off the instrument's own clock" do
+      ticks = 0.0
+      instrument = Lain::Arm::Instrument.new(clock: -> { ticks += 0.25 })
+
+      run = described_class.new(instrument:).run("please echo hi", spawn_seam:, grader:)
+
+      expect(run.elapsed).to eq(0.25)
+    end
+
+    it "prices the run through the instrument's own price book" do
+      # Nothing in the map, so every model falls to a free fallback: what is
+      # pinned is WHOSE book priced the run, not the rate.
+      zero = Lain::Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
+      free = Lain::PriceBook.new(prices: {}, fallback: zero)
+      arm = described_class.new(instrument: Lain::Arm::Instrument.new(price_book: free))
+
+      run = arm.run("please echo hi", spawn_seam:, grader:)
+
+      expect(run.total_tokens).to eq(120)
+      expect(run.compare_run.cost).to eq(0)
+    end
+  end
+
   describe "the injected isolation seam" do
     # The REAL Lease, not a stand-in for one: the arm now reclaims on the settled
     # path and surrenders from its `ensure`, so the idempotent-loud contract --

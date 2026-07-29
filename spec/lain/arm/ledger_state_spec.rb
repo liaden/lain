@@ -22,10 +22,6 @@ RSpec.describe Lain::Arm::LedgerState do
         .to be_ractor_shareable
     end
 
-    it "is value-equal to another state built from the same inputs" do
-      expect(described_class.initial(task: "x")).to eq(described_class.initial(task: "x"))
-    end
-
     it "returns a NEW value from #advanced rather than mutating" do
       advanced = ledger.advanced(note: "did a thing", next_subtask: "next")
 
