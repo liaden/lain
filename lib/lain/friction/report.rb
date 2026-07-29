@@ -79,12 +79,17 @@ module Lain
         rephrase_lines + steering_lines + rewrite_lines
       end
 
+      # ONE projection over the entries, injected into both graders that read
+      # it: each would otherwise build its own over the same in-memory array,
+      # and this class already needs a third for {#retried_tool_name}.
       def call_index
         @call_index ||= Grader::ToolCallIndex.new(@entries)
       end
 
       def rephrase_lines
-        Grader::FrustrationRepair.new(oracle: @oracle).signals(@entries).map { |signal| rephrase_line(signal) }
+        Grader::FrustrationRepair.new(oracle: @oracle)
+                                 .signals(@entries, tool_call_index: call_index)
+                                 .map { |signal| rephrase_line(signal) }
       end
 
       def rephrase_line(signal)
@@ -114,7 +119,7 @@ module Lain
       end
 
       def steering_lines
-        Grader::ToolSteering.new(@entries).flags.map { |flag| steering_line(flag) }
+        Grader::ToolSteering.new(@entries, tool_call_index: call_index).flags.map { |flag| steering_line(flag) }
       rescue Grader::ToolSteering::NoDeclaredTools
         []
       end

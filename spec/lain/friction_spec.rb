@@ -84,6 +84,26 @@ RSpec.describe Lain::Friction::Report do
     end
   end
 
+  # T18: one report, one projection. FrustrationRepair and ToolSteering read the
+  # SAME ToolCallIndex over the same records, so the Report builds it once and
+  # injects it -- three parses of one in-memory array was the defect.
+  describe "one render builds one ToolCallIndex" do
+    it "builds exactly one index across a render that finds both grader signals" do
+      allow(Lain::Grader::ToolCallIndex).to receive(:new).and_call_original
+
+      described_class.new(fixture("frustrating")).render
+
+      expect(Lain::Grader::ToolCallIndex).to have_received(:new).once
+    end
+
+    it "renders the same report as it did when each grader parsed the records itself" do
+      report = described_class.new(fixture("frustrating")).render
+
+      expect(report).to start_with("2 friction signal(s):")
+      expect(report).to include("rephrase_loop", "bash", "tool_steering: grep")
+    end
+  end
+
   describe "entries given as an already-materialized Array (the Journal.records duck)" do
     it "works the same as a lazy File.foreach enumerator" do
       entries = Lain::Journal.records(fixture("frustrating")).to_a

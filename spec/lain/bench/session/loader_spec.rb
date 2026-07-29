@@ -127,6 +127,35 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
+  # T18: seven collaborators each ask this Loader for their own record type, so
+  # the discrimination is a partition built once at initialize, not a linear
+  # re-scan of the whole record array per caller.
+  describe "the record partition" do
+    subject(:loader) { described_class.new(entries.to_a) }
+
+    it "answers of_type from one partition built at initialize, not a fresh scan per call" do
+      expect(loader.send(:of_type, "turn")).to be(loader.send(:of_type, "turn"))
+    end
+
+    it "still answers exactly the records of that type, in file order" do
+      turns = loader.send(:of_type, "turn")
+
+      expect(turns.map { |record| record["type"] }.uniq).to eq(["turn"])
+      expect(turns.map { |record| record.fetch("digest") }).to eq(agent.timeline.to_a.map(&:digest))
+    end
+
+    it "answers [] for a type no record in this journal carries" do
+      expect(loader.send(:of_type, "nothing_writes_this")).to eq([])
+    end
+
+    # One Array per type is now SHARED by every caller asking for it, so a
+    # mutation would corrupt the other readers' view rather than staying local.
+    it "hands out frozen groups, the empty answer included" do
+      expect(loader.send(:of_type, "turn")).to be_frozen
+      expect(loader.send(:of_type, "nothing_writes_this")).to be_frozen
+    end
+  end
+
   # T14: the live session format's open sessions and resume chains. Built
   # directly from {Lain::SessionRecord} and {Lain::Event::ChainWriter}, not
   # through {Lain::Bench::Session.write} -- these shapes are the live

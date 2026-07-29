@@ -72,18 +72,25 @@ module Lain
 
       # @param entries [Enumerable<Hash, String>] the {Journal.records} duck,
       #   the same input {ToolCallIndex} takes
+      # @param tool_call_index [ToolCallIndex] see {#signals}
       # @return [Grade] score = fraction of signals repaired (1.0 with none
       #   detected -- nothing went wrong is a clean pass, not a zero)
-      def grade(entries)
-        found = signals(entries)
+      def grade(entries, tool_call_index: ToolCallIndex.new(entries))
+        found = signals(entries, tool_call_index:)
         Grade.new(score: score(found), pass: found.all?(&:repaired), why: explain(found))
       end
 
       # @param entries [Enumerable<Hash, String>]
+      # @param tool_call_index [ToolCallIndex] the projection to detect over,
+      #   built from `entries` when absent. A caller folding several graders
+      #   over ONE record array ({Friction::Report}) already holds the index
+      #   this one would build, and parsing the same in-memory records again
+      #   per grader is the whole cost the keyword removes.
       # @return [Array<Signal>] every detected signal, turn order, frozen
-      def signals(entries)
-        index = ToolCallIndex.new(entries)
-        index.calls.flat_map { |digest, calls| calls.filter_map { |call| detect(index, digest, call) } }.freeze
+      def signals(entries, tool_call_index: ToolCallIndex.new(entries))
+        tool_call_index.calls.flat_map do |digest, calls|
+          calls.filter_map { |call| detect(tool_call_index, digest, call) }
+        end.freeze
       end
 
       private

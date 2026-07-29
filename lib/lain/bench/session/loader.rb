@@ -38,6 +38,13 @@ module Lain
                                "pass resolve: ->(basename) { entries for that file } to Loader.new"
         end
 
+        # {#of_type}'s answer for a type this journal holds no record of. One
+        # shared empty rather than a fresh Array per miss -- private, unlike
+        # {DEFAULT_CONTEXT_FACTORY} and {NO_RESOLVER}, which callers inject
+        # against; this one is only a private method's default.
+        NO_RECORDS = [].freeze
+        private_constant :NO_RECORDS
+
         # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck;
         #   entries it answers nil for are somebody else's records and skipped
         # @param context_factory [#call] builds the Context from the recorded
@@ -46,6 +53,13 @@ module Lain
         #   header names `resumed_from`; defaults to {NO_RESOLVER}.
         def initialize(entries, context_factory: DEFAULT_CONTEXT_FACTORY, resolve: NO_RESOLVER)
           @records = entries.filter_map { |entry| Journal.parse(entry) }
+          # Seven collaborators each want ONE record type out of this array, so
+          # the discrimination is a single partition rather than a linear
+          # re-scan per caller. File order survives inside each group, and each
+          # group is frozen: one Array is now SHARED by every caller asking for
+          # that type, so a collaborator that mutated one would corrupt the
+          # others' view -- it says so loudly instead.
+          @by_type = @records.group_by { |record| record["type"].to_s }.each_value(&:freeze).freeze
           @context_factory = context_factory
           @resolve = resolve
         end
@@ -115,9 +129,7 @@ module Lain
 
         private
 
-        def of_type(type)
-          @records.select { |record| record["type"].to_s == type }
-        end
+        def of_type(type) = @by_type.fetch(type.to_s, NO_RECORDS)
 
         def header
           @header ||= sole(HEADER_TYPE, "#{HEADER_TYPE.inspect} header records in one journal; " \

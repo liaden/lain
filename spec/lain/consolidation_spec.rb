@@ -120,6 +120,36 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
+  # T18: grouping is one walk per turn. chain_root climbs the render-parent edge
+  # to the top for EVERY turn, so without a digest=>root memo shared across the
+  # one from_records call an N-turn lineage re-reads the root's parent edge N
+  # times -- quadratic over an array already in memory. The memo lives for the
+  # call and no longer.
+  describe "grouping walks each parent edge once per from_records call" do
+    let(:deep) do
+      root = Lain::Timeline.empty(store:).commit(role: :user, content: text("deep task"),
+                                                 meta: { "spawned_from" => main.head_digest })
+      (1..11).inject(root) { |chain, step| chain.commit(role: :assistant, content: text("step #{step}")) }
+    end
+
+    it "reads each turn's parent edge once, not once per descendant" do
+      records = turn_records(deep)
+      records.each { |record| allow(record).to receive(:[]).and_call_original }
+
+      grouped = Lain::Consolidation::Lineage.from_records(records)
+
+      expect(grouped.map(&:turn_count)).to eq([12])
+      expect(records).to all(have_received(:[]).with("parent").at_most(:twice))
+    end
+
+    it "still groups a lineage under its chain root, and drops a headless tail" do
+      headless = turn_records(deep).drop(1)
+
+      expect(Lain::Consolidation::Lineage.from_records(turn_records(deep)).map(&:root)).to eq([deep.to_a.first.digest])
+      expect(Lain::Consolidation::Lineage.from_records(headless)).to eq([])
+    end
+  end
+
   describe "#dry_run" do
     it "names the lineages that would be clerked without touching the provider" do
       provider = Lain::Provider::Mock.new(responses: [])

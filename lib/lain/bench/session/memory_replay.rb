@@ -42,25 +42,41 @@ module Lain
         # the assistant commit and strictly before perform_tools.
         def replayed
           index = Memory::Index.empty
-          roots = @turns.to_h do |record|
+          roots = write_calls.to_h do |record, calls|
             snapshot = index.root
-            index = writes(record).inject(index) { |replay, item| replay.write(item) }
+            index = writes(calls).inject(index) { |replay, item| replay.write(item) }
             [record.fetch("digest"), snapshot]
           end
           RecordedMemory.new(roots:, index:)
         end
 
-        def writes(record)
-          write_calls(record).map do |block|
+        def writes(calls)
+          calls.map do |block|
             input = block.fetch("input")
             Memory::Item.new(id: input.fetch("id"), description: input.fetch("description"),
                              body: input.fetch("body"))
           end
         end
 
+        # Every turn paired with the write calls that replay, selected ONCE for
+        # the whole pass: the fold ({#replayed}) and the coverage envelope
+        # ({#write_bearing}) read the same blocks out of the same records, and
+        # re-selecting per reader re-scanned every turn's content twice.
+        #
+        # An Array of pairs, NOT a digest-keyed Hash: a rewound session
+        # journals the same turn digest more than once by design (the scribe
+        # re-records the chain after each `rewound`, and
+        # {SessionRecord::Replay#turns} hands those straight here), so keying
+        # by digest would drop an occurrence's writes and under-report
+        # {#write_bearing} -- a wrong count, reported silently. Pairs also keep
+        # {#writes} free of any membership precondition.
+        def write_calls
+          @write_calls ||= @turns.map { |record| [record, replayable(record)] }
+        end
+
         # `== false`, not negation: a tool_use with no recorded result (nil)
         # never executed, so it must not replay any more than an errored one.
-        def write_calls(record)
+        def replayable(record)
           blocks(record).select do |block|
             block["type"] == "tool_use" && block["name"] == "memory_write" && outcomes[block["id"]] == false
           end
@@ -98,7 +114,7 @@ module Lain
         end
 
         def write_bearing
-          @turns.select { |record| write_calls(record).any? }.map { |record| record.fetch("digest") }
+          write_calls.select { |_record, calls| calls.any? }.map { |record, _calls| record.fetch("digest") }
         end
 
         def agree!(record, memory)

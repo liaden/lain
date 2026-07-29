@@ -176,6 +176,26 @@ RSpec.describe Lain::Grader::FrustrationRepair do
     end
   end
 
+  # T18: a caller folding several graders over ONE record array
+  # (Friction::Report) already holds the projection they share, so it can hand
+  # it in rather than pay for a second parse of the same in-memory records.
+  describe "an injected ToolCallIndex" do
+    it "detects from the injected index instead of building its own" do
+      entries = fixture_entries("rephrase_loop")
+      injected = Lain::Grader::ToolCallIndex.new(entries)
+      allow(Lain::Grader::ToolCallIndex).to receive(:new).and_call_original
+
+      found = described_class.new.signals(entries, tool_call_index: injected)
+
+      expect(found.map(&:turn_digest)).to eq([fixture_digests("rephrase_loop").fetch("turn_ik")])
+      expect(Lain::Grader::ToolCallIndex).not_to have_received(:new)
+    end
+
+    it "builds its own when none is injected" do
+      expect(described_class.new.signals(fixture_entries("rephrase_loop")).size).to eq(1)
+    end
+  end
+
   describe "Signal#caused_by is always an Array (multi-element attribution contract)" do
     it "never answers a bare digest, even when exactly one cause was found" do
       entries = fixture_entries("rephrase_loop")

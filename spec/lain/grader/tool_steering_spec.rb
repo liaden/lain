@@ -88,6 +88,26 @@ RSpec.describe Lain::Grader::ToolSteering do
     end
   end
 
+  # T18: a caller folding several graders over ONE record array (Friction::Report)
+  # already holds the projection both of them read, so it can hand it in rather
+  # than pay for a second parse of the same in-memory records.
+  describe "an injected ToolCallIndex" do
+    it "counts selections from the injected index instead of building its own" do
+      entries = fixture("over_selected").to_a
+      injected = Lain::Grader::ToolCallIndex.new(entries)
+      allow(Lain::Grader::ToolCallIndex).to receive(:new).and_call_original
+
+      flags = described_class.new(entries, tool_call_index: injected).flags
+
+      expect(flags.map(&:name)).to eq(["dosing_lookup"])
+      expect(Lain::Grader::ToolCallIndex).not_to have_received(:new)
+    end
+
+    it "builds its own when none is injected" do
+      expect(described_class.new(fixture("over_selected")).flags.map(&:name)).to eq(["dosing_lookup"])
+    end
+  end
+
   # Mutation hazard: the real production path (Journal.records(File.foreach(path)))
   # parses `name`/`description` with JSON.parse, which freezes NOTHING -- the same
   # situation {Grader::ToolCallIndex::Call} solves by running every field through

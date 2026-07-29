@@ -49,9 +49,15 @@ module Lain
       #   `"turn"` records (observed calls)
       # @param threshold [Numeric] the over-selection ratio a tool must clear
       #   to be flagged
-      def initialize(entries, threshold: DEFAULT_THRESHOLD)
+      # @param tool_call_index [ToolCallIndex] the observed-selection
+      #   projection, built from `entries` when absent. A caller folding
+      #   several graders over ONE record array ({Friction::Report}) already
+      #   holds the index this one would build, and parsing the same
+      #   in-memory records again per grader is the cost the keyword removes.
+      def initialize(entries, threshold: DEFAULT_THRESHOLD, tool_call_index: ToolCallIndex.new(entries))
         @entries = entries
         @threshold = threshold.to_f
+        @tool_call_index = tool_call_index
       end
 
       # @return [Array<Flag>] declared tools selected more than `threshold`x
@@ -127,7 +133,7 @@ module Lain
       end
 
       def observed_counts
-        @observed_counts ||= ToolCallIndex.new(@entries).each.map(&:name).tally.freeze
+        @observed_counts ||= @tool_call_index.each.map(&:name).tally.freeze
       end
 
       def total_calls

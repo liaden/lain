@@ -163,26 +163,44 @@ module Lain
       # to tell a subagent root from a main-chain one.
       def self.from_records(records)
         by_digest = records.to_h { |record| [record["digest"], record] }
-        records.group_by { |record| chain_root(record["digest"], by_digest) }
+        # digest => its chain root, for THIS call and no longer: every turn in
+        # a lineage climbs the same edges, so without it an N-turn chain walks
+        # to the root N times. Scoped to the call because it is an artifact of
+        # this record slice, never a cache that outlives it.
+        roots = {}
+        records.group_by { |record| chain_root(record["digest"], by_digest, roots) }
                .filter_map { |root, turns| new(root:, turns:) if subagent_root?(by_digest[root]) }
       end
 
-      # Walk the single render-parent edge to the chain's root. Two ways the
-      # walk ends: a MID-walk record whose `parent` is nil is a genuine chain
-      # root; a record whose `parent` names a digest OUTSIDE this slice ends the
-      # walk on that missing digest, whose `by_digest` lookup is nil -- so
-      # {from_records} groups the lineage under a root that is not
-      # {subagent_root?} and DROPS it (a headless tail from a partial journal is
-      # never spawned, rather than crashing).
-      def self.chain_root(digest, by_digest)
-        record = by_digest[digest]
-        while record && record["parent"]
-          digest = record["parent"]
-          record = by_digest[digest]
+      # Walk the single render-parent edge to the chain's root, memoizing every
+      # digest the walk touches. Three ways the walk ends: a MID-walk record
+      # whose `parent` is nil is a genuine chain root; a record whose `parent`
+      # names a digest OUTSIDE this slice ends the walk on that missing digest,
+      # whose `by_digest` lookup is nil -- so {from_records} groups the lineage
+      # under a root that is not {subagent_root?} and DROPS it (a headless tail
+      # from a partial journal is never spawned, rather than crashing); and a
+      # digest an earlier walk already resolved answers from `roots` without
+      # climbing past it.
+      def self.chain_root(digest, by_digest, roots)
+        walked = []
+        while (parent = unresolved_parent(digest, by_digest, roots))
+          walked << digest
+          digest = parent
         end
-        digest
+        walked << digest # the terminal too, so a later walk stops here
+        root = roots.fetch(digest, digest)
+        walked.each { |step| roots[step] = root }
+        root
       end
       private_class_method :chain_root
+
+      # The parent to climb to, or nil where the walk ends: at an already
+      # resolved digest, at a record outside this slice, or at a genuine root.
+      def self.unresolved_parent(digest, by_digest, roots)
+        record = by_digest[digest]
+        record && !roots.key?(digest) ? record["parent"] : nil
+      end
+      private_class_method :unresolved_parent
 
       def self.subagent_root?(record)
         !record.nil? && !record.dig("meta", "spawned_from").nil?
