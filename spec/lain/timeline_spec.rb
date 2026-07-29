@@ -203,6 +203,29 @@ RSpec.describe Lain::Timeline do
 
       include_examples "a meet semilattice under ancestry", population: -> { population }
     end
+
+    # T20: #meet builds `mine` (self's ancestry, a Hash) eagerly -- that side
+    # has to see everything to answer "is this digest in my history" at all,
+    # so it is not this card's target. The OTHER side is a #find over
+    # `other`'s ancestors, and #find can stop the moment it lands on a digest
+    # already in `mine` -- it should never keep walking toward other's own
+    # root once the shared history is reached.
+    describe "cost: the find-side stops at the shared history" do
+      it "walks past the answer only on the eager side, never on the find-side" do
+        base_length = 60
+        base = (1...base_length).inject(say(timeline, "0")) { |acc, i| say(acc, i.to_s) }
+        mine = say(base, "mine")
+        other = say(base, "other")
+
+        tally = count_store_fetches(store) { mine.meet(other) }
+
+        # mine's side walks its own whole chain (base_length + its own commit)
+        # to build the membership hash; the find-side sees only other's own
+        # head, then the shared base head where the two chains meet -- two
+        # fetches, never another base_length worth.
+        expect(tally.count).to eq(base_length + 1 + 2)
+      end
+    end
   end
 
   # TL-3 ruling (Joel, 2026-07-17): three operators, each honest about its
@@ -389,6 +412,29 @@ RSpec.describe Lain::Timeline do
       end
     end
 
+    # T20: Kahn's algorithm processes its frontier as a FIFO queue. Array#shift
+    # is O(n) per call -- it has to shift every remaining element down -- so
+    # popping the frontier that way turns one sweep over the union graph into
+    # O(n^2). An index cursor over the same Array (append at the tail, advance
+    # a pointer instead of removing the head) keeps the sweep O(n), the same
+    # explicit-frontier-no-recursion discipline {CausalAncestry#closure}
+    # already documents for its own worklist.
+    describe "topological_rank" do
+      # A TracePoint rather than `expect_any_instance_of(Array).not_to
+      # receive(:shift)`: RSpec/AnyInstance is a real cop here (its Exclude
+      # list names five specs, and this file is not one of them), and a
+      # TracePoint proves the same fact -- no C-level Array#shift call
+      # happens anywhere during the walk -- without adding a new offense.
+      it "advances its frontier with an index cursor, never Array#shift" do
+        shifted = false
+        tracer = TracePoint.new(:c_call) { |call| shifted = true if call.method_id == :shift }
+
+        tracer.enable { trunk.dominator_meet(post_join, dominators:) }
+
+        expect(shifted).to be(false)
+      end
+    end
+
     describe "against brute force (small random union graphs)" do
       # Kept to ~a dozen events so exhaustive root-to-node path enumeration
       # stays tractable.
@@ -535,6 +581,41 @@ RSpec.describe Lain::Timeline do
 
     it "puts the empty timeline below everything" do
       expect(timeline.ancestor_of?(child)).to be(true)
+    end
+  end
+
+  # T20: #include? and #ancestor_of? (which delegates to it) used to
+  # materialize the whole ancestor chain before asking whether the digest was
+  # among it -- correct, but paid for the far side of the chain even when the
+  # answer sat one hop from head. `store_fetch_count` is what tells the two
+  # shapes apart: a bounded walk and a full re-walk return the identical
+  # `true`/`false`, so only the COST of getting there can distinguish them.
+  describe "cost: the walk stops at the answer" do
+    let(:chain_length) { 60 }
+    let(:chain) { (1...chain_length).inject(say(timeline, "0")) { |acc, i| say(acc, i.to_s) } }
+
+    it "include? visits only the turns between head and a nearby answer" do
+      target = chain.rewind.head_digest # one hop below head
+
+      tally = count_store_fetches(store) { chain.include?(target) }
+
+      expect(tally.count).to eq(2)
+    end
+
+    it "include? still walks the whole chain when the digest is genuinely absent" do
+      chain # build the chain before arming the tally -- #commit's own fetches are not this walk's cost
+
+      tally = count_store_fetches(store) { chain.include?("blake3:absent") }
+
+      expect(tally.count).to eq(chain_length)
+    end
+
+    it "ancestor_of? visits only the turns between head and a nearby answer" do
+      near_ancestor = chain.rewind # one hop below head
+
+      tally = count_store_fetches(store) { near_ancestor.ancestor_of?(chain) }
+
+      expect(tally.count).to eq(2)
     end
   end
 

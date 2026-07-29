@@ -117,8 +117,13 @@ module Lain
       ancestors.count
     end
 
+    # `#find`/`#any?` stop pulling from `#ancestors`' generator the moment the
+    # block is satisfied, unlike `ancestor_digests.include?` -- which builds
+    # the whole mapped Array before asking. That difference is invisible in
+    # the result (both answer the same true/false); it only shows up in how
+    # many turns the walk fetched to get there.
     def include?(digest)
-      ancestor_digests.include?(digest)
+      ancestors.any? { |turn| turn.digest == digest }
     end
 
     def ancestor_of?(other)
@@ -133,8 +138,13 @@ module Lain
     def meet(other)
       same_store!(other)
       mine = ancestor_digests.to_h { |digest| [digest, true] }
-      common = other.ancestor_digests.find { |digest| mine.key?(digest) }
-      checkout(common)
+      # `mine` has to see the whole of self's history to answer "is this
+      # digest in my history" at all -- that side cannot stop early. `other`
+      # can: walking Event objects (not `ancestor_digests`, which maps the
+      # whole Array first) lets `#find` stop the instant it lands on shared
+      # history, instead of continuing on toward other's own root.
+      common = other.ancestors.find { |turn| mine.key?(turn.digest) }
+      checkout(common&.digest)
     end
     alias & meet
 
@@ -397,12 +407,21 @@ module Lain
         # Kahn's algorithm from the virtual root. ANY topological rank
         # serves the intersect walks: an immediate dominator is a proper
         # ancestor, so its rank is strictly smaller.
+        #
+        # The frontier is a queue, but `Array#shift` is O(n) per call -- it
+        # has to shift every remaining element down -- which would turn one
+        # sweep over the union graph into O(n^2). `each_with_index` walks the
+        # same Array by an index cursor instead, and MRI keeps re-reading the
+        # Array's current length each step, so appending to `frontier` inside
+        # the block is exactly "push new work, the cursor reaches it later" --
+        # the append/pop worklist discipline {CausalAncestry#closure} already
+        # documents, minus the pop.
         def topological_rank
           indegree = @preds.transform_values(&:length)
           frontier = [ROOT]
           rank = {}
-          while (node = frontier.shift)
-            rank[node] = rank.length
+          frontier.each_with_index do |node, cursor|
+            rank[node] = cursor
             frontier.concat(released_children(node, indegree))
           end
           rank
