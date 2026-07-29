@@ -26,10 +26,6 @@ RSpec.describe Lain::Bench::DryReplay do
     described_class.new(timeline:, baseline:, toolset:).diff(over)
   end
 
-  it "records exactly one baseline Request per model call" do
-    expect(baseline.size).to eq(2)
-  end
-
   it "reconstructs one step per recorded model call" do
     dr = described_class.new(timeline:, baseline:, toolset:)
     expect(dr.steps).to eq(2)

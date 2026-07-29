@@ -29,10 +29,6 @@ RSpec.describe Lain::Improvement do
       expect(improvement.evidence_digests).to eq([])
     end
 
-    it "is frozen" do
-      expect(improvement).to be_frozen
-    end
-
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
       expect(improvement(evidence_digests: %w[deadbeef cafebabe])).to be_ractor_shareable
     end

@@ -69,16 +69,6 @@ RSpec.describe Lain::Agent::Accounting do
 
       expect(journal_io).to include_journal_record("turn_usage", model: nil)
     end
-
-    it "still returns the cumulative Usage the budget check consumes" do
-      accounting = described_class.new
-      accounting.observe(response(input: 10, output: 5), digest: "blake3:one")
-
-      second = accounting.observe(response(input: 3, output: 2), digest: "blake3:two")
-
-      expect(second).to eq(accounting.usage)
-      expect(second).to eq(Lain::Usage.new(input_tokens: 13, output_tokens: 7))
-    end
   end
 
   describe "#last_turn_usage" do

@@ -120,44 +120,11 @@ RSpec.describe "Lain::Frontend::PromptComposer degradation" do
     end
   end
 
+  # The latch's own arithmetic -- once per contiguous failure run, re-armed by a
+  # successful compose, and the exact message a new fault inside one run does
+  # NOT produce -- is asserted in prompt_composer_spec's "notify" block, over
+  # the same PromptComposer. Only the per-INSTANCE half is unique to this file.
   describe "notify-once semantics" do
-    it "warns once per PromptComposer instance, not per compose" do
-      seen = []
-      p = prompt_for(raising(RuntimeError), notify: ->(m) { seen << m })
-      10.times { p.compose("> ") }
-      expect(seen.size).to eq(1)
-    end
-
-    # Still one outage -- no successful compose in between re-armed the latch.
-    # The recovery case is the one that now reports both; see the intermittent
-    # probe below and prompt_composer_spec's "names the SECOND fault".
-    it "a NEW failure mode inside the SAME failure run is not re-reported" do
-      seen = []
-      mode = 0
-      renderer = ->(**) { mode.zero? ? raise("first") : raise("second") }
-      p = prompt_for(renderer, notify: ->(m) { seen << m })
-      p.compose("> ")
-      mode = 1
-      p.compose("> ")
-      expect(seen).to eq(["warning: prompt renderer unavailable (first)"])
-    end
-
-    # Was: "an INTERMITTENT renderer stays silent forever after the first
-    # failure", which is the bug this probe found. A successful compose
-    # re-arms the latch, so "once" is once per contiguous failure run.
-    it "an INTERMITTENT renderer warns again for each fresh outage" do
-      seen = []
-      fail_now = true
-      renderer = ->(text:, **) { fail_now ? raise("flap") : text }
-      p = prompt_for(renderer, notify: ->(m) { seen << m })
-      p.compose("> ")
-      fail_now = false
-      p.compose("> ")
-      fail_now = true
-      p.compose("> ")
-      expect(seen.size).to eq(2)
-    end
-
     it "two PromptComposer instances each warn -- 'once' is per instance, not per process" do
       seen = []
       2.times { prompt_for(raising(RuntimeError), notify: ->(m) { seen << m }).compose("> ") }

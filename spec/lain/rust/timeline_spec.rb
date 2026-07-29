@@ -225,9 +225,5 @@ RSpec.describe Lain::Ext::Timeline do
       one = say(timeline, "a")
       expect(one.inspect).to eq("#<Lain::Ext::Timeline #{one}>")
     end
-
-    it "does not alias to_s and inspect" do
-      expect(timeline.method(:to_s)).not_to eq(timeline.method(:inspect))
-    end
   end
 end

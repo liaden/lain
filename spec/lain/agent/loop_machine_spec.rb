@@ -40,12 +40,10 @@ RSpec.describe Lain::Agent::LoopMachine do
 
   let(:listener) { recorder.new }
 
+  # The state SET is snapshotted once, in agent_spec.rb's "exposes every
+  # declared state" -- `contain_exactly` over the same `Lain::Agent::STATES`,
+  # which also catches a state this file's `include` would have let through.
   describe "the addition is additive -- nothing legal before is illegal now" do
-    it "declares the new :stalled state without dropping any prior state" do
-      expect(Lain::Agent::STATES).to include(:awaiting_user, :awaiting_model, :awaiting_tools,
-                                             :awaiting_approval, :done, :failed, :stalled)
-    end
-
     it "keeps every pre-B11 stop_reason event landing exactly where it did" do
       # The gate this pins: adding stall/replan must not perturb the StopReason
       # transition table. Asserted here directly so a regression is loud in the

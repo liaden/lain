@@ -121,22 +121,12 @@ RSpec.describe Lain::Compare do
   describe "#report" do
     let(:report) { described_class.new(runs).report }
 
-    it "returns a String, never touching stdout" do
-      expect(report).to be_a(String)
-    end
-
     it "is a scannable table: one labelled row per metric with mean/median/min/max" do
-      ["total tokens", "cache hit", "cost", "score"].each do |label|
+      ["total tokens", "cache hit", "cost", "score", "cache write"].each do |label|
         expect(report.downcase).to include(label)
       end
       expect(report).to include("mean")
       expect(report).to include("median")
-    end
-
-    it "adds a cache-write column alongside the existing four, unchanged" do
-      ["total tokens", "cache hit", "cost", "score", "cache write"].each do |label|
-        expect(report.downcase).to include(label)
-      end
     end
 
     # Pins ORDER, not just presence: METRICS is a Hash, so a mid-hash insertion of a

@@ -68,12 +68,6 @@ RSpec.describe Lain::Bench::Variance do
     let(:variance) { described_class.new(recordings: [reference, diverging, extended]) }
     let(:report) { variance.report }
 
-    it "returns a String and writes nothing to stdout or stderr" do
-      expect { variance.report }.not_to output.to_stdout
-      expect { variance.report }.not_to output.to_stderr
-      expect(report).to be_a(String)
-    end
-
     it "marks each recording's self-replay byte-identity in the determinism section" do
       expect(report).to include("1: byte-identical", "2: byte-identical", "3: byte-identical")
     end

@@ -171,16 +171,15 @@ RSpec.describe Lain::CLI::Backend do
     # Data's generated equality (it falls through to Object#==, i.e. identity)
     # -- comparing the policy "field-for-field" means comparing each field's
     # own value (a strategy's `#label`, and `only`), not `==` on the whole.
-    it "resolves the researcher policy from the catalog: fresh, schema, read + web egress" do
+    # A smoke check only: WHICH tools the researcher holds is pinned at the seam
+    # that renders them (role_prelude_wiring_spec's "keeps the researcher
+    # tree-read-only"), and the next example proves this method is that
+    # catalog's delegate rather than a parallel construction. Re-listing the
+    # only-set here just gave the catalog a second place to drift from.
+    it "resolves the researcher policy from the catalog: fresh prefix, schema posture" do
       resolved = backend.spawn_policy(:researcher)
 
-      # The researcher gained the tier-1 web tools (web_fetch/web_search): a
-      # deliberate capability grant, not tree-mutating, so the role stays a
-      # read-and-fetch researcher with no edit/write. The policy resolves through
-      # Role::Catalog, so this set tracks the catalog rather than a parallel list.
-      expect(resolved.prefix.label).to eq("fresh")
-      expect(resolved.posture.label).to eq("schema")
-      expect(resolved.only).to eq(%w[read_file list_files web_fetch web_search])
+      expect([resolved.prefix.label, resolved.posture.label]).to eq(%w[fresh schema])
     end
 
     it "comes from Role::Catalog.fetch, not a parallel construction -- attenuates identically" do

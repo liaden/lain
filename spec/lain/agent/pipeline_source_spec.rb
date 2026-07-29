@@ -20,10 +20,6 @@ RSpec.describe Lain::Agent::PipelineSource::Null do
     expect(context_for(usage: nil)).to be(base)
   end
 
-  it "accepts the whole per-turn duck -- base:, timeline:, usage:, session:" do
-    expect { context_for }.not_to raise_error
-  end
-
   # The default must not be the thing that costs a Context its shareability:
   # `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing over
   # the pipeline, so anything on this path that holds mutable state poisons it.

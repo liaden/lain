@@ -72,36 +72,7 @@ RSpec.describe Lain::Middleware::Env do
     end
   end
 
-  # The whole point of Env is that Middleware#merge cannot diverge from
-  # Hash#merge without a law breaking: the same associativity + identity the
-  # phases already satisfy, now carried through the whole value.
-  describe "the middleware monoid law holds over Env" do
-    def tag(symbol)
-      Class.new(Lain::Middleware::Base) do
-        define_method(:call) do |env, &downstream|
-          entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
-          exited = downstream.call(entered)
-          exited.merge(trace: exited.fetch(:trace) + [[symbol, :out]])
-        end
-      end.new
-    end
-
-    # Every observation starts from a wrapped Env, so the trace threads through
-    # Env#merge/#fetch rather than Hash's -- that is what "over Env" means.
-    def observe(middleware)
-      middleware.call(Lain::Middleware::Env.wrap({ trace: [] })) { |env| env }.fetch(:trace)
-    end
-
-    let(:pool) { { a: tag(:a), b: tag(:b), c: tag(:c), d: tag(:d) } }
-
-    def compose(sequence)
-      sequence.map { |symbol| pool.fetch(symbol) }.reduce(Lain::Middleware::Identity, :>>)
-    end
-
-    include_examples "a monoid",
-                     operation: ->(a, b) { a >> b },
-                     identity: Lain::Middleware::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
-                     equal: ->(a, b) { observe(a) == observe(b) }
-  end
+  # The monoid law over Env is property-tested once, in middleware_spec.rb --
+  # its `observe` already wraps every observation through Env#merge/#fetch, so
+  # a second copy here doubled the property-test runtime for no new coverage.
 end

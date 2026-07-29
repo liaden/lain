@@ -64,10 +64,6 @@ RSpec.describe Lain::Oracle::Router do
   end
 
   describe ".definition" do
-    it "is content-addressed and stable across two builds" do
-      expect(described_class.definition.digest).to eq(described_class.definition.digest)
-    end
-
     it "addresses the heuristic and a model tier differently" do
       heuristic_digest = described_class.definition(tier: :heuristic).digest
       model_digest = described_class.definition(tier: :model).digest

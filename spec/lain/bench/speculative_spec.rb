@@ -56,12 +56,9 @@ RSpec.describe Lain::Bench::Speculative do
     end
   end
 
-  it "is deterministic: the same branches select the same trajectory twice" do
-    first = speculative.search(base, branches:)
-    second = speculative.search(base, branches:)
-    expect(first.best).to eq(second.best)
-  end
-
+  # The only nondeterminism `#search` could have is which of two equal scores
+  # wins, so THAT is what gets pinned -- rerunning a pure argmax over a fixture
+  # grader proved nothing.
   it "breaks ties toward the earliest branch, so selection is reproducible" do
     tied = [answering("Paris one."), answering("Paris two.")]
     selection = speculative.search(base, branches: tied)

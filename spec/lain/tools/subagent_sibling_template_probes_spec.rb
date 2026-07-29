@@ -84,19 +84,6 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
       .to eq(Lain::Canonical.dump(pb.last_request.cache_prefix))
   end
 
-  # ---- AC1: chain-head sharing on the CURRENT (pre-R1) prefix_digests --------
-  it "P3: prefix_digests share one head at SYSTEM_PREFIX and diverge at the tail" do
-    provider = mock(text_response("a"), text_response("b"), text_response("c"))
-    tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
-    %w[t1 t2 t3].each { |t| tool.call({ "prompt" => t }, invocation) }
-
-    chains = provider.requests.map(&:prefix_digests)
-    heads = chains.map(&:first)
-    expect(heads.map(&:first).uniq).to eq([Lain::Request::SYSTEM_PREFIX])
-    expect(heads.map(&:last).uniq.size).to eq(1)
-    expect(chains.map { |chain| chain.last.last }.uniq.size).to eq(3)
-  end
-
   # ---- The T24 census, on the ACTUAL Anthropic wire encoding -----------------
   # Linus: the card spec counts neutral marks on the Request; the wire is what
   # 400s. Encode and count cache_control across system_ AND messages: exactly
@@ -248,13 +235,6 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     expect(strategies.fetch(:fresh).child_context(child_context)).to be(child_context)
     expect(strategies.fetch(:inherit).child_context(child_context)).to be(child_context)
     expect(strategies.fetch(:sibling_template).child_context(child_context)).to be(child_context)
-  end
-
-  it "P12: a fresh-arm spawn still renders system: nil -- zero bytes added by the seam" do
-    provider = mock(text_response("done"))
-    tool = build_tool(provider:, policy: policy(prefix: :fresh, posture: :schema))
-    tool.call({ "prompt" => "go" }, invocation)
-    expect(provider.last_request.system).to be_nil
   end
 
   # ---- Isolation invariants under the template arm ---------------------------

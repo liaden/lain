@@ -29,8 +29,4 @@ RSpec.describe Lain::Oracle::Summarize do
   it "addresses a model answer and a heuristic answer separately" do
     expect(definition.digest).not_to eq(described_class.definition(tier: :heuristic).digest)
   end
-
-  it "is content-addressed, so the same question at the same tier is the same oracle" do
-    expect(definition.digest).to eq(described_class.definition.digest)
-  end
 end

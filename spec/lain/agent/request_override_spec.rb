@@ -74,9 +74,12 @@ RSpec.describe Lain::Agent::RequestOverride do
       expect(slot.resolve { :rendered }).to be(second)
     end
 
+    # 20 iterations, not 500: the deterministic probe above already stands in
+    # the consume window on purpose, so this one is a cheap corroboration with
+    # real threads, not the assertion the invariant rests on.
     it "loses nothing under a real-thread stress race" do
       second = edited.with(max_tokens: 99)
-      losses = 500.times.count do
+      losses = 20.times.count do
         slot = described_class.new.queue(edited)
         gate = Queue.new
         thread = Thread.new do

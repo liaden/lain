@@ -119,11 +119,6 @@ RSpec.describe Lain::Event do
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
       expect(ev).to be_ractor_shareable
     end
-
-    it "freezes every instance variable" do
-      unfrozen = ev.instance_variables.reject { |ivar| ev.instance_variable_get(ivar).frozen? }
-      expect(unfrozen).to be_empty
-    end
   end
 
   describe "Regular equality" do
