@@ -125,8 +125,20 @@ module Lain
                      skill_slots: self.class.shipped_skill_slots)
         @fills = fills.transform_keys(&:to_s).freeze
         @role_fills = role_fills.transform_keys(&:to_s).freeze
-        @templates = templates
-        @role_templates = role_templates
+        # The trailing #freeze is SHALLOW -- it stops `@templates = ...`, not
+        # `@templates["system"] = ...`. So each template hash is COPIED and
+        # frozen on the way in, which buys exactly one guarantee and no more:
+        # no slot can be grown, replaced or deleted under an already-built
+        # Slots, whatever the caller kept a reference to. It does NOT make this
+        # object immutable -- the template and fill Strings are still the
+        # caller's, `#fills` hands live references to them out, and
+        # `Ractor.shareable?` is false. A copy rather than a freeze in place
+        # because the hash belongs to the caller: {.shipped_templates} shares
+        # one across every instance, and freezing an argument is a mutation of
+        # an object this class does not own. ({SkillSlots} freezes itself at
+        # construction, so its region needs neither.)
+        @templates = templates.dup.freeze
+        @role_templates = role_templates.dup.freeze
         @skill_slots = skill_slots
         freeze
       end

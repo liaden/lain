@@ -35,10 +35,16 @@ module Lain
         # construction sites would be two answers to "which spool do round
         # trips tee into", and the pairing is not allowed to come apart.
         #
+        # `catalog:` is injected for the same reason and is REQUIRED, not
+        # defaulted: the run has ONE {Skill::Catalog}, and a default here would
+        # be a second read of the same tree that nothing would ever notice
+        # disagreeing with /help's.
+        #
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:)
+        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, catalog:)
+          @catalog = catalog
           @backend = backend
           @provider = provider
           @chronicle = chronicle
@@ -66,7 +72,7 @@ module Lain
 
         private
 
-        attr_reader :backend, :chronicle, :options, :supervisor
+        attr_reader :backend, :catalog, :chronicle, :options, :supervisor
 
         # One seam serves every role: the role, policy, and persona are chosen
         # PER CALL from the parsed role name and context mode, so what is
@@ -88,8 +94,12 @@ module Lain
         # The in-agent composition primitive: it renders a skill's scaffold
         # back to the SAME agent as a tool_result -- a continuation, not a
         # spawn. Built over the same catalog + slots the repl's ReplMiddleware
-        # composes, loaded once from the project root.
-        def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer)
+        # composes: the run's ONE catalog, and the ONE {Prompt::Slots} the
+        # Backend loaded and #role_spawn_seam frames children with. It called
+        # `ReplMiddleware.renderer` argument-less until T15, which read the
+        # project tree twice more -- a claim of "loaded once" that the loads
+        # did not keep.
+        def run_skill = Lain::Tools::RunSkill.new(renderer: ReplMiddleware.renderer(catalog:, slots: backend.slots))
 
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1). The observer routes its :spawn/:message lineage events

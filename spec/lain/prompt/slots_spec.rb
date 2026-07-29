@@ -90,11 +90,63 @@ RSpec.describe Lain::Prompt::Slots do
       end
     end
 
+    it "raises on every top-level render, never only the first" do
+      with_project("system" => "Now: <%= Time.now %>") do |root|
+        slots = described_class.load(root:)
+
+        3.times do
+          expect { slots.render }.to raise_error(Lain::Prompt::ImpureSlot, /Time/)
+        end
+      end
+    end
+
     it "rejects a method chained off the helper (partials are not a scripting language)" do
       with_project("system" => '<%= render("missing").to_i %>') do |root|
         expect { described_class.load(root:).render }
           .to raise_error(Lain::Prompt::ImpureSlot, /to_i/)
       end
+    end
+  end
+
+  # The loaded snapshot is what every render reads, and it was session-fixed by
+  # CLAIM only -- the trailing `freeze` in #initialize is shallow, so before
+  # T15 the template hashes themselves stayed writable and a later writer could
+  # grow or replace a slot under an already-constructed Slots. Copied and
+  # frozen at construction, that ONE property is mechanical. It is not
+  # immutability: the template Strings are still the caller's, and mutating one
+  # in place still moves the render (see the sibling example).
+  describe "the loaded snapshot is copied and frozen at construction" do
+    it "renders the slots it was built with after the caller's hashes are rewritten" do
+      templates = { "system" => "shipped bulk" }
+      role_templates = { "dev" => "dev framing" }
+      slots = described_class.new(fills: {}, templates:, role_templates:)
+
+      templates["system"] = "smuggled"
+      role_templates["dev"] = "smuggled"
+      templates.delete("system")
+
+      expect(slots.render).to eq("shipped bulk")
+      expect(slots.render_role("dev")).to eq("dev framing")
+    end
+
+    # The caller's Hash is the caller's: {.shipped_templates} hands ONE across
+    # every instance, and a constructor that froze its argument would reach
+    # into an object it does not own.
+    it "leaves the caller's own hashes alone" do
+      templates = { "system" => "shipped bulk" }
+      described_class.new(fills: {}, templates:)
+
+      expect(templates).not_to be_frozen
+    end
+
+    # SkillSlots freezes itself, so this pins the contract Slots leans on for
+    # its own snapshot claim rather than a freeze Slots performs.
+    it "renders through a skill-slot region that is frozen before it arrives" do
+      region = Lain::Prompt::SkillSlots.new(fills: {}, templates: { "cp" => { "h" => "hole" } })
+      slots = described_class.new(fills: {}, skill_slots: region)
+
+      expect(region).to be_frozen
+      expect(slots.render_skill("cp", "h")).to eq("hole")
     end
   end
 
@@ -279,6 +331,23 @@ RSpec.describe Lain::Prompt::Slots do
       with_skill_slots(overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
         expect { slots.render_skill("create-plan", "conventions") }
           .to raise_error(Lain::Prompt::ImpureSlot, /Time/)
+      end
+    end
+
+    # Purity is checked BEFORE evaluation, per render. That has to hold on the
+    # SECOND call too, and after some other hole has rendered successfully in
+    # between -- an impure fill that raised once and then resolved (or went
+    # quiet) would put a nondeterministic value above the cache line, which is
+    # the one failure this whole check exists to prevent.
+    it "raises ImpureSlot on EVERY call, including after a sibling hole renders successfully" do
+      with_skill_slots(shipped: { %w[create-plan steady] => "steady" },
+                       overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
+        impure = -> { slots.render_skill("create-plan", "conventions") }
+
+        expect { impure.call }.to raise_error(Lain::Prompt::ImpureSlot, /Time/)
+        expect { impure.call }.to raise_error(Lain::Prompt::ImpureSlot, /Time/)
+        expect(slots.render_skill("create-plan", "steady")).to eq("steady")
+        expect { impure.call }.to raise_error(Lain::Prompt::ImpureSlot, /Time/)
       end
     end
 

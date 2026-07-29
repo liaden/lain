@@ -786,6 +786,47 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.agent.context.model).to eq("probe-model-x")
     end
 
+    # T15: BEFORE this card a wired session read the project tree FIVE times --
+    # two Skill::Catalog loads (the command Surface's, and the one
+    # ReplMiddleware.renderer did for Tools::RunSkill) and three Prompt::Slots
+    # loads (Backend's memoized one, the repl stack's, and RunSkill's). Same
+    # tree, so the drift never showed in a test; it would show the moment a
+    # `.lain/` file changed mid-session, and it defeats the "session-fixed
+    # snapshot" claim both objects are documented with. One load each, threaded.
+    describe "the session's ONE catalog and ONE slots" do
+      def help_catalog(surface)
+        surface.commands.registry.find { |command| command.name == "help" }.instance_variable_get(:@catalog)
+      end
+
+      def run_skill_renderer(wiring)
+        wiring.command_env.agent.toolset.fetch("run_skill").instance_variable_get(:@renderer)
+      end
+
+      def stack_renderer(surface)
+        surface.middleware.to_a.first.instance_variable_get(:@renderer)
+      end
+
+      it "hands /help, the repl stack, and Tools::RunSkill the SAME Skill::Catalog" do
+        wiring = run_wiring
+        surface = wiring.command_surface
+        catalog = help_catalog(surface)
+
+        expect(catalog).to be_a(Lain::Skill::Catalog)
+        expect(stack_renderer(surface).instance_variable_get(:@catalog)).to be(catalog)
+        expect(run_skill_renderer(wiring).instance_variable_get(:@catalog)).to be(catalog)
+      end
+
+      it "hands Backend#context, RoleSpawn, and Tools::RunSkill the SAME Prompt::Slots" do
+        wiring = run_wiring
+        slots = backend.slots
+
+        expect(slots).to be_a(Lain::Prompt::Slots)
+        expect(wiring.role_spawn.instance_variable_get(:@slots)).to be(slots)
+        expect(run_skill_renderer(wiring).instance_variable_get(:@slots)).to be(slots)
+        expect(stack_renderer(wiring.command_surface).instance_variable_get(:@slots)).to be(slots)
+      end
+    end
+
     it "wires the queue-shaped YoloApprovals under --yolo, so the env reader stays nil-free" do
       wiring = run_wiring(options: { grace: 5, yolo: true })
 

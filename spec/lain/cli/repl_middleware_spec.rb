@@ -35,6 +35,19 @@ RSpec.describe Lain::CLI::ReplMiddleware do
     File.write(path, body)
   end
 
+  describe ".renderer" do
+    it "composes the injected catalog and slots, loading neither of its own" do
+      with_project do |root|
+        catalog = Lain::Skill::Catalog.load(root:)
+        slots = Lain::Prompt::Slots.load(root:)
+        renderer = described_class.renderer(root:, catalog:, slots:)
+
+        expect(renderer.instance_variable_get(:@catalog)).to be(catalog)
+        expect(renderer.instance_variable_get(:@slots)).to be(slots)
+      end
+    end
+  end
+
   describe ".build" do
     it "returns a Middleware::Stack carrying a SkillDispatch" do
       with_project do |root|
@@ -86,6 +99,22 @@ RSpec.describe Lain::CLI::ReplMiddleware do
         end
 
         expect(seen.fetch(:text)).to start_with("# Greet")
+      end
+    end
+
+    # T15: `slots:` is the `catalog:` precedent, one level down. Without it
+    # `.build` loaded a SECOND Prompt::Slots off disk (and `.renderer`, called
+    # from ToolsetBuild, a third), so the repl stack, Backend#context and
+    # Tools::RunSkill each framed against their own snapshot of the same tree.
+    it "renders through an injected slots -- the session's one snapshot, not a second disk read" do
+      with_project do |root|
+        slots = Lain::Prompt::Slots.load(root:)
+        stack = described_class.build(root:, slots:, role_spawn: ReplMiddlewareStubRoleSpawn.new)
+
+        dispatch = stack.to_a.first
+        renderer = dispatch.instance_variable_get(:@renderer)
+
+        expect(renderer.instance_variable_get(:@slots)).to be(slots)
       end
     end
 

@@ -15,13 +15,22 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     #
-    # ⚠️ THIS CLASS IS AT 102 OF ITS 110-LINE Metrics/ClassLength BUDGET. It
-    # spent a year at 109 and reached 110 exactly, which is what finally
-    # forced {ToolsetBuild} out of it (T1 review): "what capabilities this run
-    # holds, and how a child inherits them" was never this object's question,
-    # and the tell was a `(backend:, parent:, journal:)` triple threaded
-    # verbatim through three private methods -- a repeated parameter list is
-    # the state of an object that has not been named yet.
+    # ⚠️ THIS CLASS IS AT 107 OF ITS 110-LINE Metrics/ClassLength BUDGET --
+    # THREE LINES. T15 spent what it took to thread the run's one catalog/slots
+    # pair (and paid an ABC trip for it, which is why {#assemble_surface} is
+    # its own method), and bought two back by folding {#goal_journal} out of
+    # {#goal_driver}. Three lines is not room for a feature: EXTRACT FIRST.
+    #
+    # It had already been through this once: it sat a year at 109, reached 110
+    # exactly, and that is what finally forced {ToolsetBuild} out of it (T1
+    # review). "What capabilities this run holds, and how a child inherits
+    # them" was never this object's question, and the tell was a
+    # `(backend:, parent:, journal:)` triple threaded verbatim through three
+    # private methods -- a repeated parameter list is the state of an object
+    # that has not been named yet. The SAME tell is now visible on the
+    # `(catalog:, slots:)` pair this class threads into {Command::Surface} and
+    # {ToolsetBuild}: one `.lain/` snapshot, loaded once, wearing two keywords.
+    # Naming it is Chunk B's, and it would give this class its headroom back.
     #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
@@ -29,7 +38,7 @@ module Lain
     # {Command::Surface}, and {ToolsetBuild} are the shape to copy -- and when
     # it runs out again, extract rather than loosen.
     class Wiring
-      attr_reader :ask_human, :questions, :notifier, :supervisor, :conductor
+      attr_reader :ask_human, :questions, :notifier, :supervisor, :conductor, :command_surface
 
       # Both are the {ToolsetBuild}'s discoveries, not this object's state --
       # kept as Wiring accessors because the Repl and the exe read them here.
@@ -74,8 +83,8 @@ module Lain
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
         @conductor.guard do
-          build_repl(tty:, agent:).run(nvim:, store: agent.timeline.store, session:,
-                                       first_prompt: @options[:prompt])
+          build_repl(tty:, agent:, backend:).run(nvim:, store: agent.timeline.store, session:,
+                                                 first_prompt: @options[:prompt])
         end
       end
 
@@ -129,6 +138,13 @@ module Lain
       private
 
       attr_reader :options, :chronicle, :run_clock
+
+      # The run's ONE {Skill::Catalog}: /help lists it, the repl stack
+      # dispatches over it, and {Tools::RunSkill} renders through it. Loaded
+      # HERE because this is the only object all three readers hang off -- the
+      # {Prompt::Slots} half of the same pair is {Backend#slots}, memoized
+      # there for the same reason, and taking the same implicit `Dir.pwd`.
+      def catalog = @catalog ||= Skill::Catalog.load
 
       # D2: `--isolation`, read at its construction site (the --auto-approve
       # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv
@@ -195,7 +211,7 @@ module Lain
 
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
-                                          supervisor: @supervisor, parent:, journal:)
+                                          supervisor: @supervisor, parent:, journal:, catalog:)
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -278,24 +294,35 @@ module Lain
       # replies reader and the Repl's collaborator are one object; everything a
       # typed line dispatches through -- command registry, frozen Env, skill
       # middleware, one shared catalog -- is {Command::Surface}'s (T9).
-      def build_repl(tty:, agent:)
+      def build_repl(tty:, agent:, backend:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human:, questions:)
-        driver = goal_driver
-        @command_surface = Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:,
-                                                chronicle: @chronicle, status_feed: @status_feed, goal_driver: driver,
-                                                **@switchboard.surface_kwargs(conductor: @conductor, tty:))
+        @command_surface = assemble_surface(agent:, backend:, tty:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
-                 auto_surface:, goal_driver: driver)
+                 auto_surface:, goal_driver:)
+      end
+
+      # The surface assembly, its own method because it is its own job -- the
+      # ABC trip said so when T15 threaded the run's ONE catalog and ONE slots
+      # through it (extract, do not loosen). `backend.slots` is the Backend's
+      # memoized load, the same instance {ToolsetBuild} frames children with.
+      def assemble_surface(agent:, backend:, tty:)
+        Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:,
+                             chronicle: @chronicle, status_feed: @status_feed, catalog:, slots: backend.slots,
+                             **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 
       # The T21 standing-goal driver (memoized, so the surface and the Repl poll
       # ONE instance), over the session's live journal -- the null device under
       # --no-journal, the same resolution the Switchboard uses.
-      def goal_driver
-        journal = chronicle.telemetry_kwargs.fetch(:journal) { Journal.new(io: File.open(File::NULL, "ab")) }
-        @goal_driver ||= GoalDriver.new(journal:, quiescent: -> { quiescent? })
-      end
+      def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
+
+      # Resolved INSIDE the memo, not above it: the fallback OPENS /dev/null,
+      # so hoisting it out (as this did until T15's review caught it) leaks one
+      # File per extra #goal_driver call -- opened, discarded unread, never
+      # closed. Two readers poll the driver, so that was a real leak, not a
+      # hypothetical one.
+      def goal_journal = chronicle.telemetry_kwargs.fetch(:journal) { Journal.new(io: File.open(File::NULL, "ab")) }
 
       # Both OBSERVABLE halves of "do not drive while the fleet is unquiet": a
       # parked approval, and a human question waiting for an answer. The inbox

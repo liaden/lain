@@ -20,11 +20,27 @@ RSpec.describe Lain::CLI::Command::Surface do
   let(:policy_switch) { instance_double(Lain::Approval::PolicySwitch) }
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
 
+  # `catalog:`/`slots:` are required (T15): the run loads ONE of each and hands
+  # them over, so a surface that read its own would be a second read of the
+  # same tree -- the drift this class's one-snapshot promise exists to deny.
   def build_surface(root, approvals: nil)
     described_class.new(agent: spy("agent"), replies: spy("replies"),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
-                        chronicle: Lain::CLI::Chronicle::Null.new,
+                        chronicle: Lain::CLI::Chronicle::Null.new, catalog: Lain::Skill::Catalog.load(root:),
+                        slots: Lain::Prompt::Slots.load(root:),
                         status_feed:, policy_switch:, model_switch:)
+  end
+
+  it "refuses to construct without the run's catalog and slots, rather than reading its own" do
+    with_project do |root|
+      snapshotless = lambda do
+        described_class.new(agent: spy("agent"), replies: spy("replies"), role_spawn:, root:,
+                            supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
+                            status_feed:, policy_switch:, model_switch:)
+      end
+
+      expect { snapshotless.call }.to raise_error(ArgumentError, /catalog|slots/)
+    end
   end
 
   it "assembles the frozen nil-free Env from the wired collaborators, YoloApprovals for the empty queue" do
