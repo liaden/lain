@@ -1,6 +1,6 @@
 # Chunk A: review fixes — correctness and cost
 
-status: in-progress (panel-reviewed 2026-07-29; fix-then-ship edits applied; execution started 2026-07-29 from cc76ea4)
+status: **done** (2026-07-29, cc76ea4..42d9868; all 21 cards landed, T19 as a measurement)
 commit-mode: orchestrator-commits
 language: ruby + rust
 panel: Ruby — Torvalds, Evans, Metz, Schneeman, Patterson; Rust — Levien, Gallant, McSherry, Williams (one review agent embodies all; weigh per-card by the card's language)
@@ -122,10 +122,52 @@ them changed what the card ships:
 The pattern is worth carrying into Chunk B: an AC that names a mechanism ("memoize", "return
 a BuildError") rather than an outcome is the one that turns out to be wrong.
 
-## Progress (2026-07-29)
+## Outcome (2026-07-29)
 
-Landed on main, leaf-first, each verified green before the merge (ff-merge runs no hooks):
-T2 `fbc11ac`, T3 `da41163`, T4 `2917179`, T6 `75c0bde`, T7, T18.
+**All 21 cards landed**, `cc76ea4..42d9868`, leaf-first, each verified green before its merge
+because an ff-merge fires no hooks. T19 shipped as a measurement rather than code, which the
+card allowed for.
+
+Integration checks at close: serial suite **6710 examples, 0 failures, 2 pending** (against a
+6559 pre-chunk baseline; every increment traced to a card); `rubocop` 895 files, 0 offenses,
+**no config change** and nothing added to `.rubocop_todo.yml`; `cargo test` 216 + 50 + 11,
+clippy `-D warnings`, `fmt --check`, `cargo deny` all clean with `nu-ansi-term` still absent
+from `Cargo.lock`; `rspec --tag core` 32 examples; `pre-commit run --all-files` fully green.
+
+Two manual passes are still owed and no agent can do them: one `lain up` smoke pass confirming
+panes come up on 4.0.6 (T4 changed the derivation, and the machine's ruby was rebuilt during
+execution, so this now tests something real), and one `lain bench plan-sweep` determinism check
+after T3.
+
+### What review bought, and what it cost
+
+Of 21 cards, **17 needed at least one fix round** and T1 needed three. The panel's highest-yield
+move was not reading diffs but **mutation**: revert the behaviour a test names and see whether
+anything reddens. That found four cards shipping hollow evidence — a FIFO fix with all ten of
+its tests still green when reverted, an eager walk with all nineteen dag tests green, a spec
+named `accepts BINARY whose bytes are already valid UTF-8` whose fixture was 7-bit so it never
+exercised its own name (and the real answer was *refuse*), and parity examples that could not
+detect the transport being bypassed entirely because "the arms agree" is trivially true when
+both arms are the same walk. In every case the implementation was fine and the *evidence* was
+not. Fold this into the review brief for the next chunk rather than leaving it per-card.
+
+Three cards found the **acceptance criterion** wrong rather than the code (T5, T10, T16), and a
+fourth measured its way to declining one (T19). An AC that names a mechanism — "memoize",
+"return a BuildError" — was wrong every time it appeared; an AC that names an outcome was not.
+
+Defects a green suite would have shipped: T1's deleted fast path turned an overload into a
+*successful empty turn* on the path Lain actually runs; T14's rewrite let a mid-`catch_up`
+failure re-journal turns already on disk; T18's digest keying silently dropped a write because
+duplicate turn digests are a supported corpus after a `rewound`; T8's extracted `rewind_to`
+would hold the Store mutex for ~71 years on `rewind(2**62)`; T11's tools would have called every
+UTF-8 file invalid under `LC_ALL=C`; and T13's `Cargo.lock`, regenerated in a stale worktree,
+silently re-added the colour crate T7 had just banned — its own `cargo deny` passed because the
+worktree's `deny.toml` was stale too.
+
+Two corrections propagated through several passes before measurement caught them: a divergence
+struck as agreement by a reviewer, confirmed by an implementer, and found real by a third look
+whose fixture actually discriminated; and five of T39's grounding facts, two of which fed
+Chunk B.
 
 Panel findings a green suite did not catch, kept as the record of what review bought:
 
@@ -788,6 +830,72 @@ Scenario: the ROADMAP gains the three ruled entries
 
 **Escalation triggers:**
 - ROADMAP's structure resists a clean place for the entries — propose placement in the commit message rather than restructuring the document.
+
+## Follow-ups the panel raised and this chunk deliberately did not take
+
+Each was found by review, judged real, and scoped out with a reason. None is a defect in what
+landed.
+
+1. **`Canonical.digest_normalized`** (from T19's measurement). 48% of each rolling
+   `prefix_digests` step is a redundant second `Canonical.normalize` over data
+   `Request#initialize` already normalized; BLAKE3 itself is 5%. Prototyped: the chain drops
+   **7.41 → 1.04 ms (-86%)** with byte-identical digests, verified canonical on 500/500
+   messages. A restructure, not a cache. Needs a `Canonical.digest_normalized` entry point, so
+   it was outside T19's file scope. The real case for it is offline — `DryReplay` and sweeps,
+   about 35% of replay wall clock.
+2. **Canonical depth refusal has set parity but not class parity** (from T8). Ruby refuses
+   depth 101 with `JSON::NestingError`, which is **not** a `Lain::Error`; Ext refuses with
+   `Lain::Canonical::UnsupportedType`, which is. So `rescue Lain::Error` behaves differently
+   depending on which implementation is live, which is the divergence the parity discipline
+   exists to prevent. Fix belongs in `lib/lain/canonical.rb`.
+3. **`post_stream(..., on_data, tee: frame)`** (from T1). Today `flush:` defaults to the
+   *unsafe* direction for the one case the keyword exists for. Making the tee a `post_stream`
+   concern turns wrapping and bypassing into one decision. Deferred because T1 had already run
+   three rounds; a spec now pins the contract so a forgotten `flush:` fails on its own terms.
+4. **`parse_error_from_json` swallows an `event: error` whose data is missing or
+   unparseable** (from T1). Loud should be `ServerError` via `build_stream_error_response`.
+   Shared with the surviving JSON-body branch, and the row was already silent before the card.
+5. **`Ollama::Transport#assign_on_data` duplicates the inherited one** (from T1), byte for byte.
+6. **`PlanSweep` still passes no `context:` to its driver** (from T3). The drift is now
+   structurally impossible, but the knob the card created is reachable only from a spec, so the
+   shipped bench still renders with no system prompt.
+7. **The grep RPC has no honest bound on a single search** (from T12). The no-timeout decision
+   was upheld and measured — an aborted grep provably keeps its blocking-pool thread (78 ms
+   solo vs 130 ms behind an aborted one at `max_blocking_threads(1)`), so a
+   `tokio::time::timeout` wrapper would lie. With the default 512-thread pool saturated the
+   async surface still answers in 4.7 µs, because ping and exec never touch it, so this
+   degrades grep rather than outaging the daemon. The bound that *would* be honest is
+   `Searcher::search_reader` over a deadline- or byte-counting `Read` wrapper: it errors
+   regardless of match count and lands on the existing skipped-file path. The sink callback
+   cannot do it (fires only on a match, so a zero-match search is unbounded) and neither can
+   the `try_fold` (per file, so one big file is unbounded).
+8. **A long grep is invisible** (from T12). `tracing::debug!` covers skipped entries only;
+   nothing records elapsed, files scanned, matches, or in-flight count, so the pool-exhaustion
+   mode above is undiagnosable from the logs.
+9. **`.gitignore`-aware grep as a feature, not a transport side effect** (ruled 2026-07-29).
+   The Ruby path has no ignore awareness and the Rust one does, so parity was impossible by
+   construction. Ruled: **Ruby semantics win**, via a `respect_ignores` RPC param defaulting
+   off, so T13 is genuinely a transport swap. Turning it on is its own feature card. The
+   reasoning is a bench one: with Rust semantics winning, `Tools::Grep`'s *description* would
+   vary by wiring, which costs prompt-cache stability and makes two arms non-comparable.
+10. **`files_under`'s flat sort vs the core path's DFS order** (ruled 2026-07-29: leave and
+   document). `.` (0x2E) sorts before `/` (0x2F), so Ruby returns `["a.txt", "a/b.txt"]` where
+   Rust returns `["a/b.txt", "a.txt"]`, and at a search exceeding `MAX_MATCHES = 200` the two
+   paths return **different subsets**. The one-line fix is `.sort_by { |e| e.split("/") }` —
+   T13 verified that DFS order *is* component-array order — but it changes the default path's
+   capped set, so it wants its own commit and its own decision.
+11. **`AstGrep`'s cap error crosses in `Lain::Structural::Matcher`'s namespace, not
+   `Lain::Ext::AstGrep`'s** (from T5). Defensible — it follows `canonical.rs`'s precedent of
+   raising into a Ruby namespace — but `dump` and `search` now raise across two namespaces and
+   an ext-layer spec asserts a `Structural::Matcher` constant. The 3-line `lib.rs` diff is
+   written; it was not taken because T8 owned `lib.rs` this wave.
+
+## Watch item for Chunk B
+
+`Wiring` and `Backend` are both at **109 of the 110** `Metrics/ClassLength` limit after T15,
+which extracted `#assemble_surface` rather than loosen the cop. Chunk B's T21 (`Agent` accepts
+its collaborators) and T27 (`Bench` takes a `Backend`) land in that neighbourhood and will hit
+the ceiling immediately. Per CLAUDE.md that is a missing object, not a config nuisance.
 
 ## Integration checks
 

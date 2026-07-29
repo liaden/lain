@@ -72,6 +72,27 @@ ruling lands mid-chunk); no new caches beyond what Chunk A justified.
 
 None — triage-pending files are handled by escalation triggers, not gates.
 
+## Prerequisite from Chunk A (do this before wave 1)
+
+**Name the `(catalog:, slots:)` pair.** Chunk A's T15 threaded one `Skill::Catalog` and one
+`Prompt::Slots` through the session instead of loading them 2 and 3 times, and the pair now
+passes verbatim through `Surface.new` → `ReplMiddleware.build` → `.renderer` →
+`ToolsetBuild#run_skill`. That repeated parameter list is the state of an object nobody has
+named yet, which is the same tell `wiring.rb`'s own comment cites as the reason `ToolsetBuild`
+was extracted. T15 extracted `#assemble_surface` to keep `Metrics/AbcSize` honest, but that
+silences the cop rather than answering it.
+
+Headroom as A closes: `Wiring` **107 of 110**, `Backend` 109, `Repl` 108. T15's fix round won
+Wiring two lines back by moving a journal default inside its memo rather than hoisting it, but
+that is slack, not room. **T21** (`Agent` accepts its collaborators) and **T27** (`Bench` takes
+a `Backend`) both land in these classes, and CLAUDE.md forbids loosening the limit, so the
+extraction is what buys them space to work in.
+
+The shape the panel recommends: one `.lain/` snapshot object holding both, loaded by
+ChatLaunch. It deletes `Wiring#catalog` (about 9 lines), collapses two keywords to one at
+every call site, and ends the split where `Wiring` owns the catalog while `Backend` owns the
+slots. Do it first and T21/T27 get headroom instead of an immediate escalation.
+
 ## Waves
 
 Wave 1: T21, T23, T24, T25, T26, T27, T28, T29, T30, T32, T34, T36, T38
