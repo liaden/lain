@@ -68,7 +68,7 @@ RSpec.describe Lain::Arm::SingleThread do
     it "acquires a lease and releases it exactly once, even though the control ignores its env" do
       released = []
       lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
-      isolation = instance_double("isolation", acquire: lease)
+      isolation = instance_double(Lain::Isolation::Null, acquire: lease)
 
       arm.run("please echo hi", spawn_seam:, grader:, isolation:)
 

@@ -18,8 +18,8 @@ module CommandEnvHelper
   def command_env_readers
     { status: instance_double(Lain::StatusFeed), sessions: instance_double(Lain::CLI::Sessions),
       approvals: Lain::CLI::Command::Env::YoloApprovals, supervisor: Lain::Supervisor::Null,
-      replies: double("replies"), fork_point: instance_double(Lain::CLI::ForkPoint),
-      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: double("agent"),
+      replies: instance_double(Lain::CLI::HumanReplies), fork_point: instance_double(Lain::CLI::ForkPoint),
+      tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       policy_switch: instance_double(Lain::Approval::PolicySwitch),
       model_switch: instance_double(Lain::Context::ModelSwitch),
       chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }

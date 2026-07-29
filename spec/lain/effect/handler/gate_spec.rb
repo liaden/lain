@@ -25,7 +25,7 @@ RSpec.describe Lain::Effect::Handler::Gate do
       # A bare double with nothing stubbed: if Approving ever asked it
       # anything, this would raise "received unexpected message" and fail
       # the example -- which is the point.
-      untouched_policy = double("never consulted")
+      untouched_policy = instance_double(described_class::DenyAll)
       approving = described_class.new(policy: untouched_policy, inner: live)
 
       expect(approving.call(tool_call("safe"))).to eq(Lain::Tool::Result.ok("safe"))

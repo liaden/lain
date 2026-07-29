@@ -46,7 +46,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
   end
 
   describe "the ensure-close bracket" do
-    let(:conductor) { spy("conductor") }
+    let(:conductor) { instance_spy(Lain::CLI::Conductor) }
     let(:wiring) { instance_double(Lain::CLI::Wiring, conductor:).tap { |double| allow(double).to receive(:run) } }
     # `**` (not named kwargs) keeps the factory lambda honest about accepting
     # ChatLaunch's (options:, chronicle:) call without unused-arg noise.
@@ -67,7 +67,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
 
     it "falls back to the chronicle when the raise landed before wiring existed" do
-      chronicle = spy("chronicle")
+      chronicle = instance_spy(Lain::CLI::Chronicle)
       instance = launch({ journal: true },
                         chronicle_factory: ->(**) { chronicle },
                         wiring_factory: ->(**) { raise Lain::Error, "wiring never built" })
@@ -240,7 +240,8 @@ RSpec.describe Lain::CLI::ChatLaunch do
                         },
                         wiring_factory: lambda { |run_clock:, **|
                           given_to_wiring = run_clock
-                          instance_double(Lain::CLI::Wiring, conductor: spy("conductor")).tap do |double|
+                          instance_double(Lain::CLI::Wiring,
+                                          conductor: instance_spy(Lain::CLI::Conductor)).tap do |double|
                             allow(double).to receive(:run)
                           end
                         })

@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
   let(:ask_human) { Lain::Tools::AskHuman.new(parent:) }
   let(:questions) { Async::Queue.new }
-  let(:conductor) { double("conductor") }
+  let(:conductor) { instance_double(Lain::CLI::Conductor) }
   let(:replies) { described_class.new(tty:, conductor:, ask_human:, questions:) }
 
   describe "#drain_at_prompt" do

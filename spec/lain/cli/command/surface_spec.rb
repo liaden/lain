@@ -15,7 +15,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  let(:role_spawn) { spy("role_spawn") }
+  let(:role_spawn) { instance_spy(Lain::Skill::RoleSpawn) }
   let(:status_feed) { instance_double(Lain::StatusFeed) }
   let(:policy_switch) { instance_double(Lain::Approval::PolicySwitch) }
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
@@ -24,7 +24,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   # them over, so a surface that read its own would be a second read of the
   # same tree -- the drift this class's one-snapshot promise exists to deny.
   def build_surface(root, approvals: nil)
-    described_class.new(agent: spy("agent"), replies: spy("replies"),
+    described_class.new(agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, catalog: Lain::Skill::Catalog.load(root:),
                         slots: Lain::Prompt::Slots.load(root:),
@@ -34,7 +34,8 @@ RSpec.describe Lain::CLI::Command::Surface do
   it "refuses to construct without the run's catalog and slots, rather than reading its own" do
     with_project do |root|
       snapshotless = lambda do
-        described_class.new(agent: spy("agent"), replies: spy("replies"), role_spawn:, root:,
+        described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
+                            replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             status_feed:, policy_switch:, model_switch:)
       end

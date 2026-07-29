@@ -193,7 +193,7 @@ RSpec.describe Lain::Arm::DualLedger do
     it "acquires a lease and releases it exactly once, even though the ledger arm ignores its env" do
       released = []
       lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
-      isolation = instance_double("isolation", acquire: lease)
+      isolation = instance_double(Lain::Isolation::Null, acquire: lease)
 
       described_class.new.run("t", spawn_seam:, grader: settling_grader, isolation:)
 

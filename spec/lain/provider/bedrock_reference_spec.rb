@@ -32,9 +32,9 @@ RSpec.describe Lain::Provider::BedrockReference do
   # A doubled Mantle client: a single-pass stream whose `accumulated_message`
   # yields the message. Injected so no unit test touches the network.
   def client_returning(message)
-    stream = instance_double("Anthropic::Streaming::MessageStream", accumulated_message: message)
-    messages = instance_double("Anthropic::Resources::Messages", stream:)
-    instance_double("Anthropic::BedrockMantleClient", messages:)
+    stream = instance_double(Anthropic::Streaming::MessageStream, accumulated_message: message)
+    messages = instance_double(Anthropic::Resources::Messages, stream:)
+    instance_double(Anthropic::BedrockMantleClient, messages:)
   end
 
   subject(:provider) { described_class.new(client:) }
@@ -160,9 +160,9 @@ RSpec.describe Lain::Provider::BedrockReference do
         url: URI("https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages"), status: 429,
         headers: nil, body: nil, request: nil, response: nil, message: "slow down"
       )
-      messages = instance_double("Anthropic::Resources::Messages")
+      messages = instance_double(Anthropic::Resources::Messages)
       allow(messages).to receive(:stream).and_raise(sdk_error)
-      provider = described_class.new(client: instance_double("Anthropic::BedrockMantleClient", messages:))
+      provider = described_class.new(client: instance_double(Anthropic::BedrockMantleClient, messages:))
 
       expect { provider.complete(request) }.to raise_error(described_class::APIStatusError) do |wrapped|
         expect(wrapped.status).to eq(429)

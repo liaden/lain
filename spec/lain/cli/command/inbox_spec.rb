@@ -33,7 +33,7 @@ RSpec.describe Lain::CLI::Command::Inbox do
   let(:parent) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]) }
   let(:ask_human) { Lain::Tools::AskHuman.new(parent:, observer: ->(event) { status_feed << event }) }
   let(:questions) { Async::Queue.new }
-  let(:conductor) { double("conductor") }
+  let(:conductor) { instance_double(Lain::CLI::Conductor) }
   let(:replies) { Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human:, questions:) }
   let(:command) { described_class.new }
 

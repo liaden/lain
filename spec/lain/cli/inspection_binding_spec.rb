@@ -9,10 +9,10 @@
 RSpec.describe Lain::CLI::InspectionBinding do
   subject(:inspection) { described_class.new(timeline:, session:, supervisor:, status:) }
 
-  let(:timeline) { double("timeline", head: "blake3:abc") }
-  let(:session) { double("session", reminders: []) }
-  let(:supervisor) { double("supervisor") }
-  let(:status) { double("status") }
+  let(:timeline) { instance_double(Lain::Timeline, head: "blake3:abc") }
+  let(:session) { instance_double(Lain::Session, reminders: []) }
+  let(:supervisor) { instance_double(Lain::Supervisor) }
+  let(:status) { instance_double(Lain::StatusFeed) }
 
   it "exposes the four collaborators as readers" do
     expect(inspection.timeline).to be(timeline)
@@ -47,8 +47,8 @@ RSpec.describe Lain::CLI::InspectionBinding do
 
   describe ".for(env)" do
     it "reads timeline and session off the agent, supervisor and status off the env" do
-      agent = double("agent", timeline:, session:)
-      env = double("env", agent:, supervisor:, status:)
+      agent = instance_double(Lain::Agent, timeline:, session:)
+      env = instance_double(Lain::CLI::Command::Env, agent:, supervisor:, status:)
 
       inspection = described_class.for(env)
 

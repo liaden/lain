@@ -192,3 +192,35 @@ ThreadSafety/NewThread:
 ThreadSafety/DirChdir:
   Exclude:
     - "spec/**/*"
+
+# --- Doubles: the four ducks that cannot be verified -----------------------
+#
+# Everything else converted (51 of 76 sites). These four are the residue, and each
+# is a case where verifying the double would defeat the example.
+#
+# journal_spec's `double("io without #fsync")` is the sharpest: the example asserts
+# the Journal skips fsync on an IO that LACKS it, so verifying against ::IO -- which
+# has fsync -- would test the opposite of what it says. chat_launch's
+# chronicle_factory and prompt_composer's renderer are callables (`->(**) {}`, `#call`)
+# with no class to verify against, and repl_delivery's `outcome` is whatever
+# Conductor#supervise hands back, named structurally rather than by type.
+RSpec/VerifiedDoubles:
+  Exclude:
+    - "spec/lain/cli/chat_launch_spec.rb"
+    - "spec/lain/frontend/prompt_composer_spec.rb"
+    - "spec/lain/journal_spec.rb"
+    - "spec/lain/repl_delivery_spec.rb"
+
+# Every one of these stubs a class the spec never constructs: Socket#connect built
+# inside Vsock#start, Faraday::Retry::Middleware#sleep built inside Faraday's stack,
+# and File#fsync built inside the WAL. There is no seam to inject through without
+# reshaping production code to suit a test, so any_instance is the honest tool here.
+# The cop stays on, because reaching for it against one of OUR classes is the real
+# smell it catches -- that is a collaborator wanting injection.
+RSpec/AnyInstance:
+  Exclude:
+    - "spec/lain/core/transport/vsock_spec.rb"
+    - "spec/lain/provider/anthropic_spec.rb"
+    - "spec/lain/provider/bedrock_spec.rb"
+    - "spec/lain/provider/response_wal_spec.rb"
+    - "spec/lain/session_record/salvage_spec.rb"

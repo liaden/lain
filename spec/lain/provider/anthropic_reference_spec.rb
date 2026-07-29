@@ -48,15 +48,15 @@ RSpec.describe Lain::Provider::AnthropicReference do
   # contract end to end against a REAL MessageStream, which is what a stand-in
   # single yield cannot.
   def client_returning(message, via: :stream)
-    messages = instance_double("Anthropic::Resources::Messages")
+    messages = instance_double(Anthropic::Resources::Messages)
     if via == :stream
-      stream = instance_double("Anthropic::Streaming::MessageStream", accumulated_message: message)
+      stream = instance_double(Anthropic::Streaming::MessageStream, accumulated_message: message)
       allow(stream).to receive(:each_with_index).and_yield(:stand_in_event, 0)
       allow(messages).to receive(:stream).and_return(stream)
     else
       allow(messages).to receive(:create).and_return(message)
     end
-    instance_double("Anthropic::Client", messages:)
+    instance_double(Anthropic::Client, messages:)
   end
 
   subject(:provider) { described_class.new(client:) }
@@ -349,9 +349,9 @@ RSpec.describe Lain::Provider::AnthropicReference do
     let(:request) { Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }]) }
 
     def client_raising(error)
-      messages = instance_double("Anthropic::Resources::Messages")
+      messages = instance_double(Anthropic::Resources::Messages)
       allow(messages).to receive(:stream).and_raise(error)
-      instance_double("Anthropic::Client", messages:)
+      instance_double(Anthropic::Client, messages:)
     end
 
     it "wraps an APIStatusError, preserving the Integer status and the SDK error as cause" do

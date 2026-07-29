@@ -187,11 +187,13 @@ RSpec.describe LainCLI do
 
     it "routes post--- args into Up.new(chat_args:)" do
       up = instance_double(Lain::CLI::Up, launch_plan: plan)
-      expect(Lain::CLI::Up).to receive(:new)
-        .with(hash_including(chat_args: ["--model", "claude-x", "--no-journal"]))
-        .and_return(up)
+      allow(Lain::CLI::Up).to receive(:new).and_return(up)
       allow(Kernel).to receive(:exec)
+
       described_class.start(["up", "--", "--model", "claude-x", "--no-journal"])
+
+      expect(Lain::CLI::Up).to have_received(:new)
+        .with(hash_including(chat_args: ["--model", "claude-x", "--no-journal"]))
     end
 
     it "refuses trailing args when the invocation carried no -- separator" do

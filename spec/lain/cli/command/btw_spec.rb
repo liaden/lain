@@ -144,7 +144,7 @@ RSpec.describe Lain::CLI::Command::Keep do
   let(:command) { described_class.new }
 
   def registration(role, state)
-    double("registration", role:, state:)
+    instance_double(Lain::Supervisor::Registration, role:, state:)
   end
 
   def env_with(chronicle:, supervisor: Lain::Supervisor::Null)
@@ -158,10 +158,11 @@ RSpec.describe Lain::CLI::Command::Keep do
     # overlap a MAIN-agent round trip. With the fleet quiet too, promote! is
     # safe to run right here.
     it "promotes the ephemeral record and reports the durable name" do
-      expect(chronicle).to receive(:promote!).and_return(promoted_path)
+      allow(chronicle).to receive(:promote!).and_return(promoted_path)
 
       text = command.call("", env_with(chronicle:))
 
+      expect(chronicle).to have_received(:promote!)
       expect(text).to include(File.basename(promoted_path))
       expect(text).to include("lain sessions")
     end
@@ -178,9 +179,10 @@ RSpec.describe Lain::CLI::Command::Keep do
     it "does not let a dead registration block promotion -- stopped and failed actors are quiescent" do
       env = env_with(chronicle:,
                      supervisor: [registration("researcher", :stopped), registration("clerk", :failed)])
-      expect(chronicle).to receive(:promote!).and_return(promoted_path)
+      allow(chronicle).to receive(:promote!).and_return(promoted_path)
 
       expect(command.call("", env)).to include(File.basename(promoted_path))
+      expect(chronicle).to have_received(:promote!)
     end
   end
 
@@ -203,8 +205,8 @@ RSpec.describe "the /btw and /keep registration (T17 wiring)" do
   it "claims both names in the shipped surface, ahead of the skill fallthrough" do
     Dir.mktmpdir do |root|
       surface = Lain::CLI::Command::Surface.new(
-        agent: spy("agent"), replies: spy("replies"), supervisor: Lain::Supervisor::Null,
-        role_spawn: spy("role_spawn"), root:, chronicle: Lain::CLI::Chronicle::Null.new,
+        agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies), supervisor: Lain::Supervisor::Null,
+        role_spawn: instance_spy(Lain::Skill::RoleSpawn), root:, chronicle: Lain::CLI::Chronicle::Null.new,
         status_feed: instance_double(Lain::StatusFeed),
         policy_switch: instance_double(Lain::Approval::PolicySwitch),
         model_switch: instance_double(Lain::Context::ModelSwitch),

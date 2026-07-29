@@ -103,7 +103,7 @@ RSpec.describe Lain::Bench::Session::ResumeChain do
     let(:rewound) { trunk.commit(role: :assistant, content: text("the other branch")) }
 
     def chain_for(prior_loader)
-      factory = double("loader factory", new: prior_loader)
+      factory = class_double(Lain::Bench::Session::Loader, new: prior_loader)
       described_class.new(resumed_from: { "file" => "a.ndjson", "head" => abandoned.head_digest },
                           context_factory: nil, resolve: ->(_basename) { [] }, loader_factory: factory)
     end

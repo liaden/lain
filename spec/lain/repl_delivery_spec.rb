@@ -46,13 +46,13 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   end
 
   let(:response) { Struct.new(:text).new("the answer") }
-  let(:tty) { spy("tty") }
+  let(:tty) { instance_spy(Lain::Frontend::TTY) }
 
   # Counts asks so "no model turn was spent" is an assertion, not a hope.
   let(:agent) do
-    spy("agent").tap do |double|
+    instance_spy(Lain::Agent).tap do |double|
       allow(double).to receive(:ask).and_return(response)
-      allow(double).to receive(:timeline).and_return(spy("timeline"))
+      allow(double).to receive(:timeline).and_return(instance_spy(Lain::Timeline))
     end
   end
 
@@ -61,14 +61,14 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # the only async we exercise is respond's own `Sync`, whose body then runs to
   # completion synchronously.
   let(:conductor) do
-    spy("conductor").tap do |double|
+    instance_spy(Lain::CLI::Conductor).tap do |double|
       allow(double).to receive(:supervise) { |*_, &ask| spy("outcome", response: ask.call) }
     end
   end
 
   # The ask_human reply fibers are out of scope here; respond stops whatever
   # surfaces this hands back, and an empty set keeps the Sync from parking.
-  let(:replies) { spy("replies", surfaces: []) }
+  let(:replies) { instance_spy(Lain::CLI::HumanReplies, surfaces: []) }
 
   # An EMPTY command registry (by default) bound over a doubles-only Env:
   # every line falls through to the middleware phase, which is the seam under
@@ -81,7 +81,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   def build_repl(middleware:, registry: Lain::CLI::Command::Registry.new)
     Lain::CLI::Repl.new(
       agent:, tty:, replies:, commands: command_surface(registry),
-      chronicle: spy("chronicle"), conductor:, middleware:
+      chronicle: instance_spy(Lain::CLI::Chronicle), conductor:, middleware:
     )
   end
 
@@ -168,7 +168,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # seed replaced exactly ONE read, not every read after it.
   describe "first_prompt seeds only the first converse pass" do
     let(:conductor) do
-      spy("conductor").tap do |double|
+      instance_spy(Lain::CLI::Conductor).tap do |double|
         allow(double).to receive(:supervise) { |*_, &ask| spy("outcome", response: ask.call) }
         allow(double).to receive(:read_prompt).and_return("quit")
         allow(double).to receive(:closed?).and_return(false)

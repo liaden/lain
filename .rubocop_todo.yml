@@ -6,15 +6,6 @@
 # Note that changes in the inspected code, or installation of new
 # versions of RuboCop, may require this file to be generated again.
 
-# Offense count: 7
-RSpec/AnyInstance:
-  Exclude:
-    - 'spec/lain/core/transport/vsock_spec.rb'
-    - 'spec/lain/provider/anthropic_spec.rb'
-    - 'spec/lain/provider/bedrock_spec.rb'
-    - 'spec/lain/provider/response_wal_spec.rb'
-    - 'spec/lain/session_record/salvage_spec.rb'
-
 # Offense count: 2
 # This cop supports unsafe autocorrection (--autocorrect-all).
 RSpec/BeEq:
@@ -175,41 +166,6 @@ RSpec/SpecFilePathFormat:
 RSpec/SpecFilePathSuffix:
   Exclude:
     - 'spec/fixtures/projects/rspec_mini/spec/calculator_check.rb'
-
-# Offense count: 3
-RSpec/StubbedMock:
-  Exclude:
-    - 'spec/lain/cli/command/btw_spec.rb'
-    - 'spec/lain/cli_spec.rb'
-
-# Offense count: 13
-# This cop supports unsafe autocorrection (--autocorrect-all).
-RSpec/VerifiedDoubleReference:
-  Exclude:
-    - 'spec/lain/arm/adaptive_router_spec.rb'
-    - 'spec/lain/arm/dual_ledger_spec.rb'
-    - 'spec/lain/arm/single_thread_spec.rb'
-    - 'spec/lain/provider/anthropic_reference_spec.rb'
-    - 'spec/lain/provider/bedrock_reference_spec.rb'
-
-# Offense count: 48
-# Configuration parameters: IgnoreNameless, IgnoreSymbolicNames.
-RSpec/VerifiedDoubles:
-  Exclude:
-    - 'spec/lain/bench/session/resume_chain_spec.rb'
-    - 'spec/lain/cli/chat_launch_spec.rb'
-    - 'spec/lain/cli/command/btw_spec.rb'
-    - 'spec/lain/cli/command/inbox_spec.rb'
-    - 'spec/lain/cli/command/registry_spec.rb'
-    - 'spec/lain/cli/command/ruby_spec.rb'
-    - 'spec/lain/cli/command/surface_spec.rb'
-    - 'spec/lain/cli/human_replies_spec.rb'
-    - 'spec/lain/cli/inspection_binding_spec.rb'
-    - 'spec/lain/effect/handler/gate_spec.rb'
-    - 'spec/lain/frontend/prompt_composer_spec.rb'
-    - 'spec/lain/journal_spec.rb'
-    - 'spec/lain/repl_delivery_spec.rb'
-    - 'spec/support/command_env.rb'
 
 # Offense count: 1
 # This cop supports safe autocorrection (--autocorrect).

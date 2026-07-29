@@ -76,7 +76,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     it "acquires and releases the injected isolation lease exactly once" do
       released = []
       lease = Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { released << :once })
-      isolation = instance_double("isolation", acquire: lease)
+      isolation = instance_double(Lain::Isolation::Null, acquire: lease)
 
       arm.run("fix the typo", spawn_seam:, grader:, isolation:)
 
