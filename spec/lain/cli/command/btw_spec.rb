@@ -20,6 +20,7 @@ RSpec.describe Lain::CLI::Command::Btw do
   end
   let(:tmux_surface) { instance_double(Lain::CLI::TmuxSurface) }
   let(:command) { described_class.new }
+  let(:env) { env_with(chronicle:, agent:) }
 
   def placement(kind: :popup, degraded: false, reason: nil)
     Lain::CLI::TmuxSurface::Placement.new(kind:, target: "btw", degraded:, reason:)
@@ -28,8 +29,6 @@ RSpec.describe Lain::CLI::Command::Btw do
   def env_with(chronicle:, agent:, supervisor: Lain::Supervisor::Null)
     build_command_env(chronicle:, agent:, supervisor:, tmux_surface:)
   end
-
-  let(:env) { env_with(chronicle:, agent:) }
 
   describe "the ephemeral popup" do
     it "runs the child through Up's pane recipe (never a bare `lain chat`), rooted at this project's cwd" do

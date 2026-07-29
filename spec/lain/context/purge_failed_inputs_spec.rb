@@ -117,7 +117,7 @@ RSpec.describe Lain::Context::PurgeFailedInputs do
                                 .find { |entry| entry.subject == described_class }
 
       expect([refutation.operation, refutation.structure]).to eq(%i[call elementwise])
-      expect(refutation.reason).to match(/positional/)
+      expect(refutation.reason).to include("positional")
     end
 
     it "never also declares elementwise, and does not include the module" do

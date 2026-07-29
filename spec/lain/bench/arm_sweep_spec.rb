@@ -64,7 +64,7 @@ RSpec.describe Lain::Bench::ArmSweep do
     let(:report) { sweep.report }
 
     it "names single-thread as the control in its header" do
-      expect(report).to match(/control: single-thread/)
+      expect(report).to include("control: single-thread")
     end
 
     it "reports all five metrics as their own titled sections" do
@@ -74,18 +74,18 @@ RSpec.describe Lain::Bench::ArmSweep do
     end
 
     it "breaks the boundary out per category rather than averaging it away" do
-      expect(report).to match(/== procedural ==/)
-      expect(report).to match(/== parallel ==/)
+      expect(report).to include("== procedural ==")
+      expect(report).to include("== parallel ==")
     end
 
     it "discloses the linear-arms tie so a reader does not mistake it for a finding" do
-      expect(report).to match(/single-thread and dual-ledger produce IDENTICAL/)
+      expect(report).to include("single-thread and dual-ledger produce IDENTICAL")
       expect(report).to match(/artifact of the offline harness/i)
       expect(report).to match(/coordination overhead, visible only in the replans/i)
     end
 
     it "discloses that context-loss UNDER-counts -- omitted/added files versus the control are not counted" do
-      expect(report).to match(/UNDER-counts/)
+      expect(report).to include("UNDER-counts")
       expect(report).to match(/omitted or added\s+versus the control is not/m)
     end
 
@@ -97,7 +97,7 @@ RSpec.describe Lain::Bench::ArmSweep do
       # "wall-time (s)" is the table header; the NOTE prose says "wall-time is
       # ABSENT", so the "(s)" is what pins the match to the table, not the note.
       wall = report[/wall-time \(s\).*?(?=\n\n|\z)/m]
-      expect(wall).to match(/ABSENT/)
+      expect(wall).to include("ABSENT")
       %w[single-thread orchestrator-worker dual-ledger].each { |arm| expect(wall).to include(arm) }
     end
 

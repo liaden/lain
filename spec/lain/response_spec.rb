@@ -29,6 +29,8 @@ RSpec.describe Lain::StopReason do
 end
 
 RSpec.describe Lain::Response do
+  subject(:response) { described_class.new(content: blocks, stop_reason: :tool_use) }
+
   let(:blocks) do
     [
       { "type" => "thinking", "thinking" => "hmm" },
@@ -36,8 +38,6 @@ RSpec.describe Lain::Response do
       { "type" => "tool_use", "id" => "tu_1", "name" => "read_file", "input" => { "path" => "a.rb" } }
     ]
   end
-
-  subject(:response) { described_class.new(content: blocks, stop_reason: :tool_use) }
 
   it "is frozen" do
     expect(response).to be_deeply_frozen

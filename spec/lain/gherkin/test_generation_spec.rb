@@ -20,19 +20,8 @@ RSpec.describe Lain::Gherkin::TestGeneration do
                         Lain::Tools::TodoWrite.new, Lain::Tools::Bash.new
                       ])
   end
-
-  around do |example|
-    Dir.mktmpdir do |root|
-      @slots = Lain::Prompt::Slots.load(root:)
-      example.run
-    end
-  end
-
-  attr_reader :slots
-
   let(:catalog) { Lain::Skill::Catalog.load }
   let(:renderer) { Lain::Skill::Renderer.new(catalog:, slots:) }
-
   let(:criteria) do
     Lain::Gherkin::Criteria.parse(<<~MD)
       ```gherkin
@@ -48,6 +37,29 @@ RSpec.describe Lain::Gherkin::TestGeneration do
       ```
     MD
   end
+  # ---- AC: the scaffold reaches the test-engineer with the criteria digest ---
+
+  # ---- panel fix: an all-rubric Criteria must not silently spawn a no-op ------
+
+  let(:all_rubric_criteria) do
+    Lain::Gherkin::Criteria.parse(<<~MD)
+      ```gherkin
+      # rubric
+      Scenario: the widget feels right
+        Given a mounted widget
+        Then a human judges the feel
+      ```
+    MD
+  end
+
+  around do |example|
+    Dir.mktmpdir do |root|
+      @slots = Lain::Prompt::Slots.load(root:)
+      example.run
+    end
+  end
+
+  attr_reader :slots
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
@@ -58,8 +70,6 @@ RSpec.describe Lain::Gherkin::TestGeneration do
   def generation(provider:)
     described_class.new(renderer:, role_spawn: role_spawn(provider:))
   end
-
-  # ---- AC: the scaffold reaches the test-engineer with the criteria digest ---
 
   it "spawns test_engineer fresh with the mechanical scenario, the framework, and no rubric text" do
     provider = mock(text_response("wrote the spec"))
@@ -95,19 +105,6 @@ RSpec.describe Lain::Gherkin::TestGeneration do
 
     expect(Ractor.shareable?(record.criteria_digest)).to be(true)
     expect(Ractor.shareable?(record.rubric_scenarios)).to be(true)
-  end
-
-  # ---- panel fix: an all-rubric Criteria must not silently spawn a no-op ------
-
-  let(:all_rubric_criteria) do
-    Lain::Gherkin::Criteria.parse(<<~MD)
-      ```gherkin
-      # rubric
-      Scenario: the widget feels right
-        Given a mounted widget
-        Then a human judges the feel
-      ```
-    MD
   end
 
   it "raises NothingMechanical naming the digest, spawning nothing, when every scenario is rubric-flagged" do

@@ -89,7 +89,7 @@ RSpec.describe LainCLI do
   describe "--help text" do
     it "lists bedrock alongside anthropic and ollama in the --provider description" do
       description = described_class.commands.fetch("chat").options.fetch(:provider).description
-      expect(description).to match(/anthropic/).and match(/ollama/).and match(/bedrock/)
+      expect(description).to include("anthropic").and include("ollama").and include("bedrock")
     end
 
     it "still scopes the --api-base description to ollama" do

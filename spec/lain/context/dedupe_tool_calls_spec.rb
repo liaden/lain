@@ -80,11 +80,6 @@ RSpec.describe Lain::Context::DedupeToolCalls do
     let(:declaration) do
       Lain::Algebra.registry.about(described_class).find { |entry| entry.structure == :elementwise }
     end
-
-    def analysis_of(combinator, list) = combinator.public_send(declaration.analysis, list)
-
-    def image_of(combinator, message, analysis) = combinator.send(:without_stale, message, analysis)
-
     # One message is REWRITTEN (its text survives, its stale tool_use does not)
     # and one is DROPPED (nothing survives), which is the pair of outcomes the
     # per-message map has to be able to express.
@@ -97,6 +92,10 @@ RSpec.describe Lain::Context::DedupeToolCalls do
         user(tool_result(id: "call-2", content: "new result"))
       ]
     end
+
+    def analysis_of(combinator, list) = combinator.public_send(declaration.analysis, list)
+
+    def image_of(combinator, message, analysis) = combinator.send(:without_stale, message, analysis)
 
     it "answers the stale identifiers it would act on, without transforming anything" do
       before = Lain::Canonical.dump(duplicated_messages)

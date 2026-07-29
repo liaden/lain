@@ -29,7 +29,7 @@ RSpec.describe Lain::Tools::ReadFile do
     missing = File.join(tmpdir, "nope.txt")
     result = tool.call(path: missing)
     expect(result).to have_attributes(is_error: true)
-    expect(result.content).to match(/no such file/)
+    expect(result.content).to include("no such file")
   end
 
   it "reports a directory as an error Result rather than raising" do

@@ -35,7 +35,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
   def scripted_asker(&resolver)
     Object.new.tap do |asker|
       asker.define_singleton_method(:ask) do |question|
-        Lain::Promise.new.tap { |promise| resolver.call(promise, question) }
+        Lain::Promise.new.tap { |promise| yield(promise, question) }
       end
     end
   end

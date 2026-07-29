@@ -176,6 +176,8 @@ RSpec.describe Lain::Tool::Input do
 end
 
 RSpec.describe "a Tool declaring an input_model" do
+  subject(:tool) { tool_class.new }
+
   let(:tool_class) do
     input = Class.new(Lain::Tool::Input) do
       field :path, :string, description: "File to read", required: true
@@ -189,8 +191,6 @@ RSpec.describe "a Tool declaring an input_model" do
       def perform(checked, _context) = Lain::Tool::Result.ok("#{checked.path}:#{checked.limit.inspect}")
     end
   end
-
-  subject(:tool) { tool_class.new }
 
   it "derives #input_schema from the model" do
     expect(tool.input_schema["properties"].keys).to eq(%w[path limit])

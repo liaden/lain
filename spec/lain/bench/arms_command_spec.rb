@@ -445,7 +445,7 @@ RSpec.describe "lain bench arms" do
     it "fails naming the advertised set, with no backtrace and a nonzero exit" do
       result = run("arms", fixture, "--isolation", "nope", "--journal", journal_path)
 
-      expect(result.stderr).to match(/nope/).and match(/none/).and match(/worktree/)
+      expect(result.stderr).to include("nope").and include("none").and include("worktree")
       expect(result.exited).to be_a(SystemExit)
       expect(result.exited.status).not_to eq(0)
     end
@@ -456,7 +456,7 @@ RSpec.describe "lain bench arms" do
     it "runs no arm and asks no provider" do
       result = run("arms", fixture, "--isolation", "nope", "--journal", journal_path)
 
-      expect(result.stderr).to match(/worktree/)
+      expect(result.stderr).to include("worktree")
       expect(Lain::Arm::Driver).not_to have_received(:new)
       expect(provider.call_count).to eq(0)
     end

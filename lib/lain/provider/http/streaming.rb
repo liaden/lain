@@ -61,7 +61,7 @@ module Lain
 
         def handle_stream(&block)
           build_on_data_handler do |data|
-            block.call(build_chunk(data)) if data.is_a?(Hash)
+            yield(build_chunk(data)) if data.is_a?(Hash)
           end
         end
 
@@ -76,7 +76,7 @@ module Lain
         def assign_on_data(req, accumulator, &block)
           handler = handle_stream do |chunk|
             accumulator.add chunk
-            block.call chunk
+            yield chunk
           end
 
           if faraday_1?

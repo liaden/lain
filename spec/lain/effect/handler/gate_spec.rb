@@ -39,7 +39,7 @@ RSpec.describe Lain::Effect::Handler::Gate do
       result = approving.call(tool_call("dangerous"))
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/denied/)
+      expect(result.content).to include("denied")
     end
   end
 

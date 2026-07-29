@@ -9,11 +9,10 @@ require "async"
 # three now delegate to, and that nothing about their pinned behavior moved.
 RSpec.describe Lain::Event::ChainWriter do
   let(:store) { Lain::Store.new }
-
-  def text(body) = [{ "type" => "text", "text" => body }]
-
   let(:root) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
   let(:parent) { root.commit(role: :assistant, content: text("yo")) }
+
+  def text(body) = [{ "type" => "text", "text" => body }]
 
   describe ".correlation_of" do
     it "is nil for the empty chain" do

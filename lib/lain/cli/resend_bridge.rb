@@ -102,7 +102,7 @@ module Lain
       # ArgumentError, say) refuses cleanly, having touched neither the slot
       # nor the Timeline.
       def dispatch(on_attempt, &build)
-        refusal || send_through_loop(build.call, on_attempt)
+        refusal || send_through_loop(yield, on_attempt)
       rescue StandardError => e
         "resend refused: the edited buffer does not rebuild into a Request (#{e.message})"
       end

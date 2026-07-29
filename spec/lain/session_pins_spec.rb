@@ -100,11 +100,11 @@ end
 # AC4: a pin is journaled with the digest it names -- the Session::Journaled
 # decorator's job, so Session itself stays journal-ignorant.
 RSpec.describe Lain::Session::Journaled do
+  subject(:journaled) { described_class.new(session:, journal:) }
+
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:session) { Lain::Session.new }
-
-  subject(:journaled) { described_class.new(session:, journal:) }
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }

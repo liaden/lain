@@ -40,7 +40,7 @@ module Lain
     def each(&block)
       return enum_for(:each) unless block
 
-      names.each { |name| block.call(@by_name.fetch(name)) }
+      names.each { |name| yield(@by_name.fetch(name)) }
     end
 
     # Tool names, sorted. The canonical order everything else here derives from.

@@ -33,12 +33,11 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
 
   let(:store) { Lain::Store.new }
   let(:log) { [] }
+  let(:described_class) { Lain::Workspace::Restore }
 
   def restorer(root: dir, projection_log: log)
     described_class.new(projection: Lain::Event::Projection.new(projection_log), store:, root:)
   end
-
-  let(:described_class) { Lain::Workspace::Restore }
 
   def commit(timeline, number)
     role = number.odd? ? :user : :assistant

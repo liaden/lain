@@ -58,15 +58,14 @@ RSpec.describe Lain::Context do
 
   let(:store) { Lain::Store.new }
   let(:toolset) { Lain::Toolset.new }
-
-  def text(body) = [{ "type" => "text", "text" => body }]
-
   let(:timeline) do
     Lain::Timeline.empty(store:)
                   .commit(role: :user, content: text("hello"))
                   .commit(role: :assistant, content: text("hi"))
                   .commit(role: :user, content: text("more"))
   end
+
+  def text(body) = [{ "type" => "text", "text" => body }]
 
   # Purity is not a style preference. It is the same constraint prompt caching
   # imposes: a timestamp in the system prompt invalidates the cached prefix on

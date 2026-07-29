@@ -359,6 +359,8 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     let(:socket) { "fleet-windows-spec-#{Process.pid}-#{object_id}" }
     let(:real_surface) { Lain::CLI::TmuxSurface.new(socket:) }
+    # tmux's OWN format syntax, not Ruby interpolation (the pinned trap).
+    let(:name_format) { '#{window_name}' } # rubocop:disable Lint/InterpolationCheck
 
     around do |example|
       system("tmux", "-L", socket, "new-session", "-d", "-s", "lain", out: File::NULL, err: File::NULL)
@@ -366,9 +368,6 @@ RSpec.describe Lain::CLI::FleetWindows do
     ensure
       system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
     end
-
-    # tmux's OWN format syntax, not Ruby interpolation (the pinned trap).
-    let(:name_format) { '#{window_name}' } # rubocop:disable Lint/InterpolationCheck
 
     def window_names
       Open3.capture2("tmux", "-L", socket, "list-windows", "-t", "lain", "-F", name_format)

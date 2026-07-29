@@ -99,7 +99,7 @@ RSpec.describe Lain::Tools::WriteFile do
       result = live.call(effect, session)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/never read/)
+      expect(result.content).to include("never read")
       expect(File.read(path)).to eq("original")
     end
 

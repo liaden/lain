@@ -70,7 +70,7 @@ RSpec.describe Lain::Effect::Handler do
         h = described_class.new(toolset: Lain::Toolset.new([boom]))
         result = h.call(tool_call("boom"))
         expect(result).to have_attributes(is_error: true)
-        expect(result.content).to match(/kaboom/)
+        expect(result.content).to include("kaboom")
       end
 
       it "turns a contract violation into an error Result" do

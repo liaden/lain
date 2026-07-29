@@ -16,6 +16,15 @@ RSpec.describe Lain::Bench::Variance do
   let(:context) { Lain::Context.new(model: "claude-sonnet-4-6", max_tokens: 1024, system: "be terse") }
   let(:workspace) { Lain::Workspace.empty }
   let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
+  let(:reference) { record([tool_response("tu_1", "hi"), text_response("done")]) }
+  # Same first model call, so the first divergence lands at model call 2: the
+  # differing tool_use input (and its echoed result) changes its messages.
+  let(:diverging) do
+    record([tool_response("tu_1", "hi there, at considerably greater length"), text_response("done, and then some")])
+  end
+  # One extra tool round trip: three model calls whose first two render the
+  # same bytes as the reference's two.
+  let(:extended) { record([tool_response("tu_1", "hi"), tool_response("tu_2", "hi"), text_response("done")]) }
 
   # Narrowed over the shared builders: every response here is an echo call
   # carrying the priceable model and usage, so the call sites stay terse.
@@ -54,16 +63,6 @@ RSpec.describe Lain::Bench::Variance do
     journal << Lain::Telemetry::CapabilityDegraded.new(capability:, requirer: "Spec",
                                                        provider: "Provider::Mock")
   end
-
-  let(:reference) { record([tool_response("tu_1", "hi"), text_response("done")]) }
-  # Same first model call, so the first divergence lands at model call 2: the
-  # differing tool_use input (and its echoed result) changes its messages.
-  let(:diverging) do
-    record([tool_response("tu_1", "hi there, at considerably greater length"), text_response("done, and then some")])
-  end
-  # One extra tool round trip: three model calls whose first two render the
-  # same bytes as the reference's two.
-  let(:extended) { record([tool_response("tu_1", "hi"), tool_response("tu_2", "hi"), text_response("done")]) }
 
   describe "the headline report" do
     let(:variance) { described_class.new(recordings: [reference, diverging, extended]) }

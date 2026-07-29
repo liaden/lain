@@ -78,7 +78,7 @@ RSpec.describe Lain::Agent do
       # firing lands in :failed rather than blowing up on a missing bang method.
       expect { a.ask("hi") }.not_to raise_error
       expect(a.state).to eq(:failed)
-      expect(a.failure_reason).to match(/unrecognized/)
+      expect(a.failure_reason).to include("unrecognized")
     end
   end
 

@@ -101,7 +101,7 @@ RSpec.describe "the living docs" do
     # `--compact-strategy` deliberately carries no Thor default, so "unset" is a
     # third, reachable choice and the doc has to say which it is describing.
     it "documents the unset flag as its own case rather than as a synonym for a strategy" do
-      expect(doc).to match(/`--compact-strategy`/).and match(/no Thor default/)
+      expect(doc).to include("`--compact-strategy`").and include("no Thor default")
     end
   end
 end

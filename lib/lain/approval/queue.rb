@@ -199,7 +199,7 @@ module Lain
       # protection this method exists to give. `kind` names what was being
       # recorded, because a raise mid-construction leaves no instance to name.
       def record_evidence(kind, &entry)
-        @journal.record(entry.call)
+        @journal.record(yield)
       rescue StandardError => e
         degrade(kind, e)
       end

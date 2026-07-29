@@ -11,6 +11,8 @@
 # example that skips the injection names a provider that is refused before any
 # client is built).
 RSpec.describe Lain::Bench::SpawnSeam do
+  subject(:seam) { described_class.new(provider:, toolset:) }
+
   let(:provider) do
     Lain::Provider::Mock.new(
       responses: [text_response("done", model: "claude-sonnet-4",
@@ -19,8 +21,6 @@ RSpec.describe Lain::Bench::SpawnSeam do
   end
 
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  subject(:seam) { described_class.new(provider:, toolset:) }
 
   def journal = Lain::Channel.new
 

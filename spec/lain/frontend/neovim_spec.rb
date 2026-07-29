@@ -343,7 +343,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do
         inspector.command("LainVersion")
         wait_until { messages.include?("9.9.9") }
-        expect(messages).not_to match(/mismatch/)
+        expect(messages).not_to include("mismatch")
       end
     end
 
@@ -352,7 +352,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
       frontend.run do
         wait_until { messages.match?(/mismatch/) }
-        expect(messages).to match(/mismatch/)
+        expect(messages).to include("mismatch")
         expect(inspector.evaluate("1 + 1")).to eq(2) # the editor is alive, not crashed
       end
     end
@@ -415,7 +415,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         feed("lain://timeline", "p", cursor: [3, 0])
 
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["pin", [3]])
-        expect(messages).to match(/LainPin/)
+        expect(messages).to include("LainPin")
       end
     end
   end
@@ -471,7 +471,7 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
       lines = render(buffers, timeline)
 
       expect(lines[1]).to end_with(described_class::TimelineView::PIN_MARKER)
-      expect(lines.grep(/#{Regexp.escape(described_class::TimelineView::PIN_MARKER)}\z/).size).to eq(1)
+      expect(lines.grep(/#{Regexp.escape(described_class::TimelineView::PIN_MARKER)}\z/o).size).to eq(1)
     end
   end
 

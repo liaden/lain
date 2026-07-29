@@ -106,7 +106,7 @@ RSpec.describe Lain::CLI::Epic do
     it "says so plainly when nothing is ready" do
       write_epic("alpha", graph_of(issue("a", status: "in_flight")))
 
-      expect(command.status).to match(/ready: nothing/)
+      expect(command.status).to include("ready: nothing")
     end
   end
 
@@ -214,7 +214,7 @@ RSpec.describe Lain::CLI::Epic do
     it "says so plainly when every issue is done" do
       write_epic("alpha", graph_of(issue("a", status: "done"), issue("b", status: "done")))
 
-      expect(command.status).to match(/remaining: nothing/)
+      expect(command.status).to include("remaining: nothing")
     end
   end
 
@@ -349,8 +349,8 @@ RSpec.describe Lain::CLI::Epic do
       message = command.status
 
       expect(message).to include(container)
-      expect(message).to match(/no epics yet/)
-      expect(message).to match(/research-epic/)
+      expect(message).to include("no epics yet")
+      expect(message).to include("research-epic")
     end
 
     it "answers the same way when the home directory does not exist at all" do
@@ -366,7 +366,7 @@ RSpec.describe Lain::CLI::Epic do
     it "warns when a repo home is git-ignored" do
       write_epic("alpha", chain, home: :repo)
 
-      expect(command(home: :repo, ignored: ".gitignore:5:/.lain/").status).to match(/makes git ignore this home/)
+      expect(command(home: :repo, ignored: ".gitignore:5:/.lain/").status).to include("makes git ignore this home")
     end
 
     # The actionable half of the warning is WHICH pattern to drop; without it
@@ -396,7 +396,7 @@ RSpec.describe Lain::CLI::Epic do
     end
 
     it "warns on an empty repo home too, where the advice matters most" do
-      expect(command(home: :repo, ignored: ".gitignore:5:/.lain/").status).to match(/makes git ignore this home/)
+      expect(command(home: :repo, ignored: ".gitignore:5:/.lain/").status).to include("makes git ignore this home")
     end
   end
 

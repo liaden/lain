@@ -10,6 +10,8 @@ require "tmpdir"
 # (T14's resumed_from), and the notices the frontend renders. The exe stays
 # thin; this object owns every choice.
 RSpec.describe Lain::CLI::Resume do
+  subject(:resume) { described_class.new(paths:) }
+
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
@@ -17,8 +19,6 @@ RSpec.describe Lain::CLI::Resume do
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
   let(:recorded_context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  subject(:resume) { described_class.new(paths:) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -57,6 +57,7 @@ RSpec.describe Lain::CLI::Resume do
 
   describe "restoring the whole conversation (a closed session of three turns)" do
     let(:three) { chain("first", "ack", "second") }
+
     before { write_closed("20260101T000000-1.ndjson", three) }
 
     it "rebuilds the verified Timeline, closed, with the chained-header fields for the new journal" do
@@ -101,6 +102,7 @@ RSpec.describe Lain::CLI::Resume do
   describe "selection" do
     let(:first) { chain("one") }
     let(:second) { chain("two") }
+
     before do
       write_closed("20260101T000000-1.ndjson", first)
       write_closed("20260202T000000-1.ndjson", second)
@@ -138,6 +140,7 @@ RSpec.describe Lain::CLI::Resume do
     # filename stays selectable: salvaging a crashed --btw session.
     context "with an ephemeral (--btw) scratch session newest in the directory" do
       let(:scratch) { chain("scratchy") }
+
       before { write_session("20260303T000000-9.btw.ndjson", [open_header] + turn_records(scratch)) }
 
       it "bare --resume picks the newest DURABLE session, mirroring `lain sessions`" do
@@ -165,6 +168,7 @@ RSpec.describe Lain::CLI::Resume do
     # defence for the file a hard kill still leaves.
     context "with a zero-byte session newest in the directory" do
       let(:empty_name) { "20260404T000000-1.ndjson" }
+
       before { File.write(File.join(paths.sessions_dir, empty_name), "") }
 
       it "bare --resume skips it for the newest session that has records" do
@@ -244,6 +248,7 @@ RSpec.describe Lain::CLI::Resume do
 
   describe "an open (SIGKILL'd) session" do
     let(:two) { chain("hi", "hello") }
+
     before { write_session("20260101T000000-1.ndjson", [open_header] + turn_records(two)) }
 
     it "loads the verified turns, reports the open state, and chat continues" do
@@ -639,6 +644,7 @@ RSpec.describe Lain::CLI::Resume do
 
     describe "from a LIVE (open) session whose owner is still appending" do
       let(:two) { chain("hi", "hello") }
+
       before { write_session("20260101T000000-1.ndjson", [open_header] + turn_records(two)) }
 
       it "never constructs a Salvager and appends nothing to the parent" do

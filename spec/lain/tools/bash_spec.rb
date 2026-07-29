@@ -55,7 +55,7 @@ RSpec.describe Lain::Tools::Bash do
       result = described_class.new(shell_out_factory: short_grace)
                               .call({ command: "sleep 5", timeout: 1 }, invocation)
       expect(result).to be_error
-      expect(result.content).to match(/timed out/)
+      expect(result.content).to include("timed out")
     end
 
     # The rescue->Result mapping in isolation: no subprocess, no clock.
@@ -67,7 +67,7 @@ RSpec.describe Lain::Tools::Bash do
 
       result = tool.call({ command: "sleep 5", timeout: 7 }, invocation)
       expect(result).to be_error
-      expect(result.content).to match(/timed out after 7s/)
+      expect(result.content).to include("timed out after 7s")
     end
   end
 

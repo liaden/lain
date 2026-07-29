@@ -13,6 +13,8 @@ RSpec.describe Lain::Workspace::Snapshot do
     File.join(dir, name).tap { |path| File.binwrite(path, bytes) }
   end
 
+  subject(:writer) { described_class.new(observer:, root: dir) }
+
   around do |example|
     Dir.mktmpdir do |dir|
       @dir = dir
@@ -24,8 +26,6 @@ RSpec.describe Lain::Workspace::Snapshot do
 
   let(:events) { [] }
   let(:observer) { ->(event) { events << event } }
-
-  subject(:writer) { described_class.new(observer:, root: dir) }
 
   describe Lain::Workspace::Snapshot::Blob do
     it "content-addresses its bytes: same bytes, same digest; different bytes, different digest" do

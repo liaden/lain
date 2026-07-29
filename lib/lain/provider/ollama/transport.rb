@@ -63,7 +63,7 @@ module Lain
           buffer = +""
           handler = Provider::HTTP::Streaming::FaradayHandlers.build(
             faraday_v1: faraday_1?,
-            on_chunk: ->(chunk, _env) { on_chunk.call(chunk) },
+            on_chunk: ->(chunk, _env) { yield(chunk) },
             on_failed_response: ->(chunk, env) { handle_failed_response(chunk, buffer, env) }
           )
           assign_on_data(req, handler)

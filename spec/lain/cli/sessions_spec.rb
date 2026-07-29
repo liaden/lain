@@ -9,6 +9,8 @@ require "tmpdir"
 # is the Loader's job at resume time. Returns a String; only the frontend
 # renders (output discipline).
 RSpec.describe Lain::CLI::Sessions do
+  subject(:sessions) { described_class.new(paths:) }
+
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
@@ -16,8 +18,6 @@ RSpec.describe Lain::CLI::Sessions do
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
   let(:context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  subject(:sessions) { described_class.new(paths:) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -47,6 +47,7 @@ RSpec.describe Lain::CLI::Sessions do
       let(:oldest) { chain("one", "two") }
       let(:open_chain) { chain("three") }
       let(:newest) { chain("four", "five") }
+      let(:lines) { sessions.listing.lines.map(&:chomp) }
 
       before do
         write_session("20260101T000000-1.ndjson",
@@ -63,8 +64,6 @@ RSpec.describe Lain::CLI::Sessions do
                       newest.to_a.map { |turn| Lain::SessionRecord.turn(turn) } +
                       [closed_record(newest.head_digest)])
       end
-
-      let(:lines) { sessions.listing.lines.map(&:chomp) }
 
       it "lists newest first" do
         expect(lines.map { |line| line[/\S+/] })

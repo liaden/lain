@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::GoalDriver do
       expect(prompts.compact.size).to eq(5)
       expect(iterations.size).to eq(5)
       expect(driver).not_to be_active
-      expect(notices.join).to match(/5/)
+      expect(notices.join).to include("5")
     end
 
     it "honours a lower cap" do

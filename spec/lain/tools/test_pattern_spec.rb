@@ -10,7 +10,7 @@ RSpec.describe Lain::Tools::TestPattern do
 
     expect(result).to be_ok
     expect(result.content).to match(/\A1 match:/)
-    expect(result.content).to match(/line 1/)
+    expect(result.content).to include("line 1")
     expect(result.content).to include('NAME="total"')
   end
 
@@ -56,7 +56,7 @@ RSpec.describe Lain::Tools::TestPattern do
     result = tool.call(pattern: "def (", code: "x = 1", language: "ruby")
 
     expect(result).to have_attributes(is_error: true)
-    expect(result.content).to match(/def \(/)
+    expect(result.content).to include("def (")
   end
 
   it "reports an unsupported language as an error Result rather than raising" do

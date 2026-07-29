@@ -7,14 +7,14 @@ require "tmpdir"
 # one run becomes one loadable session file. cli_spec drives it end to end
 # through CLI#record; this pins the unit directly.
 RSpec.describe Lain::Bench::CLI::RunRecorder do
+  subject(:run_recorder) do
+    described_class.new(provider:, context:, attribution:, prompts: ["what is the aspirin dosing?"])
+  end
+
   let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
   let(:provider) { Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h", usage:)]) }
   let(:context) { Lain::Context.new(model: "claude-sonnet-4-6", max_tokens: 1024) }
   let(:attribution) { Lain::Telemetry::SlotFills.new(digests: {}, fills: {}) }
-
-  subject(:run_recorder) do
-    described_class.new(provider:, context:, attribution:, prompts: ["what is the aspirin dosing?"])
-  end
 
   it "writes one loadable session, slot_fills attribution included" do
     Dir.mktmpdir do |tmp|

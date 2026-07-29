@@ -90,7 +90,7 @@ RSpec.describe Lain::Plan::Closure do
 
       expect(closure.status).to eq("failed")
       expect(closure.passed).to be(false)
-      expect(closure.error_digests).to contain_exactly(*expected)
+      expect(closure.error_digests).to match_array(expected)
       expect(closure.error_digests.size).to eq(2)
     end
 

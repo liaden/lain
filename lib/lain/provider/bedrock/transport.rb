@@ -39,7 +39,7 @@ module Lain
         private
 
         def install_on_data(req, &on_event)
-          handler = build_on_data_handler { |data| on_event.call(data) if data.is_a?(Hash) }
+          handler = build_on_data_handler { |data| yield(data) if data.is_a?(Hash) }
           if faraday_1?
             req.options[:on_data] = handler
           else

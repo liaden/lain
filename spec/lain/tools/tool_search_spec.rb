@@ -10,6 +10,8 @@ RSpec.describe Lain::Tools::ToolSearch do
     end.new
   end
 
+  subject(:search_tool) { described_class.new(toolset: -> { attenuated_toolset }) }
+
   let(:read) do
     input = Class.new(Lain::Tool::Input) do
       field :path, :string, description: "Path to read.", required: true
@@ -30,8 +32,6 @@ RSpec.describe Lain::Tools::ToolSearch do
   let(:full_toolset) { Lain::Toolset.new([bash, grep, read]) }
   # What THIS agent actually holds -- bash dropped, the security-relevant case.
   let(:attenuated_toolset) { full_toolset.except(:bash) }
-
-  subject(:search_tool) { described_class.new(toolset: -> { attenuated_toolset }) }
 
   it "has a model-facing name and description" do
     expect(search_tool.name).to eq("tool_search")

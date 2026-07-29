@@ -194,7 +194,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     # Escaped and anchored to match what `.decline?` actually tests: the
     # prefix is inert as a regex today, but a later one need not be.
     it "keeps the decline prefix out of every pattern name, so the distinction cannot drift" do
-      reserved = /\A#{Regexp.escape(described_class::DECLINE_PREFIX)}/
+      reserved = /\A#{Regexp.escape(described_class::DECLINE_PREFIX)}/o
       expect(described_class::PATTERNS.keys.grep(reserved)).to be_empty
       expect(described_class::PATTERNS.keys.select { |name| described_class.decline?(name) }).to be_empty
     end

@@ -29,15 +29,14 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
   let(:definition) do
     Lain::Oracle::Definition.new(template: %(Summarize:\n<%= render("source") %>), schema:, tier: :heuristic)
   end
-
-  def heuristic_oracle(summary:)
-    Lain::Oracle::Heuristic.new(definition:, predicate: ->(_inputs) { { "summary" => summary } })
-  end
-
   # A tool result big enough for Handler::Summarizing to bother with
   # (DEFAULT_THRESHOLD_BYTES is 4096).
   let(:source) { "the bytes a tool returned. " * 400 }
   let(:source_digest) { Lain::Canonical.digest(source) }
+
+  def heuristic_oracle(summary:)
+    Lain::Oracle::Heuristic.new(definition:, predicate: ->(_inputs) { { "summary" => summary } })
+  end
 
   # What ToolRunner#result_block commits, projected the way Context#render
   # projects a Timeline turn: `{"role" => .., "content" => ..}`.

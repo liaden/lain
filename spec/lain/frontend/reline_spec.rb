@@ -618,7 +618,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       during_read(editor, notify: reported.method(:push))
 
       expect(editor.whole_buffer).to eq("hello")
-      expect(reported.join).to match(/Integer/)
+      expect(reported.join).to include("Integer")
     end
 
     # F2: the report itself runs inside dispatch's rescue. A notifier that

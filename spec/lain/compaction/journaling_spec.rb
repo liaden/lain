@@ -18,11 +18,6 @@ end
 RSpec.describe "Compaction journaling (T20/CAC-6)" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
-
   # A deterministic, pure, SHAREABLE summarizer -- the Compact contract. Six
   # substantial messages, keep_last(2), threshold 5: enough that a scheduled
   # compaction actually rewrites the head, so tokens_before/tokens_after
@@ -31,6 +26,10 @@ RSpec.describe "Compaction journaling (T20/CAC-6)" do
     Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer: JournalingShareableFixtures::SUMMARIZER)
   end
   let(:base) { JournalingShareableFixtures::BASE }
+
+  def records
+    journal_io.string.each_line.map { |line| JSON.parse(line) }
+  end
 
   def history(size = 6)
     (1...(size + 1)).map do |i|

@@ -239,7 +239,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff do
       expect(prompt.lines.grep(/\A- /).size).to eq(2)
       awkward.each { |name| expect(prompt).to include(File.join(@repo_root, name).inspect) }
       expect(RecordingResolver.named_paths(prompt))
-        .to contain_exactly(*awkward.map { |name| File.join(@repo_root, name) })
+        .to match_array(awkward.map { |name| File.join(@repo_root, name) })
     ensure
       lease&.release
     end

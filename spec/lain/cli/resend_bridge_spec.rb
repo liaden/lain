@@ -139,8 +139,8 @@ RSpec.describe Lain::CLI::ResendBridge do
 
       notice = described_class.new(agent:, journal:).offer { edited }
 
-      expect(notice).to match(/resend failed: simulated 500/)
-      expect(notice).to match(/at-least-once/)
+      expect(notice).to include("resend failed: simulated 500")
+      expect(notice).to include("at-least-once")
       # deliver restored the unsent edit; the bridge drains it so a later
       # ordinary ask can never send it surprisingly.
       expect(override).not_to be_queued
@@ -276,7 +276,7 @@ RSpec.describe Lain::CLI::ResendBridge do
 
       notice = described_class.new(agent:, journal:).offer { edited }
 
-      expect(notice).to match(/resend failed: simulated 500/)
+      expect(notice).to include("resend failed: simulated 500")
       expect(notice).to include("may have reached the provider once")
       expect(notice).to include("at-least-once")
     end

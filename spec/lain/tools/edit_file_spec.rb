@@ -49,7 +49,7 @@ RSpec.describe Lain::Tools::EditFile do
       result = live.call(effect, session)
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/never read/)
+      expect(result.content).to include("never read")
       expect(File.read(path)).to eq("hello world")
     end
 
@@ -133,7 +133,7 @@ RSpec.describe Lain::Tools::EditFile do
       result = tool.call({ path:, old_string: "missing", new_string: "x" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/0/)
+      expect(result.content).to include("0")
       expect(File.read(path)).to eq("hello world")
     end
 
@@ -145,7 +145,7 @@ RSpec.describe Lain::Tools::EditFile do
       result = tool.call({ path:, old_string: "hello", new_string: "x" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/2/)
+      expect(result.content).to include("2")
       expect(File.read(path)).to eq("hello hello world")
     end
 
@@ -157,7 +157,7 @@ RSpec.describe Lain::Tools::EditFile do
       result = tool.call({ path:, old_string: "aa", new_string: "b" }, invocation_with(session))
 
       expect(result).to have_attributes(is_error: true)
-      expect(result.content).to match(/2/)
+      expect(result.content).to include("2")
       expect(File.read(path)).to eq("aaa")
     end
 

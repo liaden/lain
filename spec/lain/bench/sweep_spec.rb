@@ -32,7 +32,7 @@ RSpec.describe Lain::Bench::Sweep do
 
     it "scores every one of the five arms" do
       names = arm_rows(report).map(&:first)
-      expect(names).to contain_exactly(*arms)
+      expect(names).to match_array(arms)
     end
 
     it "ranks the arms by descending recall@k mean" do
@@ -58,7 +58,7 @@ RSpec.describe Lain::Bench::Sweep do
     end
 
     it "names the corpus size and k in its header" do
-      expect(report).to match(/recall@5/).and match(/12 queries/).and match(/32 items/)
+      expect(report).to include("recall@5").and include("12 queries").and include("32 items")
     end
   end
 

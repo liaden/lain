@@ -14,17 +14,14 @@ require "tmpdir"
 # forward enumerator), reach the scribe by observing the ChainWriter and land as
 # a distinct `message` record that the turn loader skips.
 RSpec.describe Lain::SessionRecord::Scribe do
+  subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
+
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:workspace) { Lain::Workspace.empty }
   let(:store) { Lain::Store.new }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-
-  subject(:scribe) { described_class.new(journal:, context:, toolset:, workspace:) }
-
-  def text(body) = [{ "type" => "text", "text" => body }]
-
   # A user ask, an assistant tool_use, a user tool_result, an assistant reply --
   # the four render-chain turns one ask completes as.
   let(:timeline) do
@@ -36,6 +33,8 @@ RSpec.describe Lain::SessionRecord::Scribe do
                                                    "content" => "hi" }])
                   .commit(role: :assistant, content: text("done"))
   end
+
+  def text(body) = [{ "type" => "text", "text" => body }]
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }

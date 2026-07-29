@@ -55,7 +55,7 @@ module Lain
           open = frames.each_with_index.inject(nil) do |pending, (record, index)|
             fold(pending, record, tail: index == frames.size - 1, &emit)
           end
-          emit.call(torn(open)) if open
+          yield(torn(open)) if open
         end
 
         private
@@ -78,8 +78,8 @@ module Lain
           return corrupt("terminator record with no open frame", &emit) if open.nil?
           return corrupt("bytes trail a terminator record", &emit) unless rest.empty?
 
-          emit.call(Entry.new(request_digest: open.request_digest, bytes: open.raw,
-                              complete: json["complete"] == true && json["bytes"] == open.raw.bytesize))
+          yield(Entry.new(request_digest: open.request_digest, bytes: open.raw,
+                          complete: json["complete"] == true && json["bytes"] == open.raw.bytesize))
           nil
         end
 
@@ -91,7 +91,7 @@ module Lain
         end
 
         def torn_tail(open, &emit)
-          emit.call(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false))
+          yield(open ? torn(open) : Entry.new(request_digest: nil, bytes: "", complete: false))
           nil
         end
 
@@ -101,7 +101,7 @@ module Lain
         def corrupt(reason, &emit)
           raise CorruptFrame, reason unless @tolerant
 
-          emit.call(Corrupt.new(reason:))
+          yield(Corrupt.new(reason:))
           nil
         end
 

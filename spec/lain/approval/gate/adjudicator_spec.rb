@@ -43,22 +43,20 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   let(:gate) { Lain::Approval::Gate.new(journal:, timeout: 0.5) }
   let(:queue) { Lain::Approval::SignoffQueue.new }
   let(:evidence_text) { "The plan cites Epic::Stage's closed set, which the issue graph already honours." }
+  let(:plan) { artifact }
+  # The caller's answer to "how does an artifact render for a spike". There is
+  # no default -- nothing maps a digest to a path -- so every construction site,
+  # including this one, has to say.
+  let(:brief) { ->(item) { "Gather evidence for: #{item.gate_question}" } }
 
   # The whole artifact duck Gate ships: a content address and its own question.
   def artifact(digest: "blake3:plan", question: "Approve the epic plan? Reply approve or deny.")
     Data.define(:digest, :gate_question).new(digest:, gate_question: question)
   end
 
-  let(:plan) { artifact }
-
   def spawn_stub(researcher: evidence_text, verdict: "APPROVE")
     AdjudicatorSpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
   end
-
-  # The caller's answer to "how does an artifact render for a spike". There is
-  # no default -- nothing maps a digest to a path -- so every construction site,
-  # including this one, has to say.
-  let(:brief) { ->(item) { "Gather evidence for: #{item.gate_question}" } }
 
   def adjudicator(spawn = spawn_stub, clock: Lain::Approval::Gate::MONOTONIC)
     described_class.new(role_spawn: spawn, gate:, queue:, journal:, brief:, clock:)

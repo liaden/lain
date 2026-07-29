@@ -53,11 +53,11 @@ RSpec.describe Lain::Bench::DisclosureSweep do
     end
 
     it "notes the code-API arm is deferred (M6), not silently omitted" do
-      expect(report).to match(/code-API/).and match(/out of scope/i)
+      expect(report).to include("code-API").and match(/out of scope/i)
     end
 
     it "names the task count in its header" do
-      expect(report).to match(/5 tasks/)
+      expect(report).to include("5 tasks")
     end
   end
 

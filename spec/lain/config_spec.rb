@@ -74,8 +74,8 @@ RSpec.describe Lain::Config do
         File.binwrite(config_path(root), "[epics]\nhome = \"\xFF\xFE\"\n")
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to match(/could not be read as TOML/)
-          expect(error.message).not_to match(/is not valid TOML/)
+          expect(error.message).to include("could not be read as TOML")
+          expect(error.message).not_to include("is not valid TOML")
         end
       end
     end
@@ -101,8 +101,8 @@ RSpec.describe Lain::Config do
         File.chmod(0o000, path)
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to match(/could not be read as TOML/)
-          expect(error.message).not_to match(/is not valid TOML/)
+          expect(error.message).to include("could not be read as TOML")
+          expect(error.message).not_to include("is not valid TOML")
         end
       ensure
         File.chmod(0o600, path) if path && File.exist?(path)
@@ -123,8 +123,8 @@ RSpec.describe Lain::Config do
         FileUtils.mkdir_p(config_path(root))
 
         expect { described_class.load(root:) }.to raise_error do |error|
-          expect(error.message).to match(/could not be read as TOML/)
-          expect(error.message).not_to match(/is not valid TOML/)
+          expect(error.message).to include("could not be read as TOML")
+          expect(error.message).not_to include("is not valid TOML")
         end
       end
     end
@@ -280,8 +280,8 @@ RSpec.describe Lain::Config do
 
         expect { described_class.load(root:) }
           .to raise_error(Lain::Config::Epics::InvalidHome, /somewhere_else/) do |error|
-            expect(error.message).to match(/xdg/)
-            expect(error.message).to match(/repo/)
+            expect(error.message).to include("xdg")
+            expect(error.message).to include("repo")
           end
       end
     end
@@ -304,8 +304,8 @@ RSpec.describe Lain::Config do
 
           expect { described_class.load(root:) }
             .to raise_error(Lain::Config::Epics::InvalidHome) do |error|
-              expect(error.message).to match(/xdg/)
-              expect(error.message).to match(/repo/)
+              expect(error.message).to include("xdg")
+              expect(error.message).to include("repo")
             end
         end
       end

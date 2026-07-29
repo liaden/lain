@@ -199,6 +199,11 @@ RSpec.describe Lain::Telemetry do
   end
 
   describe Lain::Telemetry::RequestSent do
+    subject(:event) do
+      described_class.new(digest: request.digest, payload: request.cache_payload,
+                          stream: request.stream, extra: request.extra)
+    end
+
     let(:request) do
       Lain::Request.new(
         model: "claude-opus-4-8",
@@ -210,11 +215,6 @@ RSpec.describe Lain::Telemetry do
         reasoning: { "budget_tokens" => 1024 },
         extra: { "service_tier" => "flex" }
       )
-    end
-
-    subject(:event) do
-      described_class.new(digest: request.digest, payload: request.cache_payload,
-                          stream: request.stream, extra: request.extra)
     end
 
     it "carries the request's cache identity plus the transport fields the digest excludes" do

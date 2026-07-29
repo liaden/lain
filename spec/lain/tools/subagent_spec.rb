@@ -426,7 +426,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.run("go")
 
       expect(result).to be_error
-      expect(result.content).to match(/depth/)
+      expect(result.content).to include("depth")
       expect(tool.last_spawn).to be_nil
       expect(store.size).to eq(before)
     end
@@ -442,7 +442,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result).to be_error
-      expect(result.content).to match(/depth/)
+      expect(result.content).to include("depth")
       expect(store.size).to eq(before)
       expect(tool.last_spawn).to be_nil
     end
@@ -477,7 +477,7 @@ RSpec.describe Lain::Tools::Subagent do
       refusal = provider.requests[2].messages.flat_map { |m| m["content"] }
                                              .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
-      expect(refusal["content"]).to match(/depth/)
+      expect(refusal["content"]).to include("depth")
     end
 
     # A tool's OWN tighter ceiling survives the copy: descending must never
@@ -501,7 +501,7 @@ RSpec.describe Lain::Tools::Subagent do
       refusal = provider.requests[1].messages.flat_map { |m| m["content"] }
                                              .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
-      expect(refusal["content"]).to match(/depth/)
+      expect(refusal["content"]).to include("depth")
     end
 
     # The exe shape -- a union holding no subagent -- passes through untouched:
@@ -793,7 +793,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result).to be_error
-      expect(result.content).to match(/supervisor/)
+      expect(result.content).to include("supervisor")
     end
   end
 end

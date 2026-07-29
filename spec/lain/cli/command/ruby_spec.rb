@@ -33,13 +33,13 @@ RSpec.describe Lain::CLI::Command::Ruby do
     it "renders the error rather than crashing the repl on a bad message" do
       result = command.call("timeline.head.no_such_method", env)
 
-      expect(result).to match(/NoMethodError/)
+      expect(result).to include("NoMethodError")
     end
 
     it "renders the error rather than crashing the repl on a syntax error" do
       result = command.call("timeline.", env)
 
-      expect(result).to match(/SyntaxError/)
+      expect(result).to include("SyntaxError")
     end
   end
 
@@ -62,8 +62,9 @@ RSpec.describe Lain::CLI::Command::Ruby do
   end
 
   describe "console arity (bare)" do
-    let(:console) { spy("console") }
     subject(:command) { described_class.new(console:) }
+
+    let(:console) { spy("console") }
 
     it "opens a console over an InspectionBinding built from the env, then returns to chat" do
       result = command.call("", env)

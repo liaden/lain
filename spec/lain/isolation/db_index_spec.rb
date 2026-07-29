@@ -81,8 +81,9 @@ RSpec.describe Lain::Isolation::DbIndex do
   end
 
   describe "a declared Postgres service" do
-    let(:postgres) { Lain::Isolation::Services::Postgres.new }
     subject(:backend) { build([postgres]) }
+
+    let(:postgres) { Lain::Isolation::Services::Postgres.new }
 
     it "creates a per-worker DB and points DATABASE_URL at it" do
       lease = backend.acquire("w1")
@@ -129,8 +130,9 @@ RSpec.describe Lain::Isolation::DbIndex do
   end
 
   describe "a declared Redis service" do
-    let(:redis) { Lain::Isolation::Services::Redis.new }
     subject(:backend) { build([redis]) }
+
+    let(:redis) { Lain::Isolation::Services::Redis.new }
 
     it "gives two workers distinct Redis DB-indices off the default 0" do
       one = backend.acquire("w1")

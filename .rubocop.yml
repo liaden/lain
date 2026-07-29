@@ -1,9 +1,17 @@
+inherit_from: .rubocop_todo.yml
+
 # Without this, the AllCops/Exclude below REPLACES RuboCop's default exclude
 # list (tmp/, vendor/, node_modules/) rather than adding to it, and the build
 # artifacts under tmp/ get linted.
 inherit_mode:
   merge:
     - Exclude
+
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-rspec
+  - rubocop-thread_safety
 
 AllCops:
   TargetRubyVersion: 3.2

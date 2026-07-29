@@ -35,7 +35,7 @@ RSpec.describe Lain::Bench::DeciderSweep do
     let(:by_arm) { rows.to_h { |row| [row.first, row] } }
 
     it "scores every arm the fixture names, and only those five" do
-      expect(rows.map(&:first)).to contain_exactly(*described_class::ARMS)
+      expect(rows.map(&:first)).to match_array(described_class::ARMS)
     end
 
     it "grades the heuristic arm below the content-reading arms -- it gets the " \
@@ -69,8 +69,8 @@ RSpec.describe Lain::Bench::DeciderSweep do
     end
 
     it "names the case and arm counts in its header" do
-      expect(report).to match(/4 cases/)
-      expect(report).to match(/5 arms/)
+      expect(report).to include("4 cases")
+      expect(report).to include("5 arms")
     end
   end
 
@@ -88,7 +88,7 @@ RSpec.describe Lain::Bench::DeciderSweep do
       %w[heuristic inline model_self_directed].each do |arm|
         row = by_arm.fetch(arm)
         expect(Integer(row[1])).to eq(0)
-        expect(row[2..]).to all(match(/ABSENT/))
+        expect(row[2..]).to all(include("ABSENT"))
       end
     end
 

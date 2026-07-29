@@ -5,8 +5,9 @@ require "timeout"
 require "tempfile"
 
 RSpec.describe Lain::Tools::Subagent::Stagger do
-  let(:journal) { [] }
   subject(:stagger) { described_class.new(journal:) }
+
+  let(:journal) { [] }
 
   # Genuine FD-level redirection, not a bare `$stderr = StringIO.new`: the
   # async gem's Console logger may hold its own reference to the ORIGINAL
@@ -162,6 +163,7 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     let(:strategy) { Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template:) }
     let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
     let(:store) { Lain::Store.new }
+    let(:requests) { sibling_requests(%w[alpha-task beta-task gamma-task delta-task]) }
 
     # Four real sibling-template Requests -- byte-identical system/tools,
     # one per-child task riding in messages -- built the same way
@@ -176,8 +178,6 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
         shaped.render(timeline:, toolset:)
       end
     end
-
-    let(:requests) { sibling_requests(%w[alpha-task beta-task gamma-task delta-task]) }
 
     # The SYSTEM_PREFIX entry of the chain (Request::SYSTEM_PREFIX, -1) is
     # the shared template's own digest -- position -1 always precedes every

@@ -14,6 +14,8 @@ RSpec.describe Lain::Agent::LoopMachine do
   # A minimal includer standing in for both the Agent and the arm's Planner:
   # it wires only the announce listener the mixin needs, so these examples pin
   # the MACHINE, not either driver.
+  subject(:machine) { includer_class.new(listener) }
+
   let(:includer_class) do
     Class.new do
       include Lain::Agent::LoopMachine
@@ -37,7 +39,6 @@ RSpec.describe Lain::Agent::LoopMachine do
   end
 
   let(:listener) { recorder.new }
-  subject(:machine) { includer_class.new(listener) }
 
   describe "the addition is additive -- nothing legal before is illegal now" do
     it "declares the new :stalled state without dropping any prior state" do

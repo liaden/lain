@@ -170,7 +170,7 @@ RSpec.describe Lain::Ext::Fuzzy do
       decomposed = "néon.rb"
       hit = described_class.new([decomposed]).match("non").first
 
-      expect(decomposed.chars.size).to eq(8)
+      expect(decomposed.size).to eq(8)
       expect(decomposed.grapheme_clusters.size).to eq(7)
       expect(hit["positions"]).to all(be < 7)
       expect(hit["positions"].map { |i| decomposed.grapheme_clusters[i] }.join).to eq("non")

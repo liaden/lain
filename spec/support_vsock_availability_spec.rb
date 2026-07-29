@@ -190,7 +190,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
 
       expect(executed).to be(false)
       expect(example.execution_result.status).to eq(:pending)
-      expect(example.execution_result.pending_message).to match(/vsock_loopback unavailable/)
+      expect(example.execution_result.pending_message).to include("vsock_loopback unavailable")
     end
 
     it "skips rather than fails when the binary is missing, naming the binary" do
@@ -202,7 +202,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
 
       expect(executed).to be(false)
       expect(example.execution_result.status).to eq(:pending)
-      expect(example.execution_result.pending_message).to match(/binary not built/)
+      expect(example.execution_result.pending_message).to include("binary not built")
     end
 
     it "does not run a :vsock example with no tag filter applied -- the default posture" do
@@ -229,7 +229,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
         config.filter_run_excluding(:core)
         config.filter_manager.include(vsock: true)
 
-        group = RSpec.describe("isolated") { it("vsock and core", :vsock, :core) { executed = true } }
+        group = RSpec.describe("isolated") { it("vsock and core", :core, :vsock) { executed = true } }
         group.run(config.reporter)
       end
 

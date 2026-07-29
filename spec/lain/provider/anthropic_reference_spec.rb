@@ -191,6 +191,10 @@ RSpec.describe Lain::Provider::AnthropicReference do
   end
 
   describe "#complete content" do
+    let(:request) do
+      Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }])
+    end
+
     it "keeps the full block list -- text, thinking, and tool_use alike" do
       message = message_double(
         stop_reason: :tool_use,
@@ -217,10 +221,6 @@ RSpec.describe Lain::Provider::AnthropicReference do
       response = described_class.new(client: client_returning(message)).complete(request)
 
       expect(response.tool_uses.first["input"]).to eq("path" => "lib/x.rb")
-    end
-
-    let(:request) do
-      Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }])
     end
   end
 

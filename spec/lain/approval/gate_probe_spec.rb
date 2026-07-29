@@ -6,6 +6,9 @@ require "stringio"
 
 RSpec.describe "T5 probes: Lain::Approval::Gate" do
   let(:gate_class) { Lain::Approval::Gate }
+  let(:journal_io) { StringIO.new }
+  let(:journal) { Lain::Journal.new(io: journal_io) }
+  let(:plan) { artifact }
 
   def scripted_asker(&resolver)
     Object.new.tap do |asker|
@@ -22,10 +25,6 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
   def artifact(digest: "blake3:plan", question: "Approve? reply approve or deny.")
     Data.define(:digest, :gate_question).new(digest:, gate_question: question)
   end
-
-  let(:journal_io) { StringIO.new }
-  let(:journal) { Lain::Journal.new(io: journal_io) }
-  let(:plan) { artifact }
 
   def decisions
     Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a

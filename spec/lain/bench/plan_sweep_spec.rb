@@ -49,7 +49,7 @@ RSpec.describe Lain::Bench::PlanSweep do
 
     it "marks wall-clock ABSENT under replay rather than fabricating a number" do
       expect(report).to include("wall-clock (s)", "ABSENT (mock)")
-      expect(report).to match(/wall-clock is ABSENT under offline mock replay/)
+      expect(report).to include("wall-clock is ABSENT under offline mock replay")
     end
 
     it "shows the reactive baseline as a first-class arm, not a footnote" do

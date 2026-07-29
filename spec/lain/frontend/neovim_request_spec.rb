@@ -33,6 +33,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   let(:channel) { Lain::Channel.new }
   let(:journal) { Lain::Channel.new }
+  let(:payload) do
+    { "model" => "a", "max_tokens" => 16,
+      "messages" => [{ "role" => "user", "content" => "hi" }] }
+  end
 
   def inspector
     @inspector ||= Neovim.attach_unix(@socket)
@@ -95,11 +99,6 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def request_json_lines
     lines = buffer_lines("lain://request")
     lines if lines.first&.start_with?("{")
-  end
-
-  let(:payload) do
-    { "model" => "a", "max_tokens" => 16,
-      "messages" => [{ "role" => "user", "content" => "hi" }] }
   end
 
   def push_request(request_payload)
@@ -266,7 +265,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     def edit_buffer(&edit)
-      edited = edit.call(JSON.parse(wait_until { request_json_lines }.join("\n")))
+      edited = yield(JSON.parse(wait_until { request_json_lines }.join("\n")))
       set_buffer("lain://request", JSON.pretty_generate(edited).split("\n"))
     end
 

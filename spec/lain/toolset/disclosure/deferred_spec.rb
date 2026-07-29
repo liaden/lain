@@ -11,12 +11,12 @@ RSpec.describe Lain::Toolset::Disclosure::Deferred do
     end.new
   end
 
+  subject(:disclosure) { described_class.new }
+
   let(:read) { tool(:read_file, description: "Reads a file's contents from disk, given a path.") }
   let(:grep) { tool(:grep, description: "Searches file contents for a pattern.") }
   let(:bash) { tool(:bash, description: "Runs a shell command via sh -c.") }
   let(:toolset) { Lain::Toolset.new([bash, grep, read]) }
-
-  subject(:disclosure) { described_class.new }
 
   it "is a Disclosure arm" do
     expect(described_class.ancestors).to include(Lain::Toolset::Disclosure)

@@ -180,7 +180,7 @@ RSpec.describe Lain::Agent do
 
       result_block = a.timeline.to_a[2].content.first
       expect(result_block["is_error"]).to be(true)
-      expect(result_block["content"]).to match(/kaboom/)
+      expect(result_block["content"]).to include("kaboom")
       expect(response.text).to eq("recovered")
       expect(a).to be_done
     end
@@ -210,14 +210,14 @@ RSpec.describe Lain::Agent do
       a = agent(text_response("", stop_reason: :refusal))
       a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to match(/refused/)
+      expect(a.failure_reason).to include("refused")
     end
 
     it "fails on max_tokens" do
       a = agent(text_response("", stop_reason: :max_tokens))
       a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to match(/max_tokens/)
+      expect(a.failure_reason).to include("max_tokens")
     end
 
     # The wire enums are non-exhaustive. An unrecognized value must fail loudly,
@@ -226,7 +226,7 @@ RSpec.describe Lain::Agent do
       a = agent(Lain::Response.new(content: [], stop_reason: "something_new_in_2027"))
       a.ask("hi")
       expect(a).to be_failed
-      expect(a.failure_reason).to match(/unrecognized/)
+      expect(a.failure_reason).to include("unrecognized")
     end
 
     # A server-side tool is mid-flight; resend and let it continue.

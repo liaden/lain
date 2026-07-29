@@ -50,7 +50,7 @@ RSpec.describe Lain::Core::Transport do
   # The rescue lives inside the task, so the death is consumed there rather
   # than re-raised (with a console warning) out of Task#wait.
   def capture_death(&call)
-    call.call
+    yield
     nil
   rescue Lain::Core::Died => e
     e.message

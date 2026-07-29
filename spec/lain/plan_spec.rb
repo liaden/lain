@@ -5,6 +5,8 @@
 # renderings -- the live #to_reminder projection (the Workspace tail) and the
 # author-editable #to_markdown that round-trips back to the same digest.
 RSpec.describe Lain::Plan::Document do
+  subject(:document) { described_class.new(steps:) }
+
   let(:steps) do
     [
       Lain::Plan::Step.new(id: "s1", title: "First step", size: "M"),
@@ -12,8 +14,6 @@ RSpec.describe Lain::Plan::Document do
       Lain::Plan::Step.new(id: "s3", title: "Third step", size: "L")
     ]
   end
-
-  subject(:document) { described_class.new(steps:) }
 
   describe Lain::Plan::Step do
     it "rejects an unknown size class loudly" do

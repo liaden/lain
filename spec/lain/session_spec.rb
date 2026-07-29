@@ -110,9 +110,9 @@ RSpec.describe Lain::Session do
       Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
     end
 
-    let(:recorder) { Lain::Memory::Recorder.new }
-
     subject(:session) { described_class.new(memory: recorder) }
+
+    let(:recorder) { Lain::Memory::Recorder.new }
 
     it "adds nothing while the index is empty" do
       expect(session.reminders).to eq([])
@@ -194,10 +194,10 @@ RSpec.describe Lain::Session do
   describe Lain::Session::Journaled do
     def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
+    subject(:journaled) { described_class.new(session: inner, journal:) }
+
     let(:inner) { Lain::Session.new }
     let(:journal) { [] }
-
-    subject(:journaled) { described_class.new(session: inner, journal:) }
 
     def of_type(type) = journal.select { |record| record.journal_type == type }
 

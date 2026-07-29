@@ -32,12 +32,12 @@ RSpec.describe Lain::Arm do
       [timeline, ledger]
     end
 
-    let(:grade) { Lain::Grader::Grade.new(score: 1.0, why: "ok") }
-
     subject(:run) do
       timeline, ledger = recorded(input: 1000, output: 200)
       described_class.new(arm: "control", timeline:, grade:, elapsed: 0.5, ledger:)
     end
+
+    let(:grade) { Lain::Grader::Grade.new(score: 1.0, why: "ok") }
 
     it "scores its Timeline through Compare::Run.from_timeline" do
       allow(Lain::Compare::Run).to receive(:from_timeline).and_call_original

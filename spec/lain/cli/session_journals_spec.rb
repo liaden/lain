@@ -15,13 +15,13 @@ require "tmpdir"
 #   4. ordered by `ts` ascending, with a STABLE tiebreak
 #   5. a file that cannot be read is named, never skipped
 RSpec.describe Lain::CLI::SessionJournals do
+  subject(:journals) { described_class.new(dir: @dir, types:) }
+
   around do |example|
     Dir.mktmpdir { |dir| @dir = dir and example.run }
   end
 
   let(:types) { %w[gate_decision gate_evidence] }
-
-  subject(:journals) { described_class.new(dir: @dir, types:) }
 
   def write(name, lines, dir: @dir)
     File.write(File.join(dir, name), lines.empty? ? "" : "#{lines.join("\n")}\n")

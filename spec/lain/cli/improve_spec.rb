@@ -19,6 +19,10 @@ RSpec.describe Lain::CLI::Improve do
   let(:context) { Lain::Context.new(model: "improver-model", max_tokens: 256) }
   let(:journal) { [] }
   let(:project_hash) { "proj-abc123" }
+  let(:paths) do
+    instance_double(Lain::Paths, sessions_dir: @session_dir, improvements_path: @improvements_path,
+                                 project_hash:)
+  end
 
   around do |example|
     Dir.mktmpdir do |root|
@@ -33,11 +37,6 @@ RSpec.describe Lain::CLI::Improve do
   end
 
   attr_reader :slots
-
-  let(:paths) do
-    instance_double(Lain::Paths, sessions_dir: @session_dir, improvements_path: @improvements_path,
-                                 project_hash:)
-  end
 
   def improve(provider) = described_class.new(provider:, context:, slots:, journal:, paths:)
 

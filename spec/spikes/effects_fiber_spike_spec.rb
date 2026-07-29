@@ -102,14 +102,14 @@ RSpec.describe "Effects via Fiber vs handler objects", :spike do
       # MEASURED: the handler-object interpreter is one continuous Ruby call stack, so
       # its backtrace reaches all the way out to the frame that drove it -- this very
       # method is on it.
-      expect(handler_backtrace.join("\n")).to match(/capture_backtrace/)
+      expect(handler_backtrace.join("\n")).to include("capture_backtrace")
 
       # MEASURED: the fiber prototype's raise happens INSIDE Fiber.new's own block,
       # which has its own independent call stack -- Exception#backtrace is captured by
       # walking that stack alone, so it does NOT include capture_backtrace, #run, or
       # anything outside the fiber, even though #resume is what re-raises it at the
       # caller. This is the "wrecked stack trace" the plan's open question named.
-      expect(fiber_backtrace.join("\n")).not_to match(/capture_backtrace/)
+      expect(fiber_backtrace.join("\n")).not_to include("capture_backtrace")
     end
   end
 

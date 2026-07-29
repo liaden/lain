@@ -15,6 +15,14 @@ RSpec.describe Lain::Consolidation do
   let(:recorder) { Lain::Memory::Recorder.new }
   let(:context) { Lain::Context.new(model: "clerk-model", max_tokens: 256) }
   let(:journal) { [] }
+  let(:main) { Lain::Timeline.empty(store:).commit(role: :user, content: text("orchestrate the work")) }
+  # Two completed subagent lineages hanging off the main chain's head.
+  let(:lineage_a) { lineage("investigate the login bug", "the token TTL was zero", spawned_from: main.head_digest) }
+  let(:lineage_b) { lineage("audit the payment path", "the retry was unbounded", spawned_from: main.head_digest) }
+  let(:root_a) { lineage_a.first }
+  let(:root_b) { lineage_b.first }
+  # Journal order: main, then A's turns, then B's -- the order the pass folds in.
+  let(:records) { turn_records(main) + turn_records(lineage_a.last) + turn_records(lineage_b.last) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -28,17 +36,6 @@ RSpec.describe Lain::Consolidation do
                          .commit(role: :user, content: text(task), meta: { "spawned_from" => spawned_from })
     [root.head_digest, root.commit(role: :assistant, content: text(finding))]
   end
-
-  let(:main) { Lain::Timeline.empty(store:).commit(role: :user, content: text("orchestrate the work")) }
-
-  # Two completed subagent lineages hanging off the main chain's head.
-  let(:lineage_a) { lineage("investigate the login bug", "the token TTL was zero", spawned_from: main.head_digest) }
-  let(:lineage_b) { lineage("audit the payment path", "the retry was unbounded", spawned_from: main.head_digest) }
-  let(:root_a) { lineage_a.first }
-  let(:root_b) { lineage_b.first }
-
-  # Journal order: main, then A's turns, then B's -- the order the pass folds in.
-  let(:records) { turn_records(main) + turn_records(lineage_a.last) + turn_records(lineage_b.last) }
 
   around do |example|
     Dir.mktmpdir do |root|

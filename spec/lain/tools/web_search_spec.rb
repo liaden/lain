@@ -8,14 +8,14 @@ RSpec.describe Lain::Tools::WebSearch do
     Lain::Tools::WebSearch::Result.new(title:, url:, snippet:)
   end
 
+  subject(:tool) { described_class.new(backend:) }
+
   let(:backend) do
     hits = [result(title: "Frozen string literals", url: "https://ruby-doc.org/frozen",
                    snippet: "magic comment"),
             result(title: "String#freeze", url: "https://ruby-doc.org/freeze")]
     ->(_query) { hits }
   end
-
-  subject(:tool) { described_class.new(backend:) }
 
   it "returns titled, linked results from the injected backend" do
     result = tool.call({ query: "ruby frozen string" }, nil)
@@ -44,7 +44,7 @@ RSpec.describe Lain::Tools::WebSearch do
     tool = described_class.new(backend: ->(_query) { raise "backend down" })
     result = tool.call({ query: "boom" }, nil)
     expect(result).to be_error
-    expect(result.content).to match(/backend down/)
+    expect(result.content).to include("backend down")
   end
 
   describe "the default (unconfigured) backend" do

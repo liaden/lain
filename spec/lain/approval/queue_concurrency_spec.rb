@@ -90,7 +90,7 @@ RSpec.describe "Approval::Queue pendings under concurrent gather" do
     approved, timed_out = blocks
     expect(approved).to include("is_error" => false, "content" => "gated_a ran")
     expect(timed_out).to include("is_error" => true)
-    expect(timed_out["content"]).to match(/denied/)
+    expect(timed_out["content"]).to include("denied")
 
     # Two approval_decision records, distinct verdicts, each pending settled
     # on its own terms: the approve by the surface, the deny by the clock.

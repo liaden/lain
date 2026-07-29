@@ -239,7 +239,7 @@ RSpec.describe Lain::Gherkin::Criteria do
       expect(criteria).to be_ractor_shareable
       criteria.scenarios.each do |scenario|
         expect(scenario).to be_ractor_shareable
-        scenario.clauses.each { |clause| expect(clause).to be_ractor_shareable }
+        expect(scenario.clauses).to all(be_ractor_shareable)
       end
     end
   end

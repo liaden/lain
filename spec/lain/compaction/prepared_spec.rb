@@ -35,13 +35,12 @@ end
 RSpec.describe Lain::Compaction::Prepared do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
+  let(:summarizer) { CountingSummarizer.new }
+  let(:compact) { Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer:) }
 
   def records
     journal_io.string.each_line.map { |line| JSON.parse(line) }
   end
-
-  let(:summarizer) { CountingSummarizer.new }
-  let(:compact) { Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer:) }
 
   # Six substantial messages: enough that Compact's keep_last(2) leaves a
   # head over its byte threshold, so a prepare actually rewrites it (the

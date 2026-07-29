@@ -47,6 +47,36 @@ RSpec.describe Lain::Supervisor::Restart do
         Lain::Tool::Result.ok("wrote #{input.fetch("name")}")
       end
     end)
+    stub_const("RecordingIsolation", Class.new do
+      attr_reader :acquired, :released
+
+      def initialize(env)
+        @env = env
+        @acquired = []
+        @released = []
+      end
+
+      def acquire(worker_id)
+        @acquired << worker_id
+        recorder = self
+        Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
+      end
+    end)
+    stub_const("RecordingIsolation", Class.new do
+      attr_reader :acquired, :released
+
+      def initialize(env)
+        @env = env
+        @acquired = []
+        @released = []
+      end
+
+      def acquire(worker_id)
+        @acquired << worker_id
+        recorder = self
+        Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
+      end
+    end)
   end
 
   let(:store) { Lain::Store.new }
@@ -70,6 +100,9 @@ RSpec.describe Lain::Supervisor::Restart do
       text_response("notes kept")
     ]
   end
+  # ---- Scenario: crash and resume --------------------------------------------
+
+  let(:leased_env) { Lain::WorkerEnv.new(cwd: File.join(dir, "worker-checkout"), env: { "REDIS_URL" => "redis://1" }) }
 
   def spawn_policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
 
@@ -120,7 +153,15 @@ RSpec.describe Lain::Supervisor::Restart do
 
   def workspace_file(name) = File.join(dir, name)
 
-  # ---- Scenario: crash and resume --------------------------------------------
+  # ---- Scenario: restart re-acquires an equivalent lease (B5) ----------------
+  #
+  # The killed worker's lease died with its process; the restart RE-ACQUIRES a
+  # fresh one via the supervisor's isolation backend and hands its WorkerEnv to
+  # the revive block, so the revived worker runs under an equivalent isolated
+  # environment. Released on the supervisor's #stop, like any adoption.
+
+  # RecordingIsolation is the Isolation duck: real {Isolation::Lease}s over a
+  # fixed WorkerEnv, recording every acquire/release by worker key.
 
   it "resumes a killed actor: head equals the last committed turn, workspace matches " \
      "the last snapshot, and the restart journals both digests" do
@@ -318,35 +359,6 @@ RSpec.describe Lain::Supervisor::Restart do
     end
   end
 
-  # ---- Scenario: restart re-acquires an equivalent lease (B5) ----------------
-  #
-  # The killed worker's lease died with its process; the restart RE-ACQUIRES a
-  # fresh one via the supervisor's isolation backend and hands its WorkerEnv to
-  # the revive block, so the revived worker runs under an equivalent isolated
-  # environment. Released on the supervisor's #stop, like any adoption.
-
-  # RecordingIsolation is the Isolation duck: real {Isolation::Lease}s over a
-  # fixed WorkerEnv, recording every acquire/release by worker key.
-  before do
-    stub_const("RecordingIsolation", Class.new do
-      attr_reader :acquired, :released
-
-      def initialize(env)
-        @env = env
-        @acquired = []
-        @released = []
-      end
-
-      def acquire(worker_id)
-        @acquired << worker_id
-        recorder = self
-        Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
-      end
-    end)
-  end
-
-  let(:leased_env) { Lain::WorkerEnv.new(cwd: File.join(dir, "worker-checkout"), env: { "REDIS_URL" => "redis://1" }) }
-
   it "re-acquires a fresh equivalent lease and the revived worker runs under it" do
     backend = RecordingIsolation.new(leased_env)
     seen = nil
@@ -394,11 +406,11 @@ RSpec.describe Lain::Supervisor::Restart do
   end
 
   describe Lain::Supervisor::Restart::Revived do
+    subject(:revived) { described_class.new(agent:, address: parent_timeline.head_digest) }
+
     let(:agent) do
       Lain::Agent.new(provider: revive_provider, toolset:, context:, timeline: parent_timeline)
     end
-
-    subject(:revived) { described_class.new(agent:, address: parent_timeline.head_digest) }
 
     it "answers the registration duck: settled at the checkpoint, stoppable, addressed by its head" do
       expect(revived.address).to eq(parent_timeline.head_digest)

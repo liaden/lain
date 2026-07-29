@@ -474,7 +474,7 @@ RSpec.describe Lain::CLI::Up do
       expect(split_call(calls)).to be_nil
       expect(new_session_call(calls).last).not_to include("--nvim")
       expect(new_session_call(calls).last).to include("chat")
-      expect(report.warnings.join).to match(/nvim not found on PATH/)
+      expect(report.warnings.join).to include("nvim not found on PATH")
     end
 
     # T19 panel fix: reattaching with --nvim cannot build the cockpit (the
@@ -501,7 +501,7 @@ RSpec.describe Lain::CLI::Up do
       expect(report.created).to be(false)
       expect(new_session_call(calls)).to be_nil
       expect(split_call(calls)).to be_nil
-      expect(report.warnings.join).to match(/already exists without the nvim pane/)
+      expect(report.warnings.join).to include("already exists without the nvim pane")
     end
 
     it "does not warn on reattach when the existing window already carries the cockpit's two panes" do

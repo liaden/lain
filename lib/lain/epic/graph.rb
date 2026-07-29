@@ -209,7 +209,7 @@ module Lain
       # The one place the edge kinds are enumerated, so a third kind cannot be
       # missed by being forgotten at one of the two call sites below.
       def rebuild(issue, **overrides, &edges)
-        issue.with(**EDGE_FIELDS.to_h { |field| [field, edges.call(field)] }, **overrides)
+        issue.with(**EDGE_FIELDS.to_h { |field| [field, yield(field)] }, **overrides)
       end
 
       # An arrival carrying the departing issues' edges alongside its own, which

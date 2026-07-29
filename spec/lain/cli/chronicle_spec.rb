@@ -12,17 +12,16 @@ require "tmpdir"
 # and how the record closes. Chronicle::Null is the --no-journal duck, so the
 # exe carries no scribe nil-checks.
 RSpec.describe Lain::CLI::Chronicle do
+  subject(:chronicle) { described_class.new(journal:) }
+
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:store) { Lain::Store.new }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-
-  subject(:chronicle) { described_class.new(journal:) }
+  let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
-
-  let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }

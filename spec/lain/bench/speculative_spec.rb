@@ -5,6 +5,8 @@
 # run each, score each with a grader, and keep the best. This proves the shape
 # with a deterministic Grader::Fixture so the selection is reproducible.
 RSpec.describe Lain::Bench::Speculative do
+  subject(:speculative) { described_class.new(grader:) }
+
   let(:store) { Lain::Store.new }
   let(:base) do
     Lain::Timeline.empty(store:)
@@ -20,6 +22,7 @@ RSpec.describe Lain::Bench::Speculative do
       f.check("names Paris") { |tl| answer_text(tl).include?("Paris") }
     end
   end
+  let(:branches) { [answering("It is Lyon."), answering("The capital is Paris."), answering("Marseille, I think.")] }
 
   def answer_text(timeline)
     timeline.to_a.select { |turn| turn.role == "assistant" }
@@ -29,10 +32,6 @@ RSpec.describe Lain::Bench::Speculative do
   def answering(text)
     ->(timeline) { timeline.commit(role: :assistant, content: [{ "type" => "text", "text" => text }]) }
   end
-
-  let(:branches) { [answering("It is Lyon."), answering("The capital is Paris."), answering("Marseille, I think.")] }
-
-  subject(:speculative) { described_class.new(grader:) }
 
   it "forks N trajectories, scores each, and selects the max" do
     selection = speculative.search(base, branches:)

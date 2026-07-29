@@ -77,11 +77,11 @@ RSpec.describe Lain::Arm::DualLedger do
 
   # AC1: The ledger rides the Workspace, sent-not-stored.
   describe "the Task/Progress ledger rides the Workspace, never the Timeline" do
-    let(:captured) { [] }
-
     subject(:run) do
       described_class.new.run("summarize the paper", spawn_seam: spawn_seam(captured), grader: settling_grader)
     end
+
+    let(:captured) { [] }
 
     it "carries the ledger into the child Workspace each step" do
       run

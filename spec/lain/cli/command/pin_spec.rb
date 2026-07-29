@@ -6,6 +6,8 @@
 # unique or refuse -- resolved against THIS session's live render chain. A
 # refusal happens before anything is recorded: a bad target pins nothing.
 RSpec.describe Lain::CLI::Command::Pin do
+  subject(:command) { described_class.new }
+
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:provider) { Lain::Provider::Mock.new(responses: [text_response("one"), text_response("two")]) }
@@ -19,8 +21,6 @@ RSpec.describe Lain::CLI::Command::Pin do
     end
   end
   let(:env) { instance_double(Lain::CLI::Command::Env, agent:) }
-
-  subject(:command) { described_class.new }
 
   def hex(digest) = digest.delete_prefix("blake3:")
 
@@ -145,14 +145,14 @@ RSpec.describe Lain::CLI::Command::Pin do
 end
 
 RSpec.describe Lain::CLI::Command::Unpin do
+  subject(:command) { described_class.new }
+
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:provider) { Lain::Provider::Mock.new(responses: [text_response("one")]) }
   let(:session) { Lain::Session.new }
   let(:agent) { Lain::Agent.new(provider:, toolset:, context:, session:).tap { |built| built.ask("first") } }
   let(:env) { instance_double(Lain::CLI::Command::Env, agent:) }
-
-  subject(:command) { described_class.new }
 
   it "is the /unpin command and describes itself" do
     expect(command.name).to eq("unpin")

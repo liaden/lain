@@ -60,7 +60,7 @@ module Lain
         private
 
         def install_on_data(req, frame, &on_event)
-          handler = build_on_data_handler { |data| on_event.call(data) if data.is_a?(Hash) }
+          handler = build_on_data_handler { |data| yield(data) if data.is_a?(Hash) }
           teed = tee_chunks(handler, frame)
           if faraday_1?
             req.options[:on_data] = teed

@@ -88,7 +88,7 @@ RSpec.describe Lain::Tools::AstSearch do
     result = tool.call(pattern: "def (", language: "ruby", path: tmpdir)
 
     expect(result).to have_attributes(is_error: true)
-    expect(result.content).to match(/def \(/)
+    expect(result.content).to include("def (")
   end
 
   it "reports an unknown catalog query as an error Result" do

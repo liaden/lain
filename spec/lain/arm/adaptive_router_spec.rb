@@ -7,13 +7,12 @@
 # mid-session (the birth-boundary rule, made structural rather than a
 # convention).
 RSpec.describe Lain::Arm::AdaptiveRouter do
+  subject(:arm) { described_class.new(router:) }
+
   let(:router) do
     Lain::Oracle::Router.heuristic(short_model: "claude-haiku-4", long_model: "claude-opus-4-8",
                                    long_after_chars: 20)
   end
-
-  subject(:arm) { described_class.new(router:) }
-
   # A FRESH agent per call (Provider::Mock is stateful), built from whichever
   # `model:`/`template:` the router chose -- exactly the spawn_seam duck
   # `arm_spec`'s toy routing arm pins (`call(journal:, **spawn_opts) -> Agent`).
@@ -32,7 +31,6 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
       )
     end
   end
-
   let(:grader) do
     Lain::Grader::Fixture.new("settled") do |f|
       f.check("committed an assistant turn") { |timeline| timeline.to_a.map(&:role).include?("assistant") }

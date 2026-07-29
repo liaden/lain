@@ -187,7 +187,7 @@ RSpec.describe Lain::Improvement::Sink do
       digest = digest_padded_to(Lain::Improvement::LINE_MAX_BYTES + 1)
 
       expect { sink.append(note: "boundary probe", kind: "bug", evidence_digests: [digest]) }
-        .to raise_error(ArgumentError, /#{Lain::Improvement::LINE_MAX_BYTES}-byte line budget/)
+        .to raise_error(ArgumentError, /#{Lain::Improvement::LINE_MAX_BYTES}-byte line budget/o)
 
       path = File.join(tmp, "lain", "improvements.ndjson")
       expect(File.exist?(path)).to be(false)

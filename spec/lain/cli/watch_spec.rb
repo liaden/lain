@@ -92,9 +92,9 @@ RSpec.describe Lain::CLI::Watch do
   end
 
   describe "following one actor's stream" do
-    let!(:path) { write_journal(opening_records + traffic_records + [closed_record]) }
-
     subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
+
+    let!(:path) { write_journal(opening_records + traffic_records + [closed_record]) }
 
     it "exits 0 on session_closed" do
       expect(watch.run).to eq(0)
@@ -176,6 +176,8 @@ RSpec.describe Lain::CLI::Watch do
   end
 
   describe "an ambiguous selector" do
+    subject(:watch) { described_class.new(selector: "5", path:, sink: output, paths:) }
+
     let(:second_spawn_digest) { "5bbb222233334444555566667777888899990000aaaabbbbccccddddeeeeffff" }
 
     let!(:path) do
@@ -190,8 +192,6 @@ RSpec.describe Lain::CLI::Watch do
                                     causal_parents: [second_spawn_digest]),
                      closed_record])
     end
-
-    subject(:watch) { described_class.new(selector: "5", path:, sink: output, paths:) }
 
     it "anchors the FIRST matching spawn only" do
       watch.run
@@ -210,6 +210,8 @@ RSpec.describe Lain::CLI::Watch do
   # records, and a CHAINED message whose payload is not a Hash (an old or
   # foreign writer's shape) must all be tolerated, never crash the tail.
   describe "malformed and foreign lines" do
+    subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
+
     let!(:path) do
       write_journal(opening_records).tap do |journal|
         append_bytes(journal, "this is not json at all\n")
@@ -225,8 +227,6 @@ RSpec.describe Lain::CLI::Watch do
       end
     end
 
-    subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
-
     it "survives them all and still exits 0 on the closer" do
       expect(watch.run).to eq(0)
     end
@@ -238,9 +238,9 @@ RSpec.describe Lain::CLI::Watch do
   end
 
   describe "a selector matching no spawn" do
-    let!(:path) { write_journal(opening_records + [closed_record]) }
-
     subject(:watch) { described_class.new(selector: "beef", path:, sink: output, paths:) }
+
+    let!(:path) { write_journal(opening_records + [closed_record]) }
 
     it "says so instead of ending silent" do
       watch.run
@@ -253,9 +253,9 @@ RSpec.describe Lain::CLI::Watch do
   end
 
   describe "read-only by construction" do
-    let!(:path) { write_journal(opening_records + [closed_record]) }
-
     subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
+
+    let!(:path) { write_journal(opening_records + [closed_record]) }
 
     it "opens the journal read-only and leaves its bytes untouched" do
       modes = []
@@ -300,11 +300,11 @@ RSpec.describe Lain::CLI::Watch do
   # file nobody is writing.
   describe "choosing the newest session with no --session" do
     # Any poll here is the bug: every fixture below either closes or refuses.
+    subject(:watch) { described_class.new(selector:, sink: output, paths:, sleeper:) }
+
     let(:sleeper) { ->(_seconds) { raise "watch polled a file that can never close" } }
 
     def write_empty(name) = File.write(File.join(paths.sessions_dir, name), "")
-
-    subject(:watch) { described_class.new(selector:, sink: output, paths:, sleeper:) }
 
     it "refuses a zero-byte newest session with a message instead of polling it forever" do
       write_empty("20260724T000000-1.ndjson")

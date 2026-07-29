@@ -8,6 +8,8 @@ require "mixlib/shellout"
 # the lain repo it runs in -- the same posture worktree_spec.rb takes, and the
 # reason this stays in the default suite: git is always present, docker is not.
 RSpec.describe Lain::Isolation::Worktree::Handback do
+  subject(:handback) { described_class.new(repo_root: @repo_root, journal:) }
+
   around do |example|
     Dir.mktmpdir("lain-repo") do |repo|
       Dir.mktmpdir("lain-worktrees") do |worktrees|
@@ -18,8 +20,6 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
       end
     end
   end
-
-  subject(:handback) { described_class.new(repo_root: @repo_root, journal:) }
 
   let(:journal) { [] }
   let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root) }

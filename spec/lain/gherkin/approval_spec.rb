@@ -36,11 +36,6 @@ RSpec.describe Lain::Gherkin::Approval do
 
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-
-  def approvals
-    Lain::Journal.records(journal_io.string.lines, type: "gherkin_approval").to_a
-  end
-
   let(:criteria) do
     Lain::Gherkin::Criteria.parse(<<~MD)
       ```gherkin
@@ -50,6 +45,10 @@ RSpec.describe Lain::Gherkin::Approval do
         Then the result is 5
       ```
     MD
+  end
+
+  def approvals
+    Lain::Journal.records(journal_io.string.lines, type: "gherkin_approval").to_a
   end
 
   # AC1

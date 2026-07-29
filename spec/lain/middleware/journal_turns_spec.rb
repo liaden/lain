@@ -9,11 +9,7 @@
 # never the moved timeline.
 RSpec.describe Lain::Middleware::JournalTurns do
   let(:store) { Lain::Store.new }
-
-  def text(body) = [{ "type" => "text", "text" => body }]
-
   let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: text("hi")) }
-
   # The scribe duck: records every catch_up argument, in call order.
   let(:caught) { [] }
   let(:scribe) do
@@ -22,6 +18,8 @@ RSpec.describe Lain::Middleware::JournalTurns do
       define_method(:catch_up) { |timeline| seen << timeline }
     end.new
   end
+
+  def text(body) = [{ "type" => "text", "text" => body }]
 
   it "catches the scribe up on the LIVE head after downstream, not the env's pre-step snapshot" do
     live = timeline

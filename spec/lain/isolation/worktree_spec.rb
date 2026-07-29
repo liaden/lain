@@ -8,6 +8,8 @@ require "mixlib/shellout"
 # the lain repo it runs in. git is always present, so this stays in the default
 # suite.
 RSpec.describe Lain::Isolation::Worktree do
+  subject(:backend) { described_class.new(repo_root: @repo_root, root: @root) }
+
   around do |example|
     Dir.mktmpdir("lain-repo") do |repo|
       Dir.mktmpdir("lain-worktrees") do |worktrees|
@@ -18,8 +20,6 @@ RSpec.describe Lain::Isolation::Worktree do
       end
     end
   end
-
-  subject(:backend) { described_class.new(repo_root: @repo_root, root: @root) }
 
   # The expected per-worker path, keyed the same way the backend keys it.
   def worktree_path(worker_id)

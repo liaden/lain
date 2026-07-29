@@ -189,7 +189,7 @@ RSpec.describe Lain::Structural::Queries do
     it "each authored query declares hand-authored-for-lain MIT provenance" do
       %i[ruby typescript rust].each do |language|
         header = described_class.fetch(language).lines.first(3).join
-        expect(header).to match(/Hand-authored for lain \(MIT\)/)
+        expect(header).to include("Hand-authored for lain (MIT)")
         expect(header).to match(/tree-sitter-#{language}/)
       end
     end

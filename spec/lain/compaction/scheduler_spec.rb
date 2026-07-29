@@ -17,11 +17,6 @@ end
 RSpec.describe Lain::Compaction::Scheduler do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
-
-  def records
-    journal_io.string.each_line.map { |line| JSON.parse(line) }
-  end
-
   # A deterministic, pure, SHAREABLE summarizer -- the Compact contract (see
   # compact.rb). It collapses whatever head it is handed into one recognizable
   # marker so a spec can assert "the head was rewritten" without depending on
@@ -30,12 +25,15 @@ RSpec.describe Lain::Compaction::Scheduler do
   let(:compact) do
     Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer: SchedulerShareableFixtures::SUMMARIZER)
   end
-
   # The strategy #render would use without the scheduler: a shareable
   # `->(workspace)` provider (T21's injected shape) resolving to the identity
   # combinator, so applying it leaves the message list untouched. A compacting
   # decision rides Compact ahead of THIS; a deferring decision hands it back.
   let(:base) { SchedulerShareableFixtures::BASE }
+
+  def records
+    journal_io.string.each_line.map { |line| JSON.parse(line) }
+  end
 
   # Six substantial messages: enough that Compact's keep_last(2) leaves a head
   # over its byte threshold, so a scheduled compaction actually rewrites it.

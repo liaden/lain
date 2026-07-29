@@ -12,14 +12,14 @@ require "tmpdir"
 # Naming a file EXACTLY stays honored either way: salvaging a crashed session is
 # deliberate, not an accident of sorting.
 RSpec.describe Lain::CLI::Resume::Selector do
+  subject(:selector) { described_class.new(dir: @dir) }
+
   around do |example|
     Dir.mktmpdir { |dir| @dir = dir and example.run }
   end
 
   let(:context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  subject(:selector) { described_class.new(dir: @dir) }
 
   def write(name, records)
     path = File.join(@dir, name)
@@ -104,7 +104,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
       drain("20260728T080000-222.ndjson", at: "2026-07-28T08:00:00Z")
 
       expect { selector.call(nil) }.to raise_error(Lain::CLI::Resume::Refusal) do |error|
-        expect(error.message).not_to match(/load it anyway/)
+        expect(error.message).not_to include("load it anyway")
       end
     end
 

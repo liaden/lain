@@ -37,7 +37,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
       catalog = Lain::Skill::Catalog.load(root:, shipped_dir:)
       slots = Lain::Prompt::Slots.load(root:, skill_shipped_dir: shipped_dir)
       renderer = Lain::Skill::Renderer.new(catalog:, slots:)
-      block.call(described_class.new(catalog:, renderer:, role_spawn:), role_spawn)
+      yield(described_class.new(catalog:, renderer:, role_spawn:), role_spawn)
     end
   end
 
@@ -162,7 +162,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         catalog, renderer = real_catalog_and_renderer(root)
         parent = two_turn_parent
         seam = real_seam(parent:, slots: Lain::Prompt::Slots.load(root:))
-        block.call(described_class.new(catalog:, renderer:, role_spawn: seam), parent)
+        yield(described_class.new(catalog:, renderer:, role_spawn: seam), parent)
       end
     end
 

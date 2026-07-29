@@ -148,7 +148,7 @@ RSpec.describe Lain::Compare do
     end
 
     it "states how many runs and which capabilities degraded" do
-      expect(report).to match(/3 runs/)
+      expect(report).to include("3 runs")
     end
 
     it "omits the score row when not every run was graded" do

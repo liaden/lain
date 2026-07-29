@@ -65,7 +65,7 @@ module Lain
       # total helper makes the pass-through structural: impossible to forget
       # rather than merely remembered.
       def downstream(env, &app)
-        app ? app.call(env) : env
+        app ? yield(env) : env
       end
     end
 

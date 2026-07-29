@@ -139,7 +139,7 @@ RSpec.describe Lain::Tools::RunSkill do
         expect(first).to have_attributes(is_error: false)
         expect(second).to have_attributes(is_error: false)
         expect(third).to have_attributes(is_error: true)
-        expect(third.content).to match(/budget/)
+        expect(third.content).to include("budget")
       end
     end
 
@@ -156,7 +156,7 @@ RSpec.describe Lain::Tools::RunSkill do
         third = tool.call({ name: "three" })
 
         expect(third).to have_attributes(is_error: true)
-        expect(third.content).to match(/budget/)
+        expect(third.content).to include("budget")
       end
     end
 

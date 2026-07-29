@@ -26,7 +26,7 @@ RSpec.describe Lain::CLI::ReplMiddleware do
   def with_project(&block)
     Dir.mktmpdir do |root|
       write(File.join(root, ".lain", "skills", "greet", "skill.md"), "# Greet\nSay hello.\n")
-      block.call(root)
+      yield(root)
     end
   end
 

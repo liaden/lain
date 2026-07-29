@@ -127,7 +127,7 @@ module Lain
           @rpc.start
           drainer = Thread.new { drain }
           resender = Thread.new { resend_loop }
-          block.call(self)
+          yield(self)
         ensure
           teardown(drainer, resender)
         end

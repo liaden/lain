@@ -22,6 +22,7 @@ RSpec.describe Lain::Tools::AskHuman do
   # The asker's identity is its chain's correlation (root digest) -- the
   # convention Lineage pins; the reply is addressed back to it.
   let(:asker) { parent.head.correlation || parent.head_digest }
+  let(:tool) { build_tool }
 
   def build_tool(parent: self.parent)
     described_class.new(parent:)
@@ -37,8 +38,6 @@ RSpec.describe Lain::Tools::AskHuman do
   def store_events
     [tool.last_question, tool.last_answer].compact
   end
-
-  let(:tool) { build_tool }
 
   # ---- Scenario: ask does not block -----------------------------------------
 

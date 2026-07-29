@@ -118,6 +118,19 @@ RSpec.describe Lain::Bench::Session do
   # keys are compared turn for turn, with and without a causal edge.
   describe "the recorded turn record stays in lockstep with the live scribe's" do
     let(:store) { Lain::Store.new }
+    let(:lockstep_timeline) do
+      asked = message(to: "human", body: "which dose?")
+      answered = message(to: "agent", body: "81 mg")
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: text("what is the aspirin dosing?"))
+                    .commit(role: :assistant, content: text("81 mg"),
+                            causal_parents: [asked.digest, answered.digest])
+    end
+    let(:written) do
+      io = StringIO.new
+      described_class.write(Lain::Journal.new(io:), timeline: lockstep_timeline, context:, toolset:, workspace:)
+      io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
+    end
 
     def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -127,21 +140,6 @@ RSpec.describe Lain::Bench::Session do
       Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to:).tap do |event|
         store.put(event)
       end
-    end
-
-    let(:lockstep_timeline) do
-      asked = message(to: "human", body: "which dose?")
-      answered = message(to: "agent", body: "81 mg")
-      Lain::Timeline.empty(store:)
-                    .commit(role: :user, content: text("what is the aspirin dosing?"))
-                    .commit(role: :assistant, content: text("81 mg"),
-                            causal_parents: [asked.digest, answered.digest])
-    end
-
-    let(:written) do
-      io = StringIO.new
-      described_class.write(Lain::Journal.new(io:), timeline: lockstep_timeline, context:, toolset:, workspace:)
-      io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
     end
 
     it "writes exactly the keys SessionRecord.turn writes, turn for turn" do

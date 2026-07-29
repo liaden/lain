@@ -10,6 +10,8 @@ require "stringio"
 # loudly, names the valid range, and changes nothing: not the machine, not
 # the file.
 RSpec.describe Lain::CLI::Command::Rewind do
+  subject(:command) { described_class.new }
+
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:journal_io) { StringIO.new }
@@ -29,8 +31,6 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
   end
   let(:env) { instance_double(Lain::CLI::Command::Env, agent:, chronicle:) }
-
-  subject(:command) { described_class.new }
 
   def records = journal_io.string.each_line.map { |line| JSON.parse(line) }
   def of_type(type) = records.select { |record| record["type"] == type }

@@ -5,6 +5,8 @@
 # cards queued against it. Driven here as the standalone object the extraction
 # claims it is: a real Backend, a real recorder, no Wiring anywhere.
 RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
+  subject(:toolset_build) { build_with(options) }
+
   let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
   let(:chronicle) { Lain::CLI::Chronicle::Null.new }
   let(:recorder) { Lain::Memory::Recorder.new }
@@ -17,8 +19,6 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
                         supervisor:, parent: -> { Lain::Timeline.new }, journal:)
   end
-
-  subject(:toolset_build) { build_with(options) }
 
   describe "#build" do
     it "layers the capability floor, the child seam, and the two main-agent-only tools" do

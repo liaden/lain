@@ -183,14 +183,14 @@ RSpec.describe Lain::Tools::WebFetch do
       end
       result = described_class.new(connection:).call({ url: "https://example.com" }, nil)
       expect(result).to be_error
-      expect(result.content).to match(/500/)
+      expect(result.content).to include("500")
     end
 
     it "reports a raising client as an error Result rather than crashing" do
       connection = WebFetchStubConnection.new { |_url| raise Faraday::ConnectionFailed, "no route to host" }
       result = described_class.new(connection:).call({ url: "https://example.com" }, nil)
       expect(result).to be_error
-      expect(result.content).to match(/no route to host/)
+      expect(result.content).to include("no route to host")
     end
 
     # A 3xx whose Location cannot be parsed must be a handled error Result --

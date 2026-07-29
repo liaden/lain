@@ -10,6 +10,8 @@ require "tmpdir"
 # later verifies -- so a selector can only ever name a turn the parent
 # actually recorded.
 RSpec.describe Lain::CLI::ForkPoint do
+  subject(:fork_point) { described_class.new(dir: paths.sessions_dir) }
+
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
@@ -17,8 +19,8 @@ RSpec.describe Lain::CLI::ForkPoint do
   let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
   let(:context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
-
-  subject(:fork_point) { described_class.new(dir: paths.sessions_dir) }
+  let(:three) { chain("first", "ack", "second") }
+  let(:ancestor) { three.to_a[1].digest }
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
@@ -40,8 +42,6 @@ RSpec.describe Lain::CLI::ForkPoint do
     path
   end
 
-  let(:three) { chain("first", "ack", "second") }
-  let(:ancestor) { three.to_a[1].digest }
   before { write_session("20260101T000000-1.ndjson", three) }
 
   def hex(digest) = digest.delete_prefix("blake3:")

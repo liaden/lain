@@ -7,12 +7,12 @@
 # those names and nothing wider. The object is frozen, so the console cannot
 # reassign its ivars (read-mostly is mechanical, not a convention).
 RSpec.describe Lain::CLI::InspectionBinding do
+  subject(:inspection) { described_class.new(timeline:, session:, supervisor:, status:) }
+
   let(:timeline) { double("timeline", head: "blake3:abc") }
   let(:session) { double("session", reminders: []) }
   let(:supervisor) { double("supervisor") }
   let(:status) { double("status") }
-
-  subject(:inspection) { described_class.new(timeline:, session:, supervisor:, status:) }
 
   it "exposes the four collaborators as readers" do
     expect(inspection.timeline).to be(timeline)

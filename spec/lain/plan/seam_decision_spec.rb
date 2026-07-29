@@ -17,11 +17,11 @@ RSpec.describe Lain::Plan::SeamDecision do
     Data.define(:medians) { def median_turns(size) = medians[size] }.new(medians:)
   end
 
+  subject(:decision) { described_class.new(model: "opus", journal:) }
+
   let(:profile) { Lain::CacheProfile::ANTHROPIC } # write 1.25x, read 0.1x
   let(:prices)  { Lain::PriceBook.default }       # opus input = $15/Mtok
   let(:journal) { [] }
-
-  subject(:decision) { described_class.new(model: "opus", journal:) }
 
   # Hand-computed against opus's $15/Mtok input rate (0.000015/token):
   #   rewrite_cost = tokens_after * input * write_multiplier(1.25)

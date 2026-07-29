@@ -13,6 +13,15 @@ group :development do
   gem "debug", "~> 1.11"         # rdbg --open, for stepping the agent loop from another pane
   gem "irb"
   gem "rubocop", "~> 1.21"
+  gem "rubocop-performance", "~> 1.25"
+  gem "rubocop-rake", "~> 0.7"
+  gem "rubocop-rspec", "~> 3.7"
+  # The one extension that pulls its weight beyond style: we run Ractors, an async
+  # out-of-process core, and parallel_tests. `ClassInstanceVariable` and
+  # `MutableClassInstanceVariable` catch the shared-mutable-state bugs that
+  # `Ractor.shareable?` asserts against -- statically, at every site, rather than at
+  # the one a spec thought to check.
+  gem "rubocop-thread_safety", "~> 0.7"
   # Renders the Agent's state machine to mermaid SOURCE text (no Node toolchain: the
   # renderer is pure Ruby). A spec regenerates it and diffs it against the committed
   # README block, because a checked-in diagram that silently diverges from the code is

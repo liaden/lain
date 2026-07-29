@@ -132,7 +132,7 @@ RSpec.describe Lain::Approval::Queue do
 
         result = run.wait
         expect(result).to have_attributes(is_error: true)
-        expect(result.content).to match(/denied/)
+        expect(result.content).to include("denied")
       end
 
       expect(runs).to be_empty

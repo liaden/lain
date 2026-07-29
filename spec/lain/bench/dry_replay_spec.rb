@@ -10,6 +10,9 @@
 RSpec.describe Lain::Bench::DryReplay do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }
+  let(:recorded) { record_session(context) }
+  let(:timeline) { recorded.first }
+  let(:baseline) { recorded.last }
 
   # A genuine two-model-call session: tool_use, then end_turn. The provider
   # records the exact Requests it was handed -- the recorded baseline.
@@ -18,10 +21,6 @@ RSpec.describe Lain::Bench::DryReplay do
                                  toolset:, context: ctx)
     [agent.timeline, provider.requests]
   end
-
-  let(:recorded) { record_session(context) }
-  let(:timeline) { recorded.first }
-  let(:baseline) { recorded.last }
 
   def replay(over:)
     described_class.new(timeline:, baseline:, toolset:).diff(over)

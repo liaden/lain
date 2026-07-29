@@ -256,7 +256,7 @@ RSpec.describe Lain::Algebra do
       refutation = scratch.refutations.first
       expect([refutation.subject, refutation.operation, refutation.structure]).to eq([klass, :causal_meets,
                                                                                       :meet_semilattice])
-      expect(refutation.reason).to match(/incomparable maximal common ancestors/)
+      expect(refutation.reason).to include("incomparable maximal common ancestors")
     end
 
     it "is refused when no reason is stated, because an unexplained negative is worse than none" do

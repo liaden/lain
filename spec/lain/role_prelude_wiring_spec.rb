@@ -16,6 +16,7 @@ RSpec.describe "a spawned role's persona (PS-3)" do
                   .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
   end
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+  let(:union) { Lain::Toolset.new(%i[read_file list_files bash web_fetch web_search].map { |n| tool(n) }) }
 
   # Anonymous named capabilities: a role attenuates against tool NAMES, and the
   # child never executes a tool here (the mock settles on the first turn), so a
@@ -29,8 +30,6 @@ RSpec.describe "a spawned role's persona (PS-3)" do
       define_method(:perform) { |_input, _invocation| Lain::Tool::Result.ok("ok") }
     end.new
   end
-
-  let(:union) { Lain::Toolset.new(%i[read_file list_files bash web_fetch web_search].map { |n| tool(n) }) }
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 

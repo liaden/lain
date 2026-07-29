@@ -11,7 +11,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       path = File.join(root, ".lain", "skills", "greet", "skill.md")
       FileUtils.mkdir_p(File.dirname(path))
       File.write(path, "# Greet\nSay hello.\n")
-      block.call(root)
+      yield(root)
     end
   end
 

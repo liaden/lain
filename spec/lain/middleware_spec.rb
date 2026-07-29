@@ -96,8 +96,8 @@ RSpec.describe Lain::Middleware do
       logging.call({ effect: :x }) { |env| env }
 
       lines = channel.drain.map(&:bytes).join
-      expect(lines).to match(/tool > /)
-      expect(lines).to match(/tool < /)
+      expect(lines).to include("tool > ")
+      expect(lines).to include("tool < ")
     end
 
     it "passes the env through unchanged (it observes, it does not transform)" do

@@ -12,6 +12,8 @@ require "tmpdir"
 # to an empty queue, because this is the screen a human reads specifically to
 # decide that nothing is outstanding.
 RSpec.describe Lain::CLI::EpicQueue do
+  subject(:queue) { described_class.new(paths:, clock:) }
+
   around do |example|
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
@@ -22,9 +24,6 @@ RSpec.describe Lain::CLI::EpicQueue do
   # rather than of when the suite ran.
   let(:now) { Time.utc(2026, 7, 28, 9, 0, 0) }
   let(:clock) { -> { now } }
-
-  subject(:queue) { described_class.new(paths:, clock:) }
-
   # Shaped like a real content address ({Canonical.digest}'s "blake3:<64 hex>"),
   # so the rendering is exercised at the width a human actually copies from.
   let(:digest_a) { "blake3:#{"a" * 64}" }
@@ -213,7 +212,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
 
     it "says so loudly when a question cannot be recovered from the journal" do
-      expect(queue.listing).to match(/not recoverable/)
+      expect(queue.listing).to include("not recoverable")
     end
 
     it "narrows to one epic when a slug is given" do
@@ -258,13 +257,13 @@ RSpec.describe Lain::CLI::EpicQueue do
     it "does not render a clean all-clear over lines it could not parse" do
       write_journal("20260728T060000-100.ndjson", ["}{ not a record at all", "still not a record"])
 
-      expect(queue.listing).to match(/2 lines could not be parsed/)
+      expect(queue.listing).to include("2 lines could not be parsed")
     end
 
     it "says plainly that the emptiness is unproven" do
       write_journal("20260728T060000-100.ndjson", ["}{ truncated mid-rec"])
 
-      expect(queue.listing).to match(/not proven/)
+      expect(queue.listing).to include("not proven")
     end
 
     it "warns on a NON-empty listing too, where a missing deferral hides just as well" do
@@ -273,7 +272,7 @@ RSpec.describe Lain::CLI::EpicQueue do
                               answered_by: "deferred"),
                      "}{ truncated mid-rec"])
 
-      expect(queue.listing).to include(digest_a).and match(/1 line could not be parsed/)
+      expect(queue.listing).to include(digest_a).and include("1 line could not be parsed")
     end
 
     # A Rust tracing span sharing the fd is valid JSON and simply is not ours.
@@ -282,7 +281,7 @@ RSpec.describe Lain::CLI::EpicQueue do
       write_journal("20260728T060000-100.ndjson",
                     [{ "ts" => "2026-07-28T06:00:00.000000Z", "level" => "INFO", "target" => "lain_core" }])
 
-      expect(queue.listing).not_to match(/could not be parsed/)
+      expect(queue.listing).not_to include("could not be parsed")
     end
   end
 

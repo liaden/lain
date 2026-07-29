@@ -253,7 +253,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         wait_until { inspector.get_var("lain_rpc_version") == "4" }
         expect(described_class::PROTOCOL).to eq("4")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
-        expect(messages).not_to match(/mismatch/)
+        expect(messages).not_to include("mismatch")
       end
     end
   end

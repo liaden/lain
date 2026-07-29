@@ -41,8 +41,8 @@ RSpec.describe Lain::Friction::Report do
     it "does not flag bash or read_file for steering (proportionate selection)" do
       rendered = report.render
 
-      expect(rendered).not_to match(/tool_steering: bash/)
-      expect(rendered).not_to match(/tool_steering: read_file/)
+      expect(rendered).not_to include("tool_steering: bash")
+      expect(rendered).not_to include("tool_steering: read_file")
     end
 
     it "counts exactly two signals" do
@@ -125,6 +125,8 @@ RSpec.describe Lain::Friction::Report do
 end
 
 RSpec.describe Lain::CLI::Friction do
+  subject(:cli) { described_class.new(paths:) }
+
   let(:tmpdir) { Dir.mktmpdir }
   let(:sessions_dir) { File.join(tmpdir, "sessions").tap { |dir| FileUtils.mkdir_p(dir) } }
   let(:paths) { instance_double(Lain::Paths, sessions_dir:) }
@@ -135,8 +137,6 @@ RSpec.describe Lain::CLI::Friction do
   end
 
   after { FileUtils.remove_entry(tmpdir) }
-
-  subject(:cli) { described_class.new(paths:) }
 
   it "resolves a bare filename under this project's session dir and renders the report" do
     expect(cli.report_for("20260721T000000-1.ndjson")).to include("no friction found")

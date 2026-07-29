@@ -104,10 +104,10 @@ RSpec.describe "shipped skills" do
       with_empty_project do |renderer|
         scaffold = renderer.render("create-plan")
 
-        expect(scaffold.downcase).to match(/ground/)
+        expect(scaffold.downcase).to include("ground")
         expect(scaffold.downcase).to match(/before .*plan|ground.* first|ground.* before/)
         expect(scaffold).to match(/[Gg]herkin/)
-        expect(scaffold).to match(%r{planning/specs})
+        expect(scaffold).to include("planning/specs")
       end
     end
 
@@ -147,9 +147,9 @@ RSpec.describe "shipped skills" do
       with_empty_project do |renderer|
         scaffold = renderer.render("execute-plan").downcase
 
-        expect(scaffold).to match(/red/)
-        expect(scaffold).to match(/worktree/)
-        expect(scaffold).to match(/orchestrat/)
+        expect(scaffold).to include("red")
+        expect(scaffold).to include("worktree")
+        expect(scaffold).to include("orchestrat")
       end
     end
   end
@@ -159,8 +159,8 @@ RSpec.describe "shipped skills" do
       with_empty_project do |renderer|
         scaffold = renderer.render("critique")
 
-        expect(scaffold).to match(/SOLID/)
-        expect(scaffold.downcase).to match(/duplicat/)
+        expect(scaffold).to include("SOLID")
+        expect(scaffold.downcase).to include("duplicat")
         expect(scaffold.downcase).to match(/blocker|should-fix|nit|rank/)
       end
     end
@@ -185,10 +185,10 @@ RSpec.describe "shipped skills" do
       with_empty_project do |renderer|
         # Each scaffold must actually teach its own step of the pipeline rather
         # than being four copies of one epic preamble.
-        expect(renderer.render("research-epic")).to match(/research\.md/)
-        expect(renderer.render("plan-epic")).to match(/epic\.md/)
-        expect(renderer.render("iterate-epic").downcase).to match(/split/)
-        expect(renderer.render("create-epic-issues")).to match(%r{issues/<id>\.md})
+        expect(renderer.render("research-epic")).to include("research.md")
+        expect(renderer.render("plan-epic")).to include("epic.md")
+        expect(renderer.render("iterate-epic").downcase).to include("split")
+        expect(renderer.render("create-epic-issues")).to include("issues/<id>.md")
       end
     end
 
@@ -199,14 +199,14 @@ RSpec.describe "shipped skills" do
 
         # Both scaffolds quote the SAME constant, so a change to Home::NAME goes
         # red here rather than leaving two skills teaching different rules.
-        [plan, issues].each { |scaffold| expect(scaffold).to include(Lain::Epic::Home::NAME.source) }
+        expect([plan, issues]).to all(include(Lain::Epic::Home::NAME.source))
 
         # Epic::ID_RESERVED forbids only backticks and line breaks, so `epic.md`
         # legally carries (and round-trips) `Export_Schema`. Home::NAME is the
         # stricter grammar and it REFUSES, at write time, via
         # Home#issue -> checked_name -> MalformedName. A scaffold that says an id
         # reaching it "is already a legal filename" has the implication backwards.
-        expect(issues).to match(/MalformedName/),
+        expect(issues).to include("MalformedName"),
                           "create-epic-issues must name the failure a bad id actually produces"
         expect(issues).not_to match(/already a legal filename/i)
       end
@@ -234,7 +234,7 @@ RSpec.describe "shipped skills" do
         expect(cleared.ready.map(&:id)).to eq(["beta"])
 
         scaffold = renderer.render("iterate-epic")
-        expect(scaffold.downcase).to match(/abandon/),
+        expect(scaffold.downcase).to include("abandon"),
                                      "iterate-epic must warn that abandoning a blocker does not unblock"
         expect(scaffold).to match(/edge edit/i)
       end
@@ -251,7 +251,7 @@ RSpec.describe "shipped skills" do
         expect(scaffold).to match(/`?ready`? is NOT one of them|`ready` is/i)
         # Blocked by: is refused by the grammar; the epic-side scaffold must not
         # teach it as writable.
-        expect(scaffold).to match(/`Blocked by:` is not writable/)
+        expect(scaffold).to include("`Blocked by:` is not writable")
       end
     end
   end
