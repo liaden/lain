@@ -963,16 +963,16 @@ Subsystems without a section above, each self-documented in its own index file:
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
 | Desktop notify | `lib/lain/notify.rb` | the `dunstify` approval surface, and why its `-A` blocking behavior forced a backstop timeout |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
-| Telemetry | `lib/lain/telemetry.rb` | the `Journalable` duck and 34 of the kinds that answer it, 21 of those with a `Telemetry::Guards` construction contract. **This file is not the whole vocabulary** — see below |
+| Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Guards` namespace, and `Telemetry.fixed_point`; one file per record group holds 34 of the kinds that answer the duck, 21 of those with a `Telemetry::Guards` construction contract. **This subtree is not the whole vocabulary** — see below |
 
 **How many journal record types there are, and how to re-derive it.** Two mechanisms produce
 NDJSON records, so any single number needs its criterion stated.
 
 *Classes answering `#to_journal` through `Telemetry::Journalable`* — the criterion is
 `klass < Lain::Telemetry::Journalable`, which counts inheritance and not just `include`
-(`Telemetry::RequestResent` subclasses the `RequestSent` **event** at `telemetry.rb:275` and is
-the one a grep for `include` misses). That is **53** classes, each with a distinct `journal_type`
-string: 34 inside `lib/lain/telemetry.rb` and **19 defined elsewhere** — `Approval::GateDecision`,
+(`Telemetry::RequestResent` subclasses the `RequestSent` **event** in `telemetry/turn_stream.rb`
+and is the one a grep for `include` misses). That is **53** classes, each with a distinct
+`journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Approval::GateDecision`,
 `Approval::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
 `Compaction::Source::CompactionDecision`, `Compaction::Source::DerivationRefused`,
 `Compaction::Cold::CacheColdConfirmed`, `Compaction::Prepared::CompactionPrepared`,

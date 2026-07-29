@@ -748,4 +748,59 @@ RSpec.describe Lain::Telemetry do
         .to raise_error(ArgumentError, /requester must name who the call was asked for/)
     end
   end
+
+  # One formatter for every priced record. {Compaction} and {SeamDecision} each
+  # carried a private `#decimal`, and the two copies had DRIFTED: Compaction's
+  # returned nil for nil (its documented REFUSAL), SeamDecision's did not, so a
+  # nil figure there died inside `BigDecimal("")` -- an ArgumentError from the
+  # formatter's guts rather than a record refusing its own contract.
+  #
+  # The shared function is nil-tolerant, because nil is a value one of the two
+  # records genuinely journals. Loudness moves to the record that has no refusal
+  # to express: {Guards::SeamDecision} now requires both figures, so the nil that
+  # used to blow up inside BigDecimal is named at the boundary instead.
+  describe ".fixed_point" do
+    it "formats fixed-point, never the scientific notation BigDecimal#to_s reaches for" do
+      expect(BigDecimal("0.00012345").to_s).to eq("0.12345e-3")
+      expect(described_class.fixed_point(BigDecimal("0.00012345"))).to eq("0.00012345")
+    end
+
+    it "takes anything BigDecimal() takes and hands back a frozen String" do
+      expect(described_class.fixed_point("1.5")).to eq("1.5")
+      expect(described_class.fixed_point(2)).to eq("2.0")
+      expect(described_class.fixed_point(BigDecimal(0))).to eq("0.0")
+      expect(described_class.fixed_point("1.5")).to be_frozen
+    end
+
+    # `nil?`, not a truthy test: `false` must still reach BigDecimal and raise,
+    # or a JSON boolean lands in a money field and answers #priced? about itself.
+    it "passes nil through as the refusal, and still refuses a value that is not a number" do
+      expect(described_class.fixed_point(nil)).to be_nil
+      expect { described_class.fixed_point(false) }.to raise_error(ArgumentError)
+    end
+
+    it "is what an unpriced Compaction formats through, so its refusal stays nil in the record" do
+      refused = Lain::Telemetry::Compaction.new(trigger: %i[token_threshold], cache_state: :cold,
+                                                tokens_before: 100, tokens_after: 40,
+                                                cost_saved: nil, cost_spent: nil, model: "claude-opus-4-8")
+      expect(refused).not_to be_priced
+      expect(refused.to_journal).to include("cost_saved" => nil, "cost_spent" => nil)
+    end
+
+    # SeamDecision has no refusal reading: #net does BigDecimal(payback)
+    # unconditionally, and Plan::SeamDecision only ever quotes both sides. A nil
+    # here is a bug, and it now says so by name at construction.
+    it "leaves a SeamDecision with an unquoted side failing at its own contract" do
+      expect { seam_decision(rewrite_cost: nil) }
+        .to raise_error(ArgumentError, /rewrite_cost must quote/)
+      expect { seam_decision(payback: nil) }
+        .to raise_error(ArgumentError, /payback must quote/)
+      expect(seam_decision.net).to eq(BigDecimal("1.0"))
+    end
+
+    def seam_decision(rewrite_cost: BigDecimal("0.5"), payback: BigDecimal("1.5"))
+      Lain::Telemetry::SeamDecision.new(size: "M", estimated_turns: 8, calibrated: false, tokens_removed: 900,
+                                        tokens_after: 100, rewrite_cost:, payback:, verdict: :rewrite_now)
+    end
+  end
 end

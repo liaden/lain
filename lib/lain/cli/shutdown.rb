@@ -215,9 +215,9 @@ module Lain
       def positive?(seconds) = seconds.is_a?(Numeric) && seconds.positive?
     end
 
-    # Reopened rather than nested in the policy's own class body -- the
-    # telemetry.rb idiom: the ingress is its own responsibility, and the split
-    # keeps each body within Metrics/ClassLength instead of loosening it.
+    # Reopened rather than nested in the policy's own class body: the ingress is
+    # its own responsibility, and the split keeps each body within
+    # Metrics/ClassLength instead of loosening it.
     class Shutdown
       # The self-pipe: the signal-safe ingress the policy machine reads from.
       #
