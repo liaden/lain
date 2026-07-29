@@ -70,12 +70,19 @@ RSpec.configure do |config|
 end
 
 # :nvim specs drive a REAL headless nvim over msgpack-RPC (spec/lain/frontend/neovim_spec.rb).
-# They cost no money and touch no network, but they spawn an editor and are slow, so they are
-# opt-in like :spike -- run only with LAIN_NVIM=1. When opted in but the nvim binary is absent,
-# an example SKIPS (never fails): a missing editor is an environment gap, not a lain regression.
+# They cost no money and touch no network. Opt-OUT, not opt-in: they run on a plain `rspec`,
+# and `LAIN_NVIM=0` skips them. When nvim is absent an example SKIPS (never fails), so a machine
+# without an editor is an environment gap rather than a red build.
 #
-#     LAIN_NVIM=1 bundle exec rspec spec/lain/frontend/neovim_spec.rb
-NVIM_ENABLED = ENV["LAIN_NVIM"] == "1"
+#     LAIN_NVIM=0 bundle exec rspec        # skip them
+#
+# They were opt-in ("slow"), and the cost of that was that 97 examples -- whole files, including
+# the 714-line neovim_runtime_spec and the 426-line neovim_request_spec -- never ran in any
+# pre-commit or CI, so nothing but a manual run could catch a regression in them. Measured before
+# flipping: the entire :nvim set is 13.3s wall, against a ~70s serial suite. That is not slow
+# enough to buy invisibility with, and the tag stays only so a machine with no nvim, or a run that
+# wants the fast path, can still say no.
+NVIM_ENABLED = ENV["LAIN_NVIM"] != "0"
 
 RSpec.configure do |config|
   config.filter_run_excluding(:nvim) unless NVIM_ENABLED
