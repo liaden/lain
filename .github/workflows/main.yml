@@ -14,7 +14,11 @@ jobs:
     strategy:
       matrix:
         ruby:
-          - '4.0.5'
+          # 4.0.6 is a FLOOR, not a preference: 4.0.5 aborts the VM
+          # intermittently under parallel specs (Bug #22072, "should have cvar
+          # cache entry" -- rb_cvar_set drops the class-variable cache table in
+          # a multi-Ractor process). Keep this in step with .ruby-version.
+          - '4.0.6'
 
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +31,8 @@ jobs:
           bundler-cache: true
           cargo-cache: true
           rubygems: '4.0.3'
+      - name: Install the editor and multiplexer the suite drives
+        uses: ./.github/actions/spec-binaries
       - name: Run the default task
         run: bundle exec rake
 
@@ -40,13 +46,18 @@ jobs:
       - name: Set up Ruby & Rust
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
-          ruby-version: '4.0.5'
+          ruby-version: '4.0.6'
           bundler-cache: true
           cargo-cache: true
           rubygems: '4.0.3'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+      # The pre-commit `ruby-checks` hook runs `rake compile check`, i.e. the
+      # PARALLEL suite -- so this job drives nvim and tmux exactly like the
+      # build job does, and needs them just as much.
+      - name: Install the editor and multiplexer the suite drives
+        uses: ./.github/actions/spec-binaries
       # The cargo-deny hook is `language: system`; the runner image does not ship it.
       - uses: taiki-e/install-action@v2
         with:

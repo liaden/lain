@@ -1,0 +1,60 @@
+name: Install spec binaries
+description: >
+  The editor and multiplexer the suite actually drives, plus a loud assertion
+  that they arrived. Both CI jobs run the specs, so both need this.
+
+inputs:
+  neovim-version:
+    description: >
+      A neovim release tag, or "stable". Kept as a moving "stable" on purpose:
+      the :nvim specs drive nvim over msgpack-RPC, so CI tracking the same
+      release a developer has is worth more here than pinning a tag that slowly
+      drifts away from every dev box. Pin it if a release ever breaks the suite.
+    required: false
+    default: stable
+
+runs:
+  using: composite
+  steps:
+    # tmux from apt is fine: Ubuntu 24.04 ships 3.4, and the only version-
+    # sensitive behaviour is `display-popup`, which needs >= 3.2. TmuxSurface
+    # detects that capability at runtime rather than parsing `tmux -V`, so a
+    # newer tmux needs no change here.
+    - name: Install tmux
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends tmux
+
+    # NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind what a dev
+    # box runs, and these specs talk to it over RPC. The upstream tarball keeps
+    # CI and development on the same editor.
+    - name: Install neovim ${{ inputs.neovim-version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        url="https://github.com/neovim/neovim/releases/download/${{ inputs.neovim-version }}/nvim-linux-x86_64.tar.gz"
+        curl -fsSL "$url" -o /tmp/nvim.tar.gz
+        sudo tar -C /opt -xzf /tmp/nvim.tar.gz
+        echo "/opt/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+    # The step that earns the other two. Both suites SKIP silently when their
+    # binary is missing -- :nvim filters the tag out, and the tmux specs skip
+    # per example -- so a half-failed install does not redden anything; it just
+    # quietly stops testing the editor and the multiplexer, which is the exact
+    # invisibility this whole arrangement exists to end. Assert instead.
+    - name: Assert the suite's binaries are really here
+      shell: bash
+      run: |
+        set -euo pipefail
+        missing=()
+        for tool in nvim tmux jq; do
+          command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+        done
+        if [ ${#missing[@]} -ne 0 ]; then
+          echo "::error::missing spec binaries: ${missing[*]} -- the specs that need them would SKIP, not fail"
+          exit 1
+        fi
+        echo "nvim: $(nvim --version | head -1)"
+        echo "tmux: $(tmux -V)"
+        echo "jq:   $(jq --version)"
