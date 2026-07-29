@@ -44,9 +44,17 @@ module Lain
         # reading it wants the truth); the status bar is where nonsense gets
         # trimmed, because a pegged 100% reads as "full", which is the one
         # thing a human can act on.
+        # The parentheses around the first `if` are REQUIRED, not style: jq 1.8
+        # relaxed the grammar to accept a bare `if ... end as $var`, and 1.7
+        # does not -- it is a compile error ("unexpected as"), jq exits 3, and
+        # both renderers fall back to "lain: no state yet" with the reason
+        # thrown away by their own `2>/dev/null`. So a jq-1.7 box (Ubuntu
+        # 24.04's, and every GitHub runner) showed a permanently empty HUD and
+        # nothing said why. The other three `if`s were already parenthesized;
+        # only this one was relying on the newer grammar.
         JQ_FILTER = <<~'JQ'.strip
-          if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
-          then "🔥" else "❄" end as $warmth
+          (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
+          then "🔥" else "❄" end) as $warmth
           | (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
           | (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
           | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"

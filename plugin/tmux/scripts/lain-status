@@ -37,8 +37,8 @@ fi
 # expansion. Single quotes are the point (byte-for-byte pinned against
 # Lain::CLI::Up::JQ_FILTER by the spec).
 # shellcheck disable=SC2016
-JQ_FILTER='if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
-then "🔥" else "❄" end as $warmth
+JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now
+then "🔥" else "❄" end) as $warmth
 | (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end) as $approve
 | (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end) as $ctx
 | "\($warmth) fleet:\(.fleet | length) inbox:\(.inbox_count)\($approve)\($ctx)"'
