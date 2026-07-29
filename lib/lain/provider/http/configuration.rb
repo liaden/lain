@@ -17,10 +17,10 @@
 #
 # The custom `log_regexp_timeout=` setter upstream warned via `RubyLLM.logger`
 # on Ruby versions predating `Regexp.timeout=` -- an unlisted twelfth leak
-# site, since it is dead code on the ruby-4.0.5 this project pins (Regexp has
-# supported `.timeout=` since 3.2) and would otherwise be the one call in this
-# file that reaches a global logger. Dropped in favor of the plain generated
-# setter.
+# site, since it is dead code on the ruby-4.0.6 floor this project requires
+# (Regexp has supported `.timeout=` since 3.2) and would otherwise be the one
+# call in this file that reaches a global logger. Dropped in favor of the
+# plain generated setter.
 
 module Lain
   class Provider

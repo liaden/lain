@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mixlib/shellout"
+require "rbconfig"
 require "shellwords"
 
 module Lain
@@ -66,9 +67,23 @@ module Lain
       # re-exports the PATH fix and re-invokes the LAUNCHING binary --
       # composed per call, never a constant, because $PROGRAM_NAME must be
       # read when the exe runs (under rspec it is not the lain binary).
+      # The bindir itself is read per call too, from `RbConfig.ruby` (the
+      # RUNNING interpreter), never a pinned version literal -- CLAUDE.md's
+      # toolchain note is explicit that the pinned version is a moving floor
+      # (4.0.5 -> 4.0.6 already happened once for a Ractor VM crash), and a
+      # spawned pane must always land on whatever ruby actually launched it.
+      # UNquoted and Shellwords-escaped, same as `argv` below, not wrapped in
+      # the old literal's `"..."` -- Shellwords.escape's backslashes are only
+      # correct as a bare shell word; nested inside double quotes, a
+      # backslash before anything but $/`/"/\ stops being an escape and
+      # becomes a literal character in PATH. RbConfig.ruby is not
+      # attacker-controlled today, but this class's own comment promises no
+      # un-escaped value reaches tmux's `$SHELL -c`, and this is now a
+      # computed value, not a literal.
       # Callers: `lain up`'s chat window, its cockpit panes, and /fork's window.
       def self.pane_command(*argv)
-        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+        "export PATH=#{Shellwords.escape(File.dirname(RbConfig.ruby))}:$PATH; " \
+          "exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
       end
 
       # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil

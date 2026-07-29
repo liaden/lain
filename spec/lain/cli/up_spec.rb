@@ -295,7 +295,29 @@ RSpec.describe Lain::CLI::Up do
   describe ".pane_command" do
     it "composes the PATH re-export, the launching binary, and the escaped argv" do
       expect(described_class.pane_command("chat", "--fork", "a b"))
-        .to eq("export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat --fork a\\ b")
+        .to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat --fork a\\ b")
+    end
+
+    # Not a general /ruby-\d+\.\d+\.\d+/ refusal -- RbConfig.ruby's bindir on
+    # a ruby-install layout (this box, and CLAUDE.md's own toolchain note)
+    # IS named "ruby-4.0.6", so a correct derivation legitimately contains a
+    # version-shaped path segment. What must never reappear is the STALE
+    # literal this fix removes.
+    it "carries no stale hardcoded ruby-4.0.5 pin -- it re-exports the RUNNING interpreter's bindir" do
+      expect(described_class.pane_command("chat")).not_to include("ruby-4.0.5")
+      expect(described_class.pane_command("chat")).to include(File.dirname(RbConfig.ruby))
+    end
+
+    # The example above can't tell "derived live" from "a second hardcoded
+    # literal that happens to match today's interpreter" -- a future
+    # regression to a fresh pin (say "ruby-4.0.7") would sail through it
+    # unnoticed. Stubbing RbConfig.ruby to an interpreter that could never be
+    # this box's real one, and asserting the command follows the stub, is the
+    # only way to prove the read is live rather than baked in.
+    it "follows RbConfig.ruby when it changes -- proving the bindir is read live, not baked in" do
+      allow(RbConfig).to receive(:ruby).and_return("/opt/totally-fake-ruby-9.9.9/bin/ruby")
+
+      expect(described_class.pane_command("chat")).to include("/opt/totally-fake-ruby-9.9.9/bin")
     end
   end
 
@@ -322,7 +344,7 @@ RSpec.describe Lain::CLI::Up do
       command = capture_new_session_command(chat_args: ["--model", "claude-fable-5", "--no-journal"])
 
       expect(command).to eq(
-        "export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat " \
+        "export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat " \
         "--model claude-fable-5 --no-journal"
       )
     end
@@ -330,7 +352,7 @@ RSpec.describe Lain::CLI::Up do
     it "leaves the chat command untouched when no chat args are given" do
       command = capture_new_session_command(chat_args: [])
 
-      expect(command).to eq("export PATH=\"$HOME/.rubies/ruby-4.0.5/bin:$PATH\"; exec #{$PROGRAM_NAME} chat")
+      expect(command).to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat")
     end
 
     it "keeps a hostile chat arg inert -- it reaches chat as one literal argument, never shell syntax" do
