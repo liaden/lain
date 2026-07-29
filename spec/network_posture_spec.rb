@@ -18,12 +18,12 @@ RSpec.describe NetworkAccess do
     # Uses 127.0.0.1:1 (a port nothing listens on) so the request reaches the
     # socket and is refused locally; no traffic ever leaves the machine.
     it "reaches the socket inside the block" do
-      expect { NetworkAccess.permit { Net::HTTP.get(URI("http://127.0.0.1:1/")) } }
+      expect { described_class.permit { Net::HTTP.get(URI("http://127.0.0.1:1/")) } }
         .to raise_error(Errno::ECONNREFUSED)
     end
 
     it "restores the offline default after the block, even for a request with no cassette" do
-      NetworkAccess.permit { nil }
+      described_class.permit { nil }
       expect { Net::HTTP.get(URI("http://127.0.0.1:1/")) }
         .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
     end

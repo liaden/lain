@@ -6,12 +6,6 @@
 # Note that changes in the inspected code, or installation of new
 # versions of RuboCop, may require this file to be generated again.
 
-# Offense count: 2
-# This cop supports unsafe autocorrection (--autocorrect-all).
-RSpec/BeEq:
-  Exclude:
-    - 'spec/lain/grader/tool_call_index_spec.rb'
-
 # Offense count: 18
 # Configuration parameters: Prefixes, AllowedPatterns.
 # Prefixes: when, with, without
@@ -28,34 +22,6 @@ RSpec/DescribeMethod:
   Exclude:
     - 'spec/lain/cli/chat_launch_spec.rb'
     - 'spec/lain/provider/ollama_streaming_spec.rb'
-
-# Offense count: 44
-# This cop supports unsafe autocorrection (--autocorrect-all).
-# Configuration parameters: SkipBlocks, EnforcedStyle, OnlyStaticConstants.
-# SupportedStyles: described_class, explicit
-RSpec/DescribedClass:
-  Exclude:
-    - 'spec/lain/algebra_spec.rb'
-    - 'spec/lain/capability/degraded_set_spec.rb'
-    - 'spec/lain/compaction/strategy/elide_spec.rb'
-    - 'spec/lain/compaction/summary_snapshot_spec.rb'
-    - 'spec/lain/core/client_spec.rb'
-    - 'spec/lain/event_spec.rb'
-    - 'spec/lain/frontend/neovim/inbox_view_spec.rb'
-    - 'spec/lain/frontend/neovim_buffers_spec.rb'
-    - 'spec/lain/supervisor/restart_spec.rb'
-    - 'spec/lain/telemetry_spec.rb'
-    - 'spec/lain/usage_spec.rb'
-    - 'spec/network_posture_spec.rb'
-    - 'spec/support_vsock_availability_spec.rb'
-
-# Offense count: 3
-# This cop supports unsafe autocorrection (--autocorrect-all).
-# Configuration parameters: EnforcedStyle, NegatedMatcher.
-# SupportedStyles: method_call, block
-RSpec/ExpectChange:
-  Exclude:
-    - 'spec/lain/tool/spawn_policy_spec.rb'
 
 # Offense count: 44
 # This cop supports unsafe autocorrection (--autocorrect-all).
@@ -100,12 +66,6 @@ RSpec/NestedGroups:
     - 'spec/lain/cli/command/meta_spec.rb'
     - 'spec/lain/paths_spec.rb'
     - 'spec/lain/tool/spawn_policy_spec.rb'
-
-# Offense count: 4
-# This cop supports unsafe autocorrection (--autocorrect-all).
-RSpec/ReceiveMessages:
-  Exclude:
-    - 'spec/lain/repl_delivery_spec.rb'
 
 # Offense count: 1
 RSpec/RemoveConst:

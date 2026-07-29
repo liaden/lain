@@ -262,7 +262,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
       dir = Dir.mktmpdir("vsock-daemon-spec")
       pid = nil
 
-      VsockDaemon.run(binary: fake_vsock_binary(dir)) do |daemon|
+      described_class.run(binary: fake_vsock_binary(dir)) do |daemon|
         client = Socket.new(Socket::AF_VSOCK, Socket::SOCK_STREAM, 0)
         client.connect([Socket::AF_VSOCK, 0, daemon.port, VSOCK_SPEC_CID_LOCAL, 0, 0, 0, 0].pack("SSLLCCCC"))
         reply = client.read(5)
@@ -287,7 +287,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
       pid = nil
 
       expect do
-        VsockDaemon.run(binary: fake_vsock_binary(dir)) do |daemon|
+        described_class.run(binary: fake_vsock_binary(dir)) do |daemon|
           pid = daemon.pid
           raise "boom"
         end
@@ -301,7 +301,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
     it "raises Died naming the real exit status when the daemon dies before reporting readiness", :vsock do
       dir = Dir.mktmpdir("vsock-daemon-spec")
 
-      expect { VsockDaemon.new(binary: fake_dying_binary(dir, 3)).start }
+      expect { described_class.new(binary: fake_dying_binary(dir, 3)).start }
         .to raise_error(VsockDaemon::Died, /exited before ever reporting a vsock port/)
     ensure
       FileUtils.remove_entry(dir, true) if dir

@@ -33,7 +33,7 @@ RSpec.describe Lain::Grader::ToolCallIndex do
 
       expect(call.name).to eq("echo")
       expect(call.args).to eq({ "text" => "hi" })
-      expect(call.is_error).to eq(false)
+      expect(call.is_error).to be(false)
       expect(call.result).to eq("hi")
     end
 
@@ -66,7 +66,7 @@ RSpec.describe Lain::Grader::ToolCallIndex do
 
       call = described_class.new(journal_turns(result_turn)).calls.fetch(call_turn.head_digest).first
 
-      expect(call.is_error).to eq(true)
+      expect(call.is_error).to be(true)
       expect(call.result).to eq("kaboom")
     end
 

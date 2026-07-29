@@ -711,7 +711,7 @@ RSpec.describe Lain::Algebra do
                      reason: "a summary of a span is not a map over it")
 
       expect(scratch.refutations.first.structure).to be(:elementwise)
-      expect(klass.new).not_to be_a(Lain::Algebra::Elementwise)
+      expect(klass.new).not_to be_a(described_class)
     end
   end
 

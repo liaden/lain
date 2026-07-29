@@ -235,7 +235,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "lain://inbox" do
     it "primes at attach with the empty note" do
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
         wait_until { buffer_lines("lain://inbox").any? }
@@ -247,7 +247,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
       asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
       promises = Sync { [asker_a.ask("deploy now?"), asker_b.ask("which db?")] }
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
         push_question(asker_a)
@@ -273,7 +273,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       parent = parent_chain("a")
       asker = Lain::Tools::AskHuman.new(parent:)
       promise = Sync { asker.ask("which db?") }
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do |handle|
         push_question(asker)
@@ -301,7 +301,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "binds a buffer-local reply map when the human enters the inbox (the drain autocmd)" do
-      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: @socket, store:)
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
 
       frontend.run do
         wait_until { buffer_lines("lain://inbox").any? }

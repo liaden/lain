@@ -25,10 +25,10 @@ RSpec.describe Lain::Capability::DegradedSet do
   describe "equality (Regular)" do
     include_examples "a Regular value",
                      equal_pair: lambda {
-                       [Lain::Capability::DegradedSet.new(%i[thinking server_tools]),
-                        Lain::Capability::DegradedSet.new(%i[server_tools thinking])]
+                       [described_class.new(%i[thinking server_tools]),
+                        described_class.new(%i[server_tools thinking])]
                      },
-                     unequal: -> { Lain::Capability::DegradedSet.new(%i[thinking]) },
+                     unequal: -> { described_class.new(%i[thinking]) },
                      non_member: -> { %i[thinking server_tools] }
   end
 

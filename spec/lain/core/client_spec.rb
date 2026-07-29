@@ -120,7 +120,7 @@ RSpec.describe Lain::Core::Client, :core do
     BODY
     captured = capturing_parent_stderr do
       Sync do
-        expect { Lain::Core::Client.start(transport: transport(binary: garbage)) }
+        expect { described_class.start(transport: transport(binary: garbage)) }
           .to raise_error(Lain::Core::Died, /SIGTERM|signal 15/)
       end
     end
@@ -136,7 +136,7 @@ RSpec.describe Lain::Core::Client, :core do
       sleep 60
     BODY
     Sync do
-      expect { Lain::Core::Client.start(transport: transport(binary: close_alive)) }
+      expect { described_class.start(transport: transport(binary: close_alive)) }
         .to raise_error(Lain::Core::Died, /SIGTERM|signal 15/)
     end
   end
@@ -151,7 +151,7 @@ RSpec.describe Lain::Core::Client, :core do
     BODY
     Sync do
       started = monotonic_now
-      expect { Lain::Core::Client.start(transport: transport(binary: mute), handshake_budget: 0.3) }
+      expect { described_class.start(transport: transport(binary: mute), handshake_budget: 0.3) }
         .to raise_error(Lain::Core::Client::HandshakeTimeout, /0\.3/)
       expect(monotonic_now - started).to be < 2.0
     end
@@ -170,7 +170,7 @@ RSpec.describe Lain::Core::Client, :core do
       # The raise must also have stopped the child and its reader fiber, or
       # this Sync block would hang on the orphaned reader -- the example
       # finishing at all is the cleanup assertion.
-      expect { Lain::Core::Client.start(transport: transport(binary: Lain::Core::Child::BINARY), version: "999.0.0") }
+      expect { described_class.start(transport: transport(binary: Lain::Core::Child::BINARY), version: "999.0.0") }
         .to raise_error(Lain::Core::Client::VersionMismatch) do |error|
           expect(error.message).to include("999.0.0", Lain::Core::Client::PROTOCOL_VERSION)
         end

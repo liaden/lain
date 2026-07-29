@@ -47,21 +47,10 @@ RSpec.describe Lain::Supervisor::Restart do
         Lain::Tool::Result.ok("wrote #{input.fetch("name")}")
       end
     end)
-    stub_const("RecordingIsolation", Class.new do
-      attr_reader :acquired, :released
-
-      def initialize(env)
-        @env = env
-        @acquired = []
-        @released = []
-      end
-
-      def acquire(worker_id)
-        @acquired << worker_id
-        recorder = self
-        Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { recorder.released << worker_id })
-      end
-    end)
+    # The Isolation duck: real {Isolation::Lease}s over a fixed WorkerEnv,
+    # recording every acquire/release by worker key. Used by the B5 scenario
+    # below, where a restart re-acquires a lease the dead worker's process took
+    # with it.
     stub_const("RecordingIsolation", Class.new do
       attr_reader :acquired, :released
 
@@ -159,9 +148,7 @@ RSpec.describe Lain::Supervisor::Restart do
   # fresh one via the supervisor's isolation backend and hands its WorkerEnv to
   # the revive block, so the revived worker runs under an equivalent isolated
   # environment. Released on the supervisor's #stop, like any adoption.
-
-  # RecordingIsolation is the Isolation duck: real {Isolation::Lease}s over a
-  # fixed WorkerEnv, recording every acquire/release by worker key.
+  # RecordingIsolation, the Isolation duck this uses, is stubbed in the before hook.
 
   it "resumes a killed actor: head equals the last committed turn, workspace matches " \
      "the last snapshot, and the restart journals both digests" do
@@ -369,9 +356,9 @@ RSpec.describe Lain::Supervisor::Restart do
       record_killed_actor(task, provider:)
       supervisor = Lain::Supervisor.new(isolation: backend).run(task)
 
-      Lain::Supervisor::Restart.new(entries: record_io.string.each_line, supervisor:,
-                                    journal: restart_journal, root: dir)
-                               .call(role: "researcher") do |recording, worker_env|
+      described_class.new(entries: record_io.string.each_line, supervisor:,
+                          journal: restart_journal, root: dir)
+                     .call(role: "researcher") do |recording, worker_env|
         seen = worker_env
         Lain::Agent.new(provider: revive_provider, toolset:, context:,
                         timeline: recording.timeline, session: Lain::Session.new(worker_env:))

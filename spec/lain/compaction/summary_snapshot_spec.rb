@@ -363,7 +363,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     # into the Rust extension, which lain.rb requires at :71 while this unit
     # loads at :24. Loading `lain` at all is the proof, so this pins the reason.
     it "does not hash at load time, when Lain::Ext does not exist yet" do
-      expect(Lain::Compaction::SummarySnapshot).to be_a(Class)
+      expect(described_class).to be_a(Class)
     end
   end
 

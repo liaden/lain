@@ -43,7 +43,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
       it "copies nothing into the Store (an empty base commits no turn)" do
         parent # force the parent chain to build before measuring
-        expect { strategy.base_timeline(parent:, store:) }.not_to(change { store.size })
+        expect { strategy.base_timeline(parent:, store:) }.not_to(change(store, :size))
       end
 
       it "labels itself fresh" do
@@ -72,7 +72,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
       it "copies nothing into the Store (fork is identity)" do
         parent # force the parent chain to build before measuring
-        expect { strategy.base_timeline(parent:, store:) }.not_to(change { store.size })
+        expect { strategy.base_timeline(parent:, store:) }.not_to(change(store, :size))
       end
 
       it "labels itself inherit" do
@@ -110,7 +110,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
 
       it "copies nothing into the Store" do
         parent # force the parent chain to build before measuring
-        expect { strategy.base_timeline(parent:, store:) }.not_to(change { store.size })
+        expect { strategy.base_timeline(parent:, store:) }.not_to(change(store, :size))
       end
 
       it "labels itself sibling_template" do

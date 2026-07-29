@@ -38,7 +38,7 @@ RSpec.describe Lain::Usage do
 
     include_examples "a monoid",
                      operation: ->(a, b) { a + b },
-                     identity: Lain::Usage.zero,
+                     identity: described_class.zero,
                      generator: random_usage
 
     include_examples "a commutative monoid",

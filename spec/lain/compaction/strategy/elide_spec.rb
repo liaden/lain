@@ -137,7 +137,7 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
   # elementwise and purity declarations; this group judges the homomorphism
   # itself, which no structure in the registry names.
   describe "held to the homomorphism law over generated spans" do
-    strategy = Lain::Compaction::Strategy::Elide.new
+    strategy = described_class.new
     drawn = ElideFixtures.spans
 
     include_examples "a monoid homomorphism",

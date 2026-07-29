@@ -55,7 +55,7 @@ RSpec.describe Lain::Event do
     # optional keyword, so the old required-keyword loudness moves into an
     # explicit guard -- an envelope with no payload address at all is a bug.
     it "demands a payload address: neither payload_digest nor carried_payload is loud" do
-      expect { Lain::Event.new(kind: :turn) }
+      expect { described_class.new(kind: :turn) }
         .to raise_error(ArgumentError, /payload_digest or carried_payload/)
     end
 
@@ -63,7 +63,7 @@ RSpec.describe Lain::Event do
     # could only agree (noise) or disagree (a bug): refuse both.
     it "refuses a carried Payload alongside an explicit payload_digest or body" do
       pay = payload
-      expect { Lain::Event.new(kind: :turn, carried_payload: pay, payload_digest: pay.digest) }
+      expect { described_class.new(kind: :turn, carried_payload: pay, payload_digest: pay.digest) }
         .to raise_error(ArgumentError, /carried_payload already/)
     end
   end
@@ -174,7 +174,7 @@ RSpec.describe Lain::Event do
       # What is hashed and what is retained must not drift apart, so the event
       # carries the normalized wire form rather than whatever the caller passed.
       it "stores content in normalized wire form" do
-        event = Lain::Event.turn(role: :user, content: [{ type: :text, text: "hi" }])
+        event = described_class.turn(role: :user, content: [{ type: :text, text: "hi" }])
         expect(event.content).to eq([{ "type" => "text", "text" => "hi" }])
       end
 
@@ -222,7 +222,7 @@ RSpec.describe Lain::Event do
       end
 
       it "changes with content" do
-        expect(turn).not_to have_same_digest_as(Lain::Event.turn(role: :user, content: block("bye")))
+        expect(turn).not_to have_same_digest_as(described_class.turn(role: :user, content: block("bye")))
       end
 
       it "changes with role" do
@@ -246,11 +246,11 @@ RSpec.describe Lain::Event do
     describe "equality (Regular)" do
       include_examples "a Regular value",
                        equal_pair: lambda {
-                         [Lain::Event.turn(role: :user, content: block("hi")),
-                          Lain::Event.turn(role: :user, content: block("hi"))]
+                         [described_class.turn(role: :user, content: block("hi")),
+                          described_class.turn(role: :user, content: block("hi"))]
                        },
-                       unequal: -> { Lain::Event.turn(role: :user, content: block("bye")) },
-                       non_member: -> { Lain::Event.turn(role: :user, content: block("hi")).digest }
+                       unequal: -> { described_class.turn(role: :user, content: block("bye")) },
+                       non_member: -> { described_class.turn(role: :user, content: block("hi")).digest }
     end
   end
 
@@ -289,11 +289,11 @@ RSpec.describe Lain::Event do
       store = Lain::Store.new
       ev = Lain::Event.turn(role: :user, content: block("hi"), meta: { "a" => 1 })
       before = ev.digest
-      store.put(Lain::Event::Payload.new(kind: :turn, body: ev.body))
+      store.put(described_class.new(kind: :turn, body: ev.body))
       store.put(ev)
 
       expect(ev.digest).to eq(before)
-      expect(store.fetch(ev.payload_digest)).to eq(Lain::Event::Payload.new(kind: :turn, body: ev.body))
+      expect(store.fetch(ev.payload_digest)).to eq(described_class.new(kind: :turn, body: ev.body))
     end
   end
 end

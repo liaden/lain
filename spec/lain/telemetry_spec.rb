@@ -13,7 +13,7 @@ RSpec.describe Lain::Telemetry do
     records = %i[ToolOutput Dropped ProviderRetry TurnUsage RequestSent
                  RequestResent MemoryRoot CapabilityDegraded WriteRefused StreamStarted ObserverFailed]
     records.each do |record|
-      expect(Lain::Telemetry.const_defined?(record, false)).to be(true)
+      expect(described_class.const_defined?(record, false)).to be(true)
       expect(Lain::Event.const_defined?(record, false)).to be(false)
     end
   end

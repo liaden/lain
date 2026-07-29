@@ -51,8 +51,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # Counts asks so "no model turn was spent" is an assertion, not a hope.
   let(:agent) do
     instance_spy(Lain::Agent).tap do |double|
-      allow(double).to receive(:ask).and_return(response)
-      allow(double).to receive(:timeline).and_return(instance_spy(Lain::Timeline))
+      allow(double).to receive_messages(ask: response, timeline: instance_spy(Lain::Timeline))
     end
   end
 
@@ -170,8 +169,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     let(:conductor) do
       instance_spy(Lain::CLI::Conductor).tap do |double|
         allow(double).to receive(:supervise) { |*_, &ask| spy("outcome", response: ask.call) }
-        allow(double).to receive(:read_prompt).and_return("quit")
-        allow(double).to receive(:closed?).and_return(false)
+        allow(double).to receive_messages(read_prompt: "quit", closed?: false)
       end
     end
 
