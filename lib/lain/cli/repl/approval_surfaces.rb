@@ -38,6 +38,14 @@ module Lain
 
         # Spawn a watcher fiber per live surface over the one queue; nil under
         # --yolo, so no fiber spawns at all.
+        #
+        # The splat rests on a NEGATIVE fact about a third-party class:
+        # `Async::Task` does not respond to `to_a`, so `*task` yields the task
+        # itself rather than flattening it. An async release that added `to_a`
+        # would silently change what this returns -- which is why
+        # approval_surfaces_spec pins both the SIZE of this set and the class of
+        # every member, so that upgrade fails in a test rather than in a
+        # session's shutdown path.
         def watch(task)
           @approvals && [task.async { approval_surface.watch(@approvals) },
                          task.async { @notifier.watch(@approvals) },
