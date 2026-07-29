@@ -8,3 +8,4 @@
 # cleanly. The unit sits after `plan` in lain.rb because Issue reads
 # Gherkin::Criteria and Canonical.
 require_relative "epic/issue"
+require_relative "epic/graph"
