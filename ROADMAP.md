@@ -983,6 +983,34 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    an explicit `--journal PATH` through `Journal.open`, which is what makes the manual pass's
    "confirm the lease telemetry" step meaningful at all.
 
+20. **Planned (2026-07-29, panel-reviewed)** —
+   `planning/specs/chunk-review-correctness-cost.md`: **chunk A of the simplification-review
+   fixes** (`planning/reviews/2026-07-29-simplification-review.md`). The shipped defects (split-
+   chunk streaming crash, `gsub` backreference interpolation reachable from model input, PlanSweep
+   silently dropping `system:`, `lain up` re-execing every pane on the forbidden ruby-4.0.5,
+   `AstGrep.dump`'s measured 75 MB-from-10 KB quadratic blowup), the verified performance fixes
+   (`Scribe#catch_up` O(n²)-per-session, one-walk-one-dump on the Derived render path, Slots/
+   Catalog load-once-render-once, `Toolset#to_schema`), the Rust safety/idiom work that is also a
+   wiring prerequisite (recursion bounds, mutex-vs-Ruby discipline, the `NO_COLOR`-via-feature
+   trim, one `read_text` encoding policy), a `Tools::Grep` lain-core RPC, and the record-keeping
+   card (T39) that writes the epic-tier entry, the Rust parity gap (`planning/rust-parity-gap.md`),
+   and the unwired-seam triage item. Memoization is constrained by ruling: restructure over cache,
+   stated key-space/bound/consistency, "not worth it" is an allowed verdict (T19). The Rust
+   dag/canonical/event bindings stay **unwired** — wiring is the follow-up chunk this plan's T39
+   files.
+
+21. **Planned (2026-07-29, panel-reviewed)** —
+   `planning/specs/chunk-review-missing-objects.md`: **chunk B, runs after chunk A lands** (its
+   grounding line numbers assume A's diffs). The missing value objects behind the long parameter
+   lists (`Agent` accepting its already-extracted collaborators instead of six pass-through
+   ingredients, `Agent::Instrumentation`, the six-member `Spawn::Seam`, the injected
+   `Arm::Instrument` — constrained by `arm.rb`'s own "a base that grows every child's knobs stops
+   being a seam"), the duplication extractions (provider family error/usage/response modules, the
+   three byte-identical session resolvers, `RunClock::MONOTONIC` as the one monotonic default —
+   monotonic only, there is no single wall clock), the `telemetry.rb` index split, `Compare::Run`
+   widened to a `metrics:` hash collapsing five hand-rolled sweep folds, and the audited
+   low-value-test deletions plus the two coverage gaps (`Core::Child`, `Repl::ApprovalSurfaces`).
+
 ---
 
 ## Map of the documents
