@@ -10,6 +10,15 @@
 //! layer perform each walk ENTIRELY in Rust, crossing the boundary once with a
 //! batched result rather than once per node.
 //!
+//! **There is one walk, and it is an iterator.** Every function here folds over
+//! the private `walk`, which pulls one node at a time; nothing builds a `Vec`
+//! it does not hand back. That is what makes a bounded question cost a bounded
+//! walk -- `includes`, `ancestor_of`, and `meet`'s find side stop AT the answer
+//! rather than after the chain -- and it is the Rust half of the same change
+//! `Lain::Timeline` took in Ruby, where `#ancestors` yields rather than
+//! materializes (root `CLAUDE.md`, "Enumerable and Enumerator are the good
+//! abstractions").
+//!
 //! # The structure, and exactly which laws are proven where
 //!
 //! **Structure:** the heads over one Store form a MEET-SEMILATTICE ordered by
@@ -73,24 +82,80 @@ impl std::fmt::Display for DanglingDigest {
 
 impl std::error::Error for DanglingDigest {}
 
+/// The one walk. Yields the `Arc`-shared nodes from `head` up to the root, head
+/// first, PULLED ONE AT A TIME -- every ancestry query below is a fold over
+/// this iterator, and it is what lets the short-circuiting ones ([`includes`],
+/// [`ancestor_of`], and `meet`'s find side) stop AT the answer instead of
+/// materializing a `Vec<Arc<EventData>>` the length of the chain first.
+///
+/// Fallible per step: a digest the map does not hold yields
+/// `Err(DanglingDigest)` and ends the walk (the cursor is already taken), so
+/// the iterator fuses itself and no fold can step past corruption into an
+/// answer computed over a truncated chain. Reaching a root -- `render_parent ==
+/// None` -- is the other, ordinary stop, and the two stay distinct.
+///
+/// **The cursor BORROWS.** `render_parent` is an `Option<Digest>` living in a
+/// node the map owns and the walk holds borrowed throughout, so stepping is a
+/// pointer move: `cursor = turn.render_parent.as_ref()`. Cloning it instead
+/// would allocate a `String` per node -- measured at 5000 allocations over a
+/// 5000-node chain, against 0 for `length` and 12 for `ancestor_turns` as
+/// written -- which would have left the per-node cost exactly where it was
+/// while only the `Vec` went away. Both halves of "no materializing" are the
+/// point. `'a` covers the map and the head together; that is ONE lifetime, and
+/// an earlier revision's claim that borrowing here would need two was simply
+/// wrong -- do not let it stop you.
+///
+/// Private on purpose: the FFI layer crosses the boundary once with a batched
+/// answer (see the module doc), so it consumes the named functions below and
+/// never the walk itself.
+fn walk<'a>(
+    map: &'a StoreMap,
+    head: Option<&'a Digest>,
+) -> impl Iterator<Item = Result<Arc<EventData>, DanglingDigest>> + 'a {
+    let mut cursor = head;
+    std::iter::from_fn(move || {
+        let digest = cursor.take()?;
+        match map.get(digest) {
+            None => Some(Err(DanglingDigest(digest.clone()))),
+            Some(turn) => {
+                cursor = turn.render_parent.as_ref();
+                Some(Ok(Arc::clone(turn)))
+            }
+        }
+    })
+}
+
+/// The first digest on `head`'s chain that `wanted` accepts, or `None` when
+/// none does. THE short-circuiting primitive, shared by [`includes`] (hence
+/// [`ancestor_of`]) and by [`meet`]'s find side, so one implementation carries
+/// the stopping rule and one test proves it. `find_map` pulls the walk only as
+/// far as the first acceptance, so an answer one hop from the head costs one
+/// node rather than the whole chain. A dangle reached BEFORE the answer still
+/// raises: stopping early must never turn corruption into a quiet `None`.
+fn find_ancestor(
+    map: &StoreMap,
+    head: Option<&Digest>,
+    mut wanted: impl FnMut(&Digest) -> bool,
+) -> Result<Option<Digest>, DanglingDigest> {
+    walk(map, head)
+        .find_map(|step| match step {
+            Err(dangling) => Some(Err(dangling)),
+            Ok(turn) => wanted(&turn.digest).then(|| Ok(turn.digest.clone())),
+        })
+        .transpose()
+}
+
 /// The `Arc`-shared nodes from `head` up to the root, head first. A digest that
 /// is not in the map is a corrupt chain and returns `Err(DanglingDigest)` naming
 /// it, rather than silently truncating the walk. One pass, so callers get the
-/// whole chain in a single locked read.
+/// whole chain in a single locked read. The `Vec` is deliberate: a caller
+/// asking for every node has already said it wants them all, and `collect`
+/// into a `Result` still stops the walk at the first dangle.
 pub fn ancestor_turns(
     map: &StoreMap,
     head: Option<&Digest>,
 ) -> Result<Vec<Arc<EventData>>, DanglingDigest> {
-    let mut out = Vec::new();
-    let mut cursor = head.cloned();
-    while let Some(digest) = cursor.take() {
-        let turn = map
-            .get(&digest)
-            .ok_or_else(|| DanglingDigest(digest.clone()))?;
-        cursor = turn.render_parent.clone();
-        out.push(Arc::clone(turn));
-    }
-    Ok(out)
+    walk(map, head).collect()
 }
 
 /// The digests from `head` to the root, head first.
@@ -98,10 +163,27 @@ pub fn ancestor_digests(
     map: &StoreMap,
     head: Option<&Digest>,
 ) -> Result<Vec<Digest>, DanglingDigest> {
-    Ok(ancestor_turns(map, head)?
-        .iter()
-        .map(|turn| turn.digest.clone())
-        .collect())
+    walk(map, head)
+        .map(|step| step.map(|turn| turn.digest.clone()))
+        .collect()
+}
+
+/// How many nodes the chain from `head` holds -- Ruby `Timeline#length`. Folds
+/// the count over the walk, so asking for a number never allocates a `Vec` of
+/// every `Arc` on the chain to then throw away.
+pub fn length(map: &StoreMap, head: Option<&Digest>) -> Result<usize, DanglingDigest> {
+    walk(map, head).try_fold(0, |count, step| step.map(|_turn| count + 1))
+}
+
+/// Whether `needle` is on the chain from `head` -- Ruby `Timeline#include?`.
+/// Stops at the hit (see [`find_ancestor`]), so membership near the head is
+/// answered in a couple of node reads however long the chain behind it is.
+pub fn includes(
+    map: &StoreMap,
+    head: Option<&Digest>,
+    needle: &Digest,
+) -> Result<bool, DanglingDigest> {
+    Ok(find_ancestor(map, head, |digest| digest == needle)?.is_some())
 }
 
 /// The parent digest of `digest`. `Ok(None)` is a root (a valid stop); an absent
@@ -133,10 +215,12 @@ pub fn meet(
     a_head: Option<&Digest>,
     b_head: Option<&Digest>,
 ) -> Result<Option<Digest>, DanglingDigest> {
+    // The `a` side is the whole chain by necessity -- a membership test needs
+    // its set built before the first question -- exactly as Ruby
+    // `Timeline#meet` builds `mine`. Only the `b` side can stop early, and
+    // [`find_ancestor`] is where it does.
     let mine: HashSet<Digest> = ancestor_digests(map, a_head)?.into_iter().collect();
-    Ok(ancestor_digests(map, b_head)?
-        .into_iter()
-        .find(|digest| mine.contains(digest)))
+    find_ancestor(map, b_head, |digest| mine.contains(digest))
 }
 
 /// Whether the Timeline headed at `ancestor` is an ancestor of the one headed at
@@ -156,9 +240,7 @@ pub fn ancestor_of(
 ) -> Result<bool, DanglingDigest> {
     match ancestor {
         None => Ok(true),
-        Some(head) => Ok(ancestor_turns(map, descendant)?
-            .iter()
-            .any(|turn| &turn.digest == head)),
+        Some(head) => includes(map, descendant, head),
     }
 }
 
@@ -251,6 +333,36 @@ mod tests {
             Some(&digest("blake3:absent")),
             "head",
         )
+    }
+
+    // A straight, well-formed chain of `length` nodes. Returns (map, head).
+    fn chain(length: usize) -> (StoreMap, Digest) {
+        let (map, digests) = grow(StoreMap::new_sync(), None, length);
+        let head = digests[0].clone();
+        (map, head)
+    }
+
+    // The same chain, but its deepest node's parent was never inserted -- so a
+    // walk that runs off the end raises instead of stopping. That dangle is the
+    // instrument the short-circuit tests read: an answer returned from ABOVE it
+    // proves the walk never reached it. Returns the digests head-first, so a
+    // test names a node by its distance from the head.
+    fn dangling_chain(length: usize) -> (StoreMap, Vec<Digest>) {
+        grow(StoreMap::new_sync(), Some(digest("blake3:absent")), length)
+    }
+
+    // `length` commits stacked on `parent`, returned head-first.
+    fn grow(mut map: StoreMap, parent: Option<Digest>, length: usize) -> (StoreMap, Vec<Digest>) {
+        let mut parent = parent;
+        let mut digests = Vec::with_capacity(length);
+        for step in 0..length {
+            let (grown, node) = commit(&map, parent.as_ref(), &format!("n{step}"));
+            map = grown;
+            parent = Some(node.clone());
+            digests.push(node);
+        }
+        digests.reverse();
+        (map, digests)
     }
 
     #[test]
@@ -403,6 +515,171 @@ mod tests {
             Err(dangling.clone())
         );
         assert_eq!(parent_of(&map, &digest("blake3:absent")), Err(dangling));
+    }
+
+    // -------------------------------------------------------------------
+    // Characterization, NOT a law: the walk's COST shape.
+    //
+    // The fenced block above says what `meet` answers; these say what it
+    // costs to answer. Short-circuiting is an implementation choice this
+    // module owns -- `spec/support/shared_examples/meet_semilattice.rb`
+    // declares no complexity law, and must never grow one from here.
+    //
+    // Two instruments, and only one of them discriminates on its own:
+    //
+    //   * `ancestor_queries_stop_at_the_answer` -- a chain that DANGLES past
+    //     its root. Answering at depth 1 is possible only by stopping there.
+    //     This is the primary evidence for the short-circuit claim.
+    //   * `find_ancestor_visits_only_as_far_as_the_answer` -- counts predicate
+    //     invocations, which is `find_ancestor`'s own loop, not an adapter's.
+    //
+    // A count taken with `.inspect(..).any(..)` over `walk` would prove
+    // NOTHING: it measures `Iterator::any`'s early exit, which every iterator
+    // has, so an eager `walk` that read the whole chain up front and handed
+    // back `vec.into_iter()` would score identically. Review caught exactly
+    // that; do not reintroduce it. The laziness of the READ is observable
+    // only through allocation, which is what the next test does.
+    // -------------------------------------------------------------------
+
+    // Counts allocations on the CALLING thread, so a parallel test's traffic
+    // never leaks into a reading. Const-initialized and `Drop`-free, so the
+    // thread-local itself never allocates and cannot recurse into `alloc`;
+    // reached through `try_with` because TLS teardown must not panic here.
+    struct CountingAllocator;
+
+    thread_local! {
+        static ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    // SAFETY: both arms forward to `System`, which satisfies the GlobalAlloc
+    // contract; the counter is a plain `Cell` read-modify-write on the calling
+    // thread and allocates nothing itself, so it adds no reentrancy.
+    unsafe impl std::alloc::GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            ALLOCATIONS.try_with(|n| n.set(n.get() + 1)).ok();
+            unsafe { std::alloc::System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            unsafe { std::alloc::System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static COUNTING: CountingAllocator = CountingAllocator;
+
+    // Allocations charged to `body`, on this thread.
+    fn allocations(body: impl FnOnce()) -> usize {
+        let before = ALLOCATIONS.with(std::cell::Cell::get);
+        body();
+        ALLOCATIONS.with(std::cell::Cell::get) - before
+    }
+
+    #[test]
+    fn a_walk_allocates_nothing_per_node() {
+        // The claim the iterator was written for, and the only instrument that
+        // can see it. Two ways to fail it, both of which this catches:
+        //
+        //   * an eager `walk` that buffers every step into a `Vec` first --
+        //     `length` then pays that Vec's growth (measured: 12);
+        //   * an OWNED cursor (`cursor.clone_from(&turn.render_parent)`) --
+        //     one `String` per node (measured: 5_000).
+        //
+        // Both were re-run as mutations and both fail here. Both PASSED the
+        // `.inspect().any()` count this test replaced, which is why that one
+        // is gone.
+        let (map, head) = chain(5_000);
+
+        let for_length = allocations(|| assert_eq!(length(&map, Some(&head)), Ok(5_000)));
+        assert_eq!(
+            for_length, 0,
+            "length allocated {for_length} times over 5_000 nodes; the walk should allocate none"
+        );
+
+        // `ancestor_turns` hands back a `Vec`, so it pays that Vec's growth --
+        // and nothing else. Bounded well under the node count: a per-node
+        // allocation would put this in the thousands.
+        let for_turns = allocations(|| {
+            ancestor_turns(&map, Some(&head)).expect("well-formed chain");
+        });
+        assert!(
+            for_turns < 40,
+            "ancestor_turns allocated {for_turns} times; only the Vec's growth should"
+        );
+    }
+
+    #[test]
+    fn find_ancestor_visits_only_as_far_as_the_answer() {
+        // `meet`'s find side, exercised the way `meet` drives it: the
+        // predicate runs once per node `find_ancestor` VISITS, so this counts
+        // the consumer's loop. It says nothing about when the walk READ those
+        // nodes -- that is `a_walk_allocates_nothing_per_node`'s job -- but
+        // the consumer's loop is what `meet` short-circuits, so it is the
+        // right thing to count here.
+        let (map, digests) = dangling_chain(10_000);
+        let (head, target) = (digests[0].clone(), digests[1].clone());
+        let mut visited = 0;
+        let found = find_ancestor(&map, Some(&head), |digest| {
+            visited += 1;
+            *digest == target
+        });
+        assert_eq!(found, Ok(Some(target)));
+        assert_eq!(
+            visited, 2,
+            "the find side visited {visited} of 10_000 nodes"
+        );
+    }
+
+    #[test]
+    fn ancestor_queries_stop_at_the_answer() {
+        // The chain DANGLES past its root, so any walk that runs to the end
+        // raises. Answering at depth 1 is only possible by stopping there --
+        // the same observation as the counts above, made through the public
+        // functions rather than the private walk.
+        let (map, digests) = dangling_chain(10_000);
+        let head = digests[0].clone();
+        let target = digests[1].clone();
+        assert_eq!(includes(&map, Some(&head), &target), Ok(true));
+        assert_eq!(ancestor_of(&map, Some(&target), Some(&head)), Ok(true));
+    }
+
+    #[test]
+    fn meet_answers_a_long_chain_at_its_first_common_digest() {
+        // The a side is the whole chain by necessity (a membership test needs
+        // its set built first), so only the b side can stop early. Here b is
+        // one commit above a's head: the answer is b's second node.
+        //
+        // The STOPPING is proven one test up, not here -- `meet`'s find side
+        // IS `find_ancestor`, and a dangle cannot be placed to observe it
+        // through `meet` itself: everything b-exclusive sits ABOVE the answer
+        // (visited first), and everything below is a's chain, which the set
+        // build needs whole. This test pins the answer over that shape.
+        let (map, head) = chain(10_000);
+        let (map, above) = commit(&map, Some(&head), "above");
+        assert_eq!(meet(&map, Some(&head), Some(&above)), Ok(Some(head)));
+    }
+
+    #[test]
+    fn length_counts_the_chain_and_raises_on_a_dangle() {
+        // Values only -- this passes against `ancestor_turns(..)?.len()` too.
+        // That `length` materializes nothing is `a_walk_allocates_nothing_per_node`'s
+        // claim, not this one's, and the name says so now.
+        let (map, head) = chain(10_000);
+        assert_eq!(length(&map, Some(&head)), Ok(10_000));
+        assert_eq!(length(&StoreMap::new_sync(), None), Ok(0));
+        let (corrupt_map, corrupt_head) = corrupt();
+        assert_eq!(
+            length(&corrupt_map, Some(&corrupt_head)),
+            Err(DanglingDigest(digest("blake3:absent")))
+        );
+    }
+
+    #[test]
+    fn includes_is_false_for_a_digest_off_the_chain() {
+        let (map, _base, left, right) = forest();
+        assert_eq!(includes(&map, Some(&left), &left), Ok(true));
+        assert_eq!(includes(&map, Some(&left), &right), Ok(false));
+        assert_eq!(includes(&map, None, &digest("blake3:anything")), Ok(false));
     }
 
     #[test]

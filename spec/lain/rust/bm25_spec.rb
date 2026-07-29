@@ -63,6 +63,19 @@ RSpec.describe Lain::Ext::Bm25 do
       expect(index.search("zzznonexistent qqquux", 5)).to eq([])
     end
 
+    # Every other binding in this ext hands back a frozen outer Array
+    # (astgrep, treesitter, fuzzy, prompt); a caller must not have to remember
+    # which one is the exception. The triples and their token Arrays were
+    # already frozen, so this closes the last mutable layer -- and it is what
+    # makes the whole result Ractor-shareable, not just deep-frozen by eye.
+    it "returns a deeply frozen result, like every sibling binding" do
+      expect(index.search("drug chemotherapy agent", 10)).to be_deeply_frozen
+    end
+
+    it "freezes the empty result too" do
+      expect(index.search("zzznonexistent qqquux", 5)).to be_frozen
+    end
+
     it "is byte-identical across two builds from the same pairs" do
       a = described_class.build(corpus).search("drug chemotherapy agent", 10)
       b = described_class.build(corpus).search("drug chemotherapy agent", 10)

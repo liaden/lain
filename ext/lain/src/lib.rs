@@ -1455,18 +1455,21 @@ mod ffi {
 
         fn length(ruby: &Ruby, rb_self: &Timeline) -> Result<usize, Error> {
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
-            Ok(walked.map_err(|e| missing_object(ruby, e))?.len())
+            // `dag::length` folds the count over the walk, so a number costs no
+            // `Vec<Arc<EventData>>`. The `let` also drops the guard before the
+            // translation: the pure answer is computed under the lock, Ruby is
+            // spoken to after it.
+            let counted = dag::length(&store.locked(), rb_self.head.as_ref());
+            counted.map_err(|e| missing_object(ruby, e))
         }
 
         fn include_p(ruby: &Ruby, rb_self: &Timeline, digest: String) -> Result<bool, Error> {
             let needle: Digest = digest.into();
             let store: &Store = store_ref(ruby, rb_self)?;
-            let walked = dag::ancestor_turns(&store.locked(), rb_self.head.as_ref());
-            Ok(walked
-                .map_err(|e| missing_object(ruby, e))?
-                .iter()
-                .any(|turn| turn.digest == needle))
+            // Stops at the hit rather than walking to the root; guard dropped
+            // before the error translation, as above.
+            let found = dag::includes(&store.locked(), rb_self.head.as_ref(), &needle);
+            found.map_err(|e| missing_object(ruby, e))
         }
 
         fn ancestor_of_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
@@ -1534,10 +1537,8 @@ mod ffi {
                     // not zero, so it renders as `(?)` rather than a false `(0)`.
                     let length = store_ref(ruby, rb_self)
                         .ok()
-                        .and_then(|store: &Store| {
-                            dag::ancestor_turns(&store.locked(), Some(digest)).ok()
-                        })
-                        .map(|arcs| arcs.len().to_string())
+                        .and_then(|store: &Store| dag::length(&store.locked(), Some(digest)).ok())
+                        .map(|count| count.to_string())
                         .unwrap_or_else(|| "?".to_string());
                     format!("{prefix}... ({length})")
                 }
@@ -1695,6 +1696,12 @@ mod ffi {
         /// `#search(query, k)` -> up to `k` `[id, score, matched_tokens]` triples,
         /// ranked by descending score with insertion-order tie-breaking. One FFI
         /// crossing: the whole ranked result is built into a single frozen Array.
+        ///
+        /// Frozen all the way out -- the outer Array, each triple, and each
+        /// token Array -- which is what the `astgrep`, `treesitter`, `fuzzy` and
+        /// `prompt` bindings do, so no caller has to remember which result is
+        /// the exception. The outer freeze is also what makes the whole answer
+        /// `Ractor.shareable?`, not merely frozen a layer down.
         fn search(ruby: &Ruby, rb_self: &Bm25, query: String, k: usize) -> Result<RArray, Error> {
             let hits = rb_self.inner.search(&query, k);
             let out = ruby.ary_new_capa(hits.len());
@@ -1711,6 +1718,7 @@ mod ffi {
                 triple.freeze();
                 out.push(triple)?;
             }
+            out.freeze();
             Ok(out)
         }
     }
