@@ -198,6 +198,29 @@ RSpec.describe Lain::Frontend::TTY do
         .with(a_string_including(described_class::Warmth::COLD), true)
     end
 
+    # T29: the same file {Lain::StatusFeed} and `lain up` default to, ASKED of
+    # the one locator rather than composed a third time. The locator is stubbed
+    # to answer a path it would never derive, and only that path holds a warm
+    # deadline, so a default composed here reads nothing and renders the bare
+    # prompt. The chdir keeps a regressed default inside the tmpdir rather than
+    # letting it find the real repo's own `.lain/`.
+    it "asks the ONE project locator for its state path rather than composing one" do
+      elsewhere = File.join(@state_dir, "the-locator-said-here", "state.json")
+      FileUtils.mkdir_p(File.dirname(elsewhere))
+      File.write(elsewhere, JSON.generate({ "cache_deadline" => Time.at(1_500).utc.iso8601 }))
+      allow(Lain::ProjectDir).to receive(:new).and_return(instance_double(Lain::ProjectDir, state_path: elsewhere))
+      allow(Reline).to receive(:readmultiline).and_return("hi")
+      allow(output).to receive(:tty?).and_return(true)
+
+      Dir.chdir(@state_dir) do
+        described_class.new(channel:, output:, input: tty_input, wall_clock: -> { Time.at(1_000) },
+                            pastel: Pastel.new(enabled: false)).prompt
+      end
+
+      expect(Reline).to have_received(:readmultiline)
+        .with(a_string_including(described_class::Warmth::WARM), true)
+    end
+
     it "renders a cold glyph when the deadline has already passed" do
       write_state(cache_deadline: Time.at(500).utc.iso8601)
       allow(Reline).to receive(:readmultiline).and_return("hi")

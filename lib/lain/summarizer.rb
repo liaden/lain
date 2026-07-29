@@ -8,34 +8,18 @@ module Lain
   # costs neither tokens nor latency, which is exactly why it is tried before
   # any model-backed summarization.
   module Summarizer
-    # The loaded summarizers, in declaration order: a frozen, enumerable,
-    # session-fixed snapshot rather than a mutable registry (the posture
-    # {Skill::Catalog} and {Isolation::Services} take). An absent file is an
-    # EMPTY catalog, never an error -- a project that declares no summarizers is
-    # the common case, Null-Object by an empty enumeration rather than a nil
-    # check.
-    class Catalog
-      include Enumerable
-
+    # The loaded summarizers, in declaration order. {DslCatalog} owns everything
+    # a `.lain/*.rb` loader shares -- the exist-guard, the empty-is-not-an-error
+    # posture, and the frozen session-fixed enumeration rather than a mutable
+    # registry -- so all this class adds is where its file is, who evaluates it,
+    # and the one lookup its callers actually make.
+    class Catalog < DslCatalog
       # The project-scoped DSL file, on the `.lain/` convention (like `.git/`).
-      DSL_PATH = File.join(".lain", "summarizers.rb")
+      DSL_PATH = ProjectDir.join("summarizers.rb")
 
-      # Read and evaluate `<root>/.lain/summarizers.rb`. `root` is explicit and
-      # never read at require time, so a spec (and a bench arm) can load a
-      # catalog from a throwaway tree.
-      def self.load(root: Dir.pwd)
-        path = File.join(root, DSL_PATH)
-        new(File.exist?(path) ? Builder.build(File.read(path), path) : [])
-      end
-
-      def initialize(summarizers)
-        @summarizers = summarizers.freeze
-        freeze
-      end
-
-      def each(&block) = @summarizers.each(&block)
-
-      def empty? = @summarizers.empty?
+      # Resolved at CALL time: {Builder} loads after this class body (see the
+      # note at the foot of this file), so a constant read here would NameError.
+      def self.builder = Builder
 
       # The summarizer that handles `result`, or nil when none does.
       #

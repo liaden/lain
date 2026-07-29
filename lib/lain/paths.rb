@@ -9,7 +9,8 @@ module Lain
   # `$XDG_RUNTIME_DIR` -- each falling back to the spec-mandated default when
   # unset, every path suffixed `/lain` so this harness never collides with a
   # sibling tool sharing the same base. Project-scoped `.lain/` (like `.git/`)
-  # is a separate, non-XDG concern and out of scope here.
+  # is a separate, non-XDG concern and out of scope here -- {ProjectDir} is its
+  # locator, and answers the same class-names/instance-resolves split.
   #
   # `env:` is injected (defaulting to the real `ENV`) rather than read globally,
   # so a spec builds an isolated Hash instead of mutating process-wide state --

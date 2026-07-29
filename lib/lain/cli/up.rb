@@ -269,10 +269,15 @@ module Lain
         false
       end
 
-      # `.lain/` is a project artifact like `.git/`, not an XDG concern --
-      # {StatusFeed}'s own default follows the same rule, independently, so
-      # I1 and I2 do not need to depend on each other's private path helper.
-      def default_state_path = File.join(Dir.pwd, ".lain", "state.json")
+      # `.lain/` is a project artifact like `.git/`, not an XDG concern.
+      #
+      # This was a duplicated literal, deliberately, so I2 (this class) and I1
+      # ({StatusFeed}, which publishes the file) would not depend on each other's
+      # private path helper. They still do not: {ProjectDir} is a THIRD object
+      # both name, not {StatusFeed}'s helper reached into from here -- and it is
+      # what a project-root flag would thread through (`cli/wiring.rb`'s
+      # `fleet_isolation` note) instead of three separate literals.
+      def default_state_path = ProjectDir.new.state_path
     end
   end
 end

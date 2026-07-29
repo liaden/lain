@@ -14,8 +14,9 @@ module Lain
   # deriving and writing change for different reasons, and the atomic-replace
   # discipline that keeps a polling reader from ever seeing half a struct is
   # documented there. `.lain/` is a project artifact, like `.git/`, not an XDG
-  # concern -- see ROADMAP's "XDG conformance" entry -- so this does not
-  # resolve its default path through {Paths}.
+  # concern -- see ROADMAP's "XDG conformance" entry -- so the default path
+  # resolves through {ProjectDir}, the locator for that tree, and never through
+  # {Paths}, which is XDG only.
   #
   # Nine fields, all JOURNALED or derived from the run's own clock -- never
   # an in-process registry, and in particular never a live {Agent}: this
@@ -439,9 +440,7 @@ module Lain
       @publication.call(observed) { |current| current.merge(measures) }
     end
 
-    def default_path
-      File.join(Dir.pwd, ".lain", "state.json")
-    end
+    def default_path = ProjectDir.new.state_path
   end
 end
 

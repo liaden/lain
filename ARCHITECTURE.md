@@ -497,7 +497,14 @@ the others.
 `StatusFeed` (`lib/lain/status_feed.rb`) is one such sink. It derives a small state struct
 (cache-warmth deadline, the fleet of live spawns, the human-inbox count) from the events it
 observes and republishes it to `.lain/state.json` for the tmux, TTY, and nvim renderers. That
-path is a project artifact next to `.git/`, not resolved through `Paths`.
+path is a project artifact next to `.git/`, so it is resolved through `ProjectDir`
+(`lib/lain/project_dir.rb`) rather than `Paths`, which is XDG only. `ProjectDir#state_path` is the
+one Ruby resolver *for that file*: `StatusFeed`, `CLI::Up`'s HUD and `Frontend::TTY`'s prompt all
+default through it, and `spec/lain/project_dir_spec.rb` parses every file in `lib/` with Ripper and
+fails on any expression that recomposes the path, in any spelling. It is **not** yet the authority
+for the whole `.lain/` tree — `config.toml`, the prompt/skill slot dirs, `epics/` and `/meta/` still
+compose their own names, which is a tracked follow-up. The shipped tmux and nvim plugins hold the
+same convention in shell and Lua and are the deliberate remaining consumers of the state path.
 
 ## Subagent, Supervisor, and isolation
 
@@ -561,7 +568,10 @@ Ruby DSL on the same `.lain/` convention as `Prompt::Slots` and `Skill::Catalog`
 with no sandbox (shape-not-safety, as `Tool::Input` reads), whose surface is `postgres` and
 `redis`. An absent file loads to an empty collection, which makes both decorators Null by empty
 enumeration rather than by a nil check: **no declared services means no docker or `createdb`
-command runs at all**, and the lease is simply the inner one.
+command runs at all**, and the lease is simply the inner one. The loading half of that -- the
+`ProjectDir`-relative `DSL_PATH`, the exist-guard, the `Builder.build(source, path)` dispatch and
+the frozen enumeration -- is `DslCatalog` (`lib/lain/dsl_catalog.rb`), shared with
+`Summarizer::Catalog`; a subclass names only where its file is and who evaluates it.
 
 `Isolation::Compose` is worth reading before you touch it, because 3 of its decisions are
 safety-critical:
@@ -599,7 +609,9 @@ Where the cancellation guarantees come from is covered in
 
 ## Session NDJSON and WAL disk layout
 
-`Paths` (`lib/lain/paths.rb`) is the one naming authority. A live session's NDJSON file lands
+`Paths` (`lib/lain/paths.rb`) is the one naming authority *for XDG-resolved session artifacts* —
+the project-relative `.lain/` tree is `ProjectDir`'s, and the two never overlap. A live session's
+NDJSON file lands
 under `$XDG_STATE_HOME/lain/sessions/<project-hash>/` (`Paths#sessions_dir`, where
 `project_hash` is the first 12 hex chars of `SHA256(expand_path(project_dir))`) as a timestamped
 file that `Journal.open` creates.

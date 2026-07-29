@@ -645,6 +645,21 @@ RSpec.describe Lain::StatusFeed do
       expect(File.read(nested)).not_to be_empty
     end
 
+    # T29: this feed, `lain up`'s HUD and the TTY prompt all default to the same
+    # file and now ASK one locator for it. The locator is stubbed to answer a
+    # path it would never derive on its own, so the example fails if the default
+    # is composed here instead of delegated -- a literal cannot honour an answer
+    # it never asked for. The chdir only keeps a regressed default inside the
+    # tmpdir instead of writing into the real repo.
+    it "asks the ONE project locator for its default path rather than composing one" do
+      elsewhere = File.join(@dir, "the-locator-said-here", "state.json")
+      allow(Lain::ProjectDir).to receive(:new).and_return(instance_double(Lain::ProjectDir, state_path: elsewhere))
+
+      Dir.chdir(@dir) { described_class.new << turn_usage }
+
+      expect(File.read(elsewhere)).not_to be_empty
+    end
+
     it "replaces the file atomically: a write that fails mid-flight never corrupts the last good state" do
       # Two distinct clock ticks, not two calls to the real Time.now: derived
       # state must actually differ between the two pushes (a stale

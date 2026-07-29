@@ -288,6 +288,31 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  # T29: I1's feed, this HUD and the TTY prompt all default to the project's
+  # `.lain/state.json`. Each used to carry its own literal; all three now name
+  # the ONE locator, which is a THIRD object none of them owns -- so the
+  # deliberate "I1 and I2 do not depend on each other's private path helper"
+  # decision this file's comment records still holds.
+  describe "the default state path" do
+    # The locator is stubbed to answer a path it would never derive from the
+    # working directory, so a default composed HERE cannot produce it -- which
+    # is what makes this an assertion about delegation rather than about two
+    # spellings of the same string.
+    it "asks the ONE project locator for the HUD's state file rather than composing one" do
+      elsewhere = "/tmp/the-locator-said-here/state.json"
+      allow(Lain::ProjectDir).to receive(:new).and_return(instance_double(Lain::ProjectDir, state_path: elsewhere))
+      calls = []
+      spy = lambda do |*args|
+        calls << args
+        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+      end
+
+      described_class.new(session: "lain", shell_out_factory: spy).call
+
+      expect(calls.find { |args| args.include?("status-right") }.last).to include(elsewhere)
+    end
+  end
+
   # T16 F2: the one pane-command recipe, now a public seam so /fork's window
   # shares it instead of forking the string -- PATH re-export (tmux panes
   # source no interactive chruby) + exec of the LAUNCHING binary, read at

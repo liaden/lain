@@ -68,9 +68,11 @@ module Lain
       #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
       #   without a real clock tick (T21)
       # @param state_path [String] {StatusFeed}'s published state, under
-      #   `.lain/state.json` by default (a project artifact, matching
-      #   {StatusFeed}'s own default -- see its class comment on why this is
-      #   not an XDG path) -- injectable so specs use a tmpdir (I3)
+      #   `.lain/state.json` by default -- resolved through {ProjectDir}, the one
+      #   locator {StatusFeed} and {CLI::Up} default through too, so the three
+      #   renderers of one feed cannot name three different files (see
+      #   {StatusFeed}'s class comment on why this is not an XDG path).
+      #   Injectable so specs use a tmpdir (I3)
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
       #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
       #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
@@ -87,7 +89,7 @@ module Lain
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
                      clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
-                     state_path: File.join(Dir.pwd, ".lain", "state.json"),
+                     state_path: ProjectDir.new.state_path,
                      wall_clock: -> { Time.now }, vi_mode: false, completion_sources: Completion::Sources.new)
         @channel = channel
         @output = output

@@ -142,6 +142,23 @@ deliberately deferred, not dropped:
 
 ---
 
+## R — Deferred findings from the missing-objects chunk (2026-07-29)
+
+- **R.9 — Fold the remaining seven `.lain/` names into `ProjectDir`.** T29 landed
+  `Lain::ProjectDir` (`lib/lain/project_dir.rb`) and moved the three `.lain/state.json` literals
+  onto it, with a Ripper scan in `spec/lain/project_dir_spec.rb` that fails on any recomposition of
+  *that* path. Seven other `.lain/` names in `lib/` still compose their own: `config.rb:166`
+  (`config.toml`), `prompt/slots.rb:22` (`SLOTS_DIR`), `skill/catalog.rb:29` (`USER_DIR`),
+  `frontend/prompt_composer.rb:191` (`prompt.toml`), `epic/home.rb:76` (`epics`), and
+  `cli/command/meta.rb:45` and `:62` (`meta/`, `summarizers/`). **Scope if taken:** each becomes
+  `ProjectDir.join(...)` (root-relative, so the existing public constants keep their values), and
+  the scan widens from "the state path" to "the project directory name", which means teaching it
+  the legitimate composition sites. **Why deferred:** T29's card was explicitly the state feed plus
+  the two DSL loaders and said not to sweep wider; the seven are each one line, but the scan widening
+  is the real work and wants its own red/green.
+
+---
+
 ## M3c — Algebra, seams, and the grader (THE BENCH)
 
 ### Stream 3c-1 · `Lain::Algebra` (property-tested laws)
