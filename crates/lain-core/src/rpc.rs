@@ -36,7 +36,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use crate::exec;
+use crate::{exec, grep};
 
 /// Incremental msgpack decode. msgpack is self-delimiting, so there is no
 /// framing to invent: try to read one value; `UnexpectedEof` means
@@ -280,6 +280,10 @@ impl Request {
                 Ok(outcome) => ok_response(self.msgid, exec_result(outcome)),
                 Err(message) => error_response(self.msgid, message),
             },
+            "grep" => match run_grep(&self.params).await {
+                Ok(outcome) => ok_response(self.msgid, grep_result(outcome)),
+                Err(message) => error_response(self.msgid, message),
+            },
             unknown => error_response(self.msgid, RpcError::UnknownMethod(unknown.to_string())),
         }
     }
@@ -291,6 +295,14 @@ async fn run_exec(params: &[Value]) -> Result<exec::Outcome, String> {
         .ok_or("exec takes one params element, a map")?;
     let decoded = exec::ExecParams::from_value(map).map_err(|error| error.to_string())?;
     exec::run(decoded).await.map_err(|error| error.to_string())
+}
+
+async fn run_grep(params: &[Value]) -> Result<grep::Outcome, String> {
+    let map = params
+        .first()
+        .ok_or("grep takes one params element, a map")?;
+    let decoded = grep::GrepParams::from_value(map).map_err(|error| error.to_string())?;
+    grep::run(decoded).await.map_err(|error| error.to_string())
 }
 
 fn ok_response(msgid: u32, result: Value) -> Value {
@@ -328,6 +340,29 @@ fn exec_result(outcome: exec::Outcome) -> Value {
         (Value::from("stderr"), Value::Binary(outcome.stderr)),
         (Value::from("exit_status"), Value::from(outcome.exit_status)),
         (Value::from("timed_out"), Value::from(outcome.timed_out)),
+    ])
+}
+
+/// `matches` plus the `capped` flag, and every match is the three fields
+/// `Tools::Grep` already yields -- path, line number, line -- so the Ruby side
+/// swaps its transport without changing what it formats. Paths and lines are
+/// msgpack `str`, unlike exec's `bin` output: a grep result is text by
+/// construction (binary files are detected and skipped).
+fn grep_result(outcome: grep::Outcome) -> Value {
+    Value::Map(vec![
+        (
+            Value::from("matches"),
+            Value::Array(outcome.matches.into_iter().map(match_result).collect()),
+        ),
+        (Value::from("capped"), Value::from(outcome.capped)),
+    ])
+}
+
+fn match_result(found: grep::Match) -> Value {
+    Value::Map(vec![
+        (Value::from("path"), Value::from(found.path)),
+        (Value::from("line_number"), Value::from(found.line_number)),
+        (Value::from("line"), Value::from(found.line)),
     ])
 }
 

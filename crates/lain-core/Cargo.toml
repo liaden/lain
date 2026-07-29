@@ -70,6 +70,21 @@ nix = { version = "0.31", default-features = false, features = ["signal"] }
 # is VMADDR_PORT_ANY (u32::MAX), NOT 0 -- port 0 and every port under 1024 are
 # privileged and raise EACCES.
 tokio-vsock = "0.7"
+# ripgrep's own components, unbundled. The three do one job each and the split
+# is theirs, not ours: `ignore` walks a tree applying .gitignore/.ignore
+# precedence (a hierarchy of overriding matchers nobody should re-derive),
+# `grep-regex` compiles the pattern, `grep-searcher` does the line-oriented
+# read with binary detection. Out-of-process by the placement rule -- a
+# directory walk is I/O, so it can never live in `ext/lain`.
+#
+# `grep-regex` matters specifically because it is finite-automata (the `regex`
+# crate underneath): match time is linear in the subject, so a pattern that
+# would backtrack catastrophically in a PCRE-style engine cannot hang the
+# daemon. Do not substitute an engine with backreferences or lookaround for it
+# without re-earning that property.
+ignore = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
 
 [dev-dependencies]
 # Tempdir-scoped test sockets and scratch files, auto-cleaned.

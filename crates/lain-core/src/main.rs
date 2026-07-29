@@ -17,6 +17,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod exec;
+mod grep;
 mod rpc;
 
 use std::process::ExitCode;
