@@ -61,6 +61,25 @@ RSpec.describe Lain::Bench::ArmSweep do
     end
   end
 
+  # The report's titled metric tables, in rendered order. A section is
+  # "<title>\n<header>\n<rule>\n<row>…", so a block whose SECOND line is the
+  # shared arm-column header is a metric table and nothing else is (the NOTE
+  # prose and the "== category ==" banners are not).
+  def metric_sections(report)
+    report.split("\n\n").select { |block| block.lines[1].to_s.start_with?("arm ") }
+  end
+
+  def section_title(section) = section.lines.first.chomp
+
+  def arm_rows(section) = section.lines.drop(3).map { |line| line.split(/\s{2,}/).first }
+
+  # Every titled table's rows, in order, control-marked as the report renders it.
+  def row_order = ["single-thread (control)", "orchestrator-worker", "dual-ledger"]
+
+  # METRICS' declaration order plus the ABSENT wall-time section, which rides
+  # last in every category block.
+  def section_order = ["grader score", "total tokens", "context-loss events", "replans/stalls", "wall-time (s)"]
+
   describe "#report — the arm comparison, distributions per arm" do
     let(:report) { sweep.report }
 
@@ -68,10 +87,26 @@ RSpec.describe Lain::Bench::ArmSweep do
       expect(report).to include("control: single-thread")
     end
 
+    # Anchored at the start of a line and followed by the newline the table
+    # begins on, so a metric that survives only inside the NOTE prose (or as a
+    # substring of another title) cannot satisfy this.
     it "reports all five metrics as their own titled sections" do
-      ["grader score", "total tokens", "wall-time", "context-loss", "replans"].each do |metric|
-        expect(report).to match(/#{metric}/i)
-      end
+      section_order.each { |title| expect(report).to match(/^#{Regexp.escape(title)}\n/) }
+    end
+
+    # The two orderings a shared fold could silently reverse, and which no
+    # "includes the label" assertion would notice: the metric sections inside a
+    # category block, and the arm rows inside a section. Both are the reading
+    # order of the experiment record.
+    it "renders the metric sections in declaration order, wall-time last, in every category block" do
+      expect(metric_sections(report).map { |section| section_title(section) })
+        .to eq(section_order * 3)
+    end
+
+    it "orders the arm rows identically in every metric section, the control first" do
+      orders = metric_sections(report).map { |section| arm_rows(section) }
+      expect(orders.size).to eq(section_order.size * 3)
+      expect(orders.uniq).to eq([row_order])
     end
 
     it "breaks the boundary out per category rather than averaging it away" do
@@ -100,13 +135,6 @@ RSpec.describe Lain::Bench::ArmSweep do
       wall = report[/wall-time \(s\).*?(?=\n\n|\z)/m]
       expect(wall).to include("ABSENT")
       %w[single-thread orchestrator-worker dual-ledger].each { |arm| expect(wall).to include(arm) }
-    end
-
-    it "lists single-thread first in every metric table -- the control row" do
-      report.scan(/^single-thread\b/).each_with_index do |_match, _i|
-        # every arm row for a metric; single-thread must precede the others in each block
-      end
-      %w[single-thread orchestrator-worker dual-ledger].each { |arm| expect(report).to include(arm) }
     end
   end
 

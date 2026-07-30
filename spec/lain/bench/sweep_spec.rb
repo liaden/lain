@@ -57,6 +57,20 @@ RSpec.describe Lain::Bench::Sweep do
       expect(top_mean).to be > 0
     end
 
+    # The shared six columns come from Compare::ArmFold; the seventh is this
+    # sweep's own and rides AFTER them. A row built the other way round would
+    # still render seven plausible cells.
+    #
+    # Spelled out rather than read off ArmFold::HEADERS: an expectation sourced
+    # from the constant it pins passes a reorder of that constant unchanged, and
+    # this is the only report-level spec anywhere that names the rendered column
+    # headings at all.
+    it "heads the shared six columns, then its own tokens column" do
+      header = report.lines.find { |line| line.start_with?("arm ") }
+      expect(header.chomp.split(/\s{2,}/))
+        .to eq(["arm", "n", "mean", "median", "min", "max", "recall tokens"])
+    end
+
     it "names the corpus size and k in its header" do
       expect(report).to include("recall@5").and include("12 queries").and include("32 items")
     end

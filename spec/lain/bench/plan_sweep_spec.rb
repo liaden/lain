@@ -38,8 +38,35 @@ RSpec.describe Lain::Bench::PlanSweep do
     end
   end
 
+  # The report's titled metric tables, in rendered order: a block whose SECOND
+  # line is the shared arm-column header is a metric table, and the NOTE prose
+  # is not.
+  def metric_sections(report)
+    report.split("\n\n").select { |block| block.lines[1].to_s.start_with?("arm ") }
+  end
+
+  # METRICS' declaration order plus the ABSENT wall-clock section, which rides last.
+  def section_order = ["grader score", "context bytes (token proxy)", "cache-writes", "wall-clock (s)"]
+
   describe "Scenario: the sweep ranks shapes honestly" do
     subject(:report) { sweep.report }
+
+    # Two orderings a shared fold could silently reverse and no "includes the
+    # label" assertion would notice -- and both are the reading order of the
+    # experiment record.
+    it "renders the metric sections in declaration order, wall-clock last" do
+      expect(metric_sections(report).map { |section| section.lines.first.chomp }).to eq(section_order)
+    end
+
+    it "orders the arm rows identically in every metric section, the baselines marked" do
+      expected = ["linear / every", "linear / thinned", "linear / none (baseline)",
+                  "fork / every", "fork / thinned", "fork / none (baseline)"]
+      orders = metric_sections(report).map do |section|
+        section.lines.drop(3).map { |line| line.split(/\s{2,}/).first }
+      end
+      expect(orders.size).to eq(section_order.size)
+      expect(orders.uniq).to eq([expected])
+    end
 
     it "reports grader, tokens, and cache-write distributions for every arm" do
       ["grader score", "context bytes", "cache-writes"].each { |metric| expect(report).to include(metric) }

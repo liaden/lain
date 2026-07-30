@@ -6,10 +6,11 @@ module Lain
       # Folds the sweep's {Measurement}s into per-arm distributions and renders
       # them, one titled table per metric, under an "all tasks" section and one
       # per category. This is the Compare-STYLE, ranks-arms-side-by-side shape
-      # {Arm::Driver} and {Bench::Sweep} share; like them it reuses only the two
-      # {Compare} pieces that fit verbatim -- {Compare::Distribution} (the
-      # mean/median/min/max value object) and {Compare::Table} (the aligned
-      # renderer) -- rather than reshaping Compare's own run-priced surface.
+      # {Arm::Driver} and {Bench::Sweep} share, and {Compare::ArmFold} is now
+      # that shape's one implementation: this class declares the axes -- which
+      # arms, which metrics, which cell each metric reads -- and delegates the
+      # fold. It still does not reshape {Compare}'s own run-priced surface,
+      # because ArmFold's axis is the transposed one (see its class comment).
       #
       # It does NOT subclass {Arm::Driver}: the Driver folds ONE shared seam over
       # a flat task list into three fixed metrics, whereas this sweep carries
@@ -28,9 +29,6 @@ module Lain
           "replans/stalls" => { of: :replans, fmt: ->(value) { format("%.2f", value) } }
         }.freeze
         private_constant :METRICS
-
-        COLUMNS = %w[arm n mean median min max].freeze
-        private_constant :COLUMNS
 
         ABSENT = "ABSENT (mock)"
         private_constant :ABSENT
@@ -77,17 +75,12 @@ module Lain
         def by_category(category) = @measurements.select { |measurement| measurement.category == category }
 
         def category_block(label, subset)
-          bodies = METRICS.map { |name, spec| metric_section(name, spec, subset) } + [wall_time_section(subset)]
+          bodies = fold.sections(METRICS, arms: ARM_ORDER) { |arm, of| values_for(subset, arm, of) } +
+                   [wall_time_section(subset)]
           "== #{label} ==\n\n#{bodies.join("\n\n")}"
         end
 
-        def metric_section(name, spec, subset)
-          rows = ARM_ORDER.map do |arm|
-            dist = Compare::Distribution.new(values_for(subset, arm, spec.fetch(:of)))
-            [label_for(arm), dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map(&spec.fetch(:fmt))]
-          end
-          "#{name}\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
-        end
+        def fold = @fold ||= Compare::ArmFold.new(label: method(:label_for))
 
         # The control is marked in the TABLE, not only the header, so a reader
         # scanning one metric still knows which row every other arm is measured
@@ -98,9 +91,8 @@ module Lain
         # four stats ABSENT -- the decider-sweep discipline (mark absent, never
         # fabricate) for a metric a dry replay cannot honestly produce.
         def wall_time_section(subset)
-          n = subset.count { |measurement| measurement.arm == ARM_ORDER.first }.to_s
-          rows = ARM_ORDER.map { |arm| [label_for(arm), n, ABSENT, ABSENT, ABSENT, ABSENT] }
-          "wall-time (s)\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
+          count = subset.count { |measurement| measurement.arm == ARM_ORDER.first }
+          fold.absent_section("wall-time (s)", arms: ARM_ORDER, count:, marker: ABSENT)
         end
 
         def values_for(subset, arm, reader)

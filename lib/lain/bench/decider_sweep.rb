@@ -81,8 +81,8 @@ module Lain
       ZERO_PRICE = Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
       private_constant :ZERO_PRICE
 
-      WALL_CLOCK_COLUMNS = %w[arm n mean median min max].freeze
-      private_constant :WALL_CLOCK_COLUMNS
+      WALL_CLOCK_FMT = ->(value) { format("%.3f", value) }
+      private_constant :WALL_CLOCK_FMT
 
       # Short on purpose -- see the wall-clock section's own header line for
       # the full explanation; a table column is not the place for prose.
@@ -135,19 +135,24 @@ module Lain
         ARMS.map { |arm| @arms.run_for(arm) }.sort_by { |run| [-run.score.to_f, run.name] }
       end
 
+      # Not an {Compare::ArmFold} SECTION: this table mixes measured rows with
+      # absent ones and carries a prose banner instead of a bare title, so the
+      # sweep assembles it and borrows the fold's row -- which is where the
+      # column-to-cell pairing lives.
       def wall_clock_section
         rows = ARMS.map { |arm| wall_clock_row(arm) }
         ["== Wall clock (live/LiveReplay arms only; replayed history, never fabricated) ==", "",
-         Compare::Table.new(headers: WALL_CLOCK_COLUMNS, rows:).to_s].join("\n")
+         Compare::Table.new(headers: Compare::ArmFold::HEADERS, rows:).to_s].join("\n")
       end
 
       def wall_clock_row(arm)
         samples = @arms.wall_clock_samples(arm)
-        return [arm, "0", ABSENT, ABSENT, ABSENT, ABSENT] if samples.empty?
+        return fold.absent_row(arm, count: 0, marker: ABSENT) if samples.empty?
 
-        dist = Compare::Distribution.new(samples)
-        [arm, dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map { |value| format("%.3f", value) }]
+        fold.row(arm, Compare::Distribution.new(samples), fmt: WALL_CLOCK_FMT)
       end
+
+      def fold = @fold ||= Compare::ArmFold.new
     end
   end
 end

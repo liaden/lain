@@ -6,11 +6,12 @@ module Lain
       # Folds the sweep's {Measurement}s into per-arm distributions and renders
       # one titled table per metric, plus wall-clock as an ABSENT section. The
       # Compare-STYLE, ranks-arms-side-by-side shape {ArmSweep::Report} and
-      # {Bench::Sweep} share; like them it reuses the two {Compare} pieces that
-      # fit verbatim -- {Compare::Distribution} (mean/median/min/max) and
-      # {Compare::Table} (aligned rendering) -- rather than reshaping Compare's
-      # run-priced surface. No category breakdown (one plan, one task class), so
-      # it is flatter than {ArmSweep::Report}: header, notes, the metric tables.
+      # {Bench::Sweep} share, whose one implementation is {Compare::ArmFold}:
+      # this class declares the axes and delegates the fold, rather than
+      # reshaping {Compare}'s own run-priced surface (ArmFold's axis is the
+      # transposed one -- see its class comment). No category breakdown (one
+      # plan, one task class), so it is flatter than {ArmSweep::Report}: header,
+      # notes, the metric tables.
       class Report
         # metric label => how to pull one value off a {Measurement} and render it.
         # Wall-clock is deliberately absent -- it has no honest value under mock
@@ -21,9 +22,6 @@ module Lain
           "cache-writes" => { of: :cache_writes, fmt: ->(value) { format("%.2f", value) } }
         }.freeze
         private_constant :METRICS
-
-        COLUMNS = %w[arm n mean median min max].freeze
-        private_constant :COLUMNS
 
         ABSENT = "ABSENT (mock)"
         private_constant :ABSENT
@@ -61,16 +59,10 @@ module Lain
         private
 
         def bodies
-          METRICS.map { |name, spec| metric_section(name, spec) } + [wall_clock_section]
+          fold.sections(METRICS, arms: @arms) { |arm, of| values_for(arm, of) } + [wall_clock_section]
         end
 
-        def metric_section(name, spec)
-          rows = @arms.map do |arm|
-            dist = Compare::Distribution.new(values_for(arm, spec.fetch(:of)))
-            [label_for(arm), dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map(&spec.fetch(:fmt))]
-          end
-          "#{name}\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
-        end
+        def fold = @fold ||= Compare::ArmFold.new(label: method(:label_for))
 
         # The reactive baseline is marked in the TABLE, not only the notes, so a
         # reader scanning one metric knows which rows are the reference without
@@ -81,8 +73,7 @@ module Lain
         # four stats ABSENT -- the decider/arm-sweep discipline (mark absent,
         # never fabricate) for a metric a dry replay cannot honestly produce.
         def wall_clock_section
-          rows = @arms.map { |arm| [label_for(arm), @runs.size.to_s, ABSENT, ABSENT, ABSENT, ABSENT] }
-          "wall-clock (s)\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
+          fold.absent_section("wall-clock (s)", arms: @arms, count: @runs.size, marker: ABSENT)
         end
 
         def values_for(arm, reader)

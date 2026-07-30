@@ -137,13 +137,19 @@ module Lain
       METRICS.keys.select { |key| key != :score || @runs.all?(&:graded?) }
     end
 
+    # Compare's rows are METRICS, not arms -- but the column-to-cell pairing
+    # under n/mean/median/min/max is the very one {ArmFold#row} owns, so this
+    # borrows the row and supplies its own first column. What is shared is the
+    # pairing, not the axis: this table still folds ACROSS the runs, which is why
+    # Compare is not an ArmFold (see that class's comment).
     def summary_table
-      rows = shown_metrics.map do |key|
-        dist = distribution(key)
-        fmt = METRICS.fetch(key).fetch(:fmt)
-        [METRICS.fetch(key).fetch(:label), dist.n.to_s, *[dist.mean, dist.median, dist.min, dist.max].map(&fmt)]
-      end
-      Table.new(headers: %w[metric n mean median min max], rows:).to_s
+      rows = shown_metrics.map { |key| stat_fold.row(key, distribution(key), fmt: METRICS.fetch(key).fetch(:fmt)) }
+      Table.new(headers: ["metric", *ArmFold::HEADERS.drop(1)], rows:).to_s
+    end
+
+    # Labels each row with its metric's declared label; ArmFold does the rest.
+    def stat_fold
+      @stat_fold ||= ArmFold.new(label: ->(key) { METRICS.fetch(key).fetch(:label) })
     end
 
     def per_run_table
@@ -159,7 +165,13 @@ module Lain
   end
 end
 
-# After the class body: Table reopens Compare, and nothing in the body above
-# needs it before runtime (the same children-after-the-class-body load order
-# effect/handler.rb uses).
+# After the class body: both reopen Compare, and neither is referenced before
+# runtime -- ArmFold appears only inside method bodies (#summary_table), so this
+# require may sit here in either order, and either child may equally be required
+# at the top. The constraint that DOES bind is in lain.rb: `lain/compare` must
+# load before `lain/bench` (:64 before :65), because Bench::Sweep resolves
+# Compare::ArmFold::HEADERS while evaluating its own COLUMNS constant. Swap those
+# two lines and the suite dies with
+# `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.
 require_relative "compare/table"
+require_relative "compare/arm_fold"

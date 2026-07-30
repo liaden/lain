@@ -92,6 +92,14 @@ RSpec.describe Lain::Bench::DeciderSweep do
       end
     end
 
+    # Spelled out rather than read off ARMS: the claim is that the section
+    # follows the DECLARED order (never a Hash's, and never the Compare block's
+    # score ranking), and an assertion sourced from the constant it pins passes
+    # a reorder of that constant unchanged.
+    it "lists the wall-clock rows in the declared arm order, never a Hash's" do
+      expect(rows.map(&:first)).to eq(%w[heuristic ollama haiku inline model_self_directed])
+    end
+
     it "reports a real, non-degenerate distribution for the live-replayed arms" do
       expect(Float(by_arm.fetch("ollama")[4])).to be < Float(by_arm.fetch("ollama")[5]) # min < max
     end

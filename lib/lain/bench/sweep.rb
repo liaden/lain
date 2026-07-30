@@ -12,10 +12,16 @@ module Lain
     # It is a Compare-STYLE report, not a Compare: Compare folds many runs into
     # one distribution PER METRIC (compare.rb), whereas the sweep folds each
     # ARM's per-query recall into its OWN distribution and ranks the arms. That
-    # is a different shape than Compare::Run's scalar score, so -- per the plan
-    # card's escalation trigger -- the sweep does NOT reshape Compare's public
-    # surface. It reuses the one piece that fits verbatim: {Compare::Distribution}
-    # (the mean/median/min/max value object), and renders its own ranked table.
+    # is a different shape than Compare::Run's scalar score, so the sweep still
+    # does NOT reshape Compare's public surface -- it delegates the transposed
+    # fold to {Compare::ArmFold}, which owns exactly that shape.
+    #
+    # Unlike its siblings it renders ONE ranked table rather than a section per
+    # metric, because the tokens-on-recall column is a SECOND metric's mean
+    # riding beside the first metric's distribution: ranking by recall is the
+    # headline, and tokens is what that recall cost. So it takes ArmFold's row
+    # (the six shared cells) and appends its own seventh, rather than asking for
+    # a section it would then have to take apart.
     #
     # Zero network by construction: the vector arm reads COMMITTED fixture
     # embeddings (corpus/corpus_embeddings.json) through {Embeddings}, never a
@@ -54,8 +60,13 @@ module Lain
       CORPUS_PATH = File.expand_path("corpus/retrieval_corpus.yml", __dir__)
       EMBEDDINGS_PATH = File.expand_path("corpus/corpus_embeddings.json", __dir__)
 
-      COLUMNS = ["arm", "n", "mean", "median", "min", "max", "recall tokens"].freeze
+      # ArmFold's six, plus this sweep's own seventh. Extended, never restated,
+      # so a column added to the shared fold cannot silently skip this report.
+      COLUMNS = [*Compare::ArmFold::HEADERS, "recall tokens"].freeze
       private_constant :COLUMNS
+
+      RECALL_FMT = ->(value) { format("%.3f", value) }
+      private_constant :RECALL_FMT
 
       # One gold query: the text, its gold ids, and the ability class it probes.
       Query = Data.define(:text, :gold_ids, :klass)
@@ -248,11 +259,10 @@ module Lain
       end
 
       def row_for(name, dists)
-        recall = dists.fetch(:recall)
-        [name, recall.n.to_s,
-         *[recall.mean, recall.median, recall.min, recall.max].map { |value| format("%.3f", value) },
-         format("%.1f", dists.fetch(:tokens).mean)]
+        [*fold.row(name, dists.fetch(:recall), fmt: RECALL_FMT), format("%.1f", dists.fetch(:tokens).mean)]
       end
+
+      def fold = @fold ||= Compare::ArmFold.new
     end
   end
 end
