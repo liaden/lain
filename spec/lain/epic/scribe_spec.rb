@@ -101,6 +101,37 @@ RSpec.describe Lain::Epic::Scribe do
     end
   end
 
+  # The third record the scribe writes, and the one whose payload a later reader
+  # REPLAYS rather than merely reads. A {Graph} carries no slug, so the fiber it
+  # yields carries none either: naming the epic is exactly what this write path
+  # adds, and it is why a graph cannot journal itself.
+  describe "#graph_revised" do
+    def fiber
+      caught = nil
+      chain.split("b", into: [issue("b1"), issue("b2")]) { |yielded| caught = yielded }
+      caught
+    end
+
+    it "writes a graph_revision record carrying this epic's slug and the whole fiber" do
+      scribe.graph_revised(fiber)
+
+      record = Lain::Journal.records(io.string.lines, type: "graph_revision").to_a.first
+
+      expect(record).to include("epic_slug" => "demo", "operation" => "split", "preimage" => %w[b],
+                                "results" => %w[b1 b2], "before" => chain.digest,
+                                "arguments" => include("id" => "b"))
+    end
+
+    it "returns self, so a revision can be journaled in the middle of a chain of writes" do
+      expect(scribe.graph_revised(fiber)).to be(scribe)
+    end
+
+    it "raises before an unreplayable revision reaches the journal", :aggregate_failures do
+      expect { scribe.graph_revised(nil) }.to raise_error(ArgumentError)
+      expect(io.string).to eq("")
+    end
+  end
+
   # T4 review, fix 2 -- `Progress`'s own rule (`named_epic`/`refuse_stranger!`)
   # applied to the Scribe's other collaborator: a construction-time argument
   # that cannot do its job is refused AT construction, not on first use deep

@@ -68,6 +68,24 @@ module Lain
         validates :path, presence: { message: "must name the artifact inside the epic home, got nil" }
         validates :byte_digest, presence: { message: "must digest the bytes that landed, got nil" }
       end
+
+      # A revision must name the epic it revised, an operation something can
+      # replay, and the two digests that are its oracle. Its ARGUMENTS are not restated here:
+      # {Epic::GraphFiber} refuses a payload it could not replay at its own
+      # construction, and a second copy of that contract beside the journal is
+      # exactly the drift {Guards} exists to prevent -- so this guard reads
+      # {REVISION_OPS} rather than a list of its own.
+      class GraphRevision < Guard
+        attribute :epic_slug
+        attribute :operation
+        attribute :before
+        attribute :after
+        validates :epic_slug, presence: { message: "must name the epic this revision belongs to, got nil" }
+        validates :operation, inclusion: { in: REVISION_OPS.keys,
+                                           message: "must be one of #{REVISION_OPS.keys.join("/")}, got %<value>s" }
+        validates :before, presence: { message: "must name the graph digest the revision started from, got nil" }
+        validates :after, presence: { message: "must name the graph digest the revision landed on, got nil" }
+      end
     end
 
     # One issue's status change, journaled. This record -- not the markdown
@@ -186,6 +204,37 @@ module Lain
     class DocWritten
       # See {IssueTransition::JOURNAL_TYPE}.
       JOURNAL_TYPE = "doc_written"
+    end
+
+    # One structural revision of an epic's issue graph, journaled: the
+    # {Epic::GraphFiber} an operation yielded, plus the epic it belongs to --
+    # which is the one thing the operation cannot supply, because a {Graph}
+    # carries no slug. That is the whole difference between the two shapes, and
+    # a spec pins the member lists equal so neither can grow a field the other
+    # silently drops.
+    #
+    # Unlike its two siblings this record is a REPLAY PAYLOAD rather than a
+    # report: `arguments` holds the arriving issues in {Issue#canonical} form, so
+    # a reader can perform the edit again and check that it lands on `after`. It
+    # is therefore normalized THROUGH the fiber -- one construction contract,
+    # checked on the way into the journal here and on the way back out by
+    # {GraphFiber.of}, rather than a second normalization that could disagree.
+    GraphRevision = Data.define(:epic_slug, :operation, :arguments, :preimage, :results, :before, :after) do
+      include Telemetry::Journalable
+
+      def initialize(epic_slug:, operation:, arguments:, preimage:, results:, before:, after:)
+        epic_slug = -epic_slug.to_s
+        # The record's own guard first, so an out-of-range op reads as the
+        # ArgumentError every other epic record raises rather than as the
+        # MalformedGraph the fiber underneath would.
+        Guards::GraphRevision.check!(epic_slug:, operation: -operation.to_s, before:, after:)
+        super(epic_slug:, **GraphFiber.new(operation:, arguments:, preimage:, results:, before:, after:).to_h)
+      end
+    end
+
+    class GraphRevision
+      # See {IssueTransition::JOURNAL_TYPE}.
+      JOURNAL_TYPE = "graph_revision"
     end
   end
 end

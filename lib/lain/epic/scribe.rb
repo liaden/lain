@@ -85,6 +85,20 @@ module Lain
         write(IssueTransition.new(epic_slug: @epic_slug, issue_id: id, from_status: from, to_status: to))
       end
 
+      # One structural edit to the issue graph, journaled with the payload that
+      # replays it. A {Graph} carries no slug, so the fiber it yields carries
+      # none either -- naming the epic is exactly what this write path adds, and
+      # it is why a graph cannot journal itself.
+      #
+      #   graph.split("a", into: parts) { |fiber| scribe.graph_revised(fiber) }
+      #
+      # @param fiber [GraphFiber] the revision a graph operation yielded
+      # @return [self]
+      # @raise [ArgumentError] for anything that is not one, before it reaches
+      #   the journal -- a duck missing a member fails on the record's own
+      #   keywords, naming the member it could not supply
+      def graph_revised(fiber) = write(GraphRevision.new(epic_slug: @epic_slug, **fiber.to_h))
+
       private
 
       def refuse_unwritable!(journal)

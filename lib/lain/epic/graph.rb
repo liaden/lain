@@ -296,29 +296,40 @@ module Lain
       # This graph plus +issue+, carrying +discovered_from+ when one is named and
       # the issue's own provenance otherwise. An addition removes nothing, so it
       # is the Revision whose rewrite is empty.
-      def add(issue, discovered_from: nil)
+      #
+      # The block, here and on the two operations below, is offered the
+      # {GraphFiber} describing the edit -- see {#revise}.
+      def add(issue, discovered_from: nil, &fiber)
         arrival = clean_issue(issue, "an added issue")
-        revise([], [arrival], discovered_from: discovered_from || arrival.discovered_from)
+        # The EFFECTIVE provenance is what the fiber records, not the keyword as
+        # it arrived: a replay passing it explicitly reproduces this graph either
+        # way, and the resolved value is the one a reader auditing lineage wants.
+        provenance = discovered_from || arrival.discovered_from
+        revise("add", { "issue" => arrival.canonical, "discovered_from" => provenance },
+               [], [arrival], discovered_from: provenance, &fiber)
       end
 
       # +id+ replaced by +into+. Every part inherits the original's outbound
       # edges and names it as provenance, and every edge anywhere that named the
       # original comes to name every part -- so whoever waited on the whole of
       # +id+ now waits on all of it.
-      def split(id, into:)
+      def split(id, into:, &fiber)
         original = fetch(id)
         parts = clean_issues(into, "split parts")
         refuse_empty_split!(parts, id)
-        revise([original], parts, discovered_from: id)
+        revise("split", { "id" => original.id, "into" => parts.map(&:canonical) },
+               [original], parts, discovered_from: original.id, &fiber)
       end
 
       # +left+ and +right+ replaced by +as+, which inherits both their edge sets
       # on top of its own. Provenance is whatever +as+ declares -- a merge has two
       # parents and `discovered_from` holds one, so choosing between them here
       # would be a guess the lineage carries forever.
-      def merge(left, right, as:)
+      def merge(left, right, as:, &fiber)
         refuse_self_merge!(left, right)
-        revise([fetch(left), fetch(right)], [clean_issue(as, "a merged issue")])
+        arrival = clean_issue(as, "a merged issue")
+        revise("merge", { "left" => left, "right" => right, "as" => arrival.canonical },
+               [fetch(left), fetch(right)], [arrival], &fiber)
       end
 
       def digest = Canonical.digest(canonical)
@@ -366,8 +377,20 @@ module Lain
         raise MalformedGraph, "cannot merge an issue with itself (both sides name #{left.inspect})" if left == right
       end
 
-      def revise(removed, arriving, **overrides)
-        Graph.new(issues: Revision.new(removed, arriving, **overrides).apply(issues))
+      # The one place an operation becomes a graph, and the one place it becomes
+      # a fiber. The graph is what comes BACK, always -- a fiber is offered to a
+      # block and never returned in the graph's place, so an operation reads the
+      # same to every caller that does not care.
+      #
+      # Offered only when somebody is listening: the pair of content addresses
+      # below is real work over a revision nobody asked to audit, and the fiber
+      # is built after the new graph exists, so a refused revision (a merge
+      # closing a cycle) yields nothing rather than describing a graph that never
+      # existed.
+      def revise(operation, arguments, removed, arriving, **overrides)
+        revised = Graph.new(issues: Revision.new(removed, arriving, **overrides).apply(issues))
+        yield GraphFiber.cut(operation:, arguments:, removed:, arriving:, from: self, to: revised) if block_given?
+        revised
       end
 
       # An id is the graph's join key, so two issues sharing one make every

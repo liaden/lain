@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 # The issue graph as a deeply frozen content-addressed value. Two laws carry the
 # weight here. Construction is TOTAL: a graph that constructs is one every query
 # can answer, so duplicates, dangling edges, and cycles are refused at the door
@@ -210,6 +212,229 @@ RSpec.describe Lain::Epic::Graph do
 
     it "lists every id in graph order, frozen" do
       expect(diamond.ids).to eq(%w[a b c d]).and be_frozen
+    end
+  end
+
+  # Every structural edit yields, beside the new graph, the fiber that describes
+  # it. Ids and digests alone cannot re-run `split(id, into:)` -- the parts an
+  # author wrote are not derivable from the graph they left -- so the fiber
+  # carries the op's FULL ARGUMENTS as the replay payload, and the digest pair is
+  # the oracle a replay is judged against.
+  describe "revision fibers" do
+    # The operation, plus every fiber it yielded. A revision nobody observes must
+    # still answer a graph, so the pair is what every example below reads.
+    def observed
+      caught = []
+      [yield(->(fiber) { caught << fiber }), caught]
+    end
+
+    # A fiber denotes ONE arrow, `before -> after`, so a replay over any other
+    # graph is a question the fiber cannot answer -- and the witness for why that
+    # refusal is not decoration: a merge unions the two sides' edge sets, so two
+    # DIFFERENT graphs merge to the same one. Replaying this fiber over `other`
+    # lands squarely on the recorded `after`, which is precisely the wrong answer
+    # arriving quietly.
+    let(:merge_witness) do
+      cut_from = graph(issue("a", blocks: %w[x]), issue("b"), issue("x"))
+      other = graph(issue("a"), issue("b", blocks: %w[x]), issue("x"))
+      _, fibers = observed { |watch| cut_from.merge("a", "b", as: issue("c"), &watch) }
+      [fibers.first, cut_from, other]
+    end
+
+    it "yields a split's fiber, carrying its arguments, preimage, results and digest pair" do
+      before = graph(issue("x", blocks: %w[a]), issue("a"))
+      parts = [issue("a1"), issue("a2")]
+
+      after, fibers = observed { |watch| before.split("a", into: parts, &watch) }
+
+      expect(fibers.map(&:to_h))
+        .to eq([{ operation: "split", arguments: { "id" => "a", "into" => parts.map(&:canonical) },
+                  preimage: %w[a], results: %w[a1 a2], before: before.digest, after: after.digest }])
+    end
+
+    it "yields an add's fiber, whose preimage is empty because an addition removes nothing" do
+      before = graph(issue("a"))
+      arrival = issue("found", blocks: %w[a])
+
+      after, fibers = observed { |watch| before.add(arrival, discovered_from: "a", &watch) }
+
+      expect(fibers.map(&:to_h))
+        .to eq([{ operation: "add", arguments: { "issue" => arrival.canonical, "discovered_from" => "a" },
+                  preimage: [], results: %w[found], before: before.digest, after: after.digest }])
+    end
+
+    # The keyword is optional and the arrival's own provenance stands in for it,
+    # so the two readings agree on the graph and disagree on the RECORD. What is
+    # journaled is the provenance the revision applied -- a replay reproduces the
+    # graph either way, and an audit reading lineage off the record would
+    # otherwise see an absence where the edit had an answer.
+    it "records the provenance an addition resolved, not the keyword it was called with" do
+      arrival = issue("found", discovered_from: "elsewhere")
+
+      _, fibers = observed { |watch| graph(issue("a")).add(arrival, &watch) }
+
+      expect(fibers.map { |fiber| fiber.arguments["discovered_from"] }).to eq(%w[elsewhere])
+    end
+
+    it "yields a merge's fiber, naming both sides in its preimage" do
+      before = graph(issue("a"), issue("b"))
+      merged = issue("c")
+
+      after, fibers = observed { |watch| before.merge("a", "b", as: merged, &watch) }
+
+      expect(fibers.map(&:to_h))
+        .to eq([{ operation: "merge", arguments: { "left" => "a", "right" => "b", "as" => merged.canonical },
+                  preimage: %w[a b], results: %w[c], before: before.digest, after: after.digest }])
+    end
+
+    # The additive-API guarantee: a fiber is something an operation OFFERS, never
+    # something it returns instead of the graph. Every existing caller passes no
+    # block and reads a Graph back.
+    it "answers the same graph whether or not anybody is listening" do
+      before = graph(issue("a"))
+      watched, = observed { |watch| before.split("a", into: [issue("a1")], &watch) }
+
+      expect(before.split("a", into: [issue("a1")])).to eq(watched)
+    end
+
+    it "yields nothing when a revision is refused, so no fiber describes a graph that never existed" do
+      before = graph(issue("a", blocks: %w[x]), issue("b"), issue("x", blocks: %w[b]))
+
+      _, fibers = observed do |watch|
+        expect { before.merge("a", "b", as: issue("c"), &watch) }.to raise_error(Lain::Epic::MalformedGraph)
+      end
+
+      expect(fibers).to eq([])
+    end
+
+    it "is a deeply frozen, shareable value" do
+      _, fibers = observed { |watch| graph(issue("a")).add(issue("b"), &watch) }
+
+      expect(fibers.map { |fiber| Ractor.shareable?(fiber) }).to eq([true])
+    end
+
+    it "refuses to replay over a graph it was not cut from" do
+      fiber, _cut_from, other = merge_witness
+
+      expect { fiber.replay(other) }.to raise_error(Lain::Epic::MalformedGraph, /before/)
+    end
+
+    it "is refusing a replay that would otherwise land on the recorded after" do
+      fiber, _cut_from, other = merge_witness
+
+      expect(fiber.with(before: other.digest).replay(other).digest).to eq(fiber.after)
+    end
+
+    it "vouches for the graph it was cut from and for no other" do
+      fiber, cut_from, other = merge_witness
+
+      expect([fiber.reproduces?(cut_from), fiber.reproduces?(other)]).to eq([true, false])
+    end
+
+    # `preimage` and `results` are not decoration either: {#reproduces?} DERIVES
+    # them from the replay, so a record that lies about what left or arrived
+    # fails the audit rather than passing on the digests alone.
+    it "refuses to vouch when the recorded preimage and results are not what the replay moved" do
+      before = graph(issue("x", blocks: %w[a]), issue("a"))
+      _, fibers = observed { |watch| before.split("a", into: [issue("a1"), issue("a2")], &watch) }
+      tampered = fibers.first.with(preimage: [], results: %w[nonsense zzz])
+
+      expect([fibers.first.reproduces?(before), tampered.reproduces?(before)]).to eq([true, false])
+    end
+
+    # The degenerate edits the law has to survive: an id that both LEAVES and
+    # ARRIVES moves nothing in the graph, so the claim is read over the ids that
+    # only left and only arrived. A split into a part bearing the departing id is
+    # legal, and reproduces.
+    it "vouches for a split into a part that keeps the departing id" do
+      before = graph(issue("x", blocks: %w[a]), issue("a"))
+      _, fibers = observed { |watch| before.split("a", into: [issue("a", title: "Rewritten")], &watch) }
+
+      expect(fibers.map { |fiber| fiber.reproduces?(before) }).to eq([true])
+    end
+
+    it "refuses an operation nothing can replay" do
+      expect do
+        Lain::Epic::GraphFiber.new(operation: "rename", arguments: {}, preimage: [], results: [],
+                                   before: "blake3:a", after: "blake3:b")
+      end.to raise_error(Lain::Epic::MalformedGraph, %r{"rename".*add/split/merge}m)
+    end
+
+    # Ids are asserted rather than coerced, for the reason {Issue#clean_edges}
+    # states: `[["nested"]].map(&:to_s)` produces an "id" no issue can ever
+    # match, and quiet coercion is what this tier's constructors exist to refuse.
+    it "refuses a preimage or a results list that is not issue ids", :aggregate_failures do
+      expect { fiber_with(results: [%w[nested]]) }.to raise_error(Lain::Epic::MalformedGraph, /results/)
+      expect { fiber_with(preimage: [""]) }.to raise_error(Lain::Epic::MalformedGraph, /preimage/)
+    end
+
+    # The argument vocabulary is declared once, beside the closed op set, so a
+    # fiber carrying another operation's keys cannot construct and reach a
+    # replay that fetches keys it does not hold.
+    it "refuses arguments that are not the operation's own" do
+      expect { fiber_with(arguments: { "issue" => {}, "discovered_from" => nil }) }
+        .to raise_error(Lain::Epic::MalformedGraph, /split.*id.*into/m)
+    end
+
+    def fiber_with(**overrides)
+      Lain::Epic::GraphFiber.new(operation: "split", arguments: { "id" => "a", "into" => [] },
+                                 preimage: %w[a], results: %w[a1], before: "blake3:a", after: "blake3:b",
+                                 **overrides)
+    end
+  end
+
+  # AC: revisions replay to the recorded digest. The chain is read back out of
+  # the JOURNAL -- parsed JSON, String keys, nothing held over from the
+  # operations that wrote it -- because a replay reaching for an object the
+  # original op kept proves the descriptor complete only by accident.
+  describe "replaying a journaled chain of revisions" do
+    let(:io) { StringIO.new }
+    let(:scribe) { Lain::Epic::Scribe.new(epic_slug: "demo", journal: Lain::Journal.new(io:)) }
+    let(:start) { graph(issue("x", blocks: %w[a]), issue("a")) }
+
+    # A split, an addition discovered from one of its parts, and a merge of the
+    # other part with what was discovered -- three ops that each remove and
+    # arrive at something different.
+    def revised
+      one = start.split("a", into: [issue("a1"), issue("a2")]) { |fiber| scribe.graph_revised(fiber) }
+      two = one.add(issue("a3", blocks: %w[a1]), discovered_from: "a1") { |fiber| scribe.graph_revised(fiber) }
+      two.merge("a2", "a3", as: issue("a23")) { |fiber| scribe.graph_revised(fiber) }
+    end
+
+    def journaled = Lain::Journal.records(io.string.lines, type: "graph_revision").to_a
+
+    it "lands on the last record's after digest, replaying from the records alone", :aggregate_failures do
+      finish = revised
+      records = journaled
+
+      replayed = records.inject(start) { |value, record| Lain::Epic::GraphFiber.of(record).replay(value) }
+
+      expect(records.size).to eq(3)
+      # The chain is anchored at both ends: without this the claim is only that
+      # SOME graph replays to the last `after`, not that the recorded chain
+      # replays from where it says it started.
+      expect(start.digest).to eq(records.first["before"])
+      expect(replayed.digest).to eq(records.last["after"])
+      expect(replayed).to eq(finish)
+    end
+
+    # The digest pair is only an oracle if both halves are read: a replay landing
+    # on `after` from some other graph vouches for nothing.
+    it "vouches for every step, each fiber reproducing the pair it recorded" do
+      revised
+      states = journaled.inject([start]) do |seen, record|
+        seen + [Lain::Epic::GraphFiber.of(record).replay(seen.last)]
+      end
+
+      expect(journaled.zip(states).map { |record, value| Lain::Epic::GraphFiber.of(record).reproduces?(value) })
+        .to eq([true, true, true])
+    end
+
+    it "refuses a record that carries no arguments to replay from, rather than replaying nothing" do
+      revised
+
+      expect { Lain::Epic::GraphFiber.of(journaled.first.except("arguments")) }
+        .to raise_error(Lain::Epic::MalformedGraph, /arguments/)
     end
   end
 
