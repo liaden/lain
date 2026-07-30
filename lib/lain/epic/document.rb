@@ -150,6 +150,21 @@ module Lain
         (body.empty? ? body : "#{body}\n").freeze
       end
 
+      # This grammar's verdict on a description and a criteria block, keyed by
+      # field so {Writer#refuse!} -- reached through
+      # {Epic::Issue#document_grammar_failures} -- can ask about one field at
+      # a time. DESCRIPTION_RULES/CRITERIA_RULES belong to this module, so the
+      # walk lives here too rather than as a private copy on Issue.
+      def grammar_failures(description:, criteria:)
+        { "description" => rule_break(DESCRIPTION_RULES, description),
+          "criteria" => criteria && rule_break(CRITERIA_RULES, criteria) }.compact
+      end
+
+      def rule_break(rules, value)
+        broken = rules.find { |_message, predicate| predicate.call(value) }
+        "#{broken.first} (got #{value.inspect})" if broken
+      end
+
       # The fence being gathered: the line its opener sat on, and the lines so
       # far. {Fence::None} is the "nothing open" state, so Reader asks the fence
       # whether it is open rather than testing two ivars against nil -- the same
@@ -384,7 +399,7 @@ module Lain
         def heading = "### [#{STATUS_MARKS.fetch(issue.status)}] `#{issue.id}` #{issue.title}"
 
         def description
-          refuse!(DESCRIPTION_RULES, "description", issue.description)
+          refuse!("description")
           issue.description
         end
 
@@ -394,7 +409,7 @@ module Lain
         def criteria
           return "" if issue.criteria.nil?
 
-          refuse!(CRITERIA_RULES, "criteria", issue.criteria)
+          refuse!("criteria")
           issue.criteria.chomp
         end
 
@@ -413,11 +428,13 @@ module Lain
           SINGULAR_LINKS.include?(field) ? [value].compact : value
         end
 
-        def refuse!(rules, field, value)
-          broken = rules.find { |_message, predicate| predicate.call(value) }
-          return if broken.nil?
-
-          raise MalformedDocument, "issue #{issue.id.inspect} #{field} #{broken.first} (got #{value.inspect})"
+        # Consults {Issue#document_grammar_failures} rather than walking
+        # DESCRIPTION_RULES/CRITERIA_RULES itself: the same verdict backs
+        # {Issue#emittable?}, so a graph operation can ask before this method
+        # ever gets the chance to raise.
+        def refuse!(field)
+          failure = issue.document_grammar_failures[field]
+          raise MalformedDocument, "issue #{issue.id.inspect} #{field} #{failure}" if failure
         end
       end
     end

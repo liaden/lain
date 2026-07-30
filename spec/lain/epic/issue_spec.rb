@@ -372,6 +372,54 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
+  # T10: Issue is where BOTH downstream grammars are answered together -- the
+  # document grammar Document::Writer refuses, and the filesystem grammar
+  # Home::NAME refuses for issues/<id>.md -- so a value can be checked before
+  # either one raises at a distance.
+  describe "emittability" do
+    it "is emittable when both the document and the filesystem grammar accept it" do
+      value = issue(description: "fine.", criteria: criteria_source)
+
+      expect(value).to be_emittable
+      expect(value.emittable_failures).to be_empty
+    end
+
+    # AC: a filesystem-hostile id is named at the issue.
+    it "is not emittable when the id is valid for the document grammar but invalid for Home::NAME" do
+      value = issue(id: "Upper-Case")
+
+      expect(Lain::Epic::Home::NAME).not_to match(value.id)
+      expect(value).not_to be_emittable
+      expect(value.emittable_failures.join).to include("filesystem grammar")
+    end
+
+    it "names the document grammar when the description would not survive Writer's round trip" do
+      value = issue(description: "trailing space.  ")
+
+      expect(value).not_to be_emittable
+      expect(value.emittable_failures.join).to include("document grammar")
+    end
+
+    it "names the document grammar when the criteria would not survive Writer's round trip" do
+      value = issue(criteria: criteria_source.chomp)
+
+      expect(value).not_to be_emittable
+      expect(value.emittable_failures.join).to include("document grammar")
+    end
+
+    it "reports both grammars at once when both are broken" do
+      value = issue(id: "Upper-Case", description: "trailing space.  ")
+
+      expect(value.emittable_failures.size).to eq(2)
+    end
+
+    it "keys document_grammar_failures by field, so Writer can ask about one at a time" do
+      value = issue(description: "trailing space.  ", criteria: criteria_source.chomp)
+
+      expect(value.document_grammar_failures.keys).to contain_exactly("description", "criteria")
+    end
+  end
+
   # Equality is one of the Regular laws; the shared group pins structural
   # equality, the eql?/hash agreement, and Hash-key + Set-dedup behavior
   # together instead of restating them by hand.

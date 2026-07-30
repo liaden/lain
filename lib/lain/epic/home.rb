@@ -88,15 +88,31 @@ module Lain
         new(slug: checked, path: File.join(container(config:, paths:, root:), checked).freeze)
       end
 
+      # The boolean form of {#checked_name}'s grammar, so a caller can ask
+      # whether a value would survive the gate without provoking the raise --
+      # {Epic::Issue#emittable?} is the reason this exists: it names the
+      # filesystem grammar as one of the two an issue must satisfy, and a
+      # predicate that only raises cannot answer that question.
+      def self.filesystem_name?(value) = value.is_a?(String) && NAME.match?(value)
+
+      # The refusal {#checked_name} would raise, as a message rather than an
+      # exception -- what {Epic::Issue#emittable_failures} names for an id
+      # this grammar refuses, so that message and this one cannot drift apart
+      # into two spellings of the same rule.
+      def self.filesystem_name_failure(value, kind)
+        return if filesystem_name?(value)
+
+        format(BAD_NAME, kind:, value: value.inspect, grammar: NAME.inspect, rule: NAME_RULE)
+      end
+
       # The one gate every path segment passes through, public because it is
       # checked in two places that cannot share a receiver: a slug before there
       # is a Home, and an issue id on every read and write after there is one.
       # Interned rather than merely frozen, matching {Epic::Issue}'s ids, so the
       # whole value stays Ractor-shareable.
       def self.checked_name(value, kind)
-        unless value.is_a?(String) && NAME.match?(value)
-          raise MalformedName, format(BAD_NAME, kind:, value: value.inspect, grammar: NAME.inspect, rule: NAME_RULE)
-        end
+        failure = filesystem_name_failure(value, kind)
+        raise MalformedName, failure if failure
 
         -value
       end

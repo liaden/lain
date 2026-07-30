@@ -118,6 +118,26 @@ module Lain
           "discovered_from" => discovered_from }
       end
 
+      # Whether this issue reaches BOTH downstream artifacts: the document
+      # grammar ({Document::Writer} emits `epic.md`) and the filesystem
+      # grammar ({Home} emits `issues/<id>.md`), so a graph operation that
+      # mints an un-renderable issue is detectable here rather than at a
+      # render or a write raising at a distance.
+      def emittable? = emittable_failures.empty?
+
+      # Every reason this issue is not emittable, each naming the grammar it
+      # breaks -- {Home}'s filesystem-name check inlined, since nothing else
+      # asks for it alone. Empty exactly when {#emittable?} is true.
+      def emittable_failures
+        [*document_grammar_failures.map { |f, m| "#{f} #{m} -- the document grammar" },
+         *[Home.filesystem_name_failure(id, "issue id")].compact.map { |m| "#{m} -- the filesystem grammar" }]
+      end
+
+      # {Document} owns DESCRIPTION_RULES/CRITERIA_RULES, so it is asked
+      # rather than walked again here -- the field-keyed Hash lets
+      # {Document::Writer} consult one field at a time.
+      def document_grammar_failures = Document.grammar_failures(description:, criteria:)
+
       private
 
       # Every String entering the value goes through Canonical, because Canonical

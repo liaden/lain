@@ -337,6 +337,36 @@ RSpec.describe Lain::Epic::Document do
     end
   end
 
+  # T10 AC: Writer and the predicate agree. Writer only ever raises on the
+  # document grammar (DESCRIPTION_RULES/CRITERIA_RULES), so this only needs
+  # the forward direction -- an issue the predicate calls emittable never
+  # trips Writer -- not its converse: an issue whose id fails Home::NAME (like
+  # "日本" in the round-trip law below) is not emittable, yet Writer, which
+  # never touches the filesystem grammar, still emits it cleanly.
+  describe "Writer and the predicate agree" do
+    def sample_issues
+      [issue("a", description: "Fine prose.", criteria: criteria_source),
+       issue("b"),
+       issue("c", status: "done", description: "Two.\n\nParagraphs.")]
+    end
+
+    it "emits every issue the predicate calls emittable, without raising" do
+      sample_issues.each do |candidate|
+        expect(candidate).to be_emittable
+        expect { described_class::Writer.new(candidate).to_s }.not_to raise_error
+      end
+    end
+
+    it "refuses the same issue Writer would refuse, for the same reason" do
+      broken = issue("a", description: "Trailing space here.  \nAnd more.")
+
+      expect(broken).not_to be_emittable
+      expect(broken.emittable_failures.join).to include("document grammar")
+      expect { described_class::Writer.new(broken).to_s }
+        .to raise_error(Lain::Epic::MalformedDocument, /"a" description.*whitespace/m)
+    end
+  end
+
   # A parsed document hands out one more value than the graph: the markdown
   # itself. Every other value this unit returns is frozen.
   it "hands back a frozen document" do
