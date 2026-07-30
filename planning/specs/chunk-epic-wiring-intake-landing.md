@@ -1242,6 +1242,93 @@ Scenario: an unapproved issue refuses before any effect
 - If the command needs interactive decisions mid-landing (it should not; gates are
   decided before landing), stop: that would mean T24's protocol leaked a human step.
 
+## Execution log (2026-07-30)
+
+Rulings and corrections made during execution. These supersede the card text above.
+
+**Landed:** T12 `9530b2f`, T4 `e1ec5b1`, T3 `f3fb35a`, T10 `4f4ef2a`, T9 `4e3e109`,
+T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
+
+- **T1's AC1 wording is superseded.** Two panels independently found `Approval::Gate`'s
+  registry is keyed on artifact digest alone, so an approval at one `(epic, stage)` opened
+  every other: the same graph under two slugs shared a digest, and research prose resubmitted
+  as an `issue_plan` inherited the research sign-off. **Joel ruled: `Submission#digest` covers
+  `{stage, slug, artifact}`.** `ensure_approved!` returns the *submission* digest;
+  `#content_digest` exposes the raw content address. AC2 and AC3 unchanged. `Graph`,
+  `Document` and `Approval::Gate` untouched. Considered and rejected: embedding stage+slug in
+  the artifact text so the content digest moves naturally — it covers `research` and
+  `issue_plan` but not `epic_plan` (`Graph = Data.define(:issues)` has no slug, `to_markdown`
+  emits no header, `parse_markdown` drops preamble) and not `implementation` (an external sha,
+  no text). Filed as follow-up 5.
+
+- **`Epic::Stage::STAGES` does not exist** (cited in T1 and T2). It is `Lain::Epic::STAGES` —
+  `stage.rb:8` sits inside a `Data.define do ... end` block, so its constants scope to the
+  enclosing module. The trap CLAUDE.md already documents.
+
+- **Require placement: the subtree index owns its children.** T2's `gate/policies.rb` is
+  required from `lib/lain/approval/gate.rb`; T6's `home/journaled.rb` from
+  `lib/lain/epic/home.rb`. Both cards' "Shared-file wiring" lines named the unit index instead
+  and are wrong.
+
+- **T8's spec path is wrong in the card** — the file is
+  `spec/lain/isolation/worktree_handback_spec.rb`.
+
+- **Every wave-1 worktree forked `origin/main`, 51 commits behind local `main`.** Salvaged by
+  merging main into each. The cards' own files had not moved, but `.rubocop.yml` (+283) and
+  `Gemfile.lock` (+23) had, so no agent's RuboCop run was meaningful until re-run after merge.
+  One real casualty: T3's `clock: MONOTONIC` was correct at its base and became a `NameError`
+  when main's `9cc3797` moved the constant — integration drift, not a defect. Landing hazard
+  the same staleness created: a card's worktree copy of a shared file predates a sibling that
+  already landed, so copying it wholesale silently reverts the sibling. Hit twice (T6's
+  `home.rb` vs T10, T2's `gate.rb` vs T3); both resolved by taking main's file and appending
+  only the wiring line.
+
+- **Baseline correction.** The Integration checks cite 6441 from chunk-epic-domain. Main
+  measured **7030** before this chunk; that is the real bar.
+
+### Follow-up cards owed, from panel findings accepted as deferred
+
+1. **`Refold::SLUG_TYPES` does not list the new slug-bearing record types.** A journal holding
+   only another epic's `doc_written` records folds as "untouched" instead of raising
+   `ForeignJournal` — reproduced twice. One line plus one `progress_spec.rb` example, covering
+   `doc_written` (T6) and `review_opened`/`review_closed` (T15).
+2. **The terminal-adjudication guard is check-then-act across two model spawns.** Two
+   concurrent Adjudicators both pass `ensure_undecided!` before either writes; a probe produced
+   two terminal `gate_decision` records for one digest, one approving and one denying. T9
+   closed the sequential hole and widened the concurrent window. The real fix is
+   compare-and-append, which `Journal` has no primitive for.
+3. **`Checkout` and `Naming` as sibling files under `worktree/`.** `Metrics/ClassLength` does
+   not count a nested class's lines toward the outer class, so nesting shrinks the counter
+   without shortening the file.
+4. **`Epic::Scribe` wants an optional `graph:` seam.** A mistyped issue id writes fine and then
+   detonates `Progress.fold` with `UnknownIssue` permanently for that epic, in an append-only
+   journal. `SessionRecord::Scribe::Diverged` resolves the identical shape the other way.
+5. **Human-visible artifact front-matter**, scoped with the `Graph` slug member it needs — the
+   rejected half of the T1 digest ruling.
+6. **`lain.gemspec:60`** claims `--provider bedrock` builds `Provider::BedrockRaw` and
+   `--provider anthropic` builds `Provider::AnthropicRaw`; neither constant exists anywhere in
+   `lib/` or `spec/`, and `cli/backend.rb:158` builds `Provider::Bedrock` (verified).
+7. **`Forge::Outcome` carries only a digest**, so an orphan cannot be attributed to an epic or
+   issue. T17/T18 should put slug/issue in `detail`; widening the wire shape needs its own card.
+
+### Constraint T13, T18 and T20 inherit
+
+`Handback` sits at exactly **110/110** on `Metrics/ClassLength` after T8 — zero headroom. Any
+card adding to its direct body trips the cop, and CLAUDE.md forbids loosening it. Follow-up 3
+should land before those three cards touch it, or each pays the extraction cost separately.
+
+### Constraints T14 inherits (from T9's panel)
+
+- Three ducks must address one journal — `gate:` (whose Gate writes the decision), `journal:`
+  (evidence), `decisions:` (read-back) — and **no object can check it**. Pointing `decisions:`
+  at a different `StringIO` makes the terminal guard silently never fire.
+- **T9's boundary-counting spec cannot catch T14's double-check.** It builds an Adjudicator
+  directly, so it counts only checks inside `Adjudicator#call`. A `Policy` subclass doing the
+  inherited boundary check then delegating asks four times with the suite still green.
+- `shipped_skills_spec` pins `Policy.subclasses` to exactly three, so an anonymous
+  `Class.new(Policy)` in a spec is an order-dependent flake. Use a named class or the real
+  `Policy::Adjudicated`.
+
 ## Integration checks
 
 - Full suite: `bundle exec rspec` green; example count strictly above the 6441 baseline
