@@ -1336,7 +1336,15 @@ T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
     created. Must be decided before T24 hands real ids in. Probable answer: issue ids are
     lowercase because `Home` writes `issues/<id>.md`, and `Submission` should say so too —
     but that is T1's landed file, so it wants its own card.
-12. **A deferred adjudication re-spends without bound** — three re-decisions of one parked
+12. **`graph_revision` is a write-only trace, and `GraphFiber.of` discards the slug.** Nothing
+    in `lib/` reads these records back, classifies them, or filters by epic — so a journal
+    holding two epics' revisions, filtered on `type` alone, interleaves two chains into one
+    nonsense replay. The card's own Reuse named `Compaction::DerivationAudit`, whose doc says a
+    write-only trace is that subsystem's default failure mode: a field nobody consumes drifts
+    from what it claims without a spec going red. The re-derivation *pattern* was reused; the
+    *posture* was not. Distinct from item 1's `SLUG_TYPES` gap. The bench decomposition-fidelity
+    grader is the intended reader — this is the card that should build it.
+13. **A deferred adjudication re-spends without bound** — three re-decisions of one parked
     address cost 6 model spawns and 3 `gate_evidence` records for 1 queue item. That is T9's
     spec'd intent and nothing in `lib/` re-decides today, but `Policy::Adjudicated` makes it
     reachable from config overnight and nothing says a re-run re-pays.
