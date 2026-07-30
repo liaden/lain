@@ -170,6 +170,48 @@ deliberately deferred, not dropped:
   composing a `#call`/`#requires`-only duck into a pipeline renders rather than raising, and the
   projection-skip still fires for a declared substituting stage in either position.
 
+- **R.11 — The four real-tmux/nvim flakes corrupt mutation tables, not just gate runs.** Four
+  examples fail intermittently and were each confirmed pre-existing during the missing-objects
+  chunk (reproduced on `30e82b4`, or shown byte-identical to base): `spec/lain/cli/up_spec.rb:115`
+  and `:175`, `spec/plugin/tmux_plugin_spec.rb:252`, and
+  `spec/lain/frontend/neovim/buffers_spec.rb:291`. All four drive a **real** tmux or nvim over a
+  shared socket while guarding only on `tmux_present?`, so they fail when the box is busy rather
+  than when the code is wrong — one of them failed a commit gate here and passed on retry with no
+  change, and two panels' failures coincided with concurrent `exe/lain` processes on the machine.
+  **Why this is worse than noise:** mutation testing was this chunk's highest-yield technique, and
+  a flaky example produces a **false RED**, which reads as "the mutation was detected" when nothing
+  detected it. A flake therefore silently *weakens* the one check that finds tests which pass while
+  their subject is broken. **Scope if taken:** guard on the machine being quiet as well as on the
+  binary being present (or serialise these against a lock), so "someone else used the box" is
+  distinguishable from "you broke something". **Also worth adopting:** gate runs should tee
+  `--format documentation` to a file — an uncaptured intermittent failure is unfalsifiable, and one
+  card reported exactly that shape (1 failure in 6 runs, output lost, then 10 clean runs).
+- **R.13 — Six of the nine `bin/` scripts are executed by nothing.** `bin/demo-skills` broke when
+  `Skill::Library` landed (`6624005`) and stayed broken across a full serial suite, a whole-repo
+  `rubocop`, and `pre-commit run --all-files`, because nothing runs it. It surfaced only because a
+  later card cited it as evidence that its additive path worked, and was repaired in `2ced329`.
+  **Exercised today:** `demo-fanout`, `demo-supervision`, and `regenerate-session-fixtures`, each
+  driven by at least one spec. **Not exercised:** `chat`, `console`, `demo-core`, `demo-skills`,
+  `lint-commit-msg`, `setup`. **Why it matters:** these are the scripts a newcomer runs first, and
+  they are the only consumers of some public constructors outside `lib/` — so renaming a required
+  keyword breaks them with no test failing anywhere, which is exactly what happened. **Scope if
+  taken:** a smoke spec running each script and asserting exit 0; the covered three show the shape
+  (`demo-supervision`'s spec already asserts its printed output), tagged if slow. **Acceptance:**
+  changing a required keyword on a constructor that a `bin/` script builds fails a spec, not a
+  manual run.
+- **R.12 — Mutation testing here needs a cleared bootsnap cache.** `spec/bootsnap_setup.rb` keys
+  compiled iseq on **(path, size, mtime-seconds)**, so a byte-size-preserving mutation — a
+  reordering, an inverted condition, an equal-length constant, a transposed pair of cells —
+  applied and reverted inside one second is served **stale bytecode while `git diff` reads
+  clean**, manufacturing a false survivor. One review panel's entire first pass was invalidated
+  this way and redone with `rm -rf tmp/cache/bootsnap` per run; a second caught its own silently
+  unapplied mutation only because its harness aborted when `sub!` matched nothing. **Scope if
+  taken:** a documented mutation harness in `spec/support` (or a note in CLAUDE.md) that clears
+  the cache both sides, asserts the pattern matched exactly once, and bounds each run with a
+  timeout — a sibling found a mutation that **wedged for 16 minutes** instead of failing, and a
+  wedge must score as *not detected*, since under `parallel_tests` a dead worker presents as
+  "fewer examples, 0 failures".
+
 ---
 
 ## M3c — Algebra, seams, and the grader (THE BENCH)

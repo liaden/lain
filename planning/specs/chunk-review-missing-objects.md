@@ -1,6 +1,37 @@
 # Chunk B: review fixes — missing objects and duplication
 
-status: draft (panel-reviewed 2026-07-29; fix-then-ship edits applied) — **runs after chunk-review-correctness-cost.md lands**
+status: **done** (2026-07-29, `30e82b4..3e8502e`; all 17 cards landed, one commit each, every one
+panel-reviewed — T35 was intentionally vacant and T37 dissolved before execution)
+
+## Staleness check against post-A main (2026-07-29, 30e82b4)
+
+Held exactly: T21's migration surface (**37** spec files, **68** `Agent.new`, **66** passing
+`provider:`); T30's two `#decimal` copies still at `:936` and `:1321`; `env_spec.rb` still absent
+(T26 creates it); T29's three `File.join(Dir.pwd, ".lain", ...)` literals; both Arm
+`DEFAULT_CLOCK`s (`single_thread.rb:15`, `adaptive_router.rb:36`); `run_clock.rb:48`'s inline
+default; every T36 deletion target present.
+
+Absorbed line-number drift: `child_seam_kwargs` `:83-87` → **`:89-92`**;
+`Approval::Gate::MONOTONIC` `:241` → **`:187`**; `Approval::Queue::MONOTONIC` is the constant at
+**`:41`** (`:103` was its use as an `initialize` default); `prepared.rb` duck site `:161` →
+**`:168`**.
+
+**Material, and T32 must absorb both before it starts:**
+
+1. **`Scheduler` now has its own private `pipeline_for(decision, base)`** at `scheduler.rb:245`,
+   which is a *different method with the same name* as `Context#pipeline_for`. The duck-check
+   T32 was told to hoist has moved to `scheduler.rb:234`. So "promote `Context#pipeline_for`"
+   now has a name collision to resolve, not just call sites to adopt.
+2. **Chunk A's T17 added a second duck-check of the same shape** — `Context#substituting?`
+   (`context.rb:234-235`), which tests `respond_to?(:reads_messages?)`. It is deliberately
+   tolerant, because the pipeline duck is published and a bench user's combinator will not
+   implement a predicate it has never heard of. Any shared resolver T32 builds should cover
+   this pattern too, or state why it does not.
+
+**Also material for T23:** T15 changed `toolset_build.rb:82` to
+`RoleSpawn.new(toolset: base, slots: backend.slots, **child_seam_kwargs)`. The card says
+"toolset stays a SEPARATE parameter"; there are now **two** separate parameters, and `slots` is
+exactly what the prerequisite's snapshot object would absorb — which is why T23 moves to wave 2.
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson (one review agent embodies all)
@@ -82,11 +113,17 @@ named yet, which is the same tell `wiring.rb`'s own comment cites as the reason 
 was extracted. T15 extracted `#assemble_surface` to keep `Metrics/AbcSize` honest, but that
 silences the cop rather than answering it.
 
-Headroom as A closes: `Wiring` **107 of 110**, `Backend` 109, `Repl` 108. T15's fix round won
-Wiring two lines back by moving a journal default inside its memo rather than hoisting it, but
-that is slack, not room. **T21** (`Agent` accepts its collaborators) and **T27** (`Bench` takes
-a `Backend`) both land in these classes, and CLAUDE.md forbids loosening the limit, so the
-extraction is what buys them space to work in.
+**Correction, staleness check 2026-07-29: this is NOT a wave-1 gate, and the note that said so
+was wrong.** It claimed T21 and T27 "land in these classes and hit the ceiling on line one".
+They do not: T21's files are `agent.rb` plus its spec, T27's are `bench/cli.rb` and
+`bench/spawn_seam.rb`. Neither touches `Wiring` or `Backend`, and `rubocop --only
+Metrics/ClassLength` over `agent.rb`, `bench/cli.rb`, `wiring.rb`, `backend.rb` and
+`telemetry.rb` reports **no offenses** on post-A main. The ceiling is real for a future card in
+`Wiring`/`Backend` (107 and 109 of 110), but nothing in this chunk is blocked on it.
+
+So the extraction runs as an ordinary wave-1 card on its own merits — Metz's finding stands, a
+repeated parameter list is still an unnamed object — and **T23 moves to wave 2**, because the two
+collide on `toolset_build.rb`.
 
 The shape the panel recommends: one `.lain/` snapshot object holding both, loaded by
 ChatLaunch. It deletes `Wiring#catalog` (about 9 lines), collapses two keywords to one at
@@ -95,10 +132,64 @@ slots. Do it first and T21/T27 get headroom instead of an immediate escalation.
 
 ## Waves
 
-Wave 1: T21, T23, T24, T25, T26, T27, T28, T29, T30, T32, T34, T36, T38
-Wave 2: T22 (←T21), T31, T33 (←T25)
+Wave 1: T40, T21, T24, T25, T26, T27, T28, T29, T30, T32, T34, T36, T38
+Wave 2: T22 (←T21), T23 (←T40), T31, T33 (←T25)
 Critical path: T21 → T22
 (T35 intentionally vacant; T37 dissolved — see Intent.)
+
+**T40** is the `(catalog:, slots:)` extraction described above, given a card ID so it can be
+tracked and reviewed like any other. **T23 moved to wave 2** because it and T40 both edit
+`toolset_build.rb`, and T40 changes the very parameter list T23's seam is cut from.
+
+### Status — 11 of 17 cards on main (updated as cards move)
+
+Landed, in merge order: `b98671c` T36 · `d839c82` T26 · `194c877` T38 · `b0fe3ec` T30 ·
+`7879011` T34 · `cdeff0c` T29 · `029410d` T25 · `6624005` T40 · `1afe79b` T24 · `113c340` T32 ·
+`7c25502` T28. Every one gated on a full serial suite, whole-repo `rubocop`, and
+`pre-commit run --all-files` before the commit.
+
+| Card | State |
+|---|---|
+| T36 | ✅ merged — APPROVE first pass, the only one. 15 mutations, all caught, incl. one needing `rake compile` |
+| T26 | ✅ merged — found a real bug: `Rewind` was correct only by statement order, one reorder from journal corruption |
+| T38 | ✅ merged — `await_parked` failed open, silently cutting mutation 14's kill rate 8/8 → 6/8 |
+| T30 | ✅ merged — 1660 lines → 98 + 18 files; `fixed_point`'s two callers both pinned |
+| T34 | ✅ merged — a `compose_abandoned` no-op took 300s (`Compose::GRACE`) to fail; now milliseconds |
+| T29 | ✅ merged — its 3 new examples all survived reverting the call sites; grep scan → Ripper AST |
+| T25 | ✅ merged — **the chunk's worst find**: inverting *or* deleting `exe/lain`'s `--dry-run` branch left all 6724 examples green |
+| T40 | ✅ merged — declined the recommended owner for `Backend`; ratified. Its placement-proof example didn't prove it |
+| T24 | ✅ merged — argument evaluation had reversed drain/grade, repricing 3 arms 120→7120; span + phases restored |
+| T32 | ✅ merged — the "four-door" sweep was three doors and one hollow row; Head's call was unreachable |
+| T28 | ✅ merged — two live holes closed (bare `Faraday::ConnectionFailed` escaping); its own mutation found a 12th |
+| T21 | re-review — digest divergence fixed by refusing; `Agent` at 109/110 `ClassLength` |
+| T27 | fix round — REQUEST-CHANGES; two survivors held under cold-cache re-verification |
+| T22 | blocked on T21 |
+| T23 | wave 2, implementing |
+| T31 | wave 2, implementing |
+| T33 | wave 2, implementing |
+
+**The recurring finding — every panel, without exception: a test that passes when the behaviour
+it names is reverted.** T25's was the worst (the one branch choosing between spending money and
+printing a plan). T29's three new examples all survived reverting the call sites they existed to
+protect. T24's `Instrument` had its only claim untested because every shipped clock was a
+*call-count* clock, so a `#timed` starting after the block measured identically. T40's example
+whose comment states the card's central proof asserted `eq` between two renders of an unchanging
+tree. Mutation is the only thing that surfaces this class, and it is now the panel's first
+instruction.
+
+⚠️ **Mutation testing in this repo needs a cleared bootsnap cache.** `spec/bootsnap_setup.rb`
+keys compiled iseq on **(path, size, mtime-seconds)**, so a byte-size-preserving mutation — a
+reordering, an inverted condition, an equal-length constant — applied and reverted inside one
+second is served **stale bytecode while `git diff` reads clean**, manufacturing a false survivor.
+One panel's entire first pass was invalidated by this and redone with `rm -rf tmp/cache/bootsnap`
+per run; a second caught its own silently-unapplied mutation the same way. Filed as its own
+ticket, because it affects anyone measuring this repo, not just this chunk.
+
+**Flakes seen during the chunk, all confirmed pre-existing** (each reproduced on `30e82b4` or
+shown byte-identical to base): `cli/up_spec.rb:115` and `:175` (real tmux + nvim cockpit),
+`plugin/tmux_plugin_spec.rb:252` (HUD warmth under 7-way parallel load — it failed one commit
+gate and passed on retry with no change), and `frontend/neovim/buffers_spec.rb:291`. None
+belongs to a card in this chunk.
 
 ## Tasks
 
@@ -228,7 +319,12 @@ locals (`result`, `report`), keeping the design-rationale comment.
 **Depends on:** none
 **Files:** lib/lain/cli/consolidate.rb, lib/lain/cli/improve.rb, lib/lain/cli/friction.rb, lib/lain/consolidation.rb, new lib/lain/cli/session_file.rb, new lib/lain/provider/unreachable.rb, spec/lain/friction_spec.rb, spec/lain/cli/improve_spec.rb, spec/lain/cli/consolidate_spec.rb, spec/lain/consolidation_spec.rb
 **Reuse:** `cli/session_journals.rb`'s class comment argues for exactly this consolidation and names these files; `Sink::Null` as the Null-Object exemplar; `Command::Surface`'s "loud ArgumentError at construction" doctrine (surface.rb:24-28)
-**Shared-file wiring:** `lib/lain/cli.rb` index gains `session_file` (one line); `lib/lain.rb` gains `provider/unreachable` placement per load order (one line)
+**Shared-file wiring:** `lib/lain/cli.rb` index gains `session_file` (one line, between
+`cli/session_journals` and `cli/friction`); **`lib/lain/provider.rb`** — not `lib/lain.rb` —
+gains `require_relative "provider/unreachable"` after `provider/mock` (one line). ⚠️ This plan
+originally said `lib/lain.rb`; that was wrong, and the implementer corrected it. `lain.rb`
+requires whole *units*, and `provider.rb` is the `provider/` subtree's index, so a new provider
+is that index's business. See CLAUDE.md's Requires section.
 
 **Acceptance criteria:**
 
@@ -534,10 +630,176 @@ Scenario: ApprovalSurfaces' three-fiber fan-out is exercised
 - Exercising ApprovalSurfaces requires a full provider/context-factory setup the doubles can't fake — stop and propose the minimal seam rather than building a heavyweight fixture.
 - child_spec turns out to need behavior changes in Child to be testable — this card writes specs only; stop.
 
+## Outcome (2026-07-29)
+
+All 17 cards landed on `main`, one commit each, in merge order:
+
+`b98671c` T36 · `d839c82` T26 · `194c877` T38 · `b0fe3ec` T30 · `7879011` T34 · `cdeff0c` T29 ·
+`029410d` T25 · `6624005` T40 · `1afe79b` T24 · `113c340` T32 · `7c25502` T28 · `da20240` T21 ·
+`0c214f4` T27 · `d89f867` T31 · `2ced329` T23 · `9cc3797` T33 · `3e8502e` T22
+
+**Integration checks, all green at `3e8502e`:** full serial suite **7029 examples, 0 failures,
+2 pending** (pre-chunk 6710 in this working tree, so **+319 net**, including T36's deliberate −21);
+`rubocop` **942 files, no offenses** with `.rubocop.yml` untouched and **no `.rubocop_todo.yml`** —
+it was deleted in `0afd058`, and per the standing instruction every new-cop offense in this chunk
+was fixed in code, never deferred; `--tag nvim` **97/0** with nvim present, so not vacuous;
+`--tag core` **40/0**; `cargo test` **277** across five targets with `clippy -D warnings`,
+`fmt --check` and `cargo deny` clean (no card touched Rust); `pre-commit run --all-files` green.
+
+### Verdicts
+
+**16 of 17 cards needed a fix round.** One APPROVE on first pass (T36), fifteen
+APPROVE-WITH-FIXES, one REQUEST-CHANGES (T27). Five cards took a second review pass. Chunk A's
+figure was 17 of 21, so the rate is unchanged — the panel is not finding less as the codebase
+improves.
+
+### Every single review found a test that passes while its subject is broken
+
+This is the defect class the chunk existed to remove, and it appeared in all seventeen reviews.
+The specimens worth remembering:
+
+- **T25** — inverting *or* deleting the `--dry-run` ternary in `exe/lain` left all 6724 examples
+  green, on the one branch that decides between spending real money and printing a plan. The card's
+  own `Provider::Unreachable` cannot catch it: on the wrong branch the real provider is already
+  wired.
+- **T22** — `cli_spec.rb:145` asserted `@turn_middleware.to_a == []` and survived the ivar being
+  **deleted**, because `nil.to_a` is `[]`. Absence and emptiness were indistinguishable.
+- **T24** — `Arm::Instrument`'s central claim was untestable, because every shipped clock was a
+  *call-count* clock (`-> { ticks += 0.25 }`): a `#timed` that starts its clock **after** the block
+  measures identically, so no assertion could tell. Fixed with a clock the block advances; T33 then
+  generalised it to a *scripted* clock that raises on over-read.
+- **T29** — all three new examples survived reverting the call sites they existed to protect, and
+  the lib-wide grep scan caught **1 of 6** spellings while firing on prose. Now a Ripper walk.
+- **T40** — the example whose comment states the card's central proof asserted `eq` between two
+  renders of an unchanging tree.
+- **T31** — six hand-rolled mean/median transpositions, one at a time against the whole serial
+  suite: **all six green**. That silent-mislabel hazard, not a line count, is what justifies
+  `Compare::ArmFold`.
+- **T22 again** — `Wiring#goal_journal`, a line the card itself rewrote, had **no assertion
+  anywhere**: mutating it passed the entire 6849-example suite.
+
+Two measurements of how weak a spec file can be while green: **35 of 40** `wiring_spec` examples are
+insensitive to the reporting value reaching the Agent, and `Chronicle#catch_up` returning `self` was
+documented (and leaned on by an orchestrator ruling) but unpinned.
+
+### Declines and corrections — the mechanism/outcome rule held again
+
+Chunk A found that **an AC naming a *mechanism* was wrong every time it appeared, while an AC naming
+an *outcome* was not.** That repeated exactly:
+
+- **T40** declined the recommended owner (`ChatLaunch` → `Backend`) and was ratified; the panel
+  supplied the decisive argument the card had missed — two of the five `Backend` sites were T27's
+  files in the same wave, so compliance would have been a collision, not merely a worse shape.
+- **T23** declined the AC's namespace (`Spawn::Seam` → `Tools::Subagent::Seam`) and was ratified:
+  the AC was **internally inconsistent**, forbidding shared-file wiring while a top-level module
+  requires a `lain.rb` line. `Bench::SpawnSeam` is also a different duck (a factory), so the AC's
+  name would have recreated the four-`Gate`s defect the review filed.
+- **T31** declined the AC's mechanism and delivered its outcome; ratified on all four claims. It
+  also found the AC's "~330 lines of hand-rolled folds" was **~9× off** (41 real lines).
+- **T25** corrected *this plan's own* wiring instruction: `provider/unreachable` belongs in
+  `provider.rb`, the subtree index, not `lain.rb`, which requires whole units.
+- **T21** corrected the card's "68 sites" to 66 — `grep -r` had skipped a spec file as **binary**
+  while it held a real `Agent.new`.
+- **T30** corrected the card's claimed error class (`ArgumentError` from `BigDecimal("")`, not
+  `NoMethodError`, because `nil.to_s` is `""`).
+- **T27's panel** corrected the *implementer's* own claim: `Backend` is at **109, not 106**, because
+  reopening a class in a sibling file splits `ClassLength`'s count. The extraction is still right
+  (a naive inline guard measured 116 against Max 110) — but justified by the object, never by the
+  number it makes the cop report.
+
+### Behaviour changes a green suite hid, and one debt repaid
+
+- **T26** — `Rewind` was correct only by *statement order*: `#checkpoint` re-read the live timeline
+  and happened to run before `agent.rewind`. Nothing held it there. One reorder from journal
+  corruption; now `catch_up(from)`, with `Rewind` confirmed the only command that moves the timeline.
+- **T24** — left-to-right argument evaluation in `Run.new` reversed drain-before-grade, repricing
+  three arms from 120 to 7120 tokens, and dual-ledger's `elapsed` silently lost its `:planner_build`
+  phase. Both restored: narrowing what the bench measures is a methodology change owing its own card.
+- **T21** — the injected constructor committed a *different turn digest* than the legacy one, because
+  `ToolRunner`'s toolset defaulted to empty while the Agent renders its own to the model. Refused
+  rather than substituted, so the coupling is visible.
+- **T28** — `Bedrock` and `Embedder::Ollama` had no `Faraday::Error` arm, so exhausted retries
+  re-raised a bare `Faraday::ConnectionFailed` nothing above rescues. Both closed; the four
+  now-identical rescue blocks collapsed behind a drift guard, since keeping them apart could only
+  hide the next one to go missing.
+- **T21 → T22** — T21 left `Agent` at **109/110** on `ClassLength`, accepted only on condition that
+  T22 repay it. T22 did: **105/110**, verified line-by-line, with the reduction coming from moving
+  the clump out rather than densifying `Agent`.
+- **T23** — `bin/demo-skills` had been **red on main since `6624005`** (T40's `Skill::Library`), and
+  no gate noticed because nothing runs `bin/`. Repaired here; the coverage gap is R.13.
+
+### Follow-ups filed
+
+Cross-cutting, in `planning/remaining-work.md`: **R.9** (seven remaining `.lain/` composers),
+**R.10** (`Composed#reads_messages?` tolerant only one level deep — inherited from T17),
+**R.11** (the four real-tmux/nvim flakes, and why a false RED corrupts a mutation table),
+**R.12** (mutation testing needs a cleared bootsnap cache, an exactly-once pattern assertion, and a
+timeout where a wedge scores as *not* detected), **R.13** (six of nine `bin/` scripts are executed
+by nothing).
+
+Per-card, recorded in each hand-back under `.claude/worktrees/` at merge time and copied out before
+those trees were retired:
+
+- **Highest value:** a **positive seam census** — "no seam has a private clock". T33's negative AST
+  scan is silent by construction on a seam whose *default* is a wall clock, and three such mutations
+  survive today at `Middleware::Timeout`, `Frontend::TTY` and `Compose`. Closing it needs a
+  per-seam default assertion; `Arm::Instrument` is the shape it generalises.
+- **A journal that does not answer `#record` deadlocks** rather than failing (found by two panels
+  independently, as 110s wedges). Related and already fixed in passing: `supervisor.stop` sat
+  outside an `ensure` inside `Sync do` in `subagent_spec`, so **any** failure in that file hung
+  forever — two mutations that looked like stalls were reporting 44 and 37 real failures behind it.
+- `wiring_spec`'s **35-of-40** insensitivity; `Ollama` journals **zero** retries while three fire
+  (`RetryTap` makes it ~3 lines, and the Journal is the experiment record); `Compose::GRACE = 300`
+  plus un-timed `settle` makes a broken compose hand-off *slow* rather than loud; `Bench::ArmTasks`
+  answers a non-mapping fixture with a raw `NoMethodError` and a 22-line backtrace, and
+  `arms_report` parses the suite *before* resolving the provider, so that is what a mistyped path
+  hits first.
+- Smaller: migrate the ten loose-keyword spawn call sites and delete the `**spawn_over` splat;
+  `Compare`'s two remaining fold copies (`driver.rb:82`, `disclosure_sweep.rb:200`) plus a
+  `DisclosureSweep` heading pin; a record-view object owning timeline+journal_path+checkpoint if a
+  third consumer appears; `connect_budget:` as a *coverage-placement* change (it is 88% of
+  `child_spec`'s runtime and would let four examples leave `:core`); glob `git ls-files` so the
+  example count stops depending on untracked files; `Ractor.make_shareable` for `Arm::Instrument`
+  (a Proc is not the boundary — capturing is); a `clock:` seam for `Core::Child`; rename
+  `Telemetry::OracleAnswer#wall_clock`, which holds monotonic elapsed seconds; `Backend`'s
+  unknown-key silence; `Listener::Null` should use the documented `.instance` idiom, and nothing
+  guards that `Null` overrides every `Listener` method.
+
+### Manual passes still owed (Joel — no agent can do these)
+
+1. **From chunk A, now more meaningful:** one `lain up` smoke pass confirming the panes come up on
+   4.0.6 — T4 changed the PATH derivation to `File.dirname(RbConfig.ruby)` and the machine's ruby was
+   rebuilt mid-session, so this now tests something real.
+2. **From chunk A:** one `lain bench plan-sweep` determinism check after T3.
+3. **From this chunk:** one `lain bench arms` / `plan-sweep` report reading after T31 — the rendered
+   report *is* the experiment record. Report bytes were diffed identical across all eight artifacts,
+   so this is a read-through for sense, not a hunt for a diff.
+
 ## Integration checks
 
 - `bundle exec rake compile && bundle exec rspec` — example count vs a pre-chunk serial run
   (net down from T36; new examples from T21/T26/T38 etc.).
+
+  **Two different correct baselines exist at `30e82b4`, and the difference is exactly 10.**
+  Measured 2026-07-29, real serial runs:
+
+  - **A worktree (tracked files only): 6700 examples, 0 failures, 2 pending.** This is the
+    number every card must be compared against, because every card is built in a worktree.
+  - **This checkout: 6710, 0 failures, 2 pending** — 10 higher, and not a discrepancy to chase.
+    `spec/docs_naming_spec.rb` and `spec/lain/gherkin_spec.rb` generate one example per doc file
+    they find **on disk**, and this working tree carries ~15 untracked planning/reference docs
+    (including this plan). Those two files alone are 70 examples here against 60 in a worktree.
+    Committing these docs raises main's count by that amount, with no card responsible for it.
+
+  So: judge a card against **6700**, and expect main to sit 10 above whatever the cards sum to
+  until the planning docs land. Wave-1 agents reported 6700, 6710, 6712, 6713 as "baseline" or
+  "green" without saying which tree they measured, which is why this note exists.
+
+  One more count hazard, independent of the above: `spec/support/tags.rb` gates `:nvim` on
+  `system("nvim", "--version")` at load time, and that is a **filter, not a skip** — a run whose
+  PATH omits `/home/linuxbrew/.linuxbrew/bin` silently loses **97 examples** and still reports
+  "0 failures" (`LAIN_NVIM=0` here: 6613). A count is only evidence if `command -v nvim` is
+  stated alongside it.
 - `bundle exec rubocop` clean with no config changes.
 - `bundle exec rake core:build && bundle exec rspec --tag core` (T38's child_spec).
 - A run on a box **with nvim present**, reporting the `:nvim` example count (T33/T34 touch
