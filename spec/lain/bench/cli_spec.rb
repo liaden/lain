@@ -272,11 +272,23 @@ RSpec.describe Lain::Bench::CLI do
 
   describe "#record" do
     let(:usage) { Lain::Usage.new(input_tokens: 120, output_tokens: 30) }
+
     # The last mock response repeats once exhausted, so one script drives
     # every run of the sweep.
     let(:provider) do
       Lain::Provider::Mock.new(responses: [text_response("325-650 mg q4h", usage:,
                                                                            model: "claude-sonnet-4-6")])
+    end
+
+    # The ONE object record now takes for its provider and its Context, built the
+    # way exe/lain and every other Backend spec build it: from the flag hash.
+    # `max_tokens` is spelled out because Context requires it (`Integer(nil)`
+    # raises) and RECORD_DEFAULTS is where the exe's flag reads its own default
+    # from, so this is the same number a run gets.
+    def backend(**options)
+      Lain::CLI::Backend.new(
+        { provider: "anthropic", max_tokens: described_class::RECORD_DEFAULTS.fetch(:max_tokens), **options }
+      )
     end
 
     def write_taskfile(dir)
@@ -289,7 +301,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
         paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
-                           model: "claude-sonnet-4-6", provider:)
+                           backend: backend(model: "claude-sonnet-4-6"), provider:)
 
         expect(paths).to eq([File.join(out, "1.ndjson"), File.join(out, "2.ndjson")])
         recordings = paths.map { |path| Lain::Bench::Session.load(path) }
@@ -301,7 +313,7 @@ RSpec.describe Lain::Bench::CLI do
     it "asks one prompt per non-blank task file line, per run" do
       Dir.mktmpdir do |tmp|
         cli.record(taskfile: write_taskfile(tmp), runs: 2, out: File.join(tmp, "sessions"),
-                   model: "claude-sonnet-4-6", provider:)
+                   backend: backend(model: "claude-sonnet-4-6"), provider:)
         expect(provider.call_count).to eq(2)
         expect(provider.requests.map { |request| request.messages.size }).to all(eq(1))
       end
@@ -311,7 +323,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
         cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
-                   model: "claude-sonnet-4-6", provider:)
+                   backend: backend(model: "claude-sonnet-4-6"), provider:)
         expect(cli.variance_report([out])).to include("== Distribution ==")
       end
     end
@@ -323,7 +335,7 @@ RSpec.describe Lain::Bench::CLI do
     it "refuses to overwrite an existing session file, leaving the recorded bytes untouched" do
       Dir.mktmpdir do |tmp|
         out = File.join(tmp, "sessions")
-        record = -> { cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, provider:) }
+        record = -> { cli.record(taskfile: write_taskfile(tmp), runs: 2, out:, backend:, provider:) }
         before = record.call.map { |path| File.binread(path) }
 
         expect { record.call }.to raise_error(described_class::Refusal, /already exists/)
@@ -334,7 +346,7 @@ RSpec.describe Lain::Bench::CLI do
     # A money-spending command must not read `-n 0` as instant success.
     it "refuses a run count below one" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 0, out: tmp, provider:) }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 0, out: tmp, backend:, provider:) }
           .to raise_error(described_class::Refusal, /at least one run/)
       end
     end
@@ -343,14 +355,14 @@ RSpec.describe Lain::Bench::CLI do
     # refuse rather than quietly record fewer runs than typed.
     it "refuses a fractional run count rather than truncating it" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2.5, out: tmp, provider:) }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2.5, out: tmp, backend:, provider:) }
           .to raise_error(described_class::Refusal, /whole number/)
       end
     end
 
     it "refuses a missing task file with a Refusal, not a raw ENOENT" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: File.join(tmp, "absent.txt"), runs: 2, out: tmp, provider:) }
+        expect { cli.record(taskfile: File.join(tmp, "absent.txt"), runs: 2, out: tmp, backend:, provider:) }
           .to raise_error(described_class::Refusal, /no task file/)
       end
     end
@@ -359,7 +371,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir do |tmp|
         blank = File.join(tmp, "task.txt")
         File.write(blank, "\n \n")
-        expect { cli.record(taskfile: blank, runs: 2, out: tmp, provider:) }
+        expect { cli.record(taskfile: blank, runs: 2, out: tmp, backend:, provider:) }
           .to raise_error(described_class::Refusal, /no prompts/)
       end
     end
@@ -371,7 +383,7 @@ RSpec.describe Lain::Bench::CLI do
       allow(ENV).to receive(:[]).and_call_original
       allow(ENV).to receive(:[]).with("ANTHROPIC_API_KEY").and_return(nil)
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp) }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp, backend:) }
           .to raise_error(described_class::MissingAPIKey, /ANTHROPIC_API_KEY/)
       end
     end
@@ -381,7 +393,7 @@ RSpec.describe Lain::Bench::CLI do
     # never Thor::Error out of lib/.
     it "raises Lain::CLI::UnknownProvider on an unknown --provider name" do
       Dir.mktmpdir do |tmp|
-        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp, provider_name: "gemini") }
+        expect { cli.record(taskfile: write_taskfile(tmp), runs: 2, out: tmp, backend: backend(provider: "gemini")) }
           .to raise_error(Lain::CLI::UnknownProvider, /gemini/)
       end
     end
@@ -393,8 +405,8 @@ RSpec.describe Lain::Bench::CLI do
       it "records the sampler extra into the session header and replays dry" do
         Dir.mktmpdir do |tmp|
           out = File.join(tmp, "sessions")
-          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, provider_name: "ollama",
-                     temperature: 0, seed: 7, provider:)
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, provider:,
+                     backend: backend(provider: "ollama", temperature: 0, seed: 7))
 
           recording = Lain::Bench::Session.load(File.join(out, "1.ndjson"))
           expect(recording.context.extra).to include("temperature" => 0, "seed" => 7)
@@ -415,7 +427,7 @@ RSpec.describe Lain::Bench::CLI do
         Dir.mktmpdir do |tmp|
           out = File.join(tmp, "sessions")
           paths = cli.record(taskfile: write_taskfile(tmp), runs: 2, out:,
-                             model: "claude-sonnet-4-6", provider:)
+                             backend: backend(model: "claude-sonnet-4-6"), provider:)
 
           expect(paths.map { |path| slot_fills_count(path) }).to all(eq(1))
         end
@@ -425,7 +437,7 @@ RSpec.describe Lain::Bench::CLI do
         Dir.mktmpdir do |tmp|
           out = File.join(tmp, "sessions")
           cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
-                     model: "claude-sonnet-4-6", provider:)
+                     backend: backend(model: "claude-sonnet-4-6"), provider:)
 
           loader = Lain::Bench::Session::Loader.new(File.foreach(File.join(out, "1.ndjson")))
           expect(loader.slot_fills.digests).not_to be_empty
@@ -448,8 +460,8 @@ RSpec.describe Lain::Bench::CLI do
       it "attributes a --system override so the digest still joins onto the journaled system bytes" do
         Dir.mktmpdir do |tmp|
           out = File.join(tmp, "sessions")
-          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
-                     model: "claude-sonnet-4-6", system: "Reply with one word.", provider:)
+          cli.record(taskfile: write_taskfile(tmp), runs: 1, out:, system: "Reply with one word.",
+                     backend: backend(model: "claude-sonnet-4-6"), provider:)
 
           records = File.readlines(File.join(out, "1.ndjson")).map { |line| JSON.parse(line) }
           slot_fills = records.find { |record| record["type"] == "slot_fills" }
@@ -463,7 +475,7 @@ RSpec.describe Lain::Bench::CLI do
         Dir.mktmpdir do |tmp|
           out = File.join(tmp, "sessions")
           cli.record(taskfile: write_taskfile(tmp), runs: 1, out:,
-                     model: "claude-sonnet-4-6", provider:)
+                     backend: backend(model: "claude-sonnet-4-6"), provider:)
 
           records = File.readlines(File.join(out, "1.ndjson")).map { |line| JSON.parse(line) }
           expect(records.find { |record| record["type"] == "slot_fills" }.fetch("digests").fetch("system"))

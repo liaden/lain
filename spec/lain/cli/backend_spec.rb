@@ -156,6 +156,67 @@ RSpec.describe Lain::CLI::Backend do
       expect(backend_for(provider: "ollama", max_tokens: 1024).context(system_override: "BE TERSE").system)
         .to eq("BE TERSE")
     end
+
+    # `--max-tokens` has no default HERE (unlike --model, resolved above from the
+    # provider) -- every command declaring the flag gives Thor one, so a nil means
+    # a caller built this Backend and left the ceiling out. Backend is the single
+    # authority on it now that Bench's own constants are flag declarations only,
+    # so this is where it has to be caught: Context answers a nil with
+    # `TypeError: can't convert nil into Integer`, which is not a Lain::Error, so
+    # Boundary#render passes it through as a backtrace naming Context -- a class
+    # no operator has heard of. Same wound MissingAPIKey and InvalidCeiling were
+    # both written for; same error class as --summarizer-max-tokens'.
+    it "refuses a missing ceiling as a Lain::Error naming the flag, never a TypeError from Context" do
+      expect { backend_for(provider: "ollama").context }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens is not set/)
+    end
+
+    it "refuses an explicit nil ceiling the same way an absent key is refused" do
+      expect { backend_for(provider: "ollama", max_tokens: nil).context }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--max-tokens/)
+    end
+
+    # The two ceiling flags are two different mistakes to make, and one Ceiling
+    # object now answers for both -- so the refusal has to name the one that was
+    # actually wrong, or it sends the operator to the other flag.
+    it "names --max-tokens, never the summarizer's flag, when the chat tier's is missing" do
+      expect { backend_for(provider: "ollama").context }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling) do |error|
+          expect(error.message).not_to include("summarizer")
+        end
+    end
+  end
+
+  # The object both ceiling flags now go through. Exercised here rather than in a
+  # file of its own, as Backend::Summarizer and Backend::SpanSummarizer are: the
+  # flag NAME is the field that makes it worth extracting, and the two callers
+  # above and below are what prove each flag keeps its own voice.
+  describe Lain::CLI::Backend::Ceiling do
+    def ceiling(value) = described_class.new(flag: "--flag", value:)
+
+    it "answers the parsed ceiling for a positive value" do
+      expect(ceiling(64).tokens).to eq(64)
+      expect(ceiling("64").tokens).to eq(64)
+    end
+
+    it "refuses an unset ceiling, naming its own flag" do
+      expect { ceiling(nil).tokens }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--flag is not set/)
+    end
+
+    # 0 is TRUTHY, so no `||` downstream falls back for it and Request#max_tokens
+    # only does `Integer()` -- the provider is what 400s, three layers away.
+    it "refuses zero and negative ceilings, quoting the value" do
+      expect { ceiling(0).tokens }.to raise_error(Lain::CLI::Backend::InvalidCeiling, /--flag must be positive, got 0/)
+      expect { ceiling(-1).tokens }.to raise_error(Lain::CLI::Backend::InvalidCeiling, /got -1/)
+    end
+
+    # Unchanged from the inline `Integer(knob(...))` this replaced: a non-numeric
+    # ceiling is a parser or programmer bug, and stays a loud ArgumentError rather
+    # than being dressed up as an operator's flag mistake.
+    it "leaves an unparseable ceiling as the ArgumentError it always was" do
+      expect { ceiling("wide").tokens }.to raise_error(ArgumentError)
+    end
   end
 
   # RES4: the exe's research subagent used to hand-assemble a SpawnPolicy

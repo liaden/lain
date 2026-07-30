@@ -45,12 +45,24 @@ module ArmsCommand
   # One invocation of the command: what it said, and how it ended.
   Captured = Struct.new(:stdout, :stderr, :exited)
 
-  # The commands whose reads go through a declarative flag->keyword map rather
-  # than a literal key, and the map each forwards through. A dynamic read is a
-  # HOLE in this guard -- the key cannot be resolved from the source -- so the
-  # maps are checked entry by entry, and the pin below fails when a NEW dynamic
-  # site appears.
-  MAPS = { "arms" => "ARMS_FLAGS", "record" => "RECORD_FLAGS" }.freeze
+  # The commands whose reads go through a declarative flag->option map rather
+  # than a literal key: the map each forwards through, and the METHOD the
+  # expansion is written in. A dynamic read is a HOLE in this guard -- the key
+  # cannot be resolved from the source -- so the maps are checked entry by entry,
+  # and the pin below fails when a NEW, UNREGISTERED dynamic site appears.
+  #
+  # `site` is declared rather than assumed equal to the command name. It happens
+  # to be the command today (each map is expanded inline in its own body), but
+  # asserting THAT equality turned a coverage invariant into a production-layout
+  # mandate: hoisting the expansion into a `no_commands` helper -- a legitimate
+  # extraction -- failed the guard for a reason unrelated to coverage. Declaring
+  # the site keeps the thing worth protecting (no dynamic read this file has not
+  # been told about) and makes a move a one-line edit here.
+  MAPS = { "arms" => { const: "ARMS_FLAGS", site: :arms },
+           "record" => { const: "RECORD_FLAGS", site: :record } }.freeze
+
+  # @return [Array<String>] every method name registered above as a dynamic reader
+  def self.registered_sites = MAPS.values.map { |entry| entry.fetch(:site).to_s }.sort
 
   # One resolved option read in exe/lain, and the method it was read in. A nil
   # `key` means the index was not a literal symbol.
@@ -113,39 +125,62 @@ module ArmsCommand
     scanner.reads
   end
 
-  # @return [Hash{String=>Hash}] each map-driven command's flag->keyword map
-  def self.maps = MAPS.transform_values { |name| LainCLI::Bench.const_get(name) }
+  # @return [Hash{String=>Hash}] each map-driven command's flag->option map
+  def self.maps = MAPS.transform_values { |entry| LainCLI::Bench.const_get(entry.fetch(:const)) }
+
+  # Driving a real subcommand, and watching what it built. A module because TWO
+  # subcommand doors are guarded in this file: `arms` and `record` both expand a
+  # flag map into a Lain::CLI::Backend, so both need the same three observations
+  # (argv through the real parser, the captured streams, the built backends).
+  module Invocation
+    # The REAL Thor parser over the real command, so the argv spelling
+    # (`--max-tokens`), the type coercion, and the exit contract are exercised
+    # together; a plain options hash would prove none of the three.
+    def run(*argv) = capturing { LainCLI::Bench.start(argv) }
+
+    # Thor's shell reads $stdout/$stderr at call time, so swapping the globals is
+    # what captures it.
+    def capturing(out = StringIO.new, err = StringIO.new, &block)
+      original = [$stdout, $stderr]
+      $stdout = out
+      $stderr = err
+      exited = exit_from(&block)
+      Captured.new(out.string, err.string, exited)
+    ensure
+      $stdout, $stderr = original
+    end
+
+    # A SystemExit is this command's exit CONTRACT (Thor maps a Lain::Error to a
+    # message on stderr and a nonzero status), so it is a value here, not a crash.
+    def exit_from
+      yield
+      nil
+    rescue SystemExit => e
+      e
+    end
+
+    # Records every Backend the run builds as an [options, instance] PAIR, into
+    # the array given.
+    #
+    # THE PAIR IS THE POINT. Asserting the flags on the constructor options and
+    # the type on the entry point's kwarg, separately, proves neither that the
+    # flags reached the run: a command can build the flags-Backend, throw it
+    # away, and hand the entry point a hardcoded one -- every sampler flag
+    # silently dropped on this repo's highest-spend commands, with both halves
+    # still green. Only object identity between the two closes that.
+    def capture_backends(built)
+      allow(Lain::CLI::Backend).to receive(:new).and_wrap_original do |original, options|
+        original.call(options).tap { |backend| built << [options, backend] }
+      end
+    end
+  end
 end
 
 RSpec.describe "lain bench arms" do
+  include ArmsCommand::Invocation
+
   let(:command) { LainCLI::Bench.commands.fetch("arms") }
   let(:declared) { command.options.keys.to_set }
-
-  # The REAL Thor parser over the real command, so the argv spelling
-  # (`--max-tokens`), the type coercion, and the exit contract are exercised
-  # together; a plain options hash would prove none of the three.
-  def run(*argv) = capturing { LainCLI::Bench.start(argv) }
-
-  # Thor's shell reads $stdout/$stderr at call time, so swapping the globals is
-  # what captures it.
-  def capturing(out = StringIO.new, err = StringIO.new, &block)
-    original = [$stdout, $stderr]
-    $stdout = out
-    $stderr = err
-    exited = exit_from(&block)
-    ArmsCommand::Captured.new(out.string, err.string, exited)
-  ensure
-    $stdout, $stderr = original
-  end
-
-  # A SystemExit is this command's exit CONTRACT (Thor maps a Lain::Error to a
-  # message on stderr and a nonzero status), so it is a value here, not a crash.
-  def exit_from
-    yield
-    nil
-  rescue SystemExit => e
-    e
-  end
 
   # Scenario: the subcommand is discoverable and declares its cost.
   describe "discoverability" do
@@ -231,9 +266,12 @@ RSpec.describe "lain bench arms" do
       end
     end
 
-    it "leaves the map-driven reads exactly where they are pinned" do
+    # Every dynamic read is one MAPS registered, and every registration is a site
+    # that really reads dynamically. What this must NOT assert is that the site is
+    # named after the command -- see MAPS' own header.
+    it "leaves the map-driven reads exactly where they are registered" do
       dynamic = reads.select { |read| read.key.nil? }
-      expect(dynamic.map { |read| read.site.to_s }.uniq.sort).to eq(ArmsCommand::MAPS.keys.sort)
+      expect(dynamic.map { |read| read.site.to_s }.uniq.sort).to eq(ArmsCommand.registered_sites)
     end
 
     # Keys from three different commands, so a scan that silently stopped
@@ -290,20 +328,39 @@ RSpec.describe "lain bench arms" do
     # Every flag in the map, through the real Thor parser: a silently dropped
     # --seed is a reproducibility hole on a bench whose whole claim is
     # repeatability, and a dropped --provider is money spent on the wrong model.
-    it "carries every declared flag through to the entry point" do
+    #
+    # The map's flags now build ONE Lain::CLI::Backend (the chat path's shape), so
+    # the wire under test is flag -> Backend option -> THAT VERY OBJECT at the
+    # entry point. Backend exposes no reader for what it was given, so the
+    # constructor argument is the observation and IDENTITY is what ties it to the
+    # run (see Invocation#capture_backends). `system:` and `isolation:` are read
+    # literally in the command and stay assertable on the kwargs.
+    it "carries every declared flag through to the entry point, on the object it hands over" do
+      built = []
+      capture_backends(built)
+
       run("arms", "suite/tasks.yml", "--provider", "ollama", "--api-base", "http://localhost:11434",
           "--model", "qwen3", "--max-tokens", "321", "--system", "be terse",
           "--temperature", "0.25", "--seed", "99", "--isolation", "none")
 
-      expect(kwargs).to include(provider_name: "ollama", api_base: "http://localhost:11434",
-                                model: "qwen3", max_tokens: 321, system: "be terse",
-                                temperature: 0.25, seed: 99, isolation: "none")
+      options, instance = built.last
+      expect(options).to include(provider: "ollama", api_base: "http://localhost:11434",
+                                 model: "qwen3", max_tokens: 321, temperature: 0.25, seed: 99)
+      expect(kwargs.fetch(:backend)).to be(instance)
+      expect(kwargs).to include(system: "be terse", isolation: "none")
+    end
+
+    it "hands the entry point one backend, never the loose flags beside it" do
+      run("arms", "suite/tasks.yml")
+
+      expect(kwargs.fetch(:backend)).to be_a(Lain::CLI::Backend)
+      expect(kwargs.keys).not_to include(:provider_name, :model, :max_tokens, :temperature, :seed, :api_base)
     end
 
     it "defaults max_tokens to the live seam's own ceiling, not record's" do
       run("arms", "suite/tasks.yml")
 
-      expect(kwargs).to include(max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS)
+      expect(kwargs.fetch(:backend).context.max_tokens).to eq(Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS)
     end
   end
 
@@ -472,5 +529,89 @@ RSpec.describe "lain bench arms" do
       expect(Lain::Arm::Driver).not_to have_received(:new)
       expect(provider.call_count).to eq(0)
     end
+  end
+end
+
+# The OTHER door this file's flag-coverage guard already covers by source (its
+# `record` entries in ArmsCommand::MAPS), and the one nothing drove until now:
+# `:226` proves RECORD_FLAGS' KEYS are all declared flags and that every declared
+# flag is a key or a literal read, but nothing looked at the map's VALUES. Swap
+# `temperature` and `seed`'s targets in it and a `bench record` sweep records the
+# seed as the temperature -- on a bench whose entire claim is repeatability --
+# with the whole suite green. This card rewrote every value in that map (including
+# `provider: :provider_name` -> `provider: :provider`), so the values need a run
+# behind them, not a reading.
+#
+# NOTHING HERE SPENDS MONEY: the entry point is a double, so no Backend#provider
+# call and no key gate is ever reached.
+RSpec.describe "lain bench record" do
+  include ArmsCommand::Invocation
+
+  let(:calls) { [] }
+  let(:entry) { instance_double(Lain::Bench::CLI) }
+
+  before do
+    allow(Lain::Bench::CLI).to receive(:new).and_return(entry)
+    allow(entry).to receive(:record) do |**kwargs|
+      calls << kwargs
+      ["out/1.ndjson"]
+    end
+  end
+
+  def kwargs = calls.last
+
+  # `--provider ollama` deliberately: the assertions read the built Backend's own
+  # Context, and resolving anthropic's model default is the one path that would
+  # want a key.
+  def run_record(*extra)
+    run("record", "task.txt", "--out", "sessions", "--provider", "ollama", *extra)
+  end
+
+  it "builds the Backend from every flag its map forwards, and hands over THAT object" do
+    built = []
+    capture_backends(built)
+
+    run_record("--api-base", "http://localhost:11434", "--model", "qwen3", "--max-tokens", "64",
+               "--temperature", "0.25", "--seed", "99")
+
+    options, instance = built.last
+    expect(options).to include(provider: "ollama", api_base: "http://localhost:11434",
+                               model: "qwen3", max_tokens: 64, temperature: 0.25, seed: 99)
+    expect(kwargs.fetch(:backend)).to be(instance)
+  end
+
+  # The sampler pair through the whole wire rather than at the map: Request#extra
+  # is where a swapped `--temperature`/`--seed` actually lands, and it is what the
+  # recorded session HEADER carries.
+  it "renders the sampler flags into the Context under the names they were typed" do
+    run_record("--model", "qwen3", "--max-tokens", "64", "--temperature", "0.25", "--seed", "99")
+
+    expect(kwargs.fetch(:backend).context.extra).to eq("temperature" => 0.25, "seed" => 99)
+    expect(kwargs.fetch(:backend).context.model).to eq("qwen3")
+  end
+
+  # The three flags the command reads literally rather than through the map, and
+  # the shape of the call itself -- so a flag that stopped being threaded, or a
+  # loose sampler flag that came back beside the Backend, both fail here.
+  it "reads its own three flags literally and passes nothing else" do
+    run_record("-n", "3", "--system", "be terse")
+
+    expect(kwargs).to include(taskfile: "task.txt", out: "sessions", runs: 3, system: "be terse")
+    expect(kwargs.keys.sort).to eq(%i[backend out runs system taskfile])
+  end
+
+  it "defaults the run count and the ceiling to RECORD_DEFAULTS, not to arms' ceiling" do
+    run_record
+
+    expect(kwargs.fetch(:runs)).to eq(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs))
+    expect(kwargs.fetch(:backend).context.max_tokens)
+      .to eq(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
+  end
+
+  it "says the recorded paths, one per line, and nothing on stderr" do
+    result = run_record
+
+    expect(result.stdout).to eq("out/1.ndjson\n")
+    expect(result.stderr).to eq("")
   end
 end

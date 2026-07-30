@@ -2,16 +2,25 @@
 
 # B1 (chunk-bench-arms-subcommand): the LIVE spawn seam -- the sibling of
 # ArmSweep::Recordings#seam, whose provider is replayed from a committed
-# fixture. This one resolves its provider through the SAME Lain::CLI::Backend
-# `bench record` resolves `--provider` through, so a provider name means one
-# thing across every bench command.
+# fixture. This one is HANDED the same Lain::CLI::Backend `bench record` and
+# `lain chat` are handed, so a provider name means one thing across every
+# command and the seam holds no second copy of the flags that built it.
 #
 # Every example here injects a Provider::Mock: the seam's whole point is that it
 # CAN build a money-spending client, so no spec is allowed to let it (the one
 # example that skips the injection names a provider that is refused before any
 # client is built).
 RSpec.describe Lain::Bench::SpawnSeam do
-  subject(:seam) { described_class.new(provider:, toolset:) }
+  subject(:seam) { described_class.new(backend:, provider:, toolset:) }
+
+  # The one object the seam now takes, built the way exe/lain and every other
+  # Backend spec build it: from the flag hash. `max_tokens` is spelled out
+  # because Context requires it (`Integer(nil)` raises) -- the ceiling is the
+  # backend's now, and DEFAULT_MAX_TOKENS is what the `bench arms` flag declares
+  # rather than a second default this seam re-applies.
+  def backend(**options)
+    Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: described_class::DEFAULT_MAX_TOKENS, **options })
+  end
 
   let(:provider) do
     Lain::Provider::Mock.new(
@@ -133,12 +142,12 @@ RSpec.describe Lain::Bench::SpawnSeam do
   # any money is spent.
   describe "the provider name" do
     it "is refused by the CLI backend's own error when it is outside the advertised set" do
-      expect { described_class.new(provider_name: "haiku") }
+      expect { described_class.new(backend: backend(provider: "haiku")) }
         .to raise_error(Lain::CLI::UnknownProvider, /haiku/)
     end
 
     it "names the advertised set in the refusal" do
-      expect { described_class.new(provider_name: "haiku") }
+      expect { described_class.new(backend: backend(provider: "haiku")) }
         .to raise_error(Lain::CLI::UnknownProvider, /#{Regexp.escape(Lain::CLI::Backend::PROVIDERS.inspect)}/)
     end
 
@@ -150,7 +159,8 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # provider was resolved. No key is read, no client is built, nothing spends.
     it "resolves a real provider when none is injected, and is key-gated doing it" do
       with_env("ANTHROPIC_API_KEY" => nil) do
-        expect { described_class.new }.to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY/)
+        expect { described_class.new(backend:) }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY/)
       end
     end
 
@@ -160,7 +170,8 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # so this is the specs' own case -- but it is a real hole in "resolution
     # happens at construction", and a silent one, so it is written down.
     it "is NOT validated when a provider object and a model are both given" do
-      expect { described_class.new(provider:, provider_name: "haiku", model: "qwen3") }.not_to raise_error
+      expect { described_class.new(backend: backend(provider: "haiku", model: "qwen3"), provider:) }
+        .not_to raise_error
     end
   end
 
@@ -169,7 +180,9 @@ RSpec.describe Lain::Bench::SpawnSeam do
   # and the sampler flags reach Request#extra exactly as `bench record`'s do.
   describe "the context" do
     it "carries the resolved model and the sampler flags to every agent" do
-      seam = described_class.new(provider:, provider_name: "ollama", model: "qwen3", temperature: 0, seed: 7)
+      seam = described_class.new(
+        backend: backend(provider: "ollama", model: "qwen3", temperature: 0, seed: 7), provider:
+      )
 
       context = seam.call(journal:).context
 
@@ -185,18 +198,26 @@ RSpec.describe Lain::Bench::SpawnSeam do
     end
 
     it "renders the system prompt it was given rather than the project's slots" do
-      seam = described_class.new(provider:, system: "you are an arm under comparison")
+      seam = described_class.new(backend:, provider:, system: "you are an arm under comparison")
 
       expect(seam.call(journal:).context.system).to eq("you are an arm under comparison")
     end
 
-    it "sizes the answer for a whole file body by default" do
-      expect(seam.call(journal:).context.max_tokens).to eq(described_class::DEFAULT_MAX_TOKENS)
-      expect(described_class::DEFAULT_MAX_TOKENS).to eq(4096)
+    # The ceiling arrives INSIDE the backend, so this is what the seam is still
+    # answerable for: whatever the backend carries is what every agent renders.
+    it "renders the ceiling the backend carries" do
+      seam = described_class.new(backend: backend(max_tokens: 512), provider:)
+
+      expect(seam.call(journal:).context.max_tokens).to eq(512)
     end
 
-    it "takes an explicit ceiling over that default" do
-      expect(described_class.new(provider:, max_tokens: 512).call(journal:).context.max_tokens).to eq(512)
+    # DEFAULT_MAX_TOKENS is no longer a default this seam applies -- it is the
+    # `bench arms` flag's declared one (arms_command_spec pins the declaration to
+    # it). What is still worth asserting is WHY it exists: an arm task answers
+    # with whole file bodies, so its ceiling is not record's one-line echo.
+    it "declares a ceiling sized for a whole file body, larger than record's" do
+      expect(described_class::DEFAULT_MAX_TOKENS).to eq(4096)
+      expect(described_class::DEFAULT_MAX_TOKENS).to be > Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)
     end
   end
 end

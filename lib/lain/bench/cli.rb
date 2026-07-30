@@ -19,12 +19,16 @@ module Lain
       # front beats a transport error n prompts in.
       class MissingAPIKey < Error; end
 
-      # One source for the record defaults: {#record}'s keyword defaults and
-      # exe/lain's method_options both read from here, so the flag help and
-      # the library behavior cannot drift.
-      RECORD_DEFAULTS = {
-        runs: 2, model: Provider::Anthropic::DEFAULT_MODEL, max_tokens: 1024
-      }.freeze
+      # One source for the record defaults, so the flag help and the library
+      # behavior cannot drift. `runs` is {#record}'s own keyword default;
+      # `max_tokens` is the `bench record` FLAG's declared one -- the ceiling now
+      # arrives already resolved, inside the {Lain::CLI::Backend}, so this is what
+      # the command declares rather than a second default {#record} re-applies.
+      #
+      # There is no `model` here on purpose: `--model` is declared with no default
+      # so that {Lain::CLI::Backend} can resolve the SELECTED provider's own, and
+      # a copy of anthropic's answer sitting in this hash was read by nothing.
+      RECORD_DEFAULTS = { runs: 2, max_tokens: 1024 }.freeze
 
       # The three-section {Variance} report over recorded session files.
       #
@@ -132,9 +136,7 @@ module Lain
       #
       # THIS SPENDS REAL API MONEY per run: every arm asks a real provider once
       # per task, and the dual-ledger arm asks up to {Arm::DualLedger::DEFAULT_MAX_STEPS}
-      # times. `provider:` is the injected Provider OBJECT specs pass;
-      # `provider_name:` is the `--provider` FLAG -- {SpawnSeam} keeps that split
-      # for the same reason {#record} does.
+      # times.
       #
       # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none" --
       # see {#arm_report} for what that distinction buys and {#lease_options} for
@@ -142,6 +144,8 @@ module Lain
       # against that, and {#lease_options} says why.
       #
       # @param fixture_path [String] the committed {ArmTasks} suite the arms run
+      # @param backend [Lain::CLI::Backend] the resolved provider-and-Context
+      #   seam the flags built, forwarded whole to {SpawnSeam}
       # @param isolation [String, nil] the `--isolation` name; nil keeps
       #   {Arm::Driver}'s own default
       # @param journal [#<<, nil] where the resolved backend's
@@ -150,19 +154,19 @@ module Lain
       #   {LiveArms::DEFAULT_DECOMPOSE} for why the arm's own default is wrong here
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam} (`provider:`,
-      #   `provider_name:`, `model:`, `max_tokens:`, `temperature:`, `seed:`,
-      #   `system:`, `api_base:`, `toolset:`); ITS signature owns those defaults
+      #   `system:`, `toolset:`); ITS signature owns those defaults
       # @return [String] the Driver's report; never printed here
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
       # @raise [ArmTasks::MissingFixture] when the suite path is not there
       # @raise [Lain::CLI::UnknownProvider] on a provider name outside the set
       # @raise [Lain::CLI::IsolationBackend::Unknown] on an isolation name outside it
-      def arms_report(fixture_path:, isolation: nil, journal: nil, decompose: LiveArms::DEFAULT_DECOMPOSE,
+      def arms_report(fixture_path:, backend:, isolation: nil, journal: nil,
+                      decompose: LiveArms::DEFAULT_DECOMPOSE,
                       price_book: PriceBook.default, **spawn_options)
         suite = ArmTasks.new(fixture_path:)
         arm_report(LiveArms.build(price_book:, decompose:),
-                   tasks: suite.map(&:prompt), spawn_seam: SpawnSeam.new(**spawn_options),
+                   tasks: suite.map(&:prompt), spawn_seam: SpawnSeam.new(backend:, **spawn_options),
                    grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
       end
 
@@ -174,31 +178,35 @@ module Lain
       # need none, and an empty Toolset keeps the recorded schema trivial.
       # Tool-bearing task files are future work.
       #
-      # Provider and Context resolve through the SAME {Lain::CLI::Backend} the
-      # chat path uses, so `--provider`/`--temperature`/`--seed` mean one thing
-      # across commands and an unknown provider name raises the one
-      # {Lain::CLI::UnknownProvider} from either. `model` defaults to the selected
-      # provider's own default (nil here, resolved in Backend); the sampler flags
-      # ride the Context into Request#extra, and the recorded HEADER carries them.
+      # Provider and Context come from the SAME {Lain::CLI::Backend} the chat path
+      # is handed, so `--provider`/`--temperature`/`--seed` mean one thing across
+      # commands and an unknown provider name raises the one
+      # {Lain::CLI::UnknownProvider} from either. The sampler flags ride the
+      # Context into Request#extra, and the recorded HEADER carries them.
       #
-      # `provider_name` is the `--provider` FLAG; `provider` is the injected
-      # Provider OBJECT the specs pass (nil resolves the real, money-gated
-      # recording client). Two distinct seams: a name to resolve, and an object
-      # to stub.
+      # ONE OBJECT, NOT SIX FLAGS -- {Lain::CLI::ChatLaunch}'s shape. A sweep
+      # assembled from loose flags is a sweep where two runs can differ by one
+      # nobody threaded, and on a bench the record IS the deliverable.
       #
-      # @param provider [Lain::Provider, nil] injected in specs; nil resolves the
-      #   real recording provider (Anthropic is key-gated; ollama/bedrock come
-      #   from {Lain::CLI::Backend})
+      # TWO SEAMS, ONE WORD, ONE NESTING LEVEL APART -- and that is worse than the
+      # `provider_name`/`provider` pair it replaced, so it is written down rather
+      # than left to be re-derived: `provider:` HERE is the injected Provider
+      # OBJECT (nil asks the backend for the real, money-gated one), while the
+      # backend's own `:provider` OPTION is the `--provider` NAME to resolve. A
+      # spec reads `record(backend: Backend.new({provider: "gemini"}), provider:)`
+      # on one line, and both are correct.
+      #
+      # @param backend [Lain::CLI::Backend] the resolved provider-and-Context seam
+      # @param system [String, nil] `--system`, rendered INSTEAD of the project's
+      #   prompt slots and attributed as such
+      # @param provider [Lain::Provider, nil] injected in specs; nil asks the
+      #   backend for the real recording client, behind the money gate below
       # @return [Array<String>] the written session paths, in run order
-      def record(taskfile:, out:, runs: RECORD_DEFAULTS.fetch(:runs),
-                 model: nil, max_tokens: RECORD_DEFAULTS.fetch(:max_tokens),
-                 system: nil, provider_name: "anthropic", api_base: nil,
-                 temperature: nil, seed: nil, provider: nil)
+      def record(taskfile:, out:, backend:, runs: RECORD_DEFAULTS.fetch(:runs),
+                 system: nil, provider: nil)
         runs = check_runs(runs)
         prompts = prompts_from(taskfile)
-        backend = Lain::CLI::Backend.new(provider: provider_name, api_base:, model:,
-                                         max_tokens:, temperature:, seed:)
-        provider ||= resolve_provider(backend, provider_name)
+        provider ||= recording_provider(backend)
         context = backend.context(system_override: system)
         # PS-2 must attribute what ACTUALLY rendered: `--system` renders
         # instead of the slots, and SlotFills.from owns that distinction.
@@ -338,19 +346,20 @@ module Lain
         prompts
       end
 
-      # The recording provider for a KNOWN name. ollama and bedrock come from the
-      # SAME {Lain::CLI::Backend} chat uses; an unknown name never reaches here as
-      # `anthropic`, so it falls to {Lain::CLI::Backend#provider}, whose own guard
-      # raises {Lain::CLI::UnknownProvider} -- one error, both paths. The default
-      # `anthropic` arm is the RAW client (lossless HTTP recording) behind the
-      # money gate: refusing keyless up front beats a transport error n prompts in.
-      def resolve_provider(backend, provider_name)
-        return backend.provider unless provider_name == "anthropic"
-
-        raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it" \
-          if ENV["ANTHROPIC_API_KEY"].to_s.empty?
-
-        Provider::Anthropic.new
+      # The recording client, asked of the ONE backend chat asks -- so every
+      # `--provider` name means the same thing, resolves to the same RAW
+      # (vendored-transport) client a lossless HTTP recording needs, and an
+      # unknown one raises the single {Lain::CLI::UnknownProvider}.
+      #
+      # The keyless refusal is RESTATED, not re-implemented: the backend's own
+      # gate fires first and fires here, but it speaks in the chat's voice
+      # ("--provider anthropic needs it to build a client"). `record` is the
+      # command that spends per run, so the operator hears that instead -- one
+      # gate, two audiences, and the sentence a paid sweep deserves.
+      def recording_provider(backend)
+        backend.provider
+      rescue Lain::CLI::Backend::MissingAPIKey
+        raise MissingAPIKey, "bench record calls the real API and spends money; set ANTHROPIC_API_KEY to run it"
       end
 
       # Grades a run against THE TASK IT WAS GIVEN. {Arm::Driver} threads ONE

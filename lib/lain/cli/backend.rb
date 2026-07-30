@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "backend/ceiling"
 require_relative "backend/summarizer"
 require_relative "backend/span_summarizer"
 
@@ -178,12 +179,12 @@ module Lain
       # Non-positive is refused rather than measured, the shape
       # {Compaction.validate_keep_last} uses for its own knob -- a separate rule
       # and a separate error, because this is a different number with a different
-      # failure (see {InvalidCeiling} for what stays silent otherwise).
+      # failure (see {InvalidCeiling} for what stays silent otherwise). Both
+      # ceiling flags reach it through {Ceiling}, so there is one place either
+      # can go wrong.
       def summarizer_max_tokens
-        ceiling = Integer(knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS))
-        raise InvalidCeiling, "--summarizer-max-tokens must be positive, got #{ceiling}" unless ceiling.positive?
-
-        ceiling
+        Ceiling.new(flag: "--summarizer-max-tokens",
+                    value: knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS)).tokens
       end
 
       # Where this run's records land. Bound by the first {#pipeline_source}
@@ -198,7 +199,7 @@ module Lain
       # prompt renders from the loaded {#slots} unless a caller overrides it --
       # bench record's `--system` flag is the one caller that does.
       def context(system_override: nil)
-        Context.new(model:, max_tokens: @options[:max_tokens], extra: sampler_extra,
+        Context.new(model:, max_tokens:, extra: sampler_extra,
                     system: system_override || slots.render)
       end
 
@@ -332,6 +333,12 @@ module Lain
       # `--model` resolved once, so {#context} and the compaction book agree
       # about which model this run is.
       def model = @options[:model] || default_model(provider_name)
+
+      # `--max-tokens`, through the same {Ceiling} the summarizer tier's flag goes
+      # through. Unlike {#model} there is NO default to fall back to here: every
+      # command that renders a Context declares the flag with a Thor default, so a
+      # nil means a caller assembled this Backend by hand and left it out.
+      def max_tokens = Ceiling.new(flag: "--max-tokens", value: @options[:max_tokens]).tokens
 
       # The context window is NOT resolved here: the Source derives it from the
       # live Context every turn, so a `/model` switch mid-session moves the

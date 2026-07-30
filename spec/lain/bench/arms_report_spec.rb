@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# B2 (chunk-bench-arms-subcommand): the assembling entry point `bench arms` will
-# sit on. It takes PLAIN VALUES -- a fixture path, the provider flags, an
-# optional isolation NAME -- assembles the arms, the ArmTasks suite, that
-# suite's per-task gold grader and the live SpawnSeam, and hands all four to
-# #arm_report, returning the report String. exe/lain therefore stays a flag
-# parser (its boundary rule at exe/lain:80-85).
+# B2 (chunk-bench-arms-subcommand): the assembling entry point `bench arms`
+# sits on. It takes a fixture path, the ONE resolved Lain::CLI::Backend the flags
+# built, and an optional isolation NAME -- assembles the arms, the ArmTasks
+# suite, that suite's per-task gold grader and the live SpawnSeam, and hands all
+# four to #arm_report, returning the report String. exe/lain therefore stays a
+# flag parser (its boundary rule at exe/lain:80-85).
 #
 # Every example here is driven through Provider::Mock: this entry point spends
 # real money in production, so its specs must never resolve a live provider.
@@ -45,7 +45,17 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
-  def arms_report(**) = cli.arms_report(fixture_path:, provider:, **)
+  # The backend the flags build, spelled the way exe/lain and every other Backend
+  # spec spell it. `max_tokens` is explicit because Context requires it
+  # (`Integer(nil)` raises), and the number is the `bench arms` flag's own
+  # declared default.
+  def backend(**options)
+    Lain::CLI::Backend.new(
+      { provider: "anthropic", max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS, **options }
+    )
+  end
+
+  def arms_report(**) = cli.arms_report(fixture_path:, backend:, provider:, **)
 
   # The Driver renders one titled table per metric, blank-line separated.
   def score_section(report) = report.split("\n\n").find { |section| section.start_with?("grader score") }
@@ -169,7 +179,7 @@ RSpec.describe Lain::Bench::CLI do
     # The suite fixture is user-supplied (B3 passes a path), and ArmTasks owns
     # what a missing one means -- one authority on "what a bench task is".
     it "surfaces ArmTasks' own error for a fixture path that is not there" do
-      expect { cli.arms_report(fixture_path: "no/such/tasks.yml", provider:) }
+      expect { cli.arms_report(fixture_path: "no/such/tasks.yml", backend:, provider:) }
         .to raise_error(Lain::Bench::ArmTasks::MissingFixture, %r{no/such/tasks\.yml})
     end
 
@@ -177,7 +187,7 @@ RSpec.describe Lain::Bench::CLI do
     # an unknown --provider raises the one Lain::CLI error every bench command
     # raises, at assembly, before an arm runs.
     it "resolves the provider through the one backend every bench command uses" do
-      expect { cli.arms_report(fixture_path:, provider_name: "gpt5") }
+      expect { cli.arms_report(fixture_path:, backend: backend(provider: "gpt5")) }
         .to raise_error(Lain::CLI::UnknownProvider, /gpt5/)
     end
 
@@ -186,7 +196,9 @@ RSpec.describe Lain::Bench::CLI do
     # reproducibility hole on a bench whose whole claim is repeatability. The
     # Request the provider was actually handed is the end of that wire.
     it "carries every sampler flag in the tail through to the provider" do
-      arms_report(model: "claude-haiku-4-5", max_tokens: 321, temperature: 0.25, seed: 99)
+      cli.arms_report(fixture_path:, provider:,
+                      backend: backend(model: "claude-haiku-4-5", max_tokens: 321,
+                                       temperature: 0.25, seed: 99))
 
       request = provider.last_request
       expect(request.model).to eq("claude-haiku-4-5")
@@ -263,7 +275,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir("lain-arm-tasks") do |dir|
         path = write_fixture(dir, ["do the thing", "do the thing"])
 
-        expect { cli.arms_report(fixture_path: path, provider:) }
+        expect { cli.arms_report(fixture_path: path, backend:, provider:) }
           .to raise_error(described_class::Refusal, /task-0.*task-1|task-1.*task-0/m)
         expect(provider.call_count).to eq(0)
       end
@@ -273,7 +285,7 @@ RSpec.describe Lain::Bench::CLI do
       Dir.mktmpdir("lain-arm-tasks") do |dir|
         path = write_fixture(dir, ["do the thing", "do the other thing"])
 
-        expect(cli.arms_report(fixture_path: path, provider:)).to include("3 arms over 2 tasks")
+        expect(cli.arms_report(fixture_path: path, backend:, provider:)).to include("3 arms over 2 tasks")
       end
     end
 

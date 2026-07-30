@@ -3,24 +3,31 @@
 module Lain
   module Bench
     # The LIVE spawn seam: the `call(journal:, **spawn_opts) -> Agent` duck every
-    # {Arm} drives (see {Lain::Arm#run}), built from the SAME backend flags
-    # `bench record` understands. It is the sibling of
-    # {ArmSweep::Recordings#seam}, which answers the same duck over a provider
-    # replayed from a committed fixture; this one resolves a real provider
-    # through {Lain::CLI::Backend}, so `--provider`/`--model`/`--temperature`/
-    # `--seed` mean one thing across every bench command and an unknown name
-    # raises the one {Lain::CLI::UnknownProvider} from all of them.
+    # {Arm} drives (see {Lain::Arm#run}), built from the SAME
+    # {Lain::CLI::Backend} `bench record` and `lain chat` are built from. It is
+    # the sibling of {ArmSweep::Recordings#seam}, which answers the same duck
+    # over a provider replayed from a committed fixture; this one asks a real
+    # backend, so `--provider`/`--model`/`--temperature`/`--seed` mean one thing
+    # across every command and an unknown name raises the one
+    # {Lain::CLI::UnknownProvider} from all of them.
+    #
+    # ONE OBJECT, NOT SIX FLAGS. The backend arrives resolved, so this seam holds
+    # no second copy of the flag set and two arms cannot differ by a flag nobody
+    # threaded -- the same single-argument shape {Lain::CLI::ChatLaunch} uses.
+    #
+    # TWO SEAMS, ONE WORD, ONE NESTING LEVEL APART. `provider:` here is the
+    # injected Provider OBJECT a spec passes; the backend's own `:provider` OPTION
+    # is the `--provider` NAME to resolve. The old `provider_name`/`provider`
+    # spelling made that obvious and the shared word does not, so a spec reads
+    # `new(backend: Backend.new({provider: "haiku", ...}), provider:)` with both
+    # correct. The reason for the split is unchanged: the specs of a
+    # money-spending seam must never resolve a real client.
     #
     # A FRESH AGENT PER CALL, one provider and one Context for all of them. The
     # Agent is run state (a Timeline, a Session, a loop position) and an arm
     # spawns several; the provider is a client, and the Context is a frozen
     # value whose whole point is that every agent renders the same prefix -- a
     # per-call Context would break prompt-cache stability for no gain.
-    #
-    # `provider_name` is the `--provider` FLAG; `provider` is the injected
-    # Provider OBJECT a spec passes -- {Bench::CLI#record}'s name-to-resolve /
-    # object-to-inject split, kept here for the same reason: the specs of a
-    # money-spending seam must never resolve one.
     #
     # RESOLUTION HAPPENS AT CONSTRUCTION, not at the first spawn. An unknown
     # provider name and a missing API key are both refusals the operator should
@@ -31,8 +38,8 @@ module Lain
     # flag eagerly with "`--provider` refuses on every run because `#provider`
     # always runs"; this is the first caller for which that premise is false,
     # since an injected `provider` short-circuits `#provider` and an explicit
-    # `model` short-circuits the model default that would otherwise validate it.
-    # Inject both and a nonsense `provider_name` is simply unused. A spec pins
+    # `--model` short-circuits the model default that would otherwise validate
+    # it. Inject both and a nonsense `--provider` is simply unused. A spec pins
     # that hole rather than describing it.
     #
     # Two names in this namespace do not mean what they look like: `CLI` alone
@@ -44,18 +51,25 @@ module Lain
       # ends the run as a `:max_tokens` failure rather than a short answer. So
       # this is deliberately larger than {CLI::RECORD_DEFAULTS}' 1024 rather
       # than shared with it: two commands, two answer shapes.
+      #
+      # The ceiling itself now rides in on the backend, so this is what
+      # `bench arms` DECLARES its `--max-tokens` default to be -- one number, in
+      # the namespace whose answer shape justifies it, rather than a second
+      # default re-applied here for a caller who already resolved one.
       DEFAULT_MAX_TOKENS = 4096
 
+      # @param backend [Lain::CLI::Backend] the resolved provider-and-Context
+      #   seam the flags built; the ONE argument, so nothing here can hold a
+      #   stale copy of a flag
       # @param provider [Lain::Provider, nil] injected in specs; nil resolves the
       #   real client (key-gated for anthropic by {Lain::CLI::Backend} itself)
       # @param toolset [Lain::Toolset] the capabilities every spawned agent gets
-      # @param provider_name [String] the `--provider` flag
+      # @param system [String, nil] `--system`, rendered INSTEAD of the project's
+      #   prompt slots -- the one thing the backend does not read from its own
+      #   options ({Lain::CLI::Backend#context} takes it as an override)
       # @raise [Lain::CLI::UnknownProvider] on a name outside the advertised set
       # @raise [Lain::CLI::Backend::MissingAPIKey] resolving anthropic keyless
-      def initialize(provider: nil, toolset: Toolset.new([]), provider_name: "anthropic", api_base: nil,
-                     model: nil, max_tokens: DEFAULT_MAX_TOKENS, system: nil, temperature: nil, seed: nil)
-        backend = Lain::CLI::Backend.new(provider: provider_name, api_base:, model:, max_tokens:,
-                                         temperature:, seed:)
+      def initialize(backend:, provider: nil, toolset: Toolset.new([]), system: nil)
         @provider = provider || backend.provider
         @context = backend.context(system_override: system)
         @toolset = toolset

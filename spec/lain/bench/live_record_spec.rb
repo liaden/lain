@@ -13,11 +13,11 @@ RSpec.describe "lain bench record, live", :live do
       File.write(taskfile, "Reply with the single word: pong\n")
       out = File.join(tmp, "sessions")
 
-      # No model: override -- the run exercises RECORD_DEFAULTS' own model,
-      # the same one the exe flag defaults to.
+      # No model: in the backend options -- the run exercises the anthropic
+      # provider's own default, the same one the exe flag falls through to.
       cli = Lain::Bench::CLI.new
-      paths = cli.record(taskfile:, runs: 2, out:,
-                         max_tokens: 64, system: "Reply with one word.")
+      backend = Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 })
+      paths = cli.record(taskfile:, runs: 2, out:, backend:, system: "Reply with one word.")
 
       expect(paths.size).to eq(2)
       recordings = paths.map { |path| Lain::Bench::Session.load(path) }

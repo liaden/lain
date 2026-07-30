@@ -139,17 +139,25 @@ class LainCLI < Thor
     method_option :api_base, type: :string, desc: "Override the Ollama API base (ollama provider only)"
     method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
     method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
-    # Flag name → Bench::CLI#record keyword. One declarative map, so adding a
-    # sampler flag is one line here and one method_option above.
-    RECORD_FLAGS = { n: :runs, out: :out, model: :model, max_tokens: :max_tokens,
-                     system: :system, provider: :provider_name, api_base: :api_base,
-                     temperature: :temperature, seed: :seed }.freeze
+    # Flag name → Lain::CLI::Backend option. One declarative map, so adding a
+    # sampler flag is one line here and one method_option above. The BACKEND is
+    # what Bench::CLI#record now takes -- the chat path's own single-argument
+    # shape (Lain::CLI::ChatLaunch#call) -- so these are the flags that build it,
+    # and record's remaining three (`--n`, `--out`, `--system`) are read below.
+    RECORD_FLAGS = { model: :model, max_tokens: :max_tokens, provider: :provider,
+                     api_base: :api_base, temperature: :temperature, seed: :seed }.freeze
 
+    # One `say` of the newline-joined paths, through the SAME Boundary#render
+    # every other bench subcommand sits on -- byte-identical to the say-per-path
+    # loop this replaced (Thor appends the one trailing newline), and one fewer
+    # copy of the Lain::Error -> Thor::Error mapping. The Backend is built INSIDE
+    # the block so a refusal from its own construction presents the same way.
     def record(taskfile)
-      kwargs = RECORD_FLAGS.to_h { |flag, keyword| [keyword, options[flag]] }
-      Lain::Bench::CLI.new.record(taskfile:, **kwargs).each { |path| say path }
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
+      render do
+        backend = Lain::CLI::Backend.new(RECORD_FLAGS.to_h { |flag, key| [key, options[flag]] })
+        Lain::Bench::CLI.new.record(taskfile:, backend:, out: options[:out],
+                                    runs: options[:n], system: options[:system]).join("\n")
+      end
     end
 
     desc "plan-sweep", "Shape x density sweep over a fixture plan's scripted runs -- offline, deterministic"
@@ -193,23 +201,33 @@ class LainCLI < Thor
     method_option :journal, type: :string,
                             desc: "NDJSON file this run's isolation lease telemetry is recorded into; " \
                                   "--isolation leases the workers, and refuses without somewhere to record them"
-    # Flag name → Bench::CLI#arms_report keyword, RECORD_FLAGS' shape: one
-    # declarative map, so adding a flag is one line here and one method_option
-    # above. `decompose:` and `price_book:` are absent on purpose -- a lambda and
-    # a price table are injection seams for specs, not things an argv can spell;
-    # `journal:` is absent because the flag is a PATH and the keyword is an open
-    # Journal, and this map forwards values verbatim (a String answers `<<` by
-    # appending to itself, so a raw path would reach the resolver and quietly
-    # collect the telemetry in a local variable).
-    ARMS_FLAGS = { provider: :provider_name, api_base: :api_base, model: :model,
-                   max_tokens: :max_tokens, system: :system, temperature: :temperature,
-                   seed: :seed, isolation: :isolation }.freeze
+    # Flag name → Lain::CLI::Backend option, RECORD_FLAGS' shape: one declarative
+    # map, so adding a sampler flag is one line here and one method_option above.
+    # Bench::CLI#arms_report takes the BACKEND these build, not the flags -- the
+    # chat path's single-argument shape -- so the three that are NOT the backend's
+    # are read literally below: `--system` (an override Backend#context takes
+    # rather than an option it reads), `--isolation` (a name for a different
+    # resolver), and `--journal` (a PATH here, an open Journal there; a String
+    # answers `<<` by appending to itself, so forwarding one verbatim would
+    # quietly collect the telemetry in a local variable).
+    #
+    # `decompose:` and `price_book:` are absent for their own reason -- a lambda
+    # and a price table are injection seams for specs, not things an argv spells.
+    ARMS_FLAGS = { provider: :provider, api_base: :api_base, model: :model,
+                   max_tokens: :max_tokens, temperature: :temperature, seed: :seed }.freeze
 
+    # The Backend is built INSIDE `render`, as `record` does: a refusal from its
+    # own construction is a Lain::Error like any other, and outside the block
+    # nothing would map it to Thor's contract. The `ensure` below tolerates a
+    # raise from either side of `lease_journal`.
     def arms(fixture)
       refuse_journal_without_isolation!
-      kwargs = ARMS_FLAGS.to_h { |flag, keyword| [keyword, options[flag]] }
       journal = lease_journal
-      render { Lain::Bench::CLI.new.arms_report(fixture_path: fixture, journal:, **kwargs) }
+      render do
+        backend = Lain::CLI::Backend.new(ARMS_FLAGS.to_h { |flag, key| [key, options[flag]] })
+        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend:, journal:,
+                                         system: options[:system], isolation: options[:isolation])
+      end
     ensure
       # Closing is what discards a journal this run created and never wrote to,
       # so a refusal leaves no zero-byte artifact -- the rule the chat path keeps.
