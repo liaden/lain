@@ -25,8 +25,7 @@ module Lain
       # the gate) -- then builds the switches over it, reading the surface
       # flags (`--yolo`, `--auto-approve`) off the CLI options itself.
       def self.for(chronicle:, options:, model:)
-        journal = chronicle.telemetry_kwargs.fetch(:journal) { Journal.new(io: File.open(File::NULL, "ab")) }
-        new(journal:, model:, yolo: options[:yolo])
+        new(journal: chronicle.record_journal, model:, yolo: options[:yolo])
       end
 
       # @param journal [#record] where flips and approval decisions land

@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "json"
+require "stringio"
+
 # Stands in for the eager tier's local model (A8 wires an Ollama-backed
 # {Lain::Oracle::Model}), answering the REAL {Lain::Oracle::Summarize}
 # definition so the schema, the Promise, and `#summary` are the production ones
@@ -107,6 +110,29 @@ RSpec.describe Lain::CLI::Wiring do
       agent.ask("second turn")
 
       expect(agent.toolset).to equal(toolset_before)
+    end
+
+    # The chat's per-turn durability belt: {Lain::Middleware::JournalTurns} in
+    # the turn phase, so every committed turn is on disk before the NEXT model
+    # call. It reaches the Agent only through the run's one
+    # {Lain::Agent::Instrumentation}, and T22's mutation run found that dropping
+    # it there left this whole file green -- every other example builds over
+    # Chronicle::Null, whose turn phase is empty either way, so "empty" proved
+    # nothing. This one records.
+    it "wires the chronicle's per-turn durability middleware, so each ask lands its turns on disk" do
+      io = StringIO.new
+      recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
+      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recorder, session = recording_wiring.run_state(nil)
+      agent = recording_wiring.wire_agent(channel:, recorder:, session:, backend:)
+
+      agent.ask("ping")
+
+      turns = io.string.each_line.map { |line| JSON.parse(line) }.select { |record| record["type"] == "turn" }
+      # Two turns really landed (user + assistant), so the equality below is a
+      # record agreeing with a conversation and not two empty lists agreeing.
+      expect(turns.size).to eq(2)
+      expect(turns.map { |record| record["digest"] }).to eq(agent.timeline.to_a.map(&:digest))
     end
 
     # T12 AC1: no --auto-approve, no third surface -- unchanged wiring.
@@ -441,8 +467,17 @@ RSpec.describe Lain::CLI::Wiring do
     # Read off the Agent rather than re-asked of the Backend: `#pipeline_source`
     # binds its journal on the FIRST call and now refuses a differing second
     # one, so a spec that re-asked with different arguments would be exercising
-    # a wiring the run never performs.
-    def source_of(agent) = agent.instance_variable_get(:@pipeline_source)
+    # a wiring the run never performs. Through the Agent's one
+    # {Lain::Agent::Instrumentation} since T22 -- `fetch`, not `dig`, so a
+    # renamed ivar is a KeyError here and never a silent nil.
+    def source_of(agent) = instrumentation_of(agent).pipeline_source
+
+    def instrumentation_of(agent)
+      agent.instance_variables.include?(:@instrumentation) or
+        raise KeyError, "the Agent no longer carries @instrumentation: this seam needs updating"
+
+      agent.instance_variable_get(:@instrumentation)
+    end
 
     def decisions = journal.events.grep(Lain::Compaction::Source::CompactionDecision)
 
@@ -752,6 +787,49 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       expect(seen).to eq([run_clock])
+    end
+
+    # {Lain::CLI::Wiring#goal_journal} (wiring.rb:334) resolves the standing-goal
+    # driver's destination through {Lain::CLI::Chronicle#record_journal}. Nothing
+    # asserted it: replacing the resolution with a fresh /dev/null Journal left
+    # the ENTIRE suite green (T22's M26), because every other example here runs
+    # over Chronicle::Null, whose record_journal IS a discard -- so a discard
+    # substituted for a discard changed nothing observable anywhere. This one
+    # records, and drives the real driver the run wired.
+    context "with a recording chronicle" do
+      let(:journal_io) { StringIO.new }
+      let(:chronicle) do
+        Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io),
+                                 journal_path: "wiring-spec-goal.ndjson")
+      end
+
+      def settled_with(text)
+        Lain::Timeline.empty.commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                      .commit(role: :assistant, content: [{ "type" => "text", "text" => text }])
+      end
+
+      # `run_wiring` inlined for one reason: it closes the conductor, and
+      # {Lain::CLI::Conductor#close} closes the session record. The driver has to
+      # write while the record is still open, so the close moves BELOW the drive.
+      it "wires the standing-goal driver over the run's own journal, not a discard" do
+        Dir.mktmpdir do |dir|
+          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                       tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+
+          driver = wiring.command_surface.goal_driver
+          driver.start("ship it")
+          driver.poll(settled_with("working on it"))
+          wiring.conductor.close(reason: :exit)
+        end
+
+        records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+        # The run really opened a record, so the selection below is a search
+        # through a populated file rather than two empty lists agreeing.
+        expect(records.map { |record| record["type"] }).to include("session")
+        expect(records.select { |record| record["type"] == "goal_iteration" }.map { |record| record["goal"] })
+          .to eq(["ship it"])
+      end
     end
 
     it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired" do

@@ -236,9 +236,7 @@ module Lain
         agent = nil
         Lain::Agent.new(toolset:, context: board.graft(backend.context), handler: gate, session:, timeline:,
                         request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
-                        tool_middleware: ToolGuard.stack(chronicle),
-                        turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
-                        **agent_backing(backend, channel)).tap { |built| agent = built }
+                        **agent_backing(backend, channel, -> { agent.timeline })).tap { |built| agent = built }
       end
 
       # A8: the provider, and the compaction wiring hung off it -- the per-turn
@@ -255,9 +253,11 @@ module Lain
       # rebind ({Backend::Rebound}); the mount itself is a pure assembler over
       # those, so a memo here would only add a second place for a stale
       # collaborator to hide.
-      def agent_backing(backend, channel)
+      def agent_backing(backend, channel, timeline)
         provider = spooled_provider(backend, channel:)
-        { provider:, **CompactionMount.new(backend:, provider:, chronicle:, channel:).agent_kwargs }
+        mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
+        { provider:, instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle),
+                                                                 turn_middleware: chronicle.turn_middleware(timeline)) }
       end
 
       # Both provider construction sites tee their round trips into the
@@ -326,12 +326,12 @@ module Lain
       # --no-journal, the same resolution the Switchboard uses.
       def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
 
-      # Resolved INSIDE the memo, not above it: the fallback OPENS /dev/null,
-      # so hoisting it out (as this did until T15's review caught it) leaks one
-      # File per extra #goal_driver call -- opened, discarded unread, never
-      # closed. Two readers poll the driver, so that was a real leak, not a
-      # hypothetical one.
-      def goal_journal = chronicle.telemetry_kwargs.fetch(:journal) { Journal.new(io: File.open(File::NULL, "ab")) }
+      # Asked INSIDE the memo, not above it: under --no-journal the answer OPENS
+      # /dev/null ({Chronicle::Null#record_journal}), so hoisting this out (as it
+      # was until T15's review caught it) leaks one File per extra #goal_driver
+      # call -- opened, discarded unread, never closed. Two readers poll the
+      # driver, so that was a real leak, not a hypothetical one.
+      def goal_journal = chronicle.record_journal
 
       # Both OBSERVABLE halves of "do not drive while the fleet is unquiet": a
       # parked approval, and a human question waiting for an answer. The inbox

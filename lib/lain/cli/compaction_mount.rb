@@ -41,16 +41,17 @@ module Lain
         @backend = backend
         @provider = provider
         @channel = channel
-        @telemetry = chronicle.telemetry_kwargs
+        @telemetry = chronicle.instrumentation
       end
 
-      # The chronicle's telemetry keywords with compaction folded in: the same
-      # `model_middleware`, a `journal` that also feeds the source, and the two
-      # collaborators {Agent} defaults to Nulls.
+      # The chronicle's own {Agent::Instrumentation} with compaction folded in:
+      # the same `model_middleware`, a `journal` that also feeds the source, and
+      # the two members the chronicle left at their Nulls. `#with`, not a fresh
+      # value, because what the RECORD needs must survive what compaction adds.
       #
-      # @return [Hash] keywords for `Agent.new`
-      def agent_kwargs
-        @telemetry.merge(journal: fed_journal, pipeline_source: source, tool_observer: @backend.tool_observer)
+      # @return [Lain::Agent::Instrumentation] the value `Agent.new` takes
+      def instrumentation
+        @telemetry.with(journal: fed_journal, pipeline_source: source, tool_observer: @backend.tool_observer)
       end
 
       private
@@ -61,9 +62,9 @@ module Lain
       def fed_journal = JournalTee.new(destination, *sinks)
 
       # Where the chronicle puts turn_usage: the session journal, the --nvim
-      # tee, or -- under --no-journal, which passes no `journal:` at all -- the
-      # same Null channel {Agent} would have defaulted to.
-      def destination = @telemetry.fetch(:journal) { Channel::Null.instance }
+      # tee, or -- under --no-journal -- the Null channel its instrumentation
+      # carries, which is the same one {Agent} would have defaulted to.
+      def destination = @telemetry.journal
 
       # `--no-compact` leaves {Agent::PipelineSource::Null} in place, and that
       # is a render strategy, not a sink; teeing it would turn every journaled

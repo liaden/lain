@@ -143,7 +143,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
 
             chronicle = instance.chronicle
             chronicle.start(context:, toolset: Lain::Toolset.new)
-            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+            chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
               digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
             )
             chronicle.close
@@ -171,7 +171,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
 
             chronicle = instance.chronicle
             chronicle.start(context:, toolset: Lain::Toolset.new)
-            chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+            chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
               digest: "blake3:t1", model: nil, stop_reason: :end_turn,
               usage: { "cache_read_input_tokens" => 10 }
             )

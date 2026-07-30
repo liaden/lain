@@ -55,6 +55,70 @@ RSpec.describe Lain::Agent::Collaborators do
     end
   end
 
+  # T22: the four ingredient keywords that are also {Lain::Agent::Instrumentation}
+  # members -- `model_middleware`, `tool_middleware`, `tool_observer`, `journal`
+  # -- take their DEFAULTS from that value now, so a run has one statement of
+  # what it reports through. Pinned HERE and not only through the Agent: the
+  # parameter is this object's public seam.
+  describe "the instrumentation a default-built collaborator reports through" do
+    let(:journal) { RecordingChannel.new }
+
+    def instrumented(**)
+      Lain::Agent::Instrumentation.new(**)
+    end
+
+    it "supplies the built ToolRunner's middleware phase" do
+      phase = Lain::Middleware::Stack.new([Lain::Middleware::Identity])
+      resolved = resolve(provider:, instrumentation: instrumented(tool_middleware: phase))
+
+      expect(resolved.tool_runner.instance_variable_get(:@middleware)).to be(phase)
+    end
+
+    it "supplies the built ToolRunner's post-dispatch observer" do
+      observer = Lain::Agent::ToolRunner::Observer::Null.new
+      resolved = resolve(provider:, instrumentation: instrumented(tool_observer: observer))
+
+      expect(resolved.tool_runner.instance_variable_get(:@observer)).to be(observer)
+    end
+
+    it "supplies the built ModelCaller's middleware phase" do
+      phase = Lain::Middleware::Stack.new([Lain::Middleware::Identity])
+      resolved = resolve(provider:, instrumentation: instrumented(model_middleware: phase))
+
+      expect(resolved.model_caller.instance_variable_get(:@middleware)).to be(phase)
+    end
+
+    it "supplies the built Accounting's journal, so a turn's usage lands where the run reports" do
+      resolved = resolve(provider:, instrumentation: instrumented(journal:))
+      resolved.accounting.observe(Lain::Response.new(content: [], stop_reason: :end_turn), digest: "d")
+
+      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::TurnUsage])
+    end
+
+    # The `@given.fetch(...) { @instrumentation... }` shape, and the reason it is
+    # a fetch rather than a straight read: {Lain::Agent} builds the value FROM
+    # these keywords so the two always agree there, but a caller resolving
+    # collaborators DIRECTLY may write one without ever building a value --
+    # which is exactly what the ingredient-style examples above this do.
+    it "yields to a legacy keyword written beside it, which a direct caller may still do" do
+      written = RecordingChannel.new
+      resolved = resolve(provider:, journal: written, instrumentation: instrumented(journal:))
+      resolved.accounting.observe(Lain::Response.new(content: [], stop_reason: :end_turn), digest: "d")
+
+      expect(written.events.size).to eq(1)
+      expect(journal.events).to be_empty
+    end
+
+    # The default is the all-Null value, so an ingredient-style resolution with
+    # no instrumentation behaves exactly as it did before the parameter existed.
+    it "defaults to the all-Null value, which reports nowhere" do
+      resolved = resolve(provider:)
+
+      expect(resolved.tool_runner.instance_variable_get(:@middleware).to_a).to be_empty
+      expect(resolved.accounting.instance_variable_get(:@journal)).to be(Lain::Channel::Null.instance)
+    end
+  end
+
   # The clash rule is PER collaborator, so the two styles compose: an injected
   # ToolRunner beside a `provider:` says nothing contradictory. `toolset:` is
   # shared besides -- the Agent renders it and the ToolRunner harvests answered

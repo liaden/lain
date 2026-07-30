@@ -139,10 +139,23 @@ RSpec.describe LainCLI do
   # wiring examples moved). Wiring drives the assembly seams over the Null
   # duck, so build_toolset/build_agent record nothing here.
   describe "the chronicle seam" do
+    # `@instrumentation` is fetched, not read with a bare instance_variable_get:
+    # this assertion was `@turn_middleware.to_a == []` before T22, and `nil.to_a`
+    # is `[]` -- so it passed unchanged after the ivar it names stopped existing.
+    # An empty expectation has to prove it measured something first.
     it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
       agent = wiring.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
                                         backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
-      expect(agent.instance_variable_get(:@turn_middleware).to_a).to eq([])
+      agent.instance_variables.include?(:@instrumentation) or
+        raise KeyError, "the Agent no longer carries @instrumentation: this seam needs updating"
+      instrumentation = agent.instance_variable_get(:@instrumentation)
+
+      expect(instrumentation).to be_a(Lain::Agent::Instrumentation)
+      expect(instrumentation.turn_middleware.to_a).to eq([])
+      # The tool phase over the SAME chronicle is NOT empty, so "empty" above is
+      # a reading of the Null chronicle and not of an unwired instrumentation.
+      expect(instrumentation.tool_middleware.to_a.map(&:class))
+        .to eq([Lain::Middleware::RefuseSecretWrites])
     end
   end
 

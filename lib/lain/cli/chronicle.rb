@@ -32,7 +32,12 @@ module Lain
         def wrap_session(session) = session
         def wrap_memory(recorder) = recorder
         def turn_middleware(_timeline) = Middleware::Stack.new
-        def telemetry_kwargs = Chronicle.telemetry_kwargs(@tee)
+        def instrumentation = Chronicle.instrumentation(@tee)
+
+        # No record was ever opened, so there is no journal to hand a switch --
+        # and {Channel::Null} is not one (it answers `#<<`, not `#record`). The
+        # null device is the honest answer: the same duck, discarding.
+        def record_journal = @tee || Journal.new(io: File.open(File::NULL, "ab"))
         def catch_up(_timeline) = self
         def rewound(**) = self
         def interrupted(**) = self
@@ -117,15 +122,19 @@ module Lain
           new(journal: Journal.open(path, fsync: true), journal_path: path)
         end
 
-        # Where TurnUsage (the Agent's journal:) and RequestSent (the
+        # Where TurnUsage (the Agent's journal) and RequestSent (the
         # {Middleware::JournalRequests} phase) land: the given journal, or
         # nowhere. Class-level so {Null} shares the selection with the real
         # thing -- the logic lives once.
-        def telemetry_kwargs(journal)
-          return {} if journal.nil?
+        #
+        # A nil journal answers the all-Null {Agent::Instrumentation} rather than
+        # an empty Hash the Agent had to fill in from its own defaults: "reports
+        # nowhere" is a value now, not an absent key.
+        def instrumentation(journal)
+          return Agent::Instrumentation.new if journal.nil?
 
-          { journal:,
-            model_middleware: Middleware::Stack.new([Middleware::JournalRequests.new(journal:)]) }
+          requests = Middleware::Stack.new([Middleware::JournalRequests.new(journal:)])
+          Agent::Instrumentation.new(journal:, model_middleware: requests)
         end
       end
 
@@ -249,16 +258,25 @@ module Lain
 
       # Telemetry follows the tee when --nvim fans events to live views too;
       # otherwise it lands in the session journal itself. With a recorder
-      # wrapped, ONLY the Agent's `journal:` leg (the turn_usage stream) is
-      # decorated with JournalMemoryRoot -- JournalRequests keeps the raw
-      # destination, run_recorder's precedent: request_sent lands unpaired.
-      def telemetry_kwargs
+      # wrapped, ONLY the turn_usage leg is decorated with JournalMemoryRoot --
+      # JournalRequests keeps the raw destination, run_recorder's precedent:
+      # request_sent lands unpaired.
+      def instrumentation
         destination = @tee || @journal
-        kwargs = self.class.telemetry_kwargs(destination)
-        return kwargs if @recorder.nil?
+        resolved = self.class.instrumentation(destination)
+        return resolved if @recorder.nil?
 
-        kwargs.merge(journal: Memory::JournalMemoryRoot.new(journal: destination, recorder: @recorder))
+        resolved.with(journal: Memory::JournalMemoryRoot.new(journal: destination, recorder: @recorder))
       end
+
+      # The journal a run's own switches record into -- the {Switchboard}'s
+      # policy and model flips, the {GoalDriver}'s standing goals. They speak
+      # `#record`, which {Channel::Null} does not, so "there is no record" and
+      # "the record discards" are genuinely different answers and this reader is
+      # what tells them apart ({Null#record_journal} is the discarding half).
+      # The same destination {#instrumentation} carries, so a flip and a
+      # turn_usage cannot land in two different files.
+      def record_journal = instrumentation.journal
 
       def catch_up(timeline)
         scribe.catch_up(timeline)

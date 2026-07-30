@@ -8,6 +8,7 @@ require "active_support/core_ext/module/delegation"
 require_relative "agent/accounting"
 require_relative "agent/budget"
 require_relative "agent/collaborators"
+require_relative "agent/instrumentation"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
 require_relative "agent/pipeline_source"
@@ -55,49 +56,49 @@ module Lain
 
     # The argument list is long because the Agent is the wiring point of the whole
     # harness, and the honest split is three-way, not one big bag: values that are
-    # ALREADY their own collaborators ({Budget}); the injected *collaborators* it
-    # drives (toolset, context, the {ModelCaller}/{ToolRunner}/{Accounting} triple
-    # and the middleware stacks); and the mutable *run state* it seeds
-    # ({#seed_run_state}). A `Wiring` value object grouping the collaborators was
-    # considered and rejected: it would not remove `seed_run_state` (run state is
-    # orthogonal to collaborators) and it would move the public keyword surface --
-    # which the `provider_parity` shared group and the state-machine specs
-    # construct against by name -- for no reduction in moving parts. So the seam
-    # stays here, named. ({Collaborators} is not that object: it resolves what
-    # these keywords MEAN and moves none of them.)
+    # ALREADY their own collaborators ({Budget}, {Instrumentation}); the injected
+    # *collaborators* it drives (toolset, context, the
+    # {ModelCaller}/{ToolRunner}/{Accounting} triple); and the mutable *run state*
+    # it seeds ({#seed_run_state}). A `Wiring` value object grouping the
+    # collaborators was considered and rejected: it would not remove
+    # `seed_run_state` (run state is orthogonal to collaborators) and it would
+    # move the public keyword surface -- which the `provider_parity` shared group
+    # and the state-machine specs construct against by name -- for no reduction in
+    # moving parts. So the seam stays here, named. ({Collaborators} is not that
+    # object: it resolves what these keywords MEAN and moves none of them.)
     #
-    # Two styles, one seam (T21). The three objects the loop drives may be handed
-    # over WHOLE -- `model_caller:`, `tool_runner:`, `accounting:` -- or as the
+    # Two styles, one seam. The three objects the loop drives may be handed over
+    # WHOLE -- `model_caller:`, `tool_runner:`, `accounting:` -- or as the
     # INGREDIENTS each is built from, which is what every caller did before they
     # were injectable: `provider:`/`model_middleware:`, `handler:`/`tool_middleware:`/
     # `tool_observer:`, `journal:`. Both are supported; mixing them for ONE
-    # collaborator raises ({Collaborators} owns that rule). Every keyword stays
-    # NAMED here rather than swept into a `**wiring` splat, so an unknown keyword
-    # is still Ruby's own ArgumentError and the surface still reads off the
-    # signature.
+    # collaborator raises ({Collaborators} owns that rule).
     #
-    # Every wiring keyword defaults to {Collaborators::OMITTED} rather than to
-    # its value, because the resolution has to tell "not written" from "written"
-    # -- and it cannot default to `nil` either, since an explicit `nil` is a
-    # caller mistake {Collaborators} refuses rather than reads as a default. The
-    # marker never escapes this constructor, and the NAMED default it stands for
-    # is resolved once, inside {Collaborators}.
+    # `instrumentation:` (T22) is the same story for the seven keywords a run
+    # REPORTS through, which used to sit here as seven slots and cost this class
+    # seven signature lines. They are still accepted, through `**instrumented`,
+    # and {Instrumentation.resolve} builds the value from them -- so every
+    # existing call site keeps its meaning and an unknown keyword is still an
+    # ArgumentError, now Data's own. Saying both is refused.
     #
-    # @param journal [#<<] where per-turn usage records land; the Null channel
-    #   by default. Today ONLY {Telemetry::TurnUsage} is written here -- it is not
-    #   yet the full run record.
-    def initialize(toolset:, context:,
+    # Every collaborator keyword defaults to {Collaborators::OMITTED} rather than
+    # to its value, because the resolution has to tell "not written" from
+    # "written" -- and it cannot default to `nil` either, since an explicit `nil`
+    # is a caller mistake {Collaborators} refuses rather than reads as a default.
+    # The marker never escapes this constructor, and the NAMED default it stands
+    # for is resolved once, inside {Collaborators}.
+    #
+    # @param instrumentation [Instrumentation] where this run's records, phases
+    #   and observers go. Defaults to the all-Null value: a run that reports
+    #   nowhere, which is what an Agent built with no reporting keywords always
+    #   was.
+    def initialize(toolset:, context:, instrumentation: Collaborators::OMITTED,
                    model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
-                   model_middleware: Collaborators::OMITTED, tool_runner: Collaborators::OMITTED,
-                   handler: Collaborators::OMITTED, tool_middleware: Collaborators::OMITTED,
-                   tool_observer: Collaborators::OMITTED, accounting: Collaborators::OMITTED,
-                   journal: Collaborators::OMITTED,
-                   timeline: nil, workspace: Workspace.empty,
+                   tool_runner: Collaborators::OMITTED, handler: Collaborators::OMITTED,
+                   accounting: Collaborators::OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
-                   snapshot_writer: Workspace::Snapshot.new,
-                   transition_listener: TransitionListener::Null,
-                   turn_middleware: Middleware::Stack.new, pipeline_source: PipelineSource::Null)
+                   snapshot_writer: Workspace::Snapshot.new, **instrumented)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
@@ -105,9 +106,9 @@ module Lain
       @workspace = workspace
       @mailbox = mailbox
       @budget = budget
-      wire_callers(request_override:, turn_middleware:, model_caller:, tool_runner:, accounting:,
-                   provider:, model_middleware:, handler:, tool_middleware:, tool_observer:, journal:)
-      seed_run_state(transition_listener, session, snapshot_writer, pipeline_source)
+      wire_callers(request_override:, instrumentation:, instrumented:,
+                   model_caller:, tool_runner:, accounting:, provider:, handler:)
+      seed_run_state(session, snapshot_writer)
     end
 
     # Append a user turn and run until the loop settles.
@@ -214,7 +215,7 @@ module Lain
       @failure_reason = nil
 
       loop do
-        env = @turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
+        env = @instrumentation.turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
           response = step(on_stream_started)
           inner.merge(response:, settled: transition(response) == :settled)
         end
@@ -230,13 +231,18 @@ module Lain
     # wiring seam its own comment describes rather than growing a line per
     # collaborator.
     #
-    # {Collaborators} owns the two-style resolution -- injected or built from
-    # ingredients, and the clash rule that forbids saying both. It resolves
-    # eagerly, so a wiring mistake raises HERE and not on the first turn.
-    def wire_callers(request_override:, turn_middleware:, **wiring)
-      resolved = Collaborators.new(toolset: @toolset, **wiring)
+    # {Instrumentation} and {Collaborators} each own one half of the two-style
+    # resolution -- handed over whole or built from the individual keywords, and
+    # the clash rule that forbids saying both. Both resolve eagerly, so a wiring
+    # mistake raises HERE and not on the first turn. `instrumented` reaches the
+    # resolver too, because four of its members (`journal`, the model and tool
+    # phases, the observer) are also {Collaborators} ingredients and the clash
+    # table is keyed on the keywords a caller actually wrote.
+    def wire_callers(request_override:, instrumentation:, instrumented:, **collaborators)
+      @instrumentation = Instrumentation.resolve(instrumentation, instrumented)
+      resolved = Collaborators.new(toolset: @toolset, instrumentation: @instrumentation, **collaborators,
+                                   **instrumented.slice(*Collaborators::KEYWORDS))
       @request_override = request_override
-      @turn_middleware = turn_middleware
       @model_caller = resolved.model_caller
       @tool_runner = resolved.tool_runner
       @accounting = resolved.accounting
@@ -258,11 +264,16 @@ module Lain
     # {Accounting} is the one that moved: it is run state too (a ledger a run
     # mutates), but since T21 a caller may inject one, and resolving it beside
     # the two collaborators it is chosen with keeps that decision in one place.
-    def seed_run_state(transition_listener, session, snapshot_writer, pipeline_source)
-      @transition_listener = transition_listener
+    #
+    # The transition listener is read off {Instrumentation} rather than taken as
+    # a parameter, because that value is where "where does this run report" is
+    # decided. It is the one member copied to an ivar, because {LoopMachine}
+    # announces through it from a mixin; the turn stack and the per-turn Context
+    # source are asked of the value at their single use sites instead.
+    def seed_run_state(session, snapshot_writer)
+      @transition_listener = @instrumentation.transition_listener
       @session = session
       @snapshot_writer = snapshot_writer
-      @pipeline_source = pipeline_source
       @iterations = 0
       @dispatch_lock = Monitor.new
     end
@@ -361,8 +372,9 @@ module Lain
     # input tokens only ever grow, so a window detector fed them latches on and
     # never clears.
     def render_request
-      turn_context = @pipeline_source.context_for(base: @context, timeline: @timeline,
-                                                  usage: @accounting.last_turn_usage, session: @session)
+      turn_context = @instrumentation.pipeline_source.context_for(base: @context, timeline: @timeline,
+                                                                  usage: @accounting.last_turn_usage,
+                                                                  session: @session)
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
 

@@ -45,6 +45,57 @@ module A1PipelineSources
   end
 end
 
+# T22: one recorder per {Lain::Agent::Instrumentation} member, so "the value
+# reached its consumer" is asserted from an observable effect rather than from
+# the Agent's own ivars. In a module body for the same reason A1PipelineSources
+# is: the doubles read as the production ducks they stand in for.
+module T22Instrumentation
+  # Any middleware phase. Appends its label on the way in, then defers, so the
+  # log also says which phases ran and in what order.
+  class Tap < Lain::Middleware::Base
+    def initialize(log, label)
+      super()
+      @log = log
+      @label = label
+    end
+
+    def call(env, &app)
+      @log << @label
+      downstream(env, &app)
+    end
+  end
+
+  # {Lain::Agent::TransitionListener}'s duck.
+  class Transitions
+    attr_reader :events
+
+    def initialize = @events = []
+
+    def on_transition(from:, to:, event:) = @events << [from, to, event]
+  end
+
+  # {Lain::Agent::ToolRunner::Observer}'s duck: named after dispatch, per tool.
+  class Observations
+    attr_reader :tools
+
+    def initialize = @tools = []
+
+    def observe(_block, tool_name) = @tools << tool_name
+  end
+
+  # {Lain::Agent::PipelineSource}'s duck, counting the per-turn asks.
+  class Renders
+    attr_reader :asks
+
+    def initialize = @asks = 0
+
+    def context_for(base:, **)
+      @asks += 1
+      base
+    end
+  end
+end
+
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -861,6 +912,131 @@ RSpec.describe Lain::Agent do
         described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
                             tool_runner: Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new))
       end.to raise_error(ArgumentError, /toolset/)
+    end
+  end
+
+  # T22: the seven keywords a run REPORTS through -- the journal, the three
+  # middleware phases, the tool observer, the transition listener and the
+  # per-turn Context source -- travel as ONE {Lain::Agent::Instrumentation}
+  # value. They were seven slots on this constructor and three Hash reifications
+  # in the CLI, each poking at the Hash with `.fetch`/`.slice`/`.merge`.
+  describe "instrumentation" do
+    let(:log) { [] }
+    let(:journal) { RecordingChannel.new }
+    let(:transitions) { T22Instrumentation::Transitions.new }
+    let(:observations) { T22Instrumentation::Observations.new }
+    let(:renders) { T22Instrumentation::Renders.new }
+
+    # One tool call then a text answer: two provider round trips, so a per-turn
+    # member (the turn phase, the Context source) is asked TWICE and a per-tool
+    # one (the observer, the tool phase) once.
+    def echoing_provider
+      Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                           text_response("bye")])
+    end
+
+    def full_instrumentation
+      Lain::Agent::Instrumentation.new(
+        journal:,
+        model_middleware: Lain::Middleware::Stack.new([T22Instrumentation::Tap.new(log, :model)]),
+        tool_middleware: Lain::Middleware::Stack.new([T22Instrumentation::Tap.new(log, :tool)]),
+        turn_middleware: Lain::Middleware::Stack.new([T22Instrumentation::Tap.new(log, :turn)]),
+        tool_observer: observations, transition_listener: transitions, pipeline_source: renders
+      )
+    end
+
+    # One ask, one tool call, and every member is asked to prove it arrived. A
+    # member that never reaches its consumer is the failure this exists for:
+    # seven Nulls would leave the Agent working and the run unobserved.
+    it "delivers all seven members to their consumers in one ask" do
+      a = described_class.new(toolset:, context:, instrumentation: full_instrumentation,
+                              provider: echoing_provider)
+      a.ask("hi")
+
+      expect(log.tally).to eq({ turn: 2, model: 2, tool: 1 })
+      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::TurnUsage, Lain::Telemetry::TurnUsage])
+      expect(observations.tools).to eq(["echo"])
+      expect(renders.asks).to eq(2)
+      expect(transitions.events.map(&:last)).to include(:dispatch, :tool_use, :end_turn)
+    end
+
+    # The default is the all-Null value, so an Agent built without one behaves
+    # exactly as it always did -- no `if journal` anywhere downstream.
+    it "defaults to the all-Null value, which changes nothing" do
+      a = agent(text_response("bye"))
+
+      expect { a.ask("hi") }.not_to raise_error
+      expect(a.timeline.to_a.size).to eq(2)
+    end
+
+    # Both styles are valid; saying the same thing twice is not. The refusal is
+    # flat, because the value carries every one of the seven.
+    %i[journal model_middleware tool_middleware turn_middleware
+       tool_observer transition_listener pipeline_source].each do |member|
+      it "refuses instrumentation: passed alongside the legacy #{member}:" do
+        expect do
+          described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+                              instrumentation: Lain::Agent::Instrumentation.new,
+                              member => Lain::Agent::Instrumentation.new.public_send(member))
+        end.to raise_error(ArgumentError, /instrumentation:.*#{member}:/m)
+      end
+    end
+
+    # Every wiring keyword this constructor does not name lands in the
+    # instrumentation resolver, which is therefore the only place a wiring typo
+    # can be answered. It has to answer with the route to the fix: naming
+    # `providr:` back at the caller without naming `provider:` is what Ruby's
+    # own `unknown keyword:` does, and what Collaborators' vocabulary list used
+    # to do before the slice put it out of reach.
+    it "answers a typo with the keyword the caller meant, not just the typo" do
+      message = begin
+        described_class.new(toolset:, context:, providr: Lain::Provider::Mock.new(responses: []))
+        raise "expected an ArgumentError, and none was raised"
+      rescue ArgumentError => e
+        e.message
+      end
+
+      expect(message).to include("providr:")
+      expect(message).to include("provider:", "journal:", "pipeline_source:")
+    end
+
+    # `handler:` and `provider:` are NOT instrumentation members -- they are
+    # {Collaborators} ingredients -- so naming them beside a value that carries
+    # the phases those collaborators run in is the ordinary wiring, not a clash.
+    it "composes with the collaborator ingredients it is not one of" do
+      a = described_class.new(
+        toolset:, context:, provider: echoing_provider,
+        handler: Lain::Effect::Handler::Mock.new(results: { "echo" => "from the mock" }),
+        instrumentation: Lain::Agent::Instrumentation.new(
+          tool_middleware: Lain::Middleware::Stack.new([T22Instrumentation::Tap.new(log, :tool)])
+        )
+      )
+      a.ask("hi")
+
+      expect(log).to eq([:tool])
+      expect(a.timeline.to_a[2].content.map { |block| block["content"] }).to eq(["from the mock"])
+    end
+
+    # The compatibility statement, measured in BYTES rather than reasoned about:
+    # the legacy keywords build the same value, so the two construction styles
+    # commit the same Timeline. `Canonical` bytes serve turn hashing AND
+    # prompt-cache stability, so a divergence here would surface as an
+    # unexplained cache miss and never as an error.
+    it "commits a byte-identical Timeline whether written as one value or as the legacy keywords" do
+      digests = %i[value legacy].map do |style|
+        wiring = case style
+                 when :value then { instrumentation: Lain::Agent::Instrumentation.new(journal:) }
+                 when :legacy then { journal: }
+                 end
+        a = described_class.new(toolset:, context:, provider: echoing_provider, **wiring)
+        a.ask("hi")
+        a.timeline.to_a.map(&:digest)
+      end
+
+      # Four turns on BOTH -- user, tool_use, tool_result, text -- so the
+      # equality is two real conversations agreeing, not two empty walks.
+      expect(digests.map(&:size)).to eq([4, 4])
+      expect(digests.uniq.size).to eq(1)
     end
   end
 end

@@ -340,16 +340,48 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  describe "#telemetry_kwargs" do
+  # T22: one {Lain::Agent::Instrumentation} value, not a keyword Hash three
+  # callers poked at with `.fetch`/`.slice`/`.merge`.
+  describe "#instrumentation" do
     it "lands telemetry in the session journal, JournalRequests included" do
-      kwargs = chronicle.telemetry_kwargs
-      expect(kwargs.fetch(:journal)).to be(journal)
-      expect(kwargs.fetch(:model_middleware).to_a.first).to be_a(Lain::Middleware::JournalRequests)
+      instrumentation = chronicle.instrumentation
+
+      expect(instrumentation).to be_a(Lain::Agent::Instrumentation)
+      expect(instrumentation.journal).to be(journal)
+      expect(instrumentation.model_middleware.to_a.first).to be_a(Lain::Middleware::JournalRequests)
     end
 
     it "prefers the tee once #wrap_tee has run, so --nvim fans telemetry to live views too" do
       chronicle.wrap_tee([])
-      expect(chronicle.telemetry_kwargs.fetch(:journal)).to be_a(Lain::CLI::JournalTee)
+      expect(chronicle.instrumentation.journal).to be_a(Lain::CLI::JournalTee)
+    end
+
+    # The four members this object has nothing to say about stay at their Nulls,
+    # so a caller folding compaction in (CompactionMount) starts from a value
+    # that changes nothing rather than from an absent key it has to `fetch`.
+    it "leaves the members it does not own at their Nulls" do
+      instrumentation = chronicle.instrumentation
+
+      expect(instrumentation.pipeline_source).to be(Lain::Agent::PipelineSource::Null)
+      expect(instrumentation.transition_listener).to be(Lain::Agent::TransitionListener::Null)
+      expect(instrumentation.turn_middleware.to_a).to be_empty
+    end
+  end
+
+  # The Switchboard's flips and the GoalDriver's standing goals need a Journal
+  # duck (`#record`), which Channel::Null is NOT -- so "there is no record" and
+  # "the record discards" are different answers, and this reader is the one that
+  # tells them apart. Both call sites resolved it as a duplicated
+  # `telemetry_kwargs.fetch(:journal) { Journal.new(io: /dev/null) }`.
+  describe "#record_journal" do
+    it "is the same destination the instrumentation carries" do
+      expect(chronicle.record_journal).to be(chronicle.instrumentation.journal)
+    end
+
+    it "answers something that records, so a flip cannot crash on it" do
+      chronicle.record_journal.record({ "type" => "probe" })
+
+      expect(of_type("probe").size).to eq(1)
     end
   end
 
@@ -362,7 +394,7 @@ RSpec.describe Lain::CLI::Chronicle do
       channel = []
       chronicle.wrap_tee(channel)
 
-      chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+      chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
         digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
       )
 
@@ -407,24 +439,41 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(chronicle.wrap_memory(recorder)).to be(recorder)
     end
 
-    it "pairs each turn_usage through telemetry_kwargs' journal with the recorder's live root" do
+    it "pairs each turn_usage through the instrumentation's journal with the recorder's live root" do
       chronicle.wrap_memory(recorder)
       recorder.write(Lain::Memory::Item.new(id: "aspirin", description: "dosing", body: "40mg/kg"))
 
-      chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+      chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
         digest: "blake3:t1", model: nil, stop_reason: :end_turn, usage: {}
       )
 
       expect(of_type("memory_root").first).to include("turn_digest" => "blake3:t1", "root" => recorder.root)
     end
 
-    it "leaves telemetry_kwargs' journal undecorated when no recorder was wrapped (run_recorder's raw-journal rule)" do
-      expect(chronicle.telemetry_kwargs.fetch(:journal)).to be(journal)
+    it "leaves the instrumentation's journal undecorated with no recorder (run_recorder's raw-journal rule)" do
+      expect(chronicle.instrumentation.journal).to be(journal)
     end
   end
 
   describe "lifecycle delegation" do
     before { chronicle.start(context:, toolset:) }
+
+    # The fluent return the three scribe forwards keep, and the reason T22
+    # declined to replace them with `delegate ... to: :scribe`: that would answer
+    # the SCRIBE. {Lain::CLI::Command::Env#checkpoint} is documented as answering
+    # the Chronicle so a caller can chain off it, and its own spec cannot defend
+    # that -- `env_spec` builds the chronicle as an `instance_double` with
+    # `catch_up` stubbed, so it stays green either way. This is where the promise
+    # lives, on the real object, for both the recording Chronicle and the Null.
+    it "answers itself from catch_up, rewound and interrupted, so a caller can chain off them" do
+      expect(chronicle.catch_up(timeline)).to be(chronicle)
+      expect(chronicle.rewound(to: nil)).to be(chronicle)
+      expect(chronicle.interrupted(head: timeline.head_digest)).to be(chronicle)
+      # Non-vacuous: the forwards really reached the scribe, so the identity
+      # above is a fluent return and not three no-ops agreeing.
+      expect(records.map { |record| record["type"] })
+        .to eq(%w[session turn rewound run_interrupted])
+    end
 
     it "catch_up journals the render chain; interrupted and close record the stop and the anchor" do
       chronicle.catch_up(timeline)
@@ -473,7 +522,7 @@ RSpec.describe Lain::CLI::Chronicle do
         # TurnUsage journals BEFORE the tool executes (Agent::Accounting's real
         # order), so the paired memory_root's root is the PRE-write snapshot --
         # matching what MemoryReplay itself reconstructs from the turn content.
-        chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::TurnUsage.new(
+        chronicle.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
           digest: after_tool_use.head_digest, model: "claude-opus-4-8", stop_reason: :tool_use, usage: {}
         )
         recorder.write(Lain::Memory::Item.new(id: "aspirin", description: "dosing", body: "40mg/kg"))
@@ -482,7 +531,7 @@ RSpec.describe Lain::CLI::Chronicle do
         # is a stand-in for.
         request = Lain::Request.new(model: "claude-opus-4-8", max_tokens: 16,
                                     messages: [{ role: "user", content: "and ibuprofen?" }])
-        chronicle.telemetry_kwargs.fetch(:journal) << Lain::Telemetry::RequestSent.new(
+        chronicle.instrumentation.journal << Lain::Telemetry::RequestSent.new(
           digest: request.digest, payload: request.cache_payload, stream: request.stream,
           extra: request.extra, prefix_digests: request.prefix_digests
         )
@@ -540,7 +589,8 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.observer).to be_a(Lain::Event::ChainWriter::Null)
       expect(null.start(context: nil, toolset: nil)).to be(null)
       expect(null.turn_middleware(-> {}).to_a).to be_empty
-      expect(null.telemetry_kwargs).to eq({})
+      expect(null.instrumentation.journal).to be(Lain::Channel::Null.instance)
+      expect(null.instrumentation.model_middleware.to_a).to be_empty
       expect(null.catch_up(nil)).to be(null)
       expect(null.interrupted(head: "x")).to be(null)
       expect(null.close(reason: :exit)).to be(null)
@@ -562,11 +612,11 @@ RSpec.describe Lain::CLI::Chronicle do
       allow(Lain::Journal).to receive(:open).with(no_args).and_return(fresh_journal)
 
       returned = null.wrap_tee([])
-      kwargs = null.telemetry_kwargs
+      instrumentation = null.instrumentation
 
       expect(returned).to be(fresh_journal)
-      expect(kwargs.fetch(:journal)).to be_a(Lain::CLI::JournalTee)
-      expect(kwargs.fetch(:model_middleware).to_a.first).to be_a(Lain::Middleware::JournalRequests)
+      expect(instrumentation.journal).to be_a(Lain::CLI::JournalTee)
+      expect(instrumentation.model_middleware.to_a.first).to be_a(Lain::Middleware::JournalRequests)
     end
 
     # --no-journal's half of T17: no chronicle, no spool, no `.wal` file --

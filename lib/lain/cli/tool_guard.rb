@@ -16,13 +16,15 @@ module Lain
       module_function
 
       # @param chronicle [CLI::Chronicle] resolves where a refusal is recorded
-      # @return [Middleware::Stack] the tool-phase stack, ready for `Agent.new`
+      # @return [Middleware::Stack] the tool-phase stack, for the instrumentation
       def stack(chronicle) = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle))])
 
-      # `.slice(:journal)` must OMIT the key under --no-journal so
-      # RefuseSecretWrites' own Channel::Null default applies -- passing an
-      # explicit `journal: nil` crashes on `<<` at refusal time, the worst
-      # possible moment.
+      # The journal is READ off the chronicle's {Agent::Instrumentation}, which
+      # is what made a `.slice(:journal)` necessary before it existed: the key had
+      # to be OMITTED under --no-journal so RefuseSecretWrites' own
+      # Channel::Null default applied, because an explicit `journal: nil` crashes
+      # on `<<` at refusal time -- the worst possible moment. The value carries
+      # that same Null, so the slice has nothing left to do.
       #
       # The `oracle:` arm is a CONTENTLESSNESS FLOOR, not a second secret
       # detector ({Oracle::MemorySave}): it declines a save with nothing in it
@@ -30,7 +32,7 @@ module Lain
       # abstains entirely for a guarded tool carrying no `body` at all, which
       # is what keeps improvement_write from being refused wholesale.
       def kwargs(chronicle)
-        { oracle: Oracle::MemorySave::Gate.new, **chronicle.telemetry_kwargs.slice(:journal) }
+        { oracle: Oracle::MemorySave::Gate.new, journal: chronicle.instrumentation.journal }
       end
     end
   end

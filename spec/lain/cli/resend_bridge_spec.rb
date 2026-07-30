@@ -173,8 +173,9 @@ RSpec.describe Lain::CLI::ResendBridge do
     def build_chat_shaped_agent(provider, chronicle)
       agent = nil
       Lain::Agent.new(provider:, toolset:, context:, request_override: override,
-                      turn_middleware: chronicle.turn_middleware(-> { agent.timeline }),
-                      **chronicle.telemetry_kwargs).tap { |built| agent = built }
+                      instrumentation: chronicle.instrumentation.with(
+                        turn_middleware: chronicle.turn_middleware(-> { agent.timeline })
+                      )).tap { |built| agent = built }
     end
 
     it "journals a rewound record, never raises Diverged, and the session stays loadable" do

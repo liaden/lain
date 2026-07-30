@@ -514,7 +514,7 @@ RSpec.describe Lain::StatusFeed do
 
     it "publishes the occupancy and compaction age of records sent down the chronicle's telemetry leg" do
       feed = described_class.new(path:)
-      telemetry = chronicle_teed_to(feed).telemetry_kwargs.fetch(:journal)
+      telemetry = chronicle_teed_to(feed).instrumentation.journal
 
       telemetry << Lain::Telemetry::TurnUsage.new(
         digest: "blake3:t", model: "claude-opus-4-8", stop_reason: :end_turn,

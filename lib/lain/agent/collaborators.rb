@@ -30,11 +30,21 @@ module Lain
     # is being built, so it lands between the last two.
     class Collaborators
       # Each collaborator paired with the legacy keywords that BUILD it when it
-      # is not injected. Read two ways: the defaulting table, and the clash
-      # table {#refuse_double_wiring} consults.
+      # is not injected. Read two ways: the vocabulary {#refuse_unknown} polices,
+      # and the clash table {#refuse_double_wiring} consults. Four of these
+      # keywords -- `model_middleware`, `tool_middleware`, `tool_observer`,
+      # `journal` -- are {Instrumentation} members too (T22), so their DEFAULTS
+      # come from that value now rather than from this file; they stay named here
+      # because the clash rule is keyed on what a caller actually wrote.
       INGREDIENTS = { model_caller: %i[provider model_middleware],
                       tool_runner: %i[handler tool_middleware tool_observer],
                       accounting: %i[journal] }.freeze
+
+      # The ingredient vocabulary, flat. Public because {Agent} splits its own
+      # `**instrumented` splat on it: three {Instrumentation} members
+      # (`turn_middleware`, `transition_listener`, `pipeline_source`) build no
+      # collaborator, so forwarding them here would read as typos.
+      KEYWORDS = INGREDIENTS.values.flatten.freeze
 
       # "No keyword was written here" -- which `nil` cannot say, because an
       # explicit nil is a caller MISTAKE this class refuses
@@ -57,8 +67,15 @@ module Lain
       #   ingredient: the Agent renders it and the ToolRunner harvests answered
       #   questions from it, so naming it beside `tool_runner:` is not a clash --
       #   it is REQUIRED to agree with the runner's own ({#refuse_foreign_toolset}).
-      def initialize(toolset:, model_caller: OMITTED, tool_runner: OMITTED, accounting: OMITTED, **ingredients)
+      # @param instrumentation [Instrumentation] where a default-built
+      #   collaborator reports: the model and tool phases, the tool observer, and
+      #   the journal an {Accounting} rolls up into. Defaults to the all-Null
+      #   value, so a caller resolving collaborators alone gets what this class
+      #   hard-coded before T22.
+      def initialize(toolset:, instrumentation: Instrumentation.new, model_caller: OMITTED,
+                     tool_runner: OMITTED, accounting: OMITTED, **ingredients)
         @toolset = toolset
+        @instrumentation = instrumentation
         refuse_unknown(ingredients.keys)
         refuse_explicit_nil({ model_caller:, tool_runner:, accounting:, **ingredients })
         @given = written(ingredients)
@@ -87,11 +104,11 @@ module Lain
       # keys, before anything is discarded: a typo whose value happens to be nil
       # is still a typo.
       def refuse_unknown(keys)
-        unknown = keys - INGREDIENTS.values.flatten
+        unknown = keys - KEYWORDS
         return if unknown.empty?
 
         raise ArgumentError, "unknown ingredient: #{labelled(unknown)}. The wiring keywords are " \
-                             "#{labelled(INGREDIENTS.keys + INGREDIENTS.values.flatten)}."
+                             "#{labelled(INGREDIENTS.keys + KEYWORDS)}."
       end
 
       # An explicit nil is a mistake, not a request for the default: the way to
@@ -165,19 +182,25 @@ module Lain
       # The legacy style's named defaults, each resolved once, here. `fetch` with
       # a block keeps the Null-Object posture: the default is named at the one
       # place that needs it, so nothing downstream ever tolerates a nil.
+      #
+      # The four reporting keywords fall back to {Instrumentation}'s members
+      # rather than to a Null written here, so there is ONE statement of what a
+      # run reports through. The `fetch` stays: {Agent} builds the value FROM
+      # those same keywords, so the two always agree there, but a caller
+      # resolving collaborators directly may write a keyword without a value.
       def built_model_caller
         ModelCaller.new(provider: @given.fetch(:provider) { raise ArgumentError, MISSING_PROVIDER },
-                        middleware: @given.fetch(:model_middleware) { Middleware::Stack.new })
+                        middleware: @given.fetch(:model_middleware) { @instrumentation.model_middleware })
       end
 
       def built_tool_runner
         ToolRunner.new(handler: @given.fetch(:handler) { Effect::Handler::Live.new(toolset: @toolset) },
-                       middleware: @given.fetch(:tool_middleware) { Middleware::Stack.new },
+                       middleware: @given.fetch(:tool_middleware) { @instrumentation.tool_middleware },
                        toolset: @toolset,
-                       observer: @given.fetch(:tool_observer) { ToolRunner::Observer::Null.new })
+                       observer: @given.fetch(:tool_observer) { @instrumentation.tool_observer })
       end
 
-      def built_accounting = Accounting.new(journal: @given.fetch(:journal) { Channel::Null.instance })
+      def built_accounting = Accounting.new(journal: @given.fetch(:journal) { @instrumentation.journal })
 
       def labelled(keywords) = keywords.map { |keyword| "#{keyword}:" }.join(", ")
     end
