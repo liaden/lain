@@ -128,8 +128,15 @@ parallel). If everything lands in one long chain, you cut the seams wrong; go ba
 
 Submit `epic.md` at the `epic_plan` stage. Under `interactive` a human answers; under
 `hands_off` it approves itself audibly; under `deferred` it refuses now and parks the question
-for a human to sign off later — the refusal is journaled as a real denial, and **no evidence is
-gathered and no model is asked** on the way.
+for a human to sign off later — the refusal is journaled as a real denial, no spike runs and
+**no model is asked** on the way.
+
+Under `adjudicated` the gate tries to answer itself first: a read-only spike gathers evidence
+about the plan, journals it under its own content address, and a second model is asked for a
+one-word verdict on it. A bare APPROVE or DENY settles the gate; anything less certain still
+refuses and parks for a human, with that evidence attached to the parked item — or, when the
+spike itself came back empty, the reason it did rather than evidence. Expect it to park; the
+spike is there to make the morning review cheaper, not to sign off for you.
 
 The `epic_plan` gate cannot open while this epic's `research` sign-offs are still parked. If
 you are told the stage is blocked, that is the boundary rule, not a bug: drain the earlier

@@ -1,6 +1,70 @@
 # frozen_string_literal: true
 
+require "delegate"
 require "stringio"
+
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock), and
+# owned HERE rather than borrowed from adjudicator_spec: a spec file that reads
+# another spec file's constant passes in a full suite run and dies when this one
+# is run alone.
+module PolicySpecSupport
+  # A {SignoffQueue} that records the ONE question the stage-boundary rule asks.
+  # `#drained?` is asked once per PRECEDING stage per check, so a policy that
+  # checks the boundary AND delegates to a collaborator that checks it again
+  # asks twice per stage -- which is what this counts, rather than trusting that
+  # a second call site stayed deleted.
+  class CountingQueue < SimpleDelegator
+    attr_reader :asked
+
+    def initialize(inner)
+      super
+      @asked = []
+    end
+
+    def drained?(epic_slug, stage)
+      @asked << stage
+      super
+    end
+  end
+
+  # A {Skill::RoleSpawn} stand-in scripted PER ROLE: the adjudication path
+  # spawns the evidence spike and the verdict as two different roles inside one
+  # decision, and half of what this policy has to prove is that a refused gate
+  # spawns neither.
+  class ScriptedRoleSpawn
+    def initialize(answers)
+      @answers = answers
+      @calls = []
+    end
+
+    def call(role, context_mode, prompt)
+      @calls << { role:, context_mode:, prompt: }
+      Lain::Tool::Result.ok(@answers.fetch(role))
+    end
+
+    def roles = @calls.map { |spawn| spawn[:role] }
+  end
+
+  # ONE journal handle answering BOTH directions: `#record` appends, `#each`
+  # re-walks what was appended. It exists because the three ducks an
+  # adjudicated gate holds -- the Gate's journal, the evidence journal, and the
+  # decisions read back -- must address one stream, and pointing the read at a
+  # second IO makes the terminal guard silently never fire. A spec that wired
+  # two StringIOs would be testing a session nobody may build.
+  #
+  # `#each` re-reads the string per walk, which is the `File.foreach(path)`
+  # shape production needs and NOT the one-shot `io.each_line` shape.
+  class RereadableJournal < SimpleDelegator
+    include Enumerable
+
+    def initialize(io)
+      @io = io
+      super(Lain::Journal.new(io:))
+    end
+
+    def each(&block) = @io.string.each_line(&block)
+  end
+end
 
 # Approval::Gate::Policy is HOW a verdict is reached, wrapped around the one
 # Gate that reaches it. Each policy answers #decide by handing Gate a surface and
@@ -314,6 +378,153 @@ RSpec.describe Lain::Approval::Gate::Policy do
 
       expect(described_class.new(Lain::Approval::Gate::Policy::Drained).ensure_open!("epic_plan", epic_slug: "alpha"))
         .to eq(Lain::Epic::Stage.new("epic_plan"))
+    end
+  end
+
+  # T14. The overnight intent, as a policy: try to answer your own question
+  # before parking it for the morning queue. It is the Adjudicator wearing the
+  # seam `[epics.gates]` selects, so `deferred` stays the policy that spends
+  # nothing and this is the one that spikes first.
+  describe Lain::Approval::Gate::Policy::Adjudicated do
+    # The Gate, the evidence journal and the decisions read back are ONE
+    # handle here, which is the wiring this policy exists to make unmissable --
+    # `gate` (defined above) is built from whatever `journal` answers.
+    let(:journal) { PolicySpecSupport::RereadableJournal.new(journal_io) }
+    let(:evidence_text) { "The plan cites Epic::Stage's closed set, which the issue graph already honours." }
+    let(:brief) { ->(item) { "Gather evidence for: #{item.gate_question}" } }
+    let(:evidence_digest) { Lain::Canonical.digest(evidence_text) }
+
+    def spawn_stub(verdict: "APPROVE", researcher: evidence_text)
+      PolicySpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
+    end
+
+    def adjudicated(spawn = spawn_stub, signoffs: queue, ledger: journal)
+      described_class.new(role_spawn: spawn, brief:, journal: ledger, queue: signoffs)
+    end
+
+    def evidence_records = Lain::Journal.records(journal_io.string.lines, type: "gate_evidence").to_a
+
+    def config_with(**gates)
+      Lain::Config.new(
+        epics: Lain::Config::Epics.new(
+          home: :xdg, gates: Lain::Config::Epics::Gates.new(table: gates.transform_keys(&:to_s))
+        )
+      )
+    end
+
+    # AC1
+    it "parks a spiked deferral with the evidence's content address on the item" do
+      expect(decide(adjudicated(spawn_stub(verdict: "DEFER")))).to be(false)
+
+      expect(queue.first.evidence_digest).to eq(evidence_digest)
+    end
+
+    it "journals the spike's findings, so the digest on the parked item addresses bytes somebody kept" do
+      decide(adjudicated(spawn_stub(verdict: "DEFER")))
+
+      expect(evidence_records.first).to include("text" => evidence_text, "digest" => evidence_digest)
+    end
+
+    # AC2
+    it "opens the gate on a bare verdict, registering the digest under the adjudicated policy" do
+      expect(decide(adjudicated)).to be(true)
+
+      expect(gate.approved?(plan.digest)).to be(true)
+      expect(decisions.first).to include("policy" => "adjudicated", "answered_by" => "gate_adjudicator",
+                                         "evidence_digest" => evidence_digest)
+    end
+
+    it "parks nothing when it settles -- a terminal verdict is not an invitation to come back" do
+      decide(adjudicated)
+
+      expect(queue.to_a).to be_empty
+    end
+
+    # The T9 panel's finding, as a spec that bites for the WRAPPER shape: an
+    # Adjudicated that ran the inherited Policy#decide boundary check AND
+    # delegated to an Adjudicator that checks it too asked twice per stage, with
+    # the whole suite still green. Counting through the policy is what catches
+    # it; counting inside Adjudicator#call cannot see the wrapper at all.
+    it "checks the stage boundary exactly once, not once per layer" do
+      counted = PolicySpecSupport::CountingQueue.new(queue)
+
+      decide(adjudicated(signoffs: counted), stage: "issue_plan")
+
+      expect(counted.asked).to eq(%w[research epic_plan])
+    end
+
+    it "still refuses across an undrained earlier partition, and spends nothing doing it" do
+      queue.park(artifact_digest: "blake3:research", epic_slug: "alpha", stage: "research",
+                 question: "Approve the research?")
+      spawn = spawn_stub
+
+      expect { decide(adjudicated(spawn), stage: "epic_plan") }.to raise_error(Lain::Epic::StageBlocked)
+      expect(spawn.roles).to be_empty
+    end
+
+    # The other half of the T9 panel's finding. The guard reads the journal back,
+    # so it only fires when the stream it reads is the stream the Gate wrote to.
+    # Wire the read at a second IO and this passes silently forever.
+    it "refuses a second terminal verdict over one address, because it reads back the journal it wrote" do
+      decide(adjudicated)
+
+      expect { decide(adjudicated) }.to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided)
+    end
+
+    it "refuses a journal it cannot read back, rather than a guard that never fires" do
+      expect { adjudicated(ledger: Lain::Journal.new(io: journal_io)) }
+        .to raise_error(described_class::UnreadableJournal, /read back/)
+    end
+
+    it "refuses a handle that only reads, too -- both directions or neither" do
+      read_only = Object.new
+      read_only.define_singleton_method(:each) { |&block| block }
+
+      expect { adjudicated(ledger: read_only) }.to raise_error(described_class::UnreadableJournal)
+    end
+
+    # It is a Lain::Error because it is the refusal a real wiring hits FIRST --
+    # a plain Lain::Journal in the journal slot is the natural mistake -- and
+    # every sibling wiring refusal prints as one clean line through exe/lain's
+    # mapping rather than a backtrace.
+    it "refuses as a Lain::Error, like every other refusal a session hits at startup" do
+      expect(described_class::UnreadableJournal.ancestors).to include(Lain::Error)
+    end
+
+    it "names the stage when the refusal comes through the factory, as its sibling refusals do" do
+      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, role_spawn: spawn_stub, brief:,
+                                                      journal: Lain::Journal.new(io: journal_io))
+
+      expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
+        .to raise_error(Lain::Approval::Gate::Policies::UnusableSeam) do |error|
+          expect(error.message).to include("research")
+          expect(error.message).to include("adjudicated")
+          expect(error.message).to include("read back")
+        end
+    end
+
+    it "wears the terminal label the journal already uses, so config and record name one thing" do
+      expect(described_class::NAME).to eq(Lain::Approval::Gate::Adjudicator::TERMINAL_POLICY)
+    end
+
+    it "is selectable from [epics.gates] and built from the one dependencies value" do
+      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:,
+                                                      role_spawn: spawn_stub, brief:)
+
+      expect(Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"),
+                                                deps:))
+        .to be_a(described_class)
+    end
+
+    it "refuses at wiring time in a session that never wired the adjudication seams" do
+      deps = Lain::Approval::Gate::Policies::Deps.new(queue:, asker: nil, journal:)
+
+      expect { Lain::Approval::Gate::Policies.for(stage: "research", config: config_with(research: "adjudicated"), deps:) }
+        .to raise_error(Lain::Approval::Gate::Policies::MissingSeam, /role_spawn.*brief|brief.*role_spawn/m)
+    end
+
+    it "leaves `deferred` the policy that spends nothing -- both stay selectable" do
+      expect(Lain::Approval::Gate::Policies.names).to include("deferred", "adjudicated")
     end
   end
 end

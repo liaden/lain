@@ -91,8 +91,8 @@ RSpec.describe Lain::Approval::Gate::Policies do
   end
 
   describe "the catalog" do
-    it "names exactly the policies this card ships" do
-      expect(described_class.names).to contain_exactly("interactive", "hands_off", "deferred")
+    it "names exactly the policies that ship" do
+      expect(described_class.names).to contain_exactly("interactive", "hands_off", "deferred", "adjudicated")
     end
 
     it "defaults to interactive, the label Gate's own un-wrapped path journals" do

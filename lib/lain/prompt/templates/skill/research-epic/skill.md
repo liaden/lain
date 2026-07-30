@@ -73,8 +73,15 @@ gate policy, not your choice:
   attributed to the policy that gave itself the answer.
 - `deferred` — refuses now and parks the question for a human to sign off later. The refusal is
   a real, journaled denial: deferring is not a soft yes, and nothing about it opens a gate.
-  What parks is the artifact's address and its question — **no evidence is gathered and no
-  model is asked.** A reviewer coming to it later reads the question and goes and looks.
+  What parks is the artifact's address and its question: no spike runs and **no model is
+  asked.** A reviewer coming to it later reads the question and goes and looks.
+- `adjudicated` — tries to answer the question before parking it. A read-only spike gathers
+  evidence about the artifact, that evidence is journaled and content-addressed, and a second
+  model is asked for a one-word verdict on it. A bare APPROVE or DENY settles the gate then and
+  there; anything less certain — hesitation, prose, a spike that came back empty — still
+  refuses and parks for a human, with the evidence attached to the parked item, or the reason
+  the spike came back empty when it did. It is a spike before the queue, not a gate that
+  answers itself: expect it to park.
 
 Parked sign-offs are drained with `lain epic queue`, then `lain epic approve DIGEST` or
 `lain epic deny DIGEST`. Tell the user this is where their epic now sits.

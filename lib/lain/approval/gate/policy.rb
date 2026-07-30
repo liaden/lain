@@ -24,6 +24,12 @@ module Lain
       # {Deferred} ARE their own surface -- nobody answered, and naming that
       # (rather than writing nil) is the same choice {Gate::TIMEOUT_SURFACE}
       # makes for the clock.
+      #
+      # {Adjudicated} is the one member that does not fit the paragraph above,
+      # and deliberately: it reaches its verdict through {Gate::Adjudicator},
+      # which already owns the boundary check, the gate call and the park. It
+      # therefore overrides {#decide} outright and answers no {#surface} -- see
+      # its own comment for why wrapping instead would check the boundary twice.
       class Policy
         # The Null Object a caller NAMES when there is no sign-off queue in the
         # session at all: nothing can be parked, so no boundary can be blocked,
@@ -98,6 +104,13 @@ module Lain
         # and one of them ({Deferred::NAME}) is a fold discriminator, so a rename
         # must break loudly at the constant instead of quietly re-labelling
         # records nobody can join anymore.
+        #
+        # It is the CONFIGURED name, which for three of the four members is also
+        # the label on every record they write. {Adjudicated} is the exception
+        # and has to be: it answers `"adjudicated"` here, but a decision it
+        # PARKS journals `policy: "deferred"`, because a parked sign-off must
+        # wear the discriminator {SignoffQueue}'s fold reads. One policy, two
+        # labels, and the record's is the outcome's to choose.
         def name = self.class::NAME
 
         private
@@ -186,6 +199,115 @@ module Lain
           private
 
           def surface = SURFACE
+        end
+
+        # Try to answer the question before parking it. The overnight policy:
+        # a read-only spike gathers evidence, a second model is asked for a
+        # one-word verdict on it, and only a bare APPROVE or DENY settles the
+        # gate -- anything less certain refuses and parks for the morning queue
+        # with that evidence attached.
+        #
+        # It is {Adjudicator} wearing the seam `[epics.gates]` selects, and
+        # nothing more: the spike, the strict parse, the terminal guard and the
+        # journal-then-park ordering all stay there, where they are already
+        # specified. {Deferred} is deliberately NOT merged into it and remains
+        # the policy that spends no tokens; the two share the queue and nothing
+        # else.
+        #
+        # == It does NOT run the inherited #decide
+        #
+        # {Policy#decide} checks the stage boundary and then calls the gate.
+        # {Adjudicator#call} checks the SAME boundary itself, because it is
+        # reachable without a Policy at all, and it calls the gate as one of
+        # three possible outcomes. So this overrides `#decide` outright rather
+        # than wrapping it: `super` would ask the boundary twice per decision
+        # and open the gate on the inherited path before the spike ever ran.
+        # Twice was demonstrated with the whole suite green, which is why the
+        # counting spec for this shape counts through the POLICY.
+        #
+        # For the same reason it answers no {Policy#surface}: an adjudicated
+        # verdict has no single one. Each {Adjudicator::Outcome} brings the
+        # asker its own answer implies, and all of them sign as
+        # {Adjudicator::SURFACE}.
+        #
+        # The inherited `@boundary` is therefore DEAD STATE here, and must stay
+        # dead: using it is precisely the double-check above. Only `@queue` is
+        # read, and only to hand the Adjudicator the queue it checks against.
+        #
+        # == Re-deciding a parked address re-spends
+        #
+        # A deferral settles nothing on purpose ({Adjudicator::AlreadyDecided}
+        # guards only terminal verdicts), so an address that parked can be put
+        # through this policy again -- and each pass pays two spawns and writes
+        # another `gate_evidence`, while the queue still holds one item. Nothing
+        # in `lib/` re-decides today; this is the class that makes it reachable
+        # from an overnight `[epics.gates]`, so the cost is named rather than
+        # discovered on a bill.
+        class Adjudicated < Policy
+          # The same string as {Adjudicator::TERMINAL_POLICY}, and pinned equal
+          # by a spec. Written out rather than referenced because {Adjudicator}
+          # loads AFTER this file (gate.rb's manifest), so a forward reference
+          # here is a load-time NameError. One string, because "a machine
+          # settled this" is one fact whether config is naming the policy or a
+          # journal reader is reading the record back.
+          NAME = "adjudicated"
+
+          # A journal handle that cannot answer both directions. A {Lain::Error}
+          # rather than an ArgumentError because this is the refusal a real
+          # wiring hits FIRST -- a plain {Lain::Journal} in the journal slot is
+          # the natural mistake -- and every sibling wiring refusal
+          # ({Policies::Unknown}, {Policies::MissingSeam}) prints as one clean
+          # line through `exe/lain`'s mapping instead of a backtrace.
+          class UnreadableJournal < Error; end
+
+          # The invariant nothing downstream can check for itself: the Gate's
+          # journal, the evidence journal and the decisions read back must be
+          # ONE stream. {Adjudicator::Decided} folds journaled `gate_decision`
+          # records to refuse a second terminal verdict, so a read pointed at a
+          # different handle answers "nothing was decided" forever -- a guard
+          # that never fires, with nothing failing to say so. Requiring one
+          # object that answers both directions is what makes the mistake
+          # unrepresentable here.
+          ONE_JOURNAL = "an adjudicated gate needs one journal handle it can also read back (#record to append, " \
+                        "#each to re-walk) -- the terminal-verdict guard folds the decisions this policy " \
+                        "itself writes, so a read pointed anywhere else silently never fires"
+          private_constant :ONE_JOURNAL
+
+          # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
+          #   seam both spawns go through ({Skill::RoleSpawn})
+          # @param brief [#call] renders the spike's prompt from the artifact;
+          #   required for {Adjudicator}'s reason -- nothing here maps a digest
+          #   to a path, so a default could only send the spike after something
+          #   it cannot find
+          # @param journal [#record, #each] the one handle above. It must ALSO
+          #   be the journal the {Approval::Gate} passed to {#decide} writes to,
+          #   which no object in this process can check -- a Gate does not
+          #   publish its journal. That half of the invariant is the caller's,
+          #   and it is what the `deps` value exists to make a session state
+          #   once ({Policies::Deps}).
+          # @param queue [SignoffQueue] where an uncertain verdict parks -- and
+          #   the same queue the stage boundary is read against
+          def initialize(role_spawn:, brief:, journal:, queue:)
+            raise UnreadableJournal, ONE_JOURNAL unless journal.respond_to?(:record) && journal.respond_to?(:each)
+
+            super(queue:)
+            @role_spawn = role_spawn
+            @brief = brief
+            @journal = journal
+          end
+
+          def decide(artifact, gate:, stage:, epic_slug:) = adjudicator(gate).call(artifact, stage:, epic_slug:)
+
+          private
+
+          # Built per decision because the Gate is a decision-time argument on
+          # this seam and a constructor-time one there. Nothing is cached with
+          # it: {Adjudicator::Decided} re-walks the journal per call by design,
+          # so a fresh one costs the fold nothing it was not already paying.
+          def adjudicator(gate)
+            Adjudicator.new(role_spawn: @role_spawn, gate:, queue: @queue, journal: @journal,
+                            brief: @brief, decisions: @journal)
+          end
         end
       end
     end

@@ -14,8 +14,9 @@ module Lain
       # == One dependencies value, per-policy seam declarations
       #
       # The family's constructors disagree ({Policy::Interactive} takes an asker,
-      # {Policy::HandsOff} does not, T14's `Adjudicated` will take a `role_spawn`
-      # and a `brief`), so the factory takes the UNION once as {Deps} and each
+      # {Policy::HandsOff} does not, {Policy::Adjudicated} takes a `role_spawn`,
+      # a `brief` and a journal it can read back), so the factory takes the
+      # UNION once as {Deps} and each
       # {Recipe} declares which members it actually needs. The declaration is
       # DATA rather than a constructor's arity, which is what makes the refusal
       # possible at all: an `adjudicated` stage configured in a session that
@@ -47,12 +48,19 @@ module Lain
         # A policy configured into a session that never wired what it needs.
         class MissingSeam < Error; end
 
+        # A seam that is PRESENT and cannot do what its policy needs of it --
+        # the `journal:` an adjudicated gate must also be able to read back.
+        # Distinct from {MissingSeam} because the fix is different: one says
+        # wire it, this one says wire something else.
+        class UnusableSeam < Error; end
+
         # A {Recipe} declaring a seam {Deps} has no reader for. Refused at
         # CONSTRUCTION, because the alternative is that {Recipe#build} --- the
         # one method whose whole job is to refuse by name --- dies on
         # `public_send` with an unnamed NoMethodError while trying to name it.
         # A spec over the shipped rows would not have covered this: rows are
-        # added by hand, and the fourth one is a later card's.
+        # added by hand, and the row that first declared a seam beyond
+        # `queue`/`asker` (`adjudicated`) landed a card after this check did.
         class UnknownSeam < Error; end
 
         # Every collaborator any policy in the family could want, passed as ONE
@@ -94,10 +102,24 @@ module Lain
             missing = seams.select { |seam| deps.public_send(seam).nil? }
             raise MissingSeam, missing_message(missing, stage, policy) unless missing.empty?
 
-            builder.call(deps)
+            construct(deps, stage, policy)
           end
 
           private
+
+          # A policy that refused its OWN construction -- a seam that is there
+          # and cannot do the job ({Policy::Adjudicated::UnreadableJournal}).
+          # Re-raised with the stage on it because only the factory knows which
+          # `[epics.gates]` line asked, and a startup refusal that cannot name
+          # the stage sends an operator to the wrong one. Scoped to this one
+          # call rather than the whole method, so it can never swallow the
+          # refusal {#build} raises itself.
+          def construct(deps, stage, policy)
+            builder.call(deps)
+          rescue Error => e
+            raise UnusableSeam, "epic stage #{stage.to_s.inspect} is configured for the #{policy.inspect} " \
+                                "gate policy, but #{e.message}"
+          end
 
           def unknown_message(unknown)
             "a gate policy recipe declares #{unknown.join(", ")}, which the dependencies value does not " \
@@ -114,7 +136,8 @@ module Lain
           end
         end
 
-        # Name -> recipe. T14 adds `adjudicated` here and nowhere else.
+        # Name -> recipe. Widening the family is this table plus the policy
+        # itself; {Config::Epics::Gates} reads its valid names from here.
         CATALOG = {
           Policy::Interactive::NAME => Recipe.new(
             seams: %i[asker queue],
@@ -127,6 +150,17 @@ module Lain
           Policy::Deferred::NAME => Recipe.new(
             seams: %i[queue],
             builder: ->(deps) { Policy::Deferred.new(queue: deps.queue) }
+          ),
+          # The one row that wants the adjudication seams, which is what the
+          # per-policy declaration was for: a session running `hands_off`
+          # overnight still wires no spawn, and a session that names this
+          # policy without one is refused at startup by NAME.
+          Policy::Adjudicated::NAME => Recipe.new(
+            seams: %i[queue journal role_spawn brief],
+            builder: lambda { |deps|
+              Policy::Adjudicated.new(role_spawn: deps.role_spawn, brief: deps.brief,
+                                      journal: deps.journal, queue: deps.queue)
+            }
           )
         }.freeze
 

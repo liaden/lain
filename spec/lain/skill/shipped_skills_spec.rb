@@ -260,6 +260,11 @@ RSpec.describe "shipped skills" do
   # BEHAVIOUR. Two landed objects can read like one feature -- {Gate::Policy::Deferred}
   # parks, {Gate::Adjudicator} spikes-then-adjudicates -- and describing their
   # union teaches a gate nobody has wired.
+  #
+  # {Gate::Policy::Adjudicated} is what closed the gap: the spike-then-park path
+  # IS a selectable policy now, so the scaffolds name it -- as its own policy,
+  # beside `deferred` rather than instead of it. `deferred` still gathers
+  # nothing, which is why it stays the overnight run's no-spend option.
   describe "the epic scaffolds describe gate behaviour that has actually landed" do
     # Pinned against the DOMAIN, not against the source text. The first attempt
     # here grepped `lib/` for `Adjudicator.new` -- a property of files this spec
@@ -269,42 +274,78 @@ RSpec.describe "shipped skills" do
     # unrelated would have fired it falsely, and the cwd-relative glob passed
     # vacuously when rspec ran from another directory.
     #
-    # Policy's closed family IS the fact the scaffolds rest on: `deferred`
-    # refuses and parks because Deferred is the only deferring policy there is.
-    # A Policy::Adjudicated fires this the day it lands, however it obtains its
-    # collaborator, because it has to subclass Policy to be one. NAME rather
-    # than the class name, because NAME is the durable journal label the
-    # scaffolds actually quote.
-    it "pins the closed policy family the deferred prose depends on" do
+    # Policy's closed family IS the fact the scaffolds rest on: each policy the
+    # prose names has to be one somebody can configure. NAME rather than the
+    # class name, because NAME is the durable journal label the scaffolds
+    # actually quote.
+    it "pins the closed policy family the gate prose depends on" do
       expect(Lain::Approval::Gate::Policy.subclasses.map { |policy| policy::NAME })
-        .to match_array(%w[interactive hands_off deferred]),
+        .to match_array(%w[interactive hands_off deferred adjudicated]),
             "The gate policy family has changed. research-epic, plan-epic and create-epic-issues " \
-            "each describe `deferred` as a refusal that parks the question and gathers no evidence; " \
-            "re-check all three against the policy that moved before relaxing this."
+            "each describe every policy a session can configure; re-check all three against the " \
+            "policy that moved before relaxing this."
     end
 
-    it "describes deferred as the refusal-and-park it is, gathering nothing and asking no model" do
+    # ONE CLAIM PER POLICY, not one paragraph per topic. Blank lines separate
+    # paragraphs, but a markdown bullet is its own claim inside one, and
+    # research-epic states all four policies as a single bullet list -- so a
+    # paragraph-level grep matched `deferred` and `adjudicated` on the SAME
+    # 1074-character blob and let each policy's sentences satisfy the other's
+    # pins. It passed vacuously: an adjudicated bullet rewritten to "the gate
+    # then settles itself. It never needs a human." stayed green, because
+    # `deferred`'s own "parks the question" answered the park match.
+    def gate_claims(scaffold)
+      scaffold.split(/\n\n+/).flat_map { |paragraph| paragraph.split(/\n(?=- )/) }
+    end
+
+    it "describes deferred as the refusal-and-park it is, asking no model on the way" do
       with_empty_project do |renderer|
         %w[research-epic plan-epic create-epic-issues].each do |name|
           scaffold = renderer.render(name)
-          deferred = scaffold.split(/\n\n+/).grep(/`deferred`/)
+          deferred = gate_claims(scaffold).grep(/`deferred`/)
           expect(deferred).not_to be_empty, "#{name} never describes the deferred policy"
 
           deferred.each do |paragraph|
             expect(paragraph).to match(/refus/i), "#{name}: deferring is a refusal, not a soft yes"
             expect(paragraph).to match(/park/i), "#{name}: a deferred gate parks for later sign-off"
-            # The substantive half of the correction, pinned rather than left to
-            # prose drift: Policy::Deferred parks the artifact's digest and
-            # question and NOTHING else -- no spike, no evidence, no verdict.
             # `\s+` rather than a literal space: these are wrapped markdown
             # paragraphs, and a phrase that reflows across a line break is the
             # same sentence.
-            expect(paragraph).to match(/no\s+evidence\s+is\s+gathered/i),
-                                 "#{name}: must say plainly that deferring gathers no evidence"
+            expect(paragraph).to match(/no\s+model\s+is\s+asked/i),
+                                 "#{name}: must say plainly that deferring spends nothing"
+            # The blanket claim the scaffolds used to make. It was true of
+            # Policy::Deferred and is false of a parked sign-off in general now
+            # that Policy::Adjudicated parks WITH evidence attached, and these
+            # paragraphs are read as a description of the queue a reviewer will
+            # find in the morning.
+            expect(paragraph).not_to match(/no\s+evidence\s+is\s+gathered/i),
+                                     "#{name}: an adjudicated gate parks with evidence -- do not claim otherwise"
           end
+        end
+      end
+    end
 
-          expect(scaffold).not_to match(/adjudicat/i),
-                                  "#{name} describes adjudication, which no policy performs today"
+    it "describes adjudicated as a spike that gathers evidence and may still park" do
+      with_empty_project do |renderer|
+        %w[research-epic plan-epic create-epic-issues].each do |name|
+          adjudicated = gate_claims(renderer.render(name)).grep(/`adjudicated`/)
+          expect(adjudicated).not_to be_empty, "#{name} never describes the adjudicated policy"
+
+          adjudicated.each do |paragraph|
+            expect(paragraph).to match(/spike/i), "#{name}: adjudicating runs a read-only spike first"
+            expect(paragraph).to match(/evidence/i), "#{name}: the spike gathers evidence, and it is journaled"
+            expect(paragraph).to match(/park/i),
+                                 "#{name}: adjudicating may still park for a human -- it is not a gate that " \
+                                 "always answers itself"
+            # A blank or failed spike parks with `evidence_digest: nil` and
+            # {Adjudicator}'s note instead, so a paragraph that promises
+            # evidence on EVERY park promises the morning reviewer something
+            # the queue will not be holding.
+            expect(paragraph).to match(/empty/i),
+                                 "#{name}: name the case where the spike came back empty"
+            expect(paragraph).to match(/reason/i),
+                                 "#{name}: an empty spike parks the reason it failed, not evidence"
+          end
         end
       end
     end
