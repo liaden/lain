@@ -148,8 +148,9 @@ module Lain
         #   evidence. A caller must say how its artifacts render; T9's artifact
         #   home is what will supply the real one.
         # @param clock [#call] monotonic seconds, measuring the SPIKE's latency
-        #   ({Gate}'s injected-clock idiom, and its constant)
-        def initialize(role_spawn:, gate:, queue:, journal:, brief:, clock: MONOTONIC)
+        #   ({Gate}'s injected-clock idiom, and the same {RunClock::MONOTONIC}
+        #   default)
+        def initialize(role_spawn:, gate:, queue:, journal:, brief:, clock: RunClock::MONOTONIC)
           @role_spawn = role_spawn
           @gate = gate
           @queue = queue

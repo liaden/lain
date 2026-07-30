@@ -184,8 +184,6 @@ module Lain
       # card's policies wrap this call rather than switching inside it.
       DEFAULT_POLICY = "interactive"
 
-      MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
-
       # An irreversible step that would consume an un-approved artifact, refused.
       # Names the digest, so the edited-artifact case reads as a different,
       # un-approved address rather than a mysterious miss.
@@ -238,7 +236,7 @@ module Lain
       #   The one place the two clocks would contradict each other -- the
       #   latency on an expired gate -- is settled in {#await}: an expired gate
       #   reports the window, not this clock's delta.
-      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: MONOTONIC)
+      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
         @journal = journal
         @timeout = timeout
         @clock = clock

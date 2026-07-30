@@ -61,12 +61,6 @@ module Lain
       # hurry, matching {Approval::Queue::DEFAULT_TIMEOUT}.
       DEFAULT_TIMEOUT = 300
 
-      # Inline until there is a shared clock unit to name: **T33** creates
-      # `RunClock::MONOTONIC` in wave 2, and this default is one of the copies it
-      # collects. Inventing the unit here, for a single default, would put the
-      # seam in the wrong place.
-      MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
-
       # A generation (or closure record) that would consume an un-approved
       # criteria, refused. Names the digest so a caller traces exactly which
       # criteria was never approved -- the edited-clause case reads as a
@@ -95,7 +89,7 @@ module Lain
       # @param timeout [Numeric] seconds an unanswered gate waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
-      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: MONOTONIC)
+      def initialize(journal:, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
         @journal = journal
         @timeout = timeout
         @clock = clock

@@ -84,7 +84,7 @@ module Lain
       #   ({CLI::Conductor::CountdownTicker}) instead. A future event-driven UI
       #   is the expected caller.
       def initialize(run_task:, closer:, budget: Agent::Budget.new,
-                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
+                     clock: RunClock::MONOTONIC,
                      grace: GRACE_DEFAULT, actors: [].freeze, on_transition: ->(_state, _deadline) {})
         raise ArgumentError, "grace must be a positive Numeric, got #{grace.inspect}" unless positive?(grace)
 

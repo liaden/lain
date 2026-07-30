@@ -2,7 +2,7 @@
 
 module Lain
   class Arm
-    # How an arm MEASURES: the wall-clock it times work with, and the price book
+    # How an arm MEASURES: the monotonic clock it times work with, and the price book
     # it turns a run's journal into dollars with. Injected into every arm, which
     # is the point -- `elapsed` and `ledger` are the bench's two headline
     # metrics, and before this object each arm carried its own byte-identical
@@ -17,27 +17,31 @@ module Lain
     # two arms into `state = nil; timed { state = ... }`, mutable capture written
     # to smuggle a result out of a block that discarded it.
     #
-    # FROZEN BUT DELIBERATELY NOT `Ractor.shareable?`, the same posture {Arm::Run}
-    # states for itself: `price_book` is shareable, `clock` is a Proc and a Proc
-    # never is, so the Data is frozen while `Ractor.shareable?(instrument)` is
-    # false. That is safe HERE and only here because nothing crosses a Ractor with
-    # one -- {Driver} runs arms serially and the fan-out is `Async` fibers inside
-    # one Ractor -- and because a clock is asked for the time and holds no state to
-    # race over. A Ractor-parallel Driver would have to make the clock shareable
-    # (or build one per Ractor) rather than reach for `Ractor.make_shareable`.
+    # FROZEN BUT NOT YET `Ractor.shareable?`, the same posture {Arm::Run} states
+    # for itself: `price_book` is shareable, `clock` is a Proc, and a Proc is not
+    # shareable until it has been isolated -- so the Data is frozen while
+    # `Ractor.shareable?(instrument)` is false. NOT YET, not never: probed on
+    # 4.0.6, `Ractor.make_shareable(RunClock::MONOTONIC)` SUCCEEDS, because that
+    # lambda captures nothing, and the frozen Instrument holding it then reports
+    # shareable. `Ractor::IsolationError` is what a clock closing over mutable
+    # state would raise -- being a Proc is not the boundary; capturing is.
     #
-    # Also, because that default clock lambda is fresh per call,
-    # `Instrument.new != Instrument.new`. Two built from the SAME clock and book
-    # are equal, as Data equality promises; nothing here depends on either.
+    # Left undone because nothing crosses a Ractor with one today: {Driver} runs
+    # arms serially and the fan-out is `Async` fibers inside one Ractor, and a
+    # clock is asked for the time and holds no state to race over. Isolating a
+    # constant mutates it process-wide, so that call belongs to whoever
+    # introduces a Ractor-parallel Driver, next to its own spec.
+    #
+    # And because both defaults are single shared objects, `Instrument.new ==
+    # Instrument.new` -- as Data equality promises for two built from the same
+    # clock and book. Nothing here depends on that; it is only worth saying
+    # because the default clock USED to be a fresh lambda per call, which made
+    # the same two Instruments unequal (T33).
     Instrument = Data.define(:clock, :price_book) do
-      # `clock` is CLOCK_MONOTONIC, which never jumps backward on an NTP step, so
-      # an elapsed measurement is never negative; injectable so a spec can pin it
-      # deterministic. The lambda is inline because there is no shared monotonic
-      # constant to name yet -- T33 lands `RunClock::MONOTONIC` and three other
-      # inline copies (run_clock.rb, conductor.rb, oracle/recorded.rb) collapse
-      # onto it with this one.
-      def initialize(clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
-                     price_book: PriceBook.default)
+      # `clock` is {RunClock::MONOTONIC}, which never jumps backward on an NTP
+      # step, so an elapsed measurement is never negative; injectable so a spec
+      # can pin it deterministic.
+      def initialize(clock: RunClock::MONOTONIC, price_book: PriceBook.default)
         super
       end
 

@@ -102,8 +102,7 @@ module Lain
         #   default {Grader::Verified} and {Middleware::JournalRequests} use)
         # @param clock [#call] monotonic seconds source, injectable so a spec can
         #   pin `wall_clock` deterministically
-        def initialize(inner:, definition:, journal: Channel::Null::INSTANCE,
-                       clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+        def initialize(inner:, definition:, journal: Channel::Null::INSTANCE, clock: RunClock::MONOTONIC)
           @inner = inner
           @definition = definition
           @journal = journal

@@ -5,9 +5,8 @@ module Lain
   # since the user last answered a prompt, since the last compaction. Each is
   # a plain subtraction against ONE injected clock, so all three move
   # together under a jumped-clock spec the way {CLI::Conductor}'s own grace
-  # timing does -- reusing that class's exact idiom
-  # (`clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }`) rather
-  # than inventing a second one, because every reading here is a DURATION,
+  # timing does -- both default to {MONOTONIC} below rather than each naming a
+  # clock of its own, because every reading here is a DURATION,
   # never a wall-clock deadline a renderer ticks locally against the way
   # {StatusFeed}'s published `cache_deadline` is. Nothing here is published;
   # a caller reads the three methods directly.
@@ -45,7 +44,29 @@ module Lain
   # times raised nothing, produced no wrong-typed reading, and no reading in
   # negative or otherwise impossible territory.
   class RunClock
-    def initialize(clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+    # The one monotonic time source every `clock:` seam in the repo defaults to
+    # -- {Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor},
+    # {Approval::Queue}, {Approval::Gate}, {Gherkin::Approval},
+    # {Oracle::Recorded::Journaling}, {Arm::Instrument}, {Frontend::TTY},
+    # {Frontend::Neovim::Compose} -- plus {Core::Child}, which has no `clock:`
+    # seam and calls it. It lives HERE because this class was already the repo's
+    # clock object; a second `Lain::Clock` unit would only add a name.
+    #
+    # ONE lambda, not a factory: two seams built on the default therefore hold
+    # the same object, which is what makes `Arm::Instrument.new ==
+    # Arm::Instrument.new` true.
+    #
+    # There is deliberately no `WALL` sibling. Wall time is asked three
+    # different ways on purpose -- {Journal} stamps an ISO8601 String,
+    # {CLI::EpicQueue} a utc `Time`, and {StatusFeed},
+    # {Frontend::Neovim::InboxView} and three others a local `Time.now` -- so a
+    # single constant would have to pick one and misname the other two.
+    #
+    # Units that load BEFORE run_clock in `lain.rb` (middleware) may still name
+    # it: a keyword's default is evaluated per call, not at definition.
+    MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+
+    def initialize(clock: MONOTONIC)
       @clock = clock
       @started_at = @clock.call
       @last_input_at = @started_at

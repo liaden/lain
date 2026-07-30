@@ -38,8 +38,6 @@ module Lain
       # bound, not a hurry -- an abandoned session must eventually refuse.
       DEFAULT_TIMEOUT = 300
 
-      MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
-
       # One gated call awaiting its verdict. Deliberately MUTABLE coordination
       # state (like {Lain::Promise}, unlike the frozen value objects): it exists
       # to be decided. Resolution is single-shot with first-answer-wins
@@ -100,7 +98,7 @@ module Lain
       # @param timeout [Numeric] seconds an unanswered pending waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
-      def initialize(journal:, requester: "agent", timeout: DEFAULT_TIMEOUT, clock: MONOTONIC)
+      def initialize(journal:, requester: "agent", timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC)
         @journal = journal
         @requester = requester
         @timeout = timeout

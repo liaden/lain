@@ -112,10 +112,16 @@ module Lain
         # @param notify [#call] renders a warning line ({TTY#render_warning}),
         #   the same seam {Frontend::LineEditor} and {TTY::History} take
         # @param timeout [Numeric] see {GRACE}
-        def initialize(rpc: Detached, notify: SILENT, timeout: GRACE)
+        # @param clock [#call] monotonic seconds bounding {#settle}'s wait --
+        #   {RunClock::MONOTONIC} by default, the same seam {Middleware::Timeout}
+        #   and {CLI::Shutdown} take. Injectable so a spec can expire a 300s
+        #   bound without waiting 300 seconds, which is the only way an example
+        #   can tell that the bound is anchored at all (T33)
+        def initialize(rpc: Detached, notify: SILENT, timeout: GRACE, clock: RunClock::MONOTONIC)
           @rpc = rpc
           @notify = notify
           @timeout = timeout
+          @clock = clock
           @answers = Thread::Queue.new
           @draft = nil
           @generation = 0
@@ -215,7 +221,7 @@ module Lain
         # ordering, and {#disarm}'s clear is hygiene rather than the only
         # defence.
         def matching_answer
-          deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + @timeout
+          deadline = @clock.call + @timeout
           generation = nil
           answer = nil
           stale = true
@@ -226,7 +232,7 @@ module Lain
           answer
         end
 
-        def remaining(deadline) = [deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC), 0].max
+        def remaining(deadline) = [deadline - @clock.call, 0].max
 
         # Nothing the human confirmed, so nothing is sent -- but the draft goes
         # WITH the re-prompt. "Not dispatched" must not quietly become

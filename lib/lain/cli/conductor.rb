@@ -60,7 +60,7 @@ module Lain
       # Conductor-local clock the reader could drift from.
       def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
-                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }, tick: DEFAULT_TICK)
+                     clock: RunClock::MONOTONIC, tick: DEFAULT_TICK)
         @tty = tty
         @chronicle = chronicle
         @signals = signals

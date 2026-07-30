@@ -75,8 +75,9 @@ module Lain
       #   Injectable so specs use a tmpdir (I3)
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
       #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
-      #   absolute deadline (wall time), while `clock:` is CLOCK_MONOTONIC and
-      #   answers a different question (I3)
+      #   absolute deadline (wall time), while `clock:` is {RunClock::MONOTONIC}
+      #   and answers a different question (I3). There is deliberately no shared
+      #   WALL constant to pair with it -- see {RunClock::MONOTONIC}
       # @param vi_mode [Boolean] ask the line editor for vi mode; off unless
       #   asked, in which case {LineEditor} leaves Reline as it found it (T14)
       # @param completion_sources [Completion::Sources] where a `/command` or
@@ -88,7 +89,7 @@ module Lain
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
                      theme: Theme.new(pastel:), prompt_renderer: PromptComposer::Null.new,
                      history_path: File.join(Paths.new.state_home, "history"),
-                     clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) },
+                     clock: RunClock::MONOTONIC,
                      state_path: ProjectDir.new.state_path,
                      wall_clock: -> { Time.now }, vi_mode: false, completion_sources: Completion::Sources.new)
         @channel = channel

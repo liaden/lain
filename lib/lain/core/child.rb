@@ -133,7 +133,7 @@ module Lain
         raise Died, status
       end
 
-      def now = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
+      def now = RunClock::MONOTONIC.call
     end
   end
 end

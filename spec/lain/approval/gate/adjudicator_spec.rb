@@ -58,7 +58,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     AdjudicatorSpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
   end
 
-  def adjudicator(spawn = spawn_stub, clock: Lain::Approval::Gate::MONOTONIC)
+  def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC)
     described_class.new(role_spawn: spawn, gate:, queue:, journal:, brief:, clock:)
   end
 

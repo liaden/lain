@@ -40,8 +40,19 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   let(:notify) { ->(message) { notices << message } }
   let(:attached) { editor.new }
 
-  def compose(rpc: attached, timeout: 2)
-    described_class.new(rpc:, notify:, timeout:)
+  def compose(rpc: attached, timeout: 2, **seams)
+    described_class.new(rpc:, notify:, timeout:, **seams)
+  end
+
+  # A SCRIPTED clock: every reading is consumed exactly once and recorded, and
+  # asking past the script raises. That is what lets an example pin HOW MANY
+  # times -- and in what order -- the compose asked. A call-count clock
+  # (`-> { ticks += 1 }`) cannot: it reads the same whether the deadline is
+  # anchored before the wait or recomputed inside the loop, which is exactly
+  # the hole a sibling card found in the arm specs.
+  def scripted_clock(*readings)
+    taken = []
+    [-> { taken.push(readings.fetch(taken.size)).last }, taken]
   end
 
   # The editor answers whatever generation it was handed -- what a real
@@ -221,12 +232,20 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   # PANEL BLOCKER 1, second half: a dead editor must not send the stale draft
   # either. The bound exists so the prompt returns control, not so it invents
   # a message.
+  #
+  # EVERY example here waits on the bound expiring, so every one is wrapped in
+  # `Timeout.timeout` -- not belt-and-braces. A one-byte sign error in
+  # {Compose#remaining} (`deadline - now` becoming `deadline + now`) turns the
+  # bound into ~forever, and without the wrapper these examples park instead of
+  # failing: the whole file produced no report in 420 seconds. A deadline bug
+  # must fail LOUDLY, which for a wait means the example carries its own
+  # ceiling (T33 review).
   describe "a dead editor never wedges the prompt (panel PAC3b)" do
     it "answers the caller's re-prompt with a notice once the bound expires" do
       subject = compose(timeout: 0.05)
       subject.open("draft the editor never answered for")
 
-      expect(subject.settle(subject.marker) { :re_prompted }).to eq(:re_prompted)
+      expect(Timeout.timeout(3) { subject.settle(subject.marker) { :re_prompted } }).to eq(:re_prompted)
       expect(notices).to eq([described_class::TIMED_OUT])
       expect(subject).not_to be_pending
     end
@@ -234,7 +253,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
     it "keeps the draft for recovery rather than sending it" do
       subject = compose(timeout: 0.05)
       subject.open("draft the editor never answered for")
-      subject.settle(subject.marker) { nil }
+      Timeout.timeout(3) { subject.settle(subject.marker) { nil } }
 
       expect(subject.draft).to eq("draft the editor never answered for")
     end
@@ -244,7 +263,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
       subject.open("draft the editor never answered for")
       handed = nil
 
-      subject.settle(subject.marker) { |draft| handed = draft }
+      Timeout.timeout(3) { subject.settle(subject.marker) { |draft| handed = draft } }
 
       expect(handed).to eq("draft the editor never answered for")
     end
@@ -254,6 +273,38 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
       subject.open("draft text")
 
       expect { Timeout.timeout(3) { subject.settle(subject.marker) } }.not_to raise_error
+    end
+  end
+
+  # T33: the bound was measured by calling Process.clock_gettime directly,
+  # bypassing the `clock:` injection every sibling seam takes
+  # ({Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor}). These examples
+  # are only possible once it is injected -- a 300s bound that expires
+  # instantly is a statement that the real clock is not being read.
+  describe "the timing seam (T33)" do
+    it "bounds the wait against the injected clock, never the real one" do
+      clock, readings = scripted_clock(0.0, 1_000.0)
+      subject = compose(timeout: 300, clock:)
+      subject.open("draft the editor never answered for")
+
+      expect(Timeout.timeout(2) { subject.settle(subject.marker) { :re_prompted } }).to eq(:re_prompted)
+      expect(notices).to eq([described_class::TIMED_OUT])
+      expect(readings).to eq([0.0, 1_000.0])
+    end
+
+    it "anchors the deadline ONCE, before the wait, not per stale answer" do
+      clock, readings = scripted_clock(0.0, 0.0, 1_000.0)
+      subject = compose(timeout: 300, clock:)
+      subject.open("draft A")
+      stale_generation = attached.generations.last
+      subject.settle("changed my mind")
+      subject.open("draft B")
+      subject.wrote(["A's TEXT"], stale_generation)
+
+      expect(Timeout.timeout(2) { subject.settle(subject.marker) { :re_prompted } }).to eq(:re_prompted)
+      # One deadline reading, then one per pop: a deadline recomputed inside
+      # the loop would ask a fourth time and run off the end of the script.
+      expect(readings).to eq([0.0, 0.0, 1_000.0])
     end
   end
 
@@ -332,6 +383,8 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
       expect(Timeout.timeout(3) { subject.settle(subject.marker) }).to eq("B's text")
     end
 
+    # Bounded for the same reason the dead-editor examples are: the stale answer
+    # is popped and dropped, and then this waits on the bound like they do.
     it "times out rather than settling on a stale answer that never matches" do
       subject = compose(timeout: 0.1)
       subject.open("draft A")
@@ -341,7 +394,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
       subject.open("draft B")
       subject.wrote(["A's TEXT"], first)
 
-      expect(subject.settle(subject.marker) { :re_prompted }).to eq(:re_prompted)
+      expect(Timeout.timeout(3) { subject.settle(subject.marker) { :re_prompted } }).to eq(:re_prompted)
       expect(notices).to eq([described_class::TIMED_OUT])
     end
   end

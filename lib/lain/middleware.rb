@@ -212,7 +212,7 @@ module Lain
 
       # @param seconds [Numeric] the budget (> 0)
       # @param clock [#call] monotonic time source, injectable for tests
-      def initialize(seconds:, clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
+      def initialize(seconds:, clock: RunClock::MONOTONIC)
         raise ArgumentError, "seconds must be a positive Numeric, got #{seconds.inspect}" unless positive?(seconds)
 
         @seconds = seconds
