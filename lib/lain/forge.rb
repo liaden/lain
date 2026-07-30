@@ -16,3 +16,5 @@
 # order.
 require_relative "forge/intent"
 require_relative "forge/reconcile"
+require_relative "forge/gh"
+require_relative "forge/journaled"
