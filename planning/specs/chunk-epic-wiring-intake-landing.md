@@ -1322,7 +1322,21 @@ T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
    `@paths.sessions_dir` (project defaults to `Dir.pwd`); `CLI::Epic` reads
    `sessions_dir(project: project_hash(root))`. They agree under `exe/lain` and diverge for any
    injected `root:`, so an approved submit is invisible to `status`. Predates this chunk.
-10. **A deferred adjudication re-spends without bound** — three re-decisions of one parked
+10. **`Promotion` has a read-then-write window against the remote.** `ls-remote` then `push` is
+    two round trips, and git's non-force push refuses only *non-fast-forward* updates — so a
+    concurrent actor that advances the ref to an **ancestor** of our sha in between gets the
+    push landed, silently advancing a branch `decide` refused one line earlier. Verified with
+    the exact argv the file constructs. The clean fix is `--force-with-lease`, which this chunk
+    forbids; it belongs to the cascade chunk. Named in the class doc meanwhile.
+11. **`issue_id` denotes two different value sets across one seam.** `Forge::Promotion` runs it
+    through `Epic::Home.checked_name` (`/\A[a-z0-9][a-z0-9-]*\z/`), so `issue_id: "T18"`
+    **raises `MalformedName`** — outside the journal, with no outcome a reconcile can read —
+    while `Epic::Submission.issue_plan(issue_id: "T7")` is accepted and spec'd on main
+    (`spec/lain/epic/submission_spec.rb:187`). A pre-existing split, inherited rather than
+    created. Must be decided before T24 hands real ids in. Probable answer: issue ids are
+    lowercase because `Home` writes `issues/<id>.md`, and `Submission` should say so too —
+    but that is T1's landed file, so it wants its own card.
+12. **A deferred adjudication re-spends without bound** — three re-decisions of one parked
     address cost 6 model spawns and 3 `gate_evidence` records for 1 queue item. That is T9's
     spec'd intent and nothing in `lib/` re-decides today, but `Policy::Adjudicated` makes it
     reachable from config overnight and nothing says a re-run re-pays.
