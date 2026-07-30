@@ -38,10 +38,41 @@ module Lain
           def self.drained?(_epic_slug, _stage) = true
         end
 
+        # {Epic::Stage}'s boundary rule, bound to the queue it is asked about --
+        # the ONE object that invokes it.
+        #
+        # It exists because the rule was written twice: here on the policy seam,
+        # and again inside {Gate::Adjudicator}, which is not a Policy and never
+        # reaches {Policy#decide}. Both call sites were right and neither was
+        # redundant, which is exactly the shape that drifts -- a tightening
+        # applied to one leaves the other open, and the other is the unattended
+        # path. Naming the rule makes "checked exactly once, by whoever holds a
+        # queue" a property of the object rather than of a convention.
+        #
+        # A Stage is a frozen value that takes its queue as an argument
+        # ({Epic::Stage#ensure_open!}); this holds the queue because its callers
+        # each hold exactly one for the life of a decision.
+        class Boundary
+          # @param queue [#drained?] the sign-off queue, or {Drained} when the
+          #   session has none -- named, never defaulted, for {Policy}'s reason
+          def initialize(queue)
+            @queue = queue
+          end
+
+          # @param stage [#to_s] the stage a gate is about to open at
+          # @param epic_slug [#to_s] the epic being walked
+          # @return [Epic::Stage] the stage, so the check reads as a precondition
+          # @raise [Epic::StageBlocked] when an earlier stage of this epic still
+          #   holds sign-offs parked
+          # @raise [Epic::UnknownStage] for a stage outside the closed pipeline
+          def ensure_open!(stage, epic_slug:) = Epic::Stage.new(stage).ensure_open!(@queue, epic_slug:)
+        end
+
         # @param queue [#drained?] the sign-off queue the stage boundary is
         #   checked against, or {Drained} when the session has none
         def initialize(queue:)
           @queue = queue
+          @boundary = Boundary.new(queue)
         end
 
         # @param artifact [#digest, #gate_question] the thing being gated
@@ -58,7 +89,7 @@ module Lain
           # would be a safety spine nothing walks. Before `gate.call`, so a
           # refusal journals nothing and approves nothing: an epic must not
           # reach implementation on a plan nobody signed off.
-          Epic::Stage.new(stage).ensure_open!(@queue, epic_slug:)
+          @boundary.ensure_open!(stage, epic_slug:)
           gate.call(artifact, asker: surface, stage:, epic_slug:, policy: name)
         end
 

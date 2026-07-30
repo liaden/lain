@@ -43,18 +43,17 @@ module Lain
       # implementation agreeing with the first. The queue is journal-fold-shaped
       # the same way {Policy::Deferred} is: journal first, park second.
       #
-      # It DOES check the stage boundary itself ({Epic::Stage#ensure_open!}),
-      # before either spawn. This is NOT defence in depth: an Adjudicator is not
-      # a {Policy} and never reaches {Policy#decide}, so this call is the ONLY
-      # boundary check on this path and deleting it opens a real hole -- an
-      # unattended machine approving an implementation-stage artifact while that
-      # epic's research sign-offs are still parked. Checking first also means a
-      # blocked epic spends no tokens.
+      # It DOES check the stage boundary itself, before either spawn. This is
+      # NOT defence in depth: an Adjudicator is not a {Policy} and never reaches
+      # {Policy#decide}, so this check is the ONLY one on this path and deleting
+      # it opens a real hole -- an unattended machine approving an
+      # implementation-stage artifact while that epic's research sign-offs are
+      # still parked. Checking first also means a blocked epic spends no tokens.
       #
-      # It is nonetheless a SECOND literal call site of a rule T6 already
-      # states, and two copies can drift. Collapsing both into a
-      # `Policy::Adjudicated` is a filed follow-up; until it lands, treat the
-      # duplication as temporary and change the two together.
+      # It is the same OBJECT the policy seam checks, though, not a second copy
+      # of the rule: {Policy::Boundary} owns the one call to
+      # {Epic::Stage#ensure_open!}, so a tightening cannot land on one path and
+      # miss the unattended one.
       class Adjudicator
         # The catalog role that gives the verdict, and the surface every decision
         # is signed with. One string, so a journal reader can never confuse a
@@ -119,14 +118,31 @@ module Lain
         # the other way. This class is the first path that can re-run a gate with
         # nobody watching, so it refuses loudly rather than documenting it.
         #
-        # SCOPE, exactly: the guard is PER-ADJUDICATOR. A second Adjudicator over
-        # the same {Gate} re-adjudicates the same address freely, and can journal
-        # a denial while `Gate#approved?` still answers true. Closing that needs
-        # the registry to answer "has this been DECIDED", which Gate's add-only
-        # set of approvals cannot do for a denial without new state -- a design
-        # change to a landed, mutation-tested class, filed as a ticket beside
-        # `Policy::Adjudicated`. Do not read this guard as stronger than one
-        # instance.
+        # It also closes the unattended RATCHET in the other direction: without
+        # this, a terminal DENY could be re-run until some spike happened to
+        # produce evidence a verdict approved on, and nothing would have
+        # recorded that the artifact was already refused.
+        #
+        # SCOPE, exactly: the guard is over the JOURNAL, not over one object's
+        # memory, so it holds across Adjudicators and across sessions -- but it
+        # is a SEQUENTIAL guarantee only. That is forced rather than generous:
+        # the registry answers "was this APPROVED", which a terminal denial
+        # leaves false, so an add-only set of approvals cannot answer "was this
+        # DECIDED" at all. The journal can -- a `gate_decision` under
+        # {TERMINAL_POLICY} says a machine settled this address, whichever way
+        # it went. A deferral is deliberately NOT terminal: parking is an
+        # invitation to come back.
+        #
+        # WHAT IT DOES NOT COVER: this is check-then-act, and the window is
+        # WIDE. {#admit} folds the journal, then TWO model round-trips run, then
+        # {#settle} writes. Two Adjudicators over one address concurrently both
+        # pass the check before either writes, and both journal a terminal
+        # verdict -- reproduced under `Async`, one `approved: true` and one
+        # `approved: false` for the same digest. Moving the guard off an ivar
+        # closed the sequential hole and WIDENED this one from a Hash write to
+        # two spawns. Closing it needs compare-and-append, which the Journal has
+        # no primitive for; it is a filed follow-up, not something to improvise
+        # here. Until then: one Adjudicator per address at a time.
         class AlreadyDecided < Error; end
 
         # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
@@ -147,19 +163,26 @@ module Lain
         #   with plausible prose about nothing, which then reads as gathered
         #   evidence. A caller must say how its artifacts render; T9's artifact
         #   home is what will supply the real one.
+        # @param decisions [Enumerable<Hash, String>] the journal read BACK --
+        #   the {Journal.records} duck -- which {Decided} folds for terminal
+        #   adjudications ({AlreadyDecided}). Required and undefaulted, as `journal:` is:
+        #   defaulting it would answer "nothing was decided" for a session that
+        #   simply was not wired, which is the permissive answer to the one
+        #   question this guard exists to refuse on. Pass something RE-READABLE
+        #   (`File.foreach(path)` re-opens per walk); a snapshot Array taken at
+        #   construction goes stale at the first decision.
         # @param clock [#call] monotonic seconds, measuring the SPIKE's latency
         #   ({Gate}'s injected-clock idiom, and the same {RunClock::MONOTONIC}
         #   default)
-        def initialize(role_spawn:, gate:, queue:, journal:, brief:, clock: RunClock::MONOTONIC)
+        def initialize(role_spawn:, gate:, queue:, journal:, brief:, decisions:, clock: RunClock::MONOTONIC)
           @role_spawn = role_spawn
           @gate = gate
           @queue = queue
           @journal = journal
           @brief = brief
+          @decided = Decided.new(decisions)
           @clock = clock
-          # Address => the verdict it settled on. Process-local and add-only,
-          # like {Gate}'s own registry, and read only by {#ensure_undecided!}.
-          @terminal = {}
+          @boundary = Policy::Boundary.new(queue)
         end
 
         # Spike, adjudicate, settle or park.
@@ -171,8 +194,8 @@ module Lain
         # @param stage [#to_s] the stage this gate sits on
         # @param epic_slug [#to_s] the epic it belongs to
         # @return [Boolean] whether the artifact was approved
-        # @raise [AlreadyDecided] when this address already has a terminal
-        #   verdict from this Adjudicator
+        # @raise [AlreadyDecided] when the journal already holds a terminal
+        #   adjudication of this address, whichever way it went
         # @raise [Epic::StageBlocked] when an earlier stage of this epic still
         #   holds sign-offs parked. Both refusals happen before either spawn, so
         #   a refused gate spends no tokens and journals nothing.
@@ -186,27 +209,22 @@ module Lain
 
         # The refusals that must precede any spend, and the identity every
         # record downstream is keyed by.
+        # Two named preconditions, each owned by the object that knows its rule,
+        # both before any spend. The BOUNDARY goes first, and only because of
+        # what an operator can do about it: a blocked epic names sign-offs
+        # somebody can go approve, where "already decided" is a dead end. Both
+        # refusals are equally correct and neither spends anything, so this
+        # order is a diagnosis choice, not a safety one.
         def admit(artifact, stage:, epic_slug:)
-          ensure_undecided!(artifact.digest)
-          Epic::Stage.new(stage).ensure_open!(@queue, epic_slug:)
+          @boundary.ensure_open!(stage, epic_slug:)
+          @decided.ensure_undecided!(artifact.digest)
           { artifact_digest: artifact.digest, epic_slug:, stage:, question: artifact.gate_question }
-        end
-
-        def ensure_undecided!(digest)
-          raise AlreadyDecided, already_decided(digest) if @terminal.key?(digest)
-        end
-
-        def already_decided(digest)
-          "artifact #{digest} already has a terminal adjudication (approved: #{@terminal[digest]}) -- " \
-            "Gate's approval registry is add-only, so a second verdict would leave it disagreeing " \
-            "with the journal"
         end
 
         def settle(artifact, outcome, evidence, gated)
           approved = @gate.call(artifact, asker: outcome.asker, stage: gated[:stage],
                                           epic_slug: gated[:epic_slug], policy: outcome.policy,
                                           evidence_digest: evidence.digest, reason: outcome.reason)
-          outcome.remember(@terminal, gated[:artifact_digest], approved)
           # Journal first, park second -- the queue is a fold of journaled
           # deferrals, so a park with no record behind it vanishes on restart and
           # leaves a partition that reads drained ({Policy::Deferred}'s ordering,
@@ -313,7 +331,9 @@ module Lain
 end
 
 # The subtree index (a file with a sibling directory owns its own requires).
-# AFTER the class body: the child reopens {Adjudicator} and reads its
-# MAX_TEXT, so the class and the constant must already exist.
+# AFTER the class body: each child reopens {Adjudicator} and reads one of its
+# constants (MAX_TEXT, TERMINAL_POLICY), so the class and the constants must
+# already exist.
+require_relative "adjudicator/decided"
 require_relative "adjudicator/evidence"
 require_relative "adjudicator/outcome"

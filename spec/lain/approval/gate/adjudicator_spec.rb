@@ -1,10 +1,30 @@
 # frozen_string_literal: true
 
 require "async"
+require "delegate"
 require "stringio"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module AdjudicatorSpecSupport
+  # A {SignoffQueue} that records the ONE question the stage-boundary rule
+  # asks. `#drained?` is asked once per PRECEDING stage per check, so a rule
+  # with two call sites on one path asks it twice per stage -- which is the
+  # duplication this counts, rather than trusting that a deleted call site
+  # stayed deleted.
+  class CountingQueue < SimpleDelegator
+    attr_reader :asked
+
+    def initialize(inner)
+      super
+      @asked = []
+    end
+
+    def drained?(epic_slug, stage)
+      @asked << stage
+      super
+    end
+  end
+
   # A {Skill::RoleSpawn} stand-in scripted PER ROLE. The adjudicator spawns two
   # different roles inside one #call -- the evidence spike and the verdict -- so
   # a single-answer stub could not tell them apart, and half of what this card
@@ -48,6 +68,11 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   # no default -- nothing maps a digest to a path -- so every construction site,
   # including this one, has to say.
   let(:brief) { ->(item) { "Gather evidence for: #{item.gate_question}" } }
+  # The journal read BACK, re-enumerated on every walk -- the shape
+  # `Journal.records(File.foreach(path))` has in production. A snapshot Array
+  # taken at construction would be stale by the time a second Adjudicator asks
+  # whether this address was already decided, which is the whole question.
+  let(:journaled) { Enumerator.new { |lines| journal_io.string.each_line { |line| lines << line } } }
 
   # The whole artifact duck Gate ships: a content address and its own question.
   def artifact(digest: "blake3:plan", question: "Approve the epic plan? Reply approve or deny.")
@@ -58,8 +83,23 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     AdjudicatorSpecSupport::ScriptedRoleSpawn.new(researcher:, gate_adjudicator: verdict)
   end
 
-  def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC)
-    described_class.new(role_spawn: spawn, gate:, queue:, journal:, brief:, clock:)
+  def adjudicator(spawn = spawn_stub, clock: Lain::RunClock::MONOTONIC, signoffs: queue)
+    described_class.new(role_spawn: spawn, gate:, queue: signoffs, journal:, brief:, decisions: journaled, clock:)
+  end
+
+  # One journaled `gate_decision` under the terminal policy, hand-built so a
+  # spec can pose a decision NOBODY in this process made -- a previous
+  # session's, which is exactly the case an in-memory guard cannot see.
+  # Fully qualified rather than off `described_class`, because the group that
+  # exercises Decided directly rebinds it.
+  def adjudicated(approved:, digest: plan.digest, policy: Lain::Approval::Gate::Adjudicator::TERMINAL_POLICY)
+    { "type" => "gate_decision", "artifact_digest" => digest, "epic_slug" => "alpha", "stage" => "epic_plan",
+      "approved" => approved, "answered_by" => Lain::Approval::Gate::Adjudicator::SURFACE,
+      "policy" => policy, "latency" => 0.1 }
+  end
+
+  def adjudicator_over(records, spawn = spawn_stub)
+    described_class.new(role_spawn: spawn, gate:, queue:, journal:, brief:, decisions: records)
   end
 
   def adjudicate(subject_under_test = adjudicator, item: plan, stage: "epic_plan", epic_slug: "alpha")
@@ -258,7 +298,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       exploding.define_singleton_method(:record) { |_entry| raise IOError, "disk full" }
       subject_under_test = described_class.new(role_spawn: spawn_stub(verdict: "MAYBE"),
                                                gate: Lain::Approval::Gate.new(journal: exploding),
-                                               queue:, journal: exploding, brief:)
+                                               queue:, journal: exploding, brief:, decisions: [])
 
       expect { adjudicate(subject_under_test) }.to raise_error(IOError)
       expect(queue.to_a).to be_empty
@@ -271,7 +311,29 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
 
       expect { adjudicate(adjudicator(spawn)) }.to raise_error(Lain::Epic::StageBlocked, /alpha.*research/m)
       expect(spawn.calls).to be_empty
-      expect(decisions).to be_empty
+      # The WHOLE journal, not just the decisions: a refused gate must not leave
+      # a gate_evidence line either, and only an empty file says so.
+      expect(journal_io.string).to be_empty
+    end
+
+    # Both refusals precede every spend, so only DIAGNOSIS is at stake -- and
+    # "your epic's research sign-offs are still parked" is the actionable fact
+    # an operator can act on, where "already decided" is a dead end.
+    it "reports the blocked stage first when an already-decided digest sits in a blocked epic" do
+      adjudicate(adjudicator)
+      queue.park(artifact_digest: "blake3:research", epic_slug: "alpha", stage: "research",
+                 question: "Approve the research?")
+
+      expect { adjudicate(adjudicator) }.to raise_error(Lain::Epic::StageBlocked)
+    end
+
+    # AC3. The rule has ONE owner ({Policy::Boundary}), so one decision asks it
+    # once per earlier stage. A second call site would double every entry here.
+    it "asks the boundary rule exactly once per decision, not once per call site" do
+      counted = AdjudicatorSpecSupport::CountingQueue.new(queue)
+
+      expect(adjudicate(adjudicator(signoffs: counted), stage: "issue_plan")).to be(true)
+      expect(counted.asked).to eq(%w[research epic_plan])
     end
 
     it "parks an edited artifact separately -- a different content address is a different gate" do
@@ -288,7 +350,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   # nothing that then reads as gathered evidence.
   describe "the caller must say how an artifact renders for the spike" do
     it "refuses to be built without a brief" do
-      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:) }
+      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, decisions: journaled) }
         .to raise_error(ArgumentError, /brief/)
     end
 
@@ -436,11 +498,17 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
   end
 
-  # RULING 3: Gate's registry is add-only, so an APPROVE followed by a DENY over
-  # one digest leaves the journal's terminal record disagreeing with
-  # `Gate#approved?`. SignoffQueue documents drift toward REFUSAL; this drifts
-  # the other way, and this class is the first path that can re-run a gate with
-  # nobody watching.
+  # RULING 3, and the defect that reopened it. Gate's registry is add-only, so
+  # an APPROVE followed by a DENY over one digest leaves the journal's terminal
+  # record disagreeing with `Gate#approved?`. SignoffQueue documents drift
+  # toward REFUSAL; this drifts the other way, and this class is the first path
+  # that can re-run a gate with nobody watching.
+  #
+  # The guard therefore folds the JOURNAL's own terminal adjudications, not this
+  # object's memory: the registry is add-only and so cannot answer "was this
+  # DECIDED" for a denial at all, and a per-instance ivar answers it only for
+  # the instance that made the decision -- a second Adjudicator over the same
+  # Gate would journal a deny while `Gate#approved?` still said true.
   describe "one digest gets one terminal adjudication" do
     it "refuses a second run over a digest it already approved, naming the digest" do
       adj = adjudicator
@@ -485,6 +553,133 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       adjudicate(adj)
 
       expect(adjudicate(adj, item: artifact(digest: "blake3:plan-v2"))).to be(true)
+    end
+
+    # AC1: two adjudicators cannot disagree about one artifact.
+    it "refuses a SECOND Adjudicator over a digest the first one approved" do
+      adjudicate(adjudicator)
+      before = journal_io.string.lines.length
+
+      expect { adjudicate(adjudicator) }.to raise_error(described_class::AlreadyDecided) { |e|
+        expect(e.message).to include(plan.digest).and include("true")
+      }
+      expect(journal_io.string.lines.length).to eq(before)
+    end
+
+    # AC2: a terminal deny is also terminal.
+    it "refuses a second Adjudicator after a terminal DENY, and lands no new gate_decision" do
+      adjudicate(adjudicator(spawn_stub(verdict: "DENY")))
+      before = decisions.length
+
+      expect { adjudicate(adjudicator) }.to raise_error(described_class::AlreadyDecided, /false/)
+      expect(decisions.length).to eq(before)
+    end
+
+    it "spawns nothing when it refuses a second Adjudicator, so the re-run spends no tokens" do
+      adjudicate(adjudicator)
+      spawn = spawn_stub
+
+      expect { adjudicate(adjudicator(spawn)) }.to raise_error(described_class::AlreadyDecided)
+      expect(spawn.calls).to be_empty
+    end
+
+    it "reads the verdict off the RECORD, so a deny nobody in this process made is still terminal" do
+      expect { adjudicate(adjudicator_over([adjudicated(approved: false)])) }
+        .to raise_error(described_class::AlreadyDecided, /false/)
+    end
+
+    it "ignores a decision reached under another policy -- only an adjudication is terminal here" do
+      hands_off = adjudicated(approved: true, policy: Lain::Approval::Gate::Policy::HandsOff::NAME)
+
+      expect(adjudicate(adjudicator_over([hands_off]))).to be(true)
+    end
+
+    it "ignores a terminal adjudication of a DIFFERENT address" do
+      expect(adjudicate(adjudicator_over([adjudicated(approved: false, digest: "blake3:other")]))).to be(true)
+    end
+
+    it "allows a re-run after a deferral across instances too -- a parked gate was never settled" do
+      adjudicate(adjudicator(spawn_stub(verdict: "MAYBE")))
+
+      expect(adjudicate(adjudicator)).to be(true)
+    end
+
+    it "requires the journal it folds -- 'nothing was decided' is never a default" do
+      expect { described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, brief:) }
+        .to raise_error(ArgumentError, /decisions/)
+    end
+
+    # The identity is the ADDRESS ALONE. `GateDecision` also carries
+    # `(epic_slug, stage)` and refuses to be built without them, so dropping
+    # them here is a choice, and this is the direction it fails in.
+    it "refuses the same address in a different epic and stage -- the digest is the whole identity" do
+      adjudicate(adjudicator)
+
+      expect { adjudicate(adjudicator, stage: "research", epic_slug: "beta") }
+        .to raise_error(described_class::AlreadyDecided)
+    end
+
+    # The panel's probe, kept as the pin under the `decisions:` doc: this is the
+    # failure the re-readable requirement exists to prevent, and it fails OPEN.
+    it "goes stale on a snapshot Array, which is why the duck must re-enumerate" do
+      snapshot = journal_io.string.lines
+      adj = described_class.new(role_spawn: spawn_stub, gate:, queue:, journal:, brief:, decisions: snapshot)
+      adjudicate(adj)
+
+      expect(adjudicate(adj)).to be(true)
+    end
+  end
+
+  # The fold behind that guard, asked directly: it is the record's answer to
+  # "was this address SETTLED", which Gate's add-only registry cannot give.
+  describe Lain::Approval::Gate::Adjudicator::Decided do
+    it "refuses an address a terminal record already settled, naming the verdict" do
+      expect { described_class.new([adjudicated(approved: false)]).ensure_undecided!(plan.digest) }
+        .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /false/)
+    end
+
+    it "passes an address nothing settled" do
+      expect(described_class.new([adjudicated(approved: true)]).ensure_undecided!("blake3:other")).to be_nil
+    end
+
+    it "passes a deferral -- parking is an invitation to come back" do
+      deferred = adjudicated(approved: false, policy: Lain::Approval::SignoffQueue::DEFERRED_POLICY)
+
+      expect(described_class.new([deferred]).ensure_undecided!(plan.digest)).to be_nil
+    end
+
+    it "reads raw NDJSON lines too, so a journal file folds without a parser above it" do
+      line = "#{JSON.generate(adjudicated(approved: true))}\n"
+
+      expect { described_class.new([line]).ensure_undecided!(plan.digest) }
+        .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /true/)
+    end
+
+    it "skips foreign lines rather than raising over another writer's bytes" do
+      expect(described_class.new(["not json at all\n"]).ensure_undecided!(plan.digest)).to be_nil
+    end
+
+    it "refuses to be built on nil rather than dying mid-decision inside the fold" do
+      expect { described_class.new(nil) }.to raise_error(ArgumentError, /Journal.records duck/)
+    end
+
+    # Two conflicting terminal records for one address are reachable -- a
+    # pre-T9 journal permitted them, and so does the concurrent window. The
+    # REFUSAL is existential and order-independent either way; the rendered
+    # verdict must name the one that stands, which is the last one written.
+    describe "conflicting terminal records" do
+      let(:approved) { adjudicated(approved: true) }
+      let(:denied) { adjudicated(approved: false) }
+
+      it "names the LAST record, not the first, when the deny came second" do
+        expect { described_class.new([approved, denied]).ensure_undecided!(plan.digest) }
+          .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /false/)
+      end
+
+      it "names the LAST record when the approve came second -- journal order is time order" do
+        expect { described_class.new([denied, approved]).ensure_undecided!(plan.digest) }
+          .to raise_error(Lain::Approval::Gate::Adjudicator::AlreadyDecided, /true/)
+      end
     end
   end
 

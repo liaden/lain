@@ -273,4 +273,47 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(decide(described_class::HandsOff.new(queue: drained), stage: "epic_plan")).to be(true)
     end
   end
+
+  # AC3. The rule itself, as the ONE object that owns it. It was written twice
+  # -- here on the policy seam and again inside Gate::Adjudicator, which is not
+  # a Policy and never reaches #decide -- and two copies of a safety rule can
+  # drift. Every caller now goes through this object, so the rule has a single
+  # call site.
+  describe Lain::Approval::Gate::Policy::Boundary do
+    def park_research(epic_slug: "alpha")
+      queue.park(artifact_digest: "blake3:research", epic_slug:, stage: "research",
+                 question: "Approve the research?")
+    end
+
+    it "opens a stage whose earlier partitions are drained, answering the stage itself" do
+      expect(described_class.new(queue).ensure_open!("epic_plan", epic_slug: "alpha"))
+        .to eq(Lain::Epic::Stage.new("epic_plan"))
+    end
+
+    it "refuses a stage whose earlier partition of the same epic still holds, naming both" do
+      park_research
+
+      expect { described_class.new(queue).ensure_open!("epic_plan", epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::StageBlocked, /alpha.*research/m)
+    end
+
+    it "scopes the refusal to one epic, so concurrent epics stay independent" do
+      park_research(epic_slug: "alpha")
+
+      expect(described_class.new(queue).ensure_open!("epic_plan", epic_slug: "beta"))
+        .to eq(Lain::Epic::Stage.new("epic_plan"))
+    end
+
+    it "refuses a stage outside the closed set rather than gating on a partition nothing writes" do
+      expect { described_class.new(queue).ensure_open!("qa", epic_slug: "alpha") }
+        .to raise_error(Lain::Epic::UnknownStage, /qa/)
+    end
+
+    it "opens everything when NAMED the Drained null object" do
+      park_research
+
+      expect(described_class.new(Lain::Approval::Gate::Policy::Drained).ensure_open!("epic_plan", epic_slug: "alpha"))
+        .to eq(Lain::Epic::Stage.new("epic_plan"))
+    end
+  end
 end
