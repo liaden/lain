@@ -47,6 +47,31 @@ module Lain
         validates :latency, numericality: { greater_than_or_equal_to: 0,
                                             message: "must be seconds >= 0, got %<value>s" }
       end
+
+      # What {Gate}'s registry fold demands of a record before it will act on
+      # it. Narrower than {GateDecision} on purpose: the fold reads only these
+      # two fields (which digest, which verdict), so guarding the rest would
+      # check bytes it never looks at -- the same restraint
+      # {SignoffQueue::Guards::Decision} takes, checking `type`/`policy`/
+      # `approved` rather than the full nine-member shape.
+      #
+      # `approved` is a TRUNCATION CANARY, not for tidiness -- the same
+      # reasoning {SignoffQueue::Guards::Decision} states explicitly.
+      # {Guards::GateDecision} makes it mandatory (as `inclusion:`, since
+      # `presence:` cannot reject `false`) at every WRITE, so no record this
+      # process ever produced can be missing it or spell it as the STRING
+      # `"false"` -- the only way either reaches here is a line damaged by
+      # truncation or a hand-made record, and a truncation that took `approved`
+      # could equally have taken `artifact_digest`. Refusing the whole rebuild
+      # is the fail-closed answer: silently skipping would let a fold-past
+      # denial masquerade as "nothing to see here" just as quietly as folding
+      # a truncated `true` INTO the registry would.
+      class RegistryEntry < Guard
+        attribute :artifact_digest
+        attribute :approved
+        validates :artifact_digest, presence: { message: "must name the artifact it judged, got nil" }
+        validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
+      end
     end
 
     # One verdict over one artifact, journaled as `gate_decision`.
@@ -141,11 +166,13 @@ module Lain
     # The registry is MONOTONIC and add-only -- a later denial of an
     # already-approved digest does NOT revoke the standing approval. Both
     # verdicts land in the Journal, which is the audit record of who decided what
-    # and when; the registry is only the process-local convenience answering "may
-    # this digest be acted on". It is process-local in the other direction too:
-    # nothing is read back at startup, so a later session sees none of this
-    # session's approvals (rebuilding the registry from journaled
-    # `gate_decision` records is a later card's job, not this one's).
+    # and when; a freshly `.new`-ed registry is only the in-memory convenience
+    # answering "may this digest be acted on" without re-reading the Journal on
+    # every call, and it starts empty regardless of what an earlier session
+    # journaled. {.from_journal} is the opt-in for the other direction: it folds
+    # every approved `gate_decision` in (a denial registers nothing, the same
+    # add-only rule {#call} already enforces), so a day-two process can answer
+    # {#approved?} for day-one approvals without re-asking anyone.
     #
     # == The stage boundary is NOT this class's guarantee
     #
@@ -305,7 +332,70 @@ module Lain
       # anything -- the same read-only observability {Approval::Queue#each} gives.
       def each(&block) = @approved.each(&block)
 
+      # Rebuild a Gate's registry from a journal: every approved `gate_decision`
+      # registers its digest, so {#approved?} answers for approvals a PRIOR
+      # process journaled, and {#ensure_approved!} passes an artifact this
+      # process never itself asked about. Denials fold to nothing (see
+      # {#absorb}); fold order cannot matter for the same reason -- add-only
+      # never revokes, so approve-then-deny and deny-then-approve of one digest
+      # land identically either way this replays them. Ignores the
+      # `(epic_slug, stage)` partition entirely: the returned registry answers
+      # {#approved?} for every approved digest in `entries`, across every epic
+      # and stage, not just one -- a caller wanting the partitioned view goes
+      # through {Epic::Stage}/{SignoffQueue}, not this class.
+      #
+      # The entries replayed here are NOT re-journaled: they are already on
+      # disk, and the returned Gate's own FUTURE verdicts land in `journal:`
+      # exactly like any other Gate's.
+      #
+      # `**options` rather than restating `journal:, timeout:, clock:` with
+      # their own defaults: a second copy of {#initialize}'s defaults is
+      # exactly what went stale here once (a deleted `Gate::MONOTONIC`
+      # constant left a dangling `clock: MONOTONIC` behind, raising `NameError`
+      # on every call that didn't pass `clock:` explicitly). Forwarding makes
+      # that class of drift unrepresentable rather than merely fixed.
+      #
+      # @param entries [Enumerable<Hash, String>] journal lines or records;
+      #   foreign record types are skipped, the same contract {Journal.records}
+      #   gives every reader here
+      # @param options [Hash] forwarded verbatim to {#initialize} (`journal:`
+      #   required, `timeout:`/`clock:` default the same way a plain `.new` does)
+      # @return [Gate]
+      def self.from_journal(entries, **options)
+        new(**options).tap { |gate| gate.send(:absorb, entries) }
+      end
+
       private
+
+      # Fold every journaled `gate_decision` into the registry: an approval
+      # registers its digest, a denial does not -- the exact rule {#call}
+      # enforces live, replayed against records already on disk.
+      #
+      # PRIVATE, unlike {SignoffQueue#apply}: that method is public because a
+      # LIVE session folds its own decisions through it one at a time, so it
+      # needs to be reachable outside a rebuild. Nothing here has that caller
+      # -- {#call} registers directly -- so a public one-record `#apply` would
+      # only be a new way to break {#call}'s own "journal first, register
+      # second" ordering: a live Gate handed one hand-built Hash could register
+      # a standing approval with no journal record behind it at all. Reached
+      # only from {.from_journal}, which already owns the one instance this
+      # folds into.
+      #
+      # Guarded per record even though {Journal.records}'s type filter already
+      # ran: {Guards::RegistryEntry} is the same TRUNCATION CANARY reasoning
+      # {SignoffQueue::Guards::Decision} applies to this exact wire shape, and
+      # for the same reason -- skipping a damaged record would be exactly as
+      # silent a failure as folding a truncated one in.
+      #
+      # @param entries [Enumerable<Hash, String>] see {.from_journal}
+      # @return [self]
+      def absorb(entries)
+        Journal.records(entries, type: SignoffQueue::JOURNAL_TYPE).each do |decision|
+          Guards::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
+          @approved << decision["artifact_digest"] if decision["approved"]
+        end
+        self
+      end
 
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class
       # gathers nothing and judges nothing, so the only honest value is the one

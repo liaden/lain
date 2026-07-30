@@ -183,6 +183,38 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
+  # T3: a day-two process rebuilds the registry from what day-one already
+  # journaled, rather than starting empty and re-litigating every digest.
+  describe ".from_journal -- approvals survive a restart" do
+    it "registers an approved digest and skips a denied one, so ensure_approved! still works" do
+      approved_artifact = artifact(digest: "blake3:d")
+      denied_artifact = artifact(digest: "blake3:e")
+
+      Sync do
+        journal_gate = gate
+        journal_gate.call(approved_artifact, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
+        journal_gate.call(denied_artifact, asker: deny_asker, stage: "epic_plan", epic_slug: "lain-epics")
+      end
+
+      rebuilt = described_class.from_journal(journal_io.string.lines, journal:)
+
+      expect(rebuilt.approved?(approved_artifact.digest)).to be(true)
+      expect(rebuilt.approved?(denied_artifact.digest)).to be(false)
+      expect(rebuilt.ensure_approved!(approved_artifact)).to eq(approved_artifact.digest)
+    end
+
+    it "folds without raising when foreign record types sit between gate_decisions" do
+      Sync { gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics") }
+      lines = journal_io.string.lines
+      foreign = [%({"type":"turn_usage","tokens":10}\n), %({"type":"doc_written","path":"plan.md"}\n)]
+      interleaved = [lines.first, *foreign, *lines.drop(1)]
+
+      rebuilt = nil
+      expect { rebuilt = described_class.from_journal(interleaved, journal:) }.not_to raise_error
+      expect(rebuilt.approved?(plan.digest)).to be(true)
+    end
+  end
+
   describe Lain::Approval::GateDecision do
     def record(**overrides)
       described_class.new(artifact_digest: "blake3:abc", epic_slug: "lain-epics", stage: "epic_plan",
