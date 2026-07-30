@@ -1359,6 +1359,24 @@ T13's file. **Deferred pending T13's own outcome**: T13 carries the identical es
 and the wiring question is better answered once with both maps in hand than guessed at twice.
 The completion signal and the `mode: :actor` wire want their own cards.
 
+### Ruling: the `WorkerHandoff` call site is NOT wired in this chunk
+
+T13 built the seam (`Supervisor#initialize(handoff:)`, `#reap_crashed` before the acquire,
+`Registration#surrender`) and escalated the call site: `lib/lain/cli/wiring.rb:131` builds the
+Supervisor with an isolation backend and no handoff, so the reap does not fire in production.
+Ruled 2026-07-30, with T20's map alongside it:
+
+**Not wired here.** Three reasons. (1) T20 established `mode: :actor` is constructed by no
+`lib/`/`exe/` file, so no chat worker is adopted today — the reap would have nothing to reap.
+(2) Constructing a real `WorkerHandoff.over(repo_root:, journal:, resolver:)` requires a
+**resolver**, a model-spawning collaborator; putting that in the default chat path is a cost and
+behaviour decision, not a one-line wiring diff. (3) T13's default is `Supervisor::Retain`, not
+`WorkerHandoff::Null` — Null *releases*, and with nothing wired nothing can anchor, so Retain
+keeps today's behaviour exactly and nothing regresses by leaving it.
+
+Follow-up card, to land with the completion-signal work rather than alone: pass a real
+`WorkerHandoff` at `wiring.rb:131` and decide what resolver the chat path gets.
+
 ### Constraint T13, T18 and T20 inherit
 
 `Handback` sits at exactly **110/110** on `Metrics/ClassLength` after T8 — zero headroom. Any
