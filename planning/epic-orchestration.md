@@ -8,6 +8,13 @@
 >
 > **Addendum 2026-07-29 (§3.10):** cross-analysis with `planning/tool-use-algebra.md` added
 > five results that change details in §3.1, §3.2, §3.5, and §3.8 without changing their shape.
+>
+> **Addendum 2026-07-30 (§3.11):** the epic domain chunk landed on 07-28/29 while this doc
+> was being reviewed, so the survey below described as missing a set of objects that now
+> exist. §3.11 gives the per-chunk status, records the 2026-07-30 interview rulings, and
+> lists the follow-ups still deferred. §2.2, §2.3, §2.4, §3.4 and §3.5 have been corrected in
+> place against the working tree of 2026-07-30; §3.9's chunk list is annotated rather than
+> rewritten, because the sequencing argument still holds and only its status changed.
 
 ---
 
@@ -124,6 +131,17 @@ The mechanics work today with zero tooling: PR B targets branch A; only the bott
   `git rebase --onto origin/main <old-base-sha> layer-b`, with old-base SHAs recorded *before*
   the cascade starts. `git rebase --update-refs` (git ≥ 2.38) moves all intermediate branch
   refs in one rebase of the top; force-push `--force-with-lease`, ideally `--atomic`.
+  **The cascade is unconditional** (corrected 2026-07-30). GitHub's "Rebase and merge" button
+  is never a fast-forward: it always writes new SHAs and rewrites committer info, even when a
+  true fast-forward was available, and GitHub's own docs say so. So after any merge-button
+  landing of layer A, layer B still holds A's pre-landing SHAs and its retargeted PR shows the
+  doubled diff. Landing method changes only how *likely* the phantom conflict is: rewritten
+  commits are patch-identical while `main` has not moved, so patch-id detection usually drops
+  them, and once `main` advances the patch-ids diverge and the squash-shaped failure fires
+  identically. Fast-forward is not a landing method the merge button offers at all; a team
+  that genuinely fast-forwards is pushing `main` by hand, which is outside what "plain GitHub"
+  means everywhere else in this doc. Recording old-base SHAs and running `--onto` is required
+  under every method.
 - **Landing sequence per merge**: merge bottom (branch auto-deleted → retarget fires) → fetch →
   `--onto` cascade upward → force-push each → verify each PR's diff shrank back to one layer.
 - **`gh` covers creation and state, nothing stack-shaped**: `gh pr create --base <branch>`
@@ -168,8 +186,17 @@ The mechanics work today with zero tooling: PR B targets branch A; only the bott
   above never fires — but the design treats landing method as **configuration the discipline
   reads, never an assumption it bakes in**: both pairings (and their different cascade
   mechanics) stay supported.
+  *Corrected 2026-07-30*: the parenthetical was wrong. Rebase-merge does not exempt a stack
+  from the cascade (see the squash-trap bullet above), and it does not fast-forward. What the
+  pairing actually decides is **narrative survival** — which commits land on `main` — and
+  nothing about the ref arithmetic. The two are independent, and only the first is
+  configuration.
 
 ### 2.3 What lain already has, and the gaps
+
+> **Read this section as of 2026-07-28, then read §3.11.** The epic domain chunk landed
+> 07-28/29 and closed most of the list below. The inline corrections here are dated; the full
+> current picture is §3.11.
 
 The substrate is further along than expected. **Exists** (selected, with the interfaces the
 epic layer would consume):
@@ -179,12 +206,13 @@ epic layer would consume):
 - **Supervisor/fleet (OM-6)** — `#adopt(role:, worker_id:)` leases isolation and registers;
   derived worker state; `Supervisor::Restart` replay-restart.
 - **Human seams, two kinds** — `Tools::AskHuman` promise + inbox surfaces (`/inbox`,
-  `lain://inbox`, `:LainReply`, dunst arrival) and `Approval::Queue` for tier-3 effects. And
-  the crucial third: **`Gherkin::Approval`** (lib/lain/gherkin/approval.rb) — a fail-closed,
+  `lain://inbox`, `:LainReply`, dunst arrival) and `Approval::Queue` for tier-3 effects. And a
+  third: **`Gherkin::Approval`** (lib/lain/gherkin/approval.rb) — a fail-closed,
   content-addressed artifact gate (`#ensure_approved!` raising `NotApproved`, approval recorded
   against the criteria digest). This is the exact pattern every epic-stage gate needs,
   generalized from Gherkin criteria to any document digest.
-- **Roles + skills** — 12-role catalog with attenuation and persona slots;
+- **Roles + skills** — 13-role catalog with attenuation and persona slots (12 when this was
+  written; `gate_adjudicator` landed with the epic domain chunk, `role/catalog.rb:37`);
   `Skill::Invocation` grammar (`/skill`, `@role/skill`, `@role[/skill]`); lain-native ports of
   create-plan (5 phases), execute-plan, critique, gherkin-tests already shipped as templates.
 - **Plan machinery** — `Plan::Document` round-trips markdown ↔ frozen value at the same digest;
@@ -196,52 +224,100 @@ epic layer would consume):
 - **Bench** — DryReplay/LiveReplay, Compare with distributions and capability guards, the
   grader family (Fixture, Rubric, TestHarness-over-the-project's-framework, Verified/Refuter),
   `Arm::*` including orchestrator-worker and dual-ledger, ArmSweep/PlanSweep.
-- **Provider::Bedrock is built** — `bedrock.rb` + `bedrock.rb` (default path), wired into
-  the CLI, `aws-sdk-core` in the gemspec, env-only auth (`AWS_BEARER_TOKEN_BEDROCK`,
+- **Provider::Bedrock is built** — `lib/lain/provider/bedrock.rb` plus `provider/bedrock/`,
+  wired into the CLI at `cli/backend.rb:158`, env-only auth (`AWS_BEARER_TOKEN_BEDROCK`,
   `AWS_REGION`). Unit/parity specs exist; **the live integration pass (bedrock-provider.md
-  checks 4–7) has never run** — the spec doc still says `in-progress`.
+  checks 4–7) has never run** — the spec doc still says `in-progress` (re-checked 2026-07-30,
+  still true).
+  *Corrected 2026-07-30*: `aws-sdk-core` is **not** in the gemspec. `lain.gemspec:55-56` says
+  the opposite in as many words — the official `anthropic` SDK and `aws-sdk-core` are
+  deliberately not runtime dependencies. `aws-sdk-core` lives in the Gemfile's `:test` group
+  (`Gemfile:35`), where it rides along for the SDK oracle the Faraday transport is byte-diffed
+  against. Nothing a user installs loads it. A separate repo bug, not this doc's: the comment
+  at `lain.gemspec:60` claims `--provider bedrock` builds `Provider::BedrockRaw`, while
+  `cli/backend.rb:158` builds `Provider::Bedrock` and no `BedrockRaw` constant exists anywhere
+  in `lib/` or `spec/`.
 
-**Missing, concretely** (the epic chunk's shopping list):
+**What is missing** (rewritten 2026-07-30 against the working tree; the original A–L list was
+written 07-28 and the epic domain chunk closed most of it two days later).
 
-- **A. No issue/epic domain.** Zero occurrences of epic/issue/PR/Linear in `lib/`.
-  `Plan::Document` is deliberately flat: no dependency edges, no parent/child, no split/merge.
-- **B. No graph computation.** Waves-as-maximal-antichains exist only as prose in the skills;
-  nothing in `lib/` topo-sorts, computes antichains, or detects cycles. (The ROADMAP already
-  lists `petgraph` as the causal-DAG crate; an issue graph is small enough that pure Ruby
-  passes the five-rule binding test — this is per-session, not per-turn.)
-- **C. No split/merge operations** on any work artifact.
-- **D. No artifact writer.** Nothing writes a research/epic/plan doc to disk; `Paths` has no
-  `plans_dir`/`docs_dir`. Note the existing ruling (status_feed.rb:14, ROADMAP): `.lain/` =
-  project artifact, XDG = durable state — Joel's "default outside the repo" decision cuts
-  across this for *epic* artifacts and needs a config seam (§3.4).
-- **E. No `gh`, no branches.** Worktrees are `--detach` by design; handback refs live outside
-  `refs/heads/` *on purpose* so they're unreachable by branch name. Stacked PRs need real
-  branches and pushes — a sibling policy, not a rewrite of handback.
-- **F. No tracker client.** `Tools::WebFetch` is GET-shaped.
-- **G. No generic stage gate** — `Gherkin::Approval` is the shape to generalize. Note
-  `AskHuman`'s documented single-pending-question invariant: concurrent gates need promises on
-  events, not the `@pending` ivar.
-- **H. Unattended-gate policy is a recorded open question** (grader-from-gherkin.md GG-1:
-  standing approval / deferred sign-off). The epic flow forces this decision; §3.3 proposes the
-  answer.
-- **I. The chat path never calls `WorkerHandoff#reclaim`** (ROADMAP:833) — worker commits are
-  never handed back from chat-driven fleets. The single most important missing wire; the epic
-  flow cannot ship without it.
-- **J. Crashed-worker worktrees leak** until `Supervisor#stop` (restart takes a new worker_id;
-  B5 ticket). Accumulates over a multi-hour epic run.
-- **K. No multi-stage resume.** Sessions resume; there is no "epic run: stage 3/6, issues 4/9
-  merged" state that survives a restart.
-- **L. Bedrock unproven live** — run the owed integration pass before an epic run depends on it.
+Closed by `chunk-epic-domain.md` (all 13 cards, landed 07-28/29):
+
+- **A, B, C — the domain, the graph, and the structural operations.** `lib/lain/epic/` holds
+  `Issue` (8-field frozen `Data`, `issue.rb:88`, storing `blocks` only and deriving the inverse),
+  `Graph` with `ready` (`graph.rb:278`), `waves` as maximal antichains (`:288`), `blocked_by`
+  (`:294`), `add`/`split`/`merge` (`:298-322`), cycle refusal by named path (`:81`), plus
+  `Blocking`, `Revision`, `Document`, `Records`, `Progress`, `Home`, `Stage`.
+- **D — the artifact writer**, as `Epic::Home`. It writes exactly the §3.4 layout
+  (`research.md`, `epic.md`, `issues/<id>.md`, `plans/<id>.md`) into one of two homes chosen by
+  `[epics] home` in `.lain/config.toml` (`home.rb:71-77`), refuses paths that escape the home,
+  and resolves the XDG home under `<state_home>/epics/<project_hash>/`. The sub-claim is still
+  literally true: `Paths` has no `plans_dir` or `docs_dir`, because `Epic::Home` owns those
+  paths instead.
+- **G, H — the generic stage gate and the GG-1 answer.** `Approval::Gate` (`gate.rb:169`) gates
+  any artifact answering `#digest` and `#gate_question`; `GateDecision` is a closed 9-member
+  record; `Gate::Policy` ships `Interactive`, `HandsOff` and `Deferred` (`gate/policy.rb`);
+  `SignoffQueue` is a journal fold over `gate_decision` records; `Gate::Adjudicator` implements
+  spike-then-adjudicate. `lain epic status`, `lain epic queue|approve|deny` are wired
+  (`cli/epic.rb`, `cli/epic_queue.rb`).
+- **K — multi-stage resume**, as `Epic::Progress.fold` keyed on `epic_slug:` (`progress.rb:242`)
+  over `issue_transition` / `stage_transition` records, with multi-session journal discovery in
+  `CLI::SessionJournals`.
+
+Still open, and what each now blocks:
+
+- **E. No `gh`, no branches.** Nothing named `Forge` exists; no `Tools::Gh`. Worktrees stay
+  `--detach` by design and handback refs stay outside `refs/heads/` on purpose. Promotion to a
+  real branch is a sibling policy, not a rewrite of handback.
+- **F. No tracker client.** Still zero Linear code in `lib/`. `Tools::WebFetch` is GET-shaped.
+- **I. The chat path never calls `WorkerHandoff#reclaim`** (ROADMAP:846-848). Verified again
+  2026-07-30: the only `#reclaim` consumer in `lib/` is `Arm::OrchestratorWorker`
+  (`orchestrator_worker.rb:106`); supervisor, subagent, CLI and frontend are clean. Chat-driven
+  fleets still lose worker commits.
+- **J. Crashed-worker worktrees leak** until `Supervisor#stop`, because restart takes a new
+  worker_id (`supervisor/restart.rb:194-201`; B5 ticket).
+- **L. Bedrock unproven live.** `planning/specs/bedrock-provider.md` still says `in-progress`
+  and checks 4–7 have never run.
+
+Open because the domain landed without callers (found by the 2026-07-30 grounding pass, and
+the reason `chunk-epic-wiring-intake-landing.md` exists):
+
+- **Nothing constructs a gate.** `Approval::Gate.new` and `Gate::Adjudicator.new` appear only
+  in specs, and no class in `lib/` answers `#gate_question`, so the gate duck has no
+  implementer. There is no per-stage policy selector either: `PolicySwitch` is tier-3 effects
+  only, and `[epics.gates]` does not exist in `Config`.
+- **Nothing writes the records the fold reads.** `Records::IssueTransition` and
+  `Records::StageTransition` define their `JOURNAL_TYPE` strings (`records.rb:89,113`) and
+  `Progress` reads them, but no producer emits either, so the resume projection folds an empty
+  history.
+- **`Policy::Adjudicated` is unlanded**, so `deferred` means "park without approving" rather
+  than "spike first, then park" — a material difference for the overnight-run intent in §3.3.
+  Three shipped skill templates currently describe the union of both behaviours as current
+  (`shipped_skills_spec.rb:281-288` pins the sentence).
+- **The gate registry is process-local and add-only.** Nothing is read back at startup, so a
+  second session sees none of the first's approvals; `gate.rb:143-148` names rebuilding from
+  journaled `gate_decision` records as a later card's job. `Gherkin::Approval` carries the same
+  deferral in its own class doc.
+- **Nothing reconciles a human's edits back into the graph.** `Epic::Home#read_epic` re-parses
+  the file and returns a graph (`home.rb:132`); nothing diffs it against what lain wrote, and
+  `Document.parse_markdown` accepts truncated input silently (chunk-epic-domain follow-up 7).
+  Until that closes, "the parse is the review intake" (§3.1) is an intention, not a mechanism.
+- **`AskHuman` still holds one pending promise on an ivar** (`ask_human.rb:92,119`); its own
+  class doc says a concurrent asker must carry promises on events instead. Concurrent gates
+  need that.
+- **Repo mode is invisible to git.** `.gitignore:21` is `/.lain/` and repo mode resolves to
+  `<root>/.lain/epics/<slug>/`, so artifacts written there are untracked — which defeats the
+  one reason repo mode exists. Ruled 2026-07-30: leave the behaviour as-is (see §3.11).
 
 ### 2.4 macOS portability (native, plain tmux)
 
 Two hard blockers, both cheap:
 
-1. **`CLI::Up.pane_command` hardcodes `$HOME/.rubies/ruby-4.0.5/bin`** (up.rb:70-72; four call
-   sites — `lain up`, cockpit, `/fork`, `/btw`; pinned byte-for-byte in three spec
-   expectations). Any other ruby location makes every spawned pane fall back to system Ruby and
-   die. Fix: `File.dirname(RbConfig.ruby)` — the codebase already uses `RbConfig.ruby` for
-   exactly this reason elsewhere (cli/command/meta.rb:152).
+1. ~~**`CLI::Up.pane_command` hardcodes `$HOME/.rubies/ruby-4.0.5/bin`**~~ — **fixed, and the
+   fix landed before this doc was reviewed.** `up.rb:85` computes
+   `Shellwords.escape(File.dirname(RbConfig.ruby))`, the pane command is composed per call
+   rather than held as a constant, and the specs assert the version literal is absent. The
+   citation elsewhere in this doc to `up.rb:70` now lands on the comment that explains why.
 2. **Spec-only `sun_path` overflow**: `spec/lain/core/client_spec.rb` and
    `spec/plugin/nvim_plugin_spec.rb` build ~115-byte socket paths via `Dir.mktmpdir` under
    macOS's `/var/folders/…` (limit: 104). Production paths are ~32 bytes and fine. Fix: short
@@ -251,8 +327,8 @@ Degradations worth fixing in the same pass: `dunstify` → `Notify::Null` (desig
 TTY surface still answers — port via `alerter`, which blocks and prints the clicked action, or
 `osascript display dialog`; `terminal-notifier` cannot serve `#decide`; journal a new
 `SURFACE = "osascript"` value, never redefine `"dunst"`); `XDG_RUNTIME_DIR` fallback should be
-`TMPDIR || /tmp` (macOS `TMPDIR` is per-user/per-boot — the XDG semantics — and avoids macOS's
-3-day `/tmp` reaping, which would otherwise eat **worktree leases** mid-epic);
+`TMPDIR || /tmp` (macOS `TMPDIR` is per-user/per-boot, which is the XDG ownership and
+permission semantics `paths.rb:164`'s bare `/tmp` fallback does not give);
 `Core::Child#prepare_runtime_dir` mkdir at 0755 should match Cockpit's 0700; the Rust `/proc`
 liveness probes in tests are *silently vacuous* on macOS (use `kill(pid, 0)` via nix or cfg-gate
 them); CI has no macOS leg, so none of this regresses visibly. Already portable: the whole
@@ -260,13 +336,35 @@ rb-sys/magnus build (`.bundle` handled), io-event picks kqueue, no file-watcher/
 code exists, tmux plugin degrades with named reasons, every subprocess seam is an injected
 `shell_out_factory:`.
 
+*Corrected 2026-07-30 — the TMPDIR rationale was half wrong.* macOS reaps `$TMPDIR`
+(`/var/folders/…/T`) too, on the same roughly-3-day unaccessed rule, plus on reboot, so
+switching the fallback does not protect a multi-day lease from anything. Keep the change for
+the ownership and permission semantics named above; do not keep it for reaping. The lease
+worry is real and lands somewhere else: `CLI::IsolationBackend#worktree_root` puts worker
+checkouts at `<runtime_dir>/worktrees/<project_hash>` (`isolation_backend.rb:136`), and its own
+comment justifies that placement by calling a leased checkout "ephemeral scratch that release
+always reclaims". An epic run that holds a worktree across days contradicts that premise. Two
+honest options: move long-held leases to `state_home`, or touch them on a schedule and say so
+where the lease is acquired. This is the same question §3.7's resume story has to answer about
+its own hard state.
+
 ### 2.5 Linear (optional status mirror)
 
 Phase 1 is small: personal API key + one Faraday POST — `commentCreate(input: {issueId, body})`
-with a markdown body; `issue(id:)` accepts `ENG-123` directly; rate limits (5k/hr) are
-irrelevant at status-comment volume; `+++`-collapsible sections fold long logs; a bare issue URL
+with a markdown body; `issue(id:)` accepts `ENG-123` directly; rate limits are irrelevant at
+status-comment volume; `+++`-collapsible sections fold long logs; a bare issue URL
 renders as a mention. No official Ruby SDK; the community gems lag the schema — plain Faraday,
 no dependency. Threading via `parentId` supports one status thread per issue.
+
+*Checked 2026-07-30, and the doc was right.* Review flagged the 5k/hr figure as probably
+wrong (~1,500/hr for personal keys). Linear's rate-limiting page as of 2026-07-30 says
+**5,000 requests per hour** for a personal API key, and the same 5,000/hour per user for an
+OAuth app; the complexity ceilings are 3,000,000 points/hour and 2,000,000 points/hour
+respectively, both on a one-hour rolling leaky bucket. The figure stands, and so does the
+conclusion, which never depended on it. One claim in the same sentence is **not** verified:
+whether Linear's comment threads nest past one level. The public docs do not say, and the
+status-mirror design assumes single-level threading. Confirm it against a real workspace
+before the Linear chunk relies on it.
 
 Linear's **Agents platform** (OAuth `actor=app`, webhook-driven sessions, typed activity feed,
 10-second liveness contract) buys a distinct agent identity and delegation UX ("assign an issue
@@ -355,6 +453,15 @@ morning against work already done.
 
 ### 3.4 Artifacts: two homes, one convention
 
+> *Landed 2026-07-28/29, with the open names resolved.* `Epic::Store` is called **`Epic::Home`**.
+> `<project-hash>` is `Paths#project_hash`, already used for the core socket and the nvim
+> socket: `sha256(realpath(dir))[0,12]`, kernel-resolved so a symlinked `--project` argument
+> names the same identifier the editor serves. It is path-based, so one project reached through
+> two paths resolves to two homes; that is the existing convention and was kept rather than
+> special-cased. `state.json` was never built: the derived state is `Epic::Progress`, a fold
+> over journal records, so nothing is persisted to go stale. The rest of the layout below is
+> what `Epic::Home` writes verbatim.
+
 `Epic::Store` (naming TBD) resolves per config: default `$XDG_STATE_HOME/lain/epics/<project-hash>/<slug>/`,
 opt-in `.lain/epics/<slug>/` (gitignored by default if in-repo). Layout per epic:
 `research.md`, `epic.md` (the graph projection), `issues/<id>-<slug>.md` (self-contained,
@@ -367,6 +474,17 @@ OpenSpec-style: issues carry deltas/status against the epic; landing an issue up
 state (an event), so the epic doc is always regenerable current truth, never a stale prose copy.
 
 ### 3.5 The stack: manifest, change-ids, cascade
+
+> *Cut in two, 2026-07-30.* The landing unit is named **`Lain::Forge`**, and the first version
+> lands **serially**: one PR at a time, base always `main`, no stack open at once. Serial
+> landing needs no retargeting, no cascade, no old-base arithmetic, and no `mergeStateStatus`
+> matrix, so `chunk-epic-wiring-intake-landing.md` ships promotion plus serial landing and the
+> cascade becomes its own later chunk, written when a real epic shows serial is too slow.
+> Stacks exist to keep several PRs open for parallel human review, which is not the constraint
+> one developer landing gated work overnight is under. Everything below stays the design for
+> the cascade chunk; the landing-method seam is kept from the start so the second pairing is an
+> addition rather than a rewrite. Note also that the cascade is required under every merge
+> method, not only squash (§2.2, corrected).
 
 A new unit (`Forge::Stack`, naming TBD) owning stacked-PR discipline on plain GitHub:
 
@@ -392,7 +510,9 @@ A new unit (`Forge::Stack`, naming TBD) owning stacked-PR discipline on plain Gi
   commit sequence designed together at plan time. Landing method (rebase-merge, merge-commit,
   squash) is manifest configuration read from the target repo's settings, and narrative
   granularity adapts to it (§2.2) — one-commit-per-PR under squash, multi-commit stories under
-  rebase/merge landing (the current workplace default: rebase + fast-forward).
+  rebase/merge landing (the current workplace default: rebase-merge, which GitHub implements by
+  rewriting SHAs rather than fast-forwarding). Landing method decides which commits survive
+  onto `main`. It does not change the cascade, which every method requires.
 - Forward-compatible with GitHub's native stacked-PRs preview by construction (same
   PR-targets-parent model, bottom-up merges).
 
@@ -422,6 +542,16 @@ all events (they already would be: gates journal, `Lineage` writes spawn/message
 closures record). "Epic state" is a fold over that log — the same shape as `StatusFeed` — so
 resume is replay-to-current, the K gap closes without new machinery, and "stage 3/6, issues 4/9
 merged, 1 gate waiting" is a query. This also gives the bench §3.2's rework metric for free.
+
+*Corrected 2026-07-30 — this is true of internal state only.* `Epic::Progress` landed and does
+exactly what the paragraph says. An epic run's hard state is not internal: branches pushed, PRs
+open, worktrees a reboot vaporized. A fold reconstructs what lain believed, and nothing here
+asks whether GitHub agrees. The failure the paragraph does not face is the driver dying between
+"journal says pushed" and the push having happened. The answer being built in the wiring chunk
+is an intent/outcome pair per external effect plus a reconcile fold that asks the world before
+retrying, the shape `SessionRecord::Salvage` already uses for a crashed session. The same gap
+applies to the gate registry, which is process-local and rebuilt from nothing today (§2.3), so
+a restart on day two re-asks every standing approval.
 
 ### 3.8 `/implement-epic` and seeing the graph (added from 2026-07-28 review feedback)
 
@@ -498,6 +628,21 @@ Overnight-run readiness (Joel's stated intent) arrives with chunk 2's `deferred`
 chunks can be developed with the existing execute-plan machinery — the flow builds itself only
 after the domain exists.
 
+**Status, 2026-07-30.**
+
+| # | Chunk | Status |
+|---|---|---|
+| 1 | Prerequisites | **Never written as a chunk.** No spec exists in `planning/specs/`. Its items were split by need: the `up.rb` ruby pin (§2.4 blocker 1) landed separately; I and J are cards T20 and T13 of the wiring chunk; L (the Bedrock live pass) and the remaining macOS items are still unowned. |
+| 2 | Epic domain | **Landed 2026-07-28/29**, `chunk-epic-domain.md`, all 13 cards, `status: done`. Delivered `Epic::Issue`/`Graph`/`Document`/`Home`/`Progress`/`Records`/`Stage`, `Approval::Gate` with three policies plus `SignoffQueue` and `Adjudicator`, the four epic skill templates, and `lain epic status|queue|approve|deny`. |
+| 2b | Epic wiring, review intake, serial landing | **In flight**, `chunk-epic-wiring-intake-landing.md`, 25 cards in 5 waves. Not in the original list: chunk 2 landed the domain with no callers, so this chunk wires it, builds the review-intake flow, and takes serial landing off the front of chunk 3. |
+| 3 | Stack | **Pending, and narrowed.** Promotion and serial landing move into 2b; what remains is the cascade, the chain manifest, and `mergeStateStatus` polling. Deferred until a real epic shows serial landing is too slow. |
+| 4 | Bench | **Pending.** Unblocked in principle — `lain bench arms` shipped with `chunk-bench-arms-subcommand.md` — but the altitude arms need the driver from 2b before there is anything to sweep. |
+| 5 | Linear | **Pending, unstarted.** Still zero Linear code in `lib/`. |
+
+The ordering constraint above is discharged: `chunk-vsock-exec-transport.md` and
+`chunk-bench-arms-subcommand.md` both landed 2026-07-28, and `chunk-chat-ux-and-ui-fixes.md`
+is no longer mid-flight.
+
 ### 3.10 The algebra the epic tier inherits (added 2026-07-29)
 
 Cross-analysis with `planning/tool-use-algebra.md`, which worked through what algebraic and
@@ -560,6 +705,102 @@ re-attribution at joins, and a topology audit checking the recorded causal DAG a
 term that predicted it. Bench chunk, with the seams placed in the domain chunk as §3.9
 already requires.
 
+### 3.11 State of the repo, and the 2026-07-30 rulings (addendum)
+
+This doc was written 2026-07-28 and reviewed while the epic domain chunk was landing, so its
+survey went stale in two days. §2.3 has been rewritten, §2.2, §2.4, §3.4 and §3.5 carry dated
+corrections, and §3.9 now carries a per-chunk status table. This section holds what the
+corrections could not: the rulings from the 2026-07-30 interview, and the follow-ups that stay
+open so they are not lost.
+
+**The corrections, in one place.** Three claims in §2 were checked and two were wrong.
+`aws-sdk-core` is not a gemspec runtime dependency; `lain.gemspec:55-56` deliberately excludes
+it and it lives in the Gemfile's `:test` group. The TMPDIR fallback does not escape macOS
+reaping, because macOS reaps `$TMPDIR` on the same rule it reaps `/tmp`; the fallback is still
+worth making for ownership and permission semantics, and the multi-day-lease problem needs its
+own answer. The Linear rate limit was flagged in review as wrong and is not: Linear's docs on
+2026-07-30 say 5,000 requests per hour for a personal API key, exactly what §2.5 claimed.
+Separately, §2.2's "rebase-merge means the squash trap never fires" was wrong in a way that
+changes design: GitHub's rebase-and-merge always writes new SHAs, so the cascade is required
+under every merge-button method.
+
+**Rulings from the 2026-07-30 interview.**
+
+1. **Annotations ride a side-channel, and the document bytes stay clean.** A reviewer's margin
+   notes are nvim extmarks with virtual text, collected on the done signal and journaled as
+   `annotation` records carrying line, anchor text, and the issue the line sits under. Nothing
+   a reviewer types is written into `epic.md`, so the parse stays a parse of the grammar and
+   the round-trip law keeps holding.
+2. **The ownership baton is explicit.** lain writes the artifact and hands the file to the
+   human, who owns it until a done signal returns ownership. `Epic::Review` holds that baton:
+   `#open` journals `review_opened` with the written bytes' digest and a generation, `#settle`
+   diffs the disk bytes against what was written, journals `review_closed`, and resolves that
+   generation's promise. Regeneration refuses while a review is open, which is what stops the
+   projection from clobbering an in-flight edit — the failure §2.1's "regeneration cascade"
+   names. The promise is held per generation, not on a shared ivar, because a second review can
+   be open at the same time.
+3. **Serial landing first; the cascade is a later chunk.** See §3.5's note. Serial landing
+   targets `main` every time, so none of the cascade machinery is needed to run one epic end to
+   end.
+4. **Repo mode stays as it is.** `.gitignore:21` is `/.lain/`, so epics written under
+   `[epics] home = "repo"` are untracked, and repo mode therefore means "local, outside XDG"
+   rather than "committed and reviewable in a PR". Ruled: leave it. Neither negating the ignore
+   nor moving repo mode to a tracked path is worth doing before an epic has actually run this
+   way. §3.4's "gitignored by default if in-repo" is accurate; its implied third mode
+   (committed artifacts) does not exist.
+5. **Overnight deferral is scoped per stage, not per run.** `[epics.gates]` in
+   `.lain/config.toml` maps a stage name to a policy name, so research can be hands-off while
+   the landing stage stays interactive. Unknown stage names and unknown policy names are
+   refused at config load.
+6. **A deferred gate tries to answer itself before parking.** `Policy::Adjudicated` runs the
+   read-only spike through the `gate_adjudicator` role, and the adjudicator approves, denies, or
+   parks with an evidence digest attached. Plain `Deferred` stays selectable as the policy that
+   spends no model tokens. This is the difference between a morning queue of bare questions and
+   a morning queue of questions with findings.
+7. **Skills stay thin.** The graph, the gates, and the folds live in `lib`; a skill template
+   owns prose and calls them. That is the answer to §2.1's "convention isn't enforcement", and
+   it is why the epic skills shipped as templates rather than as procedures.
+8. **Configuration lives in `.lain/config.toml`.** One file, closed tables, unknown keys
+   refused at load. `[epics] home` and `[epics.gates]` are the epic tier's whole surface.
+
+**What the landed code decided that the prose left open.** `Approval::Gate` gates any artifact
+answering `#digest` and `#gate_question`, and the three policies differ only in which surface
+answers. So §3.3's "anything that leaves the machine is gated hard in every policy" is true in
+the sense that every irreversible step goes through a gate, and false in the sense the sentence
+implies: under `hands_off` the gate opens itself and the push happens unattended. Per-stage
+policy selection (ruling 5) is how a human stays on the landing stage. `Deferred` journals a
+real denial and parks, so `ensure_approved!` still refuses and nothing irreversible slips
+through — deferring is not a soft yes. `Epic::Issue` stores `blocks` only and derives the
+inverse through `Blocking#invert`, which is the one-fact-one-place shape review asked for.
+`Gate::Adjudicator` and `Policy` are separate objects rather than one class carrying config
+flags.
+
+**Follow-ups from `chunk-epic-domain.md` that stay deferred.** Tickets 3, 4, 5, 6, 7 and 9 are
+owned by cards in `chunk-epic-wiring-intake-landing.md`. These four are not, and nothing else
+picks them up:
+
+- **Ticket 1 — one markdown-identifier object.** `Epic::Issue` and `Plan::Step` each carry
+  their own `ID_RESERVED`, their own empty/whitespace rules, and their own grammar-message
+  lookup. The constants are pinned equal by a spec and the title rules only coincide. Fixing it
+  properly edits `lib/lain/plan/step.rb`, so it belongs to a card that owns that file.
+- **Ticket 2 — `Gherkin::Approval` → `Approval::Gate` convergence.** Two content-addressed,
+  fail-closed artifact gates now exist side by side with the same shape. Named in the domain
+  chunk's own open decisions and still owed.
+- **Ticket 8 — `Guard#check!` raises `ArgumentError`, not `Lain::Error`.** One corrupt journal
+  line naming this epic escapes the CLI's error renderer as a backtrace. The blast radius is
+  small (`attributable?` filters foreign records before the fold sees them) and the fix belongs
+  in `Guard#check!`, not in the CLI, because a landed spec asserts the raise escapes.
+- **Ticket 10 — the `i18n` cvar-cache MRI crash under `rake pspec`.** Pre-existing and
+  unrelated to any epic work; it cost a retry on most commits of the domain chunk's run. The
+  fix touches `spec/spec_helper.rb`, which no card owns. See CLAUDE.md's toolchain note: the
+  4.0.6 floor addresses the same family of Ractor crashes.
+
+**Manual passes still owed to Joel** (carried from the domain chunk, none discharged): walk a
+toy epic through `/plan-epic` → `/iterate-epic` in a live session; flip `[epics] home = "repo"`
+and confirm both homes, reading ruling 4 first; drain one deferred-gate morning queue through
+`lain epic queue` → `lain epic approve` → `lain epic status`, which only shows evidence once
+ruling 6 lands.
+
 ---
 
 ## 4. References
@@ -614,8 +855,15 @@ edge-kind split, fibers, quotient condition, round-trip laws, ladder terms) ·
 `planning/specs/grader-from-gherkin.md` (GG-1) · `planning/specs/plan-shaped-compaction.md` ·
 `planning/specs/bedrock-provider.md` (owed integration checks 4–7) ·
 `planning/specs/chunk-orchestration-arms-isolation.md` (B5, B9, fan_out ticket) ·
+`planning/specs/chunk-epic-domain.md` (the landed domain, its close-out, and the ten follow-up
+tickets §3.11 triages) · `planning/specs/chunk-epic-wiring-intake-landing.md` (the in-flight
+wiring, intake and serial-landing chunk) ·
 `references/firecracker-microvm-isolation.md` (libkrun as the macOS isolation answer) ·
-ROADMAP §Interface (inbox, StatusFeed), ROADMAP:832-833 (chat-path handback gap) ·
+ROADMAP §Interface (inbox, StatusFeed), ROADMAP:846-848 (chat-path handback gap) ·
 `lib/lain/gherkin/approval.rb` (the gate pattern) · `lib/lain/plan/document.rb` (the round-trip
-pattern) · `lib/lain/cli/up.rb:70` + `lib/lain/paths.rb:162` + `lib/lain/notify.rb:81` +
-`spec/lain/core/client_spec.rb:12` (the macOS items).
+pattern) · `lib/lain/epic/` and `lib/lain/approval/gate.rb` (what chunk 2 landed) ·
+`lib/lain/cli/up.rb:85` (the macOS ruby pin, now fixed) + `lib/lain/paths.rb:164` +
+`lib/lain/cli/isolation_backend.rb:136` + `lib/lain/notify.rb:35` +
+`spec/lain/core/client_spec.rb:12` (the remaining macOS items) ·
+https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges
+(rebase-and-merge always writes new SHAs).
