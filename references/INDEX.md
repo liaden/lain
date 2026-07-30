@@ -73,6 +73,43 @@ story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **No
 Effect/Middleware guardrail sweep, the model-migration A/B harness, the M6 retrieval axes, and
 `Agent::Budget` per-effect cost accounting. Comment-linked arXiv IDs are parked for SCOPE vetting.
 
+### [firecracker-microvm-isolation.md](firecracker-microvm-isolation.md) ⚠️ LLM-generated
+Whether microVMs can back a Lain isolation/exec arm on *these two machines*. Upstream docs and
+Lima issues are verifiable; the Lain-mapping section is Claude's inference from this repo's code
+(2026-07-28) and is a proposal, not a finding. **Not a primary source.**
+
+**What's inside:**
+- **Hardware verdict** — neither machine runs Firecracker today: this desktop has no `/dev/kvm`
+  (module present, SVM almost certainly off in BIOS) and ~7 GiB free caps it at 4–6 microVMs;
+  macOS cannot run Firecracker at all (KVM-only).
+- **The Lima answer** — Firecracker-in-Lima needs nested virt, so **M3+ and macOS 15+**, `vmType:
+  vz` + `nestedVirtualization: true`; buys code-path parity across both hosts, at the cost of two
+  hypervisors and two guest images. libkrun (KVM *and* Hypervisor.framework) is the better
+  cross-platform bet for a bench that must produce comparable numbers on both machines.
+- **The seam is the transport, not `Isolation`** — a `WorkerEnv` is `(cwd, env)` and cannot name a
+  guest path, but `Child#start` already returns a bare connected socket and Firecracker's vsock is
+  a Unix socket plus `CONNECT <port>\n` / `OK\n`. Run `lain-core` in the guest and the RPC, the
+  `exec` params, and `CoreExec` are unchanged; the one blocker is `Client.start` constructing its
+  own `Child`.
+- **No virtio-fs** — Firecracker has no shared-directory device, so `Isolation::Worktree`'s
+  host-checkout premise does not survive the boundary; workspace state has to round-trip.
+- **The 90%** — egress allow-list below the guest (gvproxy-style) as an attributed Journal
+  `Effect`, and credential *brokering* so `ANTHROPIC_API_KEY` never enters the guest.
+- **Proven by spike, not inferred** (§6, `spike/vsock_{relay,loopback}_poc.rb`) — an unmodified
+  `Core::Client` runs the boundary over a faked firecracker vsock handshake (6/6) and over real
+  `AF_VSOCK` (7/7, module autoloads, no sudo); static musl `lain-core` is 1.2 MB stripped;
+  transport latency is below measurement noise. Plus the seam contract it exposed: a transport's
+  `#stop` **must** cause the wire to EOF, or `Client#stop` deadlocks on `@reader.wait`.
+- **§7 answers** — services resolve via *guest→host vsock forwarding* (keeps `DbIndex`/`Compose`
+  working unchanged, no TAP, no root); snapshots close connections but **listeners survive**;
+  gvproxy has no Firecracker transport and no allow-list; and libkrun has virtio-fs + TSI, which
+  may reorder the whole plan.
+
+**Useful for:** the ROADMAP §M5 "microVM / container / bwrap as a *compared* knob" entry; the
+`Core::Client` transport-seam refactor (worth doing standalone); a third arm for the existing
+`Bash`/`CoreExec` differential spec; and the per-effect egress cost accounting the DN42 story
+motivates.
+
 ---
 
 ## Reference implementations (`repos/`)

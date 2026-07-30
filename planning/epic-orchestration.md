@@ -5,6 +5,9 @@
 > stacked-PR mechanics, lain substrate map, macOS portability audit, Linear API) plus the
 > 2026-07-28 interview. Next step after review: `/critique`, then `/create-plan` for the first
 > chunk.
+>
+> **Addendum 2026-07-29 (§3.10):** cross-analysis with `planning/tool-use-algebra.md` added
+> five results that change details in §3.1, §3.2, §3.5, and §3.8 without changing their shape.
 
 ---
 
@@ -495,6 +498,68 @@ Overnight-run readiness (Joel's stated intent) arrives with chunk 2's `deferred`
 chunks can be developed with the existing execute-plan machinery — the flow builds itself only
 after the domain exists.
 
+### 3.10 The algebra the epic tier inherits (added 2026-07-29)
+
+Cross-analysis with `planning/tool-use-algebra.md`, which worked through what algebraic and
+categorical structure the Tool/ToolUse layer maintains and what more would pay. Five results
+transfer, and each names the existing machinery it reuses and the chunk (§3.9) it lands in.
+
+**The exchange law appears at its third altitude.** Tools within a turn commute when
+`parallel_safe?` (ToolRunner's barrier semantics), workers within an arm commute when
+isolated (the `par` law), and issues within an epic commute when neither blocks the other:
+the final graph state must be independent of the order independent issues land in. That
+property is what makes `/implement-epic`'s ready-loop correct, and its precondition is the
+same one as the arm level, per-issue isolation (the worktree leases §3.8 already assigns).
+One precision the driver needs: `ready` is monotone under *landings* (finishing an issue
+never un-readies another) and deliberately NOT monotone under *graph edits* (a
+`discovered_from` addition may block a currently-ready issue). That asymmetry is a reason
+iterate-epic stays a distinct, gated operation rather than something the driver does
+mid-wave. Lands with the epic domain chunk; the law is a property test over `Epic::Graph`.
+
+**Two edge kinds, kept as separate as the Timeline keeps them.** `blocks` drives scheduling
+the way `render_parent` drives rendering; `discovered_from` is provenance the way
+`causal_parents` is. The rule to carry over from ARCHITECTURE's "Two parent edges": `ready`,
+waves, and topo-sort read `blocks` only, so recording provenance can never move the
+schedule. Stating it up front keeps a later contributor from "enriching" the ready query
+with provenance edges, the exact drift the Timeline's split exists to prevent.
+
+**Split and merge carry fibers.** `split(issue, into:)` and `merge(a, b)` should record
+preimages (which issues each result came from), the same discipline as compaction
+replacements' `causal_parents`. Two consumers: iterate-epic becomes auditable by
+re-derivation (the `Compaction::DerivationAudit` pattern applied to graph edits), and §3.2's
+decomposition-fidelity grader becomes a cover check, every research requirement tracing
+through the fibers to at least one issue, so a silent drop is a red grader rather than a
+review hope. Epic domain chunk.
+
+**PR granularity is a DAG quotient with a checkable condition.** §3.5 lets the manifest fold
+trivially-coupled issues into one PR. Folding is a quotient of the issue graph, and the
+quotient is a DAG only if each PR's issue set is convex under blocking: if `a` blocks `b`
+blocks `c` and `a`, `c` share a PR, then `b` must too. A non-convex grouping creates a PR
+that transitively blocks itself, surfacing as an unlandable stack with no error naming the
+cause. The manifest should refuse it at write time, in one place, the posture `Toolset#only`
+takes toward absent names. Stack chunk; pure graph arithmetic, unit-testable with no `gh`.
+
+**The markdown round-trip earns a shared law group.** `Plan::Document` already round-trips
+markdown to a frozen value at the same digest, and §3.1 adopts the identical pattern for the
+epic grammar. tool-use-algebra B6 proposes a round-trip law group (`from_h`/`to_h`
+isomorphism with the digest as oracle) for typed content blocks; the epic grammar and
+`Plan::Document` are its second and third consumers. Design the group once, in the algebra
+vocabulary, and hold all three to it, so "the parse is the review intake" (§3.1) rests on a
+law rather than on each grammar's own diligence.
+
+**The altitude arms are one ladder term, entered at different rungs.** one-shot, plan-only,
+epic-progressive, and epic-hands-off decompose as prefixes of a single sequential term
+(research → epic → issues → per-issue plan → implement → land) with a gate decorator per
+stage, and gate policy (§3.3) as a parameter. That matches the term-algebra ruling in
+tool-use-algebra B3: policies are evaluator parameters, never term structure. Two practical
+consequences. The §3.2 arm list grows by grammar instead of by a fifth hand-written arm. And
+`/implement-epic` is the *dynamic* case of B3's term evaluator: the term is recomputed from
+the graph as `discovered_from` events land, where a bench arm evaluates a static one, so the
+two share machinery deliberately: isolation as the `par` precondition, `Ledger`
+re-attribution at joins, and a topology audit checking the recorded causal DAG against the
+term that predicted it. Bench chunk, with the seams placed in the domain chunk as §3.9
+already requires.
+
 ---
 
 ## 4. References
@@ -543,7 +608,9 @@ https://linear.app/developers/rate-limiting
 https://dev.to/terrizoaguimor/i-have-adhd-and-i-keep-losing-context-so-i-taught-my-ai-to-remember-for-me-afl ·
 https://www.bodenfuller.com/writing/adhd-brains-built-for-ai-coding
 
-**Internal**: `planning/specs/orchestration-model.md` (OM-1/OM-6, open questions) ·
+**Internal**: `planning/tool-use-algebra.md` (the §3.10 cross-analysis: exchange law,
+edge-kind split, fibers, quotient condition, round-trip laws, ladder terms) ·
+`planning/specs/orchestration-model.md` (OM-1/OM-6, open questions) ·
 `planning/specs/grader-from-gherkin.md` (GG-1) · `planning/specs/plan-shaped-compaction.md` ·
 `planning/specs/bedrock-provider.md` (owed integration checks 4–7) ·
 `planning/specs/chunk-orchestration-arms-isolation.md` (B5, B9, fan_out ticket) ·

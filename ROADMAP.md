@@ -1081,6 +1081,37 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    regrow — `planning/specs/chunk-derived-context-timeline.md:171`'s F7 catalogue tracked nine of
    these and the count roughly doubled since.
 
+25. **Planned (2026-07-29, panel-reviewed)** —
+   `planning/specs/chunk-tool-algebra-lenses-partition.md`: the tool-use algebra chunk, from
+   `planning/tool-use-algebra.md`. Four streams: the law suites the tool layer relies on but
+   never proves (the exchange law behind `parallel_safe?`, posture equivalence over allowed
+   calls, Toolset value equality + attenuation laws with the no-join security reading); the
+   block lenses (`Response::ToolUse`, `Tool::ResultBlock` — the Env/MessageEnvelope `.wrap`
+   pattern, ruled over a Hash subclass after a spike showed `Canonical.normalize` erases
+   subclasses and raises on `Data`); `Lain::IntervalPartition` extracted from
+   `Compaction::Strategy::Base` **plus the refinement meet and `Strategy::Composed`**
+   (un-deferring derived-context follow-up 3 — Joel: building it proves the extraction); and
+   the algebra registry's own follow-ups 0/0b/11 (Middleware monoid declaration, verb latch,
+   `Registry#seal`). **Sequenced strictly after chunk 21's review-fixes chunk B lands** — its
+   T21/T23/T32 touch the same files; re-verify all anchors against post-B main.
+
+26. **Planned (2026-07-30, panel-reviewed)** —
+   `planning/specs/chunk-epic-wiring-intake-landing.md`: wire the landed epic domain and
+   close the loop item 22 left open. Three streams, 25 cards: gate wiring (Submission
+   artifacts answering the gate duck, per-stage policy from `[epics.gates]`, transition
+   writers the Progress fold has been waiting for, registry rebuilt from the journal,
+   `Policy::Adjudicated` so deferred gates spike before parking); review intake (ownership
+   baton — `Epic::Review` promise-per-generation, shadow-copy diff as journaled events,
+   `:LainReviewDone`, extmark annotations landing as `annotation` records); external state
+   (Forge intent/outcome records with a Salvage-shaped reconcile, anchor-only handback,
+   `Forge::Gh` executor pair, branch promotion, serial landing resumable after a crash,
+   `lain epic land [--resume]`). Rulings recorded: extmark side-channel over in-text
+   markers; serial landing first, stack cascade deferred to its own chunk (GitHub docs
+   confirm every merge-button method rewrites SHAs); repo-mode gitignore stays as-is.
+   Panel: ruby roster plus the standing algebra seats (Kmett, Milewski, Wadler, Elliott,
+   Matsakis), APPROVE-WITH-FIXES applied. Refreshes `planning/epic-orchestration.md` (T12)
+   against the 2026-07-30 critique (`.critique-epic-orchestration.md`).
+
 ---
 
 ## Map of the documents
