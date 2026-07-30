@@ -1327,6 +1327,38 @@ T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
     spec'd intent and nothing in `lib/` re-decides today, but `Policy::Adjudicated` makes it
     reachable from config overnight and nothing says a re-run re-pays.
 
+### T20 stopped after discovery — its escalation trigger fired
+
+The card said: if the chat actor lifecycle has no completion signal, stop after discovery and
+hand back the map, because designing that signal is out of scope. It has none. Verified
+2026-07-30, no `lib/` or `spec/` file touched:
+
+- **No completion signal.** `Tools::Subagent::Actor#run` (`actor.rb:166-174`) is
+  `process(prompt)` → `@ready.resolve(true)` → `@park.wait`, and `@park` is signalled nowhere in
+  `lib/`. The actor parks forever after its initial turn. A lease is released in exactly two
+  places, both unwind: `Supervisor#register`'s `ensure` and `Supervisor#stop`
+  (`supervisor.rb:137-147`). The registry is append-only.
+- **Near misses ruled out.** `Registration#settle` awaits only the *initial* turn and its lone
+  production caller is the graceful-shutdown drain (`conductor.rb:230` → `Shutdown#drain`),
+  itself an unwind. `Registration#state` cannot distinguish parked-quiescent from working —
+  `CLI::Command::Keep` already documents that.
+- **Nothing holds a `WorkerHandoff`.** `WorkerHandoff.over` is called by **zero** files in
+  `lib/` or `exe/`; the real object is constructed only in specs. Chat holds the isolation
+  backend alone (`wiring.rb:131`), `Supervisor` has no `handoff:` keyword, and
+  `Registration#release` is a bare `lease.release`. `Arm::Driver`, `LiveArms` and `ArmSweep`
+  all leave the `Null` default.
+- **Compounding, and it lowers the urgency:** `mode: :actor` is constructed by no `lib/`/`exe/`
+  file either — chat's toolset and `Skill::RoleSpawn` both build one-shot subagents. **No chat
+  worker is ever adopted today, so there are no commits to lose yet.** `ROADMAP.md:844-848`
+  already records both halves as chunk-14 deviations (spec tickets 6 and 13).
+
+Only one half of T20's Gherkin is reachable without new design: *an unwinding fleet surrenders*
+— `Supervisor#stop`/`#register` calling `#surrender` rather than a bare `lease.release`. That is
+T13's file. **Deferred pending T13's own outcome**: T13 carries the identical escalation trigger
+("if the restart path has no handle on a `WorkerHandoff`, stop"), so it may hit the same wall,
+and the wiring question is better answered once with both maps in hand than guessed at twice.
+The completion signal and the `mode: :actor` wire want their own cards.
+
 ### Constraint T13, T18 and T20 inherit
 
 `Handback` sits at exactly **110/110** on `Metrics/ClassLength` after T8 — zero headroom. Any
