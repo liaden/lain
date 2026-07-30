@@ -71,6 +71,18 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
     end
   end
 
+  # Fails ONE git subcommand by RAISING rather than exiting nonzero -- what an
+  # exhausted fd table, a killed spawn or a Ctrl-C mid-call actually looks like.
+  # `factory_failing` above covers the other half (git ran and refused).
+  def factory_raising(subcommand, error = Errno::EMFILE)
+    real = Mixlib::ShellOut.public_method(:new)
+    lambda do |*args, **kwargs|
+      raise(error, "git #{subcommand}") if args.include?(subcommand)
+
+      real.call(*args, **kwargs)
+    end
+  end
+
   def head_commit(dir) = run_git(dir, "rev-parse", "HEAD").strip
 
   def registered_worktrees = run_git(@repo_root, "worktree", "list", "--porcelain")
@@ -84,6 +96,11 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
   def ref_target(ref) = try_git(@repo_root, "rev-parse", "--verify", "--quiet", ref)
 
   def worker_refs = run_git(@repo_root, "for-each-ref", "--format=%(refname)", "refs/lain").split("\n")
+
+  # The ref an id anchors under, asked of the object that decides it rather than
+  # reconstructed here -- a parallel copy of the slug-plus-fingerprint rule would
+  # drift and the specs that depend on it would go quietly green.
+  def worker_ref(worker_id) = described_class::Naming.new(worker_id).ref
 
   def merging? = File.exist?(File.join(@repo_root, ".git", "MERGE_HEAD"))
 
@@ -257,7 +274,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
       commit_in(lease.worker_env.cwd, "worker\n", "worker work")
       # A ref BELOW the one we are about to write is a real git F/D conflict:
       # update-ref cannot lock the worker's ref while a child of it exists.
-      run_git(@repo_root, "update-ref", "#{handback.send(:ref_for, "worker-1")}/child", head_commit(@repo_root))
+      run_git(@repo_root, "update-ref", "#{worker_ref("worker-1")}/child", head_commit(@repo_root))
       parent_head = head_commit(@repo_root)
 
       outcome = nil
@@ -280,6 +297,45 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
 
       expect(outcome.kind).to eq(:failed)
       expect(outcome.detail).to include("git")
+    ensure
+      lease&.release
+    end
+
+    # "Say where the work is" is the whole contract, and a raise AFTER the ref
+    # was written is the case where a human most needs it: the commits are safe
+    # on a ref nobody was told about. The method-level rescue cannot know that --
+    # it hard-codes nil -- so the answer has to come from the level that watched
+    # the write happen.
+    it "names the ref when the raise lands AFTER the ref was written" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      commit_in(@repo_root, "parent's line\n", "parent work")
+      handback = described_class.new(repo_root: @repo_root, journal:,
+                                     shell_out_factory: factory_raising("merge"))
+
+      outcome = nil
+      expect { outcome = handback.call(lease, worker_id: "worker-1") }.not_to raise_error
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.ref).to start_with("refs/lain/worker/worker-1-")
+      expect(outcome.detail).to include("Errno::EMFILE")
+      expect(ref_target(outcome.ref).stdout.strip).to eq(commit)
+      expect(journal.map(&:ref)).to eq([outcome.ref])
+    ensure
+      lease&.release
+    end
+
+    it "still answers with a nil ref when the raise lands BEFORE the write" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      handback = described_class.new(repo_root: @repo_root, journal:,
+                                     shell_out_factory: factory_raising("update-ref"))
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.ref).to be_nil
+      expect(worker_refs).to be_empty
     ensure
       lease&.release
     end
@@ -538,6 +594,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
         commit_in(lease.worker_env.cwd, "worker #{id.__id__}\n", "worker work")
 
         expect { handback.call(lease, worker_id: id) }.not_to raise_error
+        expect { handback.anchor(lease, worker_id: id) }.not_to raise_error
         expect { handback.continue("refs/lain/worker/x", worker_id: id) }.not_to raise_error
         expect { handback.abandon("refs/lain/worker/x", worker_id: id) }.not_to raise_error
         lease.release
@@ -594,6 +651,304 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
 
       expect(outcome.kind).to eq(:failed)
       expect(outcome.parent_state).to eq(:merging)
+    ensure
+      lease&.release
+    end
+  end
+
+  # The ref half of #call with nothing after it, for the caller that is already
+  # unwinding: the `update-ref` used to live inside #call, so an exception
+  # raised anywhere in that method reclaimed a worktree whose commits no ref
+  # reached. An `ensure` can afford this one -- it merges nothing, writes no
+  # working-tree state, and reads the ref before writing it.
+  describe "#anchor" do
+    it "writes the worker's commit to its ref and merges nothing" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      parent_head = head_commit(@repo_root)
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(outcome.ref).to start_with("refs/lain/worker/worker-1-")
+      expect(ref_target(outcome.ref).stdout.strip).to eq(commit)
+      expect(outcome.parent_state).to eq(:untouched)
+      expect(head_commit(@repo_root)).to eq(parent_head)
+      expect(reachable_from_head?(commit)).to be(false)
+      expect(merging?).to be(false)
+      expect(head_refs).not_to include(a_string_including("worker-1"))
+    ensure
+      lease&.release
+    end
+
+    it "answers nothing-to-do the second time, leaving the ref exactly where it was" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      first = handback.anchor(lease, worker_id: "worker-1")
+
+      second = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(second.kind).to eq(:nothing_to_do)
+      expect(second.ref).to eq(first.ref)
+      expect(ref_target(second.ref).stdout.strip).to eq(commit)
+      expect(worker_refs).to eq([first.ref])
+    ensure
+      lease&.release
+    end
+
+    it "writes no ref for a worktree that never moved" do
+      lease = backend.acquire("worker-1")
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:nothing_to_do)
+      expect(outcome.ref).to be_nil
+      expect(worker_refs).to be_empty
+    ensure
+      lease&.release
+    end
+
+    it "writes no ref when the parent already has the worker's commits" do
+      lease = backend.acquire("worker-1")
+      commit_in(@repo_root, "parent moved on\n", "parent work")
+
+      expect(handback.anchor(lease, worker_id: "worker-1").kind).to eq(:nothing_to_do)
+      expect(worker_refs).to be_empty
+    ensure
+      lease&.release
+    end
+
+    # A dirty parent and a parent mid-merge are the two states #call refuses to
+    # merge into. Anchoring is not a merge, so both still get their ref, and
+    # neither working tree is touched.
+    it "anchors into a dirty parent without touching its working tree" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      File.write(File.join(@repo_root, "README"), "uncommitted parent edit\n")
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(ref_target(outcome.ref).stdout.strip).to eq(commit)
+      expect(File.read(File.join(@repo_root, "README"))).to eq("uncommitted parent edit\n")
+    ensure
+      lease&.release
+    end
+
+    it "anchors into a parent mid-merge without disturbing that merge" do
+      first = backend.acquire("worker-1")
+      commit_in(first.worker_env.cwd, "worker's line\n", "worker work")
+      commit_in(@repo_root, "parent's line\n", "parent work")
+      handback.call(first, worker_id: "worker-1")
+      second = backend.acquire("worker-2")
+      commit = commit_in(second.worker_env.cwd, "second\n", "second work", file: "SECOND")
+
+      outcome = handback.anchor(second, worker_id: "worker-2")
+
+      expect(outcome.kind).to eq(:declined)
+      expect(ref_target(outcome.ref).stdout.strip).to eq(commit)
+      expect(merging?).to be(true)
+      expect(File.read(File.join(@repo_root, "README"))).to include("<<<<<<<")
+    ensure
+      first&.release
+      second&.release
+      run_git(@repo_root, "merge", "--abort")
+    end
+
+    # #anchor is the ref, not the handback: a later #call over the same lease
+    # still owes the parent the merge, and finding its own ref already written
+    # must not read as nothing-to-do.
+    it "does not stop a later #call from merging the same commit" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      anchored = handback.anchor(lease, worker_id: "worker-1")
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:merged)
+      expect(outcome.ref).to eq(anchored.ref)
+      expect(reachable_from_head?(commit)).to be(true)
+    ensure
+      lease&.release
+    end
+
+    it "leaves the checkout on disk and registered with git" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      handback.anchor(lease, worker_id: "worker-1")
+
+      expect(File.directory?(lease.worker_env.cwd)).to be(true)
+      expect(registered_worktrees).to include(lease.worker_env.cwd)
+      expect(lease).not_to be_released
+    ensure
+      lease&.release
+    end
+
+    it "reports a failed ref write as an outcome, propagating nothing" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      # A ref BELOW the one we are about to write is a real git F/D conflict.
+      run_git(@repo_root, "update-ref", "#{worker_ref("worker-1")}/child", head_commit(@repo_root))
+
+      outcome = nil
+      expect { outcome = handback.anchor(lease, worker_id: "worker-1") }.not_to raise_error
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.detail).not_to be_empty
+    ensure
+      lease&.release
+    end
+
+    it "reports a raise from the git invocation itself as an outcome" do
+      exploding = ->(*, **) { raise Errno::ENOENT, "git" }
+      handback = described_class.new(repo_root: @repo_root, journal:, shell_out_factory: exploding)
+      lease = backend.acquire("worker-1")
+
+      outcome = nil
+      expect { outcome = handback.anchor(lease, worker_id: "worker-1") }.not_to raise_error
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.detail).to include("git")
+    ensure
+      lease&.release
+    end
+
+    it "journals what it anchored" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(journal.map(&:outcome)).to eq([:declined])
+      expect(journal.first.ref).to eq(outcome.ref)
+    ensure
+      lease&.release
+    end
+
+    # A TOTAL anchor failure is the worst thing that happens on this path: the
+    # worktree is force-removed moments later and the commits become gc-able. A
+    # silent Journal makes that indistinguishable from a worker that committed
+    # nothing -- and the Journal is the experiment record, not a log. `Interrupt`
+    # is here because it is `< Exception`: a `rescue StandardError` would let it
+    # past the journalling, which is exactly how this went silent.
+    [Errno::EMFILE, Interrupt].each do |error|
+      it "journals a :failed anchor when git raises #{error}, rather than going silent" do
+        lease = backend.acquire("worker-1")
+        commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+        handback = described_class.new(repo_root: @repo_root, journal:,
+                                       shell_out_factory: factory_raising("rev-parse", error))
+
+        outcome = nil
+        expect { outcome = handback.anchor(lease, worker_id: "worker-1") }.not_to raise_error
+
+        expect(outcome.kind).to eq(:failed)
+        expect(outcome.detail).to include(error.name)
+        expect(journal.map(&:outcome)).to eq([:failed])
+        expect(journal.first.worker_key).to eq("worker-1")
+      ensure
+        lease&.release
+      end
+    end
+
+    # THE SEAM THIS DELIBERATELY DOES NOT CLOSE. {#anchor} takes a one-message
+    # duck (`#worker_env`) and never asks whether the lease is still live:
+    # requiring `#released?` would couple it to {Lease}'s lifecycle over a
+    # condition only the lifecycle owner can act on. So a released lease is not
+    # REFUSED, it is reported -- which is what a caller reads, and what the
+    # Journal keeps. T13/T18/T20 all call this; the contract is here, not in a
+    # hand-back note.
+    it "answers a released lease with a failed outcome and a journal line, not a refusal" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      lease.release
+
+      outcome = nil
+      expect { outcome = handback.anchor(lease, worker_id: "worker-1") }.not_to raise_error
+
+      expect(outcome.kind).to eq(:failed)
+      expect(outcome.ref).to be_nil
+      expect(journal.map(&:outcome)).to eq([:failed])
+      expect(worker_refs).to be_empty
+    end
+
+    # `update-ref <ref> <new> <old>` is git's compare-and-swap, and `<old>` is
+    # exactly the value {Checkout#target} just read ("" meaning must-not-exist).
+    # Without it the read-then-write is not atomic and the loser of a race
+    # silently overwrites the winner -- on a ref that is sometimes the ONLY
+    # anchor a worker's commits have.
+    it "refuses a ref write whose expected old value no longer holds" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      other = head_commit(@repo_root)
+      ref = worker_ref("worker-1")
+      real = Mixlib::ShellOut.public_method(:new)
+      # A sibling writes the ref in the window between #target's read and the
+      # update-ref about to be built.
+      racing = lambda do |*args, **kwargs|
+        run_git(@repo_root, "update-ref", ref, other) if args.include?("update-ref")
+        real.call(*args, **kwargs)
+      end
+
+      outcome = described_class.new(repo_root: @repo_root, journal:, shell_out_factory: racing)
+                               .anchor(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:failed)
+      expect(ref_target(ref).stdout.strip).to eq(other)
+    ensure
+      lease&.release
+    end
+
+    # THE OTHER CAS BRANCH. Every other example here either writes into a ref
+    # that does not exist (expected value "") or short-circuits at
+    # `held == commit` before any write. The ADVANCE -- anchor at A, the worker
+    # commits B, anchor again -- is the only path that hands the compare-and-swap
+    # a NON-EMPTY expected value, so without this a mutant pinning that value to
+    # "" is killed only by accident, somewhere else.
+    it "advances the ref when the worker commits again after an anchor" do
+      lease = backend.acquire("worker-1")
+      first_commit = commit_in(lease.worker_env.cwd, "worker one\n", "worker work")
+      first = handback.anchor(lease, worker_id: "worker-1")
+      second_commit = commit_in(lease.worker_env.cwd, "worker two\n", "more worker work")
+
+      second = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(first.kind).to eq(:declined)
+      expect(second.kind).to eq(:declined)
+      expect(second.ref).to eq(first.ref)
+      expect(ref_target(first.ref).stdout.strip).to eq(second_commit)
+      expect(second_commit).not_to eq(first_commit)
+      # One entry per write, so the advance is on the record as an advance.
+      expect(run_git(@repo_root, "reflog", second.ref).lines.size).to eq(2)
+    ensure
+      lease&.release
+    end
+
+    # Provenance next to the object, for someone holding nothing but the
+    # repository. `--create-reflog` is what makes it stick: git's default
+    # `core.logAllRefUpdates` covers only refs/heads, refs/remotes, refs/notes
+    # and HEAD, so a bare `-m` on this namespace is accepted and dropped -- which
+    # is a green-looking no-op, exactly the failure this example exists to catch.
+    it "stamps the ref's own reflog, so the write is attributable from the repo alone" do
+      lease = backend.acquire("worker-1")
+      commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      outcome = handback.anchor(lease, worker_id: "worker-1")
+
+      expect(run_git(@repo_root, "reflog", outcome.ref)).to include("lain handback: anchored")
+      expect(run_git(@repo_root, "reflog", outcome.ref)).to include(commit[0, 7])
+    ensure
+      lease&.release
+    end
+
+    it "stamps a reflog on the ref #call anchors too, not only #anchor's" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+      outcome = handback.call(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:merged)
+      expect(run_git(@repo_root, "reflog", outcome.ref)).to include("lain handback: anchored")
     ensure
       lease&.release
     end
@@ -726,6 +1081,21 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
     it "refuses a kind no caller can act on" do
       expect { described_class.new(kind: :probably_fine, worker_key: "w") }
         .to raise_error(ArgumentError, /kind must be one of/)
+    end
+
+    # `:declined` now covers two things a caller acts on differently: a parent
+    # that refused the merge (retry it later) and an anchor that never offered
+    # one (there is nothing to retry). `detail` is prose, so the discrimination
+    # is a message -- KINDS is closed, and widening it was the stop trigger.
+    it "tells an anchor-only decline from a parent that refused the merge" do
+      anchored = described_class.new(kind: :declined, worker_key: "w", ref: "refs/lain/worker/w",
+                                     detail: Lain::Isolation::Worktree::Handback::ANCHOR_ONLY)
+      refused = described_class.new(kind: :declined, worker_key: "w", ref: "refs/lain/worker/w",
+                                    detail: Lain::Isolation::Worktree::Handback::DIRTY)
+
+      expect(anchored).to be_anchor_only
+      expect(refused).not_to be_anchor_only
+      expect(described_class.new(kind: :merged, worker_key: "w")).not_to be_anchor_only
     end
 
     it "defaults to the untouched-parent, nothing-carried shape" do

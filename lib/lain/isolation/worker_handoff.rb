@@ -43,15 +43,17 @@ module Lain
     # resolver in it. Both no-op on an already-released lease, so calling one and
     # then the other costs a boolean.
     #
-    # THE ATTEMPT IS NOT THE SAME AS THE GUARANTEE, and the difference is real:
-    # the `update-ref` lives inside `Handback#call`, so an exception raised
-    # THERE -- mid-`rev-parse`, mid-`update-ref` -- reclaims with no ref written,
-    # and this object cannot recover it. By the time anything notices, the lease
-    # is released and the checkout is gone. Closing that needs an ANCHOR-ONLY
-    # operation on {Worktree::Handback} (write the ref, merge nothing) that an
-    # `ensure` can retry; D4 exposes none, and inventing one from out here would
-    # duplicate its ref-naming. Recorded as a follow-up, not papered over: what
-    # is claimed above is exactly what holds.
+    # THE ATTEMPT IS NOW THE GUARANTEE. The `update-ref` lives inside
+    # `Handback#call`, so an exception raised THERE -- mid-`rev-parse`,
+    # mid-`update-ref`, mid-merge -- used to reclaim with no ref written, and by
+    # the time anything noticed the lease was released and the checkout gone.
+    # {Worktree::Handback#anchor} closes it: the ref without the merge, touching
+    # no working tree and idempotent because it reads the ref before writing
+    # one. {#complete}'s `ensure` calls it whenever the body left nothing
+    # anchored, so no path reaches `lease.release` until either a ref holds the
+    # worker's commits or git itself refused to write one. ONE attempt, never a
+    # loop: this runs while an exception is climbing, and an unbounded retry
+    # would hold the worktree for as long as git kept failing.
     #
     # NO MODEL CALL WHILE UNWINDING. {#surrender} spawns nothing on purpose: a
     # resolver is an unbounded provider round trip with no deadline anywhere in
@@ -125,14 +127,22 @@ module Lain
         def summary
           case kind
           when :nothing_to_do then ""
-          when :merged then "handback merged the worker's commits (#{ref})"
-          when :resolved then detailed("handback conflict resolved in #{paths.join(", ")}, then merged (#{ref})")
+          when :merged then "handback merged the worker's commits#{at_ref}"
+          when :resolved then detailed("handback conflict resolved in #{paths.join(", ")}, then merged#{at_ref}")
           when :conflicted then detailed("the handback conflict STANDS unresolved; the work is on #{ref}")
-          else detailed("handback #{kind} (#{ref})")
+          else detailed("handback #{kind}#{at_ref}")
           end
         end
 
         private
+
+        # A nil ref is a legitimate answer -- nothing was anchored, because a CAS
+        # lost, a lease was already released, or the raise landed before the
+        # write -- and rendering it as literal empty parens made a `:failed` read
+        # as "the work is gone" when there was simply never anything to name.
+        # Empty rather than "(none)": the sentence should not mention a ref it
+        # has no ref to mention.
+        def at_ref = ref.nil? ? "" : " (#{ref})"
 
         def detailed(sentence) = detail.empty? ? sentence : "#{sentence} -- #{detail}"
       end
@@ -211,7 +221,7 @@ module Lain
         new(handback: Worktree::Handback.new(repo_root:, journal:), repo_root:, resolver:)
       end
 
-      # @param handback [#call, #continue, #abandon] {Worktree::Handback}
+      # @param handback [#call, #anchor, #continue, #abandon] {Worktree::Handback}
       # @param repo_root [String] the checkout `handback` merges into -- prefer
       #   {.over}, which derives both from one root so they cannot disagree
       # @param resolver [#call] the `call(role_name, context_mode, prompt)` spawn
@@ -238,8 +248,8 @@ module Lain
       # The UNWINDING completion: try to anchor the worker's commits to a ref
       # before the reclaim destroys them, restore the parent, release the lease
       # -- and spawn nothing. An arm calls this from its `ensure`, which is what
-      # keeps any exception class from skipping the attempt. See the class doc
-      # for the one case the attempt cannot cover.
+      # keeps any exception class from skipping the attempt; the attempt's own
+      # `ensure` is what makes it a guarantee (see the class doc).
       #
       # @return [Report] with the same totality contract as {#reclaim}
       def surrender(lease, worker_id:) = complete(lease, worker_id:, resolver: Resolver::Skipped)
@@ -259,10 +269,48 @@ module Lain
         anchored = @handback.call(lease, worker_id:)
         told(resolve(anchored, worker_id:, resolver:), restoration = restore(anchored, worker_id:))
       rescue StandardError => e
-        told(broke(anchored, e), restoration = restore(anchored, worker_id:))
+        told(broke(anchor(lease, anchored, worker_id:), e), restoration = restore(anchored, worker_id:))
       ensure
-        restore(anchored, worker_id:) if restoration.nil?
+        unwind(lease, anchored, worker_id:) if restoration.nil?
         lease&.release
+      end
+
+      # What the `ensure` owes when no reported path got there -- the `Exception`
+      # case, which has no Report to decorate, only obligations. Anchor first:
+      # the ref is the thing that survives the release under it.
+      def unwind(lease, anchored, worker_id:)
+        anchor(lease, anchored, worker_id:)
+        restore(anchored, worker_id:)
+      end
+
+      # Write the ref the body did not get to. {Worktree::Handback#anchor} merges
+      # nothing and touches no working tree, which is what makes it callable from
+      # here; it is also idempotent, so the guard below is an optimization rather
+      # than a correctness condition -- a handback that already anchored has a
+      # ref, and is handed straight back.
+      #
+      # TOTAL and UNREPEATED, for the reasons {#restore} is total: this runs from
+      # an `ensure` where a raise would REPLACE the exception already climbing
+      # and skip the `lease&.release` under it, and a retry with no bound would
+      # hold the worktree for as long as git kept failing.
+      #
+      # THE RESCUE IS FOR THE DUCK, NOT FOR GIT. {Worktree::Handback#anchor}
+      # answers every failure with a journalled `:failed` Outcome and raises
+      # nothing, so against the real collaborator this rescue never fires. It
+      # stays because `handback` is INJECTED: a substitute that raises would
+      # otherwise replace the climbing exception with its own and skip the
+      # release -- measured, not assumed, by the one-attempt example. Keeping it
+      # here is what lets that rescue live where it can still journal.
+      #
+      # A lease that is nil or ALREADY RELEASED is refused rather than asked:
+      # there is nothing to read from a reclaimed checkout, and {#complete}'s own
+      # early return leaves through this same `ensure`.
+      def anchor(lease, anchored, worker_id:)
+        return anchored if lease.nil? || lease.released? || anchored&.ref
+
+        @handback.anchor(lease, worker_id:)
+      rescue Exception # rubocop:disable Lint/RescueException
+        anchored
       end
 
       # Leave the parent checkout usable, and MEASURE whether that worked.

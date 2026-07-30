@@ -35,6 +35,14 @@ module Lain
       # recur. The corollary is the thing to guard: a future commit-ish argument
       # to {Worktree#add} would reintroduce it -- refuse that, not this namespace.
       #
+      # THE REF WITHOUT THE MERGE. {#anchor} is that first half on its own, for
+      # a caller that is already unwinding. It writes the ref, merges nothing,
+      # and touches no working tree, so an `ensure` racing a cancel can still
+      # save the commits the reclaim under it is about to make unreachable --
+      # which {#call} cannot promise, since a raise anywhere inside it leaves
+      # the ref unwritten. It reads the ref before writing one, which is what
+      # makes calling it twice free.
+      #
       # UNCOMMITTED WORK STAYS SCRATCH, exactly as {Worktree} says. This class
       # makes *committed* work survivable and reports what happened. It never
       # spawns, never removes a worktree, and NEVER RAISES -- not from git, not
@@ -49,23 +57,6 @@ module Lain
       # handback that ever mattered. A merge that fails anyway is reported, not
       # forced.
       class Handback
-        # Outside refs/heads/ on purpose -- see the class doc.
-        REF_NAMESPACE = "refs/lain/worker"
-
-        # git-check-ref-format rejects spaces, `~^:?*[\`, `@{`, `..`, a leading
-        # `.` and a trailing `.` or `.lock`. A worker_id is an arbitrary caller
-        # object, so its bytes are slugged into that alphabet rather than
-        # trusted -- an id like `arm 1/spawn..x` would otherwise fail the write.
-        UNSAFE = /[^A-Za-z0-9._-]+/
-
-        # Long enough to stay readable, short enough that the ref survives a
-        # 255-byte filesystem path component once the fingerprint is appended.
-        SLUG_LIMIT = 60
-
-        # A worker with no name is still a worker: it gets a name here rather
-        # than a blank one, which would slug to nothing and journal to nothing.
-        UNNAMED = "unnamed-worker"
-
         # `git status` reports untracked files unless told not to -- see the
         # class doc for why a stray scratch file is not a dirty parent.
         TRACKED_ONLY = "--untracked-files=no"
@@ -76,18 +67,114 @@ module Lain
         MID_MERGE = "parent is mid-merge from an earlier handback; #continue or #abandon that one first"
         DIRTY = "parent checkout has uncommitted changes"
         ABANDONED = "merge abandoned; the work is still on the ref"
+        ANCHOR_ONLY = "work anchored on the ref; no merge was attempted"
+
         NO_MERGE = "no merge in progress in the parent checkout"
         RESIDUE = "conflict markers remain in these paths; resolve them and #continue again, or #abandon"
+
+        # Stamped into the ref's reflog, so `git reflog refs/lain/worker/<w>`
+        # tells someone holding nothing but the repository that lain wrote this
+        # ref, and when.
+        #
+        # It says WHO and WHEN, deliberately not WHAT HAPPENED, because the two
+        # annotate DIFFERENT OBJECTS: `:merged`, `:declined` and `:nothing_to_do`
+        # describe the state of the PARENT CHECKOUT, while a reflog entry
+        # describes this ref. Stamping an outcome here would annotate the wrong
+        # thing -- and old->new already encodes the only distinction that IS the
+        # ref's own, namely create versus advance. The outcome vocabulary stays
+        # on the {Outcome} and in the Journal, where one event keeps one record.
+        ANCHORED = "lain handback: anchored"
+
+        # A caller's `worker_id` as the two names every operation here needs: the
+        # KEY the journal joins on, and the REF the work is anchored under.
+        #
+        # Its own object because its rules are its own and none of them are about
+        # git-the-operation: an arbitrary caller object has to survive `#to_s`,
+        # then git's refname alphabet, then an injectivity requirement no other
+        # part of this class cares about. Pure -- no shell, no journal, no state
+        # -- so it is the one piece here that can be reasoned about without a
+        # repository.
+        class Naming
+          # Outside refs/heads/ on purpose -- see {Handback}'s class doc.
+          REF_NAMESPACE = "refs/lain/worker"
+
+          # git-check-ref-format rejects spaces, `~^:?*[\`, `@{`, `..`, a leading
+          # `.` and a trailing `.` or `.lock`. A worker_id is an arbitrary caller
+          # object, so its bytes are slugged into that alphabet rather than
+          # trusted -- an id like `arm 1/spawn..x` would otherwise fail the write.
+          UNSAFE = /[^A-Za-z0-9._-]+/
+
+          # Long enough to stay readable, short enough that the ref survives a
+          # 255-byte filesystem path component once the fingerprint is appended.
+          SLUG_LIMIT = 60
+
+          # A worker with no name is still a worker: it gets a name here rather
+          # than a blank one, which would slug to nothing and journal to nothing.
+          UNNAMED = "unnamed-worker"
+
+          def initialize(worker_id)
+            @name = totally(worker_id)
+          end
+
+          # A worker with no usable name is still a worker: naming it beats a
+          # blank the telemetry guard refuses to record.
+          def key = @name.strip.empty? ? UNNAMED : @name
+
+          # Fingerprinted on the ORIGINAL name, never on {#key}: `""` and `"   "`
+          # are both DISPLAYED as `unnamed-worker`, but they are two workers, and
+          # a shared ref would have them overwrite each other.
+          def ref = "#{REF_NAMESPACE}/#{slug}-#{fingerprint}"
+
+          private
+
+          # The caller's worker_id as a String, TOTALLY. `#to_s` is the caller's
+          # own code: it can raise, answer a non-String, or (a BasicObject) not
+          # exist at all -- and this is reached from a rescue handler as well as
+          # from a method body, where a raise would be a handler re-raising the
+          # very thing it was called to contain. An id whose bytes are not valid
+          # in their own encoding is refused here too, since every later
+          # `strip`/`gsub` would raise on it.
+          def totally(worker_id)
+            name = worker_id.to_s
+            name.is_a?(String) && name.valid_encoding? ? name : ""
+          rescue StandardError
+            ""
+          end
+
+          # Two workers must never share a ref: `update-ref` overwrites
+          # unconditionally, and on a `:declined` or `:conflicted` outcome the
+          # ref is the ONLY anchor, so a collision makes one worker's commits
+          # unreachable and gc-able. The readable half is what a human greps for;
+          # the fingerprint is what makes the mapping injective, since slugging
+          # alone maps `a/b`, `a b` and `a-b` onto one name. It also makes the
+          # slug a fixpoint: nothing a caller can spell reconstructs a trailing
+          # `.lock` or `.` once hex follows it.
+          def slug
+            readable = key.gsub(UNSAFE, "-").gsub("..", "-").delete_prefix(".")[0, SLUG_LIMIT]
+            readable.empty? ? UNNAMED : readable
+          end
+
+          # The hex half of the content address: `Canonical.digest` answers
+          # `blake3:<hex>`, and a colon is not legal in a refname.
+          #
+          # NOT {Paths#project_hash}, which keys the worktree DIRECTORY: it
+          # `File.expand_path`es its argument against the process cwd, so `a/b`
+          # and `./a/b` collide and one id hashes two ways from two cwds. Fine
+          # for a scratch directory keyed once per process; wrong for a durable
+          # ref.
+          def fingerprint = Canonical.digest(@name).split(":").last[0, 12]
+        end
 
         # What a handback did, and -- the field its caller's next move depends on
         # -- what state that left the parent checkout in.
         #
         # `kind` is one of {KINDS}: `:nothing_to_do` (the worker's commits are
-        # already in the parent, or there was no merge to finish), `:merged`,
-        # `:conflicted`, `:declined` (the work is on the ref and the parent did
-        # not take it -- a dirty parent, a parent already mid-merge, or an
-        # abandoned merge; `detail` says which), `:failed` (a git call failed;
-        # the message is in `detail`).
+        # already in the parent, already on the ref, or there was no merge to
+        # finish), `:merged`, `:conflicted`, `:declined` (the work is on the ref
+        # and the parent did not take it -- a dirty parent, a parent already
+        # mid-merge, an abandoned merge, or an {#anchor} that offered it none;
+        # `detail` says which), `:failed` (a git call failed; the message is in
+        # `detail`).
         #
         # `ref` names where the work is anchored, and is nil ONLY when nothing
         # was written -- `:nothing_to_do` from a `#call`, or a `:failed` that
@@ -126,6 +213,17 @@ module Lain
           # @return [Boolean] whether the parent checkout is sitting mid-merge,
           #   waiting for {Handback#continue} or {Handback#abandon}.
           def merge_in_progress? = parent_state == :merging
+
+          # `:declined` covers two things a caller acts on differently: a parent
+          # that REFUSED the merge (worth retrying once it is clean) and an
+          # {Handback#anchor} that never offered one (nothing to retry -- the
+          # merge was never the point). {Outcome::KINDS} is closed and widening
+          # it would break every exhaustive `case`, so the discrimination is a
+          # message rather than a sixth kind.
+          #
+          # @return [Boolean] whether this outcome came from an anchor-only
+          #   write, on which no merge was ever attempted
+          def anchor_only? = detail == ANCHOR_ONLY
         end
 
         # One git working tree, questioned. The parent and the leased worktree
@@ -167,6 +265,30 @@ module Lain
           def merging? = ok?(run("rev-parse", "--verify", "--quiet", "MERGE_HEAD"))
 
           def contains?(commit) = ok?(run("merge-base", "--is-ancestor", commit, "HEAD"))
+
+          # What `ref` points at, or "" when it points at nothing. A ref that
+          # does not exist is not an error to ask about: "no ref yet" and "a ref
+          # on some other commit" both mean the same write is still owed, and no
+          # commit is ever "", so no caller writes a nil guard.
+          def target(ref)
+            shell = run("rev-parse", "--verify", "--quiet", ref)
+            ok?(shell) ? shell.stdout.strip : ""
+          end
+
+          # The write half of {#target}, and git's own compare-and-swap:
+          # `update-ref <ref> <new> <old>` refuses unless the ref still holds
+          # `<old>`, where "" means it must not exist at all. Passing back the
+          # value just read is what makes read-then-write atomic, so the loser of
+          # a race fails loudly instead of overwriting a ref that is sometimes
+          # the ONLY thing keeping a worker's commits reachable.
+          #
+          # `--create-reflog` is not decoration: git's default
+          # `core.logAllRefUpdates` logs only refs/heads, refs/remotes,
+          # refs/notes and HEAD, so for this namespace a bare `-m` is accepted
+          # and silently dropped (measured, git 2.43).
+          def anchor(ref, commit, held)
+            run("update-ref", "--create-reflog", "-m", ANCHORED, ref, commit, held)
+          end
 
           # `-z`, because the default output runs every path through
           # `core.quotePath`: a conflict on `föö.txt` would be reported as
@@ -224,11 +346,54 @@ module Lain
         # @param worker_id [Object] names the ref the work is anchored under
         # @return [Outcome] always -- nothing raises past here
         def call(lease, worker_id:)
-          name = name_of(worker_id)
-          worktree = Checkout.new(lease.worker_env.cwd, shell_out_factory: @shell_out_factory)
-          journaled(preserve(worktree, key_for(name), ref_for(name)))
+          named = Naming.new(worker_id)
+          journaled(preserve(checkout(lease), named.key, named.ref))
         rescue StandardError => e
-          journaled(broke(key_for(name_of(worker_id)), nil, e))
+          journaled(broke(Naming.new(worker_id).key, nil, e))
+        end
+
+        # Anchor `lease`'s committed work under {Naming::REF_NAMESPACE} and stop
+        # there: no merge, no staging, no working-tree state anywhere. Call it
+        # while the lease is STILL LIVE, for the reason {#call} gives.
+        #
+        # THIS IS THE OPERATION AN `ensure` CAN AFFORD. {#call} writes the ref
+        # and then merges, so an exception raised anywhere in it reclaims a
+        # worktree whose commits no ref reaches; this is the ref half alone, and
+        # it is idempotent because it reads the ref before writing one -- a
+        # second call over the same lease costs two `rev-parse`s and writes
+        # nothing. Anchoring is not handing back, so a later {#call} over the
+        # same lease still owes the parent its merge and still performs it.
+        #
+        # NOTHING GOES UNRECORDED, and that is why the rescue here is `Exception`
+        # rather than `StandardError` as everywhere else in this class. This is
+        # the operation that runs while a worker is being torn down: the worktree
+        # is force-removed moments later, so an anchor that failed ENTIRELY is
+        # the single event the record must not lose -- a silent Journal makes it
+        # indistinguishable from a worker that committed nothing. `Async::Cancel`
+        # and `Interrupt` are `< Exception` and are exactly the classes that
+        # arrive on this path, so a `rescue StandardError` would let the failure
+        # past the journalling on its way to being swallowed upstream. The cost
+        # is real and accepted: a cancel that lands inside this method is
+        # reported instead of propagated. Every other operation here keeps
+        # `StandardError`, because none of them is the last thing to touch a
+        # checkout that is about to cease existing.
+        #
+        # @param lease [#worker_env] the live lease whose `worker_env.cwd` holds
+        #   the commits to anchor. Liveness is NOT checked -- this takes a
+        #   one-message duck and only the lifecycle owner can act on a released
+        #   lease -- so a released one is a `:failed` outcome and a journal line,
+        #   not a refusal.
+        # @param worker_id [Object] names the ref, exactly as {#call} names it
+        # @return [Outcome] `:declined` once the work is on the ref and the
+        #   parent has not taken it (none was offered -- `detail` says so, and
+        #   {Outcome#anchor_only?} answers it), `:nothing_to_do` when the parent
+        #   already has the commits or the ref already holds them, `:failed`
+        #   when git refused or raised -- never a raise
+        def anchor(lease, worker_id:)
+          named = Naming.new(worker_id)
+          journaled(pin(checkout(lease), named.key, named.ref))
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          journaled(broke(Naming.new(worker_id).key, nil, e))
         end
 
         # Conclude a merge a `:conflicted` outcome left in progress, once its
@@ -247,9 +412,9 @@ module Lain
         #   `:nothing_to_do` if no merge is in progress; or `:failed` -- never a
         #   raise
         def continue(ref, worker_id: ref)
-          journaled(conclude(ref, key_for(name_of(worker_id))))
+          journaled(conclude(ref, Naming.new(worker_id).key))
         rescue StandardError => e
-          journaled(broke(key_for(name_of(worker_id)), ref, e))
+          journaled(broke(Naming.new(worker_id).key, ref, e))
         end
 
         # Give up on a merge left in progress: the parent goes back to how it
@@ -261,27 +426,54 @@ module Lain
         #   `:nothing_to_do` if no merge is in progress, `:failed` if the parent
         #   is STILL mid-merge afterwards -- never a raise
         def abandon(ref, worker_id: ref)
-          journaled(discard(ref, key_for(name_of(worker_id))))
+          journaled(discard(ref, Naming.new(worker_id).key))
         rescue StandardError => e
-          journaled(broke(key_for(name_of(worker_id)), ref, e))
+          journaled(broke(Naming.new(worker_id).key, ref, e))
         end
 
         private
 
-        # Ref first: capture the worktree's HEAD, skip if the parent already has
-        # it, anchor it outside refs/heads, and only then try the merge.
-        # "Already has it" is asked as reachability rather than remembered from
-        # the add, so a parent that moved on under a worker that committed
-        # nothing reads as nothing-to-do too.
-        def preserve(worktree, key, ref)
+        # The leased checkout a `lease` points at. Built per operation rather
+        # than held, because a lease outlives no handback and a stale one would
+        # name a directory that has been reclaimed.
+        def checkout(lease) = Checkout.new(lease.worker_env.cwd, shell_out_factory: @shell_out_factory)
+
+        # Capture the worktree's HEAD, skip if the parent already has it, and
+        # anchor it outside refs/heads. "Already has it" is asked as reachability
+        # rather than remembered from the add, so a parent that moved on under a
+        # worker that committed nothing reads as nothing-to-do too. A ref ALREADY
+        # on that commit is left alone rather than rewritten: {#anchor} is
+        # retried from an `ensure`, and this is where its idempotence lives.
+        def pin(worktree, key, ref)
           head = worktree.head
           return failed(key, "rev-parse HEAD", head) unless ok?(head)
 
           commit = head.stdout.strip
           return outcome(:nothing_to_do, key) if @parent.contains?(commit)
 
-          write = @parent.run("update-ref", ref, commit)
-          ok?(write) ? merge(ref, key) : failed(key, "update-ref #{ref}", write)
+          held = @parent.target(ref)
+          return outcome(:nothing_to_do, key, ref:, detail: ANCHOR_ONLY) if held == commit
+
+          write = @parent.anchor(ref, commit, held)
+          ok?(write) ? outcome(:declined, key, ref:, detail: ANCHOR_ONLY) : failed(key, "update-ref #{ref}", write)
+        end
+
+        # Ref first, then the merge -- and the merge only if there is an anchor
+        # to merge FROM. A pin that answered with no ref (nothing to hand back,
+        # or git refusing to write) IS the outcome; a pin that found the ref
+        # already written by an earlier {#anchor} still owes the parent a merge.
+        #
+        # THE RESCUE IS WHERE THE REF SURVIVES A RAISE. {#call}'s own method-level
+        # rescue cannot name a ref -- it runs where nothing knows whether the
+        # write happened -- so a raise from the merge reported the work as lost
+        # while it sat safely on disk. This level watched the write, so this is
+        # the level that can say so, and "say where the work is" is the whole
+        # contract.
+        def preserve(worktree, key, ref)
+          pinned = pin(worktree, key, ref)
+          pinned.ref.nil? ? pinned : merge(ref, key)
+        rescue StandardError => e
+          broke(key, pinned&.ref, e)
         end
 
         def merge(ref, key)
@@ -372,51 +564,6 @@ module Lain
         end
 
         def ok?(shell) = shell.exitstatus.zero?
-
-        # The caller's worker_id as a String, TOTALLY. `#to_s` is the caller's
-        # own code: it can raise, answer a non-String, or (a BasicObject) not
-        # exist at all -- and this runs in the rescue handler as well as in the
-        # body, where a raise would be a handler re-raising the very thing it
-        # was called to contain. An id whose bytes are not valid in their own
-        # encoding is refused here too, since every later `strip`/`gsub` would
-        # raise on it.
-        def name_of(worker_id)
-          name = worker_id.to_s
-          name.is_a?(String) && name.valid_encoding? ? name : ""
-        rescue StandardError
-          ""
-        end
-
-        # A worker with no usable name is still a worker: naming it beats a
-        # blank the telemetry guard refuses to record.
-        def key_for(name) = name.strip.empty? ? UNNAMED : name
-
-        # Fingerprinted on the ORIGINAL name, never on {#key_for}'s: `""` and
-        # `"   "` are both DISPLAYED as `unnamed-worker`, but they are two
-        # workers, and a shared ref would have them overwrite each other.
-        def ref_for(name) = "#{REF_NAMESPACE}/#{slug(key_for(name))}-#{fingerprint(name)}"
-
-        # Two workers must never share a ref: `update-ref` overwrites
-        # unconditionally, and on a `:declined` or `:conflicted` outcome the ref
-        # is the ONLY anchor, so a collision makes one worker's commits
-        # unreachable and gc-able. The readable half is what a human greps for;
-        # the fingerprint is what makes the mapping injective, since slugging
-        # alone maps `a/b`, `a b` and `a-b` onto one name. It also makes the
-        # slug a fixpoint: nothing a caller can spell reconstructs a trailing
-        # `.lock` or `.` once hex follows it.
-        #
-        # NOT {Paths#project_hash}, which keys the worktree DIRECTORY: it
-        # `File.expand_path`es its argument against the process cwd, so `a/b`
-        # and `./a/b` collide and one id hashes two ways from two cwds. Fine for
-        # a scratch directory keyed once per process; wrong for a durable ref.
-        def slug(key)
-          readable = key.gsub(UNSAFE, "-").gsub("..", "-").delete_prefix(".")[0, SLUG_LIMIT]
-          readable.empty? ? UNNAMED : readable
-        end
-
-        # The hex half of the content address: `Canonical.digest` answers
-        # `blake3:<hex>`, and a colon is not legal in a refname.
-        def fingerprint(name) = Canonical.digest(name).split(":").last[0, 12]
       end
     end
   end

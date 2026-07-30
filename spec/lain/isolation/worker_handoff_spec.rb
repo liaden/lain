@@ -519,6 +519,202 @@ RSpec.describe Lain::Isolation::WorkerHandoff do
     end
   end
 
+  # The recorded data-loss hole. The `update-ref` lives INSIDE `Handback#call`,
+  # so a raise anywhere in that method used to release the lease over a worktree
+  # no ref reached -- and releasing a `--detach`ed worktree makes its commits
+  # unreachable and gc-able. `Handback#anchor` is the ref without the merge, and
+  # the `ensure` calls it whenever the body left nothing anchored.
+  describe "a raise mid-handback no longer loses the worker's commits" do
+    # Raises exactly where the hole was: before any ref is written.
+    def exploding_call(error, message = "the index is unwritable")
+      Class.new(SimpleDelegator) do
+        define_method(:call) { |*, **| raise(error, message) }
+      end.new(Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:))
+    end
+
+    def over(broken) = described_class.new(handback: broken, repo_root: @repo_root, resolver:)
+
+    it "anchors the commit and names the ref on the report it failed with" do
+      lease = clean_lease
+      worker_commit = run_git(lease.worker_env.cwd, "rev-parse", "HEAD").strip
+      path = lease.worker_env.cwd
+
+      report = over(exploding_call(IOError)).reclaim(lease, worker_id: "worker-1")
+
+      expect(report.kind).to eq(:failed)
+      expect(report.ref).to start_with("refs/lain/worker/worker-1-")
+      expect(run_git(@repo_root, "rev-parse", report.ref).strip).to eq(worker_commit)
+      expect(lease).to be_released
+      expect(registered_worktrees).not_to include(path)
+    ensure
+      lease&.release
+    end
+
+    # `Async::Cancel` and `Interrupt` are `< Exception`, so no rescue in the
+    # object sees them: only the `ensure` runs, and it must anchor before the
+    # release under it.
+    [Async::Cancel, Interrupt].each do |klass|
+      it "anchors from the ensure when #{klass} climbs out of the handback" do
+        lease = clean_lease
+        worker_commit = run_git(lease.worker_env.cwd, "rev-parse", "HEAD").strip
+
+        expect { over(exploding_call(klass)).reclaim(lease, worker_id: "worker-1") }.to raise_error(klass)
+
+        expect(worker_refs).to contain_exactly(a_string_starting_with("refs/lain/worker/worker-1-"))
+        expect(run_git(@repo_root, "rev-parse", worker_refs.first).strip).to eq(worker_commit)
+        expect(lease).to be_released
+      ensure
+        lease&.release
+      end
+    end
+
+    # #surrender is the arm's `ensure`-position call, so it is the one that runs
+    # while an exception is already climbing somewhere above.
+    it "anchors from #surrender too, and spawns nothing" do
+      lease = clean_lease
+      worker_commit = run_git(lease.worker_env.cwd, "rev-parse", "HEAD").strip
+
+      report = over(exploding_call(IOError)).surrender(lease, worker_id: "worker-1")
+
+      expect(run_git(@repo_root, "rev-parse", report.ref).strip).to eq(worker_commit)
+      expect(resolver.spawns).to be_empty
+      expect(lease).to be_released
+    ensure
+      lease&.release
+    end
+
+    # ONE attempt, never a loop: the anchor runs while an exception climbs, and a
+    # retry with no bound would hold the worktree for as long as git kept
+    # failing. A raise from the anchor must not replace the climbing exception
+    # nor skip the release under it.
+    it "tries the anchor once and still releases when the anchor itself raises" do
+      attempts = 0
+      broken = Class.new(SimpleDelegator) do
+        define_method(:call) { |*, **| raise(Interrupt, "interrupted") }
+        define_method(:anchor) do |*, **|
+          attempts += 1
+          raise(Interrupt, "the anchor is broken too")
+        end
+      end.new(handback)
+      lease = clean_lease
+
+      expect { over(broken).reclaim(lease, worker_id: "worker-1") }.to raise_error(Interrupt, "interrupted")
+
+      expect(attempts).to eq(1)
+      expect(lease).to be_released
+    ensure
+      lease&.release
+    end
+
+    # The guard is what keeps the experiment record honest: a handback that
+    # already anchored gets no second `update-ref` and no second journal line.
+    it "adds no anchor of its own when the handback already wrote the ref" do
+      lease = clean_lease
+
+      handoff.reclaim(lease, worker_id: "worker-1")
+
+      expect(journal.map(&:outcome)).to eq([:merged])
+    ensure
+      lease&.release
+    end
+
+    # Raises ONE git subcommand rather than exiting nonzero -- an exhausted fd
+    # table, a killed spawn, a Ctrl-C mid-call.
+    def raising_at(subcommand, error = Errno::EMFILE)
+      real = Mixlib::ShellOut.public_method(:new)
+      factory = lambda do |*args, **kwargs|
+        raise(error, "git #{subcommand}") if args.include?(subcommand)
+
+        real.call(*args, **kwargs)
+      end
+      Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:, shell_out_factory: factory)
+    end
+
+    # The summary is the ONE line an arm folds into a worker's result. A `:failed`
+    # that renders "handback failed ()" tells a human the work is gone when it is
+    # sitting on a ref two commands away.
+    it "names the ref in the summary when the merge raises after the anchor" do
+      lease = clean_lease
+      worker_commit = run_git(lease.worker_env.cwd, "rev-parse", "HEAD").strip
+
+      report = over(raising_at("merge")).reclaim(lease, worker_id: "worker-1")
+
+      expect(report.kind).to eq(:failed)
+      expect(report.ref).to start_with("refs/lain/worker/worker-1-")
+      expect(report.summary).to include(report.ref)
+      expect(report.summary).not_to include("()")
+      expect(run_git(@repo_root, "rev-parse", report.ref).strip).to eq(worker_commit)
+    ensure
+      lease&.release
+    end
+
+    # A worktree is force-removed moments after this, so an anchor that failed
+    # ENTIRELY is the one event the record must not lose. `Interrupt` is the
+    # shape that went silent: `< Exception`, so it slipped past the journalling
+    # on its way to being swallowed.
+    it "leaves a journal line when the ensure's anchor fails totally" do
+      lease = clean_lease
+
+      expect { over(raising_at("rev-parse", Interrupt)).reclaim(lease, worker_id: "worker-1") }
+        .to raise_error(Interrupt)
+
+      expect(journal.map(&:outcome)).to eq([:failed])
+      expect(journal.first.worker_key).to eq("worker-1")
+      expect(lease).to be_released
+    ensure
+      lease&.release
+    end
+  end
+
+  # Fix 1 corrected the ref VALUE where nil was wrong. This is the rendering of a
+  # nil that is right: a CAS loss, an already-released lease and a pre-write
+  # raise all legitimately anchor nothing, and "handback failed ()" reads as "the
+  # work is gone" rather than "there was never a ref to name".
+  describe "a summary never renders an empty pair of parens" do
+    it "omits the parens when there is no ref to name" do
+      report = described_class::Report.new(kind: :failed, detail: "git update-ref failed")
+
+      expect(report.summary).to eq("handback failed -- git update-ref failed")
+      expect(report.summary).not_to include("()")
+    end
+
+    it "still names the ref in parens when there is one" do
+      report = described_class::Report.new(kind: :failed, ref: "refs/lain/worker/w-1", detail: "boom")
+
+      expect(report.summary).to eq("handback failed (refs/lain/worker/w-1) -- boom")
+    end
+
+    it "omits them on a :merged with no ref, and keeps them when it has one" do
+      expect(described_class::Report.new(kind: :merged).summary).to eq("handback merged the worker's commits")
+      expect(described_class::Report.new(kind: :merged, ref: "refs/lain/worker/w-1").summary)
+        .to eq("handback merged the worker's commits (refs/lain/worker/w-1)")
+    end
+
+    # The real path that produces one: the compare-and-swap loses, so nothing is
+    # anchored and there is genuinely no ref to name.
+    it "reads cleanly for a CAS loss, which anchors nothing" do
+      lease = clean_lease
+      ref = Lain::Isolation::Worktree::Handback::Naming.new("worker-1").ref
+      other = run_git(@repo_root, "rev-parse", "HEAD").strip
+      real = Mixlib::ShellOut.public_method(:new)
+      racing = lambda do |*args, **kwargs|
+        run_git(@repo_root, "update-ref", ref, other) if args.include?("update-ref")
+        real.call(*args, **kwargs)
+      end
+      losing = Lain::Isolation::Worktree::Handback.new(repo_root: @repo_root, journal:, shell_out_factory: racing)
+
+      report = described_class.new(handback: losing, repo_root: @repo_root, resolver:)
+                              .reclaim(lease, worker_id: "worker-1")
+
+      expect(report.kind).to eq(:failed)
+      expect(report.ref).to be_nil
+      expect(report.summary).not_to include("()")
+      expect(report.summary).to start_with("handback failed -- ")
+    ensure
+      lease&.release
+    end
+  end
+
   # Unwinding a merge needs git, and on this path git is what failed -- there is
   # no second mechanism to try. What is left is to SAY it, loudly, naming the ref
   # and the one command that fixes the checkout. Silence here means the next
