@@ -106,6 +106,16 @@ class LainCLI < Thor
     method_option :reason, type: :string, desc: "Why -- journaled with the decision"
     desc "deny DIGEST", "Refuse a parked artifact -- journals a terminal gate_decision"
     def deny(digest) = render { Lain::CLI::EpicQueue.new.deny(digest, reason: options[:reason]) }
+
+    method_option :issue, type: :string, desc: "Which issue -- issue_plan and implementation gate one issue"
+    method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
+    desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
+    def submit(stage, slug = nil)
+      render do
+        Lain::CLI::EpicSubmit.new(input: $stdin, output: $stdout)
+                             .submit(stage, slug, issue: options[:issue], digest: options[:digest])
+      end
+    end
   end
 
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI

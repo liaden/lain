@@ -167,14 +167,31 @@ module Lain
       #   from the home, the document, or the fold -- exe/lain renders all of
       #   them as a message with no backtrace
       def status(slug = nil)
-        container = Lain::Epic::Home.container(config: @config, paths: @paths, root: @root)
         slugs = slugs_in(container)
         return unstarted(container) if slugs.empty?
 
         report(chosen(slug, slugs, container))
       end
 
+      # WHICH epic a bare command means: the sole one in the home, or the named
+      # one checked against it.
+      #
+      # Public because it is the one question every epic verb has to answer the
+      # SAME way. `lain epic submit` gates the artifact this command reports on,
+      # so a second spelling of "the sole epic" would let the two report on
+      # different work -- silently, since neither would raise. The rule lives
+      # here, next to the home listing it reads, and the other verbs ask.
+      #
+      # @param slug [String, nil]
+      # @return [String] the resolved slug
+      # @raise [Ambiguous, UnknownEpic, UnreadableHome]
+      def resolve_slug(slug = nil) = chosen(slug, slugs_in(container), container)
+
       private
+
+      # Memoized: three of the four callers above ask for it in one invocation,
+      # and it is pure path arithmetic over values this object already holds.
+      def container = @container ||= Lain::Epic::Home.container(config: @config, paths: @paths, root: @root)
 
       def report(slug)
         home = Lain::Epic::Home.resolve(config: @config, paths: @paths, slug:, root: @root)
@@ -209,7 +226,12 @@ module Lain
         raise UnknownEpic, "no epic #{slug.inspect} in #{container} -- it holds #{listed(slugs)}"
       end
 
+      # An empty home is reachable only through {#resolve_slug}: {#status}
+      # answers {#unstarted} before it ever chooses. A verb that must NAME an
+      # epic has no such answer, and "holds 0 epics ()" would be a sentence
+      # about nothing -- so the emptiness is said outright.
       def sole(slugs, container)
+        raise UnknownEpic, "no epics yet in #{container} -- there is nothing to name" if slugs.empty?
         return slugs.first if slugs.one?
 
         raise Ambiguous, "#{container} holds #{slugs.size} epics (#{listed(slugs)}) -- " \
