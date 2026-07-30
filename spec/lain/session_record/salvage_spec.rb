@@ -62,6 +62,22 @@ RSpec.describe Lain::SessionRecord::Salvage do
       expect(outcome.response.usage).to eq(canned.usage)
     end
 
+    # The recovered turn's spend is the whole reason this class exists, and it
+    # was the third hand-written copy of the same four-key decode. One decoder
+    # now, so a key cannot drift only on the path nobody was watching.
+    it "decodes the recovered usage through Usage.from_anthropic_wire" do
+      # Spool FIRST: the live Provider::Anthropic that writes the frame decodes
+      # through the same method, so a spy armed before it would be satisfied by
+      # the provider's call and prove nothing about Salvage.
+      digest = spool(canned)
+      allow(Lain::Usage).to receive(:from_anthropic_wire).and_call_original
+
+      outcome = described_class.new(entries: [request_sent(digest)], frames:, timeline:).call
+
+      expect(Lain::Usage).to have_received(:from_anthropic_wire)
+      expect(outcome.response.usage).to eq(canned.usage)
+    end
+
     it "commits the reassembled content as the new assistant head, onto the given Timeline" do
       digest = spool(canned)
 
@@ -234,6 +250,35 @@ RSpec.describe Lain::SessionRecord::Salvage do
 
       expect(outcome).to be_recovered
       expect(outcome.request_digest).to eq(digest)
+    end
+  end
+
+  # This class SHADOWS {Provider::AnthropicWire#build_response} rather than
+  # including it -- `session_record.rb` loads before `provider.rb`, so the module
+  # does not exist at class-body time (and `lain/agent`, which needs
+  # SessionRecord, sits between them, so the order cannot simply swap). Nothing
+  # else pins the two in agreement: a field added to the shared decoder would be
+  # silently absent here, on the crash-recovery path, where the whole point is
+  # that a recovered Response equals what the live call would have produced.
+  describe "agreement with the shared Anthropic-wire decoder it shadows" do
+    let(:assembled) do
+      Lain::Provider::Anthropic::StreamAssembler::Assembled.new(
+        id: "msg_1", model: "claude-opus-4-8", stop_reason: "end_turn",
+        # Tool inputs already parsed, which is the documented difference between
+        # the two bodies (the shared one also runs #normalize_tool_inputs). With
+        # parsed inputs that step is identity, so any OTHER divergence shows.
+        content: [{ "type" => "thinking", "thinking" => "...", "signature" => "sig" },
+                  { "type" => "tool_use", "id" => "tu_1", "name" => "t", "input" => { "path" => "a.rb" } }],
+        usage: { "input_tokens" => 10, "output_tokens" => 4, "cache_read_input_tokens" => 8 }
+      )
+    end
+
+    it "builds the identical Response from the identical Assembled" do
+      salvage = described_class.new(entries: [], frames: [], timeline:).send(:build_response, assembled)
+      shared = Lain::Provider::Anthropic.new(transport: Object.new, api_key: "k")
+                                        .send(:build_response, assembled)
+
+      expect(salvage).to eq(shared)
     end
   end
 end

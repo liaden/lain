@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "faraday"
-require "json"
-require "time"
-
 require_relative "anthropic/retry_tap"
 require_relative "anthropic/stream_assembler"
 require_relative "anthropic/transport"
@@ -22,70 +18,34 @@ module Lain
     # == encode vs. the wire
     #
     # `#encode` returns the SDK's `system_:` kwargs so the dry-diff can compare it
-    # against the oracle. {#complete} rewrites that one key to the wire `system`
-    # and adds the top-level `stream` flag -- the only two places the neutral
-    # kwargs and the actual JSON body differ.
+    # against the oracle. {AnthropicWire#wire_payload} rewrites that one key to
+    # the wire `system` and adds the top-level `stream` flag -- the only two
+    # places the neutral kwargs and the actual JSON body differ, which is why
+    # they live on the far side of the encode/wire split rather than in
+    # {AnthropicEncoding}, whose output the oracles must keep seeing as kwargs.
     class Anthropic < Provider
       include AnthropicEncoding
+      # The wire body, the wire response, and the rate-limit backoff -- shared
+      # with {Provider::Bedrock}, which speaks the same Messages API. That is
+      # also where RATE_LIMIT_RESET_HEADER and RESET_HEADER_PARSER now live;
+      # constant lookup walks ancestors, so `Anthropic::RATE_LIMIT_RESET_HEADER`
+      # still resolves.
+      include AnthropicWire
+      # APIError / APIStatusError, nested here and rooted at Lain::Error.
+      #
+      # UNRELATED to {Provider::AnthropicReference::APIError}: same name, same
+      # shape, no shared ancestor besides {Lain::Error} -- verified nothing
+      # above the Provider rescues either by name today (Backend can hand chat
+      # either backend depending on whether journaling is on, see T17w). A
+      # caller wanting "an Anthropic API error" regardless of which backend
+      # produced it must handle both explicitly, or a shared marker module must
+      # be introduced first -- do not assume `rescue Anthropic::APIError`
+      # catches an SDK-oracle failure, or vice versa.
+      include ErrorWrapping.under(Lain::Error)
       include StreamStartedSignal
 
       DEFAULT_MODEL = "claude-opus-4-8"
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
-
-      # Which Anthropic rate-limit reset header feeds faraday-retry's backoff.
-      # Anthropic returns several `anthropic-ratelimit-*-reset` headers as RFC3339
-      # timestamps; the exact one to honor should be confirmed against a live 429
-      # (see the plan's open questions) -- token limits bind first on large
-      # agentic prompts, so the tokens reset is the default until then.
-      #
-      # T17w widens the stakes on this open question: this class used to be
-      # bench-only (a money-gated, explicitly opt-in recording path), so an
-      # unconfirmed backoff header was a contained risk. Backend now hands it
-      # live default --journal chat traffic, so a wrong header here throttles
-      # (or fails to throttle) ordinary conversations, not just `bench record`
-      # runs. Still not confirmed against a live 429 -- that confirmation is a
-      # named follow-up ticket, not something to chase in this fix round.
-      RATE_LIMIT_RESET_HEADER = "anthropic-ratelimit-tokens-reset"
-
-      NUMERIC_SECONDS = /\A\d+(\.\d+)?\z/
-
-      # faraday-retry's default header parser understands only seconds or an
-      # RFC2822 date. Anthropic's reset headers are RFC3339, and its `retry-after`
-      # is plain seconds, so one parser must handle both: a bare number is seconds,
-      # anything else is a timestamp turned into seconds-from-now (never negative).
-      RESET_HEADER_PARSER = lambda do |value|
-        string = value.to_s
-        return if string.empty?
-        return string.to_f if string.match?(NUMERIC_SECONDS)
-
-        [Time.iso8601(string) - Time.now, 0.0].max
-      rescue ArgumentError
-        nil
-      end
-
-      # Wraps a vendored transport error so nothing above the Provider rescues a
-      # Provider::HTTP class. The original is preserved as `#cause`.
-      #
-      # UNRELATED to {Anthropic::APIError}: same name, same shape, no shared
-      # ancestor besides {Lain::Error} -- verified nothing above the Provider
-      # rescues either by name today (Backend can now hand chat either backend
-      # depending on whether journaling is on, see T17w). A future caller that
-      # wants to rescue "an Anthropic API error" regardless of which backend
-      # produced it must handle both explicitly, or a shared marker module must
-      # be introduced first -- do not assume `rescue Anthropic::APIError`
-      # catches an {Anthropic} (SDK) failure, or vice versa.
-      class APIError < Lain::Error; end
-
-      # A non-2xx response; `#status` is lifted out so callers branch on it
-      # without unwrapping `#cause`.
-      class APIStatusError < APIError
-        attr_reader :status
-
-        def initialize(message = nil, status: nil)
-          super(message)
-          @status = status
-        end
-      end
 
       # @param transport [#sync_post, #stream] injected in specs; a real
       #   {Transport} over the vendored connection otherwise.
@@ -113,14 +73,7 @@ module Lain
       # parsed tool inputs. `on_stream_started` is CE-5's signal -- see
       # {StreamStartedSignal} -- never called on the non-streaming path.
       def complete(request, on_stream_started: nil)
-        build_response(dispatch(request, on_stream_started))
-      rescue Provider::HTTP::Error => e
-        raise wrap_error(e)
-      rescue Faraday::Error => e
-        # Exhausted retries re-raise the last connection-level failure
-        # (ConnectionFailed, a timeout) as a bare Faraday class; nothing above
-        # the Provider rescues a transport class, so it wraps like the rest.
-        raise APIError, e.message
+        wrapping_errors { build_response(dispatch(request, on_stream_started)) }
       end
 
       private
@@ -142,18 +95,7 @@ module Lain
         config.max_retries = 2
         config.retry_block = @retries.retry_block
         config.exhausted_retries_block = @retries.exhausted_block
-        config.rate_limit_reset_header = RATE_LIMIT_RESET_HEADER
-        config.header_parser_block = RESET_HEADER_PARSER
-        config
-      end
-
-      # The wire body: encode's `system_` kwarg becomes `system`, and `stream` is
-      # added as the top-level field the SDK expressed by method choice instead.
-      def wire_payload(request)
-        payload = encode(request)
-        payload[:system] = payload.delete(:system_) if payload.key?(:system_)
-        payload[:stream] = request.stream
-        payload
+        apply_rate_limit_backoff(config)
       end
 
       # The Provider owns frame opening (it computes the digest) AND attempt
@@ -192,36 +134,6 @@ module Lain
         body = @transport.sync_post(payload, frame:).body || {}
         StreamAssembler::Assembled.new(id: body["id"], model: body["model"], stop_reason: body["stop_reason"],
                                        content: body["content"] || [], usage: body["usage"] || {})
-      end
-
-      def build_response(assembled)
-        Response.new(id: assembled.id, model: assembled.model,
-                     content: normalize_tool_inputs(assembled.content),
-                     stop_reason: assembled.stop_reason, usage: build_usage(assembled.usage), raw: assembled)
-      end
-
-      def normalize_tool_inputs(content)
-        content.map { |block| normalize_tool_input(block) }
-      end
-
-      # Belt-and-suspenders on the Response#tool_uses contract: the streaming
-      # assembler already parses tool inputs and the sync body arrives parsed, but
-      # a String must never reach the Timeline.
-      def normalize_tool_input(block)
-        return block unless block.is_a?(Hash) && block["type"] == "tool_use" && block["input"].is_a?(String)
-
-        block.merge("input" => JSON.parse(block["input"]))
-      end
-
-      def build_usage(usage)
-        Usage.new(input_tokens: usage["input_tokens"], output_tokens: usage["output_tokens"],
-                  cache_creation_input_tokens: usage["cache_creation_input_tokens"],
-                  cache_read_input_tokens: usage["cache_read_input_tokens"])
-      end
-
-      def wrap_error(error)
-        status = error.response.respond_to?(:status) ? error.response.status : nil
-        status ? APIStatusError.new(error.message, status:) : APIError.new(error.message)
       end
     end
   end

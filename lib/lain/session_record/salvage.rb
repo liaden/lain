@@ -242,15 +242,23 @@ module Lain
                  .map { |_type, data| JSON.parse(data) }
       end
 
+      # deliberately absent: {Provider::AnthropicWire}, whose #build_response
+      # this shadows. It cannot be INCLUDED here -- `session_record.rb` loads
+      # before `provider.rb` in `lain.rb`'s topological order, so the constant
+      # does not exist yet at class-body time, which is the same reason
+      # {Provider::Anthropic::StreamAssembler} is reached lazily above. What
+      # would differ if it could: the shared version runs
+      # `normalize_tool_inputs`, redundant here because the assembler that
+      # produced `assembled` has already parsed every tool input.
+      #
+      # The usage decode is NOT shadowed -- that one is a class method, so it is
+      # reachable at runtime and is the single {Usage.from_anthropic_wire} the
+      # two live providers use. A recovered turn is by definition one a crash
+      # interrupted, so it is the last place a drifted token key should hide.
       def build_response(assembled)
         Response.new(id: assembled.id, model: assembled.model, content: assembled.content,
-                     stop_reason: assembled.stop_reason, usage: build_usage(assembled.usage), raw: assembled)
-      end
-
-      def build_usage(usage)
-        Usage.new(input_tokens: usage["input_tokens"], output_tokens: usage["output_tokens"],
-                  cache_creation_input_tokens: usage["cache_creation_input_tokens"],
-                  cache_read_input_tokens: usage["cache_read_input_tokens"])
+                     stop_reason: assembled.stop_reason,
+                     usage: Usage.from_anthropic_wire(assembled.usage), raw: assembled)
       end
     end
   end

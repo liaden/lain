@@ -149,6 +149,58 @@ RSpec.describe Lain::Provider::Bedrock do
       expect(retries.first.status).to eq(429)
       expect(retries.first.attempt).to eq(1)
     end
+
+    # It journals through {Anthropic::RetryTap} rather than its own pair of
+    # lambdas. The tap additionally rotates the WAL frame threaded onto the
+    # retried env; Bedrock's transport threads none, and the tap is nil-safe
+    # about that, so adopting it is journaling-identical -- and the day Bedrock
+    # grows a spool, the attempt-boundary rule comes with it for free instead of
+    # being re-derived.
+    it "journals through the shared Anthropic::RetryTap, not a private copy" do
+      allow(Lain::Provider::Anthropic::RetryTap).to receive(:new).and_call_original
+
+      described_class.new(channel:, api_key: "tok", region: "us-east-1").complete(request(stream: false))
+
+      expect(Lain::Provider::Anthropic::RetryTap).to have_received(:new).with(hash_including(channel:))
+    end
+  end
+
+  # The arm {Provider::Anthropic#complete} and {Provider::Ollama#complete} both
+  # have and this one did NOT: a non-2xx passes through the vendored
+  # ErrorMiddleware and arrives as a {Provider::HTTP::Error}, but a
+  # CONNECTION-level failure never reaches that middleware at all -- exhausted
+  # retries re-raise the last transport failure as a bare Faraday class, which
+  # nothing above the Provider rescues. `--provider bedrock` is the work
+  # account's live default, so "the VPN dropped" escaped the whole stack here
+  # while the same input shape was contained on both sibling backends.
+  describe "a connection-level failure with the retries exhausted" do
+    it "wraps it into APIError, not a bare Faraday class" do
+      stub_request(:post, "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages")
+        .to_raise(Faraday::ConnectionFailed)
+
+      expect do
+        described_class.new(config: bedrock_zero_retry_config).complete(request(stream: false))
+      end.to raise_error(described_class::APIError)
+    end
+
+    it "contains a streaming connection failure in the same family" do
+      stub_request(:post, "https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages")
+        .to_raise(Faraday::ConnectionFailed)
+
+      expect do
+        described_class.new(config: bedrock_zero_retry_config).complete(request(stream: true))
+      end.to raise_error(Lain::Error)
+    end
+
+    # ZeroRetry's config carries no Bedrock credentials, and the endpoint is
+    # derived from the region, so both have to be filled in for the request to
+    # reach webmock at all.
+    def bedrock_zero_retry_config
+      config = zero_retry_config
+      config.bedrock_api_key = "tok"
+      config.bedrock_region = "us-east-1"
+      config
+    end
   end
 
   # Same hole as {Anthropic::Transport}, same cause: {Transport#stream} installs

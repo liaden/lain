@@ -148,6 +148,28 @@ RSpec.describe Lain::Embedder::Ollama do
         Lain::Embedder::Ollama::APIStatusError
       ) { |error| expect(error.status).to eq(500) }
     end
+
+    # The arm {Provider::Ollama#complete} already has and this did NOT: a
+    # non-2xx arrives as a {Provider::HTTP::Error} through the vendored
+    # ErrorMiddleware, but a connection-level failure never reaches that
+    # middleware -- exhausted retries re-raise a bare Faraday class. "Ollama is
+    # not running" is the ordinary case for a local, keyless backend, and this
+    # is the memory-retrieval path, so the leak surfaced as an unrescuable
+    # transport error in the middle of a recall rather than a named
+    # {Embedder::Error} the caller already handles.
+    it "wraps an exhausted connection failure into APIError, not a bare Faraday class" do
+      stub_request(:post, "http://localhost:11434/api/embed").to_raise(Faraday::ConnectionFailed)
+
+      expect { described_class.new(config: zero_retry_config).embed(%w[a]) }
+        .to raise_error(Lain::Embedder::Ollama::APIError)
+    end
+
+    it "keeps that failure inside the Embedder::Error family a caller rescues" do
+      stub_request(:post, "http://localhost:11434/api/embed").to_raise(Faraday::ConnectionFailed)
+
+      expect { described_class.new(config: zero_retry_config).embed(%w[a]) }
+        .to raise_error(Lain::Embedder::Error)
+    end
   end
 
   # AC: live round trip. Hits a REAL local Ollama with the pinned embed model.

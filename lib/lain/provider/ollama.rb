@@ -29,8 +29,37 @@ module Lain
     # real enum is only "stop"/"length"/"" -- there is no "tool_calls" value --
     # so `:tool_use` is derived from the PRESENCE of tool_calls, not from
     # done_reason (both confirmed in references/ollama/).
+    #
+    # == What Ollama deliberately does not have
+    #
+    # It shares {ErrorWrapping} with the hosted arms but NOT {AnthropicWire} --
+    # its wire is native `/api/chat` NDJSON, decoded by {Ollama::Encoding} and
+    # this class's own #build_response. The rest of the asymmetry is stated
+    # here rather than left to be inferred from an absent line, because a
+    # silent divergence between providers is how a bench arm stops being
+    # comparable:
+    #
+    # deliberately absent: a `channel:` -- so retries are NOT journaled on this
+    # arm. faraday-retry still runs (HTTP::Configuration's vendored 3), but no
+    # {Telemetry::ProviderRetry} reaches the Journal, so a run's record shows
+    # one request where three attempts happened. Free/local spend is why that
+    # was tolerable; comparing latency across arms is why it will not stay so.
+    #
+    # deliberately absent: a timeout/retry envelope of its own -- unlike
+    # {Anthropic#build_config}, this leaves the vendored ruby_llm defaults
+    # (300s, 3 retries). A local model that thinks for six minutes is a real
+    # shape, so the 300s is a live limit rather than a formality.
+    #
+    # deliberately absent: rate-limit backoff -- a local server sends no
+    # `anthropic-ratelimit-*` headers, so there is nothing for
+    # {AnthropicWire::RESET_HEADER_PARSER} to read.
+    #
+    # deliberately absent: a `spool:` -- no response WAL, so nothing on this arm
+    # is salvageable after a crash.
     class Ollama < Provider
       include Encoding
+      # APIError / APIStatusError, nested here and rooted at Lain::Error.
+      include ErrorWrapping.under(Lain::Error)
 
       DEFAULT_MODEL = "qwen3:4b"
 
@@ -47,21 +76,6 @@ module Lain
       # field) -- a stronger guarantee than Anthropic's tool-forcing under the same
       # capability name. See Provider::AnthropicReference::CAPABILITIES.
       CAPABILITIES = %i[streaming thinking structured_output].freeze
-
-      # Wraps a vendored transport error so nothing above the Provider rescues a
-      # Provider::HTTP class. The original is preserved as `#cause`.
-      class APIError < Lain::Error; end
-
-      # A non-2xx response; `#status` is lifted out so callers branch on it
-      # without unwrapping `#cause`.
-      class APIStatusError < APIError
-        attr_reader :status
-
-        def initialize(message = nil, status: nil)
-          super(message)
-          @status = status
-        end
-      end
 
       # @param transport [#sync_post] injected in specs; a real {Transport} over
       #   the vendored connection otherwise.
@@ -86,23 +100,15 @@ module Lain
       # converge on the same body Hash -- {StreamAssembler} reassembles the NDJSON
       # lines into the shape the non-streaming endpoint returns -- so both decode
       # through one #build_response (path parity).
+      #
+      # Both error arms come from {ErrorWrapping#wrapping_errors}, which records
+      # why this arm bites hardest here: ollama is the DEFAULT summarizer
+      # provider, "ollama is not running" is the ordinary case, and since the
+      # span summarizer answers on the RENDER path a leak takes out the turn
+      # rather than one summary. {#stream_body}'s JSON::ParserError arm sits
+      # inside the block and passes through it untouched.
       def complete(request)
-        build_response(request.stream ? stream_body(request) : sync_body(request))
-      rescue Provider::HTTP::Error => e
-        raise wrap_error(e)
-      rescue Faraday::Error => e
-        # {Provider::Anthropic#complete}'s second arm, and it was missing
-        # here. A non-2xx passes through the vendored ErrorMiddleware and
-        # arrives as a {Provider::HTTP::Error}; a CONNECTION-level failure never
-        # reaches that middleware at all, so exhausted retries re-raise the last
-        # transport failure as a bare Faraday class. Nothing above the Provider
-        # rescues a transport class, so uncontained it escapes the whole stack.
-        #
-        # It bites hardest here of all the backends: ollama is the DEFAULT
-        # summarizer provider, "ollama is not running" is the ordinary case, and
-        # since the span summarizer answers on the RENDER path a leak takes out
-        # the turn rather than one summary.
-        raise APIError, e.message
+        wrapping_errors { build_response(request.stream ? stream_body(request) : sync_body(request)) }
       end
 
       private
@@ -189,11 +195,6 @@ module Lain
 
       def blank?(value)
         value.nil? || value == ""
-      end
-
-      def wrap_error(error)
-        status = error.response.respond_to?(:status) ? error.response.status : nil
-        status ? APIStatusError.new(error.message, status:) : APIError.new(error.message)
       end
     end
   end

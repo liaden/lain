@@ -90,7 +90,9 @@ module Lain
 end
 
 require_relative "provider/stream_started_signal"
+require_relative "provider/error_wrapping"
 require_relative "provider/anthropic_encoding"
+require_relative "provider/anthropic_wire"
 # NOTE: the official-SDK arms (Provider::AnthropicReference, Provider::BedrockReference) are NOT
 # here. They are `#encode` differential ORACLES that no run constructs -- every
 # hosted path goes through a raw arm over the vendored Faraday transport -- so

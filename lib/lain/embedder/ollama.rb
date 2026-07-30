@@ -15,23 +15,25 @@ module Lain
     # {APIStatusError} with the status lifted out. Neither ever returns a silent
     # empty vector -- that is the whole contract this arm exists to keep honest.
     class Ollama < Embedder
+      # APIError / APIStatusError, plus both error arms of the round trip, nested
+      # here as on the three Providers that share this concern -- but rooted at
+      # {Embedder::Error}, not {Lain::Error}, so `rescue Embedder::Error` still
+      # catches every embedding failure. That difference in base is why the
+      # concern is parameterized.
+      #
+      # An {Embedder} reaching into `Provider::` is deliberate, not an accident
+      # of where the file landed: what gets wrapped is a {Provider::HTTP::Error}
+      # off the shared vendored transport, which is the same reason {Transport}
+      # below subclasses {Provider::Ollama::Transport}. A third namespace holding
+      # one concern used by two would be worse than the reach.
+      #
+      # deliberately absent: a `channel:` and a `spool:`, exactly as on
+      # {Provider::Ollama} -- retries on this arm are not journaled and nothing
+      # is salvageable after a crash.
+      include Provider::ErrorWrapping.under(Embedder::Error)
+
       DEFAULT_MODEL = "nomic-embed-text"
       MALFORMED = "malformed /api/embed response"
-
-      # Wraps a vendored transport error so nothing above the Embedder rescues a
-      # Provider::HTTP class; the original is preserved as `#cause`.
-      class APIError < Embedder::Error; end
-
-      # A non-2xx response; `#status` is lifted out so callers branch on it
-      # without unwrapping `#cause`.
-      class APIStatusError < APIError
-        attr_reader :status
-
-        def initialize(message = nil, status: nil)
-          super(message)
-          @status = status
-        end
-      end
 
       # {Provider::Ollama::Transport} with one more round trip on it: same
       # vendored Faraday stack, same `ollama_api_base`/DEFAULT_API_BASE posture,
@@ -63,10 +65,12 @@ module Lain
         @transport = transport || Transport.new(@config, sink:)
       end
 
+      # Both error arms come from {Provider::ErrorWrapping#wrapping_errors}; this
+      # was the second of the two backends missing the connection-level one.
+      # {#extract}'s own APIError for a torn body is raised INSIDE the block and
+      # passes through it untouched.
       def embed(texts)
-        extract(@transport.embed_post(payload_for(texts)).body || {}, texts.size)
-      rescue Provider::HTTP::Error => e
-        raise wrap_error(e)
+        wrapping_errors { extract(@transport.embed_post(payload_for(texts)).body || {}, texts.size) }
       end
 
       # @return [String] the pinned embed model, e.g. "nomic-embed-text".
@@ -111,11 +115,6 @@ module Lain
         config = Provider::HTTP::Configuration.new
         config.ollama_api_base = api_base unless api_base.nil?
         config
-      end
-
-      def wrap_error(error)
-        status = error.response.respond_to?(:status) ? error.response.status : nil
-        status ? APIStatusError.new(error.message, status:) : APIError.new(error.message)
       end
     end
   end

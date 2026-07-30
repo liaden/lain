@@ -28,6 +28,38 @@ RSpec.describe Lain::Usage do
     end
   end
 
+  # The Anthropic wire's usage object had three hand-written decoders --
+  # Provider::Anthropic, Provider::Bedrock and SessionRecord::Salvage each
+  # spelled the same four string keys out. Salvage's copy is the one that
+  # matters: it decodes bytes replayed from the WAL, so a key that drifted there
+  # would under-report spend on exactly the turn nobody was watching.
+  describe ".from_anthropic_wire" do
+    it "maps the four wire keys onto the four fields" do
+      wire = { "input_tokens" => 10, "output_tokens" => 4,
+               "cache_creation_input_tokens" => 2, "cache_read_input_tokens" => 8 }
+
+      expect(described_class.from_anthropic_wire(wire))
+        .to eq(described_class.new(input_tokens: 10, output_tokens: 4,
+                                   cache_creation_input_tokens: 2, cache_read_input_tokens: 8))
+    end
+
+    # A turn with no cache activity omits both cache keys entirely.
+    it "reads absent cache keys as zero" do
+      decoded = described_class.from_anthropic_wire({ "input_tokens" => 3, "output_tokens" => 1 })
+
+      expect(decoded.cache_creation_input_tokens).to eq(0)
+      expect(decoded.cache_read_input_tokens).to eq(0)
+    end
+
+    # An assembled stream with no usage event at all hands over `{}`, and the
+    # sync path's `body["usage"]` can be nil outright. Both are the absence of
+    # billing information, which is exactly zero -- not a reason to raise.
+    it "reads an empty or missing usage object as zero" do
+      expect(described_class.from_anthropic_wire({})).to eq(described_class.zero)
+      expect(described_class.from_anthropic_wire(nil)).to eq(described_class.zero)
+    end
+  end
+
   # These are not decoration. Aggregating a branched Timeline sums over a set of
   # turns in no particular order; the laws are what make the total independent of
   # the walk order.

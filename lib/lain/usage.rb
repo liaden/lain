@@ -73,6 +73,37 @@ module Lain
 
     def self.zero = ZERO
 
+    # The Anthropic wire's `usage` object, decoded in ONE place. Three callers
+    # spelled these four string keys out by hand -- {Provider::Anthropic},
+    # {Provider::Bedrock}, and {SessionRecord::Salvage}, which decodes bytes
+    # replayed from the response WAL. A key that drifted in the third would
+    # under-report spend on exactly the turn nobody was watching, since a
+    # salvaged turn is by definition one a crash interrupted.
+    #
+    # It lives in this reopened body because that is where `ZERO` and `.zero`
+    # live, not because a `def self.` would have failed inside the `Data.define`
+    # block -- CLAUDE.md's trap is about CONSTANTS and nested classes, and a
+    # class method defined in that block works fine.
+    #
+    # Absent usage is zero, not an error: an assembled stream that carried no
+    # usage event hands over `{}`, and the sync path's `body["usage"]` can be
+    # nil outright. Both are the absence of billing information, and #initialize
+    # already normalizes each nullable field to 0. `nil` is the one widening
+    # against the three inline copies it replaces, which raised NoMethodError on
+    # it; no call site reaches that, since all three feed `body["usage"] || {}`
+    # or the assembler's `{}` default.
+    #
+    # @param wire [Hash, nil] parsed JSON -- STRING keys, as it comes off the
+    #   wire. A symbol-keyed Hash yields an all-zero Usage rather than raising,
+    #   exactly as the three inline copies did; this feeds bench cost
+    #   accounting, so pass it what the parser produced.
+    def self.from_anthropic_wire(wire)
+      wire ||= {}
+      new(input_tokens: wire["input_tokens"], output_tokens: wire["output_tokens"],
+          cache_creation_input_tokens: wire["cache_creation_input_tokens"],
+          cache_read_input_tokens: wire["cache_read_input_tokens"])
+    end
+
     # The doc comment above, made enumerable. One line files both the monoid
     # and the commutative-monoid claim, so a walk holds `#+` to identity,
     # associativity and commutativity without knowing which contains which.
