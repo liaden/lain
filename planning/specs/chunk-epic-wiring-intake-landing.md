@@ -1310,6 +1310,22 @@ T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
    `lib/` or `spec/`, and `cli/backend.rb:158` builds `Provider::Bedrock` (verified).
 7. **`Forge::Outcome` carries only a digest**, so an orphan cannot be attributed to an epic or
    issue. T17/T18 should put slug/issue in `detail`; widening the wire shape needs its own card.
+8. **An approval whose transitions never landed wedges the epic permanently.** `gate.call` and
+   the Scribe's two transitions are separate journal writes with no atomicity. Probed: with the
+   approval journalled and the transitions not, a re-submit answers "already approved … nothing
+   was decided or journaled again", `stage_events` stays empty, and progress never advances —
+   `standing` short-circuits before the Scribe forever, offering no remedy. Not-re-deciding is
+   correct; the flaw is using "already decided" as a proxy for "already advanced". Wants either
+   a reconcile in `standing` when progress shows the gated stage incomplete, or a named remedy
+   in the message.
+9. **`CLI::EpicQueue` and `CLI::Epic` disagree about the session directory.** EpicQueue reads
+   `@paths.sessions_dir` (project defaults to `Dir.pwd`); `CLI::Epic` reads
+   `sessions_dir(project: project_hash(root))`. They agree under `exe/lain` and diverge for any
+   injected `root:`, so an approved submit is invisible to `status`. Predates this chunk.
+10. **A deferred adjudication re-spends without bound** — three re-decisions of one parked
+    address cost 6 model spawns and 3 `gate_evidence` records for 1 queue item. That is T9's
+    spec'd intent and nothing in `lib/` re-decides today, but `Policy::Adjudicated` makes it
+    reachable from config overnight and nothing says a re-run re-pays.
 
 ### Constraint T13, T18 and T20 inherit
 
