@@ -7,6 +7,7 @@ require "active_support/core_ext/module/delegation"
 
 require_relative "agent/accounting"
 require_relative "agent/budget"
+require_relative "agent/collaborators"
 require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
 require_relative "agent/pipeline_source"
@@ -54,34 +55,49 @@ module Lain
 
     # The argument list is long because the Agent is the wiring point of the whole
     # harness, and the honest split is three-way, not one big bag: values that are
-    # ALREADY their own collaborators ({Budget}, {Accounting} via `journal`); the
-    # injected *collaborators* it drives (provider, toolset, context, handler, the
-    # three middleware stacks); and the mutable *run state* it seeds ({#seed_run_state}).
-    # A `Wiring` value object grouping the collaborators was considered and
-    # rejected: it would not remove `seed_run_state` (run state is orthogonal to
-    # collaborators) and it would move the public keyword surface -- which the
-    # `provider_parity` shared group and the state-machine specs construct against
-    # by name -- for no reduction in moving parts. So the seam stays here, named.
+    # ALREADY their own collaborators ({Budget}); the injected *collaborators* it
+    # drives (toolset, context, the {ModelCaller}/{ToolRunner}/{Accounting} triple
+    # and the middleware stacks); and the mutable *run state* it seeds
+    # ({#seed_run_state}). A `Wiring` value object grouping the collaborators was
+    # considered and rejected: it would not remove `seed_run_state` (run state is
+    # orthogonal to collaborators) and it would move the public keyword surface --
+    # which the `provider_parity` shared group and the state-machine specs
+    # construct against by name -- for no reduction in moving parts. So the seam
+    # stays here, named. ({Collaborators} is not that object: it resolves what
+    # these keywords MEAN and moves none of them.)
     #
-    # `handler:` defaults to a live {Effect::Handler::Live} rather than `nil`: a
-    # named default resolved once, at the signature, keeps the Null-Object posture
-    # (no `handler || ...` nil-tolerance downstream).
+    # Two styles, one seam (T21). The three objects the loop drives may be handed
+    # over WHOLE -- `model_caller:`, `tool_runner:`, `accounting:` -- or as the
+    # INGREDIENTS each is built from, which is what every caller did before they
+    # were injectable: `provider:`/`model_middleware:`, `handler:`/`tool_middleware:`/
+    # `tool_observer:`, `journal:`. Both are supported; mixing them for ONE
+    # collaborator raises ({Collaborators} owns that rule). Every keyword stays
+    # NAMED here rather than swept into a `**wiring` splat, so an unknown keyword
+    # is still Ruby's own ArgumentError and the surface still reads off the
+    # signature.
+    #
+    # Every wiring keyword defaults to {Collaborators::OMITTED} rather than to
+    # its value, because the resolution has to tell "not written" from "written"
+    # -- and it cannot default to `nil` either, since an explicit `nil` is a
+    # caller mistake {Collaborators} refuses rather than reads as a default. The
+    # marker never escapes this constructor, and the NAMED default it stands for
+    # is resolved once, inside {Collaborators}.
     #
     # @param journal [#<<] where per-turn usage records land; the Null channel
     #   by default. Today ONLY {Telemetry::TurnUsage} is written here -- it is not
     #   yet the full run record.
-    def initialize(provider:, toolset:, context:,
-                   handler: Effect::Handler::Live.new(toolset:),
+    def initialize(toolset:, context:,
+                   model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
+                   model_middleware: Collaborators::OMITTED, tool_runner: Collaborators::OMITTED,
+                   handler: Collaborators::OMITTED, tool_middleware: Collaborators::OMITTED,
+                   tool_observer: Collaborators::OMITTED, accounting: Collaborators::OMITTED,
+                   journal: Collaborators::OMITTED,
                    timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
-                   journal: Channel::Null.instance,
                    snapshot_writer: Workspace::Snapshot.new,
                    transition_listener: TransitionListener::Null,
-                   model_middleware: Middleware::Stack.new,
-                   tool_middleware: Middleware::Stack.new,
-                   turn_middleware: Middleware::Stack.new,
-                   tool_observer: ToolRunner::Observer::Null.new, pipeline_source: PipelineSource::Null)
+                   turn_middleware: Middleware::Stack.new, pipeline_source: PipelineSource::Null)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
@@ -89,9 +105,9 @@ module Lain
       @workspace = workspace
       @mailbox = mailbox
       @budget = budget
-      @turn_middleware = turn_middleware
-      wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:, tool_observer:)
-      seed_run_state(transition_listener, journal, session, snapshot_writer, pipeline_source)
+      wire_callers(request_override:, turn_middleware:, model_caller:, tool_runner:, accounting:,
+                   provider:, model_middleware:, handler:, tool_middleware:, tool_observer:, journal:)
+      seed_run_state(transition_listener, session, snapshot_writer, pipeline_source)
     end
 
     # Append a user turn and run until the loop settles.
@@ -206,34 +222,44 @@ module Lain
       end
     end
 
-    # The dispatch wiring the loop drives -- the provider round trip and tool
-    # dispatch, each behind its own {Middleware::Stack}, plus the one-shot
-    # {RequestOverride} slot #call_model consults before rendering. Grouped
-    # out of #initialize so the constructor reads as the wiring seam its own
-    # comment describes rather than growing a line per collaborator.
-    def wire_callers(provider:, model_middleware:, handler:, tool_middleware:, request_override:, tool_observer:)
+    # The collaborators the loop drives -- the provider round trip, tool dispatch
+    # and the token ledger, the first two each behind their own
+    # {Middleware::Stack} -- plus the turn stack the loop wraps every iteration
+    # in and the one-shot {RequestOverride} slot #call_model consults before
+    # rendering. Grouped out of #initialize so the constructor reads as the
+    # wiring seam its own comment describes rather than growing a line per
+    # collaborator.
+    #
+    # {Collaborators} owns the two-style resolution -- injected or built from
+    # ingredients, and the clash rule that forbids saying both. It resolves
+    # eagerly, so a wiring mistake raises HERE and not on the first turn.
+    def wire_callers(request_override:, turn_middleware:, **wiring)
+      resolved = Collaborators.new(toolset: @toolset, **wiring)
       @request_override = request_override
-      @model_caller = ModelCaller.new(provider:, middleware: model_middleware)
-      @tool_runner = ToolRunner.new(handler:, middleware: tool_middleware, toolset: @toolset,
-                                    observer: tool_observer)
+      @turn_middleware = turn_middleware
+      @model_caller = resolved.model_caller
+      @tool_runner = resolved.tool_runner
+      @accounting = resolved.accounting
     end
 
     # The mutable run context, kept apart from #initialize on purpose: the
-    # collaborators above are the immutable wiring, and these five are the state
-    # a run mutates as it goes -- a fresh Accounting rolling up over the injected
-    # journal, the observer the machine announces transitions to, the run's single
-    # mutable Session (read-set + write-set + reminders, which -- unlike
-    # everything the model sees -- never enters the Timeline), the snapshot
-    # writer (stateful: it remembers the last files map it wrote, so it is run
-    # state exactly as the Session is), the per-turn Context source (stateful for
-    # the same reason -- a live {PipelineSource} accumulates cache-warmth and
-    # idle readings ACROSS turns, which is why it is asked rather than
-    # recomputed), and the iteration count. Naming that seam is the point; the
-    # machine owns the state ITSELF (initial: :awaiting_user), so it is not
-    # seeded here.
-    def seed_run_state(transition_listener, journal, session, snapshot_writer, pipeline_source)
+    # collaborators above are the immutable wiring, and these are the state
+    # a run mutates as it goes -- the observer the machine announces transitions
+    # to, the run's single mutable Session (read-set + write-set + reminders,
+    # which -- unlike everything the model sees -- never enters the Timeline),
+    # the snapshot writer (stateful: it remembers the last files map it wrote,
+    # so it is run state exactly as the Session is), the per-turn Context source
+    # (stateful for the same reason -- a live {PipelineSource} accumulates
+    # cache-warmth and idle readings ACROSS turns, which is why it is asked
+    # rather than recomputed), and the iteration count. Naming that seam is the
+    # point; the machine owns the state ITSELF (initial: :awaiting_user), so it
+    # is not seeded here.
+    #
+    # {Accounting} is the one that moved: it is run state too (a ledger a run
+    # mutates), but since T21 a caller may inject one, and resolving it beside
+    # the two collaborators it is chosen with keeps that decision in one place.
+    def seed_run_state(transition_listener, session, snapshot_writer, pipeline_source)
       @transition_listener = transition_listener
-      @accounting = Accounting.new(journal:)
       @session = session
       @snapshot_writer = snapshot_writer
       @pipeline_source = pipeline_source

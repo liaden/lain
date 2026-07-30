@@ -679,4 +679,188 @@ RSpec.describe Lain::Agent do
       expect(results.map { |block| block["type"] }).to eq(["tool_result"])
     end
   end
+
+  # T21: the Agent accepts the three objects it drives -- ModelCaller,
+  # ToolRunner, Accounting -- instead of only the ingredients it builds them
+  # from. Additive: the legacy keywords stay, and every existing call site
+  # keeps its meaning. Mixing the two styles for ONE collaborator is the loud
+  # case, because it states two answers to a single wiring question.
+  describe "collaborator injection" do
+    # One value per wiring keyword, so the clash table below can name a
+    # collaborator and an ingredient and get a constructible pair. Built per
+    # call: an Agent must never be handed a collaborator another Agent drives.
+    def wiring_value(keyword)
+      { model_caller: Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: [])),
+        tool_runner: Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new),
+        accounting: Lain::Agent::Accounting.new,
+        provider: Lain::Provider::Mock.new(responses: []),
+        model_middleware: Lain::Middleware::Stack.new,
+        handler: Lain::Effect::Handler::Mock.new,
+        tool_middleware: Lain::Middleware::Stack.new,
+        tool_observer: Lain::Agent::ToolRunner::Observer::Null.new,
+        journal: RecordingChannel.new }.fetch(keyword)
+    end
+
+    it "drives injected collaborators, with no provider:, journal: or middleware keyword" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
+                                                      text_response("bye")])
+      journal = RecordingChannel.new
+      a = described_class.new(
+        toolset:, context:,
+        model_caller: Lain::Agent::ModelCaller.new(provider:),
+        # `toolset:` on the runner too: it must harvest from the same set the
+        # Agent renders, or the committed digest moves (see the digest group).
+        tool_runner: Lain::Agent::ToolRunner.new(
+          handler: Lain::Effect::Handler::Mock.new(results: { "echo" => "from the injected runner" }), toolset:
+        ),
+        accounting: Lain::Agent::Accounting.new(journal:)
+      )
+      response = a.ask("hi")
+
+      expect(response.text).to eq("bye")
+      # The injected runner's handler answered, so dispatch went through IT and
+      # not through a ToolRunner the Agent built over the real toolset.
+      expect(a.timeline.to_a[2].content.map { |block| block["content"] }).to eq(["from the injected runner"])
+      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::TurnUsage, Lain::Telemetry::TurnUsage])
+    end
+
+    # The sharpest statement that the ledger is the caller's object and not a
+    # fresh one: a resumed run's spend survives construction.
+    it "reports the injected Accounting's running total, not a fresh ledger" do
+      accounting = Lain::Agent::Accounting.new
+      accounting.observe(text_response(usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2)), digest: "seed")
+      a = described_class.new(toolset:, context:, accounting:,
+                              model_caller: Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(
+                                responses: []
+                              )))
+
+      expect(a.usage.input_tokens).to eq(40)
+    end
+
+    it "still builds all three from the legacy keywords, journaling through the given channel" do
+      journal = RecordingChannel.new
+      a = agent([tool_response(["tu_1", "echo", { "text" => "x" }]),
+                 text_response(usage: Lain::Usage.new(input_tokens: 12, output_tokens: 2))], journal:)
+      a.ask("hi")
+
+      # The default-built ToolRunner still dispatches over the real toolset,
+      # and the default-built Accounting still rolls up over the given journal.
+      expect(a.timeline.to_a[2].content.map { |block| block["content"] }).to eq(["x"])
+      expect(journal.events.size).to eq(2)
+      expect(a.usage.input_tokens).to eq(12)
+    end
+
+    it "demands a provider when no model_caller is injected" do
+      expect { described_class.new(toolset:, context:) }
+        .to raise_error(ArgumentError, /provider/)
+    end
+
+    it "still refuses an unknown keyword, so a typo cannot be swallowed as wiring" do
+      expect { described_class.new(toolset:, context:, provider: wiring_value(:provider), providr: nil) }
+        .to raise_error(ArgumentError, /providr/)
+    end
+
+    # Both styles are valid; mixing them for one collaborator is not.
+    { model_caller: %i[provider model_middleware],
+      tool_runner: %i[handler tool_middleware tool_observer],
+      accounting: %i[journal] }.each do |collaborator, ingredients|
+      ingredients.each do |ingredient|
+        it "refuses #{collaborator}: passed alongside #{ingredient}:" do
+          expect do
+            described_class.new(toolset:, context:, collaborator => wiring_value(collaborator),
+                                ingredient => wiring_value(ingredient))
+          end.to raise_error(ArgumentError, /#{collaborator}.*#{ingredient}/m)
+        end
+      end
+    end
+
+    # An explicit nil is a caller mistake, not a request for the default: the way
+    # to take a default is to omit the keyword. It has to be loud, because every
+    # silent reading is worse. `handler: nil` used to propagate and crash on
+    # dispatch; resolved to a default it would quietly become a LIVE handler over
+    # the real toolset -- a nil that runs tools. `journal: nil` would quietly
+    # become the Null channel and throw away the experiment record a caller
+    # thought they had asked for.
+    %i[model_caller provider model_middleware tool_runner handler tool_middleware
+       tool_observer accounting journal].each do |keyword|
+      it "refuses an explicit #{keyword}: nil rather than reading it as the default" do
+        expect { described_class.new(toolset:, context:, keyword => nil) }
+          .to raise_error(ArgumentError, /#{keyword}.*nil/m)
+      end
+    end
+  end
+
+  # T21's correctness gate, and the one place the two construction styles could
+  # diverge in BYTES. A {Agent::ToolRunner} harvests answered questions from ITS
+  # OWN toolset and the Agent commits them as the turn's `causal_parents:`, which
+  # are Merkle digest input -- so a runner looking at a different capability set
+  # than the Agent renders writes a different Timeline for the same conversation.
+  # `Canonical` bytes serve turn hashing AND prompt-cache stability, so the
+  # symptom would be a mysterious cache miss, never an error. Measured on both
+  # paths here rather than reasoned about.
+  describe "the committed digest across construction styles" do
+    # The hand-over duck, exactly as Tools::AskHuman answers it: one drain, then
+    # empty. A Struct rather than a Tool subclass because the harvest is the only
+    # behaviour under test and `respond_to?(:take_answered_questions)` is the
+    # whole selection rule ToolRunner applies.
+    def handover_toolset(digest)
+      tool = Struct.new(:name).new("ask_human")
+      queue = [digest]
+      tool.define_singleton_method(:take_answered_questions) { queue.slice!(0..) }
+      tool.define_singleton_method(:parallel_safe?) { false }
+      tool.define_singleton_method(:to_schema) do
+        { "name" => "ask_human", "description" => "probe", "input_schema" => { "type" => "object" } }
+      end
+      Lain::Toolset.new([tool])
+    end
+
+    def handover_agent(style, tools:, provider:, timeline:)
+      handler = Lain::Effect::Handler::Mock.new(results: { "ask_human" => "the answer" })
+      wiring = case style
+               when :legacy then { provider:, handler: }
+               when :injected then { model_caller: Lain::Agent::ModelCaller.new(provider:),
+                                     tool_runner: Lain::Agent::ToolRunner.new(handler:, toolset: tools) }
+               end
+      described_class.new(toolset: tools, context:, timeline:, **wiring)
+    end
+
+    def seeded_timeline
+      Lain::Timeline.empty(store: Lain::Store.new)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+
+    # The delivery turn: the one user message holding every tool_result, whose
+    # causal_parents carry the harvest.
+    def tool_result_turn(agent)
+      agent.timeline.to_a.find { |event| event.content.any? { |block| block["type"] == "tool_result" } }
+    end
+
+    def handover_turn(style)
+      seeded = seeded_timeline
+      provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "ask_human", {}]), text_response])
+      agent = handover_agent(style, tools: handover_toolset(seeded.head_digest), provider:, timeline: seeded)
+      agent.ask("go")
+      tool_result_turn(agent)
+    end
+
+    it "is byte-identical, and both paths really do harvest the consumption edge" do
+      turns = %i[legacy injected].map { |style| handover_turn(style) }
+
+      # Non-empty on BOTH, so the equality below is two harvests agreeing and
+      # not two omissions agreeing.
+      expect(turns.map { |turn| turn.causal_parents.size }).to eq([1, 1])
+      expect(turns.map(&:digest).uniq.size).to eq(1)
+    end
+
+    # The guard that makes the parity above impossible to lose quietly: the
+    # Agent cannot hand its toolset to a runner it did not build, so a runner
+    # over a different one is refused at construction instead of silently
+    # writing a different digest.
+    it "refuses an injected ToolRunner built over a toolset that is not the Agent's" do
+      expect do
+        described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+                            tool_runner: Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new))
+      end.to raise_error(ArgumentError, /toolset/)
+    end
+  end
 end

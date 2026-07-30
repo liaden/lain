@@ -49,6 +49,13 @@ module Lain
         end
       end
 
+      # Which capability set {#answered_questions} harvests from. Readable
+      # because it is not private business: the harvest becomes the committed
+      # turn's `causal_parents:`, so an {Agent} handed a runner it did not build
+      # has to check that the two of them are looking at the same set
+      # ({Collaborators#refuse_foreign_toolset}).
+      attr_reader :toolset
+
       # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
       # itself still routes through `handler`, never a direct tool lookup.
       # `observer:` is the post-dispatch seam {#observe} describes.
