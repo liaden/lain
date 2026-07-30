@@ -115,4 +115,67 @@ RSpec.describe Lain::Skill::RoleSpawn do
       .to raise_error(Lain::Role::Catalog::Unknown, /nope.*expected one of/m)
     expect(provider.call_count).to eq(0)
   end
+
+  # ---- T23: one Seam held, and per-call work that is role selection only -----
+  #
+  # This class's own doc already says it "holds the same collaborator set the
+  # exe's research_subagent assembles" -- the same six, written out twice. Held
+  # as one value, what is FIXED at construction and what is CHOSEN per call stop
+  # being interleaved in one nine-keyword signature.
+  #
+  # Every other example above constructs with the loose keywords, so their green
+  # beside this block's is the additive claim: both styles are valid.
+  describe "the spawn Seam (T23)" do
+    def seam_value(provider:, **extra)
+      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, **extra)
+    end
+
+    it "spawns over an injected seam, holding no loose collaborators of its own" do
+      value = seam_value(provider: mock(text_response("done")))
+      spawn = described_class.new(seam: value, toolset: union, slots:)
+
+      expect(spawn.call(:dev, :fresh, "go")).to be_ok
+      expect(spawn.seam).to be(value)
+    end
+
+    # The role is the per-call variable; the seam is not. Two calls through one
+    # instance pick two different only-sets while every collaborator -- here the
+    # observer carrying each child's lineage -- stays the same object.
+    it "chooses the role per call and leaves the held seam untouched" do
+      seen = []
+      provider = mock(text_response("a"), text_response("b"))
+      spawn = described_class.new(seam: seam_value(provider:, observer: seen.method(:push)),
+                                  toolset: union, slots:)
+
+      spawn.call(:dev, :fresh, "one")
+      dev_tools = provider.last_request.tools.map { |tool| tool["name"] }
+      spawn.call(:reviewer_sre, :fresh, "two")
+
+      expect(provider.last_request.tools.map { |tool| tool["name"] }).to match_array(%w[read_file list_files bash])
+      expect(dev_tools.size).to eq(8)
+      expect(seen.map(&:kind)).to eq(%i[spawn message spawn message])
+    end
+
+    it "refuses a seam and its loose members together, naming the member" do
+      provider = mock(text_response("unused"))
+
+      expect { described_class.new(seam: seam_value(provider:), provider:, toolset: union, slots:) }
+        .to raise_error(ArgumentError, "pass seam: or its members [:provider], not both")
+    end
+
+    it "refuses a loose keyword that is not a seam member" do
+      expect do
+        described_class.new(provider: mock(text_response("unused")), context_factory: -> { child_context },
+                            parent:, observers: [], toolset: union, slots:)
+      end.to raise_error(ArgumentError, /unknown keyword: :observers/)
+    end
+
+    # A typo beside a seam is a typo, not a both-at-once conflict.
+    it "calls a misspelled keyword beside a seam a typo, not a conflict" do
+      expect do
+        described_class.new(seam: seam_value(provider: mock(text_response("unused"))),
+                            toolset: union, slots:, max_dept: 2)
+      end.to raise_error(ArgumentError, "unknown keyword: :max_dept")
+    end
+  end
 end

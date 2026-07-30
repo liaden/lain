@@ -11,6 +11,14 @@ module Lain
       # identically at every call is state an object is missing, not
       # arguments. It is injected once, here, and the seam methods read it.
       #
+      # T23 took the argument one step further, where it had always pointed: the
+      # six a child spawn is built over used to be assembled into a Hash by a
+      # private `#child_seam_kwargs` and splatted into both child seams. They are
+      # now one {Lain::Tools::Subagent::Seam}, built in the constructor, which is
+      # why five of this class's ivars are gone -- provider, chronicle,
+      # supervisor, journal, and the parent handle were only ever held to fill
+      # that Hash.
+      #
       # The set is layered, and the layering is the policy. {BaseTools} is the
       # capability floor, and it is ALSO the union a child attenuates from --
       # so the same `base` is what {Skill::RoleSpawn} and {Tools::Subagent}
@@ -33,7 +41,10 @@ module Lain
         # `provider:` is INJECTED rather than resolved here: it is the run's
         # spooled provider, and {Wiring} builds the only other one. Two
         # construction sites would be two answers to "which spool do round
-        # trips tee into", and the pairing is not allowed to come apart.
+        # trips tee into", and the pairing is not allowed to come apart. It, the
+        # chronicle's observer, the supervisor, the journal and the parent handle
+        # are read once, into the one spawn {Lain::Tools::Subagent::Seam} both
+        # child seams travel over.
         #
         # `library:` is injected for the same reason and is REQUIRED, not
         # defaulted: the run has ONE {Skill::Library}, and a default here would
@@ -48,12 +59,11 @@ module Lain
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:)
           @library = library
           @backend = backend
-          @provider = provider
-          @chronicle = chronicle
           @options = options
-          @supervisor = supervisor
-          @parent = parent
-          @journal = journal
+          @seam = Lain::Tools::Subagent::Seam.new(
+            provider:, context_factory: -> { backend.context }, parent:,
+            journal:, supervisor:, observer: chronicle.observer
+          )
         end
 
         # The run's toolset: the capability floor, plus the child seams and
@@ -74,23 +84,14 @@ module Lain
 
         private
 
-        attr_reader :backend, :library, :chronicle, :options, :supervisor
+        attr_reader :backend, :library, :options, :seam
 
         # One seam serves every role: the role, policy, and persona are chosen
         # PER CALL from the parsed role name and context mode, so what is
         # fixed here is only what they all share. `slots:` is the session's
         # rendered-persona source -- the library's half, loaded once.
         def role_spawn_seam(base)
-          Lain::Skill::RoleSpawn.new(toolset: base, slots: library.slots, **child_seam_kwargs)
-        end
-
-        # The collaborators BOTH child seams attenuate over -- the same
-        # spooled provider, child context, live parent handle, journal,
-        # supervisor, and lineage observer. One method, so the sentence "over
-        # the same seams" is code rather than a comment that can drift.
-        def child_seam_kwargs
-          { provider: @provider, context_factory: -> { backend.context },
-            parent: @parent, journal: @journal, supervisor:, observer: chronicle.observer }
+          Lain::Skill::RoleSpawn.new(seam:, toolset: base, slots: library.slots)
         end
 
         # The in-agent composition primitive: it renders a skill's scaffold
@@ -107,8 +108,7 @@ module Lain
         # depth 1). The observer routes its :spawn/:message lineage events
         # into the session record, exactly as ask_human's Q/A goes.
         def research_subagent(base)
-          Lain::Tools::Subagent.new(toolset: base, policy: backend.spawn_policy(:researcher), max_depth: 1,
-                                    **child_seam_kwargs)
+          Lain::Tools::Subagent.new(seam:, toolset: base, policy: backend.spawn_policy(:researcher), max_depth: 1)
         end
       end
     end

@@ -22,6 +22,12 @@ require "lain"
 require "async"
 
 results = []
+
+# The session's ONE Skill::Library -- the catalog /help reads and the slots a
+# persona renders through, loaded once (T40). Both dispatch surfaces below take
+# it, so this demo exercises the same "one read per session" property the live
+# wiring has.
+library = Lain::Skill::Library.load
 def check(results, label, passed)
   results << passed
   puts "  #{label.ljust(52)} #{passed ? "ok" : "FAIL"}"
@@ -29,7 +35,7 @@ end
 
 # --- 1. in-line /create-plan expands into the turn text --------------------
 puts "\n/create-plan draft a widget  (in-line, one timeline)"
-inline_stack = Lain::CLI::ReplMiddleware.build(role_spawn: Object.new)
+inline_stack = Lain::CLI::ReplMiddleware.build(role_spawn: Object.new, library:)
 downstream_text = nil
 inline_stack.call({ text: "/create-plan draft a widget", agent: :session }) do |env|
   downstream_text = env[:text]
@@ -65,11 +71,11 @@ provider = Lain::Provider::Mock.new(responses: [
                                     ])
 seam = Lain::Skill::RoleSpawn.new(
   provider:, context_factory: -> { Lain::Context.new(model: "child-model", max_tokens: 256) },
-  toolset: union, parent: -> { parent }, slots: Lain::Prompt::Slots.load,
+  toolset: union, parent: -> { parent }, slots: library.slots,
   journal: Lain::Channel::Null.instance, supervisor: Lain::Supervisor::Null,
   observer: Lain::Event::ChainWriter::Null.new
 )
-role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam)
+role_stack = Lain::CLI::ReplMiddleware.build(role_spawn: seam, library:)
 
 folded = nil
 parent_turn_ran = false

@@ -18,13 +18,14 @@ module Lain
     # == Injection (the pinned seam)
     #
     # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
-    # time -- provider, a child-Context factory, the union toolset it attenuates
-    # from, the spawn {Tool::SpawnPolicy}, a journal, a Budget, a spawn-depth
-    # ceiling, and (for `mode: :actor`) the {Supervisor} whose reactor task a
-    # model-dispatched actor launches under. The dispatch duck stays the Session
-    # (the `context:` a tool receives), which this tool does not read: everything
-    # it needs to spawn was injected, so the ToolRunner and the Session interface
-    # are untouched. `parent:` is a live handle to the parent Timeline (a
+    # time, as one {Seam} value -- provider, a child-Context factory, the live
+    # parent handle, a journal, the {Supervisor} a model-dispatched actor
+    # launches under, and the lineage observer -- plus this tool's OWN axes: the
+    # union toolset it attenuates from, the spawn {Tool::SpawnPolicy}, a Budget,
+    # and a spawn-depth ceiling. The dispatch duck stays the Session (the
+    # `context:` a tool receives), which this tool does not read: everything it
+    # needs to spawn was injected, so the ToolRunner and the Session interface
+    # are untouched. `Seam#parent` is a live handle to the parent Timeline (a
     # Timeline or a `-> Timeline` thunk, since the toolset is built before the
     # Agent) -- the one collaborator the render chain cannot supply, because H is
     # the parent's head at the instant of the call. The shared Store rides ON
@@ -68,7 +69,7 @@ module Lain
       # honest projection of what the call did. `nil` until a spawn happens (and
       # after a depth refusal, which emits nothing).
       #
-      # OM-2-ONLY statefulness (T19 panel #4): `@parent` (a live handle) and
+      # OM-2-ONLY statefulness (T19 panel #4): the seam's live parent handle and
       # these `@last_*` ivars are safe here because a Subagent instance belongs
       # to exactly one agent's toolset and a one-shot spawn runs synchronously
       # inside a single tool dispatch -- no interleaving writer can exist.
@@ -79,28 +80,33 @@ module Lain
       # projection and the journaled lifecycle), never tool state.
       attr_reader :name, :last_spawn, :last_message, :last_child
 
+      # The {Seam} this tool spawns over, and the union a child attenuates FROM.
+      # Both are read-side: the study bench asks "what could this child do, over
+      # whose provider and journal", and it used to answer by reaching two deep
+      # into {ChildBuilder}'s ivars, which pinned the extraction's private shape
+      # rather than the capability layering the question is about.
+      attr_reader :seam
+
+      def attenuates_from = @builder.toolset
+
       # Two lifecycle modes over the same spawn machinery (OM-2/OM-3): `:one_shot`
       # runs a child to a single result within one dispatch (the 5-1 model);
       # `:actor` launches a long-lived {Actor} fiber whose outputs reach the
       # parent as mailbox events instead. `log` is the append-only read-side that
       # {Lineage} writes every event to -- the actor's mailbox folds it; the
       # one-shot defaults to {Log::Null} because nothing folds its stream.
-      # `observer` is Lineage's outward slot (T13), forwarded verbatim: the
-      # session scribe can only attach at THIS constructor, the one seam the exe
-      # wires, so an unforwardable observer would be silent record loss one
-      # level up. `supervisor` is the OM-6 reactor a model-dispatched actor
-      # launches under; {Supervisor::Null} (not running) keeps the refusal.
-      def initialize(provider:, context_factory:, toolset:, policy:, parent:,
-                     journal: Channel::Null.instance, budget: Agent::Budget.new,
+      #
+      # The six spawn collaborators arrive as one `seam:` ({Seam}); the loose
+      # keywords they used to be still work and land in `**spawn_over`, which
+      # {Seam.resolve} turns into the same value. What is left here is this tool's
+      # OWN axes -- the union, the policy, the budget, and the config triple
+      # {#seed_config} closes over.
+      def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
                      max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null,
-                     observer: Event::ChainWriter::Null.new, supervisor: Supervisor::Null,
-                     persona: Role::Persona::Null)
+                     persona: Role::Persona::Null, **spawn_over)
         super()
-        @builder = ChildBuilder.new(provider:, context_factory:, toolset:, policy:, journal:, budget:, persona:)
-        @parent = parent
-        @journal = journal
-        @observer = observer
-        @supervisor = supervisor
+        @seam = Seam.resolve(seam, **spawn_over)
+        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:)
         seed_config(max_depth, name, mode, log)
       end
 
@@ -177,7 +183,7 @@ module Lain
         units = prompts.map do |prompt|
           ->(on_stream_started:) { @max_depth <= 0 ? depth_exceeded : spawn_one_shot(prompt, on_stream_started:) }
         end
-        Stagger.new(journal: @journal).call(units)
+        Stagger.new(journal:).call(units)
       end
 
       # Launch a long-lived {Actor} over a freshly built child, and return the
@@ -189,27 +195,21 @@ module Lain
       def launch_actor(prompt, parent: parent_timeline, worker_env: WorkerEnv.default)
         # Per launch, mirroring #perform: AC4's floor note has no lifecycle
         # exemption, so an actor-mode sibling under the floor is reported too.
-        policy.prefix.journal_floor(@journal)
-        Actor.new(agent: build_child(parent, worker_env), lineage:, parent:, journal: @journal).launch(prompt)
+        policy.prefix.journal_floor(journal)
+        Actor.new(agent: build_child(parent, worker_env), lineage:, parent:, journal:).launch(prompt)
       end
 
-      # A nested copy of this tool, for a child's union: same collaborators
-      # ({ChildBuilder#config} re-injects them verbatim), but the parent handle
-      # points at the CHILD (the grandchild's lineage names the child's head,
-      # not this parent's) and the ceiling is capped at `ceiling` -- never
-      # raised past this tool's own, so a tool wired to never spawn
-      # (max_depth 0) stays that way whatever the spawner had left. Public only
-      # for {ChildBuilder}, which builds the child's union -- it is not a
+      # A nested copy of this tool, for a child's union: the same {Seam} and the
+      # same config ({ChildBuilder#config} re-injects both verbatim, rebinding
+      # only the seam's parent handle to the CHILD, so the grandchild's lineage
+      # names the child's head and not this parent's), with the ceiling capped at
+      # `ceiling` -- never raised past this tool's own, so a tool wired to never
+      # spawn (max_depth 0) stays that way whatever the spawner had left. Public
+      # only for {ChildBuilder}, which builds the child's union -- it is not a
       # Subagent, so `protected` can no longer say "only the spawn machinery".
       def descend(parent:, ceiling:)
-        self.class.new(
-          **@builder.config, parent:,
-                             # The observer and supervisor descend with the copy: a grandchild's
-                             # events must reach the same scribe (or nested spawns silently vanish
-                             # from the session record) and its actors the same reactor.
-                             max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log,
-                             observer: @observer, supervisor: @supervisor
-        )
+        config = @builder.config(parent:)
+        self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log)
       end
 
       protected
@@ -236,11 +236,11 @@ module Lain
       # tool_result carries the handle -- the actor's address (its :spawn
       # digest), the stable name a caller tells it by.
       def adopt_actor(prompt)
-        return actor_refused unless @supervisor.running?
+        return actor_refused unless supervisor.running?
 
         # The supervisor acquires this worker's isolation lease and hands its
         # WorkerEnv down, so the actor's child resolves cwd/env against it.
-        actor = @supervisor.adopt(role: @name) { |worker_env| launch_actor(prompt, worker_env:) }
+        actor = supervisor.adopt(role: @name) { |worker_env| launch_actor(prompt, worker_env:) }
         Tool::Result.ok("actor launched: #{actor.address}")
       end
 
@@ -255,7 +255,7 @@ module Lain
         # Per spawn, not per tool: the floor note (see PrefixStrategy::
         # SiblingTemplate#journal_floor) lands beside each :spawn it warns
         # about, so a fan-out's record shows which spawns ran un-cacheable.
-        policy.prefix.journal_floor(@journal)
+        policy.prefix.journal_floor(journal)
         parent = parent_timeline
         spawn = lineage.spawn(parent)
         child, response = run_child(prompt, parent, on_stream_started:)
@@ -300,11 +300,11 @@ module Lain
       # what {StatusFeed}'s fleet field consumes. One-shot mode keeps the plain
       # observer: its records already ride the tool_result and the scribe, and
       # its journal contents are pinned by existing specs.
-      def lineage_observer = @mode == :actor ? method(:journal_lifecycle) : @observer
+      def lineage_observer = @mode == :actor ? method(:journal_lifecycle) : observer
 
       def journal_lifecycle(event)
-        @journal << Telemetry::Message.from_event(event)
-        @observer.call(event)
+        journal << Telemetry::Message.from_event(event)
+        observer.call(event)
       end
 
       # The config axis, apart from the injected collaborators (the Agent
@@ -329,15 +329,107 @@ module Lain
       # (the toolset is built before the Agent, so the exe wiring hands a
       # `-> { agent.timeline }` that reads the head at the instant of the call).
       def parent_timeline
-        @parent.respond_to?(:call) ? @parent.call : @parent
+        handle = @seam.parent
+        handle.respond_to?(:call) ? handle.call : handle
       end
+
+      # The seam's members, read by name: the spawn path says `journal` and
+      # `observer`, which is what the six were called when they were keywords.
+      def journal = @seam.journal
+      def observer = @seam.observer
+      def supervisor = @seam.supervisor
     end
 
     # Reopened rather than nested mid-body -- the shutdown.rb idiom: the spawn
-    # wiring is its own responsibility (the extraction the Metrics trip named),
-    # and the split keeps each class body within Metrics/ClassLength instead of
-    # loosening it.
+    # wiring and the value it is wired FROM are each their own responsibility
+    # (the extraction the Metrics trip named), and the split keeps each class
+    # body within Metrics/ClassLength instead of loosening it.
     class Subagent < Tool
+      # The {Seam} observer default, as ONE frozen object. Its two neighbours are
+      # already singletons (`Channel::Null.instance`, `Supervisor::Null`), so
+      # defaulting this one to a fresh `ChainWriter::Null.new` made
+      # `Seam.new(**three) == Seam.new(**three)` FALSE -- a value whose equality
+      # depends on WHICH member the caller let default is a trap, and Data's
+      # member-wise `==` is only ever as deep as its members ({Skill::Library}
+      # files the same caveat). Sharing one is safe because it holds no state:
+      # `#call` swallows the event and returns self. Frozen says so mechanically,
+      # and is what makes an all-defaults Seam's shareability turn only on the
+      # three collaborators that are genuinely live.
+      #
+      # It lives on {Subagent}, not inside the `Data.define` block: a constant
+      # written in that block lands in the ENCLOSING module rather than on the
+      # Data class (the `Request::SYSTEM_PREFIX` trap), and the block's own
+      # constant lookup is lexical from here anyway.
+      NO_OBSERVER = Event::ChainWriter::Null.new.freeze
+
+      # What a child spawn is built OVER: the six collaborators every spawn needs
+      # and no single spawn chooses -- the run's provider, a child-Context
+      # factory, the live parent handle, the journal, the {Supervisor} a
+      # model-dispatched actor adopts onto, and the lineage observer.
+      #
+      # They were six loose keywords on three signatures ({Subagent},
+      # {ChildBuilder}, {Skill::RoleSpawn}) plus one Hash literal in
+      # {CLI::Wiring::ToolsetBuild}, whose own class comment says the tell out
+      # loud: "a triple passed identically at every call is state an object is
+      # missing, not arguments". This is that object, so a seventh collaborator
+      # is one member and one wiring line rather than four edits that can be
+      # three-quarters done.
+      #
+      # It nests HERE, under the class all three adopters build, because that is
+      # what they have in common: {Skill::RoleSpawn} exists to construct a
+      # {Subagent} per call, {ToolsetBuild} to wire one. A top-level
+      # `Lain::Spawn::Seam` would sit a hand's breadth from {Bench::SpawnSeam},
+      # a DIFFERENT duck (`call(journal:, **spawn_opts) -> Agent`) -- the
+      # same-name-different-thing problem the simplification review itself filed
+      # against the four Gates.
+      #
+      # `toolset` is deliberately NOT a member: each adopter attenuates over a
+      # different base union (see {ToolsetBuild}'s layering), so it is per-caller
+      # state, not shared seam state.
+      #
+      # Frozen, like every Data, but NOT `Ractor.shareable?` and not aspiring to
+      # be -- `context_factory` is always a callable, a provider is always a live
+      # client, and `parent` is a thunk or a Timeline (measured: neither is
+      # shareable). The journal is NOT among the reasons: its default here is
+      # `Channel::Null.instance`, which IS shareable. This bundles collaborators;
+      # it is not a value in the {Event}/{Canonical} sense.
+      Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer) do
+        # The last three default to their Null objects, so a caller who wires none
+        # of them gets byte-identically what the pre-seam constructors' own
+        # defaults gave. The first three have no Null and stay required: Data's
+        # own missing-keyword error is the loud failure, unwritten.
+        def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
+                       supervisor: Supervisor::Null, observer: NO_OBSERVER)
+          super
+        end
+
+        # Adoption is additive, in ONE place: a caller passes `seam:` or the loose
+        # members, and the adopting constructor's `**` splat lands here. Both at
+        # once cannot be honored, so it raises rather than silently preferring one
+        # and dropping the other.
+        #
+        # A stray keyword is a TYPO, not a conflict, and the two must not be
+        # confused: on the loose path Data's own `new` says `unknown keyword:
+        # :max_dept`, and reporting the same key as "you passed a seam AND its
+        # members" would send the reader hunting for a member they never passed.
+        # So the seam path partitions first and says the same thing Ruby does.
+        def self.resolve(seam, **members)
+          return new(**members) if seam.nil?
+
+          refuse_unknown(members.keys - self.members)
+          raise ArgumentError, "pass seam: or its members #{members.keys.inspect}, not both" unless members.empty?
+
+          seam
+        end
+
+        def self.refuse_unknown(unknown)
+          return if unknown.empty?
+
+          raise ArgumentError, "unknown keyword#{"s" if unknown.size > 1}: #{unknown.map(&:inspect).join(", ")}"
+        end
+        private_class_method :refuse_unknown
+      end
+
       # What a child IS, given the injected collaborators: the union it renders,
       # the Agent over it, the handler enforcing the posture. {Subagent} decides
       # WHEN one may spawn (depth, mode, supervisor presence); this builds it.
@@ -345,25 +437,28 @@ module Lain
       # at initialize -- so one builder serves every spawn and every descended
       # copy ({#config}) without carrying spawn-specific state.
       class ChildBuilder
-        attr_reader :policy
+        attr_reader :policy, :toolset
 
-        def initialize(provider:, context_factory:, toolset:, policy:, journal:, budget:,
-                       persona: Role::Persona::Null)
-          @provider = provider
-          @context_factory = context_factory
+        def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null)
+          @seam = seam
           @toolset = toolset
           @policy = policy
-          @journal = journal
           @budget = budget
           @persona = persona
         end
 
         # The constructor kwargs a descended copy re-injects ({Subagent#descend}):
         # spawn wiring is shared config, so every copy gets it verbatim -- the
-        # persona included, so a grandchild renders the same role framing.
-        def config
-          { provider: @provider, context_factory: @context_factory, toolset: @toolset,
-            policy: @policy, journal: @journal, budget: @budget, persona: @persona }
+        # persona included, so a grandchild renders the same role framing, and the
+        # seam's observer and supervisor along with it (a grandchild's events must
+        # reach the same scribe, or nested spawns silently vanish from the session
+        # record, and its actors the same reactor).
+        #
+        # `parent` is the ONE member a copy does not inherit: it points at the
+        # CHILD, so the grandchild's lineage names the child's live head.
+        def config(parent:)
+          { seam: @seam.with(parent:), toolset: @toolset, policy: @policy,
+            budget: @budget, persona: @persona }
         end
 
         # A fresh child Agent over the base Timeline the prefix strategy chose,
@@ -414,10 +509,10 @@ module Lain
         # record.
         def spawn_agent(parent, union, allowed, worker_env)
           Agent.new(
-            provider: @provider, context: child_context,
+            provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
             timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
-            session: Session.new(worker_env:), budget: @budget, journal: @journal
+            session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
           )
         end
 
@@ -429,7 +524,7 @@ module Lain
         # fresh child renders; a strategy that rewrites system sees the persona'd
         # context, not the bare factory one.
         def child_context
-          @policy.prefix.child_context(@persona.child_context(@context_factory.call), journal: @journal)
+          @policy.prefix.child_context(@persona.child_context(@seam.context_factory.call), journal: @seam.journal)
         end
 
         # `schema` renders the attenuated set, so a plain executor over it
@@ -441,7 +536,7 @@ module Lain
         def child_handler(union, allowed)
           return Effect::Handler::Live.new(toolset: allowed) unless @policy.posture.refuses_over_union?
 
-          RefusingHandler.new(allowed: allowed.names, journal: @journal,
+          RefusingHandler.new(allowed: allowed.names, journal: @seam.journal,
                               inner: Effect::Handler::Live.new(toolset: union))
         end
       end

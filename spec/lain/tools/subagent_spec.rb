@@ -729,6 +729,11 @@ RSpec.describe Lain::Tools::Subagent do
       )
     end
 
+    # `supervisor.stop` is in an `ensure`, and that is not tidiness: the reactor
+    # task it stops is a CHILD of this `Sync`, so a failed expectation that skips
+    # the stop leaves `Sync` waiting on a task that never finishes -- the example
+    # hangs instead of reporting, and with it every example after it in the file.
+    # A mutation campaign found this the expensive way.
     it "launches under a running Supervisor: the spawn lands, the handle returns, no refusal" do
       supervisor = Lain::Supervisor.new
       Sync do |task|
@@ -743,6 +748,7 @@ RSpec.describe Lain::Tools::Subagent do
         expect(result.content).to include(spawn.digest)
         expect(supervisor.map(&:address)).to eq([spawn.digest])
         expect(supervisor.map(&:role)).to eq(["subagent"])
+      ensure
         supervisor.stop
       end
     end
@@ -764,6 +770,7 @@ RSpec.describe Lain::Tools::Subagent do
         expect(response.text).to eq("parent continues")
         actor = supervisor.first.actor
         expect(actor.settle).not_to be_dead
+      ensure
         supervisor.stop
       end
     end
@@ -794,6 +801,115 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(result).to be_error
       expect(result.content).to include("supervisor")
+    end
+  end
+
+  # ---- T23: the child-spawn collaborators travel as ONE Seam value -----------
+  #
+  # The six a child spawn is always built over -- provider, child-Context
+  # factory, live parent handle, journal, supervisor, lineage observer -- were
+  # loose keywords on three signatures, bundled into a Hash at the one place
+  # ({CLI::Wiring::ToolsetBuild#child_seam_kwargs}) that already knew they were
+  # one thing. Naming the value is what makes "over the same seams" checkable,
+  # and what makes a seventh member a one-place change.
+  #
+  # Every OTHER example in this file constructs with the loose keywords, so this
+  # block's green plus theirs is the additive claim: both styles are valid.
+  describe "the spawn Seam (T23)" do
+    let(:seam) do
+      Lain::Tools::Subagent::Seam.new(provider: mock(text_response("seamed")),
+                                      context_factory: -> { child_context }, parent:)
+    end
+
+    it "spawns over an injected seam, with no loose collaborator keywords" do
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy, max_depth: 3)
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to eq("seamed")
+      expect(tool.seam).to be(seam)
+    end
+
+    # The last three are Null-defaulted, so a caller who wires none of them gets
+    # byte-identically what the pre-seam constructor's own defaults gave. All
+    # three are the SAME object every time, which is what the next example needs.
+    it "defaults journal, supervisor and observer to their Null objects" do
+      expect(seam.journal).to be(Lain::Channel::Null.instance)
+      expect(seam.supervisor).to be(Lain::Supervisor::Null)
+      expect(seam.observer).to be(Lain::Tools::Subagent::NO_OBSERVER)
+      expect(Lain::Tools::Subagent::NO_OBSERVER).to be_frozen
+    end
+
+    # A value object whose `==` depends on WHICH member the caller let default is
+    # a trap: `observer:` used to default to a FRESH ChainWriter::Null, so two
+    # seams over identical collaborators compared unequal while their two
+    # singleton neighbours compared equal.
+    it "equates two seams built from the same collaborators, defaults included" do
+      members = { provider: :p, context_factory: :cf, parent: :pa }
+
+      expect(Lain::Tools::Subagent::Seam.new(**members))
+        .to eq(Lain::Tools::Subagent::Seam.new(**members))
+    end
+
+    it "requires the three that have no Null: provider, context factory, and parent" do
+      expect { Lain::Tools::Subagent::Seam.new(provider: mock, context_factory: -> { child_context }) }
+        .to raise_error(ArgumentError, /parent/)
+    end
+
+    # Both styles are valid; holding both at once is the one thing that cannot
+    # be honored, so it raises at construction rather than silently preferring
+    # one and discarding the other.
+    it "refuses a seam and its loose members together, naming the member" do
+      expect { described_class.new(seam:, provider: mock, toolset: union, policy: spawn_policy) }
+        .to raise_error(ArgumentError, "pass seam: or its members [:provider], not both")
+    end
+
+    # The loose path must stay as loud as Ruby's own keyword checking was: a
+    # misspelled collaborator is a silent Null default if the splat swallows it.
+    it "refuses a loose keyword that is not a seam member" do
+      expect do
+        described_class.new(provider: mock, context_factory: -> { child_context }, parent:,
+                            observers: [], toolset: union, policy: spawn_policy)
+      end.to raise_error(ArgumentError, /unknown keyword: :observers/)
+    end
+
+    # A typo BESIDE a seam is still a typo. Diagnosing it as a both-at-once
+    # conflict sends the reader hunting for a member they never passed, so the
+    # seam path says exactly what Data's own `new` says on the loose path.
+    it "calls a misspelled keyword beside a seam a typo, not a conflict" do
+      expect { described_class.new(seam:, toolset: union, policy: spawn_policy, max_dept: 3) }
+        .to raise_error(ArgumentError, "unknown keyword: :max_dept")
+    end
+
+    it "names every stray keyword when several arrive beside a seam" do
+      expect { described_class.new(seam:, toolset: union, policy: spawn_policy, max_dept: 3, nam: "x") }
+        .to raise_error(ArgumentError, "unknown keywords: :max_dept, :nam")
+    end
+
+    # A descended copy re-injects the seam verbatim EXCEPT the parent handle: a
+    # grandchild's lineage must name the CHILD's head, while the observer and
+    # supervisor must stay the same objects or a nested spawn's record vanishes
+    # one level up.
+    it "descends the seam onto the child, rebinding only the parent" do
+      wired = seam.with(observer: ->(_event) {}, supervisor: Lain::Supervisor.new, journal: Lain::Channel.new)
+      tool = described_class.new(seam: wired, toolset: union, policy: spawn_policy, max_depth: 3)
+      child_handle = -> { parent }
+
+      copy = tool.descend(parent: child_handle, ceiling: 1)
+
+      expect(copy.seam.parent).to be(child_handle)
+      expect(copy.seam.to_h.except(:parent)).to eq(wired.to_h.except(:parent))
+    end
+
+    # The union a child attenuates FROM, published. It was reachable only by a
+    # two-deep `instance_variable_get(:@builder).instance_variable_get(:@toolset)`
+    # (toolset_build_spec's own reach-through), which pins the extraction's
+    # private shape instead of the capability floor the bench wants to read.
+    it "publishes the union a child attenuates from" do
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy)
+
+      expect(tool.attenuates_from).to be(union)
     end
   end
 end
