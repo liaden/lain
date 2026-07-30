@@ -65,7 +65,7 @@ module Lain
     # stays `#epics_home`. `[epics] epics_home` would stutter
     # (`epics.epics_home`), and the typo this class's own AC teaches
     # ("hoem") is a typo of "home", not of "epics_home".
-    Epics = Data.define(:home)
+    Epics = Data.define(:home, :gates)
 
     # Reopened (not a body inside the `Data.define do ... end` block) because
     # constants and nested classes defined THERE are lexically scoped to
@@ -73,7 +73,7 @@ module Lain
     # `Request::SYSTEM_PREFIX` for the precedent.
     class Epics
       HOME_VALUES = %w[xdg repo].freeze
-      KEYS = %w[home].freeze
+      KEYS = %w[home gates].freeze
 
       # `[epics]` present but not a table -- TOML permits a scalar or an array
       # there (`epics = "x"`), and treating it as one without checking crashes
@@ -121,6 +121,139 @@ module Lain
         end
       end
 
+      # The `[epics.gates]` sub-table: which {Approval::Gate::Policy} each epic
+      # stage's gates run under (`epic_plan = "deferred"`). Its own small class
+      # for {Epics}'s own reason -- it knows its keys, its allowed values, and
+      # its errors -- and BOTH sides of the mapping are closed sets, so both are
+      # refused at load rather than discovered at the first overnight gate.
+      #
+      # The allowed VALUES are not spelled here: {Approval::Gate::Policies.known?}
+      # answers, so widening the policy family is one edit in the factory rather
+      # than two that can disagree. That reference is resolved at CALL time,
+      # which is why it does not invert lain.rb's load order.
+      #
+      # Absence means interactive everywhere, so {#policy_for} is total: a stage
+      # nobody configured still gets a policy, and no caller writes a nil guard.
+      Gates = Data.define(:table)
+
+      # Reopened for {Epics}'s reason: constants and nested classes inside a
+      # `Data.define do ... end` block are scoped to the enclosing module.
+      class Gates
+        # The three refusals share a shape -- a path that may be absent (a value
+        # built directly rather than loaded) and a message naming the sub-table
+        # -- so the prefix is spelled once here instead of three times.
+        class Refusal < Error
+          attr_reader :path
+
+          def initialize(path, detail)
+            @path = path
+            prefix = path ? "#{path}: " : ""
+            super("#{prefix}[epics.gates] #{detail}")
+          end
+        end
+
+        # `gates` present but not a table (`gates = "deferred"`), the sibling of
+        # {Epics::NotATable} and for its reason: `.keys` on a String is an
+        # unnamed NoMethodError three frames from the file that caused it.
+        class NotATable < Refusal
+          attr_reader :value
+
+          def initialize(value, path: nil)
+            @value = value
+            super(path, "must be a table, got #{value.class}: #{value.inspect}")
+          end
+        end
+
+        # A stage name outside {Epic::STAGES}. Loud rather than ignored: a
+        # silently dropped `reserch = "deferred"` leaves that stage interactive,
+        # so an unattended run wedges on a gate nobody is there to answer.
+        # `keys` matches {Epics::UnknownKeys}'s reader, and every unknown stage
+        # is reported in one pass.
+        class UnknownStages < Refusal
+          attr_reader :keys
+
+          def initialize(keys, path: nil)
+            @keys = keys
+            super(path, "has no stages #{keys.map(&:inspect).join(", ")}; " \
+                        "the pipeline is #{Epic::STAGES.join(" -> ")}")
+          end
+        end
+
+        # A policy name no recipe answers to -- including a value of the wrong
+        # TYPE, which simply fails the membership test rather than being coerced
+        # first ({Epics::InvalidHome}'s posture).
+        class UnknownPolicies < Refusal
+          attr_reader :policies
+
+          def initialize(policies, path: nil)
+            @policies = policies
+            super(path, "names unknown gate policies #{policies.map(&:inspect).join(", ")}; " \
+                        "known policies: #{Approval::Gate::Policies.names.join(", ")}")
+          end
+        end
+
+        # @param table [Object] whatever `[epics] gates` parsed to; nil when absent
+        # @param path [String, nil] the config file, named in every refusal
+        # @return [Gates]
+        def self.from(table, path: nil)
+          table = {} if table.nil?
+          check!(table, path:)
+          new(table:)
+        end
+
+        # A caller that is not {.from} may reasonably hand a plain Hash, or nil
+        # for "none configured". Coercing here is what makes {Epics#initialize}'s
+        # guard total: a typo'd policy name in a hand-built value raises
+        # {UnknownPolicies} naming it, where storing the Hash as handed deferred
+        # the failure to an unnamed NoMethodError inside {Config#gate_policy_for}
+        # -- no path, no key, and a stack frame away from the mistake.
+        def self.coerce(gates) = gates.is_a?(self) ? gates : from(gates)
+
+        # @return [Gates] the value an absent sub-table yields
+        def self.empty = EMPTY
+
+        # The closed-set checks, shared by {.from} (which names the config file)
+        # and by {#initialize} (which cannot, and passes nil).
+        #
+        # @raise [NotATable, UnknownStages, UnknownPolicies]
+        def self.check!(table, path: nil)
+          raise NotATable.new(table, path:) unless table.is_a?(Hash)
+          # An empty table has no key and no value to judge, so it is vacuously
+          # valid -- and answering HERE, before either closed set is read, is
+          # also what lets {EMPTY} be built while this file loads (see the note
+          # at {Config::EMPTY}). Every non-empty table arrives through
+          # {Config.load}, long after both sets exist.
+          return if table.empty?
+
+          unknown = table.keys - Epic::STAGES
+          raise UnknownStages.new(unknown, path:) unless unknown.empty?
+
+          unnamed = table.values.reject { |policy| Approval::Gate::Policies.known?(policy) }
+          raise UnknownPolicies.new(unnamed, path:) unless unnamed.empty?
+        end
+
+        # Validated in the value's own constructor as well as in {.from}, the
+        # {Epics#initialize} precedent: a typo that CONSTRUCTS would reach
+        # {Approval::Gate::Policies.for} as an unbuildable name.
+        def initialize(table:)
+          self.class.check!(table)
+
+          # Interned and re-frozen rather than stored as handed over: the caller's
+          # Hash is theirs to keep mutating, and this value rides inside a
+          # Ractor-shareable {Config}.
+          super(table: table.to_h { |stage, policy| [-stage, -policy] }.freeze)
+        end
+
+        # Total by construction -- an unconfigured stage runs the default.
+        #
+        # @param stage [#to_s] an {Epic::Stage} or its name
+        # @return [String] the policy name that stage's gates run under
+        def policy_for(stage) = table.fetch(stage.to_s, Approval::Gate::Policies::DEFAULT)
+
+        EMPTY = new(table: {}).freeze
+        private_constant :EMPTY
+      end
+
       # @param table [Object] whatever `raw["epics"]` parsed to: a Hash when
       #   the table is present and well-formed, nil when it is absent, or
       #   anything else a project wrote in its place (`epics = "x"`).
@@ -135,11 +268,20 @@ module Lain
         unknown = table.keys - KEYS
         raise UnknownKeys.new(unknown, path:) unless unknown.empty?
 
+        new(home: home_from(table, path:), gates: Gates.from(table["gates"], path:))
+      end
+
+      # `home`'s own closed-set check, split out so this entry point reads as
+      # one line per key. Each key `[epics]` learns owns its reading; keeping
+      # them inline is what made this method grow past Metrics/AbcSize when
+      # `gates` arrived, and the next key would do it again.
+      def self.home_from(table, path:)
         home = table.fetch("home", "xdg")
         raise InvalidHome.new(home, path:) unless HOME_VALUES.include?(home)
 
-        new(home: home.to_sym)
+        home.to_sym
       end
+      private_class_method :home_from
 
       # Closed-set validation belongs to the VALUE, not only to the
       # TOML-parsing path that usually builds it (T1's `Epic::Issue` does the
@@ -148,10 +290,17 @@ module Lain
       # `.from` can never carry a symbol T9's `case epics_home` doesn't
       # expect. `.from`'s own check stays -- it names the config path, which
       # this constructor-level guard cannot.
-      def initialize(home:)
+      #
+      # `gates` earns the SAME guarantee through {Gates.coerce}, and for the
+      # same reason spelled one key over: a hand-built `gates: {"research" =>
+      # "yolo"}` used to construct here and fail later as an unnamed
+      # NoMethodError from {Config#gate_policy_for}. Coercion refuses the typo
+      # by name and accepts the two shapes a caller plausibly means -- a plain
+      # Hash, and nil for "none configured".
+      def initialize(home:, gates: Gates.empty)
         raise InvalidHome.new(home, path: nil) unless HOME_VALUES.map(&:to_sym).include?(home)
 
-        super
+        super(home:, gates: Gates.coerce(gates))
       end
     end
 
@@ -162,6 +311,9 @@ module Lain
     # @raise [Epics::NotATable] when `[epics]` is present but not a table
     # @raise [Epics::UnknownKeys] when `[epics]` carries a key this class does not know
     # @raise [Epics::InvalidHome] when `home` is set to anything but xdg/repo
+    # @raise [Epics::Gates::NotATable] when `[epics.gates]` is present but not a table
+    # @raise [Epics::Gates::UnknownStages] when it keys a stage outside {Epic::STAGES}
+    # @raise [Epics::Gates::UnknownPolicies] when it names a policy no recipe builds
     def self.load(root: Dir.pwd)
       path = File.join(root, ".lain", "config.toml")
       return empty unless File.exist?(path)
@@ -193,6 +345,11 @@ module Lain
 
     def epics_home = epics.home
 
+    # @param stage [#to_s] an {Epic::Stage} or its name
+    # @return [String] the gate policy that stage runs under, "interactive"
+    #   unless `[epics.gates]` says otherwise
+    def gate_policy_for(stage) = epics.gates.policy_for(stage)
+
     # `instance_of?`, not `is_a?`: a subclass instance and a Config instance
     # must agree in BOTH directions (`a == b` iff `b == a`), which `is_a?`
     # breaks (a subclass `is_a?` its parent; a parent is never `is_a?` its
@@ -207,6 +364,12 @@ module Lain
       [self.class, epics].hash
     end
 
+    # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
+    # `Epic::STAGES` and {Approval::Gate::Policies}, and neither exists yet
+    # while this file loads -- config.rb is twelfth in lain.rb's manifest,
+    # against approval/'s forty-ninth and epic/'s sixty-eighth. A non-empty
+    # default here breaks `require "lain"` outright, which is every spec at
+    # once rather than one, so no test is owed for it.
     EMPTY = new(epics: Epics.new(home: :xdg)).freeze
     private_constant :EMPTY
   end
