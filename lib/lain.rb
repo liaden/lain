@@ -86,3 +86,9 @@ require "lain/lain"
 # orchestration tactics are swappable, observable, and comparable.
 module Lain
 end
+
+# Every claim lain makes about its own algebra has now been filed by the class
+# body that makes it, so the process-wide registry closes: a declaration after
+# this line is a runtime mutation of global state, and Algebra::Sealed refuses
+# it. Injected registries are nobody else's and are untouched.
+Lain::Algebra.registry.seal

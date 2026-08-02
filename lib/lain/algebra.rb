@@ -36,6 +36,16 @@ module Lain
   # in a form a spec can walk -- so the refutation is a first-class entry with a
   # mandatory reason, and an unexplained one is refused.
   #
+  # == Why every verb asks the latch first
+  #
+  # Every verb opens with {Registry#refuse_sealed}, uniformly, so "a claim is a
+  # load-time move" is one rule a reader checks by reading rather than a
+  # judgement made per verb. {Elementwise} is the one with something to lose --
+  # it generates a method before it files -- but a family of verbs where only
+  # some carry the guard invites the next verb to be the one that forgets.
+  # ({Elementwise.not_elementwise} is the exception, and files nothing on any
+  # registry: it always raises {Contradiction}.)
+  #
   # The modules are stateless: they add class-level verbs and (for {Elementwise}
   # and {Pure}) instance behavior, never an ivar, so including one cannot
   # disturb an includer's deep freeze or its Ractor shareability.
@@ -71,6 +81,12 @@ module Lain
 
     # A generated operation that would overwrite one the class wrote itself.
     class Occupied < Error; end
+
+    # A claim filed after the registry closed. Every claim lain makes is made
+    # by a class body while `lib/` loads, so a later one is not a declaration
+    # at all -- it is a runtime mutation of process-global state that a whole
+    # suite reads. See {Registry#seal}.
+    class Sealed < Error; end
 
     # A unit that cannot be named where its declaration is written, deferred to
     # first read.
@@ -139,6 +155,10 @@ module Lain
     # Enumerable, and populated at load time by the declarations in `lib/`, so a
     # spec can walk it directly -- no ObjectSpace sweep, no constant walk. That
     # walk is the point: a marker nothing reads is decoration.
+    #
+    # Populated at load time and then CLOSED, by {#seal}: the process-wide one
+    # is a global that a whole suite reads, and a claim filed after loading is
+    # a mutation of it rather than a declaration about `lib/`.
     class Registry
       include Enumerable
 
@@ -164,6 +184,7 @@ module Lain
 
       def declare(subject:, operation:, structure:, identity: nil, bottom: nil, analysis: nil, dual: nil,
                   implied_by: nil)
+        refuse_sealed(subject:, operation:)
         entry = Declaration.new(subject:, operation: operation.to_sym, structure:, identity_source: identity,
                                 bottom:, analysis:, dual: dual&.to_sym, implied_by:)
         refuse_unknown(entry)
@@ -172,10 +193,56 @@ module Lain
       end
 
       def refute(subject:, operation:, structure:, reason:)
+        refuse_sealed(subject:, operation:)
         entry = Refutation.new(subject:, operation: operation.to_sym, structure:, reason:)
         refuse_unknown(entry)
         refuse_unexplained(entry)
         commit(entry)
+      end
+
+      # Close the registry. `lain.rb` calls this on the process-wide one once
+      # the last unit has loaded, by which point every claim lain makes has
+      # been filed.
+      #
+      # The freeze IS the seal -- one state with one representation, so
+      # {#sealed?} and `frozen?` cannot come to disagree. Freezing `@entries`
+      # is the backstop under {#refuse_sealed}, and it covers registries closed
+      # THROUGH HERE: a bare `.freeze` also reads as sealed, and there the
+      # refusal is the whole of the guarantee.
+      #
+      # Shallow on purpose, and the honest statement of what that buys is that
+      # a sealed registry is as frozen as what it was HANDED. Its entries are
+      # frozen Data, but their fields are the caller's objects -- an identity
+      # ({Usage::ZERO}, a {Later} around a block) and, where a reader will feel
+      # it sooner, the `bottom:` and `reason:` PROSE a report prints. Every one
+      # in the tree is a frozen literal, so nothing here moves; a mutable
+      # String handed in would still be the author's to mutate, and freezing an
+      # object the registry does not own would reach outside its own state.
+      #
+      # Idempotent, because sealing states a condition rather than making a
+      # change.
+      def seal
+        @entries.freeze
+        freeze
+      end
+
+      def sealed? = frozen?
+
+      # Public, and asked by the declaration verbs BEFORE they touch their
+      # includer: {Elementwise} generates the whole-span map and only then
+      # files, so a refusal that arrived from {#declare} alone would leave that
+      # method behind on a class whose claim was refused. One check, reached
+      # from the declaring side and the registry side both -- the same
+      # invariant, which is why it is not two.
+      #
+      # It takes a subject and an operation rather than an entry, unlike the
+      # refusals below it: a verb asks before there is an entry to ask about.
+      def refuse_sealed(subject:, operation:)
+        return unless sealed?
+
+        raise Sealed, "#{subject} claims ##{operation} after the registry was sealed; every claim lain makes " \
+                      "is filed by a class body while `lib/` loads, and the process-wide registry closes " \
+                      "there -- pass a `registry:` of your own to declare anywhere else"
       end
 
       private
@@ -255,9 +322,10 @@ module Lain
 
     # The process-wide registry, which is what the law walk enumerates. Module
     # state, deliberately and in exactly one place: the declarations are made by
-    # class bodies as they load, so there is nowhere earlier to hold them. Every
-    # verb takes an injectable `registry:` so a spec can declare against a
-    # scratch one instead.
+    # class bodies as they load, so there is nowhere earlier to hold them, and
+    # `lain.rb` seals it once the last of them has. Every verb takes an
+    # injectable `registry:` so a spec can declare against a scratch one
+    # instead -- an injected registry is nobody else's, so nothing seals it.
     def self.registry = @registry ||= Registry.new
   end
 end

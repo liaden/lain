@@ -46,10 +46,12 @@ module Lain
 
       class_methods do
         def pure(on:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.declare(subject: self, operation: on, structure: :pure)
         end
 
         def not_pure(on:, because:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.refute(subject: self, operation: on, structure: :pure, reason: because)
         end
       end

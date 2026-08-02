@@ -468,6 +468,182 @@ RSpec.describe Lain::Algebra do
     end
   end
 
+  # Follow-ups 0b and 11 of chunk-algebra-vocabulary.md, closed together: the
+  # verbs and the registry are two views of one invariant, so the latch is ONE
+  # check reached from both sides. The probe that motivated it is recorded in
+  # that doc -- a declaration made from a spec grew the process-wide registry
+  # 0 -> 1 and left an anonymous class sitting in the law walk.
+  describe "sealing" do
+    # Enough shape for every verb to have something real to name, and nothing
+    # else wrong with it, so no other refusal can fire ahead of the latch.
+    def declaring
+      Class.new do
+        include Lain::Algebra::CommutativeMonoid
+        include Lain::Algebra::MeetSemilattice
+        include Lain::Algebra::Pure
+        include Lain::Algebra::Attenuation
+
+        def merge(other) = other
+        def only(*names) = names
+        def except(*names) = names
+      end
+    end
+
+    it "refuses every declaration verb, uniformly" do
+      scratch = registry.seal
+      klass = declaring
+
+      aggregate_failures do
+        expect { klass.monoid on: :merge, identity: 0, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.commutative_monoid on: :merge, identity: 0, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.meet_semilattice on: :merge, bottom: "the empty one, per store", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.pure on: :merge, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.attenuation on: :only, dual: :except, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+      end
+    end
+
+    it "refuses every refutation verb too, because a negative is a claim as well" do
+      scratch = registry.seal
+      klass = declaring
+
+      aggregate_failures do
+        expect { klass.not_a_monoid on: :merge, because: "it drops the left operand", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.not_a_commutative_monoid on: :merge, because: "order is load-bearing", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.not_a_meet_semilattice on: :merge, because: "no greatest lower bound", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.not_pure on: :merge, because: "it reads the filesystem", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { klass.not_an_attenuation on: :only, because: "it re-reads the parent", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+      end
+    end
+
+    # The verb with something to lose: {Algebra::Elementwise} GENERATES the
+    # whole-span map and only then files, so a latch living in #declare alone
+    # would leave that method behind on a class whose claim was refused.
+    it "refuses an elementwise declaration before it generates the method" do
+      scratch = registry.seal
+      klass = Class.new do
+        include Lain::Algebra::Elementwise
+
+        def twice(element) = [element, element]
+      end
+
+      expect { klass.elementwise on: :call, each: :twice, registry: scratch }
+        .to raise_error(Lain::Algebra::Sealed)
+      expect(klass.new).not_to respond_to(:call)
+    end
+
+    # A closed registry will not file the claim whatever else is wrong with it,
+    # so the answer is the same one for every malformed variant -- the same
+    # reasoning that puts {Registry#refuse_unknown} first among the others.
+    # Both of {Algebra::Elementwise}'s own refusals are here because that is
+    # the verb where the ordering has teeth: it is the one whose next move is
+    # `define_method`.
+    it "answers ahead of every refusal a verb makes for itself" do
+      scratch = registry.seal
+      occupied = Class.new do
+        include Lain::Algebra::Elementwise
+
+        def call(span) = span
+        def twice(element) = [element, element]
+      end
+
+      aggregate_failures do
+        expect { declaring.meet_semilattice on: :merge, bottom: "  ", registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { declaring.attenuation on: :only, dual: :nope, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { occupied.elementwise on: :call, each: :twice, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect { occupied.elementwise on: :map, each: :twise, registry: scratch }
+          .to raise_error(Lain::Algebra::Sealed)
+      end
+    end
+
+    it "refuses declare and refute on the registry itself, which is the same check" do
+      scratch = registry.seal
+
+      aggregate_failures do
+        expect { scratch.declare(subject: String, operation: :+, structure: :monoid, identity: "") }
+          .to raise_error(Lain::Algebra::Sealed, /String.*#\+/)
+        expect { scratch.refute(subject: String, operation: :+, structure: :monoid, reason: "it drops one") }
+          .to raise_error(Lain::Algebra::Sealed, /registry:/)
+      end
+    end
+
+    it "leaves the entries exactly as they were, so a refused claim files nothing" do
+      scratch = registry
+      klass = declaring
+      klass.monoid on: :merge, identity: 0, registry: scratch
+      scratch.seal
+
+      expect { klass.pure on: :merge, registry: scratch }.to raise_error(Lain::Algebra::Sealed)
+      expect(scratch.map { |entry| [entry.subject, entry.operation, entry.structure] })
+        .to eq([[klass, :merge, :monoid]])
+    end
+
+    it "is frozen and still enumerable, which is what the law walk needs of it" do
+      scratch = registry
+      klass = declaring
+      klass.monoid on: :merge, identity: 0, registry: scratch
+
+      expect(scratch.seal).to be(scratch)
+      expect(scratch).to be_frozen.and be_sealed
+      expect(scratch.declarations.size).to eq(1)
+      expect(scratch.about(klass).size).to eq(1)
+    end
+
+    it "is idempotent, because sealing states a condition rather than making a change" do
+      scratch = registry.seal
+
+      expect { scratch.seal }.not_to raise_error
+    end
+
+    # The global being closed says nothing about anyone else's: every toy in
+    # this file declares into a scratch Registry and goes on doing so.
+    it "closes only the registry it was called on" do
+      scratch = registry
+      klass = declaring
+      klass.monoid on: :merge, identity: 0, registry: scratch
+
+      expect(described_class.registry).to be_sealed
+      expect(scratch).not_to be_sealed
+      expect(scratch.declarations.size).to eq(1)
+    end
+
+    describe "the process-wide registry, once the library has loaded" do
+      # `Lain::Timeline.meet_semilattice(on: :length, ...)` at runtime is the
+      # shape this refuses: a verb is a load-time move, and reaching one at run
+      # time mutates process-global state that a whole suite reads.
+      it "raises rather than letting a runtime declaration through" do
+        klass = Class.new do
+          include Lain::Algebra::MeetSemilattice
+
+          def meet(other) = other
+        end
+        before = described_class.registry.to_a
+
+        expect { klass.meet_semilattice on: :meet, bottom: "the empty Timeline, per store" }
+          .to raise_error(Lain::Algebra::Sealed)
+        expect(described_class.registry.to_a).to eq(before)
+      end
+
+      it "still enumerates every claim `lib/` filed" do
+        expect(described_class.registry.about(Lain::Usage).map(&:structure))
+          .to eq(%i[monoid commutative_monoid])
+        expect(described_class.registry.refutations).not_to be_empty
+      end
+    end
+  end
+
   describe "including a property module" do
     it "disturbs neither deep freeze nor Ractor shareability" do
       value = Class.new do

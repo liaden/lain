@@ -39,11 +39,13 @@ module Lain
 
       class_methods do
         def meet_semilattice(on:, bottom:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           MeetSemilattice.refuse_unnamed_bottom(self, on, bottom)
           registry.declare(subject: self, operation: on, structure: :meet_semilattice, bottom:)
         end
 
         def not_a_meet_semilattice(on:, because:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.refute(subject: self, operation: on, structure: :meet_semilattice, reason: because)
         end
       end

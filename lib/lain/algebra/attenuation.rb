@@ -54,11 +54,13 @@ module Lain
 
       class_methods do
         def attenuation(on:, dual:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           Attenuation.refuse_unanswered_dual(self, on, dual)
           registry.declare(subject: self, operation: on, structure: :attenuation, dual:)
         end
 
         def not_an_attenuation(on:, because:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.refute(subject: self, operation: on, structure: :attenuation, reason: because)
         end
       end

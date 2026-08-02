@@ -30,10 +30,12 @@ module Lain
 
       class_methods do
         def monoid(on:, identity:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.declare(subject: self, operation: on, structure: :monoid, identity:)
         end
 
         def not_a_monoid(on:, because:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.refute(subject: self, operation: on, structure: :monoid, reason: because)
         end
       end

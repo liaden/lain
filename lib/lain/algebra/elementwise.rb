@@ -101,6 +101,11 @@ module Lain
 
       class_methods do
         def elementwise(on:, each:, given: nil, registry: Algebra.registry)
+          # Ahead of `define_method` below, which is why the latch is the verb's
+          # and not only {Registry#declare}'s: a refusal that arrived after the
+          # generation would leave the whole-span map on a class whose claim the
+          # registry then refused.
+          registry.refuse_sealed(subject: self, operation: on)
           mapper = given.nil? ? Alone.new(per_element: each) : GivenAnalysis.new(per_element: each, analysis: given)
           Elementwise.refuse_occupied(self, on)
           Elementwise.refuse_unanswered_helpers(self, on, mapper)

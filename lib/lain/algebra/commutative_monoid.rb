@@ -29,12 +29,14 @@ module Lain
 
       class_methods do
         def commutative_monoid(on:, identity:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.declare(subject: self, operation: on, structure: :monoid, identity:,
                            implied_by: :commutative_monoid)
           registry.declare(subject: self, operation: on, structure: :commutative_monoid, identity:)
         end
 
         def not_a_commutative_monoid(on:, because:, registry: Algebra.registry)
+          registry.refuse_sealed(subject: self, operation: on)
           registry.refute(subject: self, operation: on, structure: :commutative_monoid, reason: because)
         end
       end
