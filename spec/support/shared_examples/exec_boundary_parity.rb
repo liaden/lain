@@ -38,6 +38,19 @@ RSpec.shared_examples "an exec boundary matching bash" do
     expect(core.content.b).to include(File.realpath(workdir).b, "err".b)
   end
 
+  # The ONE case here that is metacharacter-free, and therefore the only one
+  # that exercises what T17 built: Shell::Verdict allows it, so the bash arm
+  # runs reconstructed argv through Open3 while core still runs `sh -c`. Every
+  # other case in this group contains `;`, a quote or `${}` and so abstains,
+  # which compares `sh -c` against `sh -c` exactly as before the term arm
+  # existed. The literal is what pins it -- printf writes no trailing newline,
+  # so a byte of drift in either arm's rendering shows up here.
+  it "matches bash byte-for-byte on a literal command, which bash runs as a TERM" do
+    bash, core = differential("printf hi", Lain::WorkerEnv.default)
+    expect_identical(bash, core)
+    expect(core.content).to eq("exit status: 0\n--- stdout ---\nhi--- stderr ---\n")
+  end
+
   # `sh` is dash, whose printf implements POSIX \ooo but NOT bash's \xNN -- with
   # hex it emits the escape text verbatim on BOTH arms, which reads exactly like
   # a transport corrupting bytes while proving nothing. The octal here is what

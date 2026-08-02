@@ -26,9 +26,17 @@ RSpec.describe Lain::Tools::Bash do
   it "reports a nonzero exit status in the content, not as is_error" do
     # A nonzero exit is often exactly what the model asked to observe (grep
     # with no matches); the tool ran correctly, so this is not a tool failure.
-    result = tool.call({ command: "exit 3" }, invocation)
+    # `sh -c` in the command keeps this on the STRING arm -- Shell::Verdict
+    # abstains on `sh` -- which is where `exit` is a builtin that works.
+    result = tool.call({ command: %(sh -c "exit 3") }, invocation)
     expect(result).to be_ok
     expect(result.content).to include("exit status: 3")
+  end
+
+  it "reports a nonzero exit status from the term arm too" do
+    result = tool.call({ command: "grep -q lain-no-such-pattern /dev/null" }, invocation)
+    expect(result).to be_ok
+    expect(result.content).to include("exit status: 1")
   end
 
   it "runs in the given cwd" do
@@ -45,6 +53,9 @@ RSpec.describe Lain::Tools::Bash do
     # the TERM->KILL grace -- mixlib-shellout hardcodes `sleep 3` inside
     # reap_errant_child with no option to configure it, and 3 idle seconds
     # would dominate the whole suite's runtime.
+    #
+    # `sh -c` keeps this on the STRING arm, which is the arm mixlib owns; a bare
+    # `sleep 5` is literal and would be run as a term.
     it "kills a command that runs past its timeout" do
       short_grace = lambda do |*args, **opts|
         Mixlib::ShellOut.new(*args, **opts).tap do |shell_out|
@@ -53,9 +64,22 @@ RSpec.describe Lain::Tools::Bash do
       end
 
       result = described_class.new(shell_out_factory: short_grace)
-                              .call({ command: "sleep 5", timeout: 1 }, invocation)
+                              .call({ command: %(sh -c "sleep 5"), timeout: 1 }, invocation)
       expect(result).to be_error
       expect(result.content).to include("timed out")
+    end
+
+    # The same posture on the term arm: a Shell::Pipeline::Timeout is an error
+    # Result naming the timeout, exactly as mixlib's CommandTimeout is, because
+    # a timeout is the tool failing to produce a result rather than a command
+    # exiting non-zero.
+    it "kills a term that runs past its timeout" do
+      tool = described_class.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
+                                 shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
+
+      result = tool.call({ command: "sleep 5", timeout: 1 }, invocation)
+      expect(result).to be_error
+      expect(result.content).to include("timed out after 1s")
     end
 
     # The rescue->Result mapping in isolation: no subprocess, no clock.
@@ -65,7 +89,7 @@ RSpec.describe Lain::Tools::Bash do
       end
       tool = described_class.new(shell_out_factory: ->(*, **) { timed_out.new })
 
-      result = tool.call({ command: "sleep 5", timeout: 7 }, invocation)
+      result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
       expect(result).to be_error
       expect(result.content).to include("timed out after 7s")
     end
@@ -167,6 +191,89 @@ RSpec.describe Lain::Tools::Bash do
       expect(result.content).to include("host=[]")
     ensure
       ENV.delete("LAIN_SCRUB_ME")
+    end
+
+    it "runs a TERM in the WorkerEnv's cwd and environment" do
+      Dir.mktmpdir do |dir|
+        env = ENV.to_h.merge("LAIN_TERM_PROBE" => "from_worker_env")
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env:))
+
+        expect(tool.call({ command: "pwd" }, invocation_with(session)).content).to include(File.realpath(dir))
+        expect(tool.call({ command: "printenv LAIN_TERM_PROBE" }, invocation_with(session)).content)
+          .to include("from_worker_env")
+      end
+    end
+  end
+
+  # Which arm ran is a decision of Shell::Verdict's, and the tool's job is to
+  # make it invisible in the result. These examples pin the choice, not the
+  # execution -- Shell::Pipeline's own spec owns what a term does once chosen.
+  describe "choosing an arm" do
+    # A verdict stand-in that abstains on everything, which is how a command the
+    # real verdict would ALLOW can be run through the string arm for comparison.
+    let(:abstaining) do
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+    end
+
+    let(:no_shell) { ->(*, **) { raise "a shell was spawned" } }
+
+    it "runs an allowed command as a term, with no shell process at all" do
+      result = described_class.new(shell_out_factory: no_shell).call({ command: "printf hi" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to include("exit status: 0", "hi")
+    end
+
+    # The dispatch half of the card's misparse scenario. `time { echo PWNED; }`
+    # is broken=false and fully covered -- neither the node-kind tier nor the
+    # byte-coverage backstop sees anything -- so it abstains via the program-
+    # runner denylist and reaches the STRING arm and the gate above it, exactly
+    # as it does today. What the reconstructed argv would have done instead is
+    # pinned in spec/lain/shell/pipeline_spec.rb.
+    it "sends an abstained command to the shell arm, as the original string" do
+      seen = []
+      recording = lambda do |command, **opts|
+        seen << command
+        Mixlib::ShellOut.new("true", **opts)
+      end
+
+      described_class.new(shell_out_factory: recording).call({ command: "time { echo PWNED; }" }, invocation)
+      described_class.new(shell_out_factory: recording).call({ command: "echo $(id)" }, invocation)
+
+      expect(seen).to eq(["time { echo PWNED; }", "echo $(id)"])
+    end
+
+    # The flag describes the TOOL, which still takes a string the model wrote.
+    # A term arm is not a reason to flip it; which CALLS may skip a human is the
+    # escalation ladder's question, asked per call.
+    it "still declares that it requires approval" do
+      expect(tool.requires_approval?).to be(true)
+    end
+
+    # Byte-identity is what keeps the term arm a transparent optimization rather
+    # than a behavior change: same exit status, same stdout, same stderr, same
+    # encoding, through the one shared template.
+    it "renders byte-identical content on either arm" do
+      ["printf hi", "grep -q lain-no-such-pattern /dev/null", "cat /nonexistent/lain/probe",
+       "ls -d ."].each do |command|
+        term = described_class.new.call({ command: }, invocation)
+        string = described_class.new(verdict: abstaining).call({ command: }, invocation)
+
+        expect(term.content).to eq(string.content), command
+        expect(term.content.encoding).to eq(string.content.encoding), command
+        expect(term.is_error).to eq(string.is_error), command
+      end
+    end
+
+    # The one measured divergence, pinned rather than hidden: a shell BUILTIN
+    # has no binary to exec, so the term arm reports 127 where `sh -c` exits 3.
+    # Implementing builtins would make Shell::Pipeline a shell, and re-running
+    # the string after an allow would surrender the property the term arm exists
+    # for -- so this is the honest outcome, and a reader meets it here.
+    it "answers a shell builtin with command-not-found on the term arm" do
+      expect(tool.call({ command: "exit 3" }, invocation).content).to include("exit status: 127", "exit")
+      expect(described_class.new(verdict: abstaining).call({ command: "exit 3" }, invocation).content)
+        .to include("exit status: 3")
     end
   end
 end

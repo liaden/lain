@@ -16,9 +16,15 @@ module Lain
   # the two answer different questions. Even it answers only "literal and fully
   # understood", never "safe", and it is free to abstain -- which is what lets
   # the pair be honest where a regex could not be.
+  #
+  # {Shell::Pipeline} is what makes an allow sound rather than merely confident:
+  # it runs the reconstructed argv and never the string the model wrote, so a
+  # disagreement between this parser and a real shell degrades to a broken
+  # command instead of an attacker-chosen one.
   module Shell
   end
 end
 
 require_relative "shell/parse"
 require_relative "shell/verdict"
+require_relative "shell/pipeline"

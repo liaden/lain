@@ -11,6 +11,26 @@ module Lain
     # fully controls that string (see the plan's "Tool tiers, and where the
     # security boundary is").
     #
+    # == Two arms, chosen by {Shell::Verdict}, and one rendering
+    #
+    # Every call is offered to the verdict first. It answers *"is this command
+    # syntactically literal and fully understood?"* -- never "is it safe" -- and
+    # it is free to abstain, which most commands do.
+    #
+    # * *allow* -- {Shell::Pipeline} runs the RECONSTRUCTED ARGV. No shell is
+    #   started, so a disagreement between that parser and a real shell degrades
+    #   to a broken command rather than an attacker-chosen one. There is
+    #   deliberately no path from an allow back to the string: falling back
+    #   would hand `sh -c` exactly the command the term path was chosen for.
+    # * *anything else* -- the string runs through `sh -c` as it always has,
+    #   under the same gate, with the same approval.
+    #
+    # Both arms render through {.render_output}, so which one ran is not
+    # observable in the tool result. The one measured exception is a shell
+    # BUILTIN with no binary -- `exit 3` is `command not found` on the term arm
+    # -- and {Shell::Pipeline} documents why closing that gap honestly is not
+    # possible.
+    #
     # A PROCESS BOUNDARY IS NOT A SECURITY BOUNDARY. The child inherits our
     # uid, filesystem, and network; Mixlib::ShellOut adds no seccomp, landlock,
     # namespace, or chroot confinement of its own. What it *does* make
@@ -51,9 +71,16 @@ module Lain
       # inline: specs substitute a ShellOut whose TERM->KILL grace is short
       # (mixlib-shellout hardcodes `sleep 3` in reap_errant_child, with no
       # option) without giving up the real process-group kill.
-      def initialize(shell_out_factory: Mixlib::ShellOut.public_method(:new))
+      #
+      # @param verdict [#call] `String -> Shell::Verdict::Decision`, the choice
+      #   of arm. Injected rather than constructed so a spec can pin either arm
+      #   for one command and compare their bytes.
+      def initialize(shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                     verdict: Shell::Verdict.new, pipeline: Shell::Pipeline.new)
         super()
         @shell_out_factory = shell_out_factory
+        @verdict = verdict
+        @pipeline = pipeline
       end
 
       def name = "bash"
@@ -66,11 +93,23 @@ module Lain
 
       # Tier 3: the model fully controls `command`. Gated by Effect::Handler::Gate
       # by default -- see the class comment.
+      #
+      # STAYS TRUE now that a term arm exists, and the reason is that the flag
+      # describes the TOOL, not one call through it: the tool still takes a
+      # string the model wrote. Which calls may skip a human is the escalation
+      # ladder's question, asked per call and answered from the verdict.
       def requires_approval? = true
 
       protected
 
       def perform(input, invocation)
+        decision = @verdict.call(input.command)
+        decision.allow? ? run_term(decision.term, input, invocation) : run_string(input, invocation)
+      end
+
+      private
+
+      def run_string(input, invocation)
         shell_out = build_shell_out(input, invocation)
         shell_out.run_command
         # Exit status rides in the returned content, not `is_error`: a
@@ -80,10 +119,29 @@ module Lain
         # not a subprocess's own exit code.
         Tool::Result.ok(format_output(shell_out))
       rescue Mixlib::ShellOut::CommandTimeout => e
-        Tool::Result.error("command timed out after #{input.timeout || DEFAULT_TIMEOUT}s: #{e.message}")
+        timed_out(input, e)
       end
 
-      private
+      # The same three fields, from the same {WorkerEnv}, rendered through the
+      # same template -- so the arm a call took is not observable in its result.
+      def run_term(term, input, invocation)
+        worker_env = session_of(invocation).worker_env
+        result = @pipeline.call(term,
+                                cwd: worker_env.resolve(input.cwd), env: worker_env.env,
+                                timeout: seconds(input),
+                                stdout_sink: output_sink(invocation, :stdout),
+                                stderr_sink: output_sink(invocation, :stderr))
+        Tool::Result.ok(self.class.render_output(exit_status: result.exit_status,
+                                                 stdout: result.stdout, stderr: result.stderr))
+      rescue Shell::Pipeline::Timeout => e
+        timed_out(input, e)
+      end
+
+      def seconds(input) = input.timeout || DEFAULT_TIMEOUT
+
+      def timed_out(input, error)
+        Tool::Result.error("command timed out after #{seconds(input)}s: #{error.message}")
+      end
 
       # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
       # {CoreExec}. Under the default WorkerEnv (`Dir.pwd`) it is
