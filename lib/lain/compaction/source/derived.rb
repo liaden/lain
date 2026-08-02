@@ -271,11 +271,19 @@ module Lain
 
           private
 
+          # The runs a cut leaves are an interval partition of the span in their
+          # own right, so they are built by the value that owns that shape --
+          # and a refusal in them names `IntervalPartition.covering` rather than
+          # an inner hook nobody asked.
           def runs(span, pinned)
-            span.reject { |index| pinned.include?(index) }
-                .chunk_while { |before, after| after == before + 1 }
-                .map { |run| run.first..run.last }
+            IntervalPartition.covering(span, excluding: pinned, owner: cutter).validated
           end
+
+          # NOT {Strategy::Base#name}, which this class overrides to answer the
+          # INNER strategy. That is right for the journalled edge and wrong here:
+          # computing the runs is this wrapper's own work, and a fault in it must
+          # not be reported against the strategy an operator chose.
+          def cutter = -(self.class.name || self.class.to_s)
         end
         private_constant :PinCuts
       end

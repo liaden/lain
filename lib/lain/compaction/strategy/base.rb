@@ -3,10 +3,12 @@
 module Lain
   module Compaction
     module Strategy
-      # An answer to {Base#propose_ranges} that is not an interval partition of
-      # the span it was asked about. Loud, and named for what it is not: the
-      # conditions it enforces are well-formedness, not style.
-      class NotAPartition < Error; end
+      # The name this namespace keeps for {IntervalPartition::NotAPartition}.
+      # The conditions are the VALUE's, and so is the error -- a lib-level value
+      # raising a compaction-namespaced error would invert the dependency the
+      # extraction exists to fix -- but every rescue site and every spec that
+      # learned this name reaches it here.
+      NotAPartition = IntervalPartition::NotAPartition
 
       # A subclass redefining one of the two methods {Base} defines FOR it.
       class Sealed < Error; end
@@ -103,6 +105,12 @@ module Lain
         SEALED = { ranges: "#propose_ranges, which #ranges validates",
                    collapse: "#blocks, or `elementwise on: :blocks`" }.freeze
 
+        # What a refusal cites as the source of the ranges it refused. Supplied
+        # here because THIS is the caller that called the hook: a partition built
+        # from cut points or from a refinement names its own constructor instead,
+        # so no refusal ever sends a reader to a hook nobody called.
+        HOOK = "#propose_ranges"
+
         # The name this strategy answers to in errors and in the journalled
         # derivation edge. Interned, because an anonymous class's `to_s` is a
         # freshly built MUTABLE String (CLAUDE.md's named trap) and this name is
@@ -127,10 +135,11 @@ module Lain
         # @param messages [Array<Hash>] the rendered messages
         # @param span [Range] the droppable span, as message indices
         # @return [Array<Range>] the sub-spans to collapse: ascending,
-        #   non-overlapping, all inside `span`. Empty means "collapse nothing",
-        #   which is how a strategy declines a turn.
+        #   non-overlapping, all inside `span`, and in {IntervalPartition}'s
+        #   canonical inclusive spelling whatever the hook proposed. Empty means
+        #   "collapse nothing", which is how a strategy declines a turn.
         def ranges(messages, span:)
-          Partition.new(strategy: name, span:, ranges: propose_ranges(messages, span:)).validated
+          IntervalPartition.of(span, propose_ranges(messages, span:), owner: name, provenance: HOOK).validated
         end
 
         # The hook {#ranges} validates. Implement this; call that. It is public
@@ -152,117 +161,6 @@ module Lain
         #   answers no blocks, since that is the unit of the monoid {#blocks}
         #   maps into rather than a blank replacement.
         def collapse(messages) = Replacement.of(answered_blocks(messages))
-
-        # The conditions of an interval partition, and the only place they are
-        # stated. Order matters three times over: a non-collection cannot be
-        # asked for its elements at all, a non-Range cannot be asked whether it
-        # is empty, and ranges out of order would ALSO trip the overlap check,
-        # so being told about an overlap when the real fault is the ordering
-        # sends a reader to the wrong line. Each refusal is stated on its own
-        # terms so that the message names the fault a reader has to fix, rather
-        # than whichever later check happened to trip over it first.
-        Partition = Data.define(:strategy, :span, :ranges) do
-          def validated
-            refuse_answerless
-            refuse_foreign
-            refuse_uncountable
-            refuse_empty
-            refuse_outside
-            refuse_disorder
-            refuse_overlap
-            ranges
-          end
-
-          private
-
-          # FIRST, because everything below asks the proposal a question only a
-          # collection can answer. A strategy whose hook falls off the end (a
-          # guard clause with no else, an `each` where a `map` was meant)
-          # answers `nil`, and `nil.grep_v` named nobody -- a NoMethodError from
-          # inside the validator, about the validator, for a bug in a strategy.
-          def refuse_answerless
-            return if ranges.is_a?(Array)
-
-            raise NotAPartition, "#{strategy} answers #{ranges.inspect} from #propose_ranges; expected an " \
-                                 "Array of Ranges"
-          end
-
-          def refuse_foreign
-            alien = ranges.grep_v(Range)
-            return if alien.empty?
-
-            raise NotAPartition, "#{strategy} answers #{listed(alien)}, which is not a Range"
-          end
-
-          # A range's members ARE message indices -- the caller maps them onto
-          # source turns -- so a Range of anything but Integers is not a smaller
-          # kind of partition, it is a different type of thing. `0.0..1.5` cleared
-          # every check below it (`cover?` compares numerically, and it is
-          # neither empty nor out of order) and died in the CALLER as
-          # `TypeError: can't iterate from Float`, naming nobody. Unbounded ends
-          # are left to #refuse_outside, which has something truer to say about
-          # them.
-          def refuse_uncountable
-            odd = ranges.select { |range| bounded?(range) && !integral?(range) }
-            return if odd.empty?
-
-            raise NotAPartition, "#{strategy} answers #{listed(odd)}, whose endpoints are not Integer message " \
-                                 "indices"
-          end
-
-          def bounded?(range) = !range.begin.nil? && !range.end.nil?
-
-          def integral?(range) = range.begin.is_a?(Integer) && range.end.is_a?(Integer)
-
-          # An empty interval is not a small collapse, it is no collapse, and
-          # answering one is how a strategy would commit a replacement event that
-          # subsumes nothing. Refused on its own terms rather than through
-          # #cover?, which reports `2..1` as "outside 0..3" -- true of nothing,
-          # and it sends the reader looking for a bounds bug.
-          def refuse_empty
-            hollow = ranges.select { |range| hollow?(range) }
-            return if hollow.empty?
-
-            raise NotAPartition, "#{strategy} answers #{listed(hollow)}, an empty range; a range that " \
-                                 "collapses nothing is spelled by leaving it out"
-          end
-
-          def refuse_outside
-            stray = ranges.reject { |range| span.cover?(range) }
-            return if stray.empty?
-
-            raise NotAPartition, "#{strategy} answers #{listed(stray)}, outside the span it was asked " \
-                                 "about, #{span.inspect}"
-          end
-
-          def refuse_disorder
-            pair = ranges.each_cons(2).find { |before, after| before.first > after.first }
-            return if pair.nil?
-
-            raise NotAPartition, "#{strategy} answers #{pair.last.inspect} after #{pair.first.inspect}, " \
-                                 "so its ranges are not in ascending order"
-          end
-
-          def refuse_overlap
-            pair = ranges.each_cons(2).find { |before, after| before.cover?(after.first) }
-            return if pair.nil?
-
-            raise NotAPartition, "#{strategy} answers #{pair.first.inspect} and #{pair.last.inspect}, " \
-                                 "which overlap at #{pair.last.first}"
-          end
-
-          # Bounded at both ends and covering nothing. An unbounded range is left
-          # to #refuse_outside, which is the check that has something true to say
-          # about it.
-          def hollow?(range)
-            return false if range.begin.nil? || range.end.nil?
-
-            range.exclude_end? ? range.begin >= range.end : range.begin > range.end
-          end
-
-          def listed(ranges) = ranges.map(&:inspect).join(", ")
-        end
-        private_constant :Partition
 
         # Defined LAST, so Base's own definitions above are not refused by it,
         # and on the singleton so it fires for every subclass -- including one
