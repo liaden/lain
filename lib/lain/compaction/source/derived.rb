@@ -269,6 +269,15 @@ module Lain
 
           def blocks(messages) = @inner.blocks(messages)
 
+          # THE ONE THE COLLAPSE TAKES, and it has to be forwarded separately:
+          # this wrapper sits between the derivation and EVERY operator-supplied
+          # strategy (`:103`), so an inner {Strategy::Composed} -- which routes a
+          # collapse by the range's tag and implements no `#blocks` of its own --
+          # reached the delegation above, fell through to
+          # {Strategy::Base#blocks}, and died of NotImplementedError with its
+          # ranges perfectly correct.
+          def blocks_for(messages, range) = @inner.blocks_for(messages, range)
+
           private
 
           # The runs a cut leaves are an interval partition of the span in their

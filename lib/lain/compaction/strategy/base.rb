@@ -22,8 +22,8 @@ module Lain
       # ...and the two questions a CALLER asks, neither of which a strategy
       # writes:
       #
-      #   ranges(messages, span:) -> Array<Range>   # the proposal, validated
-      #   collapse(messages)      -> Replacement    # the blocks, wrapped
+      #   ranges(messages, span:)        -> Array<Range>  # the proposal, validated
+      #   collapse(messages, range: nil) -> Replacement   # the blocks, wrapped
       #
       # It is the sibling of {Summarizer::Base} one level up: that duck answers
       # two questions about a single tool result, this one answers two about a
@@ -99,6 +99,8 @@ module Lain
       # vocabulary at all, and an includer must freeze itself to pass the
       # shareability proxy anyway.
       class Base
+        include Algebra::CommutativeMonoid
+
         # What a subclass may not redefine, and what to write instead. The hint
         # is half the value: the mistake this catches is a reasonable one, made
         # by someone who read the card's duck section and not this file.
@@ -157,10 +159,44 @@ module Lain
           raise NotImplementedError, "strategy #{name} must implement #blocks(messages) -> Array<Hash>"
         end
 
+        # Two strategies claiming disjoint stretches of one span, run as one --
+        # {Composed}, and the operation this class declares a commutative monoid
+        # at the foot of the file. Spelled `|` because what it does is take the
+        # UNION of two range-sets, and because the partiality reads as a set
+        # operation: an overlap refuses rather than picking a winner.
+        def |(other) = Composed.new(self, other)
+
+        # @param messages [Array<Hash>] one range's worth of messages
+        # @param range [Range, nil] which sub-span they were sliced from.
+        #   {Derivation}'s fold already holds it at the call site and passes it
+        #   through; nil is "a slice nobody proposed", which is how every direct
+        #   caller asks.
         # @return [Replacement] what replaces one range -- DROP if the collapse
         #   answers no blocks, since that is the unit of the monoid {#blocks}
         #   maps into rather than a blank replacement.
-        def collapse(messages) = Replacement.of(answered_blocks(messages))
+        def collapse(messages, range: nil) = Replacement.of(answered_blocks(messages, range))
+
+        # The blocks for ONE proposed range, which is where composition enters.
+        #
+        # A strategy that proposed its own ranges answers its own {#blocks} and
+        # never reads the range -- so this is invisible to every hook in the
+        # tree, and {#blocks} keeps its one-argument shape, which it has to:
+        # {Algebra::Elementwise} GENERATES {Elide}'s from a per-message map and
+        # the generated method takes exactly one positional argument. Widening
+        # the hook itself would mean widening that generator, one structure up,
+        # for a parameter no elementwise map can use.
+        #
+        # {Composed} is the one strategy that overrides it, because a range it
+        # answers was proposed by one of its two operands and only that operand
+        # can collapse it. It is public so a composition can forward to the
+        # operand that owns the range without reaching through its visibility.
+        def blocks_for(messages, _range) = blocks(messages)
+
+        # The strategies this one is made of: itself, for anything that is not a
+        # composition. {Composed} is the only strategy that answers more, and
+        # this is what lets it check that a range it is asked to collapse was
+        # tagged by one of its own leaves rather than merely carrying a tag.
+        def operands = [self]
 
         # Defined LAST, so Base's own definitions above are not refused by it,
         # and on the singleton so it fires for every subclass -- including one
@@ -181,13 +217,22 @@ module Lain
         # hand-written per-element map by others, so a wrong shape is a mistake
         # that gets MADE -- and {Replacement}, which would catch it a moment
         # later, cannot name whose fault it is.
-        def answered_blocks(messages)
-          answered = blocks(messages)
+        def answered_blocks(messages, range)
+          answered = blocks_for(messages, range)
           return answered if answered.is_a?(Array)
 
           raise NotBlocks, "strategy #{name} answered #{answered.inspect} from #blocks; " \
                            "expected an Array of content blocks"
         end
+
+        # BELOW `#|`, which it names, and outside `private`, which a declaration
+        # is not. It is also below `.method_added`, which it never reaches: that
+        # hook fires for a `def`, and this is a class-level verb call.
+        #
+        # The unit is an INSTANCE of a subclass built after this class body
+        # closes, which is exactly {Context::Combinator}'s situation with
+        # {Context::Identity} and exactly what {Algebra.later} exists for.
+        commutative_monoid on: :|, identity: Algebra.later { Identity.new }
       end
     end
   end

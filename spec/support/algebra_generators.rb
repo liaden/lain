@@ -24,7 +24,14 @@ module AlgebraGenerators
       [Lain::Timeline, :causal_meets] => Timelines.causal_meets,
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.merge(strategy_claims).merge(middleware_claims).merge(toolset_claims).freeze
+    }.merge(strategy_claims).merge(middleware_claims).merge(toolset_claims).merge(partition_claims).freeze
+  end
+
+  # {Lain::IntervalPartition}'s refinement meet, kept apart from `registered`
+  # for the same reason the three below it are: that list is at
+  # Metrics/MethodLength's limit.
+  def self.partition_claims
+    { [Lain::IntervalPartition, :meet] => Partitions.refinement }
   end
 
   # The compaction strategies' claims, kept in their own hash rather than in the
@@ -33,6 +40,7 @@ module AlgebraGenerators
   # summarizing and eliding strategies next.
   def self.strategy_claims
     { [Lain::Compaction::Strategy::Replacement, :+] => Replacements.concatenation,
+      [Lain::Compaction::Strategy::Base, :|] => Strategies.composition,
       [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
       [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks,
       [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks }
@@ -325,6 +333,59 @@ module AlgebraGenerators
     end
   end
 
+  # == The population is EXHAUSTIVE, not sampled
+  #
+  # There are 34 partial interval partitions of `0..3` and they are all here.
+  # A semilattice population is normally grown at random ({MeetSemilatticePopulations}
+  # builds a forest, because a hand-picked shape is where an associativity bug
+  # hides) -- but this order is small enough to enumerate outright, so the same
+  # concern is answered by leaving nothing out rather than by sampling well.
+  #
+  # `ancestor_of:` is REFINEMENT and not ancestry: the group's default asks
+  # `#ancestor_of?`, which this value does not answer, and the order the meet is
+  # a meet OF is "every interval of mine sits inside one of yours".
+  module Partitions
+    module_function
+
+    SPAN = 0..3
+
+    # {AlgebraLaws::WITNESSES} takes the exhaustive battery's four members from
+    # the END of a population, so the four that bend these laws hardest go last:
+    # the bottom (claiming nothing), the top (the whole span uncut), and two
+    # GAPPED partitions. A gap is what separates the common refinement from a
+    # naive union of cut points, and it is where a wrong meet stops being a
+    # lower bound at all.
+    HARDEST = [[], [0..3], [0..1, 3..3], [0..0, 1..2]].freeze
+
+    def refinement
+      drawn = population
+      { population: -> { drawn }, ancestor_of: ->(finer, coarser) { finer.refines?(coarser) } }
+    end
+
+    def population
+      hardest = HARDEST.map { |ranges| partition(ranges) }
+      (every_partition(SPAN) - hardest) + hardest
+    end
+
+    # Every ascending, non-overlapping selection of intervals inside the span --
+    # which is every value {Lain::IntervalPartition} will accept over it, the
+    # empty one included.
+    def every_partition(span)
+      subsets(intervals(span)).select { |ranges| disjoint?(ranges) }.map { |ranges| partition(ranges) }
+    end
+
+    def intervals(span) = span.flat_map { |first| (first..span.max).map { |last| first..last } }
+
+    def subsets(pool) = (0..pool.size).flat_map { |size| pool.combination(size).to_a }
+
+    # Ascending AND non-overlapping in one reading: `combination` preserves the
+    # pool's order, so a selection whose every neighbour pair is separated is
+    # already sorted.
+    def disjoint?(ranges) = ranges.each_cons(2).all? { |before, after| before.max < after.first }
+
+    def partition(ranges) = Lain::IntervalPartition.of(SPAN, ranges, owner: "a partition")
+  end
+
   module Spans
     module_function
 
@@ -425,6 +486,72 @@ module AlgebraGenerators
 
   module Strategies
     module_function
+
+    # The one span every composition claim is read over, and the four zones it
+    # divides into. Four because the widest law in the group -- associativity --
+    # draws THREE times, so any three consecutive draws have to be three
+    # different zones; a cycle of three would hand associativity `a | a` on
+    # every third iteration.
+    COMPOSITION_SPAN = 0..15
+    ZONE = 4
+    ZONES = 4
+
+    # == Why the population is a fixed cycle of zone-disjoint strategies
+    #
+    # `#|` is PARTIAL -- two strategies whose ranges overlap refuse, and `a | a`
+    # always overlaps -- while the shared monoid group draws its population
+    # through a NULLARY `generator` called independently per law, up to three
+    # times in one check. "Draw a disjoint pair" is therefore not expressible as
+    # a filter over an already-built pool: nothing downstream of the generator
+    # can see the other draws.
+    #
+    # So the pool is built disjoint instead. Four strategies, each owning one
+    # quarter of {COMPOSITION_SPAN} and proposing a real range inside it, handed
+    # out in a fixed cycle: any three consecutive draws are three different
+    # zones, so no law can be given an overlapping pair and none can be given
+    # `a | a`. The zones carry NON-EMPTY range-sets, so the laws are read over a
+    # composition that actually composes something -- an all-Identity pool would
+    # satisfy every law about nothing.
+    #
+    # And no draw is built THROUGH `#|` (follow-up A-1): {Combinators.draw_from}
+    # and {Middlewares.draw_from} fold their pool with `reduce(Identity, :>>)`,
+    # so a left-absorbing `#>>` collapses every draw onto the unit and both
+    # monoid laws hold vacuously. Break `#|` here in any way at all and these
+    # four are untouched -- a left-absorbing `#|` answers only the left operand's
+    # zone, which the commutativity law reads as different ranges out and fails.
+    def composition
+      drawn = Array.new(ZONES) { |zone| zoned(zone) }.cycle
+      { operation: ->(a, b) { a | b }, generator: -> { drawn.next }, equal: observationally_equal }
+    end
+
+    # One zone's worth of one span, collapsed to a marker naming the zone. The
+    # range stops one index short of its zone so consecutive zones are separated
+    # by a retained index rather than merely adjacent -- adjacency is legal, and
+    # an off-by-one that merged two zones would then be invisible.
+    def zoned(zone)
+      first = zone * ZONE
+      Class.new(Lain::Compaction::Strategy::Base) do
+        define_method(:name) { -"zone #{zone}" }
+        define_method(:propose_ranges) { |_messages, **| [first..(first + ZONE - 2)] }
+        define_method(:blocks) { |_messages| [{ "type" => "text", "text" => "<zone #{zone}>" }] }
+      end.new.freeze
+    end
+
+    # Two composed strategies are never `==` as objects, so equality is
+    # OBSERVATIONAL -- {Combinators.observationally_equal}'s shape. What is
+    # observed is both halves of the seam and not only the proposal: the ranges
+    # answered over one span AND what each of them collapses to. Ranges alone
+    # would leave the dispatch unread, which is the half `a | Identity`
+    # collapsing exactly as `a` alone turns on.
+    def observationally_equal
+      probe = Array.new(COMPOSITION_SPAN.size) { |index| message("m#{index}") }
+      observe = lambda do |strategy|
+        strategy.ranges(probe, span: COMPOSITION_SPAN).map do |range|
+          [range.first, range.max, strategy.collapse(probe[range], range:).content]
+        end
+      end
+      ->(a, b) { observe.call(a) == observe.call(b) }
+    end
 
     # {Lain::Compaction::Strategy::Identity} proposes no ranges whatever it is
     # offered, so what the purity laws read here is the shareability proxy and

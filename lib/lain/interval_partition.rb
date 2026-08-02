@@ -39,6 +39,8 @@ module Lain
   # citing a hook nobody called sends a reader to a strategy that is not at
   # fault.
   class IntervalPartition
+    include Algebra::MeetSemilattice
+
     # An answer that is not an interval partition of the span it was asked
     # about. Loud, and named for what it is not: the conditions it enforces are
     # well-formedness, not style.
@@ -46,6 +48,7 @@ module Lain
 
     OF = "IntervalPartition.of"
     COVERING = "IntervalPartition.covering"
+    MEET = "IntervalPartition#meet"
 
     # @param span [Range] the indices the ranges must fall inside
     # @param ranges [Array<Range>] the proposal, as proposed
@@ -92,6 +95,9 @@ module Lain
 
     private_class_method :runs, :refuse_unwalkable, :refuse_unaskable
 
+    Proposal = Data.define(:owner, :span, :ranges, :provenance)
+    private_constant :Proposal
+
     # The answer AS PROPOSED, and the seven conditions that decide whether it
     # names a partition. A separate object because the two hold different things:
     # the partition holds the canonical spelling, and a refusal has to quote what
@@ -110,7 +116,14 @@ module Lain
     # fault is the ordering sends a reader to the wrong line. Each refusal is
     # stated on its own terms so that the message names the fault a reader has to
     # fix, rather than whichever later check happened to trip over it first.
-    Proposal = Data.define(:owner, :span, :ranges, :provenance) do
+    #
+    # Reopened rather than written as a `Data.define ... do` block -- which is
+    # this file's own idiom one level up, and for the same reason ({Request}'s
+    # trap). It is also what {Metrics/ClassLength} was reporting: the seven
+    # refusals are a second object's worth of code, and a block body counts
+    # against the class that lexically contains it while a reopened one is
+    # measured as the separate object it already is.
+    class Proposal
       def validated
         refuse_answerless
         refuse_foreign
@@ -210,7 +223,6 @@ module Lain
 
       def listed(ranges) = ranges.map(&:inspect).join(", ")
     end
-    private_constant :Proposal
 
     # Refused as proposed, then stored canonical. The owner is interned because
     # an anonymous class's `to_s` and every interpolation build a MUTABLE String
@@ -237,7 +249,72 @@ module Lain
 
     def hash = [IntervalPartition, span, ranges].hash
 
+    # The common refinement of two partitions of one span: cut wherever EITHER
+    # of them cuts, which for intervals is the pairwise intersection of their
+    # ranges. So the result's cut points are the union of both sets, it is finer
+    # than each, and meeting a partition with the trivial one -- the whole span,
+    # uncut -- answers the other operand itself.
+    #
+    # It covers only what BOTH cover, and that is the half a set-partition
+    # reading does not have: these partitions are partial (a gap is a stretch no
+    # range claims, which the derivation retains verbatim), so a refinement that
+    # filled in a gap because the other operand claimed it would be proposing a
+    # collapse neither asker asked for.
+    #
+    # {Compaction::Strategy::Composed} is the caller, and it asks the question
+    # backwards: two strategies may be composed only when they claim disjoint
+    # stretches, which is exactly "their meet is empty".
+    #
+    # It is the GREATEST lower bound and not merely a lower bound, under the
+    # refinement order {#refines?} names -- which is why it is declared a
+    # semilattice at the foot of this class rather than described here. The
+    # partiality (two different spans refuse) is {Timeline#meet}'s exactly:
+    # that one is total relative to a store and raises {Store::CrossStore}
+    # across stores, and {Algebra::MeetSemilattice}'s own doc calls a bottom
+    # "relative to a store... a fact about the structure rather than a value
+    # the structure holds". Substitute span for store and it is this class.
+    def meet(other)
+      refuse_mismatched(other)
+      IntervalPartition.new(owner: "#{owner} meet #{other.owner}", span:, ranges: intersections(other),
+                            provenance: MEET)
+    end
+
+    # Is every interval of this one inside an interval of `coarser`? The order
+    # {#meet} is a meet OF, said as a predicate so that "finer than each" is a
+    # question a caller can ask rather than a claim only this comment makes.
+    def refines?(coarser)
+      span == coarser.span && ranges.all? { |mine| coarser.ranges.any? { |theirs| theirs.cover?(mine) } }
+    end
+
     private
+
+    def intersections(other)
+      ranges.flat_map { |mine| other.ranges.filter_map { |theirs| shared(mine, theirs) } }
+    end
+
+    # Both operands are ascending and non-overlapping, so walking one against
+    # the other in order yields the intersections in order too -- there is
+    # nothing to sort, and #refuse_disorder would say so if there were.
+    #
+    # A PLAIN Range, even when both operands were owner-tagged
+    # ({Compaction::Strategy::Composed::Owned}). #canonical goes to some length
+    # to let a tagged range survive #validated by identity; a refinement is the
+    # opposite case, and deliberately: an interval two strategies both claim has
+    # no single owner, and finding exactly those intervals is what the meet is
+    # for.
+    def shared(one, another)
+      first = [one.first, another.first].max
+      last = [one.max, another.max].min
+
+      first..last unless last < first
+    end
+
+    def refuse_mismatched(other)
+      return if span == other.span
+
+      raise NotAPartition, "#{owner} and #{other.owner} partition different spans, #{span.inspect} and " \
+                           "#{other.span.inspect}; two spans have no common refinement"
+    end
 
     # `0..2` and `0...3` are one interval with two spellings, and both were paid
     # for: the `#max`-never-`#last` dance in {Compaction::Derivation} and the
@@ -262,5 +339,12 @@ module Lain
       range.is_a?(Range) && range.exclude_end? &&
         range.begin.is_a?(Integer) && range.end.is_a?(Integer) && range.begin < range.end
     end
+
+    # BELOW #meet, which it names. Prose and not a value, exactly as
+    # {Timeline}'s two declarations are: the bottom that makes the meet total is
+    # the partition claiming nothing, and there is no one of those to record --
+    # a partition carries its span, so the bottom is a different value for every
+    # span and is a fact about the structure rather than a member of it.
+    meet_semilattice on: :meet, bottom: "the empty partition, per span"
   end
 end

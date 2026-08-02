@@ -337,8 +337,12 @@ module Lain
 
         def retained(indices) = turns[indices].map { |turn| Write.retaining(turn) }
 
+        # The range travels WITH its slice. The fold already holds it, and a
+        # {Strategy::Composed} needs it to route the collapse to whichever
+        # operand proposed it -- the one fact about a range that the slice
+        # cannot carry. Every other strategy ignores it.
         def replacement(range)
-          collapse = strategy.collapse(messages[range])
+          collapse = strategy.collapse(messages[range], range:)
 
           Write.replacing(collapse.content, subsumed(range)) unless collapse.drop?
         end

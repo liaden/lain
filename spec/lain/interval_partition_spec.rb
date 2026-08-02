@@ -194,6 +194,78 @@ RSpec.describe Lain::IntervalPartition do
     end
   end
 
+  # The combination `chunk-derived-context-timeline.md` follow-up 3 deferred as
+  # speculative, un-deferred by Joel on 2026-07-29 because building it is what
+  # proves this extraction: `Compaction::Strategy::Composed` refuses an overlap
+  # by asking two proposals what they meet in.
+  describe "the common refinement two partitions meet in" do
+    def over(ranges, owner:, span: 0..7) = described_class.of(span, ranges, owner:)
+
+    it "cuts wherever either operand cuts" do
+      halves = over([0..3, 4..7], owner: "Elide")
+      thirds = over([0..1, 2..5, 6..7], owner: "Summarizing")
+
+      expect(halves.meet(thirds).validated).to eq([0..1, 2..3, 4..5, 6..7])
+    end
+
+    it "reads two spellings of one interval as one interval" do
+      expect(over([0...4], owner: "a").meet(over([0..3], owner: "b")).validated).to eq([0..3])
+    end
+
+    it "is finer than both operands, and coarser than neither" do
+      halves = over([0..3, 4..7], owner: "Elide")
+      thirds = over([0..1, 2..5, 6..7], owner: "Summarizing")
+      met = halves.meet(thirds)
+
+      expect([met.refines?(halves), met.refines?(thirds)]).to eq([true, true])
+      expect([halves.refines?(met), thirds.refines?(met)]).to eq([false, false])
+    end
+
+    it "keeps only what both partitions cover, so a gap in either is a gap in it" do
+      expect(over([0..3], owner: "a").meet(over([2..7], owner: "b")).validated).to eq([2..3])
+      expect(over([0..1], owner: "a").meet(over([4..5], owner: "b")).validated).to be_empty
+    end
+
+    it "answers the other operand itself when one of them is the trivial partition" do
+      trivial = over([0..7], owner: "trivial")
+      other = over([0..1, 4..5], owner: "other")
+
+      expect(trivial.meet(other)).to eq(other)
+      expect(other.meet(trivial)).to eq(other)
+    end
+
+    # A meet over the partitions of ONE span, said as the laws rather than as
+    # prose. The registry proves the same four laws over an exhaustive
+    # population; this example is the readable statement of them.
+    it "is idempotent, commutative and associative over one span" do
+      a = over([0..3, 4..7], owner: "a")
+      b = over([0..1, 2..5, 6..7], owner: "b")
+      c = over([0..0, 1..7], owner: "c")
+
+      expect(a.meet(a)).to eq(a)
+      expect(a.meet(b)).to eq(b.meet(a))
+      expect(a.meet(b).meet(c)).to eq(a.meet(b.meet(c)))
+    end
+
+    it "refuses two partitions of different spans, naming both" do
+      expect { over([0..1], owner: "a", span: 0..3).meet(over([0..1], owner: "b", span: 0..7)) }
+        .to raise_error(described_class::NotAPartition, /a and b.*0\.\.3 and 0\.\.7/)
+    end
+
+    it "names both askers, so a refusal about the refinement cites whose ranges met" do
+      met = over([0..3], owner: "Elide").meet(over([2..7], owner: "Summarizing"))
+
+      expect(met.owner).to eq("Elide meet Summarizing")
+    end
+
+    it "is a deeply frozen, shareable value like any other partition" do
+      met = over([0..3], owner: "a").meet(over([2..7], owner: "b"))
+
+      expect(met).to be_frozen
+      expect(Ractor.shareable?(met)).to be(true)
+    end
+  end
+
   describe "the shape of the object" do
     it "is a deeply frozen, shareable value" do
       value = partition([0..1, 2..3])

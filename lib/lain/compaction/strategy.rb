@@ -5,6 +5,9 @@ require_relative "strategy/base"
 require_relative "strategy/identity"
 require_relative "strategy/elide"
 require_relative "strategy/summarizing"
+# Last: it composes the others, and its own refusal subclasses a value-level
+# error rather than this file's alias, which is assigned below these requires.
+require_relative "strategy/composed"
 
 module Lain
   module Compaction
@@ -15,7 +18,8 @@ module Lain
     #
     # {Base} is the duck -- which sub-spans to collapse, and what replaces one --
     # and {Identity} is its Null. {Replacement} is what a collapse answers, and
-    # DROP is the unit that makes a range vanish.
+    # DROP is the unit that makes a range vanish. {Composed} runs two of them
+    # over one span, which is a commutative monoid with {Identity} as its unit.
     module Strategy
     end
   end
