@@ -1,56 +1,75 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module CLI
     # The live switches a session's commands flip (T14), lifted out of {Wiring}
-    # because "which switches exist, and what they start as" is its own
-    # responsibility (the Metrics trip said so: extract, do not loosen):
+    # because "which switches exist, what they start as, and what a flip
+    # re-binds" is its own responsibility (the Metrics trip said so: extract, do
+    # not loosen):
     #
     # * ONE {Approval::PolicySwitch} the Gate holds for the whole session --
     #   `/yolo` flips the delegate inside it, Gate stays construction-fixed.
-    #   `--yolo` starts it on {Gate::ApproveAll} and wires NO queue; otherwise
-    #   the {Approval::Queue} is both the initial policy and the parked list
-    #   `/approve` drains ({#approvals} is nil under --yolo, so Wiring's
-    #   callers keep their existing no-queue paths).
+    #   `--yolo` wires NO queue ({#approvals} is nil then, so Wiring's callers
+    #   keep their existing no-queue paths); otherwise the {Approval::Queue} is
+    #   both the parked list `/approve` drains and, through the ladder, the
+    #   policy the asking rungs resolve to.
     # * ONE {Context::ModelSwitch} the main agent's Context reads at render
     #   time -- `/model` writes it, {#graft} installs it.
     # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
-    #   writes it, the prompt and the HUD read it. `--yolo` starts it on `auto`,
-    #   the same flag the approval half above reads, so the two can never
-    #   disagree about what the operator asked for.
+    #   writes it, the prompt and the HUD read it. `--yolo` starts it on `auto`.
+    # * ONE {LiveToolset} the Agent and its executor are BUILT with -- the
+    #   capability set a posture attenuates, re-bound in place (T10).
+    #
+    # == The flag is read once, and the ladder says the rest
+    #
+    # `--yolo` used to be read twice, once per axis, with a comment promising the
+    # two could never disagree. They no longer can, because it is read once: it
+    # picks the starting {Mode}, and {Mode::Resolution} answers the gate policy
+    # and the capability set that mode implies. Nothing here re-states "yolo
+    # means approve everything" -- {Mode::Posture}'s table does, in one place,
+    # for the starting mode and for every flip after it.
     #
     # Every switch journals its flips to the SAME journal approval decisions
     # land in: on a study bench "who flipped what, when" is evidence.
     class Switchboard
-      # All three switches live HERE rather than in {Wiring} for a mechanical
+      # All four slots live HERE rather than in {Wiring} for a mechanical
       # reason, not a tidiness one: each needs the run's `journal:`, and Wiring's
       # only source for one is `chronicle.record_journal`, which OPENS a file per
       # call (/dev/null under --no-journal) -- the leak wiring.rb:363-366
       # documents and fixed for #goal_driver. This class resolves that journal
-      # exactly once and builds all three over it.
-      attr_reader :approvals, :policy_switch, :model_switch, :mode_switch
+      # exactly once and builds all of them over it.
+      attr_reader :approvals, :policy_switch, :model_switch, :mode_switch, :toolset
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
       # the gate) -- then builds the switches over it, reading the surface
       # flags (`--yolo`, `--auto-approve`) off the CLI options itself.
-      def self.for(chronicle:, options:, model:)
-        new(journal: chronicle.record_journal, model:, yolo: options[:yolo])
+      #
+      # `toolset:` is the run's BASE capability set, and base is the whole point:
+      # attenuation is monotone, so every posture resolves from the set the
+      # session was built with and never from what the previous posture left
+      # behind (see {Mode::Resolution}'s note on `base:`).
+      def self.for(chronicle:, options:, model:, toolset:)
+        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:)
       end
 
       # @param journal [#record] where flips and approval decisions land
       # @param yolo [Boolean] start approving everything, with no queue
       # @param model [String] the model in force until the first /model
-      def initialize(journal:, yolo:, model:)
+      # @param toolset [Lain::Toolset] the run's full capability set. Required,
+      #   with no empty-set default, for the reason build_agent's `session:` is:
+      #   a board built without one resolves every posture against nothing, so
+      #   the model would be shown no tools at all and `/mode plan` would raise
+      #   {Toolset::UnknownTool} on a name the run really does hold. A forgotten
+      #   collaborator must be an ArgumentError here, not a mystery one turn on.
+      def initialize(journal:, yolo:, model:, toolset:)
         @approvals = yolo ? nil : Approval::Queue.new(journal:)
-        @policy_switch = Approval::PolicySwitch.new(@approvals || Effect::Handler::Gate::ApproveAll.new, journal:)
+        @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        # `--yolo` IS the auto posture -- the same flag, read once, expressed on
-        # both axes. This establishes WHERE the live mode lives; T10 owns making
-        # a switch DO something, by re-binding the gate policy and the toolset
-        # the posture resolves to. Until then a flip journals and is read by the
-        # prompt and the HUD, and changes no capability.
-        @mode_switch = Mode::Switch.new(Mode.new(posture: yolo ? :auto : :accept_edits), journal:)
+        seed(Mode.new(posture: yolo ? :auto : :accept_edits), journal:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY
@@ -58,11 +77,11 @@ module Lain
       def graft(context) = context.with_model(@model_switch)
 
       # The session's approval gate over `inner`: the Gate holds this board's
-      # ONE policy switch, so /yolo flips reach it while the Gate itself stays
-      # construction-fixed.
+      # ONE policy switch, so /yolo flips and posture flips both reach it while
+      # the Gate itself stays construction-fixed.
       def gate(inner:) = Effect::Handler::Gate.new(policy: policy_switch, inner:)
 
-      # This board's contribution to the {Command::Surface}: the two switches,
+      # This board's contribution to the {Command::Surface}: the three switches,
       # plus /approve's inline drain prompt over the SAME conductor-routed
       # reader the Repl's watch surface uses (see Repl::ApprovalSurfaces#approval_surface's WHY).
       def surface_kwargs(conductor:, tty:)
@@ -71,8 +90,162 @@ module Lain
 
       private
 
+      # The starting mode's resolution seeds both live slots DIRECTLY rather
+      # than through {#apply}, because construction must journal nothing: the
+      # initial policy is the wiring's choice and is already visible in the
+      # session's flags, which is the rule {Approval::PolicySwitch} and
+      # {Mode::Switch} each state for themselves.
+      def seed(initial, journal:)
+        resolution = resolve(initial)
+        @resolved = resolution.toolset
+        @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
+        @toolset = LiveToolset.new(-> { @resolved })
+        @mode_switch = BoundSwitch.new(Mode::Switch.new(initial, journal:),
+                                       resolve: method(:resolve), apply: method(:apply))
+      end
+
+      # The posture's declared symbols as this session's live collaborators.
+      # Pure, and it raises before anything moves -- {Toolset::UnknownTool} when
+      # a posture names a tool this run does not hold, and the refusal below.
+      #
+      # The sentinel is how the refusal OBSERVES the answer instead of re-asking
+      # the question. Testing `posture.gate_policy == :queue` here would be a
+      # second reader of {Mode::Posture}'s table, and a future rung whose symbol
+      # differs but which still resolves to the queue slot would walk straight
+      # past it and be handed the fallback -- the same degrade, through a new
+      # door. Passing a value that IS NOT a policy and asking whether the
+      # resolution handed it back reads no table at all: whatever the ladder
+      # grows, "this rung wanted the queue" is exactly "the queue arm fired".
+      def resolve(mode)
+        resolution = Mode::Resolution.for(mode:, base: @base, queue: @approvals || NO_QUEUE)
+        refuse_queueless(mode.posture) if resolution.gate_policy.equal?(NO_QUEUE)
+        resolution
+      end
+
+      # `/yolo off`'s doctrine one rung up, and for a sharper reason than that
+      # one: a --yolo session wired no queue AND no `/approve` drain to answer
+      # it, so building one on demand would not restore `manual` -- it would
+      # park every gated call until the fail-closed timeout denied it, a THIRD
+      # arm the operator never asked for. Handing the fallback policy over
+      # instead is the other degrade, a run journalled as `manual` that approves
+      # everything, which is precisely what {Mode::Resolution} refuses a nil
+      # `queue:` to prevent. So the flip refuses, and names the way out: the
+      # choice was made at the command line and only the command line can unmake
+      # it.
+      def refuse_queueless(posture)
+        raise Error, "no approval queue in this session (started with --yolo); the #{posture.name} posture parks " \
+                     "gated calls on one, so there is nothing for it to ask through -- restart without --yolo " \
+                     "to use it"
+      end
+
+      # What a flip DOES. The gate policy goes through the ONE PolicySwitch
+      # /yolo also writes, so a transcript reads as a single policy history and
+      # the last flip wins regardless of which surface made it; the capability
+      # set is re-bound in the slot the Agent and the executor already hold.
+      #
+      # `snapshot_scope` is deliberately NOT bound here: {Workspace::Snapshot}
+      # primes its scope against a root at construction, and the Agent's
+      # `snapshot_writer:` has no live slot yet. That rung of the ladder is owed.
+      def apply(resolution, surface:)
+        @policy_switch.switch(resolution.gate_policy, surface:)
+        @resolved = resolution.toolset
+      end
+
       def prompt(conductor:, tty:)
         Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
+      end
+
+      # Stands where the queue would be for a session that has none, so the
+      # resolution can be ASKED whether the posture wanted one. Frozen and
+      # private: it must never reach a gate, and it cannot -- #resolve raises
+      # the moment it comes back.
+      NO_QUEUE = Object.new.freeze
+      private_constant :NO_QUEUE
+
+      # The capability set the Agent and {Effect::Handler::Live} are BUILT with,
+      # so a posture flip can change what the model is shown without rebuilding
+      # either. Exactly {Approval::PolicySwitch}'s shape one axis over, and for
+      # the same seam reality: both holders are construction-fixed, so the live
+      # thing has to be a slot they already have.
+      #
+      # == It is a read-only FACE, and the writer stays on the board
+      #
+      # This object is frozen and has no writer at all: it reads `@resolved`
+      # through a thunk, and only {Switchboard#apply} moves that. The obvious
+      # shape -- a public `#bind` mirroring {Approval::PolicySwitch#switch} --
+      # was built first and rejected at review, because it is not the same kind
+      # of write. Its three siblings journal every flip with the surface that
+      # made it; a `#bind` on this reader would be the one authorization write
+      # in the family that is unattributable, sitting in public on `agent.toolset`
+      # where `bind(Toolset.new)` disarms a live session to zero tools, writes no
+      # journal line, and leaves the mode slot still reading `accept_edits`. In a
+      # codebase whose premise is "possession is authorization", the object that
+      # IS the possession must not offer a silent disarm.
+      #
+      # It delegates the model-facing surface and NOTHING else -- the rendered
+      # schema, the `include?`/`fetch` pair Live authorizes and dispatches with,
+      # and the Enumerable seam {Agent::ToolRunner} harvests answered questions
+      # through. Not a `SimpleDelegator`: `only`/`except` deliberately do not
+      # pass through, because attenuating the live slot would answer a plain
+      # Toolset and read like a second, competing expression of the ladder.
+      #
+      # `==` and `hash` are deliberately absent, so `live == live.current` is
+      # false in both directions even though {Toolset#==} exists: this is a slot,
+      # not a value, and two slots holding equal sets are still two sessions.
+      # Compare `live.current`, or `live.digest`, and never the face.
+      class LiveToolset
+        include Enumerable
+
+        delegate :to_schema, :include?, :fetch, :[], :each, :names, :digest, :size, :empty?, :to_s, to: :current
+
+        # @param source [#call] answers the {Toolset} in force right now
+        def initialize(source)
+          @source = source
+          freeze
+        end
+
+        # Read every time rather than memoized: being late is the entire job.
+        def current = @source.call
+
+        def inspect = "#<#{self.class} #{self}>"
+      end
+
+      # The {Mode::Switch} the command surface writes, decorated so a flip does
+      # something. T5 established WHERE the live mode lives and left the doing
+      # to this card; the doing is one ordering, and the order is the contract:
+      #
+      #   resolve  -- pure, and raises here if the mode cannot be bound at all
+      #   switch   -- the slot moves and the flip is journaled
+      #   apply    -- the gate policy and the capability set follow it
+      #
+      # Resolving FIRST is what keeps a refused flip out of the journal
+      # entirely: the Journal never records a mode the session then failed to
+      # enter. Only that half is enforced. The converse -- that the harness is
+      # never in a mode the Journal missed -- rests on `apply` not raising, and
+      # nothing here would catch it if it did: the record would be written and
+      # the gate would still be on the old policy. Unreachable today (`apply`
+      # only calls a switch and an assignment, and everything that CAN fail
+      # failed in `resolve`), and stated rather than claimed away, because the
+      # day `apply` grows a fallible step is the day the order needs revisiting.
+      #
+      # A decorator rather than a hook on {Mode::Switch} because the switch is a
+      # delegating VALUE -- it holds a Mode and a journal, and nothing about
+      # "what a session re-binds when its posture changes" is its question.
+      class BoundSwitch
+        delegate :current, :posture, :layers, :describe, to: :@switch
+
+        def initialize(switch, resolve:, apply:)
+          @switch = switch
+          @resolve = resolve
+          @apply = apply
+        end
+
+        def switch(mode, surface:)
+          resolution = @resolve.call(mode)
+          @switch.switch(mode, surface:)
+          @apply.call(resolution, surface:)
+          @switch.current
+        end
       end
     end
   end

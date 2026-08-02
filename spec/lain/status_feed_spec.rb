@@ -688,8 +688,10 @@ RSpec.describe Lain::StatusFeed do
     end
 
     def queue_over_a_real_chronicle(feed)
+      # An empty base set says what this example is not about: it wants the
+      # board's queue, and a posture never attenuates on this path.
       Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: {},
-                                 model: "claude-opus-4-8").approvals
+                                 model: "claude-opus-4-8", toolset: Lain::Toolset.new).approvals
     end
   end
 

@@ -262,13 +262,13 @@ module Lain
       # the executor writes them to the TTY Channel AND the editor's -- never
       # to the journal, which already holds them in the turn's tool_result.
       def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil)
-        board = switchboard(backend)
-        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset:,
+        board = switchboard(backend, toolset)
+        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset,
                                                                  channel: LiveViews.tool_output(channel, views)))
 
         agent = nil
-        Lain::Agent.new(toolset:, context: board.graft(backend.context), handler: gate, session:, timeline:,
-                        request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
+        Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: gate, session:,
+                        timeline:, request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
                         **agent_backing(backend, channel, -> { agent.timeline })).tap { |built| agent = built }
       end
 
@@ -309,8 +309,15 @@ module Lain
       # chronicle (the null device under --no-journal). Memoized where
       # build_agent first needs it, so the direct build_agent seam the specs
       # drive assembles it too.
-      def switchboard(backend)
-        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model)
+      #
+      # T10: it owns the run's CAPABILITY set on the same terms. `toolset:` is
+      # the BASE set every posture resolves from -- attenuation is monotone, so
+      # leaving `plan` has to rebuild from what the session was built with and
+      # never from what the previous posture left behind -- and what comes back
+      # as `board.toolset` is the live slot the Agent and its executor hold, so
+      # a `/mode` flip changes the rendered schema without rebuilding either.
+      def switchboard(backend, toolset)
+        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model, toolset:)
       end
 
       # The Repl over the run's collaborators -- the accessors are this class's
