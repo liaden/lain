@@ -195,6 +195,40 @@ pointed at the implementer's worktree; and "I could not find a seam" is not "no 
 (`const_get` bypasses `private_constant`, and `.covering` refuses from `PinCuts` given an
 unbounded span).
 
+### Waves 2–4 — LANDED. Chunk complete, 12/12.
+
+| Card | Verdict | Commit |
+|---|---|---|
+| T7 attenuation algebra | REQUEST-CHANGES → APPROVE | `43b9d6c` |
+| T8 ResultBlock lens | APPROVE-WITH-FIXES | `73cf692` |
+| T9 lens adoption | APPROVE-WITH-FIXES | `b65ee1e` |
+| T11 registry seal | APPROVE-WITH-FIXES | `71fbf1b` |
+| T10 refinement meet | REQUEST-CHANGES → APPROVE | `8c622b2` |
+| T12 vocabulary | — | (this commit's sibling) |
+
+**The three findings worth remembering, all the same shape — a guarantee asserted in prose
+that nothing enforced:**
+
+1. **T7's monotonicity law certified a capability escape.** Stated against the *receiver*, it
+   could only fail if attenuation invented a tool, so a `Toolset` honest in `names`, `each`,
+   `to_schema`, `digest` and `==` — and lying in `#include?` and `#fetch`, the two messages
+   `Effect::Handler::Live` authorizes with — passed **every law** while dispatching a dropped
+   `bash` through the real handler. Fixed by stating it against the **request**: "a capability
+   the attenuation dropped", not "one the receiver lacked". The escape is now a spec against
+   the live handler. Both halves of the fix were necessary and neither sufficient.
+2. **T10's `Composed` was unusable on the only production path.** `Source::Derived` wraps every
+   operator-supplied strategy in `PinCuts`, which forwarded `#blocks` but not the new
+   `#blocks_for` — invisible because the card's own end-to-end spec bypassed `Source`.
+3. **T11's seal had to latch the verbs, not the registry**, because `Elementwise` generates its
+   method *before* filing its claim: a registry-only latch refuses the declaration, files
+   nothing, and leaves a **working** generated method on the class.
+
+**Card text corrected at execution** (the code is right, the plan was wrong): T10's `#meet` AC
+(intersection, not cut-point union — see the card) and T10's hook widening (`blocks_for`, since
+`Elide#blocks` is generated with strict arity 1).
+
+**Suite: 8052 → 8517.** Integration check 1's "strictly above the 7883 re-baseline" holds.
+
 **Scope expansions, ruled by the orchestrator rather than escalated to Joel:**
 
 - **T1 → `spec/lain/agent/tool_runner_spec.rb`.** The card's mandated eager digest makes
@@ -881,8 +915,18 @@ un-deferral ruling (Joel, 2026-07-29: building this proves the extraction) goes 
 Scenario: the meet is the common refinement
   Given two well-formed partitions over one span
   When they are met
-  Then the result's cut points are the union of both, it is finer than each, and meeting with
-       the trivial partition returns the other operand
+  Then the result cuts wherever either operand cuts and claims only what BOTH claim -- the
+       pairwise intersection; it is finer than each under #refines?; and meeting with the
+       partition that claims the whole span uncut returns the other operand
+  # REWORDED AT EXECUTION (2026-08-02). The original said "the result's cut points are the
+  # union of both", which silently assumes TOTAL partitions. These have GAPS -- retained
+  # turns live in them -- and under a cut-point reading the meet would FILL those gaps,
+  # inventing coverage nobody proposed. Worse, that reading breaks two of this scenario's
+  # own three clauses on gapped input: `trivial.meet(other)` answers a re-cut partition
+  # rather than `other`, and the result does not `refines?` its own operand. Intersection
+  # holds all three. Verified exhaustively: over all 34 partial interval partitions of
+  # 0..3, #refines? is a genuine partial order and #meet is the GREATEST lower bound for
+  # all 1156 pairs, with zero exceptions.
 
 Scenario: composition is a commutative monoid on disjoint proposals
   Given the law sweep and a generator drawing disjoint strategy pairs

@@ -1151,6 +1151,20 @@ Scenario: an allowed pipeline runs stage by stage
   Given the command "printf 'a\nb\na\n' | sort | uniq -c"
   When it is dispatched
   Then the output holds the counted, sorted lines
+  # ⚠️ AMENDED AT EXECUTION (2026-08-02). As written this scenario cannot run end to end:
+  # T16 ABSTAINS on it. T15 does not strip quotes from argv terms, so T16 refuses any
+  # quoted argument rather than exec a literal `'` -- a deliberate narrowing, and the
+  # strict direction. This scenario is about Open3.pipeline running stages, not about the
+  # verdict, so build the TERM DIRECTLY here and say in the spec why. Do not widen T16 to
+  # make this scenario pass; do not add dequoting on this card. If dequoting is wanted it
+  # is its own reviewed card, because "what the shell would have done to these bytes" is
+  # the whole question T15/T16 exist to avoid answering by guess.
+
+Scenario: a quoted command abstains rather than executing its quotes
+  Given the command "printf 'a\nb\na\n' | sort | uniq -c"
+  When the verdict is asked
+  Then it abstains, so the string path handles it and the term path never sees quotes
+  # Pins the interaction above, so a future widening of T16 has to come past this example.
 
 Scenario: a stage that executes its stdin is refused downstream of a pipe
   Given the command "echo whoami | sh"
@@ -1383,6 +1397,23 @@ Scenario: an absent approval table means no remembered answers
 `lib/lain/effect/handler/gate.rb:51` — the ladder must still present as
 `#call(effect, context) -> Boolean`, so Gate is unchanged.
 **Shared-file wiring:** none (T10 already owns the `Switchboard.for` diff)
+
+> ⚠️ **MEASURED AT EXECUTION (2026-08-02), from T19's panel — `Rule::Call.for` is NOT total,
+> and the ladder must not assume it is.**
+>
+> | input | result |
+> |---|---|
+> | required String, **invalid UTF-8** | **`ArgumentError`** — from ActiveSupport's `String#blank?` → `Regexp#match?`, NOT `Tool::InvalidInput` |
+> | required String, blank / `"  "` / missing / nil | `Tool::InvalidInput` (never reaches a rule) |
+> | unknown attribute | `Tool::InvalidInput` |
+> | required String, **NUL byte** or **UTF-16LE** | **builds fine**, then raises *later*, inside a classifier |
+>
+> So the ladder must rescue **`ArgumentError` as well as `Tool::InvalidInput`** — and the last
+> row is the important one: a rescue list is not a substitute for a total classifier, because
+> those values pass `Call.for` cleanly and detonate downstream. Also note `Risk` is **not** a
+> `Rule` (ruled at execution): it is `Approval::Risk`, consulted on the **write** side by T20,
+> never a rung in this ladder. A rung that cannot decide would be provably unobservable under
+> this card's own "an abstaining rung does not change the outcome" scenario.
 
 This is the "middleware wrapping the human" idea in the repo's own idiom: the ladder is a value,
 each rung is named, and every verdict is attributed to the rung that made it. It is also the
@@ -1631,6 +1662,52 @@ with their cards because no two same-wave cards touch the same index.
      exactly as it was.
   3. Run a session's worth of ordinary commands and read the journal: confirm the abstention rate
      is roughly the measured 25%, and that every approval names the rung that decided it.
+
+## Execution log — follow-ups found while building (2026-08-02)
+
+### ⚠️ A LIVE DEFECT IN LANDED CODE, found by T4's panel and verified by the orchestrator
+
+`Approval::SignoffQueue::Guards::Decision` (`signoff_queue.rb:108-118`) is documented as a
+**truncation canary** — its own comment says "the only thing it can catch is a line that was
+damaged or hand-made". It does not catch one whose damage is an empty Array:
+
+```
+type: "signoff", policy: "human", approved: "nope"   -> valid=false   (canary works)
+type: [],        policy: "human", approved: []       -> valid=TRUE, zero errors
+```
+
+**Mechanism, and it generalises past this one guard.** `ActiveModel::Validations::Clusivity`
+(`clusivity.rb:21-29`) branches on the value's type: for an Array it tests
+**member-by-member** with `all?`, and `[].all?` is vacuously true. So on a `Lain::Guard`, an
+**untyped `attribute` plus `inclusion:`/`exclusion:` is a silent yes for any Array value**,
+including the empty one.
+
+**Reachability:** `SignoffQueue#apply` is documented "PUBLIC … reachable with any Hash at all",
+so a damaged journal line can drain a parked sign-off nobody answered — precisely the outcome
+the canary's comment says it prevents.
+
+**Blast radius:** ~30 `inclusion:` validators sit on untyped `Guard` attributes. The
+model-facing ones are defended *by accident* — `field :stage, :string` casts `[]` to `"[]"` via
+`ActiveModel::Type::String`, which then fails the inclusion. Untyped `Guard` attributes have no
+such defence. `Tool::Input`'s `exclusion:` at `input.rb:122` is safe only because `JSON_TYPES`
+has no `"array"` and no field declares one — a landmine for the first array-valued field.
+
+**Rule worth writing into CLAUDE.md:** on a `Lain::Guard`, type the attribute or use
+`validates_each`; never rely on `inclusion:`/`exclusion:` alone to reject a non-scalar.
+
+**Its own card.** Not fixed inline: it is landed, security-adjacent, has its own specs, and a
+drive-by fix inside an unrelated card is the scope creep this chunk has been refusing all along.
+
+### Plan defects found during execution
+
+- **The shared-files section is wrong about `lib/lain/mode.rb`.** It keeps unit index files with
+  their card because "no two same-wave cards touch the same index" — false here: T4 and T9 are
+  both wave 3 and both add a file under `mode/`, and in wave 1 T1 and T2 *both* created this
+  file independently and collided at merge. It is orchestrator-owned in practice.
+- **T13's "shared-file wiring: none" was wrong** — corrected in the card, with the reason
+  (`Scope::REGISTRY` is frozen inside the module body, so the require must go at the **top**).
+- **T16's Gherkin conflicted with T17's** — the quoted pipeline T17 dispatches is one T16
+  correctly abstains on. Resolved in both cards rather than by widening the verdict.
 
 ## Open decisions
 
