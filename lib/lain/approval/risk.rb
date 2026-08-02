@@ -41,9 +41,18 @@ module Lain
     # FROM THE PROMPT -- and that is enforced by {Classification#keepsake},
     # which answers nil for a risky classification. A persister takes a
     # {Keepsake}, which closes both halves: FORGETTING to ask is a NoMethodError
-    # on nil rather than a review finding, and FORGING one is impossible because
-    # {Keepsake} has no public constructor and refuses `#with`. Emacs' claim is
-    # that the code enforces it; a documented convention would not.
+    # on nil rather than a review finding, and one cannot be forged BY ACCIDENT
+    # because {Keepsake} has no public constructor and refuses `#with`.
+    #
+    # Not "cannot be forged": Ruby has no hard `private`, so `allocate` and
+    # `send` remain -- `token_for` below spells `Keepsake.send(:for, call)`
+    # itself -- and {Rule::Call} lives with the same residue one card back.
+    # What the type buys is that every ACCIDENTAL route refuses, which is the
+    # class of mistake that actually reaches review;
+    # {Remembered::Persister#remember} additionally refuses a keepsake that is
+    # not deeply frozen, which is what `allocate` produces and {Keepsake.for}
+    # never does. Emacs' claim is that the code enforces it; a documented
+    # convention would not.
     #
     # == What it is not
     #
