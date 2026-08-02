@@ -152,6 +152,16 @@ RSpec.describe Lain::Workspace::Snapshot do
 
       expect(scope.paths(write_set: %w[a b], root: Pathname.new("/w"))).to eq(%w[a b])
     end
+
+    # The Null Object arm of the duck: a scope with no earlier state to differ
+    # from answers the priming call and does nothing, so {Snapshot} may always
+    # send it.
+    it "answers the priming call with nothing to prime" do
+      scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
+
+      expect(scope.baseline(Pathname.new("/w"))).to be_nil
+      expect(scope.paths(write_set: %w[a b], root: Pathname.new("/w"))).to eq(%w[a b])
+    end
   end
 
   describe "an injected scope" do
@@ -159,12 +169,15 @@ RSpec.describe Lain::Workspace::Snapshot do
     # write-set, records the root it was handed, and names its own policy.
     let(:scope_class) do
       Class.new do
-        attr_reader :roots
+        attr_reader :roots, :primed
 
         def initialize(extra)
           @extra = extra
           @roots = []
+          @primed = []
         end
+
+        def baseline(root) = @primed << root
 
         def paths(write_set:, root:)
           @roots << root
@@ -214,6 +227,29 @@ RSpec.describe Lain::Workspace::Snapshot do
                              .write(timeline: committed_timeline, paths: [path])
 
       expect(event.body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::SCOPE_NOTE)
+    end
+
+    # Construction, not the first write: a scope that detects DIFFERENCES needs
+    # the workspace as the session found it, and a first turn's own changes must
+    # not already be folded into the state they are measured against.
+    it "primes the scope with the payload's root, before any turn runs" do
+      scope = widening_scope([])
+
+      described_class.new(observer:, root: dir, scope:)
+
+      expect(scope.primed.map(&:to_s)).to eq([File.expand_path(dir)])
+    end
+
+    # The whole point of priming from here: the Symbol survives all the way to
+    # the writer, so a posture can name a scope without constructing one.
+    it "primes a scope it resolved from a short name" do
+      scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
+      allow(Lain::Workspace::Snapshot::Scope).to receive(:resolve).with(:write_set).and_return(scope)
+      allow(scope).to receive(:baseline)
+
+      described_class.new(observer:, root: dir, scope: :write_set)
+
+      expect(scope).to have_received(:baseline).with(Pathname.new(File.expand_path(dir)))
     end
   end
 

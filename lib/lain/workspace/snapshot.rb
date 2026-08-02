@@ -94,6 +94,12 @@ module Lain
         @root = Pathname.new(File.expand_path(root)).freeze
         @scope = Scope.resolve(scope)
         @last_files = nil
+        # A difference-detecting scope needs a state to differ FROM, and this is
+        # the only place that knows both the root and the moment the session
+        # began. Priming here is what keeps the Symbol form of a scope usable
+        # end to end: a posture names `:shadow_git` and stays inert, and turn 1
+        # is still covered. A no-op for a scope with nothing to prime.
+        @scope.baseline(@root)
       end
 
       # Snapshot the paths the {Scope} selects, given `paths`, as they stand on

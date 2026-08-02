@@ -1,5 +1,11 @@
 # frozen_string_literal: true
 
+# This file is the scope/ subtree's index. Its children load at the TOP because
+# REGISTRY below is built and FROZEN while the module body evaluates: a child
+# required after it could never register its short name, and `Scope.fetch` would
+# raise Unknown for a scope that is sitting right there.
+require_relative "scope/shadow_git"
+
 module Lain
   class Workspace
     class Snapshot
@@ -23,6 +29,14 @@ module Lain
       #   cannot disagree. Order is free -- {Snapshot} sorts.
       # - `#note` -> String, verbatim into the payload's "snapshot_scope".
       # - `#label` -> short String name, for journals and bench arms.
+      # - `#baseline(root)` -> primes whatever the scope must know about the
+      #   workspace BEFORE the first turn runs. {Snapshot#initialize} calls it
+      #   with the root it will name in every payload, and that is what lets a
+      #   scope be chosen by an inert Symbol and still cover turn 1: a
+      #   difference-detecting scope needs something to be a difference FROM,
+      #   and only {Snapshot} knows both the root and the moment the session
+      #   began. A no-op on a scope holding no such state -- the Null Object
+      #   arm, so no caller ever writes `if scope.respond_to?`.
       module Scope
         class Unknown < Error; end
 
@@ -45,9 +59,13 @@ module Lain
           def note = NOTE
 
           def label = "write_set"
+
+          # Nothing to prime: this scope reports what it was handed, so there is
+          # no earlier state for a later turn to differ from.
+          def baseline(_root) = nil
         end
 
-        REGISTRY = { write_set: WriteSet }.freeze
+        REGISTRY = { write_set: WriteSet, shadow_git: ShadowGit }.freeze
         private_constant :REGISTRY
 
         # A name maps to a fresh instance; an already-built scope passes
