@@ -94,3 +94,4 @@ end
 
 require_relative "mode/layer"
 require_relative "mode/posture"
+require_relative "mode/switch"
