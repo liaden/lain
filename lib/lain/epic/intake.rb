@@ -164,6 +164,49 @@ module Lain
                                    "(#{graph.digest} was written as #{text.inspect})"
         end
       end
+
+      # The bytes lain last wrote for an artifact that is PROSE. Three of the
+      # four epic stages are -- research and the issue plan are written to be
+      # read, not resolved -- so a review has to be openable over a written side
+      # that has no graph at all.
+      #
+      # BESIDE {Written} rather than inside it. Written's whole invariant is
+      # that its bytes and its graph agree, and it enforces that by parsing; a
+      # Written widened to tolerate a missing graph would be a value whose
+      # invariant holds only sometimes, which is the one thing this tier's
+      # values are built not to be.
+      #
+      # {#graph_digest} answers nil the way {DocWritten}'s does and for its
+      # reason: a graph digest is a property of the RESOLVED artifact, so prose
+      # has no way to acquire one. That nil is the whole seam -- it is what a
+      # reader consults to learn that a delta over these bytes was measured and
+      # never compared, rather than compared and found equal.
+      #
+      # Nothing here parses. A research note is not an epic document, and
+      # running the grammar over one would report ordinary prose as a malformed
+      # epic: a false alarm about the human's work rather than a report of it.
+      Prose = Data.define(:bytes) do
+        def initialize(bytes:)
+          refuse_stranger!(bytes)
+          # Interned rather than normalized through {Canonical}, which pins
+          # UTF-8: prose is never parsed, so nothing downstream needs it to be
+          # text, and a written side that refused a note saved in another
+          # encoding would refuse to review the file most in need of it.
+          super(bytes: -bytes)
+        end
+
+        def byte_digest = Intake.byte_digest(bytes)
+        def graph_digest = nil
+
+        private
+
+        def refuse_stranger!(bytes)
+          return if bytes.is_a?(String)
+
+          raise MalformedDocument, "the written side of a prose intake is the bytes lain wrote " \
+                                   "(got #{bytes.inspect})"
+        end
+      end
     end
   end
 end

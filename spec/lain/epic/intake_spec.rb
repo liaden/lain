@@ -586,6 +586,56 @@ RSpec.describe Lain::Epic::Intake do
     end
   end
 
+  # Three of the four epic stages are prose, not a graph, so the written side of
+  # a review has to be sayable without one. This is the value that says it --
+  # beside Written rather than inside it, because Written's whole invariant is
+  # that its bytes and its graph agree, and there is no graph here to agree with.
+  describe "what lain wrote as prose" do
+    let(:note) { "# Research\n\nThe interesting part is the second paragraph.\n" }
+
+    def prose(bytes) = Lain::Epic::Intake::Prose.new(bytes:)
+
+    it "addresses its bytes at the same address the reviewed document uses" do
+      expect(prose(note).byte_digest).to eq(described_class.byte_digest(note))
+    end
+
+    # Structurally nil, the way DocWritten's is: a graph digest is a property of
+    # the RESOLVED artifact, so prose has no way to acquire one. This is the nil
+    # a consumer reads to learn nothing structural was compared.
+    it "has no graph digest, because prose has no way to acquire one" do
+      expect(prose(note).graph_digest).to be_nil
+    end
+
+    it "keeps the bytes it was handed, byte for byte" do
+      expect(prose(note).bytes).to eq(note)
+    end
+
+    it "refuses a written side that is not bytes, rather than digesting something else" do
+      expect { prose(nil) }.to raise_error(Lain::Epic::MalformedDocument, /bytes/)
+      expect { prose(graph(issue("a"))) }.to raise_error(Lain::Epic::MalformedDocument, /bytes/)
+    end
+
+    # Prose is never parsed, here or anywhere downstream: a research note is not
+    # an epic document, and reporting one as a malformed epic would be a false
+    # alarm about the human's work rather than a report of it.
+    it "does not parse the bytes it holds" do
+      allow(Lain::Epic::Document).to receive(:parse_markdown).and_call_original
+
+      prose(corrupt_heading).byte_digest
+
+      expect(Lain::Epic::Document).not_to have_received(:parse_markdown)
+    end
+
+    it "builds positionally, the way every other Data in this codebase does" do
+      expect(Lain::Epic::Intake::Prose.new(note).bytes).to eq(note)
+    end
+
+    it "is a deeply frozen, shareable value" do
+      expect(prose(+note)).to be_deeply_frozen
+      expect(Ractor.shareable?(prose(+note))).to be(true)
+    end
+  end
+
   describe "the states a delta may not hold" do
     let(:clean) { diff(source, markdown(*four, issue("e"))) }
 

@@ -94,6 +94,15 @@ module Lain
 
         # The question a consumer asks first: below it, an empty account means
         # nothing was comparable rather than nothing changed.
+        #
+        # "Nothing was comparable" is wider than "the parse failed", and the
+        # invariant is the one {#refuse_uncompared_account!} states rather than
+        # any particular cause: a delta carrying an error holds no account.
+        # {Epic::Review} builds one for a review rebuilt from the journal, where
+        # the disk is on record but the bytes lain wrote are gone. `error_kind`
+        # is what separates the causes, and it is the only thing that should --
+        # a second predicate over one field is one more thing that can disagree
+        # with the first.
         def malformed? = !error.nil?
 
         private
