@@ -151,6 +151,21 @@ module Lain
 
       # The tool_result blocks an event carries in its content, or none when the
       # event is detached (no carried body) or carries no content blocks.
+      #
+      # Deliberately NOT lensed, and the next sweeper should leave it alone:
+      # both key reads here are the two a lens cannot replace. The body read
+      # asks for the container, and the `type` test asks a question
+      # {Tool::ResultBlock.wrap} does not answer -- it accepts any Hash and
+      # checks no type, so a lens can only go on AFTER the shape is known. What
+      # comes back is the block itself, because #provenance answers the wire
+      # hash a caller may hand to {Canonical}, which refuses a lens.
+      #
+      # The stronger reason is in this projection's own fixtures: two of the
+      # three tool_result blocks in `projection_spec.rb` carry no `is_error`,
+      # because a causal walk has never needed to ask. A lens here whose reader
+      # ever reached for that key would raise on them -- the `fetch` readers are
+      # sound only where {Tool::ResultBlock.of} built the block, and these were
+      # not built, they were observed.
       def tool_results(event)
         blocks = event.body.is_a?(Hash) ? event.body["content"] : nil
         Array(blocks).select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }

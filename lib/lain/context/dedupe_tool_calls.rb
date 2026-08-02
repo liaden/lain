@@ -47,11 +47,11 @@ module Lain
       # consumer, not "protected block" here and "protected message" there.
       def stale_tool_use_ids(messages)
         tool_use_occurrences(messages)
-          .group_by { |(_message, block)| Canonical.dump("name" => block["name"], "input" => block["input"]) }
+          .group_by { |(_message, use)| Canonical.dump("name" => use.name, "input" => use.input) }
           .values
           .flat_map { |occurrences| occurrences[0..-2] }
-          .reject { |(message, _block)| @protected_patterns.protects?(Canonical.dump(message)) }
-          .map { |(_message, block)| block["id"] }
+          .reject { |(message, _use)| @protected_patterns.protects?(Canonical.dump(message)) }
+          .map { |(_message, use)| use.id }
       end
 
       private
@@ -69,21 +69,40 @@ module Lain
         [content == message["content"] ? message : message.merge("content" => content)]
       end
 
-      # [message, block] pairs -- occurrences keep their containing message
-      # alongside the tool_use block so the protection check downstream can
-      # consult the whole message, not just the block.
+      # [message, tool_use lens] pairs -- occurrences keep their containing
+      # message alongside the block so the protection check downstream can
+      # consult the whole message, not just the block. The `type` test is a raw
+      # key read and stays one: {Response::ToolUse.wrap} accepts any Hash and
+      # checks no type, so a block must be KNOWN a tool_use before it is lensed.
       def tool_use_occurrences(messages)
         messages.flat_map do |message|
-          message["content"].select { |block| block["type"] == "tool_use" }.map { |block| [message, block] }
+          message["content"].select { |block| block["type"] == "tool_use" }
+                            .map { |block| [message, Response::ToolUse.wrap(block)] }
         end
       end
 
-      # A single predicate covers both block shapes: a tool_use block's own
-      # "id" and a tool_result block's answering "tool_use_id" are never both
-      # present on the same block, so checking both is safe and needs no
-      # `block["type"]` branch.
+      # Two shapes answer the same question -- a tool_use block by its own "id",
+      # its answering tool_result by "tool_use_id" -- and each is asked through
+      # the lens that names it. The branch is what makes that honest: neither
+      # lens checks the wire type, so the type has to be established before one
+      # is put on. It also closes what the earlier untyped `include?(block["id"])
+      # || include?(block["tool_use_id"])` left open -- a tool_use with no "id"
+      # put nil in the stale set, and every id-less block in the render (every
+      # text block) then matched it and was dropped. That id is now a `fetch` in
+      # #stale_tool_use_ids, so the malformed block raises where it is read.
+      #
+      # `else false` is a WIDENING, and deliberate: Anthropic's block vocabulary
+      # is non-exhaustive, and shapes outside Lain's own -- `server_tool_use`,
+      # `web_search_tool_result` -- carry these very keys. Before the branch
+      # they could match a stale id and be dropped; now nothing but the two
+      # shapes this class actually reasons about is ever dropped. A future
+      # vocabulary that must dedupe gets an arm here, not a fall-through.
       def stale?(block, stale_ids)
-        stale_ids.include?(block["id"]) || stale_ids.include?(block["tool_use_id"])
+        case block["type"]
+        when "tool_use" then stale_ids.include?(Response::ToolUse.wrap(block).id)
+        when "tool_result" then stale_ids.include?(Tool::ResultBlock.wrap(block).tool_use_id)
+        else false
+        end
       end
 
       # Below the methods it names, which Algebra::Elementwise requires: the

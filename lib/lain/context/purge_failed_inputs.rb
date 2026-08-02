@@ -71,10 +71,17 @@ module Lain
       #
       # It answers every failed id, not every id this run will redact: the
       # window is positional and so belongs to #call, not here.
+      # The `type` test is a raw key read and stays one: {Tool::ResultBlock.wrap}
+      # accepts any Hash and checks no type, so a block must be KNOWN a
+      # tool_result before it is lensed. Every read AFTER that test goes through
+      # the lens, where a tool_result missing `is_error` or `tool_use_id` raises
+      # instead of reading as "did not fail" or as a nil identifier.
       def failed_tool_use_ids(messages)
         messages.flat_map { |message| message["content"] }
-                .select { |block| block["type"] == "tool_result" && block["is_error"] }
-                .map { |block| block["tool_use_id"] }
+                .select { |block| block["type"] == "tool_result" }
+                .map { |block| Tool::ResultBlock.wrap(block) }
+                .select(&:error?)
+                .map(&:tool_use_id)
       end
 
       private
@@ -104,8 +111,13 @@ module Lain
         message["role"] == "assistant" && !@protected_patterns.protects?(Canonical.dump(message))
       end
 
+      # The redacted image is built from the BLOCK, never from the lens: the
+      # lens is a view, and `merge` on it would answer something no longer a
+      # Hash where {Canonical} has been promised one.
       def purge_block(block, failed_ids)
-        redact = block["type"] == "tool_use" && failed_ids.include?(block["id"])
+        return block unless block["type"] == "tool_use"
+
+        redact = failed_ids.include?(Response::ToolUse.wrap(block).id)
         redact ? block.merge("input" => {}) : block
       end
 

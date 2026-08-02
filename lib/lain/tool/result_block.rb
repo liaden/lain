@@ -19,6 +19,17 @@ module Lain
     # build without an id, and gate 3 (a failed tool is reported, never dropped)
     # because `is_error` is read off the {Result} and is never inferred from the
     # shape of the content.
+    #
+    # **{.of} is the SOLE writer of a string-keyed tool_result block in `lib/`,
+    # reached only from `ToolRunner#delivery`.** That fact is what every named
+    # reader's `fetch` rests on, so a second writer must either come through
+    # here or retire the readers. `is_error` is OPTIONAL on Anthropic's wire and
+    # is not optional on ours: a tool_result that reached a reader was built
+    # here, with all four keys, so a missing one is a builder bug rather than a
+    # shape to tolerate -- and readers may raise on it instead of reading a
+    # failure as a success. The pre-T8 builder wrote all four keys too, so
+    # Stores, journals, and fixtures recorded before this class existed read
+    # exactly the same way.
     class ResultBlock
       # How much of a malformed block {#field} quotes. A `read_file`-shaped
       # tool_result carries a whole file in `content`, so an unbounded `inspect`

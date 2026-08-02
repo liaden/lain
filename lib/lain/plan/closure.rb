@@ -121,15 +121,20 @@ module Lain
       end
       private_class_method :snapshot_scope
 
+      # The `type` test stays a raw read: {Tool::ResultBlock.wrap} checks no
+      # type, so a block must be KNOWN a tool_result before it is lensed.
+      # `is_error` is then a `fetch` -- a tool_result missing it raises rather
+      # than leaving a failed step's evidence unnamed. `to_h` hands the wrapped
+      # block back by identity, so the address named here is the one the Store
+      # already holds.
       def self.error_evidence(turns)
-        turns.flat_map { |turn| error_blocks(turn) }.map { |block| Canonical.digest(block) }
+        turns.flat_map { |turn| Array(turn.content).grep(Hash) }
+             .select { |block| block["type"] == "tool_result" }
+             .map { |block| Tool::ResultBlock.wrap(block) }
+             .select(&:error?)
+             .map { |block| Canonical.digest(block.to_h) }
       end
       private_class_method :error_evidence
-
-      def self.error_blocks(turn)
-        Array(turn.content).grep(Hash).select { |block| block["type"] == "tool_result" && block["is_error"] }
-      end
-      private_class_method :error_blocks
 
       def initialize(step_id:, title:, status:, size:, criteria_digest:, passed:, score:, why:,
                      files:, snapshot_scope:, elided_digests:, error_digests:, notes_for_future_steps:)

@@ -119,8 +119,13 @@ module Lain
         record["parent"] || record.dig("meta", "spawned_from")
       end
 
+      # The `type` test is a raw key read and stays one: {Response::ToolUse.wrap}
+      # accepts any Hash and checks no type, so a block must be KNOWN a tool_use
+      # before it is lensed -- a text block put behind this lens would raise on
+      # a `name` it was never going to carry.
       def tool_uses(record)
         blocks(record).select { |block| block["type"] == "tool_use" }
+                      .map { |block| Response::ToolUse.wrap(block) }
       end
 
       def blocks(record)
@@ -128,11 +133,15 @@ module Lain
         content.is_a?(Array) ? content.grep(Hash) : []
       end
 
+      # Every field is normalized from the object the lens hands back, which is
+      # the object the block already holds -- {Response::ToolUse#input} and
+      # {Tool::ResultBlock#content} read through `fetch`, they do not rebuild --
+      # so the Call's fields are what they were before the lens went on.
       def pair(tool_use)
-        outcome = outcomes[tool_use["id"]]
-        Call.new(tool_use_id: Canonical.normalize(tool_use["id"]), name: Canonical.normalize(tool_use["name"]),
-                 args: Canonical.normalize(tool_use["input"]), is_error: outcome && outcome["is_error"],
-                 result: outcome && Canonical.normalize(outcome["content"]))
+        outcome = outcomes[tool_use.id]
+        Call.new(tool_use_id: Canonical.normalize(tool_use.id), name: Canonical.normalize(tool_use.name),
+                 args: Canonical.normalize(tool_use.input), is_error: outcome&.error?,
+                 result: outcome && Canonical.normalize(outcome.content))
       end
 
       # tool_use_id => its tool_result block, across the WHOLE entry set: a
@@ -145,10 +154,18 @@ module Lain
       # it ever did, the same silent-tolerance shape `Hash#merge` gives every
       # other fold in this codebase -- never a raise, since a duplicate id
       # is a wire anomaly to investigate, not a corrupt-lineage signal.
+      #
+      # The `type` test is a raw key read and stays one for the reason
+      # {#tool_uses} gives, and here it carries weight it did not before: a turn
+      # mixes text blocks in with its results, and every one of them used to key
+      # this map under a nil `tool_use_id` (harmless, since no real id is nil).
+      # Behind the lens they would raise, so the filter is now the thing that
+      # keeps them out rather than a tidiness.
       def outcomes
         @outcomes ||= @turns.flat_map { |record| blocks(record) }
                             .select { |block| block["type"] == "tool_result" }
-                            .to_h { |block| [block["tool_use_id"], block] }
+                            .map { |block| Tool::ResultBlock.wrap(block) }
+                            .to_h { |block| [block.tool_use_id, block] }
       end
     end
   end

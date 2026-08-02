@@ -42,6 +42,23 @@ RSpec.describe Lain::Context::DedupeToolCalls do
       expect(described_class.new.call(messages)).to eq(messages)
     end
 
+    # The key is (name, args), and only the args half was pinned: replacing the
+    # name in the grouping key with a constant left every other example in this
+    # file green, so nothing said two DIFFERENT tools asked the same question
+    # are two calls. They are -- "search cats" and "lookup cats" answer
+    # differently, and dropping the older would drop an answer nothing else
+    # holds.
+    it "keeps two different tools asked the same question -- the key is (name, args), not args" do
+      messages = [
+        assistant(tool_use(id: "call-1", name: "search", input: { "q" => "cats" })),
+        user(tool_result(id: "call-1", content: "search says")),
+        assistant(tool_use(id: "call-2", name: "lookup", input: { "q" => "cats" })),
+        user(tool_result(id: "call-2", content: "lookup says"))
+      ]
+
+      expect(described_class.new.call(messages)).to eq(messages)
+    end
+
     it "leaves non-tool messages untouched" do
       messages = [
         { "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] },

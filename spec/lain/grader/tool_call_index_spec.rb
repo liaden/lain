@@ -81,6 +81,26 @@ RSpec.describe Lain::Grader::ToolCallIndex do
       expect(call.result).to be_nil
     end
 
+    # Only a tool_result answers a tool_use. Anthropic's block vocabulary is
+    # non-exhaustive and other shapes carry a `tool_use_id` too --
+    # `web_search_tool_result` is the shipped example -- so the outcome map's
+    # type filter is what keeps one of those from being read as the call's
+    # answer. Given all four keys here, so the filter's absence would show up as
+    # a WRONG outcome rather than as a raise on a missing one.
+    it "pairs only from tool_result blocks -- another shape naming the same tool_use_id is not the outcome" do
+      call_turn = Lain::Timeline.empty(store:)
+                                .commit(role: :user, content: text("search"))
+                                .commit(role: :assistant, content: [tool_use("tu_1", "search", { "q" => "cats" })])
+      foreign = { "type" => "web_search_tool_result", "tool_use_id" => "tu_1",
+                  "content" => "not an outcome", "is_error" => true }
+      result_turn = call_turn.commit(role: :user, content: [foreign])
+
+      call = described_class.new(journal_turns(result_turn)).calls.fetch(call_turn.head_digest).first
+
+      expect(call.is_error).to be_nil
+      expect(call.result).to be_nil
+    end
+
     it "omits a turn with no tool_use from #calls entirely" do
       turn = Lain::Timeline.empty(store:).commit(role: :user, content: text("just chatting"))
 
