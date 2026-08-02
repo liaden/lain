@@ -631,6 +631,22 @@ RSpec.describe Lain::CLI::Up do
     it "clamps a ratio above 1.0 rather than rendering a nonsense percentage" do
       expect(render(warm_state("occupancy" => 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100%")
     end
+
+    # T8: the mode. StatusFeed publishes the lighter already composed, so this
+    # filter carries no copy of the posture/layer ladder and no comparison
+    # against the default posture's NAME -- "silent under accept_edits" is one
+    # rule, declared once, in Mode::Posture.
+    it "names the posture and every active layer through the composed lighter" do
+      expect(render(warm_state("mode_lighter" => "MAN AA"))).to eq("🔥 fleet:2 inbox:3 MAN AA")
+    end
+
+    it "says nothing about the mode under the default posture, whose lighter is empty" do
+      expect(render(warm_state("mode_lighter" => ""))).to eq("🔥 fleet:2 inbox:3")
+    end
+
+    it "says nothing about the mode before the first switch, when the key is absent" do
+      expect(render(warm_state("posture" => nil, "mode_lighter" => nil))).to eq("🔥 fleet:2 inbox:3")
+    end
   end
 
   describe "degrading loudly" do

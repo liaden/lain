@@ -18,7 +18,7 @@ module Lain
   # resolves through {ProjectDir}, the locator for that tree, and never through
   # {Paths}, which is XDG only.
   #
-  # Nine fields, all JOURNALED or derived from the run's own clock -- never
+  # Eleven fields, all JOURNALED or derived from the run's own clock -- never
   # an in-process registry, and in particular never a live {Agent}: this
   # object is constructed in `ChatLaunch#open_chronicle`, BEFORE `Wiring`
   # exists, so anything it can only learn by asking a collaborator that does
@@ -129,6 +129,40 @@ module Lain
   #   zero is then a backstop for a stream that was never paired to begin with
   #   -- a journal replayed from the middle of a parked call -- not the
   #   primary defence.
+  # * `posture` / `layers` / `mode_lighter` -- the exclusive mode slot, the
+  #   composable half, and the composed rendering, derived from a
+  #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning
+  #   (why all three ship, and why an undeclared name renders as itself). All
+  #   absent until the first switch, and forced to be: {Mode::Switch} journals
+  #   nothing at construction, and this object is built before `Wiring` exists,
+  #   so a guessed `accept_edits` would be wrong for every `--yolo` run.
+  #
+  #   ⚠️ THE MODE DERIVATION NEVER RAISES; THE PUBLISH STILL DOES, and the two
+  #   are not in tension. {ModeState.lighter_of} rescues the `ArgumentError` an
+  #   undeclared name would raise, because this sink rides the
+  #   {CLI::JournalTee}, which re-raises a sink's failure -- deriving a status
+  #   line must never cost the agent its turn. A failed WRITE is the opposite
+  #   case and is deliberately loud: {Publication} argues it ("a state feed
+  #   that cannot write is not a state feed that should pretend it did") and
+  #   spec/lain/status_feed_spec.rb's "replaces the file atomically" pins the
+  #   `Errno::ENOSPC`. planning/specs/chunk-modes-approval-undo.md's T8 asked
+  #   for "nothing is raised" from an unwritable path; that was implemented as
+  #   the derivation half ONLY, because swallowing the write for `mode_switch`
+  #   alone -- while every other field's write still raised -- would be
+  #   incoherent, and swallowing it for all of them is a change to
+  #   {Publication}'s contract, not to this field. Do not "fix" this by adding
+  #   a rescue there.
+  #
+  #   Both are {#observed}, so a LAYER flip publishes even when the posture did
+  #   not move -- the whole reason {Telemetry::ModeSwitch} carries four fields
+  #   rather than two. `/mode +auto_approve` journals `manual -> manual`, and
+  #   `auto_approve` is the one layer answering `alters_outcome?`; a guard
+  #   comparing the posture ALONE would leave a HUD saying "MAN" while the
+  #   approval gate had been turned off, which is the silently-active policy
+  #   the mode design forbids. The mechanism is that design's own rule rather
+  #   than a special case here: an outcome-altering layer MUST declare a
+  #   lighter ({Mode::Layer::Declaration} enforces it), so every layer that can
+  #   move an outcome moves this string.
   # * `elapsed` / `idle` / `since_compaction` -- the run's own measures, read
   #   off the injected {RunClock} and published as PLAIN DURATIONS in whole
   #   seconds. They are deliberately NOT deadlines: `cache_deadline` above is
@@ -231,6 +265,7 @@ module Lain
     def start_empty
       @cache_deadline = nil
       @occupancy = nil
+      @mode = ModeState::NONE
       @approvals_pending = 0
       @compactions = 0
       # Insertion-ordered, keyed by digest: a Hash (not an Array) is what
@@ -264,6 +299,10 @@ module Lain
       @compactions += 1 if event.is_a?(Telemetry::Compaction)
       observe_usage(event) if event.respond_to?(:usage)
       observe(event) if event.respond_to?(:kind)
+      # Matched by class, for {Telemetry::Compaction}'s reason and not the
+      # approval pair's: a `#to`/`#to_layers` duck would also catch an
+      # {Event}, whose `#to` is a message recipient.
+      @mode = ModeState.of(event) if event.is_a?(Telemetry::ModeSwitch)
       observe_approval(event)
       publish_if_changed
       self
@@ -417,7 +456,7 @@ module Lain
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @pending.size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
-        "compactions" => @compactions }
+        "compactions" => @compactions }.merge(@mode.published)
     end
 
     # The run's own measures, read at the instant of the call. Never compared
@@ -444,8 +483,9 @@ module Lain
   end
 end
 
-# This file is `status_feed/`'s index. {StatusFeed::Publication} reopens the
-# class above, so it loads AFTER the class body -- `effect/handler.rb`'s
-# ordering, for the same reason (CLAUDE.md, Requires). Nothing at load time
-# needs the constant; #initialize does, and that runs later.
+# This file is `status_feed/`'s index. Both children reopen the class above, so
+# they load AFTER the class body -- `effect/handler.rb`'s ordering, for the same
+# reason (CLAUDE.md, Requires). Nothing at load time needs either constant;
+# #initialize does, and that runs later.
 require_relative "status_feed/publication"
+require_relative "status_feed/mode_state"

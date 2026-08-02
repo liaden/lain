@@ -78,6 +78,18 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
+    # T8, same discipline: the mode lighter arrives already composed, so the
+    # script renders it without knowing a posture from a layer -- and stays
+    # quiet under the silent default, whose lighter is the empty string.
+    it "renders the composed mode lighter, and nothing when it is empty" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, posture: "manual", mode_lighter: "MAN AA")
+      expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0 MAN AA")
+
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, posture: "accept_edits", mode_lighter: "")
+      expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0")
+    end
+
     # The clamp ships in the script too, or an Ollama chat's status bar reads
     # "ctx:244%" -- ContextWindow.default measures an unmatched model against
     # its 8,192-token fallback, so a ratio above 1.0 reaches this renderer.

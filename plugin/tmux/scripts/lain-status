@@ -1,15 +1,18 @@
 #!/bin/sh
-# Renders the lain HUD line (warmth / fleet / inbox / approvals / context)
-# for a tmux status bar.
+# Renders the lain HUD line (warmth / fleet / inbox / approvals / context /
+# mode) for a tmux status bar.
 #
 #   lain-status [DIR]
 #
 # Reads DIR/.lain/state.json (DIR defaults to $PWD; lain.tmux passes the
 # pane's cwd via tmux's #{pane_current_path}) -- the struct
-# Lain::StatusFeed publishes. The filter reads five of its keys
-# ("cache_deadline","fleet","inbox_count","approvals_pending","occupancy")
-# and ignores the rest; the last two are rendered only when present, so a
-# state.json written by an older lain still renders the line it always did.
+# Lain::StatusFeed publishes. The filter reads six of its keys
+# ("cache_deadline","fleet","inbox_count","approvals_pending","occupancy",
+# "mode_lighter") and ignores the rest; the last three are rendered only when
+# present, so a state.json written by an older lain still renders the line it
+# always did. mode_lighter arrives ALREADY COMPOSED (the posture's lighter
+# plus every active layer's, empty under the silent default posture), so this
+# script carries no copy of the mode ladder -- see Up::Hud::JQ_FILTER.
 # The occupancy percentage is clamped to 100: an unmatched model (every
 # Ollama id, most Bedrock ids) is measured against ContextWindow's 8,192
 # conservative fallback, which can publish a ratio well above 1.0.
@@ -42,7 +45,8 @@ fi
 JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
 + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
 + (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
-+ (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)'
++ (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
++ (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)'
 
 if command -v jq >/dev/null 2>&1; then
   jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"

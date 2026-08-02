@@ -22,12 +22,12 @@ module Lain
         # correctly, so this is not the tmux-3.7-only risk it might look like
         # at a glance.
         #
-        # The two later segments are CONDITIONAL, and both conditions are
+        # The three later segments are CONDITIONAL, and every condition is
         # written to survive a key that is simply absent: a state published by
         # an older `lain`, or the ordinary pre-first-turn window where
         # occupancy is genuinely unknown, must render the line it always did
         # rather than "approve:0 ctx:--". A status bar that says something on
-        # every quiet chat is noise; these two speak only when there is
+        # every quiet chat is noise; these three speak only when there is
         # something to say. (`.foo` on a missing key is null in jq, never an
         # error, which is what makes the guards one comparison each. A zero
         # occupancy is truthy in jq -- only null and false are not -- so a
@@ -61,11 +61,25 @@ module Lain
         # So it renders identically under jq 1.7 and 1.8, and survives a tmux
         # 3.4 round trip. Verified against both, warm and cold, with and
         # without the optional keys, including the clamp and a zero occupancy.
+        # The mode segment is the THIRD conditional, and it is deliberately a
+        # single non-empty test over an ALREADY COMPOSED string.
+        # {Lain::StatusFeed} publishes `mode_lighter` as the posture's lighter
+        # followed by every active layer's, and the mode design declares the
+        # default posture SILENT by giving `accept_edits` an empty lighter. Had
+        # this filter rendered `.posture` and `.layers` instead, it would carry
+        # its own copy of the posture/layer lighter table AND its own
+        # comparison against the literal name "accept_edits" -- restated again,
+        # byte for byte, in `plugin/tmux/scripts/lain-status`. One rule, one
+        # home, and this renderer only has to know that empty means quiet.
+        # `.mode_lighter` on a state published before the key existed is null,
+        # so `// ""` covers an older `lain` and the pre-first-switch window
+        # alike, both of which must render the line they always did.
         JQ_FILTER = <<~'JQ'.strip
           (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
           + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
           + (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
           + (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
+          + (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)
         JQ
 
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \

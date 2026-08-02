@@ -487,6 +487,136 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  # T8: the mode, published for the tmux HUD. Two keys, because they answer
+  # different questions: `posture` is the exclusive slot as DATA (a bench, an
+  # nvim view, a journal reader), `mode_lighter` is the already-composed
+  # rendering, so none of the three renderers reading `.lain/state.json` needs
+  # its own copy of the posture/layer ladder.
+  describe "the mode (T8)" do
+    def mode_switch(to:, from: :manual, from_layers: [], to_layers: [], surface: "tty")
+      Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:)
+    end
+
+    # This sink is built in ChatLaunch#open_chronicle, BEFORE Wiring exists,
+    # and Mode::Switch journals nothing at construction -- so until the first
+    # /mode, the honest answer is "not told", never a guessed default.
+    it "is absent until a mode_switch record names a posture" do
+      feed = described_class.new(path:)
+
+      feed << turn_usage
+
+      expect(published.values_at("posture", "layers", "mode_lighter")).to eq([nil, nil, nil])
+    end
+
+    # The layer half ships as DATA beside the rendered lighter, so a bench arm
+    # asking "was auto_approve on?" answers with a set membership rather than a
+    # substring match against "AA".
+    it "publishes the active layers as names, not only as a substring of the lighter" do
+      feed = described_class.new(path:)
+
+      feed << mode_switch(from: :manual, to: :manual, to_layers: %i[auto_approve goal])
+
+      expect(published["layers"]).to eq(%w[auto_approve goal])
+    end
+
+    it "publishes the posture the record switched TO, not the one it left" do
+      feed = described_class.new(path:)
+
+      feed << mode_switch(from: :manual, to: :plan)
+
+      expect(published["posture"]).to eq("plan")
+    end
+
+    # The layer list is built through a real LayerSet, exactly as Mode::Switch
+    # builds it: the record's own doc promises precedence order, so composing
+    # the lighter must READ that order rather than re-canonicalize it -- a
+    # second copy of a rule LayerSet already owns.
+    it "composes the lighter from the posture and every active layer, in the record's precedence order" do
+      feed = described_class.new(path:)
+      mode = Lain::Mode.new(posture: :manual, layers: %i[goal auto_approve])
+
+      feed << mode_switch(from: :manual, to: mode.posture.name, to_layers: mode.layers.names)
+
+      expect(published["mode_lighter"]).to eq("MAN AA GOAL")
+    end
+
+    # accept_edits declares an EMPTY lighter -- the default is silent, and that
+    # rule lives in Posture's table, not in three renderers' filters.
+    it "composes an empty lighter for the default posture, which declares itself silent" do
+      feed = described_class.new(path:)
+
+      feed << mode_switch(from: :manual, to: :accept_edits)
+
+      expect(published.values_at("posture", "mode_lighter")).to eq(["accept_edits", ""])
+    end
+
+    it "republishes when the posture moves" do
+      feed = described_class.new(path:)
+      feed << mode_switch(from: :manual, to: :manual)
+      allow(File).to receive(:write).and_call_original
+
+      feed << mode_switch(from: :manual, to: :auto)
+
+      expect(File).to have_received(:write).once
+    end
+
+    # The carry-forward T4 left this card: `/mode +auto_approve` journals
+    # `manual -> manual`, and auto_approve is the one layer that alters an
+    # outcome. A guard comparing the posture ALONE would suppress the publish
+    # and leave the HUD saying "MAN" while the approval gate had been turned
+    # off -- the silently-active policy this plan's Design forbids.
+    it "republishes a layer flip that never moved the posture" do
+      feed = described_class.new(path:)
+      feed << mode_switch(from: :manual, to: :manual)
+      allow(File).to receive(:write).and_call_original
+
+      feed << mode_switch(from: :manual, to: :manual, to_layers: %i[auto_approve])
+
+      expect(File).to have_received(:write).once
+      expect(published["mode_lighter"]).to eq("MAN AA")
+    end
+
+    it "skips the write when an unrelated record arrives and the mode did not move" do
+      feed = described_class.new(path:)
+      feed << mode_switch(from: :manual, to: :plan)
+      feed << spawn_event("a")
+      allow(File).to receive(:write).and_call_original
+
+      feed << spawn_event("a") # redelivery: nothing this feed derives moved
+
+      expect(File).not_to have_received(:write)
+    end
+
+    it "skips the write on a redelivered mode_switch, which moves no derived field" do
+      feed = described_class.new(path:)
+      feed << mode_switch(from: :manual, to: :auto)
+      allow(File).to receive(:write).and_call_original
+
+      feed << mode_switch(from: :manual, to: :auto)
+
+      expect(File).not_to have_received(:write)
+    end
+
+    # Posture.for/Layer.for raise ArgumentError on an undeclared name, and this
+    # sink rides the JournalTee, which re-raises -- so a record written by a
+    # newer lain (or replayed from an older one) would cost the agent its turn
+    # over a status line. It degrades to naming the thing instead, which is
+    # loud where silence would be the bug.
+    it "never raises on a posture name this build does not declare, and still names it" do
+      feed = described_class.new(path:)
+
+      expect { feed << mode_switch(from: :manual, to: :turbo) }.not_to raise_error
+      expect(published.values_at("posture", "mode_lighter")).to eq(%w[turbo turbo])
+    end
+
+    it "never raises on a layer name this build does not declare, and still names it" do
+      feed = described_class.new(path:)
+
+      expect { feed << mode_switch(from: :manual, to: :manual, to_layers: %i[telepathy]) }.not_to raise_error
+      expect(published["mode_lighter"]).to eq("MAN telepathy")
+    end
+  end
+
   # The examples above hand this sink its records directly, which is the unit
   # question: what does it derive? This one asks the wiring question the ACs
   # are actually written about -- does a real parked approval REACH it? -- by
@@ -527,6 +657,23 @@ RSpec.describe Lain::StatusFeed do
 
       expect(published["occupancy"]).to eq(0.5)
       expect(published["since_compaction"]).to eq(0)
+    end
+
+    # T8: the same wiring question for the mode. Every other mode example hands
+    # a Telemetry::ModeSwitch straight to `feed <<`, which proves the
+    # derivation and proves nothing about ARRIVAL -- and arrival is exactly
+    # what T13's known gap got wrong one field over. So this drives a real
+    # Mode::Switch over the chronicle's own record journal, the leg
+    # Approval::PolicySwitch and Context::ModelSwitch already use.
+    it "publishes a flip made by a real Mode::Switch over the chronicle's record journal" do
+      feed = described_class.new(path:)
+      switch = Lain::Mode::Switch.new(Lain::Mode.new(posture: :manual),
+                                      journal: chronicle_teed_to(feed).record_journal)
+
+      switch.switch(Lain::Mode.new(posture: :plan, layers: %i[auto_approve]), surface: "tty")
+
+      expect(published.values_at("posture", "layers", "mode_lighter"))
+        .to eq(["plan", %w[auto_approve], "PLAN AA"])
     end
 
     # Exactly ChatLaunch#open_chronicle's order: the chronicle opens, the feed
@@ -633,7 +780,8 @@ RSpec.describe Lain::StatusFeed do
       feed << turn_usage(cache_read: 1)
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
-                                                "occupancy", "compactions", "elapsed", "idle", "since_compaction")
+                                                "occupancy", "compactions", "posture", "layers", "mode_lighter",
+                                                "elapsed", "idle", "since_compaction")
     end
 
     it "creates the destination directory (the project's .lain/) on demand" do
