@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   class Context
     # A read-only view over a single canonical message hash -- the string-keyed
@@ -26,6 +28,12 @@ module Lain
       # would give a value that digests the same yet is not the same object,
       # which is exactly the drift this whole-value shape exists to prevent.
       def to_h = @hash
+
+      # Delegated, never inherited: an un-delegated lens serializes as the
+      # `to_s` of its own object header -- VALID JSON carrying a debug string,
+      # which the NDJSON Journal accepts in silence where a raise would be
+      # caught. See {Response::ToolUse#to_json}, which states it at length.
+      def to_json(...) = @hash.to_json(...)
 
       def user? = @hash["role"] == "user"
 

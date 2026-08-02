@@ -72,6 +72,23 @@ RSpec.describe Lain::Middleware::Env do
     end
   end
 
+  describe "#to_json" do
+    # Canonical refuses a lens outright; JSON would happily emit the object
+    # header as a quoted String -- parseable NDJSON carrying a debug artifact,
+    # which is the one failure the Journal cannot detect.
+    it "serializes as the wrapped hash, not as the lens's object header" do
+      env = described_class.wrap({ request: "req" })
+
+      expect(JSON.parse(env.to_json)).to eq("request" => "req")
+    end
+
+    it "forwards the generator state, so a nested lens serializes too" do
+      nested = { "outer" => described_class.wrap({ request: "req" }) }
+
+      expect(JSON.parse(nested.to_json)).to eq("outer" => { "request" => "req" })
+    end
+  end
+
   # The monoid law over Env is property-tested once, in middleware_spec.rb --
   # its `observe` already wraps every observation through Env#merge/#fetch, so
   # a second copy here doubled the property-test runtime for no new coverage.

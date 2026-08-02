@@ -123,4 +123,21 @@ RSpec.describe Lain::Context::MessageEnvelope do
       end
     end
   end
+
+  describe "#to_json" do
+    # Canonical refuses a lens outright; JSON would happily emit the object
+    # header as a quoted String -- parseable NDJSON carrying a debug artifact,
+    # which is the one failure the Journal cannot detect.
+    it "serializes as the wrapped hash, not as the envelope's object header" do
+      envelope = described_class.wrap(message("user", block("text", "hi")))
+
+      expect(JSON.parse(envelope.to_json)).to eq(envelope.to_h)
+    end
+
+    it "forwards the generator state, so a nested envelope serializes too" do
+      nested = { "outer" => described_class.wrap(message("user", block("text", "hi"))) }
+
+      expect(JSON.parse(nested.to_json)).to eq("outer" => message("user", block("text", "hi")))
+    end
+  end
 end

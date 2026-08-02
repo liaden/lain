@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module Middleware
     # The environment threaded through a {Stack}, as a read-only whole value
@@ -42,6 +44,12 @@ module Lain
       def merge(other) = self.class.new(@hash.merge(other.is_a?(self.class) ? other.to_h : other))
 
       def to_h = @hash
+
+      # Delegated, never inherited: an un-delegated lens serializes as the
+      # `to_s` of its own object header -- VALID JSON carrying a debug string,
+      # which the NDJSON Journal accepts in silence where a raise would be
+      # caught. See {Response::ToolUse#to_json}, which states it at length.
+      def to_json(...) = @hash.to_json(...)
 
       def request = fetch(:request)
       def response = fetch(:response)
