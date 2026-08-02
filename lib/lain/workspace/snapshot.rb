@@ -2,6 +2,10 @@
 
 require "pathname"
 
+# Snapshot's own subtree index. Scope loads at the TOP because the class body
+# below reads Scope::WriteSet::NOTE while it evaluates.
+require_relative "snapshot/scope"
+
 module Lain
   class Workspace
     # Writes the workspace's file state into the event log: one :snapshot event
@@ -15,16 +19,14 @@ module Lain
     # journals -- W4 owes the scribe wiring and a journal representation for
     # blob bytes before replay-restart can restore files from the record.
     #
-    # == The snapshot policy (write-set only, and it says so)
+    # == The snapshot policy (whatever the {Scope} says, and it says so)
     #
-    # Scope is the session's write-set -- the paths structured mutating tools
-    # (edit_file) recorded via {Session#record_write}. A free-form `bash` can
-    # mutate anything, and no tool can enumerate what it touched, so files
-    # outside the write-set are an HONEST GAP: never captured, never guessed
-    # at, and declared in every payload's "snapshot_scope" note so the record
-    # itself names its own blind spot. The one thing the policy does promise
-    # about out-of-band writes: a write-set file mutated by bash IS re-captured,
-    # because {#write} hashes current bytes rather than trusting who wrote them.
+    # Which paths get captured is the one axis of policy that is a study
+    # variable, so it is an injected {Scope} object rather than a rule written
+    # here: {Scope::WriteSet} is the default and sees only what structured tools
+    # recorded, and a shadow-repo scope can see what `bash` did. The chosen
+    # scope's own note rides every payload's "snapshot_scope" field, so the
+    # record always names the policy that actually produced it.
     #
     # == Payload shape: root-relative keys, the root once as data
     #
@@ -48,8 +50,10 @@ module Lain
     # all) lands no event -- the skip that keeps "read-only turns snapshot
     # nothing" true without a per-tool dirty flag that bash could never set.
     class Snapshot
-      SCOPE_NOTE = "write-set only: paths recorded via Session#record_write; " \
-                   "out-of-band mutations (e.g. bash) outside that set are not captured"
+      # The default scope's note, kept under its old name because
+      # {Plan::Closure} reads it as the fallback for a step that took no
+      # snapshot. It delegates rather than duplicates, so the two cannot drift.
+      SCOPE_NOTE = Scope::WriteSet::NOTE
 
       # A file's bytes as a content-addressed Store object. Parentless (no
       # Store edges), binary-safe, and addressed over the RAW bytes -- not
@@ -83,14 +87,18 @@ module Lain
       # @param root [String] the workspace root file keys are made relative to.
       #   Defaults to the working directory at construction -- the same base
       #   `File.expand_path` resolves the Session's read/write sets against.
-      def initialize(observer: Event::ChainWriter::Null.new, root: Dir.pwd)
+      # @param scope [Scope, Symbol, String] which paths to capture and the note
+      #   that declares it; a scope object or a registered short name.
+      def initialize(observer: Event::ChainWriter::Null.new, root: Dir.pwd, scope: Scope::WriteSet.new)
         @chain_writer = Event::ChainWriter.new(observer:)
         @root = Pathname.new(File.expand_path(root)).freeze
+        @scope = Scope.resolve(scope)
         @last_files = nil
       end
 
-      # Snapshot `paths` as they stand on disk, into `timeline`'s Store,
-      # causally parented to `timeline`'s head turn. Blobs land first (the
+      # Snapshot the paths the {Scope} selects, given `paths`, as they stand on
+      # disk, into `timeline`'s Store, causally parented to `timeline`'s head
+      # turn. Blobs land first (the
       # payload's file digests must not dangle for W2's restore), then the
       # payload-then-envelope write rides {Event::ChainWriter#put}.
       #
@@ -106,7 +114,7 @@ module Lain
       # @param paths [Enumerable<String>] the session write-set
       # @return [Event, nil] the :snapshot event, or nil when nothing changed
       def write(timeline:, paths:)
-        files = manifest(timeline.store, paths)
+        files = manifest(timeline.store, @scope.paths(write_set: paths, root: @root))
         return nil if skip?(files)
 
         @last_files = files
@@ -114,7 +122,7 @@ module Lain
                                     from: Event::ChainWriter.correlation_of(timeline), to: nil,
                                     causal_parents: [timeline.head_digest].compact,
                                     body: { "root" => @root.to_s, "files" => files,
-                                            "snapshot_scope" => SCOPE_NOTE })
+                                            "snapshot_scope" => @scope.note })
       end
 
       private

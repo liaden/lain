@@ -52,6 +52,171 @@ RSpec.describe Lain::Workspace::Snapshot do
     end
   end
 
+  # T12's byte-identity proof. Every literal below was captured by running a
+  # scripted session against the tree as it stood BEFORE the scope object
+  # existed (`git show main:lib/lain/workspace/snapshot.rb`), so it is evidence
+  # that the default arm is a refactor, not a transcription of this card's own
+  # output. Only the root is substituted -- the real one is a tmpdir, and the
+  # payload records it verbatim -- so each pinned digest is the digest that
+  # snapshot really has when rooted at NORMALIZED_ROOT. The dumped bytes are
+  # pinned alongside the digests because {Lain::Canonical} sorts keys before
+  # hashing, so a digest alone could not catch a renamed or reordered key.
+  describe "the default scope, against digests captured before this card" do
+    normalized_root = "/w"
+
+    def normalized(event, root)
+      payload = Lain::Event::Payload.new(kind: :snapshot, body: event.body.merge("root" => root))
+      { keys: event.body.keys,
+        bytes: Lain::Canonical.dump(event.body.merge("root" => root)),
+        payload_digest: payload.digest,
+        event_digest: Lain::Canonical.digest(event.payload.merge("payload_digest" => payload.digest)) }
+    end
+
+    # One stateful writer over three writes, exactly as the capture script ran
+    # it: the skip logic and the last-files memory are part of what is pinned.
+    let(:sequence) do
+      writer = described_class.new(root: dir)
+      a = write_file(dir, "a.txt", "alpha")
+      b = write_file(dir, "b.txt", "beta")
+      timeline = committed_timeline
+      events = { two_files: writer.write(timeline:, paths: [a, b]) }
+      File.binwrite(a, "bash rewrote me")
+      events[:out_of_band] = writer.write(timeline:, paths: [a, b])
+      [a, b].each { |path| File.delete(path) }
+      events[:total_deletion] = writer.write(timeline:, paths: [a, b])
+      events.transform_values { |event| normalized(event, normalized_root) }
+    end
+
+    it "reproduces the pre-card digest for a two-file write-set" do
+      expect(sequence.fetch(:two_files)).to eq(
+        keys: %w[files root snapshot_scope],
+        bytes: '{"files":{"a.txt":"blake3:0d8c5eaed5d24af0b26b4982c89e17e7df51ecfa1a7655365a9a58c3883aaa69",' \
+               '"b.txt":"blake3:a08ddaf158de8b9b7affcea15de583d36f59f22f2f42a785410b2c30bfa740bb"},' \
+               '"root":"/w","snapshot_scope":"write-set only: paths recorded via Session#record_write; ' \
+               'out-of-band mutations (e.g. bash) outside that set are not captured"}',
+        payload_digest: "blake3:e8ad505710020e34fb3a91ec646b0f87ee3e9a662333d8fc1fd575981d6dcd2b",
+        event_digest: "blake3:5c4b1e2fed263f52811587052440b6c9383fb405cdcb124a3b7b56b7542b72d0"
+      )
+    end
+
+    # The escalation trigger at :190, pinned by digest: bash rewriting a
+    # write-set file still lands the new bytes, under the same key.
+    it "reproduces the pre-card digest for a file mutated out of band" do
+      expect(sequence.fetch(:out_of_band)).to eq(
+        keys: %w[files root snapshot_scope],
+        bytes: '{"files":{"a.txt":"blake3:c3a726c4c817c9b5e3a47b1655ad857d2f08f1051873a696df1797bc2d0f18d1",' \
+               '"b.txt":"blake3:a08ddaf158de8b9b7affcea15de583d36f59f22f2f42a785410b2c30bfa740bb"},' \
+               '"root":"/w","snapshot_scope":"write-set only: paths recorded via Session#record_write; ' \
+               'out-of-band mutations (e.g. bash) outside that set are not captured"}',
+        payload_digest: "blake3:3f54cc7b6fc7083987c546d1c55cb847e636a5c837bd3f8cda35e05c148b0947",
+        event_digest: "blake3:b09b075ef5eca2fa71dc567d39e32697589387f8a1b05eedd26ea01ae52156db"
+      )
+    end
+
+    it "reproduces the pre-card digest for total write-set deletion" do
+      expect(sequence.fetch(:total_deletion)).to eq(
+        keys: %w[files root snapshot_scope],
+        bytes: '{"files":{},"root":"/w","snapshot_scope":"write-set only: paths recorded via ' \
+               'Session#record_write; out-of-band mutations (e.g. bash) outside that set are not captured"}',
+        payload_digest: "blake3:ee64e418694d858213ecde12c8ee6da66a9014713e072f225caff009ffeed693",
+        event_digest: "blake3:edd9cf62a3fc9d36931ba71514f09b591f1d77af778cb2b514d33e339bb976dc"
+      )
+    end
+
+    # Plan::Closure reads this constant as its no-snapshot fallback, so the
+    # name survives the move; the scope is now where the text lives.
+    it "keeps SCOPE_NOTE the write-set scope's own note" do
+      expect(Lain::Workspace::Snapshot::SCOPE_NOTE)
+        .to eq(Lain::Workspace::Snapshot::Scope::WriteSet.new.note)
+    end
+  end
+
+  describe Lain::Workspace::Snapshot::Scope do
+    it "passes a scope instance through resolution unchanged" do
+      scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
+
+      expect(described_class.resolve(scope)).to be(scope)
+    end
+
+    it "resolves a short name to a fresh scope of that kind" do
+      expect(described_class.resolve(:write_set)).to be_a(Lain::Workspace::Snapshot::Scope::WriteSet)
+    end
+
+    it "raises on an unknown name, naming the registered scopes" do
+      expect { described_class.resolve(:everything) }
+        .to raise_error(described_class::Unknown, /everything.*write_set/m)
+    end
+
+    it "hands the write-set straight back, ignoring the root" do
+      scope = Lain::Workspace::Snapshot::Scope::WriteSet.new
+
+      expect(scope.paths(write_set: %w[a b], root: Pathname.new("/w"))).to eq(%w[a b])
+    end
+  end
+
+  describe "an injected scope" do
+    # T13's shape in miniature: a scope that widens the set beyond the
+    # write-set, records the root it was handed, and names its own policy.
+    let(:scope_class) do
+      Class.new do
+        attr_reader :roots
+
+        def initialize(extra)
+          @extra = extra
+          @roots = []
+        end
+
+        def paths(write_set:, root:)
+          @roots << root
+          write_set + @extra
+        end
+
+        def note = "everything the scope could find"
+      end
+    end
+
+    def widening_scope(extra) = scope_class.new(extra)
+
+    it "captures the paths the scope returns, not the write-set it was handed" do
+      tracked = write_file(dir, "tracked.txt", "in the write set")
+      discovered = write_file(dir, "discovered.txt", "found by the scope")
+
+      event = described_class.new(observer:, root: dir, scope: widening_scope([discovered]))
+                             .write(timeline: committed_timeline, paths: [tracked])
+
+      expect(event.body.fetch("files").keys).to contain_exactly("discovered.txt", "tracked.txt")
+    end
+
+    it "writes the scope's own note as snapshot_scope, never a hardcoded string" do
+      path = write_file(dir, "a.txt", "alpha")
+
+      event = described_class.new(observer:, root: dir, scope: widening_scope([]))
+                             .write(timeline: committed_timeline, paths: [path])
+
+      expect(event.body.fetch("snapshot_scope")).to eq("everything the scope could find")
+    end
+
+    # One source of truth for the root: the scope keys nothing itself, so it
+    # must be told the same root the payload records.
+    it "hands the scope the workspace root the payload names" do
+      path = write_file(dir, "a.txt", "alpha")
+      scope = widening_scope([])
+
+      described_class.new(observer:, root: dir, scope:).write(timeline: committed_timeline, paths: [path])
+
+      expect(scope.roots.map(&:to_s)).to eq([File.expand_path(dir)])
+    end
+
+    it "resolves a scope named at construction" do
+      path = write_file(dir, "a.txt", "alpha")
+
+      event = described_class.new(observer:, root: dir, scope: :write_set)
+                             .write(timeline: committed_timeline, paths: [path])
+
+      expect(event.body.fetch("snapshot_scope")).to eq(Lain::Workspace::Snapshot::SCOPE_NOTE)
+    end
+  end
+
   describe "#write" do
     # AC (a mutating tool snapshots), the writer half: one :snapshot event whose
     # payload content-addresses each written file's bytes into the Store.
