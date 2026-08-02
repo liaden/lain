@@ -236,17 +236,11 @@ module Lain
         uses.size > 1 && uses.all? { |tool_use| safety.fetch(tool_use.name) }
       end
 
+      # Gates 3 and 4 are constructor invariants of {Tool::ResultBlock.of}, which
+      # states them. `to_h` hands the plain hash straight back, so delivery, the
+      # commit, and the observer see what they always did.
       def result_block(tool_use, context)
-        result = dispatch(tool_use, context)
-        {
-          "type" => "tool_result",
-          # Gate 4: the id must match the tool_use that asked for it.
-          "tool_use_id" => tool_use.id,
-          "content" => result.content,
-          # Gate 3: a failed tool is reported, never dropped and never raised past
-          # the loop. Handler::Live is where the conversion happens.
-          "is_error" => result.error?
-        }
+        Tool::ResultBlock.of(dispatch(tool_use, context), tool_use_id: tool_use.id).to_h
       end
 
       def dispatch(tool_use, context)
