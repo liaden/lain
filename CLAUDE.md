@@ -252,3 +252,9 @@ Structures that plausibly qualify, and what they buy:
 - Constants and nested classes defined **inside a `Data.define(...) do ... end` block** are
   lexically scoped to the enclosing module, not the Data class. Reopen the class after the
   block instead (see `Request::SYSTEM_PREFIX`).
+- **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
+  parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
+  A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default
+  `Include` patterns do not match `.toml`. **An `Exclude` entry does not save you** — verified:
+  `AllCops: Exclude` governs RuboCop's own file *discovery*, not a path a human hands it
+  directly, so the file is still parsed when named. The only defence is not naming it.
