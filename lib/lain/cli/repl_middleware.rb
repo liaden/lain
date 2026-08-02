@@ -24,10 +24,21 @@ module Lain
     # to a "not wired" message with no error at the wiring site. Either way a
     # forgotten keyword must be a loud ArgumentError here, not a quiet degrade
     # far from the bug.
+    #
+    # `extras`, unlike the two keywords above, defaults to none: T23 opens the
+    # door {Middleware::Stack} already has -- `#use`/`#insert_before`/
+    # `#insert_after` -- to this phase, it does not invent a new one. Extras
+    # are placed AHEAD of the one fixed member, so they run outermost, in the
+    # order given, wrapping skill dispatch rather than being wrapped by it; it
+    # is what a future symmetric `Principal` hangs off. A caller whose extra
+    # short-circuits without setting `env[:response]` gets no help from this
+    # module -- `repl.rb`'s dispatch boundary already renders that fault
+    # loudly (`render_missing_response`), for every phase alike.
     module ReplMiddleware
-      def self.build(role_spawn:, library:)
-        Middleware::Stack.new([Middleware::SkillDispatch.new(catalog: library.catalog, renderer: library.renderer,
-                                                             role_spawn:)])
+      def self.build(role_spawn:, library:, extras: [])
+        skill_dispatch = Middleware::SkillDispatch.new(catalog: library.catalog, renderer: library.renderer,
+                                                       role_spawn:)
+        Middleware::Stack.new([*extras, skill_dispatch])
       end
     end
   end
