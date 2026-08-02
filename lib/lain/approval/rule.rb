@@ -154,9 +154,9 @@ module Lain
       end
 
       # The rule's identity in every record it produces. Derived from the class
-      # basename, so `Rule::Risk` is `"risk"`. An anonymous rule cannot answer
-      # it and says so: a decision nobody can attribute is not an experiment
-      # record.
+      # basename, so a `BashOnly` rule is `"bash_only"`. An anonymous rule
+      # cannot answer it and says so: a decision nobody can attribute is not an
+      # experiment record.
       ANONYMOUS = "an anonymous rule must define #name -- a decision names the rule that made it"
       private_constant :ANONYMOUS
 
