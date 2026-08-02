@@ -11,8 +11,8 @@ RSpec.describe Lain::Compare do
                     cache_creation_input_tokens: cache_write)
   end
 
-  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]))
-    Lain::Compare::Run.new(name:, usage:, cost: BigDecimal(cost.to_s), score:, degraded:)
+  def run(name, usage:, cost:, score: nil, degraded: Lain::Capability::DegradedSet.new([]), posture: nil)
+    Lain::Compare::Run.new(name:, usage:, cost: BigDecimal(cost.to_s), score:, degraded:, posture:)
   end
 
   let(:runs) do
@@ -193,6 +193,169 @@ RSpec.describe Lain::Compare do
     it "has no default ledger: a Run must name its usage source" do
       expect { described_class::Run.from_timeline(name: "x", timeline: nil) }
         .to raise_error(ArgumentError, /ledger/)
+    end
+
+    it "carries the posture the caller recorded for the run" do
+      timeline, ledger = recorded("yo", input: 10, output: 1)
+      run = described_class::Run.from_timeline(name: "recorded", timeline:, ledger:, posture: :plan)
+      expect(run.posture.to_s).to eq("plan")
+    end
+  end
+
+  # The posture is an AXIS, not decoration. Compare already refuses to draw a
+  # distribution across runs that degraded different capabilities; a `plan` run
+  # against an `auto` run is the same kind of apples-to-oranges, because the
+  # posture decides which tools the model could even see and which calls a human
+  # had to answer. The case that must not break is ABSENCE: every recording made
+  # before modes existed carries no mode record at all, and absent has to mean
+  # absent rather than a fifth rung of the ladder.
+  describe "the posture axis" do
+    def posture_run(name, posture)
+      run(name, usage: usage(input: 10, output: 1), cost: "0.001", posture:)
+    end
+
+    def compare(*postures)
+      described_class.new(postures.each_with_index.map { |posture, i| posture_run("r#{i}", posture) })
+    end
+
+    it "compares two runs recorded under the same posture" do
+      expect { compare(:accept_edits, :accept_edits) }.not_to raise_error
+    end
+
+    it "refuses runs under different postures, naming both" do
+      expect { compare(:manual, :auto) }
+        .to raise_error(Lain::Compare::Posture::Mismatch, /\bmanual\b.*\bauto\b/m)
+    end
+
+    it "compares runs whose journals hold no mode record -- a run from before modes existed" do
+      expect { compare(nil, nil) }.not_to raise_error
+    end
+
+    # THE example for why the guard is `combination(2)` and not the degraded
+    # guard's `each_cons(2)`. Agreement is not transitive here: an unrecorded
+    # posture agrees with both its neighbours, so an adjacent-pairwise walk
+    # waves `manual` and `auto` through on the strength of the absence sitting
+    # between them -- and reverting the guard to `each_cons` fails nothing else
+    # in this file.
+    it "refuses postures that differ across an unrecorded run standing between them" do
+      expect { compare(:manual, nil, :auto) }
+        .to raise_error(Lain::Compare::Posture::Mismatch, /\bmanual\b.*\bauto\b/m)
+    end
+
+    # Absence is not a claim, so it cannot contradict one. A guard that refused
+    # here would be treating "not recorded" as a fifth posture, which is exactly
+    # what every pre-modes fixture would then fail on.
+    it "compares an unrecorded run against a recorded one -- absent is absent, not a fifth posture" do
+      expect { compare(:manual, nil) }.not_to raise_error
+      expect { compare(nil, :manual) }.not_to raise_error
+    end
+
+    it "refuses a posture name that is not on the ladder, naming the roster" do
+      expect { posture_run("typo", :acept_edits) }
+        .to raise_error(ArgumentError, /unknown posture.*accept_edits/m)
+    end
+
+    it "keeps a Run with a posture Ractor-shareable" do
+      expect(posture_run("a", :manual)).to be_ractor_shareable
+    end
+
+    describe "the report" do
+      it "states the posture when every run used the same one" do
+        expect(compare(:accept_edits, :accept_edits).report).to include("posture: accept_edits")
+      end
+
+      it "names each run's posture when they were not all recorded alike" do
+        report = compare(:manual, nil).report
+        expect(report).to include("r0=manual").and include("r1=not recorded")
+      end
+
+      it "says a posture was not recorded rather than inventing one" do
+        expect(described_class.new(runs).report).to include("posture: not recorded")
+      end
+
+      # Both facts on this line are comma lists of their own, so an undelimited
+      # header reads "degraded: extended_output, thinking, posture: a=manual"
+      # and a reader cannot see where the capability list ends.
+      it "delimits the header's facts, so neither comma list runs into the other" do
+        degraded = Lain::Capability::DegradedSet.new(%i[thinking extended_output])
+        pair = [nil, nil].each_with_index.map do |_, i|
+          run("r#{i}", usage: usage(input: 10, output: 1), cost: "0.001", degraded:)
+        end
+        expect(described_class.new(pair).report.lines.first.chomp)
+          .to eq("Compare — 2 runs | degraded: extended_output, thinking | posture: not recorded")
+      end
+    end
+  end
+
+  # What a run's posture IS, given a journal: the trajectory it was in, since a
+  # mode can be switched mid-run and neither end of that switch describes what
+  # produced the outcome on its own.
+  describe Lain::Compare::Posture do
+    def journaled(*flips)
+      io = StringIO.new
+      journal = Lain::Journal.new(io:)
+      flips.each do |from, to|
+        journal.record(Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers: [], to_layers: [],
+                                                       surface: "tty"))
+      end
+      described_class.from_journal(io.string.lines)
+    end
+
+    it "reads the posture a run switched into off its mode_switch records" do
+      expect(journaled(%w[manual auto]).to_s).to eq("manual → auto")
+    end
+
+    it "is unrecorded when the journal holds no mode record" do
+      posture = journaled
+      expect(posture.to_s).to eq("not recorded")
+      expect(posture).to eq(described_class::UNRECORDED)
+    end
+
+    # A switch to the posture already in force is journaled on purpose, so a
+    # transcript shows the redundant request -- but the posture never moved, and
+    # an axis that reported "plan → plan" would be reporting the request rather
+    # than the run.
+    it "collapses a redundant switch: the posture in force never moved" do
+      expect(journaled(%w[plan plan]).to_s).to eq("plan")
+    end
+
+    it "refuses a run that switched against one that stayed put" do
+      switched = journaled(%w[manual auto])
+      expect { described_class.guard!(switched, described_class.for(:auto)) }
+        .to raise_error(described_class::Mismatch, /manual → auto/)
+    end
+
+    it "compares two runs that took the same trajectory" do
+      expect(journaled(%w[manual auto])).to eq(journaled(%w[manual auto]))
+    end
+
+    # Reading only the `to`s after the first record would answer
+    # "plan → manual → plan" for this: a plausible trajectory that never
+    # happened, on the experiment record. Interleaved records are ordinary the
+    # moment fan-out has more than one worker writing.
+    it "refuses records that do not chain, rather than inventing a trajectory" do
+      damaged = [{ "type" => "mode_switch", "from" => "plan", "to" => "manual" },
+                 { "type" => "mode_switch", "from" => "auto", "to" => "plan" }]
+      expect { described_class.from_journal(damaged) }
+        .to raise_error(described_class::BrokenChain, /\bmanual\b.*\bauto\b/m)
+    end
+
+    # An empty list of postures IS absence, and a Recorded holding none would be
+    # the fifth value this whole file exists to not have: it renders as the
+    # empty String and agrees with nothing, not even another empty one.
+    it "answers absence for no names at all, never an empty trajectory" do
+      expect(described_class.for).to eq(described_class::UNRECORDED)
+      expect(described_class.coerce([])).to eq(described_class::UNRECORDED)
+    end
+
+    it "skips foreign lines, as every journal reader does" do
+      expect(described_class.from_journal(['{"type":"turn_usage"}', "not json at all"]))
+        .to eq(described_class::UNRECORDED)
+    end
+
+    it "is Ractor-shareable, recorded or not" do
+      expect(described_class.for(:plan)).to be_ractor_shareable
+      expect(described_class::UNRECORDED).to be_ractor_shareable
     end
   end
 end
