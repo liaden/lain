@@ -3,6 +3,8 @@
 require "async"
 require "async/queue"
 require "json"
+require "mixlib/shellout"
+require "stringio"
 require "tmpdir"
 
 # OM-6 core: the orchestration reactor ABOVE the Agent. Actor#launch spawns its
@@ -632,6 +634,604 @@ RSpec.describe Lain::Supervisor do
 
         expect(seen.first.cwd).to eq(Dir.pwd) # WorkerEnv.default, exactly as before the seam
         expect { supervisor.stop }.not_to raise_error
+      end
+    end
+  end
+
+  # ---- Scenario: a crashed worker's checkout is reaped, its commits are not --
+  #
+  # {Supervisor::Restart} replays a dead worker under a NEW worker_id, so nothing
+  # ever reclaims the dead one's lease and a multi-day epic run accumulates one
+  # orphan worktree per crash. Reclaiming it with a bare `lease.release` would be
+  # worse: {Isolation::Worktree} reclaims a --detach'ed checkout with --force, so
+  # the instant it is released an unanchored commit is unreachable -- and a
+  # crashed worker is exactly the one holding commits nothing else has. The reap
+  # therefore runs through {Isolation::WorkerHandoff#surrender}: anchor under
+  # refs/lain/worker/, then release, spawning no resolver.
+
+  describe "reaping a crashed worker" do
+    # ONE log for both collaborators, because what this scenario is about is
+    # ORDER: the surrender lands before the release under it, and both land
+    # before the replacement's acquire.
+    before do
+      stub_const("LoggingIsolation", Class.new do
+        def initialize(env, log)
+          @env = env
+          @log = log
+        end
+
+        def acquire(worker_id)
+          @log << [:acquire, worker_id]
+          log = @log
+          Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { log << [:release, worker_id] })
+        end
+      end)
+
+      # The WorkerHandoff duck, recording. It keeps the real object's own
+      # exactly-once guard -- Report.nothing over an already-released lease --
+      # so a spec sees exactly the surrenders the real collaborator would
+      # perform, and never a phantom repeat of one already given up.
+      stub_const("RecordingHandoff", Class.new do
+        def initialize(log)
+          @log = log
+        end
+
+        def surrender(lease, worker_id:)
+          return Lain::Isolation::WorkerHandoff::Report.nothing if lease.nil? || lease.released?
+
+          @log << [:surrender, worker_id]
+          lease.release
+          Lain::Isolation::WorkerHandoff::Report.nothing
+        end
+      end)
+
+      # An actor duck that answers ONLY #stop -- all {Supervisor#stop} ever owed
+      # of a registration's actor before the reap started asking #failed? about
+      # every row on the way out. {CLI::Wiring}'s own spec stand-in is exactly
+      # this shape, which is how the widened duck stayed invisible.
+      stub_const("StopOnlyWorker", Class.new do
+        def initialize(log)
+          @log = log
+        end
+
+        def stop
+          @log << %i[farewell minimal]
+          self
+        end
+      end)
+
+      # A handoff outside its own documented contract: {Isolation::WorkerHandoff}
+      # answers a Report on every StandardError path, and this one raises
+      # instead. It is the injected-collaborator case the totality note names.
+      stub_const("ExplodingHandoff", Class.new do
+        def surrender(_lease, worker_id:)
+          raise Lain::Error, "handoff exploded for #{worker_id}"
+        end
+      end)
+
+      # A handoff that SUSPENDS before it does anything, which is what a
+      # fiber-aware one would do (the real one blocks the whole reactor inside
+      # Mixlib::ShellOut, which is what makes the concurrent-reap race benign by
+      # accident rather than by construction). The sleep is NOT zero and that is
+      # measured: a zero-duration timer is already due when the adopting task
+      # parks on its `.wait`, so the reactor resumes this reap to completion
+      # before the second adoption ever starts -- and the overlap under test
+      # never happens.
+      stub_const("SuspendingHandoff", Class.new do
+        def initialize(log)
+          @log = log
+        end
+
+        def surrender(lease, worker_id:)
+          return Lain::Isolation::WorkerHandoff::Report.nothing if lease.nil? || lease.released?
+
+          Async::Task.current.sleep(0.02)
+          @log << worker_id
+          lease.release
+          Lain::Isolation::WorkerHandoff::Report.nothing
+        end
+      end)
+    end
+
+    # A handback that CONFLICTS and then refuses to unwind, so the parent stays
+    # mid-merge. Driven through the REAL {Isolation::WorkerHandoff} -- whose
+    # initializer stays open for a substituted handback -- so the STRANDED
+    # Report under test is one the collaborator actually produces, not one the
+    # spec invented.
+    let(:stranding_handoff) do
+      handback = Class.new do
+        def call(_lease, worker_id:) = mid_merge(:conflicted, worker_id)
+
+        def abandon(ref, worker_id: ref) = mid_merge(:failed, worker_id)
+
+        private
+
+        def mid_merge(kind, worker_id)
+          Lain::Isolation::Worktree::Handback::Outcome.new(
+            kind:, worker_key: worker_id, ref: "refs/lain/worker/#{worker_id}",
+            paths: ["notes.md"], parent_state: :merging
+          )
+        end
+      end.new
+      Lain::Isolation::WorkerHandoff.new(handback:, repo_root: Dir.pwd)
+    end
+
+    let(:shared_env) { Lain::WorkerEnv.new(cwd: "/leased/checkout", env: {}) }
+
+    # An adopted worker whose actor dies AFTER the adoption returned: it parks
+    # mid-turn and the :raise release fails the in-flight call, leaving it
+    # dead-but-not-stopped -- the registry's :failed.
+    #
+    # A born-dead actor (a Mock with zero responses) will NOT do here, and that
+    # is measured: its fiber starts eagerly and fails before the registration
+    # lands, so it is already :failed inside its own adoption -- and a reap that
+    # ran one line too LATE, after the acquire it is supposed to precede, still
+    # produced the right log. This fixture is what tells the two apart.
+    #
+    # @return [WorkerEnv] the leased environment the crashed worker held
+    def crash(supervisor, role: "worker")
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      env, doomed = parked(supervisor, role, entered:, release:)
+      entered.dequeue         # provably mid-turn: the adoption is long over
+      release.enqueue(:raise) # ... and NOW it dies
+      expect { doomed.settle }.to raise_error(Lain::Error, /injected/)
+      env
+    end
+
+    # @return [Array(WorkerEnv, Tools::Subagent::Actor)] the leased environment
+    #   and the actor parked in its first turn
+    def parked(supervisor, role, entered:, release:)
+      env = nil
+      actor = supervisor.adopt(role:) do |worker_env|
+        env = worker_env
+        parking_tool(entered:, release:).launch_actor("go")
+      end
+      [env, actor]
+    end
+
+    # @return [WorkerEnv] the leased environment the settled worker runs under
+    def healthy(supervisor, role: "worker")
+      env = nil
+      supervisor.adopt(role:) do |worker_env|
+        env = worker_env
+        actor_tool(text_response("ok")).launch_actor("go")
+      end.settle
+      env
+    end
+
+    it "surrenders the dead worker's lease before the replacement acquires -- ref first, then release" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        crash(supervisor)
+        healthy(supervisor)
+
+        expect(log).to eq([[:acquire, "worker-1"], [:surrender, "worker-1"],
+                           [:release, "worker-1"], [:acquire, "worker-2"]])
+        # The dead row stays in the registry: it is the honest history of the
+        # first life (Restart's own "Identity" note), reaped but not erased.
+        expect(supervisor.map(&:state)).to eq(%i[failed running])
+        supervisor.stop
+      end
+    end
+
+    # The panel's first probe: the reap is not a first-crash special case.
+    it "surrenders a SECOND crash too, and re-surrenders no lease it already gave up" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        crash(supervisor)
+        crash(supervisor)
+        healthy(supervisor)
+
+        expect(log).to eq([[:acquire, "worker-1"], [:surrender, "worker-1"], [:release, "worker-1"],
+                           [:acquire, "worker-2"], [:surrender, "worker-2"], [:release, "worker-2"],
+                           [:acquire, "worker-3"]])
+        supervisor.stop
+      end
+    end
+
+    it "leaves a LIVE worker's lease alone -- only the crashed row is reaped" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        healthy(supervisor, role: "alive")
+        crash(supervisor, role: "doomed")
+        healthy(supervisor, role: "replacement")
+
+        expect(log.select { |entry| entry.first == :surrender }).to eq([[:surrender, "doomed-2"]])
+        supervisor.stop
+      end
+      expect(log.last(2)).to eq([[:release, "alive-1"], [:release, "replacement-3"]])
+    end
+
+    # The default is RETAINING, not the release-only WorkerHandoff::Null: with
+    # no handoff wired there is nothing that can anchor, and a bare release of a
+    # crashed worker's checkout is the one thing this card exists to prevent. An
+    # idle worktree until #stop is the cost; the worker's commits are not.
+    it "retains a crashed worker's lease when no handoff is wired -- #stop is what reclaims it" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log)).run(task)
+        crash(supervisor)
+        healthy(supervisor)
+
+        expect(log).to eq([[:acquire, "worker-1"], [:acquire, "worker-2"]])
+        supervisor.stop
+      end
+      expect(log.last(2)).to eq([[:release, "worker-1"], [:release, "worker-2"]])
+    end
+
+    # ---- #stop is the OTHER place that holds the handoff --------------------
+    #
+    # The reap on the adoption path only fires when a LATER adoption happens. A
+    # supervised fleet shutting down is the likeliest path a crashed worker's
+    # lease is ever given up on, and there #stop held @handoff and bare-released
+    # anyway -- destroying the force-removed checkout that was the only copy of
+    # the worker's commits. The card's headline guarantee, on the likelier path.
+
+    it "surrenders a crashed row at #stop, and bare-releases only the live ones" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        healthy(supervisor, role: "alive")
+        crash(supervisor, role: "doomed")
+
+        supervisor.stop
+      end
+      expect(log).to eq([[:acquire, "alive-1"], [:acquire, "doomed-2"],
+                         [:release, "alive-1"], [:surrender, "doomed-2"], [:release, "doomed-2"]])
+    end
+
+    # #stop is what makes an actor `stopped?`, and a stopped row no longer reads
+    # :failed -- so the crashed/live question must be asked BEFORE the farewell.
+    # Asking after it makes every reap at teardown silently vanish, which is the
+    # bug above wearing a different hat.
+    it "reads the crashed row's state BEFORE the farewell that would hide it" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        crashed = crash(supervisor)
+        expect(crashed).to eq(shared_env)
+
+        supervisor.stop
+
+        expect(supervisor.map(&:state)).to eq([:stopped]) # the farewell landed too
+      end
+      expect(log).to eq([[:acquire, "worker-1"], [:surrender, "worker-1"], [:release, "worker-1"]])
+    end
+
+    # A lease the handoff DECLINED to take (the Retain default) is still given
+    # up at teardown: retaining it is a running-fleet posture, and #stop's job is
+    # that nothing lain provisioned is left standing.
+    it "still releases a retained crashed lease at #stop when no handoff is wired" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log)).run(task)
+        crash(supervisor)
+
+        supervisor.stop
+      end
+      expect(log).to eq([[:acquire, "worker-1"], [:release, "worker-1"]])
+    end
+
+    # The reap's DECISION widens the duck #stop demands of an actor: `failed?`
+    # asks `stopped?` and `dead?`, which a stand-in owing only `#stop` cannot
+    # answer. That raise climbs out of #stop's `each` -- and #stop is what every
+    # reactor-owning caller runs from its own `ensure`, where a raise during
+    # teardown leaves the root task never completing and the process HANGS in
+    # epoll instead of failing. So the decision belongs inside the same
+    # tolerance the surrender has.
+    #
+    # BOUNDED deliberately: a regression here must report, not stall, and an
+    # unbounded example would reproduce the hang in the suite rather than name
+    # it. The window is the assertion.
+    it "tears down a row whose actor cannot answer the reap predicates, without wedging #stop" do
+      journal = []
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        supervisor.adopt(role: "minimal") { StopOnlyWorker.new(log) }
+
+        bounded(task) { supervisor.stop }
+      end
+      expect(log).to eq([[:acquire, "minimal-1"], %i[farewell minimal], [:release, "minimal-1"]])
+      # "I cannot tell whether this row crashed" is not "it crashed": a healthy
+      # worker must not be surrendered, and must not be recorded as a failed reap.
+      expect(journal.grep(described_class::WorkerReaped)).to be_empty
+    end
+
+    # Anything that escapes a `Sync` block -- a raise, or a failed expectation --
+    # leaves the supervisor's parked reactor task parked, because a #stop that
+    # raised never reached its own `@task.stop`. Sync's teardown then waits on
+    # that child forever, in epoll, with nothing runnable, and the example HANGS
+    # instead of failing. That shape is what let this class of bug through twice:
+    # a truncated run reports the examples that SURVIVED as a pass. Both halves
+    # are the bound -- the window catches a stall inside the block, and
+    # cancelling the leftover children catches the one after it.
+    def bounded(task, &block)
+      task.with_timeout(2, &block)
+    ensure
+      task.children&.each(&:stop)
+    end
+
+    # ---- the Report the reap gets back --------------------------------------
+
+    # WorkerHandoff::STRANDED is the one state whose remedy is a person running
+    # `git merge --abort`: a parent left mid-merge DECLINES every later handback,
+    # forever, with `<<<<<<<` markers standing in a real working tree. The Report
+    # is the only place it is ever named, so discarding the Report makes it
+    # discoverable only when the next handback mysteriously declines.
+    it "journals the reap's Report, carrying a STRANDED parent onto the record" do
+      journal = []
+      Sync do |task|
+        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                         handoff: stranding_handoff).run(task)
+        crash(supervisor)
+        healthy(supervisor)
+        supervisor.stop
+      end
+      reaped = journal.grep(described_class::WorkerReaped)
+      expect(reaped.map(&:worker_key)).to eq(["worker-1"])
+      expect(reaped.first).to have_attributes(role: "worker", kind: :failed, stranded: true,
+                                              ref: "refs/lain/worker/worker-1")
+      expect(reaped.first.summary).to include("git merge --abort")
+      expect(reaped.first.to_journal["type"]).to eq("worker_reaped")
+    end
+
+    # The reap runs over every failed row at every adoption, and an
+    # already-surrendered lease answers :nothing_to_do -- journaling that would
+    # put one noise line per adoption into the experiment record.
+    it "journals nothing for a reap with nothing to report" do
+      journal = []
+      Sync do |task|
+        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                         handoff: RecordingHandoff.new([])).run(task)
+        crash(supervisor)
+        healthy(supervisor)
+        healthy(supervisor)
+        supervisor.stop
+      end
+      expect(journal.grep(described_class::WorkerReaped)).to be_empty
+    end
+
+    # ---- a handoff outside its own contract ---------------------------------
+    #
+    # {Isolation::WorkerHandoff#surrender} promises a Report on every
+    # StandardError path, but `handoff` is INJECTED and the doc never demanded
+    # totality. A reap's failure belongs to the reap: it must not refuse an
+    # unrelated adoption, and it must not wedge the fleet's teardown.
+
+    it "survives a handoff that RAISES: the replacement is adopted and the raise is journalled" do
+      journal = []
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: ExplodingHandoff.new).run(task)
+        crash(supervisor)
+
+        # Bounded: an intolerant reap does not fail this example, it HANGS it --
+        # the raise escapes the Sync and strands the parked reactor task.
+        bounded(task) do
+          expect { healthy(supervisor) }.not_to raise_error
+          expect { supervisor.stop }.not_to raise_error
+        end
+      end
+      expect(journal.grep(described_class::WorkerReaped).map(&:summary))
+        .to eq(["Lain::Error: handoff exploded for worker-1"])
+      # The surrender failed, so the lease was never given up -- #stop's own
+      # release is what keeps a broken handoff from leaking the checkout too.
+      expect(log).to include([:release, "worker-1"])
+    end
+
+    # ONE journalled failure, not one per adoption: the reap is claimed, and a
+    # claim is not handed back on failure. One attempt then say it is
+    # {Isolation::WorkerHandoff}'s own posture on a refusal it cannot retry.
+    it "attempts a raising handoff exactly once, however many adoptions follow" do
+      journal = []
+      Sync do |task|
+        supervisor = described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
+                                         handoff: ExplodingHandoff.new).run(task)
+        crash(supervisor)
+        bounded(task) do
+          healthy(supervisor)
+          healthy(supervisor)
+          supervisor.stop
+        end
+      end
+      expect(journal.grep(described_class::WorkerReaped).size).to eq(1)
+    end
+
+    # ---- the concurrent-reap race -------------------------------------------
+
+    # Two adoptions in flight over one crashed row. The real WorkerHandoff's own
+    # exactly-once guard (Report.nothing over an already-released lease) is
+    # check-then-act, and holds only because Mixlib::ShellOut blocks the whole
+    # reactor -- an accident of that collaborator, not a property of this loop.
+    # The claim is taken synchronously, so a fiber-aware handoff is safe too.
+    it "reaps a crashed row exactly once across two concurrent adoptions" do
+      surrenders = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, []),
+                                         handoff: SuspendingHandoff.new(surrenders)).run(task)
+        crash(supervisor)
+
+        [task.async { healthy(supervisor, role: "a") },
+         task.async { healthy(supervisor, role: "b") }].each(&:wait)
+        supervisor.stop
+      end
+      expect(surrenders).to eq(["worker-1"])
+    end
+
+    # The card's own scenario, driven through the object it names: a Restart
+    # replays the dead worker under a new worker_id, and reaches the reap
+    # because it adopts through {Supervisor#adopt} like every other adoption.
+    it "reaps the worker a Restart replaces, and the replacement holds the fresh lease" do
+      log = []
+      record = killed_session_record
+      Sync do |task|
+        supervisor = described_class.new(isolation: LoggingIsolation.new(shared_env, log),
+                                         handoff: RecordingHandoff.new(log)).run(task)
+        crash(supervisor, role: "researcher")
+        restart(record, supervisor:)
+
+        expect(log).to eq([[:acquire, "researcher-1"], [:surrender, "researcher-1"],
+                           [:release, "researcher-1"], [:acquire, "researcher-2"]])
+        expect(supervisor.map(&:role)).to eq(%w[researcher researcher])
+        supervisor.stop
+      end
+    end
+
+    # A minimal open session record: a Scribe writes its header at construction
+    # and catch_up appends the committed turn, which is everything the Loader's
+    # verified re-commit needs. No tools and no snapshot, so the restart
+    # restores no workspace -- what is under test here is the ADOPTION.
+    def killed_session_record
+      io = StringIO.new
+      scribe = Lain::SessionRecord::Scribe.new(journal: Lain::Journal.new(io:), context: restart_context,
+                                               toolset: Lain::Toolset.new([]))
+      agent = restart_agent([text_response("worked")], Lain::Timeline.empty(store:))
+      agent.ask("do the thing")
+      scribe.catch_up(agent.timeline)
+      io.string.each_line
+    end
+
+    def restart_context = Lain::Context.new(model: "actor", max_tokens: 128)
+
+    def restart_agent(responses, timeline)
+      Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), toolset: Lain::Toolset.new([]),
+                      context: restart_context, timeline:)
+    end
+
+    def restart(record, supervisor:)
+      Lain::Supervisor::Restart.new(entries: record, supervisor:, journal: Lain::Channel::Null.instance)
+                               .call(role: "researcher") { |recording| restart_agent([], recording.timeline) }
+    end
+
+    # The AC's observable claims, against the real backend and the real
+    # handback. Operates on a THROWAWAY repo it creates itself (git init in a
+    # mktmpdir), never the lain repo it runs in -- worktree_spec.rb's posture,
+    # and the reason this stays in the default suite: git is always present.
+    describe "against a real worktree backend" do
+      around do |example|
+        Dir.mktmpdir("lain-repo") do |repo|
+          Dir.mktmpdir("lain-worktrees") do |worktrees|
+            @repo_root = File.realpath(repo)
+            @worktrees = File.realpath(worktrees)
+            init_repo(@repo_root)
+            example.run
+          end
+        end
+      end
+
+      let(:handback_journal) { [] }
+      let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees) }
+      let(:handoff) { Lain::Isolation::WorkerHandoff.over(repo_root: @repo_root, journal: handback_journal) }
+
+      # The spec's OWN git calls scrub the git-context env, so building and
+      # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted
+      # env (a pre-commit hook) exactly as the subject is.
+      def run_git(dir, *args)
+        shell = Mixlib::ShellOut.new("git", "-C", dir, *args,
+                                     environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+        shell.run_command.error!
+        shell.stdout
+      end
+
+      def init_repo(dir)
+        run_git(dir, "init", "-q")
+        run_git(dir, "config", "user.email", "test@example.com")
+        run_git(dir, "config", "user.name", "Test")
+        File.write(File.join(dir, "seed.txt"), "seed\n")
+        run_git(dir, "add", "-A")
+        run_git(dir, "commit", "-q", "-m", "seed")
+      end
+
+      def commit_work(dir)
+        File.write(File.join(dir, "worker.txt"), "the crashed worker's only copy\n")
+        run_git(dir, "add", "-A")
+        run_git(dir, "commit", "-q", "-m", "worker work")
+        run_git(dir, "rev-parse", "HEAD").strip
+      end
+
+      def anchored_commits = run_git(@repo_root, "for-each-ref", "--format=%(objectname)", "refs/lain/worker/").split
+
+      def worktree_paths = run_git(@repo_root, "worktree", "list").lines
+
+      it "reaps the dead worker's checkout, keeps its commit on refs/lain/worker/, " \
+         "and gives the replacement a fresh lease" do
+        Sync do |task|
+          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+          crashed = crash(supervisor)
+          commit = commit_work(crashed.cwd)
+
+          replacement = healthy(supervisor)
+
+          expect(Dir.exist?(crashed.cwd)).to be(false)   # the orphan worktree is gone
+          expect(anchored_commits).to include(commit)    # and the work it held is not
+          expect(replacement.cwd).not_to eq(crashed.cwd)
+          expect(Dir.exist?(replacement.cwd)).to be(true)
+          supervisor.stop
+        end
+      end
+
+      # THE blocker probe, against real git: a crash, a commit, and a shutdown
+      # with no later adoption to reap it. #stop force-removes a --detach'ed
+      # checkout, so a bare release here is the worker's commits gone -- and a
+      # supervised fleet shutting down is the most likely path there is.
+      it "surrenders a crashed worker at #stop, keeping its commits when no adoption follows" do
+        commit = nil
+        Sync do |task|
+          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+          crashed = crash(supervisor)
+          commit = commit_work(crashed.cwd)
+
+          supervisor.stop
+
+          expect(Dir.exist?(crashed.cwd)).to be(false)  # the checkout is reclaimed
+        end
+        expect(anchored_commits).to include(commit)     # and the work it held is not lost
+        # Anchored FIRST, then offered: the ref is what survives the release, and
+        # a clean parent takes the merge on top of it.
+        expect(handback_journal.map(&:outcome)).to eq([:merged])
+      end
+
+      it "leaves no lain-owned worktree standing after #stop" do
+        Sync do |task|
+          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+          commit_work(crash(supervisor).cwd)
+          healthy(supervisor)
+
+          supervisor.stop
+        end
+
+        expect(worktree_paths.size).to eq(1) # the parent checkout, and nothing else
+        expect(Dir.children(@worktrees)).to be_empty
+      end
+
+      # The panel's second probe: a crash with nothing to hand back must still
+      # give the lease up cleanly. The parent already contains the worktree's
+      # HEAD, so the handback is :nothing_to_do -- never a :failed outcome left
+      # behind in the record for someone to chase.
+      it "releases a crashed worker that committed NOTHING cleanly, anchoring no ref" do
+        Sync do |task|
+          supervisor = described_class.new(isolation: backend, handoff:).run(task)
+          crashed = crash(supervisor)
+
+          healthy(supervisor)
+
+          expect(Dir.exist?(crashed.cwd)).to be(false)
+          expect(handback_journal.map(&:outcome)).to eq([:nothing_to_do])
+          expect(anchored_commits).to be_empty
+          supervisor.stop
+        end
       end
     end
   end

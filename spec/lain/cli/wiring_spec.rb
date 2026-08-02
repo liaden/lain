@@ -20,9 +20,16 @@ end
 # The launch block's stand-in for an adopted actor (D2): it builds the child's
 # Session from the LEASED WorkerEnv exactly as
 # {Lain::Tools::Subagent::ChildBuilder#spawn_agent} does, so what a spec reads
-# back is the object the real spawn path constructs. Only `#stop` is owed of the
-# actor duck -- {Lain::Supervisor#stop} farewells each registration before it
-# releases the lease.
+# back is the object the real spawn path constructs.
+#
+# It answers the LIFECYCLE predicates as well as `#stop`, because that is what
+# the actor duck is: {Lain::Supervisor::Registration#state} derives every row's
+# state from `stopped?`/`dead?`, and {Lain::Supervisor#stop} reads it on the way
+# out to tell a crashed row (surrendered) from a live one (released). A stand-in
+# that answered only `#stop` kept passing while that contract widened under it,
+# which is precisely how the widening went unnoticed -- so these are honest
+# rather than hard-coded: this worker is alive until it is stopped, and never
+# crashes.
 class WiringSpecWorker
   attr_reader :session, :checkout
 
@@ -35,9 +42,20 @@ class WiringSpecWorker
     @checkout = { exists: Dir.exist?(worker_env.cwd),
                   repo: File.exist?(worker_env.resolve(".git")),
                   seeded: File.exist?(worker_env.resolve("README")) }
+    @stopped = false
   end
 
-  def stop = self
+  def stop
+    @stopped = true
+    self
+  end
+
+  def stopped? = @stopped
+
+  # No fiber to fail, so the only way this worker is dead is by being stopped --
+  # {Lain::Tools::Subagent::Actor}'s own distinction, and it keeps every row here
+  # out of the crashed branch.
+  def dead? = @stopped
 end
 
 RSpec.describe Lain::CLI::Wiring do

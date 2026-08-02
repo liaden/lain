@@ -192,13 +192,14 @@ module Lain
       # append -- so a diverged revival raises out of the adoption and
       # registers nothing.
       # RETENTION: the fresh lease this revival acquires is reclaimed at the
-      # supervisor's #stop, NOT at the next restart. A restart is a NEW adoption
-      # under a NEW worker_id (the supervisor allocates one per adoption), so
-      # B2's same-id reap never fires across restarts -- N crash-restarts leave
-      # N stale worktrees standing until #stop. This is deliberate: the dead
-      # registration is honest HISTORY of the first life (see the Restart class
-      # doc's "Identity" note), so its lease is not force-reclaimed under a
-      # successor that never held it; #stop reclaims the whole fleet at once.
+      # supervisor's #stop. A restart is a NEW adoption under a NEW worker_id
+      # (the supervisor allocates one per adoption), so B2's same-id reap never
+      # fires across restarts; what keeps N crash-restarts from leaving N stale
+      # worktrees standing is {Supervisor#reap_crashed}, which SURRENDERS the
+      # dead worker's lease -- its commits anchored under refs/lain/worker/
+      # first -- from inside the adoption below. The dead registration itself
+      # stays, honest HISTORY of the first life (see the class doc's "Identity"
+      # note); it is its abandoned checkout that goes, never its work.
       def adopt(role, recording, revive)
         head = recording.timeline.head_digest
         @supervisor.adopt(role:) do |worker_env|

@@ -34,16 +34,28 @@ module Lain
     # would carry the first life's dead registry rows into the second).
     class AlreadyRunning < Error; end
 
-    # @param journal [#<<] where a bounded {Drain}'s timeout record lands;
-    #   the Null channel by default.
+    # @param journal [#<<] where a bounded {Drain}'s timeout record and every
+    #   reap's {WorkerReaped} land; the Null channel by default.
     # @param isolation [#acquire] the isolation backend each adoption leases a
     #   {WorkerEnv} from; the shared-process {Isolation::Null} by default, whose
     #   lease is {WorkerEnv.default} and whose release is a no-op -- so a
     #   supervisor with no isolation wired behaves byte-identically to before
     #   the lease seam existed (Null Object, no `if isolation` anywhere).
-    def initialize(journal: Channel::Null.instance, isolation: Isolation::Null.new)
+    # @param handoff [#surrender] how a CRASHED worker's lease is given up
+    #   ({#reap_crashed}, {#stop}); {Isolation::WorkerHandoff} is the one that
+    #   exists, and pairing it with a {Isolation::Worktree} backend is what makes
+    #   the reap safe. The default {Retain} declines instead -- see its own note
+    #   for why the wired-nothing answer here is "keep it" rather than "release
+    #   it". `#surrender` SHOULD be total (a {Isolation::WorkerHandoff::Report}
+    #   on every StandardError path, which the real one guarantees), but this is
+    #   an injected collaborator and totality is not enforceable from here, so
+    #   {#reap} tolerates a raise instead of demanding one -- a reap's failure
+    #   belongs to the reap, and must refuse no unrelated adoption and wedge no
+    #   teardown.
+    def initialize(journal: Channel::Null.instance, isolation: Isolation::Null.new, handoff: Retain)
       @journal = journal
       @isolation = isolation
+      @handoff = handoff
       # An Array, not an address-keyed Hash: an address is the :spawn event's
       # CONTENT digest, and two spawns of the same arm from the same head
       # legitimately share one -- the registry records ADOPTIONS, in adoption
@@ -54,6 +66,12 @@ module Lain
       # worker id even when two share a role -- a Worktree backend keys its
       # checkout path on this, and two live leases at one path is a refusal.
       @worker_seq = 0
+      # Which registrations have had their one reap attempt. Claimed
+      # SYNCHRONOUSLY, which is what makes two concurrent adoptions surrender a
+      # crashed row exactly once (see {#claim}); the ROW is the key, not its
+      # worker_id, because a caller may supply a worker_id a later adoption
+      # reuses.
+      @reaped = Set.new
     end
 
     # Spawn the long-lived reactor task under `task` and park it. The park is
@@ -87,6 +105,9 @@ module Lain
     # of -- invisible to the HUD, skipped by the drain, torn down by {#stop}
     # without a farewell (review fix 2).
     #
+    # Any CRASHED worker is reaped first ({#reap_crashed}), so a fleet does not
+    # accumulate one orphan checkout per crash while the replacements run.
+    #
     # A lease is acquired FIRST, inside the adopted task, and its {WorkerEnv} is
     # handed to the launch block so the actor's child runs its tools under the
     # leased cwd/env. The block may ignore it (a non-isolation launch is a
@@ -106,7 +127,8 @@ module Lain
         running?
 
       @task.async do
-        register(role, @isolation.acquire(worker_id || next_worker_id(role)), launch)
+        reap_crashed
+        register(role, worker_id || next_worker_id(role), launch)
       end.wait
     end
 
@@ -133,14 +155,15 @@ module Lain
     # cancel the reactor task -- so no fiber is torn down by the parent's
     # cancellation while a farewell is still in flight.
     #
+    # A crashed worker's lease is SURRENDERED here, not bare-released; see
+    # {#farewell}, which is the other half of {#reap_crashed} and the likelier
+    # of the two paths a crash actually leaves by.
+    #
     # @return [self]
     def stop
       return self unless running?
 
-      each do |registration|
-        registration.actor.stop
-        registration.release
-      end
+      each { |registration| farewell(registration) }
       @task.stop
       @task.wait
       self
@@ -148,27 +171,143 @@ module Lain
 
     private
 
+    # One row's teardown. A CRASHED row is surrendered here for the same reason
+    # {#reap_crashed} surrenders one: the release below force-removes a
+    # `--detach`ed checkout, so bare-releasing the one worker holding commits
+    # nothing else has destroys them. This is the LIKELIER path of the two --
+    # the reap on the adoption path only fires when a later adoption happens,
+    # while every supervised fleet eventually shuts down.
+    #
+    # The reap runs BEFORE the farewell because #stop is what makes an actor
+    # `stopped?`, and a stopped row no longer reads :failed ({Registration#state}
+    # ranks the operator's deliberate stop over the crash) -- asking afterwards
+    # would find nothing to reap, ever. The release still runs under a
+    # surrender: it is idempotent, so it is a no-op once the handoff gave the
+    # lease up, and it is what stops a DECLINING handoff ({Retain}) or a broken
+    # one from leaving a provisioned checkout standing past teardown.
+    def farewell(registration)
+      reap(registration) if reapable?(registration)
+      registration.actor.stop
+      registration.release
+    end
+
+    # Surrender one crashed row and SAY what came back. Discarding the Report
+    # drops {Isolation::WorkerHandoff::STRANDED} on the floor -- a parent
+    # checkout left mid-merge, which declines every later handback forever and
+    # leaves conflict markers standing in a real person's working tree -- and
+    # the Report is the only place that state is ever named.
+    #
+    # The rescue is for the injected duck, not for {Isolation::WorkerHandoff},
+    # which answers a Report on every StandardError path: a collaborator that
+    # raises anyway would otherwise take an unrelated adoption down with it
+    # (measured: every LATER adoption raised, permanently) or skip the rest of a
+    # teardown. `StandardError` and not `Exception`, because an `Async::Stop` or
+    # an `Interrupt` climbing through a reap is a cancellation that must keep
+    # climbing -- the same line {Isolation::WorkerHandoff} draws.
+    def reap(registration)
+      record(WorkerReaped.from(registration, registration.surrender(@handoff)))
+    rescue StandardError => e
+      record(WorkerReaped.raised(registration, e))
+    end
+
+    # `:nothing_to_do` is the answer an already-surrendered lease gives, and
+    # {#reap_crashed} runs over every failed row at every adoption -- journaling
+    # it would put one noise line per adoption into the experiment record.
+    def record(reaped)
+      @journal << reaped unless reaped.quiet?
+    end
+
+    # Whether this row is a crash whose one reap attempt is still unclaimed.
+    #
+    # The DECISION is inside the tolerance, not just the surrender under it
+    # ({#reap}), because asking it WIDENS the duck an actor owes: `failed?`
+    # reaches through to `stopped?` and `dead?`, which a registration holding a
+    # stand-in that owed only `#stop` cannot answer -- and #stop is what every
+    # reactor-owning caller runs from an `ensure`, where a raise during teardown
+    # leaves the root task never completing and the process HANGS in epoll
+    # instead of failing (measured, cli/wiring_spec). A guarantee that a reap
+    # cannot wedge the fleet has to cover the question as well as the answer.
+    #
+    # Answering FALSE, and journaling nothing: "I cannot tell whether this row
+    # crashed" is not "it crashed". A {WorkerReaped} here would put a failed
+    # reap of a healthy worker into the experiment record, and surrendering on a
+    # guess would hand a live worker's checkout away -- so the row falls through
+    # to exactly the plain release it got before the reap existed. That is the
+    # opposite verdict from {#reap}'s rescue, which records because there a reap
+    # was genuinely attempted and genuinely failed.
+    #
+    # @return [Boolean]
+    def reapable?(registration)
+      registration.failed? && !claim(registration).nil?
+    rescue StandardError
+      false
+    end
+
+    # The reap claim. `Set#add?` answers nil for a member already present, and a
+    # fiber cannot switch inside it -- so the claim is taken before the handoff
+    # can reach its first suspension point, which is what makes two concurrent
+    # adoptions (or an adoption racing {#stop}) surrender one row exactly once.
+    # The real {Isolation::WorkerHandoff}'s own released?-then-anchor guard is
+    # check-then-act and survives only because Mixlib::ShellOut blocks the whole
+    # reactor; that is a property of that collaborator, not of this loop, and a
+    # fiber-aware handoff double-surrenders without this (measured).
+    #
+    # NOT handed back on failure: one attempt, then the record says what
+    # happened -- {Isolation::WorkerHandoff}'s own posture on a refusal it
+    # cannot retry, and what keeps a broken handoff from journaling once per
+    # adoption forever.
+    #
+    # @return [Registration, nil] the row when THIS call took its attempt, nil
+    #   when an earlier one already had it
+    def claim(registration) = @reaped.add?(registration) && registration
+
     def next_worker_id(role)
       @worker_seq += 1
       "#{role}-#{@worker_seq}"
     end
 
-    # The registration append rides INSIDE the adopted task (review fix 2), and
-    # so does the lease it carries. `registered` guards the reclaim: any exit
-    # that did NOT reach a live registration -- a launch that raised, OR the
-    # adopted task CANCELLED after the acquire (Async::Stop is an Exception, not
-    # a StandardError, so a `rescue StandardError` would miss it and strand an
+    # A crashed worker's lease outlives its actor: {Restart} replays it under a
+    # NEW worker_id, so nothing else ever reclaims the dead one and a multi-day
+    # epic run accumulates one orphan worktree per crash. A bare `lease.release`
+    # would be worse than the leak -- {Isolation::Worktree} reclaims a
+    # `--detach`ed checkout with `--force`, so the instant it is released an
+    # unanchored commit is unreachable, and a crashed worker is exactly the one
+    # holding commits nothing else has. The handoff is what makes giving it up
+    # safe: anchor under `refs/lain/worker/`, then release, spawning no resolver
+    # (an unbounded provider round trip has no business inside a restart).
+    #
+    # BEFORE the acquire under it, so the dead worker's work is on its ref -- and
+    # offered to the parent -- while the replacement's checkout is still to be
+    # cut. A reaped row STAYS in the registry, since it is the honest history of
+    # the first life ({Restart}'s "Identity" note), so this runs over it again at
+    # every later adoption; {#claim} is what makes the repeat cost one set
+    # lookup instead of a second surrender.
+    #
+    # Claiming the whole batch before reaping any of it is deliberate, not an
+    # accident of `select`-then-`each`: the claims land in one unbroken stretch
+    # of this fiber, so no concurrent adoption can slip between them.
+    def reap_crashed
+      select { |registration| reapable?(registration) }.each { |registration| reap(registration) }
+    end
+
+    # The acquire and the registration append both ride INSIDE the adopted task
+    # (review fix 2). `registered` guards the reclaim: any exit that did NOT
+    # reach a live registration -- a launch that raised, OR the adopted task
+    # CANCELLED after the acquire (Async::Stop is an Exception, not a
+    # StandardError, so a `rescue StandardError` would miss it and strand an
     # orphan worktree invisible to #stop) -- releases the lease on the way out.
     # `ensure` is the only exit that runs on cancellation too, so it is the one
-    # place the reclaim cannot be skipped.
-    def register(role, lease, launch)
+    # place the reclaim cannot be skipped; `&.` covers the acquire itself
+    # raising, which provisioned nothing to reclaim.
+    def register(role, worker_id, launch)
       registered = false
+      lease = @isolation.acquire(worker_id)
       actor = launch.call(lease.worker_env)
-      @registry << Registration.new(role:, actor:, lease:)
+      @registry << Registration.new(role:, actor:, lease:, worker_id:)
       registered = true
       actor
     ensure
-      lease.release unless registered
+      lease&.release unless registered
     end
   end
 
@@ -177,10 +316,11 @@ module Lain
   # within Metrics/ClassLength instead of loosening it.
   class Supervisor
     # One registry row: the role the adoption named, the live actor it holds,
-    # and the isolation {Isolation::Lease} that actor runs under. State is
-    # DERIVED from the actor's own predicates on every read -- a stored status
-    # field would go stale the moment a fiber failed.
-    Registration = Data.define(:role, :actor, :lease) do
+    # the isolation {Isolation::Lease} that actor runs under, and the worker_id
+    # that lease was taken under. State is DERIVED from the actor's own
+    # predicates on every read -- a stored status field would go stale the
+    # moment a fiber failed.
+    Registration = Data.define(:role, :actor, :lease, :worker_id) do
       def address = actor.address
 
       def head_digest = actor.timeline.head_digest
@@ -188,11 +328,20 @@ module Lain
       # Reclaim the worker's leased environment. A no-op on the shared-process
       # {Isolation::Null} lease (its on_release does nothing), so releasing one
       # worker's lease never tears down state a still-running sibling shares;
-      # a Worktree lease removes exactly this worker's own checkout. The
-      # crashed-worker case is spec'd apart: a restart acquires a FRESH lease
-      # under a new worker_id, so a dead registration's lease is reclaimed here
-      # at #stop, never force-reaped under a successor that never held it.
+      # a Worktree lease removes exactly this worker's own checkout.
       def release = lease.release
+
+      # Give the lease up the way a worker that CRASHED has to have it given up:
+      # through the handoff, which anchors the commits before the release under
+      # it destroys the checkout ({Supervisor#reap_crashed}). `worker_id` rides
+      # along because it is what {Isolation::Worktree::Handback} names the ref
+      # from -- so a human finds the work under the id the registry showed.
+      def surrender(handoff) = handoff.surrender(lease, worker_id:)
+
+      # Dead but never stopped -- {Registration#state}'s :failed, which is the
+      # crash. An operator's own #stop is deliberate and is reclaimed with the
+      # rest of the fleet, so it is not reaped out from under them here.
+      def failed? = state == :failed
 
       # :running covers parked-and-serviceable; :failed is dead-but-not-stopped
       # ({Tools::Subagent::Actor#dead?}'s distinction); :stopped wins over
@@ -225,6 +374,21 @@ module Lain
       rescue StandardError
         self
       end
+    end
+
+    # The wired-nothing handoff ({#reap_crashed}'s default), and deliberately
+    # NOT {Isolation::WorkerHandoff::Null}, which releases: with no handoff
+    # wired there is nothing here that can anchor, and releasing a crashed
+    # worker's `--detach`ed checkout with nothing anchored is what makes its
+    # commits unreachable. So the wired-nothing answer is KEEP IT -- one idle
+    # worktree until #stop, which is what a crash costs today, rather than the
+    # work. Wire an {Isolation::WorkerHandoff} to make the reap happen.
+    #
+    # It answers the one message the reap sends, not the whole WorkerHandoff
+    # duck: a Supervisor never reclaims a SETTLED worker (an actor's completion
+    # is its own #stop), so a `#reclaim` here would be a method with no caller.
+    module Retain
+      def self.surrender(_lease, **) = Isolation::WorkerHandoff::Report.nothing
     end
 
     # The wired-nothing default ({Tools::Subagent}, {CLI::Conductor}): answers
@@ -261,6 +425,47 @@ module Lain
     # being drained when the window closed".
     DrainTimedOut = Data.define(:within, :roles) do
       include Telemetry::Journalable
+    end
+
+    # What a crashed worker's reap did, in the experiment record ({#reap}). The
+    # {Isolation::WorkerHandoff::Report} it carries is the ONLY thing that ever
+    # names {Isolation::WorkerHandoff::STRANDED} -- a parent checkout left
+    # mid-merge, whose remedy is a person running `git merge --abort` and whose
+    # cost until they do is that every later handback declines, silently, around
+    # `<<<<<<<` markers standing in their working tree. `summary` is the
+    # Report's own one-line answer (it names the ref the work is on); `stranded`
+    # lifts the one state a human must act on out of that prose so a HUD or a
+    # bench query can filter on it. `worker_key` is the STRING worker_id, the
+    # join key {Telemetry::Handback} and {Telemetry::IsolationLease} already
+    # share. Journals as "worker_reaped".
+    WorkerReaped = Data.define(:role, :worker_key, :kind, :ref, :stranded, :summary) do
+      include Telemetry::Journalable
+
+      # STRANDED has no kind of its own: {Isolation::WorkerHandoff#told}
+      # escalates a stranded restoration by APPENDING that sentence to whatever
+      # detail the Report already carried, so matching the constant is the only
+      # way to read it back out. The constant and not a copy of its text, so the
+      # two cannot drift apart in silence.
+      def self.from(registration, report)
+        new(role: registration.role, worker_key: registration.worker_id, kind: report.kind, ref: report.ref,
+            stranded: report.detail.include?(Isolation::WorkerHandoff::STRANDED), summary: report.summary)
+      end
+
+      # A handoff that raised where its own contract answers a Report. There is
+      # no Report, so `stranded` is false in the honest sense of "nothing
+      # reported it" -- the raise is what a reader acts on here.
+      def self.raised(registration, error)
+        new(role: registration.role, worker_key: registration.worker_id, kind: :failed, ref: nil,
+            stranded: false, summary: "#{error.class}: #{error.message}")
+      end
+
+      def initialize(role:, worker_key:, kind:, ref:, stranded:, summary:)
+        super(role: role.to_s.dup.freeze, worker_key: worker_key.to_s.dup.freeze, kind: kind.to_sym,
+              ref: ref&.dup&.freeze, stranded: stranded ? true : false, summary: summary.to_s.dup.freeze)
+      end
+
+      # @return [Boolean] whether this record says nothing worth a journal line
+      def quiet? = kind == :nothing_to_do
     end
 
     # The one settle {Supervisor#drain} hands Shutdown: the whole fleet,
