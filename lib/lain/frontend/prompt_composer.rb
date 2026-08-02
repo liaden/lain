@@ -359,13 +359,24 @@ module Lain
         #   {CLI::Conductor} records input on
         # @param status_feed [#state] the published struct; `"fleet"` is the
         #   only reading this class takes from it
-        def initialize(agent:, clock:, status_feed:)
+        # @param mode [#posture, #layers, nil] the session's live mode -- a
+        #   {Lain::Mode} value or a {Mode::Switch} both answer this duck.
+        #   `nil` until the mode ladder is wired into a live chat (T5/T10),
+        #   which is why it defaults to nil rather than being required: this
+        #   card owns no line in `cli/wiring.rb`, so today's caller keeps
+        #   constructing a {RunState} exactly as it always has, and `#to_h`
+        #   reports no mode -- byte-identical to before this card.
+        def initialize(agent:, clock:, status_feed:, mode: nil)
           @agent = agent
           @clock = clock
           @status_feed = status_feed
+          @mode = mode
         end
 
-        def to_h = { "model" => @agent.context.model, "occupancy" => occupancy, "fleet" => fleet, "idle" => idle }
+        def to_h
+          { "model" => @agent.context.model, "occupancy" => occupancy, "fleet" => fleet, "idle" => idle,
+            "mode" => mode }
+        end
 
         private
 
@@ -384,6 +395,20 @@ module Lain
         def fleet
           size = @status_feed.state["fleet"].size
           size.positive? ? size.to_s : nil
+        end
+
+        # The posture's own lighter, then every active layer's, in the same
+        # precedence order {Mode#describe} reports -- `LayerSet#layers`
+        # already canonicalizes to declaration order, so this does not
+        # re-sort. `accept_edits` with no layers reduces to an empty Array,
+        # which is nil here for the same reason {#fleet} and {#occupancy} are:
+        # a `( ... )` group elides a variable that is absent, never one that
+        # is an empty String rendered anyway.
+        def mode
+          return nil unless @mode
+
+          lighters = [@mode.posture.lighter, *@mode.layers.layers.map(&:lighter)].reject(&:empty?)
+          lighters.empty? ? nil : lighters.join(" ")
         end
 
         def idle = humanize(@clock.idle)

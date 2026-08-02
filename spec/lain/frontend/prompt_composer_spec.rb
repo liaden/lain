@@ -570,7 +570,41 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "answers a plain string-keyed Hash the formatter can render" do
-      expect(state.keys).to contain_exactly("model", "occupancy", "fleet", "idle")
+      expect(state.keys).to contain_exactly("model", "occupancy", "fleet", "idle", "mode")
+    end
+
+    # T7: the posture the human is in must live in chrome they cannot lose,
+    # but only when a mode is actually wired -- nobody threads one through
+    # `cli/wiring.rb` until T5/T10 land, so `mode: nil` (the default) must
+    # keep behaving exactly as it always has.
+    describe "mode" do
+      it "reports nothing when no mode is wired, so the default costs nothing" do
+        expect(described_class.new(agent:, clock:, status_feed:).to_h["mode"]).to be_nil
+      end
+
+      it "reports the posture's own lighter for a non-default posture" do
+        mode = Lain::Mode.new(posture: :plan, layers: [])
+
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("PLAN")
+      end
+
+      it "reports nothing for the default posture with no layers active" do
+        mode = Lain::Mode.new(posture: :accept_edits, layers: [])
+
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to be_nil
+      end
+
+      it "reports the posture lighter alongside every active layer's, in precedence order" do
+        mode = Lain::Mode.new(posture: :manual, layers: %i[auto_approve])
+
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("MAN AA")
+      end
+
+      it "reports only the active layers' lighters when the posture itself is silent" do
+        mode = Lain::Mode.new(posture: :accept_edits, layers: %i[goal])
+
+        expect(described_class.new(agent:, clock:, status_feed:, mode:).to_h["mode"]).to eq("GOAL")
+      end
     end
   end
 
@@ -696,7 +730,71 @@ RSpec.describe Lain::Frontend::PromptComposer do
     it "ships a default that parses, and names the variables the run supplies" do
       shipped = Lain::Ext::Prompt.from_toml(File.read(described_class::DEFAULT_CONFIG))
 
-      expect(shipped.variables).to contain_exactly("model", "occupancy", "fleet", "idle")
+      expect(shipped.variables).to contain_exactly("model", "occupancy", "fleet", "idle", "mode")
+    end
+  end
+
+  # T7 -- the posture surfaces in chrome the human cannot lose, but only when
+  # a mode is actually wired: `accept_edits` with no layers is the default,
+  # and the default must cost nothing.
+  describe "the mode segment the default format renders" do
+    let(:shipped) { Lain::Ext::Prompt.from_toml(File.read(Lain::Frontend::PromptComposer::DEFAULT_CONFIG)) }
+    let(:state) { { "model" => "claude-opus-4-1", "occupancy" => "38%", "fleet" => "3", "idle" => "12m" } }
+
+    # The format string exactly as it read immediately BEFORE this card,
+    # reproduced verbatim -- so a divergence shows up as a real byte
+    # difference rather than this test comparing the new format against
+    # itself. This is the proof the card's escalation trigger demands: a
+    # non-default posture must not change what a default-posture prompt
+    # renders.
+    let(:pre_t7_format) do
+      Lain::Ext::Prompt.from_toml(
+        %(format = "[$model](bold cyan)( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"\n)
+      )
+    end
+
+    it "is byte-identical to the pre-T7 format when the posture is the default and no layers are active" do
+      old_bytes = pre_t7_format.render(state, color: false)
+      new_bytes = shipped.render(state.merge("mode" => nil), color: false)
+
+      expect(new_bytes).to eq(old_bytes)
+    end
+
+    it "carries a non-default posture's lighter into the rendered line" do
+      rendered = shipped.render(state.merge("mode" => "PLAN"), color: false)
+
+      expect(rendered).to include("PLAN")
+    end
+
+    it "carries the posture lighter and every active layer's lighter" do
+      rendered = shipped.render(state.merge("mode" => "MAN AA"), color: false)
+
+      expect(rendered).to include("MAN", "AA")
+    end
+  end
+
+  # T7's fourth scenario: a mode collaborator that raises must not lose the
+  # prompt. No new rescue is added for this -- {Formatted#call} raises
+  # straight through `@state.to_h`, and {PromptComposer#compose}'s existing
+  # RENDERER_FAULTS net already catches it, exactly as it does today for any
+  # other reader that raises. This pins that the mode reading rides the same
+  # net rather than needing one of its own.
+  describe "a mode collaborator that raises" do
+    let(:agent) { instance_double(Lain::Agent, occupancy: nil, context: instance_double(Lain::Context, model: "opus")) }
+    let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
+    let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
+    # Answers neither #posture nor #layers -- the shape a badly-wired
+    # collaborator would take, not a well-formed Mode.
+    let(:broken_mode) { Object.new }
+
+    it "degrades to the plain prompt and warns once, through the composer's existing fault net" do
+      state = Lain::Frontend::PromptComposer::RunState.new(agent:, clock:, status_feed:, mode: broken_mode)
+      renderer = described_class.renderer(state:, screen: -> { 200 })
+      warnings = []
+      composer = described_class.new(theme: plain, renderer:, notify: warnings.method(:push))
+
+      expect(composer.compose("> ").line).to eq("> ")
+      expect(warnings.size).to eq(1)
     end
   end
 end

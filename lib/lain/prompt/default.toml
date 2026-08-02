@@ -3,6 +3,16 @@
 # rendered per prompt, in process -- there is no fork/exec behind this file, and
 # nothing here may cause one.
 #
+# Never name this file on a `rubocop` command line, not even to lint it. RuboCop
+# has no TOML grammar and will parse `format = "..."` as Ruby, "fixing"
+# Lint/UselessAssignment by deleting the `format = ` prefix -- verified, and it
+# leaves a bare string literal that is no longer valid TOML. An `AllCops:
+# Exclude` entry does NOT save you here: Exclude governs RuboCop's own file
+# DISCOVERY, not a path handed to it directly on the command line -- also
+# verified. A bare `bundle exec rubocop` / `pre-commit run --all-files` (the
+# shapes CI and the git hook actually use) never walks into this file and is
+# safe.
+#
 # A project overrides it with `.lain/prompt.toml`; a machine, with
 # `$XDG_CONFIG_HOME/lain/prompt.toml`. The narrowest scope that answered wins.
 #
@@ -18,11 +28,18 @@
 #               blank -- a prompt is not the place to answer for a wiring bug)
 #   $fleet      how many subagents have spawned, absent when none have
 #   $idle       since the human last answered a prompt: 12s, 5m, 2h
+#   $mode       the posture's lighter, then every active layer's, space
+#               separated -- e.g. "PLAN" or "MAN AA". Absent whenever there is
+#               nothing to say: no mode is wired yet, or the session is in
+#               accept_edits (the default posture) with no layers active. This
+#               is chrome the human cannot accidentally scroll away or turn
+#               off, which is why it rides the composed line above the editor
+#               rather than living only in the transcript.
 #
 # Colour is NOT resolved here. Ruby owns the stream, so it decides whether this
 # renders with escape sequences at all; a `(bold cyan)` on a piped stdout emits
 # plain bytes.
-format = "[$model](bold cyan)( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"
+format = "[$model](bold cyan)( [$mode](bold yellow))( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"
 
 # [settings]
 # The composed line is dropped, rather than wrapped, when it is wider than the
