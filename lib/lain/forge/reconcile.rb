@@ -420,3 +420,10 @@ module Lain
     end
   end
 end
+
+# Loaded last: {World} is the observer this class asks, and it reaches for
+# {Promotion::Remote} at construction, so the class body above -- and the
+# sibling it borrows -- must exist before it is read. The subtree index owns
+# its own children (CLAUDE.md, Requires); `forge.rb` names the unit, not the
+# unit's insides.
+require_relative "reconcile/world"

@@ -229,6 +229,30 @@ module Lain
         invoke(argv) { |_shell| Answer.new(ok: true, detail: { "value" => number, "argv" => argv }) }
       end
 
+      # @return [Answer] `value` is every OPEN pull request from `head`
+      #
+      # `--state open`, and the narrowing is a decision rather than a default.
+      # The one caller is {Reconcile::World#pr_for}, whose duck is documented as
+      # "the PR **opened** from that head ref", and both of ITS callers ask the
+      # same question: is there a live pull request here, so that opening
+      # another would be a duplicate. `--state all` answered that question with
+      # a pull request a human deliberately CLOSED -- a resumed landing then
+      # read the close as "pr_create already completed", skipped the step, and
+      # went on to merge a pull request somebody had shut. That is false
+      # idempotency, which is the failure this whole tier exists to prevent.
+      #
+      # Nothing loses the merged case: `merged?` asks {#pr_view} through
+      # `pr_state(number)`, which reads every state, so the fold never needs
+      # this verb to see a merged pull request. What DOES narrow is the window
+      # where an unsettled pr_create's pull request was already merged by
+      # something outside this serial protocol -- it now reads as needing a
+      # retry, and `gh pr create` from a head with no commits ahead of base
+      # refuses loudly. A refusal is the right end for that.
+      def pr_list(head:)
+        argv = ["pr", "list", "--head", head.to_s, "--state", "open", "--json", "number"]
+        invoke(argv) { |shell| parsed(argv, shell) }
+      end
+
       # @param fields [Array<String, Symbol>] gh `--json` field names
       # @return [Answer] `value` is the parsed document
       def pr_view(ref:, fields:)

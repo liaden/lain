@@ -53,6 +53,18 @@ RSpec.describe Lain::Forge::Gh do
       expect(factory.argvs.last).to eq(["gh", "pr", "view", "7", "--json", "number,url"])
     end
 
+    # `--state open`, not `all`: the only caller asks "is there a live pull
+    # request from this head", and a pull request a human CLOSED answering yes
+    # made a resumed landing skip its pr_create and go on to merge something
+    # somebody had shut. See the verb's own comment for why the merged case
+    # loses nothing.
+    it "lists only the OPEN pull requests for a head ref" do
+      gh.pr_list(head: "epic/demo/a1")
+
+      expect(factory.argvs.last).to eq(["gh", "pr", "list", "--head", "epic/demo/a1", "--state", "open",
+                                        "--json", "number"])
+    end
+
     it "runs every verb in the injected cwd, under a bound" do
       gh.pr_merge(number: 7)
 
@@ -80,6 +92,13 @@ RSpec.describe Lain::Forge::Gh do
 
       expect(answer).not_to be_ok
       expect(answer.detail["reason"]).to eq("unreadable")
+    end
+
+    it "returns every matching pull request as a structured value" do
+      answer = gh_answering(stdout: %([{"number":91}])).pr_list(head: "epic/demo/a1")
+
+      expect(answer).to be_ok
+      expect(answer.value).to eq([{ "number" => 91 }])
     end
 
     it "answers a structured value on a document it cannot parse, never a JSON::ParserError" do
