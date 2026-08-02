@@ -608,6 +608,92 @@ RSpec.describe Lain::Epic::Review do
   # UNCOMPARED structurally, which is a third report and not either of the two
   # that already exist: it is not "the sides agreed" (Baseline) and it is not
   # "nothing could be compared because something failed" (Recalled).
+  # T23's F1. A hand-over that never happened is not a settle, and leaving it
+  # open is not survivable: the claim is journaled before the token comes back,
+  # so a restarted lain rebuilds it and refuses every write to the epic with no
+  # user-reachable escape. #abandon is the named way back, and it is journaled
+  # for exactly that reason.
+  describe "#abandon" do
+    it "releases the path, so the artifact can be written and reviewed again" do
+      token = review.open(path: reviewed, written:)
+
+      review.abandon(token.generation, reason: "the editor never took it")
+
+      expect(review.open?(reviewed)).to be(false)
+      expect { review.open(path: reviewed, written:) }.not_to raise_error
+    end
+
+    # The whole point of journaling it: an in-memory release would leave the
+    # journal saying open and the next rebuild would restore the wedge.
+    it "journals the release, so a rebuilt review does not hold the path either" do
+      token = review.open(path: reviewed, written:)
+      review.abandon(token.generation, reason: "the editor never took it")
+
+      rebuilt = described_class.from_journal(io.string.lines, journal:, epic_slug: "alpha")
+
+      expect(rebuilt.open?(reviewed)).to be(false)
+      expect(rebuilt.generation_for(reviewed)).to be_nil
+    end
+
+    # Reusing ReviewClosed rather than inventing a record: Replay#release
+    # already folds it and already reads error/error_kind, so an abandon needs
+    # no new branch anywhere.
+    it "closes with the abandon named as the error kind, not as a comparison" do
+      token = review.open(path: reviewed, written:)
+      review.abandon(token.generation, reason: "the editor never took it")
+      closed = records("review_closed").last
+
+      expect(closed["error_kind"]).to eq("Lain::Epic::Review::Abandoned")
+      expect(closed["error"]).to eq("the editor never took it")
+      expect(closed["changes"]).to eq({})
+    end
+
+    # Nothing came back because nothing went out, so the file is as lain wrote
+    # it -- a statement, not a placeholder. `lossy` is unmeasured, Recalled's
+    # own distinction, and error_kind is what keeps them apart.
+    it "records the written bytes as what is on disk, and claims no truncation" do
+      token = review.open(path: reviewed, written:)
+      review.abandon(token.generation, reason: "the editor never took it")
+      closed = records("review_closed").last
+
+      expect(closed["disk_digest"]).to eq(written.byte_digest)
+      expect(closed["written_digest"]).to eq(written.byte_digest)
+      expect(closed["lossy"]).to be(false)
+    end
+
+    # Nobody reviewed anything, so there is no delta to hand anyone and a
+    # fabricated one would report a review that never happened.
+    it "does not resolve the promise with a delta nobody produced" do
+      Sync do
+        token = review.open(path: reviewed, written:)
+
+        review.abandon(token.generation, reason: "the editor never took it")
+
+        expect(token).not_to be_resolved
+      end
+    end
+
+    it "abandons exactly its own generation and leaves the others held" do
+      first = review.open(path: reviewed, written:)
+      second = review.open(path: "/epics/alpha/research.md", written:)
+
+      review.abandon(first.generation, reason: "the editor never took it")
+
+      expect(review.open?(reviewed)).to be(false)
+      expect(review.open?(second.path)).to be(true)
+    end
+
+    it "refuses a generation that was settled, never opened, or is not one" do
+      token = review.open(path: reviewed, written:)
+      review.settle(token.generation, disk: retitled_disk)
+
+      expect { review.abandon(token.generation, reason: "late") }
+        .to raise_error(described_class::NotOpen, /already settled/)
+      expect { review.abandon(99, reason: "late") }.to raise_error(described_class::NotOpen, /never opened/)
+      expect { review.abandon("3junk", reason: "late") }.to raise_error(described_class::NotOpen)
+    end
+  end
+
   describe "a prose artifact" do
     let(:note) do
       <<~PROSE

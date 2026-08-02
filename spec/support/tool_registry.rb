@@ -64,6 +64,10 @@ module ToolRegistry
     },
     "run_skill" => -> { build_run_skill },
     "ask_human" => -> { Lain::Tools::AskHuman.new(parent: Lain::Timeline.empty(store: Lain::Store.new)) },
+    # Construction-only, the "core_exec" precedent above: every property this
+    # spec asks of the instance is a declaration, never #perform, and nil
+    # collaborators fail loudly if that ever stops being true.
+    "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
     "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) }

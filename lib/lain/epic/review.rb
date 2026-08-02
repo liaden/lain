@@ -68,6 +68,12 @@ module Lain
       # without matching message text -- which is what that member is for.
       class Unrecoverable < Error; end
 
+      # Constructed and handed to {ReviewClosed}, never raised: it is the
+      # `error_kind` an ABANDONED review closes with, so a reader can tell a
+      # hand-over that never happened from one that came back malformed. See
+      # {#abandon} for when that is the honest record.
+      class Abandoned < Error; end
+
       class NoPromise < Error; end
 
       # The promise a review rebuilt from the journal does not have.
@@ -171,12 +177,18 @@ module Lain
         # means -- and a token that carried only the number would leave the slug
         # to be remembered BESIDE it at every construction site, which is the
         # forget-and-misroute failure the pair exists to rule out.
-        attr_reader :epic_slug, :generation, :path
+        # `written_digest` rides here because it is a field of the very record
+        # this object is the live half OF, and because a token that cannot name
+        # the bytes lain wrote cannot describe its own close -- which is exactly
+        # what {Review#abandon} needs when there is no disk read to describe it
+        # with.
+        attr_reader :epic_slug, :generation, :path, :written_digest
 
-        def initialize(epic_slug:, generation:, path:, baseline:, promise:)
+        def initialize(epic_slug:, generation:, path:, written_digest:, baseline:, promise:)
           @epic_slug = epic_slug
           @generation = generation
           @path = path
+          @written_digest = written_digest
           @baseline = baseline
           @promise = promise
         end
@@ -272,8 +284,9 @@ module Lain
         end
 
         def token(record, generation)
+          written_digest = record["written_digest"].to_s
           Token.new(epic_slug: @epic_slug, generation:, path: ReviewClaim.path(record["path"]),
-                    baseline: Recalled.new(record["written_digest"].to_s), promise: Unpromised)
+                    written_digest:, baseline: Recalled.new(written_digest), promise: Unpromised)
         end
 
         def release(record)
@@ -358,6 +371,7 @@ module Lain
         @journal << ReviewOpened.new(epic_slug: @epic_slug, path:, generation:,
                                      written_digest: written.byte_digest, graph_digest: written.graph_digest)
         @open[generation] = Token.new(epic_slug: @epic_slug, generation:, path:,
+                                      written_digest: written.byte_digest,
                                       baseline: baseline_for(written), promise: Promise.new)
       end
 
@@ -414,7 +428,62 @@ module Lain
         delta
       end
 
+      # Give the baton back without a settlement, because the hand-over never
+      # happened.
+      #
+      # The case is narrow and it is deliberately NOT a settle: something raised
+      # between {#open} and the human being told the file is theirs, so nobody
+      # was handed anything, no editor buffer exists to send `done` from, and no
+      # route to {#settle} was ever bound. Left open, that claim is DURABLE --
+      # {ReviewOpened} is journaled before the token comes back -- so a restarted
+      # lain would go on refusing every write to this epic with no user-reachable
+      # escape at all.
+      #
+      # Journaled for exactly that reason: an in-memory release would leave the
+      # journal saying open, and the next {.from_journal} would rebuild the wedge
+      # this method exists to prevent.
+      #
+      # It closes with {ReviewClosed} rather than a record of its own, because
+      # {Replay#release} already folds that record and already reads
+      # `error`/`error_kind`. An abandon IS a close that compared nothing, which
+      # is the shape that record already carries, so the fold needs no new
+      # branch and no reader needs teaching.
+      #
+      # `disk_digest` is the WRITTEN digest, and that is a statement rather than
+      # a placeholder: nothing came back because nothing went out, so what is on
+      # disk is what lain wrote. `lossy: false` is UNMEASURED, not measured false
+      # -- {Recalled}'s own distinction, and `error_kind` is what keeps them
+      # apart.
+      #
+      # The promise is deliberately NOT resolved. Nobody reviewed anything, so
+      # there is no delta to hand anyone and a fabricated one would report a
+      # review that never happened. The only caller raises past its own await, so
+      # no fiber is left waiting; a caller that abandons a review it also intends
+      # to await has to answer that for itself.
+      #
+      # @param generation [Integer, String] the token's generation, read exactly
+      #   as {#settle} reads it
+      # @param reason [String] why the hand-over did not happen, journaled as the
+      #   record's `error`
+      # @return [Token] the token whose claim was given back
+      # @raise [NotOpen] for a generation that was settled, never opened here, or
+      #   is not a generation at all
+      def abandon(generation, reason:)
+        generation = read_generation(generation)
+        token = @open.fetch(generation) { refuse_stale!(generation) }
+        @journal << abandoned(token, reason)
+        release(generation)
+        token
+      end
+
       private
+
+      def abandoned(token, reason)
+        ReviewClosed.new(epic_slug: @epic_slug, path: token.path, generation: token.generation,
+                         written_digest: token.written_digest, disk_digest: token.written_digest,
+                         changes: Intake::Account.empty.changes, lossy: false,
+                         error: reason.to_s, error_kind: Abandoned.name)
+      end
 
       # The wire's refusal is a record's refusal (ArgumentError), and this is the
       # one place that is the wrong exception: the only caller
