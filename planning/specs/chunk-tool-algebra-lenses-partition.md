@@ -1,9 +1,40 @@
 # Tool-use algebra: laws, block lenses, and the shared interval partition
 
-status: draft (panel-reviewed 2026-07-29: REQUEST-CHANGES → both blockers and all
-should-fixes applied — T2's driver corrected to back-to-back single-use responses, T10's
-collapse dispatch designed via hook widening + owner-tagged ranges; awaiting chunk B before
-execution)
+status: **in-progress** (2026-08-02; panel-reviewed 2026-07-29: REQUEST-CHANGES → both blockers
+and all should-fixes applied — T2's driver corrected to back-to-back single-use responses, T10's
+collapse dispatch designed via hook widening + owner-tagged ranges; chunk B landed at `3e8502e`)
+
+## Staleness check, 2026-08-02 (main at `e31f9a5`)
+
+**Spec re-baseline (the count this plan deliberately left blank): 7883 examples, 0 failures,
+2 pending** — `bundle exec rspec` on `e31f9a5`, exit 0. Integration check 1's "strictly above"
+is measured against 7883.
+
+Chunk B landed at `3e8502e`, but main has advanced past it through the epic-wiring chunk.
+Re-verified every wave-1 anchor. **Held exactly:** `toolset.rb` freeze-at-construction `:34`,
+`#only` `:75`, `#except` `:86`, `to_schema` `:99`; `strategy/base.rb` `Partition` `:164`,
+`private_constant` `:265`, `method_added` `:271`, the seven refusals `:186-250`, the builder
+`:133`; `derivation.rb` `Plan#writes` `:318`; `source/derived.rb` `PinCuts#runs` `:274-276`;
+`response.rb` `#tool_uses` `:70`; `middleware.rb` `class Base` `:50` / `Identity = Base.new`
+`:75`; `context/base.rb:78` declaration shape; `algebra.rb` `STRUCTURES` `:48`, requires
+`:264-268`, `@entries` `:144`, `@registry ||=` `:258`; `algebra_laws_spec.rb` `GROUPS` `:116`,
+`BATTERIES` `:124`, `EVIDENCE` `:135`, `POPULATIONS` `:141`; `algebra_generators.rb`
+`strategy_claims` `:34`, `observationally_equal` `:76`.
+
+**Absorbed drift (no card invalidated):**
+
+- `agent/tool_runner.rb` line numbers moved: `#run` `:83` (was ~`:76`), `#observe` `:164`,
+  `#contiguous_runs` `:198`, `#gather` `:219`, `#result_block` `:237`, `DuplicateToolUse` raise
+  `:160`. T4/T8/T9 re-anchor by method name, not line.
+- **`Spawn::Seam` was never built** — chunk B's T23 left only a design comment at
+  `subagent.rb:381`. T3's escalation trigger about it is moot; `build_subagent`
+  (`subagent_spec.rb:26`) and `loop_driven` (`:41`) are unchanged.
+- **`spec/support/shared_examples/` holds 12 groups, not seven** (integration check 4's count is
+  stale; its *invariant* — byte-unchanged, only `attenuation.rb` added — stands).
+- **`include_examples "a monoid"` appears at 8 sites, 4 of them Middleware's**
+  (`middleware_spec.rb`, `repl_middleware_spec.rb`, `agent_turn_middleware_spec.rb`,
+  `middleware/skill_dispatch_spec.rb`) — not five. T6's AC already anticipated the re-count.
+  `spec/lain/middleware/env_spec.rb` still exists (chunk B's T36 did not delete it).
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson (one review agent embodies all)
@@ -124,6 +155,114 @@ proven at five identical `include_examples` sites with zero declaration in `lib/
 `middleware.rb:75`); observational equality precedent `Combinators.observationally_equal`
 (`algebra_generators.rb:76-79`). Follow-ups 0b/11 both open: verbs are public class methods
 on every includer; `Registry` has no seal, `@entries` mutable, `@registry ||=` non-atomic.
+
+## Execution log (orchestrator, 2026-08-02)
+
+### Wave 1 — LANDED, 6/6. Suite 8052 / 0 failures / 2 pending (from 7883).
+
+| Card | Verdict | Commit |
+|---|---|---|
+| T3 posture equivalence | APPROVE | `86b5eeb` |
+| T6 Middleware monoid | APPROVE-WITH-FIXES (deferred to A-1) | `48d8712` |
+| T4 ToolUse lens | APPROVE-WITH-FIXES (7 mechanical) | `8667a5b` |
+| — lens `to_json` cleanup (orchestrator-owned) | — | `c864171` |
+| T2 exchange law | APPROVE-WITH-FIXES → re-reviewed APPROVE | `5727706` |
+| T5 IntervalPartition | REQUEST-CHANGES ×2 → APPROVE | `32ab223` |
+| T1 Toolset equality | REQUEST-CHANGES → APPROVE | `61acbae` |
+
+**Every card that received a deep review had a real defect found.** Four were serious enough
+to have shipped behind a green suite:
+
+1. **T1 had a failing spec.** `spec/lain/cli/wiring/toolset_build_spec.rb` hands `lib/` an
+   `instance_double(Lain::Tool)` stubbing only `name`; the eager digest made `Toolset.new`
+   call `#to_schema` on it. The implementer's 69-file sweep grepped for specs building a
+   Toolset *inline* and structurally could not see one built by `lib/` from a spec-supplied
+   member. **Lesson, now in every brief: when a change widens a construction contract, only a
+   full-suite run enumerates the blast radius.**
+2. **T5's refusal messages named ranges the author never wrote** — normalization ran before
+   validation, so `[0...3, 1...4]` was reported as "0..2 and 1..3", and every production
+   out-of-span refusal printed a respelled span (`derivation.rb:283` always asks
+   `0...boundary.index`). The code carried a comment arguing this could not happen; the
+   argument only covered malformed shapes.
+3. **T2's read-set comparisons held vacuously.** Killing read observation outright
+   (`Session#read?` → always false) left all 92 examples green: 36 of 45 compared `[] == []`.
+4. **T6's law sweep passes under a left-absorbing operator** — see A-1.
+
+**Process notes that changed how later waves are briefed:** run the full suite before
+reporting green; a fresh worktree needs `bundle exec rake compile`; review agents must be
+pointed at the implementer's worktree; and "I could not find a seam" is not "no seam exists"
+— T5 reported the second while the first was true, and its panel produced the seam
+(`const_get` bypasses `private_constant`, and `.covering` refuses from `PinCuts` given an
+unbounded span).
+
+**Scope expansions, ruled by the orchestrator rather than escalated to Joel:**
+
+- **T1 → `spec/lain/agent/tool_runner_spec.rb`.** The card's mandated eager digest makes
+  `Toolset#initialize` call `#to_schema` on every member, where before it needed only `#name`.
+  Four `Struct.new(:name)` fakes in that file had no `#to_schema` and broke. This is *not* the
+  card's first escalation trigger (nothing relied on `==` being identity — those are fixture
+  gaps), and the correction is precedented in-repo: `spec/lain/agent_spec.rb:858-864` already
+  gives the identical hand-over fake a `#to_schema`. Restricted to the two fake-builder
+  helpers; no assertion or example body touched. T8 (wave 2, same file) inherits the change.
+- **T1 second behavior change, accepted:** `#to_schema` now returns the same memoized frozen
+  Array per call rather than a fresh one. Every `lib/` consumer is read-only (`context.rb:162`,
+  `session_record.rb:49`, `toolset/disclosure/upfront.rb:14`, `tools/tool_search.rb:72`, the
+  bench recorders). **T7 must note:** a law asserting `to_schema` *object identity* across two
+  calls would now pass vacuously.
+
+**Follow-up tickets raised during execution (not in scope here):**
+
+- **A-1. The monoid law generators are built through the operator they test.** Found by T6's
+  panel via direct falsification, and it is a real hole in the bench's own proof machinery.
+  `Middlewares.draw_from`, `Combinators.draw_from`, and `middleware_spec.rb:29-31`'s `compose`
+  helper all build each population draw with `reduce(Identity, :>>)`. Make `>>` left-absorbing
+  (return the receiver, discard the argument) and **the sweep stays green**: every draw
+  collapses to bare `Identity`, so both monoid laws hold vacuously. This predates T6 — T6 was
+  told to reuse `Combinators` as its model and did so faithfully, and the trap its own card
+  named (bare-`Base`-instance populations) *is* correctly closed, verified by a second
+  mutation that went RED. Fix is cross-cutting: construct monoid-law populations independently
+  of the operator under test, across `Combinators`, `Middlewares`, and any future
+  `draw_from`-shaped generator. **Not a gate on T6.** Note T7's and T10's generators do *not*
+  have this shape — they draw from fixed pools rather than composing — so this chunk adds no
+  new instances of it.
+- **A-2. The lens pattern leaves `to_json` open, and it is not loud.** Found by T4's panel.
+  `Canonical.normalize` refuses a lens with `UnsupportedType` — the closed door this chunk's
+  grounding leans on — but `JSON` does not: `lens.to_json` yields `"\"#<Lain::…:0x…>\""`,
+  *valid* JSON carrying a debug string. A journal line that parses but carries garbage is
+  undetectable where a raise is not, and the Journal is the experiment record. **Ruled:**
+  transparent delegation (`def to_json(*args) = @hash.to_json(*args)`), consistent with `#to_h`
+  returning the hash by identity. Applied to `Response::ToolUse` in T4; **required of T8's
+  `ResultBlock`, which is the one that actually sits a hop from `journal.rb`'s
+  `JSON.generate`**; `Middleware::Env` and `Context::MessageEnvelope` share the hole and are
+  fixed as an orchestrator-owned cleanup (neither file belongs to any card in either chunk).
+- **A-4. Three definitions of one equality idea, and nothing says they differ.** Raised by T1's
+  panel. `Lain::ContentAddressed` is the house convention (`Event`, `Event::Payload`,
+  `Memory::Item`, `Memory::Index::Root`, `Plan::Closure`, `Plan::SeamPolicy`,
+  `Workspace::Snapshot`); `Capability::DegradedSet` hand-rolls the trio while a comment claims
+  it "mirrors" the module; `Toolset` (T1) now hand-rolls a third. **T1's is the correct one:**
+  it guards with `instance_of?` where the other two use `is_a?`, and under `is_a?` plus a
+  class-embedding `hash` the asymmetry both siblings write down as a caveat is a live
+  `hash`/`eql?` contract violation waiting for the first subclass. **Ruled:** T1 keeps its
+  semantics and documents the divergence rather than adopting the weaker guard. Converge
+  `ContentAddressed` and `DegradedSet` onto `instance_of?` in a follow-up, then fold `Toolset`
+  into the module.
+- **A-5.** `Grader::Journaling#subject_digest` is a `respond_to?(:digest)` duck that `Toolset`
+  now satisfies **by accident**, and `Bench::Session::RecordedToolset` (`bench/session.rb:81-89`)
+  answers `#to_schema` but not `#digest` — so a replay can never assert `replayed == recorded`.
+  "The same capability set" now has two representations and only one is comparable.
+- **A-3.** `Lain::Session` exposes readers for `writes` and `pins` but **none for the
+  read-set**. T2's fix makes this structural rather than incidental — its read-set anchor has
+  to go through `read?` over a closed fixture. T2 had to ask `read?` over a closed fixture instead of comparing the set
+  directly. A reader would make the order-independence claim direct rather than inferred.
+
+**Process note for the remaining waves:** review agents must be pointed at the *implementer's*
+worktree. A reviewer given its own `isolation: "worktree"` lands in a different tree and finds
+git refuses to reach across, forcing content-hash workarounds. Spawn reviewers without
+isolation and name the implementer's worktree path.
+
+**Worktree note for every future card in both chunks:** a fresh worktree has no compiled
+`lib/lain/lain.so`, so `bundle exec rake compile` is required before any spec runs. The failure
+reads as `LoadError: cannot load such file -- lain/lain`, which looks like a missing gem.
 
 ## Orchestrator contract (plan-specific only)
 
