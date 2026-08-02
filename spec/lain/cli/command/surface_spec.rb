@@ -19,6 +19,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   let(:status_feed) { instance_double(Lain::StatusFeed) }
   let(:policy_switch) { instance_double(Lain::Approval::PolicySwitch) }
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
+  let(:mode_switch) { instance_double(Lain::Mode::Switch) }
 
   # `library:` is required (T15's posture, T40's one keyword): the run loads ONE
   # library and hands it over, so a surface that read its own would be a second
@@ -28,7 +29,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, policy_switch:, model_switch:)
+                        status_feed:, policy_switch:, model_switch:, mode_switch:)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -37,7 +38,7 @@ RSpec.describe Lain::CLI::Command::Surface do
         described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
-                            status_feed:, policy_switch:, model_switch:)
+                            status_feed:, policy_switch:, model_switch:, mode_switch:)
       end
 
       expect { libraryless.call }.to raise_error(ArgumentError, /library/)
@@ -54,7 +55,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             catalog: Lain::Skill::Catalog.load(root:), slots: Lain::Prompt::Slots.load(root:),
-                            status_feed:, policy_switch:, model_switch:)
+                            status_feed:, policy_switch:, model_switch:, mode_switch:)
       end
 
       expect { paired.call }.to raise_error(ArgumentError, /catalog|slots|library/)
@@ -69,6 +70,46 @@ RSpec.describe Lain::CLI::Command::Surface do
       expect(env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
       expect(env.status).to be(status_feed)
       expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
+    end
+  end
+
+  # The run's ONE mode switch reaches a command through the Env and nowhere
+  # else: `identity`, not merely a switch that answers the same posture, because
+  # `/mode` mutates the slot and a second instance would leave the Gate reading
+  # a posture no command can move.
+  it "hands the run's one mode switch through, so /mode writes the slot the gate reads" do
+    with_project do |root|
+      expect(build_surface(root).env.mode_switch).to be(mode_switch)
+    end
+  end
+
+  # A forgotten mode_switch must be a loud ArgumentError at construction, for
+  # the reason this class's own comment gives about its siblings: a defaulted
+  # switch would fail OPEN -- a posture nothing can change, reported as working.
+  it "refuses to construct without the run's mode switch, rather than defaulting one" do
+    with_project do |root|
+      switchless = lambda do
+        described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
+                            replies: instance_spy(Lain::CLI::HumanReplies),
+                            supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
+                            library: Lain::Skill::Library.load(root:),
+                            status_feed:, policy_switch:, model_switch:)
+      end
+
+      expect { switchless.call }.to raise_error(ArgumentError, /mode_switch/)
+    end
+  end
+
+  # PINS EXISTING BEHAVIOUR -- this card adds no code for it. The Env is built
+  # in #initialize and read through a bare attr_reader, so two reads are already
+  # one object. It is asserted because the contract ("assembled ONCE per run")
+  # is what makes every reader identity-stable across a session, and a later
+  # card that made #env a builder would break /mode and /yolo silently.
+  it "assembles the Env exactly once per run, so two reads are the same object" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      expect(surface.env).to be(surface.env)
     end
   end
 

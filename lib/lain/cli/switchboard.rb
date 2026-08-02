@@ -14,11 +14,21 @@ module Lain
     #   callers keep their existing no-queue paths).
     # * ONE {Context::ModelSwitch} the main agent's Context reads at render
     #   time -- `/model` writes it, {#graft} installs it.
+    # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
+    #   writes it, the prompt and the HUD read it. `--yolo` starts it on `auto`,
+    #   the same flag the approval half above reads, so the two can never
+    #   disagree about what the operator asked for.
     #
     # Every switch journals its flips to the SAME journal approval decisions
     # land in: on a study bench "who flipped what, when" is evidence.
     class Switchboard
-      attr_reader :approvals, :policy_switch, :model_switch
+      # All three switches live HERE rather than in {Wiring} for a mechanical
+      # reason, not a tidiness one: each needs the run's `journal:`, and Wiring's
+      # only source for one is `chronicle.record_journal`, which OPENS a file per
+      # call (/dev/null under --no-journal) -- the leak wiring.rb:363-366
+      # documents and fixed for #goal_driver. This class resolves that journal
+      # exactly once and builds all three over it.
+      attr_reader :approvals, :policy_switch, :model_switch, :mode_switch
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
@@ -35,6 +45,12 @@ module Lain
         @approvals = yolo ? nil : Approval::Queue.new(journal:)
         @policy_switch = Approval::PolicySwitch.new(@approvals || Effect::Handler::Gate::ApproveAll.new, journal:)
         @model_switch = Context::ModelSwitch.new(model, journal:)
+        # `--yolo` IS the auto posture -- the same flag, read once, expressed on
+        # both axes. This establishes WHERE the live mode lives; T10 owns making
+        # a switch DO something, by re-binding the gate policy and the toolset
+        # the posture resolves to. Until then a flip journals and is read by the
+        # prompt and the HUD, and changes no capability.
+        @mode_switch = Mode::Switch.new(Mode.new(posture: yolo ? :auto : :accept_edits), journal:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY
@@ -50,7 +66,7 @@ module Lain
       # plus /approve's inline drain prompt over the SAME conductor-routed
       # reader the Repl's watch surface uses (see Repl::ApprovalSurfaces#approval_surface's WHY).
       def surface_kwargs(conductor:, tty:)
-        { policy_switch:, model_switch:, approval_prompt: prompt(conductor:, tty:) }
+        { policy_switch:, model_switch:, mode_switch:, approval_prompt: prompt(conductor:, tty:) }
       end
 
       private

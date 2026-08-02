@@ -8,21 +8,38 @@ RSpec.describe Lain::CLI::Command::Env do
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       policy_switch: instance_double(Lain::Approval::PolicySwitch),
       model_switch: instance_double(Lain::Context::ModelSwitch),
+      mode_switch: instance_double(Lain::Mode::Switch),
       chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
   end
 
-  it "is a frozen value over the twelve readers" do
+  it "is a frozen value over the thirteen readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                policy_switch model_switch chronicle role_spawn])
+                policy_switch model_switch mode_switch chronicle role_spawn])
   end
 
   it "refuses a nil reader loudly, naming it -- Null collaborators, never nil" do
     expect { described_class.new(**readers, fork_point: nil) }
       .to raise_error(ArgumentError, /fork_point/)
+  end
+
+  # The mode switch is a REQUIRED live collaborator, not a nilable one and not a
+  # Null: `/mode` writes the slot the Gate and the toolset read, so a Null here
+  # would fail OPEN in the way surface.rb:29-37 names -- `/mode plan` would
+  # report success while the live posture never moved. Nil must be as loud as
+  # any other missing reader, and it must say WHICH one.
+  it "refuses a nil mode_switch by name, so a half-wired posture cannot start a run" do
+    expect { described_class.new(**readers, mode_switch: nil) }
+      .to raise_error(ArgumentError, /mode_switch/)
+  end
+
+  it "answers the live mode switch the run wired" do
+    switch = instance_double(Lain::Mode::Switch)
+
+    expect(described_class.new(**readers, mode_switch: switch).mode_switch).to be(switch)
   end
 
   it "answers the approval queue's read duck with nothing parked under --yolo" do

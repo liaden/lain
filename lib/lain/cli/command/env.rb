@@ -12,9 +12,12 @@ module Lain
       # Nil-free by contract: every reader answers a real collaborator (or the
       # one genuine Null Object, {YoloApprovals}), and a nil is refused loudly
       # at assembly -- no command ever writes `if env.thing`.
+      # `mode_switch` sits beside its two siblings deliberately: all three are
+      # delegating slots a command WRITES and a construction-fixed collaborator
+      # READS, so they are one family, not three unrelated readers.
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
-                        :policy_switch, :model_switch, :chronicle, :role_spawn) do
+                        :policy_switch, :model_switch, :mode_switch, :chronicle, :role_spawn) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \

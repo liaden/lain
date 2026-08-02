@@ -210,6 +210,7 @@ RSpec.describe "the /btw and /keep registration (T17 wiring)" do
         status_feed: instance_double(Lain::StatusFeed),
         policy_switch: instance_double(Lain::Approval::PolicySwitch),
         model_switch: instance_double(Lain::Context::ModelSwitch),
+        mode_switch: instance_double(Lain::Mode::Switch),
         library: Lain::Skill::Library.load(root:)
       )
 

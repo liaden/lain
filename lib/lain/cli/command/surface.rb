@@ -27,10 +27,14 @@ module Lain
       # one line in the {Env} assembly here.
       class Surface
         # `chronicle:`, `status_feed:`, `policy_switch:`, `model_switch:`,
-        # `role_spawn:` and `library:` are all required, not defaulted -- each is
+        # `mode_switch:`, `role_spawn:` and `library:` are all required, not
+        # defaulted -- each is
         # always wired in the live path, so a defaulted Null here would only mask
         # a mis-wire (a permissive policy_switch/model_switch would even fail
-        # OPEN: a silently disconnected gate). A forgotten keyword must be a loud
+        # OPEN: a silently disconnected gate). The mode switch is the sharpest
+        # case of that rule, not an exception to it: a defaulted one would let
+        # `/mode plan` report success against a slot no gate and no toolset ever
+        # reads. A forgotten keyword must be a loud
         # ArgumentError at construction, not a quiet degrade far from the bug.
         # That applies to the library exactly as it does to the rest: a from-disk
         # default here would silently be a SECOND read of the same tree, which is
@@ -39,7 +43,7 @@ module Lain
         # `root:` survives the library, on its own business: {Meta} reads the
         # project's `.lain/` config from it. It no longer feeds a snapshot load.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
-                       model_switch:, library:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
+                       model_switch:, mode_switch:, library:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
                        goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
@@ -49,7 +53,7 @@ module Lain
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                              policy_switch:, model_switch:)
+                              policy_switch:, model_switch:, mode_switch:)
         end
 
         attr_reader :env, :goal_driver
@@ -76,13 +80,13 @@ module Lain
         # `approvals` falls back, to the genuine {Env::YoloApprovals} Null when
         # --yolo wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:, policy_switch:,
-                         model_switch:)
+                         model_switch:, mode_switch:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
             approvals: approvals || Env::YoloApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            policy_switch:, model_switch:, role_spawn: @role_spawn
+            policy_switch:, model_switch:, mode_switch:, role_spawn: @role_spawn
           )
         end
 
