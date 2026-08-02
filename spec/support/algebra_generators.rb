@@ -24,7 +24,7 @@ module AlgebraGenerators
       [Lain::Timeline, :causal_meets] => Timelines.causal_meets,
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.merge(strategy_claims).merge(middleware_claims).freeze
+    }.merge(strategy_claims).merge(middleware_claims).merge(toolset_claims).freeze
   end
 
   # The compaction strategies' claims, kept in their own hash rather than in the
@@ -42,6 +42,13 @@ module AlgebraGenerators
   # reason `strategy_claims` is: that hash is at Metrics/MethodLength's limit.
   def self.middleware_claims
     { [Lain::Middleware::Base, :>>] => Middlewares.composition }
+  end
+
+  # Toolset's attenuation claim, kept apart from `registered` for the same
+  # reason `strategy_claims` and `middleware_claims` are: that hash is at
+  # Metrics/MethodLength's limit.
+  def self.toolset_claims
+    { [Lain::Toolset, :only] => Toolsets.attenuation }
   end
 
   def self.claims = registered.keys
@@ -222,6 +229,99 @@ module AlgebraGenerators
     def causally_below(store)
       ancestry = Lain::Timeline::CausalAncestry.new(store)
       ->(m, a) { m.head_digest.nil? || ancestry.closure([a.head_digest]).key?(m.head_digest) }
+    end
+  end
+
+  # == How this population is built, and why that is the whole point
+  #
+  # Every subject is handed to `Lain::Toolset.new` as a list of tool INSTANCES,
+  # and every request is a plain slice of the name Array those instances produce.
+  # Neither `#only` nor `#except` is called anywhere in the construction. That
+  # is not incidental: the monoid generators in this same file build each draw
+  # with `reduce(Identity, :>>)`, so making `#>>` left-absorbing collapses every
+  # draw onto the unit and leaves the law sweep green -- the laws hold vacuously
+  # about a population the broken operation itself produced (follow-up A-1).
+  # Break `#only` here in any way at all and the draws are untouched, so the
+  # laws are read over the same subjects and the same requests they were before,
+  # and they fail.
+  module Toolsets
+    module_function
+
+    def attenuation
+      draws = population
+      { population: -> { draws }, observed: method(:revealed), refusal: Lain::Toolset::UnknownTool }
+    end
+
+    # Four sets of decreasing size plus the empty one, each crossed with the
+    # requests below. Built ONCE and captured: T1 made construction eager --
+    # the canonical schema and its digest are computed before the freeze -- so a
+    # population rebuilt per law would pay for it repeatedly.
+    def population
+      tools = %w[bash glob grep read_file].map { |name| tool(name) }
+      [tools, tools.first(3), tools.values_at(0, 3), tools.first(1), []]
+        .map { |held| Lain::Toolset.new(held) }
+        .flat_map { |subject| requests(subject.names).map { |request| [subject, request] } }
+    end
+
+    # Name subsets as DATA -- prefixes, suffixes, every PAIR, the empty request
+    # and the whole list. Array slicing and `combination`, not attenuation: see
+    # the note above the module.
+    #
+    # The pairs are here because prefixes and suffixes alone leave a hole in the
+    # composition law. Two names at opposite ends of the sorted list co-occur
+    # ONLY in the whole-list request, where `only(subject, request) == subject`
+    # and the composition conjunct degenerates to `only(s, b) == only(s, b)` --
+    # no chain passes through a narrowed intermediate holding both. Every pair
+    # now has a request that genuinely narrows and still contains it.
+    def requests(names)
+      prefixes = names.each_index.map { |i| names.first(i + 1) }
+      suffixes = names.each_index.map { |i| names.last(i + 1) }
+      ([[], names] + prefixes + suffixes + names.combination(2).to_a).uniq
+    end
+
+    # A throwaway tool whose only interesting property is its name -- the whole
+    # of what a capability set is keyed by. Mirrors spec/lain/toolset_spec.rb's
+    # own helper.
+    def tool(tool_name)
+      Class.new(Lain::Tool) do
+        define_method(:name) { tool_name.to_s }
+        define_method(:description) { "the #{tool_name} tool" }
+        def perform(_input, _context) = Lain::Tool::Result.ok("ok")
+      end.new
+    end
+
+    # Every capability name a Toolset hands out through a public message, asked
+    # of the DROPPED names as well as the kept ones -- which is why `candidates`
+    # is a parameter rather than something derivable from the result.
+    #
+    # Three of these are what a reader sees: `#names`, the Enumerable, and the
+    # schema sent to the model. The other two are what actually AUTHORIZES a
+    # tool call -- `#include?` at effect/handler/live.rb:44 and `#fetch` at :44
+    # and :69 -- and they are the ones that matter. A set honest in the first
+    # three and lying in the last two passes every other law in this group while
+    # a dropped tool executes end to end; spec/lain/toolset_spec.rb holds that
+    # exact set and runs it through the live handler.
+    #
+    # `#[]` is not probed separately: it is an alias installed in Toolset's own
+    # body, so it is a distinct method a subclass can leave honest while
+    # overriding `#fetch`. The handler calls `#fetch`, so `#fetch` is what a
+    # capability escape has to go through.
+    def revealed(toolset, candidates)
+      (listed(toolset) + candidates.select { |name| toolset.include?(name) } +
+        candidates.flat_map { |name| fetched(toolset, name) }).uniq
+    end
+
+    def listed(toolset)
+      toolset.names + toolset.map(&:name) + toolset.to_schema.map { |entry| entry["name"] }
+    end
+
+    # What a fetch hands over, under both names it could be known by: the one
+    # the caller asked with and the one the tool answers to.
+    def fetched(toolset, name)
+      tool = toolset.fetch(name)
+      [name, tool.name]
+    rescue Lain::Toolset::UnknownTool
+      []
     end
   end
 

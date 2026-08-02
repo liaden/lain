@@ -476,6 +476,7 @@ RSpec.describe Lain::Algebra do
         include Lain::Algebra::MeetSemilattice
         include Lain::Algebra::Elementwise
         include Lain::Algebra::Pure
+        include Lain::Algebra::Attenuation
 
         def initialize = freeze
       end.new
@@ -484,7 +485,7 @@ RSpec.describe Lain::Algebra do
       expect(value).to be_ractor_shareable
     end
 
-    # For four of the five, the module is a vocabulary and nothing more: a
+    # For five of the six, the module is a vocabulary and nothing more: a
     # class may include it and file no claim at all, so `is_a?` says only that
     # the verbs were granted. The registry is the classification.
     it "grants a vocabulary without asserting anything, for every module but Elementwise" do
@@ -823,6 +824,86 @@ RSpec.describe Lain::Algebra do
       end
 
       expect(scratch.refutations.first.structure).to be(:pure)
+    end
+  end
+
+  describe Lain::Algebra::Attenuation do
+    # A pair of trivial attenuations over a Set, which is enough shape for the
+    # declaration verb to have something real to name.
+    def restricting
+      Class.new do
+        include Lain::Algebra::Attenuation
+
+        def only(*names) = names
+        def except(*names) = names
+      end
+    end
+
+    it "files one claim carrying its dual, not two claims" do
+      scratch = registry
+      klass = restricting
+      klass.attenuation on: :only, dual: :except, registry: scratch
+
+      expect(scratch.declarations.map { |entry| [entry.operation, entry.dual] }).to eq([%i[only except]])
+    end
+
+    # The operation half is {Registry#refuse_unanswered}'s, already spec'd
+    # above. The dual half has to be held to the same standard for the same
+    # reason: a typo'd `dual:` that registered quietly would surface as a law
+    # failing far from the line that caused it, which is exactly what this
+    # vocabulary's refuse-at-load posture exists to prevent.
+    # `operation:` is symbolized by {Registry#declare}; the dual has to be too,
+    # or `dual: "except"` would store a String that no consumer looking for
+    # `:except` would match.
+    it "accepts a String dual and files it as a Symbol" do
+      scratch = registry
+      klass = restricting
+      klass.attenuation on: :only, dual: "except", registry: scratch
+
+      expect(scratch.declarations.first.dual).to be(:except)
+    end
+
+    # Not a raw TypeError out of `method_defined?`: a malformed dual is this
+    # vocabulary's own refusal, like every other malformed claim.
+    it "refuses a dual that is not even a name, as a house error" do
+      scratch = registry
+      klass = restricting
+
+      aggregate_failures do
+        expect { klass.attenuation on: :only, dual: nil, registry: scratch }
+          .to raise_error(Lain::Algebra::Unanswered, /nil/)
+        expect { klass.attenuation on: :only, dual: 42, registry: scratch }
+          .to raise_error(Lain::Algebra::Unanswered, /42/)
+      end
+    end
+
+    it "refuses a dual the class does not answer, naming it" do
+      scratch = registry
+      klass = Class.new do
+        include Lain::Algebra::Attenuation
+
+        def only(*names) = names
+      end
+
+      expect { klass.attenuation on: :only, dual: :excpet, registry: scratch }
+        .to raise_error(Lain::Algebra::Unanswered, /excpet/)
+    end
+
+    it "files nothing when it refuses the dual" do
+      scratch = registry
+      klass = restricting
+      expect { klass.attenuation on: :only, dual: :nope, registry: scratch }
+        .to raise_error(Lain::Algebra::Unanswered)
+
+      expect(scratch.declarations).to be_empty
+    end
+
+    it "records the negative with its reason, like every other structure" do
+      scratch = registry
+      klass = restricting
+      klass.not_an_attenuation on: :only, because: "it re-reads the parent registry", registry: scratch
+
+      expect(scratch.refutations.first.structure).to be(:attenuation)
     end
   end
 end

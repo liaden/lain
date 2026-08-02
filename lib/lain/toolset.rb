@@ -20,6 +20,7 @@ module Lain
     class DuplicateTool < Error; end
 
     include Enumerable
+    include Algebra::Attenuation
 
     # The schema and its digest are built HERE rather than memoized on demand:
     # the object freezes itself on the next line, so a lazy `@digest ||=` is a
@@ -93,6 +94,36 @@ module Lain
 
       self.class.new(@by_name.except(*keys).values)
     end
+
+    # The security reading of the pair above, said where the registry can hold
+    # it to laws: attenuation goes DOWN and only down. `#only` names what
+    # survives, `#except` names what goes, `except(x) == only(names - x)`, and
+    # chaining either can never widen the result -- a capability once dropped
+    # cannot be regained by the holder.
+    #
+    # There is deliberately no join. Two Toolsets have no least upper bound in
+    # this algebra, and none is offered: union exists only at CONSTRUCTION,
+    # below the trust boundary, where {Tools::Subagent#child_union} assembles a
+    # child's set out of tools the parent already holds.
+    #
+    # What the boundary covers, precisely: the MODEL-FACING surface -- the
+    # rendered schema, and the `#include?`/`#fetch` pair
+    # {Effect::Handler::Live} authorizes and dispatches with. No message on
+    # THOSE adds a dropped capability back, which is what makes "possession is
+    # authorization" survive contact with a subagent, and the monotonicity law
+    # is how it stays checked rather than merely written down here.
+    #
+    # It is not a claim about the Ruby object graph, and must not be read as
+    # one. The tools an attenuated set still yields are objects with surfaces of
+    # their own: `only(:subagent).fetch("subagent").attenuates_from` hands back
+    # the whole un-attenuated union (`tools/subagent.rb:90`). Reaching a tool's
+    # own constructor arguments in-process is not the threat this boundary is
+    # against; a spec pins both halves so neither reading drifts.
+    #
+    # The partiality is a law too: `only` outside the current set raises, and
+    # `except` twice over the same names raises, because the second call is
+    # naming a tool that is already gone.
+    attenuation on: :only, dual: :except
 
     # The provider-neutral tool array: each tool's schema, sorted by name, run
     # through {Lain::Canonical} so the bytes are stable across constructions.

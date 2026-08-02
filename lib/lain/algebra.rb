@@ -25,7 +25,7 @@ module Lain
   # laws, while `#causal_meets` explicitly does not -- a criss-cross fan-in
   # leaves incomparable maximal common ancestors, so there is no unique greatest
   # lower bound. `include MeetSemilattice` on the class would therefore be a
-  # lie. For four of the five modules, including one grants the *vocabulary* and
+  # lie. For five of the six modules, including one grants the *vocabulary* and
   # asserts nothing: `is_a?` is NOT the classification, the registry is.
   # {Elementwise} is the exception, and says so in its own doc.
   #
@@ -45,7 +45,7 @@ module Lain
     # and an unnamed structure fails loudly against this list rather than
     # quietly joining it -- the same shape as
     # {Isolation::Services::Builder::VERBS}.
-    STRUCTURES = %i[monoid commutative_monoid meet_semilattice elementwise pure].freeze
+    STRUCTURES = %i[monoid commutative_monoid meet_semilattice elementwise pure attenuation].freeze
 
     # A structure outside {STRUCTURES}. Named per the error-taxonomy
     # convention, beside the registry that raises it.
@@ -102,18 +102,20 @@ module Lain
 
     # One structure on one operation of one class.
     #
-    # Three fields are structure-specific and nil everywhere else, which is the
+    # Four fields are structure-specific and nil everywhere else, which is the
     # honest shape: what evidence a claim carries depends on what it claims.
     #
     # * +identity+   the unit, for +:monoid+ and +:commutative_monoid+.
     # * +bottom+     a short PROSE description, for +:meet_semilattice+.
     # * +analysis+   the whole-span method an elementwise map is relative to.
+    # * +dual+       the operation an +:attenuation+ states the same restriction
+    #   through from the other side -- `except` to `only`.
     # * +implied_by+ the verb that filed this claim without the author writing
     #   it: `commutative_monoid` files a `:monoid` declaration too, and an error
     #   about that entry must never read as a line nobody typed.
     Declaration = Data.define(:subject, :operation, :structure, :identity_source, :bottom, :analysis,
-                              :implied_by) do
-      def initialize(identity_source: nil, bottom: nil, analysis: nil, implied_by: nil, **) = super
+                              :dual, :implied_by) do
+      def initialize(identity_source: nil, bottom: nil, analysis: nil, dual: nil, implied_by: nil, **) = super
 
       # The unit, resolved on read. A lazy one is re-invoked every time -- a
       # frozen Data has nowhere to memoize -- so a walk should read it once per
@@ -160,9 +162,10 @@ module Lain
         end
       end
 
-      def declare(subject:, operation:, structure:, identity: nil, bottom: nil, analysis: nil, implied_by: nil)
+      def declare(subject:, operation:, structure:, identity: nil, bottom: nil, analysis: nil, dual: nil,
+                  implied_by: nil)
         entry = Declaration.new(subject:, operation: operation.to_sym, structure:, identity_source: identity,
-                                bottom:, analysis:, implied_by:)
+                                bottom:, analysis:, dual: dual&.to_sym, implied_by:)
         refuse_unknown(entry)
         refuse_unwrapped(entry, identity)
         commit(entry)
@@ -266,3 +269,4 @@ require_relative "algebra/commutative_monoid"
 require_relative "algebra/meet_semilattice"
 require_relative "algebra/elementwise"
 require_relative "algebra/pure"
+require_relative "algebra/attenuation"

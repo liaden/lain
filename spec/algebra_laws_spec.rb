@@ -118,7 +118,8 @@ module AlgebraLaws
     commutative_monoid: "a commutative monoid",
     meet_semilattice: "a meet semilattice under ancestry",
     elementwise: "an elementwise map",
-    pure: "a pure operation"
+    pure: "a pure operation",
+    attenuation: "an attenuation"
   }.freeze
 
   BATTERIES = { meet_semilattice: MeetSemilattice, elementwise: Elementwise, pure: Pure }.freeze
@@ -133,7 +134,8 @@ module AlgebraLaws
   # proved a different one. Both structures whose laws invoke the subject take
   # it, so `pure on: :blocks` cannot be discharged by exercising `#ranges`.
   EVIDENCE = { monoid: :identity, commutative_monoid: :identity,
-               elementwise: %i[operation analysis], pure: %i[operation] }.freeze
+               elementwise: %i[operation analysis], pure: %i[operation],
+               attenuation: %i[operation dual] }.freeze
 
   # The knobs that carry a population, whichever structure supplies one. An
   # empty population makes every `all?` law vacuously true, which is the
