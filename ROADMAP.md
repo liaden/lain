@@ -1111,11 +1111,22 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    Panel: ruby roster plus the standing algebra seats (Kmett, Milewski, Wadler, Elliott,
    Matsakis), APPROVE-WITH-FIXES applied. Refreshes `planning/epic-orchestration.md` (T12)
    against the 2026-07-30 critique (`.critique-epic-orchestration.md`).
-   **25 of 26 cards landed as of 2026-08-02** (T26, the prose review baseline, was split out
-   of T23 during execution). **T20 is deferred by ruling** — nothing constructs a chat actor
-   or holds a `WorkerHandoff`, so there is nothing to hand back yet. **T23 is the one card
-   left**: `Tools::RequestReview`, unblocked now that prose artifacts are reviewable, and the
-   reader that would finally make `annotation` records non-write-only.
+   **26 of 27 cards landed as of 2026-08-02** (T26, the prose review baseline, was split out
+   of T23 during execution; T27 was added when T23's "registration line" turned out to be a
+   card). **T20 is deferred by ruling** — nothing constructs a chat actor or holds a
+   `WorkerHandoff`, so there is nothing to hand back yet. **T23 landed as `c803437`**:
+   `Tools::RequestReview`, the reader that finally makes `annotation` records non-write-only,
+   via a journal decorator between `Review` and the journal rather than by widening
+   `Token#resolve`. Its panel found a wedge worth naming — a raise between `Review#open` and
+   the settle left the baton held *and journaled*, so a restarted lain refused every write to
+   that epic with no user-reachable escape. The release line ruled on is **whether the human
+   has been told**; before that the baton comes back, from `await` onward the human genuinely
+   holds the file. Two second-order findings came out of the same seam and generalize past
+   this card: `Async::Stop` descends from `Exception`, so `rescue StandardError` around an
+   awaiting fiber has a hole in it, and an `ensure` that raises *replaces* what it was
+   cleaning up after. **T27 wires the tool into a chat** — `wiring.rb` had zero `Epic::`
+   references, so registering it forced the unanswered question of where a chat's epic slug
+   comes from.
    **The 2026-07-30 resume was reviewed and repaired on 2026-08-02.** Thirteen cards had
    landed in five commits with no commit bodies, written without isolation, TDD, or a panel;
    three panels returned REQUEST-CHANGES on all of it. What they found is recorded in the
@@ -1155,6 +1166,45 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    so; no answer timeout, deregistration riding the supervisor lease. Panel: ruby roster,
    REQUEST-CHANGES → all seven blockers applied.
 
+28. **Planned (2026-08-02) — how lain merges its own workers' work.**
+   `planning/merge-conflict-handling.md`. Today `Worktree::Handback` merges one worker at a time
+   (`handback.rb:486`) and `WorkerHandoff` spawns a `merge_resolver` per conflict. Both costs are
+   paid N times, and the larger one is not the resolver — it is the full-suite gate against each
+   merged tree. The founding ruling (Joel): **a worker's commits are never optional.** Work worth
+   planning is worth merging, so deterministic first and tokens when deterministic will not do it;
+   `Retain` is for the crash cases (OOM, the 4.0.5 cvar segfault, kernel panic, power loss), where
+   the honest answer is to anchor and leave recoverable rather than discard.
+   **Shape: partition, batch the resolver, verify once** — probe each worker ref with
+   `git merge-tree --write-tree`, land the clean subset sequentially onto an integration ref
+   (journaling each `Outcome`, so per-worker attribution survives one suite run), spawn ONE
+   resolver over the aggregate conflict set, then gate on a single suite run. Sibling conflicts
+   are *correlated* — N workers touching one manifest produce N instances of one conflict — so
+   the aggregate is both cheaper and better-posed than N hunks in isolation. Explicitly **not**
+   octopus: verified on git 2.43, it refuses wholesale on any conflict and merges nothing. A
+   single N-parent commit carrying a resolved tree is still available via `git commit-tree` (also
+   verified, 4 parents), at the cost of a combination nothing tested and lost bisect.
+   **Ruling: merge tuning is lain's CLI flags, never ambient git config.** `-X patience` /
+   `--diff-algorithm=histogram` (Myers misaligns list-shaped files and invents conflicts that are
+   not semantic) and `--conflict=zdiff3` (markers carrying the merge BASE, so a resolver sees what
+   each side changed rather than two final states) are passed by lain and journaled with the
+   intent. Git config is machine state: it governs whoever is working in the checkout, says
+   nothing about the lain loop, and would make lain's behaviour unreproducible on a machine
+   nobody has configured.
+   **`.gitattributes merge=union` is a knob `Lain::Friction` proposes, never applies.** M1's
+   observer is for the lain USER and folds a session Journal with no model call; handback outcomes
+   already name conflicted paths, so "which paths conflict repeatedly, across how many distinct
+   workers, by ADDITION rather than by edits to shared lines" is answerable from existing records.
+   It must propose with evidence because union is wrong for ordered files, and this repo holds the
+   exemplar: `lib/lain.rb` is a topological load-order manifest, so union keeps both requires in
+   the wrong ORDER and the symptom is a load-time `NameError` out of a merge git called clean.
+   **The custom LLM merge driver is its own card** — `.gitattributes` routing a path to a driver
+   git invokes only for files that actually conflict, scoped to one file with its base, composing
+   with `rerere` and per-path `union`, and working for rebase and cherry-pick too. Its costs are
+   real: an unbounded provider round trip inside `git merge` is the footgun `WorkerHandoff`
+   already names when it refuses to spawn while unwinding, so it needs a deadline and a loud
+   deterministic fallback; and a driver sees one file and no suite, so the suite gate stays the
+   real verification.
+
 ---
 
 ## Map of the documents
@@ -1166,7 +1216,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
   `hn-harness-overhead-2026-07.md` (the field's cache/overhead argument, Tier-1 items folded into
   `specs/cache-economics.md`), `hn-agent-landscape-2026-07.md` (broader HN scan — graders,
   guardrail stack, control-flow axis, Journal-native retrieval; Tier-1 → `specs/graders.md` + M3c/M5/M6
-  fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`.
+  fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`,
+  `merge-conflict-handling.md` (how lain merges its own workers' work — item 28).
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
   `oss-inspiration.md`, 15 papers in `papers/rst/`, reference impls in `repos/`.
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.

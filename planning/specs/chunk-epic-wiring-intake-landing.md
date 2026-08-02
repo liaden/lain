@@ -1,6 +1,9 @@
 # Epic wiring, review intake, and serial landing
 
-status: in-progress -- 25 of 26 cards landed (T20 deferred by ruling, T23 remaining).
+status: done -- 26 of 27 cards landed (T20 deferred by ruling; T27 added
+        2026-08-02 when T23's "registration line" turned out to be a card).
+        Manual passes remain owed to Joel; they are listed under Integration checks
+        and are his to run, not the chunk's to finish.
         The 2026-07-30 resume's five body-less commits were panel-reviewed on
         2026-08-02, repaired, and the range rewritten one card per commit; see
         "The 2026-08-02 panel review" below.
@@ -1101,7 +1104,14 @@ Scenario: a drifted anchor degrades honestly
   across versions, pin the behavior actually observed and note the version, do not chase
   it.
 
-### T23 — The agent requests a review and waits            [wave 5] [risk: medium]
+### T23 — The agent requests a review and waits            [wave 5] [risk: medium] [LANDED c803437]
+
+> Narrowed by the ruling below, and two details of this card were superseded in execution.
+> `slug` is NOT an input field: `Review#open` journals the *injected* slug beside the artifact
+> path, so a model-supplied one would journal one epic's path under another epic's claim — the
+> injected home is the capability, and `Tool::Input` validates shape, not safety. And "the tool
+> writes through the journaled home" reads as the pre-review generation step, which belongs to
+> `Scribe`; the tool resolves the artifact through the journaled home and reads it once.
 
 **Depends on:** T6, T15, T16, T22
 **Files:** `lib/lain/tools/request_review.rb` (create),
@@ -1259,7 +1269,44 @@ bodies**, against a repo whose every other commit records its reasoning; the pla
 never updated, so the tracker showed wave 1 only. See the 2026-08-02 review below.
 
 **Landed 2026-08-02:** T25 `ee37954`, T26 `9cbef9a`, the review-intake repairs `0477f5d`.
-T20 stays deferred by the ruling above. T23 is unblocked by T26 and not yet built.
+T20 stays deferred by the ruling above. T23 landed later the same day as `c803437`, after two
+review rounds; T27 as `2e1e95c`, after one; and the parent-handle bug T27's discovery turned up
+as `6b108e3`. See "T23's review rounds" below.
+
+**T20, re-verified at close-out (2026-08-02) rather than carried forward on the 07-30 note.**
+All three grounding claims still hold on `main`: `mode: :actor` is constructed by no `lib/` or
+`exe/` file (the only hit is a comment at `supervisor.rb:15`), `WorkerHandoff.over` has zero
+callers outside specs, and `wiring.rb` builds the Supervisor with no `handoff:`, so it defaults
+to `Retain`. Neither of T20's scenarios is reachable by building harder. The first needs a
+completion signal that does not exist -- `Actor#run` is `process(prompt)` ->
+`@ready.resolve(true)` -> `@park.wait`, and `@park` is signalled nowhere. The second asserts
+*the ref is anchored*, and `Retain` returns `Report.nothing` and anchors nothing by design.
+
+**Ruling (Joel, 2026-08-02) -- a worker's commits are never optional.** Work worth planning is
+worth merging: default to spending whatever it takes, deterministic first and tokens when
+deterministic will not do it. `Retain` is for the crash cases -- OOM, a segfault like the 4.0.5
+cvar bug, kernel panic, power loss -- where the honest answer is to anchor and leave the work
+recoverable rather than discard it.
+
+That ruling settles the cost objection this chunk had raised against wiring a real
+`WorkerHandoff`, and the objection was WRONG on its own terms: `#reclaim` tries the
+deterministic handback FIRST and spawns the resolver only when that merge conflicts, while
+`#surrender` passes `Resolver::Skipped` and never spawns at all. The cost is conditional, not
+standing. Everything the wiring needs already exists -- `Role::Catalog[:merge_resolver]` with a
+tight toolset, `Skill::RoleSpawn#call(role_name, context_mode, prompt)` matching the resolver
+duck exactly, and `Wiring#role_spawn` already built -- so it is roughly three lines at
+`wiring.rb:140`.
+
+**And `Retain` is not the safety net it reads as.** `Supervisor#stop` runs `farewell`, which is
+`reap if reapable?` -> `actor.stop` -> `release`; with `Retain` the reap anchors nothing, so the
+release force-removes the `--detach`ed checkout and the commits go with it. Process death (OOM,
+segfault, panic, power cut) leaves the worktree on disk and recoverable, but only because
+nothing ran to remove it. A graceful shutdown after a worker crashed destroys the work today.
+Wiring a real handoff is what turns that into anchor-and-report.
+
+Not done here, deliberately: the wiring is small but the completion signal is not, and the two
+belong together. Both head the follow-on chunk, with `planning/merge-conflict-handling.md`
+(ROADMAP item 28) carrying the batching design the same interview produced.
 
 - **T1's AC1 wording is superseded.** Two panels independently found `Approval::Gate`'s
   registry is keyed on artifact digest alone, so an approval at one `(epic, stage)` opened
@@ -1583,12 +1630,115 @@ hid the defects, so patching it preserves the shape). The other three areas take
 passes with red-before-green per finding and probes-become-specs. Every fix pass re-runs the
 panel's own mutation battery.
 
+**The staleness trap, hit a fourth time on 2026-08-02, and the first time caught clean.** T27's
+worktree forked `origin/main` (`cc76ea4`), now **81 commits** behind local main, because local
+main has not been pushed since 2026-07-29 and the gap grows every session. The agent stopped
+after nineteen read-only git commands having written nothing, and refused to run the suite on a
+tree that could not host the card. What made that possible was one line in the brief naming the
+commit to expect and telling it to stop if it saw anything else. What it found is the part worth
+keeping: **partial resolution is how staleness disguises itself as a design problem.** The card
+hung on `CLI::Epic#resolve_slug`, absent at the stale base -- but `Ambiguous`, `UnknownEpic` and
+`UnreadableHome`, named in the same brief, resolved there fine. Some names resolving and others
+not reads as "the orchestrator is wrong about this API", not "my tree is old", and that is very
+likely what cost the three earlier agents in this chunk a review round each.
+
 **Process lessons for the skill, beyond this chunk.** A resumed execution must (a) re-run the
 FULL suite and compare the example COUNT against the recorded baseline, never just the failure
 list; (b) keep one card per commit, because a three-card commit cannot be reverted per card;
 (c) write commit bodies — on a bench whose deliverable is the experiment record, five empty
 bodies is 2,900 lines whose reasoning exists nowhere; and (d) update the plan doc, which is
 the tracker, not a side notes file.
+
+### T23's review rounds, and the ruling that let it touch landed code
+
+T23 landed as `c803437` after a panel round of REQUEST-CHANGES and a re-review of
+APPROVE-WITH-FIXES. The findings are worth keeping because two of them are about the same
+thing: an exception path nobody had a spec for.
+
+**F1, critical.** `perform` opened the review and then awaited with no `ensure`, so a raise
+anywhere between the two left the baton held — and `review_opened` is journaled before the
+token comes back, so a *restarted* lain went on refusing every write to that epic. Worst
+subcase: the raise happened before the human was told, so no editor buffer existed to send
+`done` from and there was no user-reachable escape at all. Reproduced four ways.
+
+**Ruling (mine, expanding scope deliberately): the release line is whether the human has been
+TOLD.** Before that — the bind, the editor open, the notification — nobody knows the file is
+theirs and no route to `settle` was ever bound, so the baton must come back. From
+`token.await` onward the human genuinely holds the file and the CLI's binding can still settle
+it, so it stays held; releasing there would yank a file out from under someone mid-edit, which
+is the harm `Home::Journaled`'s guard exists to prevent. That needed `Epic::Review#abandon`,
+which is landed T15 code — allowed on condition it journal the release (an in-memory release
+leaves the journal saying open, so the next `from_journal` rebuilds the wedge) and reuse
+`ReviewClosed` rather than invent a record, since `Replay#release` already folds that shape and
+already reads `error`/`error_kind`. The panel confirmed by execution that a journal holding an
+abandon folds clean.
+
+**`Async::Stop` descends from `Exception`, not `StandardError`.** The first fix was a `rescue
+StandardError`, which implemented only half the ruling: a turn cancelled *during* the hand-over
+is invisible to it and lands squarely in the window that must release. It is an `ensure` with a
+`told` flag now. This is worth remembering beyond this card — every `rescue StandardError`
+around an awaiting fiber in this codebase has the same hole.
+
+**And the `ensure` could raise out of itself.** A human `done` landing between the bind and a
+notifier failure made `abandon` raise `NotOpen` from inside the ensure, *masking* the
+cancellation the ensure existed for. It swallows `NotOpen` alone, because `NotOpen` **is** its
+postcondition. The instruction "do not widen it" was then found to be a rule with no guard —
+widening to `StandardError` survived mutation — so a dead-journal case now kills the widening.
+
+**The coverage lesson, twice.** The implementer mutation-tested its own green run five ways and
+the panel still found seven survivors; after the fix round the panel's fourteen fresh mutations
+found four more. Every one was in the renderer, and the pattern held both times: *which*
+sentence gets chosen was pinned, *what the sentence says* was not. Deleting the "did not parse"
+branch made the tool report `structure: unchanged -- every issue compared equal` about a
+document that did not parse. Mutation testing finds what specs assert, and asserting on a
+branch is not asserting on its words.
+
+**A spec bound that did not bound.** `task.with_timeout` fires in the calling task, but `Sync`
+will not return while a child is parked forever, so a plausible bug hung the file at 3 of 24
+examples until SIGKILL — the same "truncated run reads as a pass" trap this chunk hit twice
+before, arriving through the very header that claimed to have closed it. The fix is an
+`ensure run&.stop` owned by a single `parked`/`call_in` helper so no example can spawn an
+unregistered child.
+
+### T27 — Wire the review tool into a chat            [added 2026-08-02] [risk: medium]
+
+T23's card called its wiring "a toolset registration line in `lib/lain/cli/wiring.rb`". It is
+not one. `wiring.rb` has zero `Epic::` references, so registering the tool forces a question
+the chunk never answered: **where does a chat session's epic slug come from?** There is no
+`--epic` flag on `lain chat`. Without this card T23 is dead code and manual pass 1 is
+impossible, so it is a card rather than a follow-up.
+
+**Ruling:** a `--epic SLUG` option resolving through `CLI::Epic#resolve_slug`, which already
+means "the slug you named, or the sole epic here". A chat must never fail to start over this:
+ambiguous, absent, or refused resolution means the tool is simply not in the toolset, reported
+through the startup-notice seam `Wiring#run` already threads. A chat outside an epic has no
+document to review, and a tool that cannot act should not be offered to the model.
+
+Two constraints that are not negotiable, both from `Epic::Review`'s own doc: exactly ONE
+`Review` per slug (two share a journal and both hand out generation 1, which `Replay#park`
+calls a wiring error and carries rather than refuses), and the SAME instance passed as the
+journaled home's `reviews:` and the tool's `review:`, or the regeneration guard guards nothing.
+
+The journal is the chat's own session journal (`chronicle.record_journal`): `CLI::Epic::Journals`
+folds every session journal file in the project's sessions dir and filters by record type and
+slug, so that is where a review's records are findable from. `Review.from_journal` rather than
+`Review.new`, so a chat restarted mid-review still refuses to overwrite.
+
+**What the panel caught, and it is the best kind of finding: the card broke its own founding
+ruling.** `EpicMount.for` resolved `config: Config.load(root:)` in a DEFAULT ARGUMENT. Ruby
+evaluates those before the method body runs, so they sit outside the body's `rescue` and the guard
+never sees them. That alone is a Ruby subtlety worth remembering, but the consequence here came
+from a second fact nobody had noticed: **`lain chat` never read `.lain/config.toml` at all before
+this card** -- `Config.load` had no chat-path caller. So T27 made every chat read it, and seven
+config errors that had been harmless became "the chat does not start", which is exactly what the
+ruling above forbids. The fix is to put the defaults on a private `.mount` and keep `.for` as the
+rescuing wrapper, so everything evaluates inside the guard.
+
+Two smaller things the panel measured rather than asserted. The startup fold is unbounded but the
+resolve-first ordering keeps the common case free: 0 ms outside an epic, 35 ms at 2.7 MB of session
+journals, 203 ms at 32 MB. And T27 is the **first production caller of `Review.from_journal`**, so
+the two-dead-sessions collision `Replay#park` documents -- both hand out generation 1, and one's
+close cancels the other's held claim -- moves from theoretical to reachable.
 
 ## Integration checks
 
@@ -1601,9 +1751,12 @@ the tracker, not a side notes file.
   `doc/lain.txt`.
 - `pre-commit run --all-files` green.
 - Manual passes for Joel, named so nothing drops silently:
-  1. Live review round trip: `lain up --nvim`, agent writes an epic doc, requests review,
-     annotate with `ga`, edit a title, `:LainReviewDone`, confirm the agent narrates the
-     delta and the annotations.
+  1. Live review round trip: `lain chat --nvim ... --epic SLUG` (the flag is T27's; it may be
+     omitted where the project holds exactly one epic), agent writes an epic doc, requests
+     review, annotate with `ga`, edit a title, `:LainReviewDone`, confirm the agent narrates the
+     delta and the annotations. Known gap going in: `InboxView` counts only ask_human pendings,
+     so `/inbox` at `you>` shows nothing while an agent is parked on a review -- the only signs
+     are the desktop notification and the editor split. Extending it was ruled out of this chunk.
   2. Serial landing dry run against a scratch GitHub repo with real `gh` auth: approve an
      implementation gate, `lain epic land`, watch the intent/outcome chain, kill the
      process mid-landing, `lain epic land --resume`, confirm no duplicate branch or PR.
@@ -1622,11 +1775,38 @@ the tracker, not a side notes file.
   leaves the issue `in_flight` forever. Closing it means widening the scope filter to carry
   the issue's own transitions, which is a change to what "one issue's entries" means and
   wants its own card.
-- Follow-up from the intake repairs (2026-08-02): `annotation` records are still WRITE-ONLY --
-  nothing in `lib/` reads them and `Intake::Delta` has no member for them, so T22's "the agent
-  receives them with the delta" is unmet. `Tools::RequestReview` (T23) is the intended reader;
-  the hand-back records the record shape, the `(epic_slug, generation)` join, the order
-  guarantee, and the two meanings of a nil `issue_id`, so T23 can be written against it.
+- ~~Follow-up from the intake repairs (2026-08-02): `annotation` records are still WRITE-ONLY.~~
+  **Closed by T23** (`c803437`). `RequestReview::Notes` is the reader — a journal decorator
+  between `Review` and the journal, keyed on `(epic_slug, generation)`. `Intake::Delta` still has
+  no member for them, and deliberately: `Review#settle` resolves the promise with the delta
+  alone, and widening `Token#resolve` would have changed landed invariant-heavy code to carry a
+  value only one caller wants. What remains unclosed is narrow — a turn that dies *before* its
+  settle leaves its notes in the tee, which is written into `Notes`' own doc with the reason.
+- **Bug found by T27, pre-existing, confirmed by execution: `Wiring#wire_agent`'s parent thunk is
+  dead.** `agent = nil; parent = -> { agent.timeline }`, and `build_agent(...)` is the method's
+  return EXPRESSION -- the local is never reassigned, and `run`'s `agent = wire_agent(...)` assigns
+  a different local in a different scope. So `parent.call` raises `NoMethodError: undefined method
+  'timeline' for nil`. Confirmed twice: against the closure shape in isolation, and against the real
+  object (`wiring.ask_human.send(:parent_timeline)` after a real `wire_agent` returned a real
+  `Agent`). It is ONE Proc, `equal?`-shared by `Tools::AskHuman::Notifying` (via
+  `notifying_ask_human`) and `Tools::Subagent::Seam#parent` (via `build_toolset`), and
+  `Notifying#ask` calls `super` straight into it -- so the first `ask_human` question and the first
+  subagent spawn in a live chat both raise. It stayed invisible because every spec builds its own
+  working thunk rather than taking Wiring's. One line to fix
+  -- `agent = build_agent(...)` -- and it needs the probe promoted to a spec, because nothing in the
+  suite drives the thunk. Not fixed inside T27: it is a different defect in a file that card was
+  already rewriting, and it deserves its own commit and its own red.
+- **`Tools::RequestReview` cannot reach the editor, so a review does not auto-open.** T27's finding,
+  and it corrects an error in my own brief: `views` in `Wiring` is a plain Hash
+  (`{channel:, socket_path:, journal:}`), not the frontend. The object answering `open_review` is
+  `Frontend::Neovim`, which `Repl#run` builds as a LOCAL and publishes only as its `command_inbox`,
+  so no wiring can reach it. Passing `views` would have made `editor` truthy and raised
+  `NoMethodError` under `--nvim` while working headless -- the worst shape of bug, since the
+  headless specs would stay green. `NoEditor` therefore stands: the notification names the path and
+  the human opens it themselves, and the `done` gesture still settles because that rail IS the
+  command inbox and IS bound. Closing it means `Repl` publishing the frontend the way it already
+  publishes `command_inbox`. `Tools::RequestReview`'s own `NoEditor` doc comment repeats the same
+  misconception about `views` and wants correcting with it.
 - Named follow-ups this chunk creates (so they are not lost): render open reviews in
   `lain epic status`; surface parked reviews in the inbox count; the stack-cascade chunk
   (retargeting, `--onto`, `--force-with-lease` semantics); the bench altitude arms and
