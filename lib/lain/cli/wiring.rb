@@ -32,11 +32,20 @@ module Lain
     # renders the slots half into the system prompt. This class now loads
     # neither half and threads one keyword.
     #
+    # T27 was the third time and spent the last of it. "Which epic is this chat
+    # in, and who holds the baton for its documents" is {EpicMount}'s question,
+    # not this one's, and the tell was the tell again: the
+    # `(home:, review:, notes:)` triple {Lain::Tools::RequestReview} takes, three
+    # collaborators that travel together AND carry an invariant between them.
+    # What is left here is one keyword at one call site. There is no longer room
+    # for a fourth: the NEXT card must extract before it adds, and
+    # #assemble_surface below already names which object that is.
+    #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
     # is not. So spend the headroom the same way -- {CompactionMount},
-    # {Command::Surface}, and {ToolsetBuild} are the shape to copy -- and when
-    # it runs out again, extract rather than loosen.
+    # {Command::Surface}, {ToolsetBuild} and {EpicMount} are the shape to copy --
+    # and when it runs out again, extract rather than loosen.
     class Wiring
       attr_reader :ask_human, :questions, :notifier, :supervisor, :conductor, :command_surface
 
@@ -78,7 +87,7 @@ module Lain
       def run(backend:, resumed:, nvim:, &notice)
         channel = Lain::Channel.new
         recorder, session = run_state(resumed)
-        agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim)
+        agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
@@ -121,7 +130,7 @@ module Lain
         [recorder, chronicle.wrap_session(session)]
       end
 
-      def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil)
+      def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
         agent = nil
         parent = -> { agent.timeline }
         @notifier = Lain::Notify.for
@@ -130,7 +139,7 @@ module Lain
         # #run_chat below runs it under a chat-level reactor that outlives asks.
         @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation(channel))
         @ask_human = notifying_ask_human(parent)
-        toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human)
+        toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human, notice:)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
         build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
       end
@@ -202,9 +211,27 @@ module Lain
       # #auto_surface delegate to what the build discovered.
       attr_reader :toolset_build
 
-      def build_toolset(recorder, backend:, parent:, journal:, ask_human:)
+      # `epic:` is WHICH epic this chat is in and the review baton over it --
+      # {EpicMount}, or its NoEpic when none resolves, which is why nothing here
+      # or in the build asks whether there is one. It is constructed at this call
+      # rather than in a method of its own for a measured reason: this class is
+      # two lines under its ClassLength budget, and a named accessor here would
+      # buy nothing the keyword does not already say.
+      #
+      # `bindings:` is the same late-binding the `parent` thunk above uses, for a
+      # sharper reason: {HumanReplies} is built in #build_repl, strictly AFTER
+      # this, so the tool reads the thunk at CALL time. It closes over an IVAR
+      # rather than a local, which is what makes it actually late -- see the T27
+      # hand-back for the sibling thunk that captures a local and stays nil.
+      # `notice:` is DEFAULTED where `epic:` upstream is required, and the two
+      # are not the same kind of argument: forgetting the startup seam loses a
+      # sentence, where forgetting the epic would lose the tool. #run takes its
+      # own notice block optionally for the same reason.
+      def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
-                                          supervisor: @supervisor, parent:, journal:, library: backend.library)
+                                          supervisor: @supervisor, parent:, journal:, library: backend.library,
+                                          epic: EpicMount.for(chronicle:, options:, notice:, notify: @notifier,
+                                                              bindings: -> { @replies }))
         @toolset_build.build(recorder, ask_human:)
       end
 

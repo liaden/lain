@@ -304,6 +304,49 @@ class LainCLI < Thor
        "(variance, record, sweep, plan-sweep, arms)"
   subcommand "bench", Bench
 
+  # WHO answers a turn, and how it samples: the provider, its endpoint, the
+  # model, the token ceiling, and the two sampler knobs that ride
+  # `Request#extra`. Its own module on {CompactionFlags}' rule -- one question,
+  # six flags that only make sense read together, and one object in lib that
+  # already owns the whole resolution ({Lain::CLI::Backend}), so this band and
+  # that object have the same boundary.
+  #
+  # Extracted by T27, and by the same pressure that produced {CompactionFlags}:
+  # this class reached its Metrics/ClassLength budget, and the rule is extract,
+  # never loosen. A nested module's body does not count toward the enclosing
+  # class's length, so a band moved here is a band the exe stops paying for.
+  #
+  # Declaration ORDER is preserved by calling `.declare` exactly where the flags
+  # used to sit: Thor accumulates `method_option` onto the command declared
+  # NEXT, so a band that moved would silently attach to the wrong command.
+  module ModelFlags
+    # Split in two on {CompactionFlags}' own rule (its three methods are one
+    # question each), and by the cop's insistence: WHICH endpoint answers, then
+    # HOW it answers. The order the two are called in is the order the flags
+    # used to sit in, which is the part that must not drift.
+    def self.declare(thor)
+      endpoint(thor)
+      sampling(thor)
+    end
+
+    def self.endpoint(thor)
+      thor.method_option :provider, type: :string, default: "anthropic",
+                                    desc: "Model provider: anthropic, ollama, or bedrock"
+      thor.method_option :api_base, type: :string,
+                                    desc: "Override the Ollama API base (ollama provider only)"
+      thor.method_option :model, type: :string,
+                                 desc: "Model id; defaults to the selected provider's own default when unset"
+    end
+
+    def self.sampling(thor)
+      thor.method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per model turn"
+      thor.method_option :temperature, type: :numeric,
+                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
+      thor.method_option :seed, type: :numeric,
+                                desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
+    end
+  end
+
   # The compaction band of `chat`'s flag surface: whether to compact at all, the
   # three byte knobs, and the summarizer TIER. Its own module because it is its
   # own question -- "how does this run manage a growing history", answered by
@@ -387,18 +430,7 @@ class LainCLI < Thor
   desc "chat", "Start an interactive Lain session"
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
-  method_option :provider, type: :string, default: "anthropic",
-                           desc: "Model provider: anthropic, ollama, or bedrock"
-  method_option :api_base, type: :string,
-                           desc: "Override the Ollama API base (ollama provider only)"
-  method_option :model, type: :string,
-                        desc: "Model id; defaults to the selected provider's own default when unset"
-  method_option :max_tokens, type: :numeric, default: 4_096,
-                             desc: "max_tokens per model turn"
-  method_option :temperature, type: :numeric,
-                              desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
-  method_option :seed, type: :numeric,
-                       desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
+  ModelFlags.declare(self)
   method_option :journal, type: :boolean, default: true,
                           desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
   method_option :resume, type: :string, banner: "[SESSION]", lazy_default: "",
@@ -416,6 +448,14 @@ class LainCLI < Thor
                                      "the human hasn't yet -- opt-in, races the human/dunst surfaces"
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
+  # WHICH epic this chat may hand documents to the human from. Unset resolves to
+  # the sole epic in the home (Lain::CLI::Epic#resolve_slug, the same rule every
+  # epic verb answers), and a home holding several with no name here simply
+  # leaves request_review out with a startup notice -- a chat never fails to
+  # start over an epic, because a chat outside one has no document to review.
+  method_option :epic, type: :string, banner: "SLUG",
+                       desc: "The epic whose documents request_review may hand to you; " \
+                             "defaults to the sole epic in this project's epic home"
   method_option :windows, type: :boolean, default: false,
                           desc: "Open a tmux window running lain watch per subagent spawn " \
                                 "(needs $TMUX and the session journal; incompatible with --no-journal)"

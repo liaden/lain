@@ -1037,5 +1037,107 @@ RSpec.describe Lain::CLI::Wiring do
         expect(renderer).to be_a(Lain::Frontend::PromptComposer::Null)
       end
     end
+
+    # T27: request_review is a capability, so it is the toolset build's to
+    # append -- but WHICH epic a chat is in is a question the chat tier never
+    # had to answer before, and the answer decides whether the tool exists at
+    # all. {EpicMount} owns both; what these examples pin is the wiring.
+    #
+    # Isolation is total and deliberate: a repo-mode epics home under the
+    # tmpdir, plus an XDG state home inside it, so neither this developer's
+    # real epics nor their real session journals can decide an example.
+    describe "the epic tier's request_review tool" do
+      require "fileutils"
+
+      def with_state_home(path)
+        was = ENV.fetch("XDG_STATE_HOME", nil)
+        ENV["XDG_STATE_HOME"] = path
+        yield
+      ensure
+        ENV["XDG_STATE_HOME"] = was
+      end
+
+      # Written straight to the repo-mode layout rather than through
+      # {Epic::Home}: an epic exists once its document is on disk, and this
+      # spec is about the wiring above that, not about path arithmetic.
+      def create_epic(dir, slug)
+        graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a1", title: "the a1 issue")])
+        path = File.join(dir, ".lain", "epics", slug, "epic.md")
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, Lain::Epic::Document.to_markdown(graph))
+      end
+
+      def in_project(*slugs)
+        Dir.mktmpdir do |dir|
+          FileUtils.mkdir_p(File.join(dir, ".lain"))
+          File.write(File.join(dir, ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
+          slugs.each { |slug| create_epic(dir, slug) }
+          with_state_home(File.join(dir, "state")) { Dir.chdir(dir) { yield(dir) } }
+        end
+      end
+
+      def toolset_named(options: { grace: 5 })
+        mounted = described_class.new(options:, chronicle:, status_feed:)
+        recorder, session = mounted.run_state(nil)
+        mounted.wire_agent(channel:, recorder:, session:, backend:).toolset.names
+      end
+
+      def run_in(dir, options: { grace: 5 }, &notice)
+        wiring = described_class.new(options:, chronicle:, status_feed:,
+                                     tty_factory: tty_factory("quit\n", dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil, &notice)
+        wiring.conductor.close(reason: :exit)
+        wiring
+      end
+
+      it "wires the tool when the project's sole epic resolves" do
+        in_project("alpha") { expect(toolset_named).to include("request_review") }
+      end
+
+      it "wires the tool for the epic --epic names" do
+        in_project("alpha", "beta") do
+          expect(toolset_named(options: { grace: 5, epic: "beta" })).to include("request_review")
+        end
+      end
+
+      # A chat must never fail to start over this, and a tool that cannot act
+      # must not be offered to the model.
+      it "leaves the tool out, and says why, when the home holds several epics and none was named" do
+        in_project("alpha", "beta") do |dir|
+          said = []
+
+          expect(toolset_named).not_to include("request_review")
+          run_in(dir) { |notice| said << notice }
+          expect(said.join).to include("--epic")
+        end
+      end
+
+      # The ordinary chat: no epic anywhere, no tool, and nothing said.
+      it "starts a chat with no epic home at all, silently" do
+        Dir.mktmpdir do |dir|
+          with_state_home(File.join(dir, "state")) do
+            Dir.chdir(dir) do
+              said = []
+
+              expect(toolset_named).not_to include("request_review")
+              expect { run_in(dir) { |notice| said << notice } }.not_to raise_error
+              expect(said).to be_empty
+            end
+          end
+        end
+      end
+
+      # {HumanReplies} is built in #build_repl, strictly AFTER the toolset --
+      # so the tool holds a thunk, and what it must read at CALL time is the
+      # run's ONE live replies object, the same one the Env hands the commands.
+      it "late-binds the tool to the live HumanReplies the run built" do
+        in_project("alpha") do |dir|
+          wiring = run_in(dir)
+          tool = wiring.command_env.agent.toolset.fetch("request_review")
+
+          expect(tool.send(:bindings)).to equal(wiring.command_env.replies)
+        end
+      end
+    end
   end
 end

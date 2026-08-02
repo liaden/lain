@@ -22,10 +22,14 @@ module Lain
       # The set is layered, and the layering is the policy. {BaseTools} is the
       # capability floor, and it is ALSO the union a child attenuates from --
       # so the same `base` is what {Skill::RoleSpawn} and {Tools::Subagent}
-      # are handed, while `ask_human` and {Tools::RunSkill} are appended
-      # AFTER, main-agent-only: a subagent must not be able to ask the human
-      # directly, nor to render a skill scaffold back into a conversation that
-      # is not the one the human is having.
+      # are handed, while `ask_human`, {Tools::RunSkill} and the epic's own
+      # tools are appended AFTER, main-agent-only: a subagent must not be able
+      # to ask the human directly, nor to render a skill scaffold back into a
+      # conversation that is not the one the human is having. The epic's
+      # {Tools::RequestReview} joins that list for ask_human's exact reason --
+      # it is an ask_human whose subject is a file, it PARKS until the human
+      # answers, and a child that could open one would hold an artifact's baton
+      # in a conversation nobody is watching.
       #
       # {#role_spawn} and {#auto_surface} are readable only once {#build} has
       # run, because they are things the build DISCOVERS rather than things it
@@ -53,13 +57,23 @@ module Lain
         # `backend.slots` reach-through until T40 named the pair -- one keyword
         # cannot be half-forgotten, which two could.
         #
+        # `epic:` is injected for the third time on the same rule, and it is
+        # REQUIRED: which epic a chat is in is not this object's question, and
+        # the `(home:, review:, notes:)` triple {Lain::Tools::RequestReview}
+        # takes carries an invariant between its members (ONE Review, in both
+        # places) that only {EpicMount} can keep. What arrives here is a finished
+        # capability provider, exactly as `provider:` and `library:` do, and what
+        # is asked of it is one message -- so a chat outside an epic hands over
+        # {EpicMount::NoEpic} and no line below asks whether there is an epic.
+        #
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:)
+        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:)
           @library = library
           @backend = backend
           @options = options
+          @epic = epic
           @seam = Lain::Tools::Subagent::Seam.new(
             provider:, context_factory: -> { backend.context }, parent:,
             journal:, supervisor:, observer: chronicle.observer
@@ -79,12 +93,12 @@ module Lain
           base = Lain::Toolset.new(BaseTools.build(recorder))
           @role_spawn = role_spawn_seam(base)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
-          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill])
+          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill] + epic.tools)
         end
 
         private
 
-        attr_reader :backend, :library, :options, :seam
+        attr_reader :backend, :library, :options, :seam, :epic
 
         # One seam serves every role: the role, policy, and persona are chosen
         # PER CALL from the parsed role name and context mode, so what is

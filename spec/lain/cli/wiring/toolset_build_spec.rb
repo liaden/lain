@@ -33,8 +33,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # the Backend's, which is where the run's single load lives.
   let(:library) { backend.library }
 
+  # A chat outside an epic, which is the overwhelmingly common one: its whole
+  # surface is `tools == []`, so nothing below has to know an epic tier exists.
+  # The example that DOES care wires a real {Lain::CLI::EpicMount}.
+  let(:epic) { Lain::CLI::EpicMount::NoEpic }
+
   def build_with(options)
-    described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:)
+    described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:)
   end
 
   describe "#build" do
@@ -64,6 +69,34 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       expect(inherited).to match_array(floor)
       expect(inherited).not_to include("ask_human", "run_skill", "subagent")
+    end
+
+    # T27: a chat outside an epic offers no review tool at all, and the way it
+    # says so is an empty collection rather than a nil this build has to test
+    # for. `include` on its own would be vacuous here, so the floor is pinned
+    # too: the set must be the ordinary one, minus nothing.
+    it "adds no review tool when the chat is in no epic" do
+      names = toolset_build.build(recorder, ask_human:).names
+
+      expect(names).not_to include("request_review")
+      expect(names).to include("subagent", "ask_human", "run_skill")
+    end
+
+    context "when the chat resolved an epic" do
+      let(:review_tool) { instance_double(Lain::Tool, name: "request_review") }
+      let(:epic) { instance_double(Lain::CLI::EpicMount, tools: [review_tool]) }
+
+      # Whatever the mount hands over is appended AFTER the floor, which is what
+      # makes it main-agent-only: a child attenuates from the floor, so it can
+      # never inherit a tool that parks holding an artifact's baton in a
+      # conversation nobody is watching.
+      it "appends the epic's tools where a child cannot inherit them" do
+        full = toolset_build.build(recorder, ask_human:)
+        floor = Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)
+
+        expect(full.fetch("request_review")).to be(review_tool)
+        expect(full.fetch("subagent").attenuates_from.names).to match_array(floor)
+      end
     end
 
     # T23: the six collaborators BOTH child seams attenuate over are one value,
@@ -118,7 +151,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "refuses to construct without the library" do
       expect do
         described_class.new(backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options:,
-                            supervisor:, parent: -> { Lain::Timeline.new }, journal:)
+                            supervisor:, parent: -> { Lain::Timeline.new }, journal:, epic:)
       end.to raise_error(ArgumentError, /library/)
     end
   end
