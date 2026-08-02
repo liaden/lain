@@ -21,18 +21,21 @@ module Lain
 
     include Enumerable
 
+    # The schema and its digest are built HERE rather than memoized on demand:
+    # the object freezes itself on the next line, so a lazy `@digest ||=` is a
+    # guaranteed FrozenError.
+    #
     # @param tools [Array<Lain::Tool>] the capabilities this set grants
     def initialize(tools = [])
-      by_name = {}
-      tools.each do |tool|
-        key = tool.name.to_s
-        raise DuplicateTool, "two tools are named #{key.inspect}" if by_name.key?(key)
-
-        by_name[key] = tool
-      end
-      @by_name = by_name.freeze
+      @by_name = indexed(tools)
+      @schema = Canonical.normalize(map(&:to_schema))
+      @digest = Canonical.digest(@schema)
       freeze
     end
+
+    # The content address of {#to_schema} -- the exact bytes prompt caching keys
+    # on, and the whole of this set's identity as a value.
+    attr_reader :digest
 
     # Iterates tools in name order, so any Enumerable-derived operation (map,
     # to_a, sort) is itself deterministic rather than construction-order
@@ -97,7 +100,35 @@ module Lain
     # Toolsets holding the same tools regardless of the order they were built in
     # -- which is precisely the invariant prompt caching depends on.
     def to_schema
-      Canonical.normalize(map(&:to_schema))
+      @schema
+    end
+
+    # Value equality, defined as the canonical schema bytes: two Toolsets are
+    # equal iff they present the same tools to the model. This is SCHEMA
+    # equality, not behavioral equality -- two tools with identical schemas and
+    # completely different `#perform` bodies compare equal, because the schema is
+    # the whole of what the model, and the prompt cache, can see.
+    #
+    # `equal?` is untouched, so the specs pinning that a posture returns the very
+    # same object still mean what they meant.
+    #
+    # Two siblings state the same idea: {Lain::ContentAddressed} (the digest trio
+    # seven values include) and {Lain::Capability::DegradedSet}. This one is NOT
+    # the module, and diverges from both on one word -- `instance_of?` where they
+    # write `is_a?`. Both record the `is_a?` asymmetry as a latent caveat: under
+    # subclassing `parent == child` holds while `child == parent` does not, and a
+    # class-embedding `hash` then makes that a live ==/hash contract violation.
+    # `instance_of?` is symmetric, so there is nothing to caveat. Converging all
+    # three on `instance_of?` -- and then folding this class into the module --
+    # is owed; until it lands, this comment is what says the three differ on
+    # purpose rather than by drift.
+    def ==(other)
+      other.instance_of?(self.class) && digest == other.digest
+    end
+    alias eql? ==
+
+    def hash
+      [self.class, digest].hash
     end
 
     # to_s is the human-facing projection; inspect keeps the class-tagged,
@@ -111,6 +142,17 @@ module Lain
     end
 
     private
+
+    # Name -> tool, frozen. A repeated name is refused rather than resolved:
+    # {#fetch} would otherwise answer with whichever tool happened to be last.
+    def indexed(tools)
+      tools.each_with_object({}) do |tool, by_name|
+        key = tool.name.to_s
+        raise DuplicateTool, "two tools are named #{key.inspect}" if by_name.key?(key)
+
+        by_name[key] = tool
+      end.freeze
+    end
 
     def normalize(names)
       names.flatten.map(&:to_s)

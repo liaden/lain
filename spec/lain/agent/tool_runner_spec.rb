@@ -194,10 +194,22 @@ RSpec.describe Lain::Agent::ToolRunner do
   # boundary with consume-once fakes, so the contract does not rest on
   # agent_spec's end-to-end examples alone.
   describe "#delivery" do
+    # A Struct rather than a Tool subclass because the harvest is the only
+    # behaviour under test, but a Toolset digests its members' schemas at
+    # construction, so even this fake answers #to_schema -- agent_spec's
+    # equivalent hand-over fake does the same, for the same reason.
+    def fake_tool(name)
+      fake = Struct.new(:name).new(name)
+      fake.define_singleton_method(:to_schema) do
+        { "name" => name, "description" => "probe", "input_schema" => { "type" => "object" } }
+      end
+      fake
+    end
+
     # The real Tools::AskHuman#take_answered_questions shape: hands its
     # digests over exactly once, empty ever after.
     def handover_tool(name, digests)
-      fake = Struct.new(:name).new(name)
+      fake = fake_tool(name)
       queue = digests.dup
       fake.define_singleton_method(:take_answered_questions) do
         handed = queue.dup
@@ -207,7 +219,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       fake
     end
 
-    def plain_tool(name) = Struct.new(:name).new(name)
+    def plain_tool(name) = fake_tool(name)
 
     def runner(*tools)
       described_class.new(handler: echoing_handler, toolset: Lain::Toolset.new(tools))

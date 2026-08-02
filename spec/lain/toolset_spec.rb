@@ -82,6 +82,88 @@ RSpec.describe Lain::Toolset do
     it "carries each tool's neutral schema fields" do
       expect(full.to_schema.first).to include("name" => "bash", "strict" => true)
     end
+
+    # The schema is built once in #initialize (the digest needs it, and the
+    # object freezes itself there), so every call hands back the SAME object
+    # rather than a fresh normalization. Pinned because sharing is a visible
+    # change of identity, even though it is not a change of value.
+    it "returns the very same array on every call" do
+      expect(full.to_schema).to equal(full.to_schema)
+    end
+
+    it "is deeply frozen, so sharing it cannot leak a mutable value" do
+      expect(full.to_schema).to be_frozen
+      expect(full.to_schema.first).to be_frozen
+      expect(full.to_schema.first.fetch("input_schema")).to be_frozen
+    end
+
+    it "raises rather than letting one caller mutate what every caller sees" do
+      expect { full.to_schema << {} }.to raise_error(FrozenError)
+      expect { full.to_schema.first["name"] = "other" }.to raise_error(FrozenError)
+    end
+  end
+
+  describe "#digest" do
+    it "is the content address of the rendered schema" do
+      expect(full.digest).to eq(Lain::Canonical.digest(full.to_schema))
+    end
+
+    it "is frozen -- digests are Hash keys all over" do
+      expect(full.digest).to be_frozen
+    end
+
+    it "is identical across construction orders" do
+      expect(described_class.new([bash, grep, read]).digest).to eq(full.digest)
+    end
+
+    it "moves under attenuation" do
+      expect(full.only(:grep).digest).not_to eq(full.digest)
+    end
+  end
+
+  describe "equality" do
+    it "is equal for the same tools built in different orders" do
+      one = described_class.new([read, grep, bash])
+      two = described_class.new([bash, grep, read])
+      expect(one).to eq(two)
+      expect(one).to eql(two)
+      expect(one.hash).to eq(two.hash)
+    end
+
+    # The empty set is the identity element of the attenuation algebra, so its
+    # equality is the case a law battery leans on hardest.
+    it "equates two empty Toolsets" do
+      expect(described_class.new).to eq(described_class.new([]))
+    end
+
+    it "is unequal for different capability sets" do
+      expect(full.only(:read_file, :grep)).not_to eq(full)
+      expect(full.except(:bash)).not_to eq(full)
+      expect(described_class.new).not_to eq(full)
+    end
+
+    it "works as a Hash key, found by an equal-but-distinct set" do
+      table = { full => :parent }
+      expect(table[described_class.new([bash, grep, read])]).to eq(:parent)
+    end
+
+    it "leaves equal? alone -- value equality is not identity" do
+      expect(described_class.new([read])).not_to equal(described_class.new([read]))
+    end
+
+    it "is schema equality, not behavioral equality" do
+      one = described_class.new([tool(:same)])
+      two = described_class.new([Class.new(Lain::Tool) do
+        def name = "same"
+        def description = "the same tool"
+        def perform(_input, _context) = Lain::Tool::Result.error("entirely different behavior")
+      end.new])
+      expect(one).to eq(two)
+    end
+
+    it "is not equal to a non-Toolset that happens to carry the same schema" do
+      expect(full).not_to eq(full.to_schema)
+    end
   end
 
   # to_s is the human-facing tool list; inspect keeps the class-tagged,

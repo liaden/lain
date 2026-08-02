@@ -126,14 +126,23 @@ RSpec.describe Lain::CLI::Wiring do
     # T16: the session Toolset is built ONCE (toolset_build.rb:61-64) and the
     # Agent holds it in an ivar for its whole life. This identity is what made a
     # #to_schema memo PLAUSIBLE -- Context#render (context.rb:162) calls
-    # `toolset.to_schema` unconditionally every turn, against the same
-    # instance -- but a measurement (see .handback-T16.md) found the call costs
-    # ~225us against a round trip in the hundreds-of-ms-to-seconds range, three
-    # to four orders of magnitude below the noise floor, so the memo was
-    # declined: no real saving to justify the extra reachable mutable state on
-    # a value object CLAUDE.md says must be deeply frozen. The invariant here
-    # -- one Toolset survives the whole session -- is worth pinning on its own
-    # regardless of any memo (Schneeman).
+    # `toolset.to_schema` unconditionally every turn, against the same instance.
+    # T16 declined that memo on a measurement (~225us per call, orders of
+    # magnitude under a round trip) plus an objection: extra reachable mutable
+    # state on a value object CLAUDE.md says must be deeply frozen.
+    #
+    # T1 shipped the memo anyway, and both halves of T16's objection have since
+    # been answered rather than overruled. Toolset now has value equality over
+    # its canonical schema bytes, so it must hold a digest; the digest REQUIRES
+    # the normalized schema, so keeping it is a reordering of work already done,
+    # not an addition -- and it has to happen in #initialize, since the object
+    # freezes itself there and a lazy memo would be a FrozenError. Nor is it
+    # mutable state: what is stored is the same deeply-frozen structure
+    # Canonical.normalize already returned, so the value stays deeply frozen.
+    # Measured at review: ~844us once per session, ~461us saved every turn after
+    # the first -- break-even at turn two. The invariant here -- one Toolset
+    # survives the whole session -- is worth pinning on its own regardless
+    # (Schneeman), and it is what makes the memo pay.
     it "renders every turn with the SAME Toolset instance across the session" do
       agent = wire_agent
       toolset_before = agent.toolset

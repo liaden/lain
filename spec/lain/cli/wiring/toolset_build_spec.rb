@@ -83,7 +83,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     context "when the chat resolved an epic" do
-      let(:review_tool) { instance_double(Lain::Tool, name: "request_review") }
+      # A Toolset digests its members' schemas at construction, so a member
+      # reaching Toolset.new from lib/ must answer #to_schema. Stubbing it on a
+      # VERIFYING double is honest rather than conventional: Lain::Tool really
+      # declares #to_schema (tool.rb:150), so rspec checks the stub against the
+      # real method.
+      let(:review_tool) do
+        instance_double(Lain::Tool, name: "request_review",
+                                    to_schema: { "name" => "request_review", "description" => "review",
+                                                 "input_schema" => { "type" => "object" } })
+      end
       let(:epic) { instance_double(Lain::CLI::EpicMount, tools: [review_tool]) }
 
       # Whatever the mount hands over is appended AFTER the floor, which is what
