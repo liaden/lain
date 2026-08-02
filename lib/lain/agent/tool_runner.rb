@@ -148,9 +148,9 @@ module Lain
       # one method whose `fetch` was chosen for loudness.
       def names_by_id(uses)
         uses.each_with_object({}) do |tool_use, names|
-          id = tool_use.fetch("id")
-          refuse_duplicate(names, id, tool_use.fetch("name"))
-          names[id] = tool_use.fetch("name")
+          id = tool_use.id
+          refuse_duplicate(names, id, tool_use.name)
+          names[id] = tool_use.name
         end
       end
 
@@ -186,7 +186,7 @@ module Lain
       #
       # @return [Hash{String => Boolean}]
       def safety_by_name(uses)
-        uses.map { |tool_use| tool_use.fetch("name") }.uniq
+        uses.map(&:name).uniq
             .to_h { |name| [name, @handler.tool_named(name)&.parallel_safe? || false] }
       end
 
@@ -194,9 +194,11 @@ module Lain
       # both neighbours are parallel-safe, so every unsafe tool -- adjacent to
       # nothing it may run beside -- falls out as its own singleton run, the
       # barrier {#run} dispatches alone. {#run} always passes the turn's one
-      # precomputed map; the default only serves a direct diagnostic caller.
+      # precomputed map; the default only serves a direct diagnostic caller,
+      # which -- like every path through here -- hands over
+      # {Response::ToolUse} lenses, never raw block hashes.
       def contiguous_runs(uses, safety = safety_by_name(uses))
-        uses.chunk_while { |left, right| safety.fetch(left.fetch("name")) && safety.fetch(right.fetch("name")) }
+        uses.chunk_while { |left, right| safety.fetch(left.name) && safety.fetch(right.name) }
       end
 
       # The default, order-preserving map: each tool_use resolved before the next.
@@ -231,7 +233,7 @@ module Lain
       # weight -- and it reads the SAME {#safety_by_name} map the partition
       # chunked by, so the two can never disagree.
       def gatherable?(uses, safety)
-        uses.size > 1 && uses.all? { |tool_use| safety.fetch(tool_use.fetch("name")) }
+        uses.size > 1 && uses.all? { |tool_use| safety.fetch(tool_use.name) }
       end
 
       def result_block(tool_use, context)
@@ -239,7 +241,7 @@ module Lain
         {
           "type" => "tool_result",
           # Gate 4: the id must match the tool_use that asked for it.
-          "tool_use_id" => tool_use.fetch("id"),
+          "tool_use_id" => tool_use.id,
           "content" => result.content,
           # Gate 3: a failed tool is reported, never dropped and never raised past
           # the loop. Handler::Live is where the conversion happens.
@@ -249,12 +251,12 @@ module Lain
 
       def dispatch(tool_use, context)
         effect = Effect::ToolCall.new(
-          tool_use_id: tool_use.fetch("id"),
-          name: tool_use.fetch("name"),
+          tool_use_id: tool_use.id,
+          name: tool_use.name,
           # Gate 5: a parsed object, never a serialized JSON string. The Provider
           # guarantees this even on the streaming path, where the wire hands back
           # `input` as a raw String.
-          input: tool_use.fetch("input")
+          input: tool_use.input
         )
         @middleware.call({ effect:, context: }, &@handler.to_app).result
       end

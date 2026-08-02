@@ -61,14 +61,20 @@ module Lain
       content.select { |block| block["type"] == type.to_s }
     end
 
-    # Every tool_use block, with `input` already a parsed Hash.
+    # Every tool_use block, lensed by {ToolUse}, with `input` already a parsed
+    # Hash.
     #
     # The Provider is responsible for guaranteeing that: on Anthropic's STREAMING
     # path with raw-hash tool schemas, `tool_use.input` arrives as a raw JSON
     # String rather than a Hash, while non-streaming `create` returns it parsed.
     # Nothing above the Provider should ever have to know that.
+    #
+    # `ToolUse` is spelled through `Response::` because a method body written
+    # inside a `Data.define` block resolves constants against its LEXICAL scope
+    # (`Lain`), not against the Data class -- the same trap that sends
+    # `Request::SYSTEM_PREFIX` into a reopened class body.
     def tool_uses
-      blocks_of_type("tool_use")
+      blocks_of_type("tool_use").map { |block| Response::ToolUse.wrap(block) }
     end
 
     def tool_use?
@@ -83,9 +89,15 @@ module Lain
       Canonical.digest({ "content" => content, "stop_reason" => stop_reason.to_s })
     end
 
+    # Counts blocks rather than #tool_uses, which would allocate a lens per
+    # block to reach a number -- on the error and debug path, where the object
+    # is being described precisely because something already went wrong.
     def to_s
-      "#<Lain::Response #{stop_reason} blocks=#{content.size} tools=#{tool_uses.size}>"
+      "#<Lain::Response #{stop_reason} blocks=#{content.size} tools=#{blocks_of_type("tool_use").size}>"
     end
     alias_method :inspect, :to_s
   end
 end
+
+# After the Data.define: the lens reopens `Response`, which has to exist first.
+require_relative "response/tool_use"

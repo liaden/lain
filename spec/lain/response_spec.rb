@@ -68,6 +68,16 @@ RSpec.describe Lain::Response do
     it "is empty when there are none" do
       expect(described_class.new(content: [], stop_reason: :end_turn).tool_uses).to eq([])
     end
+
+    # The lens is a VIEW: named readers for the runner, Hash-duck reads for
+    # everyone else, and the underlying block hash untouched.
+    it "hands back ToolUse lenses over the raw blocks" do
+      use = response.tool_uses.first
+
+      expect(use).to be_a(Lain::Response::ToolUse)
+      expect(use.id).to eq("tu_1")
+      expect(use.to_h).to be(response.content.last)
+    end
   end
 
   it "answers tool_use?" do
