@@ -101,6 +101,20 @@ RSpec.describe Lain::CLI::Wiring do
       expect(mock_provider.call_count).to eq(1)
     end
 
+    # The parent handle is ONE Proc, equal?-shared by AskHuman::Notifying and
+    # Subagent::Seam, and it is read at CALL time -- so nothing observes it until
+    # the first question is asked or the first child is spawned, which is why it
+    # was dead in production for as long as it was. Every other spec in the suite
+    # builds its own working thunk instead of taking this one, so the seam that
+    # ships had no coverage at all. Asserted through the tools' own resolution
+    # (#parent_timeline, Seam#parent), not by reaching for the lambda: what
+    # matters is that the objects Wiring hands out can find the Agent, not how.
+    it "hands its tools a parent handle that resolves to the live Agent" do
+      agent = wire_agent
+      expect(wiring.ask_human.send(:parent_timeline)).to equal(agent.timeline)
+      expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
+    end
+
     it "exposes the reply seam and fleet supervisor it wired, as its own accessors" do
       wire_agent
       expect(wiring.ask_human).to be_a(Lain::Tools::AskHuman::Notifying)

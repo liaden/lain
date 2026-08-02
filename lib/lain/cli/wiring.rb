@@ -141,7 +141,13 @@ module Lain
         @ask_human = notifying_ask_human(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human, notice:)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
-        build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
+        # ASSIGNED, not merely returned: `parent` above closes over this local,
+        # and the tools built between here and there read it at CALL time. Left
+        # as a bare return expression the local stays nil forever -- the caller's
+        # `agent = wire_agent(...)` binds a different local in a different scope
+        # -- so the first ask_human question and the first subagent spawn both
+        # raise NoMethodError on nil.
+        agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
       end
 
       private
