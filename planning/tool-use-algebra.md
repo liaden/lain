@@ -3,6 +3,69 @@
 status: research, 2026-07-29. Nothing here is a commitment; each idea names the follow-up
 shape it would take and what it would cost under the registry's rules.
 
+## What landed, 2026-08-02
+
+`planning/specs/chunk-tool-algebra-lenses-partition.md` executed the tool/tool-use half of this
+doc. The rest of the document is left as it was written, so the record keeps saying what it said;
+this section is where it disagrees with the tree. **Where the two disagree, the code is right.**
+
+| Idea | Status | Where |
+|---|---|---|
+| 1. exchange law behind `parallel_safe?` | shipped | `spec/lain/tools/parallel_commutation_spec.rb` |
+| 2. posture equivalence | shipped | `spec/lain/tools/subagent_posture_equivalence_spec.rb` |
+| 3. attenuation laws, and `Toolset#==` | shipped | `lib/lain/algebra/attenuation.rb`, `lib/lain/toolset.rb`, `spec/support/shared_examples/attenuation.rb` |
+| 4. attenuation commutes with rendering | partly, inside idea 3 | monotonicity's `observed` probes the rendered names, so the schema cannot reveal a dropped tool; the entry-for-entry equality is still open |
+| 5. used-capability ledger | open | — |
+| 6. pipeline algebra over whitelisted commands | open | — |
+| 7. glossary additions | shipped | `docs/GLOSSARY.md` (interval partition, lens, attenuation, chain of responsibility) |
+| B4. one partition value, two consumers | shipped, three consumers | `lib/lain/interval_partition.rb` |
+| B6. typed content blocks | shipped as 4 read-only lenses; the typed sum type and the error coproduct are open | `lib/lain/response/tool_use.rb`, `lib/lain/tool/result_block.rb` |
+| B1, B2, B3, B5, B7 | open | — |
+
+Six places where the text above is now wrong, each of them a design decision made during
+execution rather than a slip:
+
+1. **The refused join shipped as a positive declaration, not as `not_a_join_semilattice`.** Idea 3's
+   code block proposes the refutation verb. A refutation of a structure with no positive declarer
+   anywhere fails the chunk's own "named consumer" bar, so `:attenuation` was added to `STRUCTURES`
+   as a positive claim (`attenuation on: :only, dual: :except`), the security reading went into
+   `toolset.rb`'s doc comment, and monotonicity is what makes it checkable.
+2. **Monotonicity is bounded by the REQUEST, not by the receiver.** Idea 3 states "the result's names
+   are a subset of the receiver's". That form is nearly free and certifies nothing: `only` fetches
+   out of the receiver's own index, so it can fail only by inventing a tool. It passed while a
+   `Toolset` honest in `#names`, `#each`, `#to_schema` and `#digest` and lying in `#include?` and
+   `#fetch` dispatched a dropped tool through `Effect::Handler::Live` end to end. The law is
+   `observed(only(s, r)) ⊆ r`, `observed` reaches the authorizing pair, and the escape is a spec.
+3. **The composition law needed its raise half.** Idea 3 writes `only(*a).only(*b) == only(*(a & b))`
+   when `b ⊆ a`, "raises otherwise", as an aside. Both halves ship as first-class laws, along with a
+   second raise the doc does not mention at all: chaining `except` over the same names. The
+   partiality is the structure.
+4. **`Toolset` equality is the canonical schema bytes alone.** Idea 3 proposes "names plus canonical
+   schema bytes". `to_schema` is name-sorted and every entry carries its name, so the names
+   comparison is redundant with it; it survives at most as a cheap early-out and is never part of the
+   definition. The guard is `instance_of?`, which diverges deliberately from `ContentAddressed` and
+   `Capability::DegradedSet`.
+5. **The refinement meet is the pairwise intersection, not the union of cut points.** B4 and the
+   original deferral both read it as a cut-point union. These partitions have GAPS, which the
+   derivation retains verbatim, so a cut-point reading fills them and invents coverage nobody
+   proposed — and it costs the operation both properties it exists for: meeting with the uncut
+   partition stops answering the other operand, and the result stops refining its operands. Verified
+   over all 34 partial partitions of `0..3`.
+6. **`ToolRunner#contiguous_runs` was not adopted, on purpose.** B4 reads the two sites as the same
+   structure; they are, but the runner's `chunk_while` runs over tool_use objects and their safety
+   answers rather than over indices, so routing it through the value would be change for symmetry's
+   sake. `IntervalPartition`'s third caller is `Strategy::Composed` instead. The glossary entry
+   records the sibling and the reason.
+
+Two smaller corrections. Idea 7's left-bias bullet says two handlers claiming one effect "resolve to
+the outermost" — that is right, and the glossary now says so, with the base `Handler` named as the
+identity of that union. Idea 1 landed as a plain spec sweep rather than as a `:commuting` structure,
+per the doc's own "the group alone captures most of the value".
+
+The chunk's own follow-ups (A-1 the monoid generators built through the operator they test, A-4 the
+three equality idioms, A-5 the two representations of "the same capability set") are recorded in the
+chunk spec's execution log, not here.
+
 ## The question
 
 Would adopting more concepts from abstract algebra or category theory improve how Tools and

@@ -11,11 +11,15 @@ in this codebase specifically.
 > A set with an associative binary operation and an identity element.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Monoid))
 
-Three things in lain are monoids, and each one is property-tested against the same shared example group
-in `spec/support/shared_examples/monoid.rb`. `Middleware` composes with `Composable#>>`, and
-`Middleware::Identity` is the pass-through that leaves a stack unchanged. `Usage` adds token counts
-and is additionally commutative, so the order you fold a session's turns in cannot change the total.
-The `Context` combinator chain composes with the same `>>`.
+Five operations in lain are monoids, and each one is property-tested against the same shared example
+group in `spec/support/shared_examples/monoid.rb`. `Middleware` composes with `Composable#>>`, and
+`Middleware::Identity` is the pass-through that leaves a stack unchanged. The `Context` combinator
+chain composes with the same `>>`. `Usage` adds token counts and is additionally commutative, so the
+order you fold a session's turns in cannot change the total.
+`Compaction::Strategy::Replacement` concatenates content blocks with `+` over `DROP` (see
+[free monoid](#free-monoid)). `Compaction::Strategy::Base#|` composes two strategies over one span
+with `Strategy::Identity` as its unit, and is commutative too, because the derivation folds ranges in
+ascending index order whichever operand was written first.
 
 The laws matter operationally. If `Context` composition were not associative, the prompt you get
 would depend on how you bracketed the combinators, which is the class of bug that ordinary
@@ -138,22 +142,61 @@ raises rather than being quietly dropped, so a fiber is never silently incomplet
 > form a Boolean lattice of size `2^(n-1)` ordered by refinement.
 > ([Wikipedia](https://en.wikipedia.org/wiki/Partition_of_an_interval))
 
-What a compaction strategy answers from `#ranges` is one of these over the collapsible span: an
-ascending, non-overlapping, non-empty set of index ranges inside the span, with the gaps between them
-retained verbatim. Those three conditions are **well-formedness**, not style, because the derivation
-folds the ranges straight into writes — one replacement per range, retained turns in the gaps — with
-no per-index membership test to catch a bad answer. A private `Partition` value inside
-`Compaction::Strategy::Base` states them in one place and refuses each on its own terms, and
-`spec/lain/compaction/strategy_spec.rb` covers each of these five: out of ascending order,
-overlapping, an empty range, not a `Range`, and outside the span.
+`Lain::IntervalPartition` (`lib/lain/interval_partition.rb`) is the value: a frozen
+`(owner, span, ranges)` triple that cannot be held in an invalid state, because **seven** conditions
+are checked at construction and each is refused on its own terms — a proposal that is not an `Array`
+at all, a member that is not a `Range`, endpoints that are not Integer message indices, an empty
+range, one outside the span, two out of ascending order, and two that overlap. The order of the
+checks is deliberate: ranges out of order would *also* trip the overlap check, so being told about an
+overlap when the fault is the ordering sends a reader to the wrong line. The refusals run against the
+proposal **as proposed**, before the ranges are normalized to their canonical inclusive spelling, so
+a message never quotes ranges its author did not write. `owner` and the constructor's `provenance`
+are diagnosis only and no part of identity: two partitions of one span into the same intervals are
+the same partition, whoever asked for them.
 
-The lattice framing is what makes a **pin a cut point rather than a shield**. `Source::Derived::PinCuts`
-does not lift a pinned message out of a collapse; it splits the span into one sub-span per contiguous
-run of unpinned messages, so the pinned turn falls in no range at all and the derivation retains it,
-in position, between the two replacements either side. That is `keep_last + 3` rendered messages where
-the old projection gave `keep_last + 2`, pinned in `spec/lain/compaction/source_spec.rb`. It is also
-the shape that makes combining strategies expressible later — two answers over one span have a common
-refinement — which is designed and deliberately not built.
+What a compaction strategy answers from `#ranges` is one of these over the collapsible span, with the
+gaps between the ranges retained verbatim. The conditions are **well-formedness**, not style, because
+the derivation folds the ranges straight into writes — one replacement per range, retained turns in
+the gaps — with no per-index membership test to catch a bad answer.
+`spec/lain/interval_partition_spec.rb` pins each refusal on the value itself, and
+`spec/lain/compaction/strategy_spec.rb` and `spec/lain/compaction/derivation_spec.rb` keep pinning
+them from the seat where the damage was felt.
+
+The value sits at lib level rather than inside `Compaction::Strategy` because it has three callers
+and only one of them is a strategy:
+
+- `Strategy::Base#ranges` validates whatever the `#propose_ranges` hook answered (`.of`), and a
+  refusal cites that hook by name.
+- `Source::Derived::PinCuts` builds the runs a set of cut points leaves (`.covering`). This is what
+  makes a **pin a cut point rather than a shield**: the span splits into one sub-span per contiguous
+  run of unpinned messages, so the pinned turn falls in no range at all and the derivation retains
+  it, in position, between the two replacements either side. That is `keep_last + 3` rendered
+  messages where the old projection gave `keep_last + 2`, pinned in
+  `spec/lain/compaction/source_spec.rb`.
+- `Compaction::Strategy::Composed` asks two proposals for their common refinement.
+
+`Agent::ToolRunner#contiguous_runs` (`lib/lain/agent/tool_runner.rb`) builds the same shape and is
+deliberately **not** adopted: its `chunk_while` runs over tool_use objects and their parallel-safety
+answers, not over indices, so routing it through the value would be change for symmetry's sake. Its
+`chunk_while` makes well-formedness structural anyway — the runs are *generated* rather than
+proposed and checked, which is the same door-closing move `Algebra::Elementwise` makes when it
+generates a whole-span map out of a per-message one.
+
+The **refinement meet** is now built, and it is the pairwise *intersection* of the two operands'
+ranges, not the union of their cut points. These partitions are partial — a gap is a stretch no range
+claims — so a cut-point reading fills the gaps and proposes a collapse neither operand asked for,
+which also costs the operation the two properties it exists for: meeting with the uncut partition
+stops answering the other operand, and the result stops refining its own operands. Under the
+refinement order `#refines?` names, the intersection is the greatest lower bound. The class declares
+`meet_semilattice on: :meet, bottom: "the empty partition, per span"`, and the law sweep proves it
+over an **exhaustive** population: all 34 partial interval partitions of `0..3`, with the bottom, the
+uncut span and two gapped partitions placed last so the battery's witnesses are the four that bend
+the laws hardest (`AlgebraGenerators::Partitions` in `spec/support/algebra_generators.rb`).
+
+`Compaction::Strategy::Composed` (`elide | summarize`) is the consumer that made the extraction pay:
+two strategies compose only over **disjoint** stretches, which is exactly "their meet is empty", and
+an overlap refuses naming both owners and the indices they both claimed
+(`spec/lain/compaction/strategy/composed_spec.rb`).
 
 ### Idempotence
 
@@ -176,6 +219,13 @@ bound, so it returns the set of maximal common ancestors instead of a single ele
 
 Knowing which of the 3 you are holding matters, because only the semilattice ones obey the laws that
 `meet_semilattice.rb` checks.
+
+`Lain::IntervalPartition#meet` is the third **declared** instance and the only one outside
+`Timeline`: the common refinement of two partitions of one span, greatest under the refinement order
+`#refines?` names (see [interval partition](#interval-partition)). Its bottom is recorded as prose
+rather than as a value, exactly as `Timeline`'s two are — a partition carries its span, so "the empty
+partition" is a different value for every span, which makes the bottom a fact about the structure
+rather than a member of it.
 
 ### Regular type
 
@@ -335,6 +385,14 @@ does not handle. `Gate` is the clearest case, since it handles approval and dele
 holds no `Toolset` of its own so that gating and dispatch can never disagree about what a tool name
 resolves to. `Middleware::Composed` is the same shape one layer up.
 
+Read algebraically, a handler chain is a **left-biased** union of partial interpreters, with the base
+`Handler` — which handles nothing and only delegates — as its identity. `#call` asks `handles?`
+outermost-first, so 2 handlers claiming the same effect resolve to the outermost, silently. No chain
+in the tree has that overlap today, at 3 effect kinds; naming the bias is what keeps a later reader
+from discovering it by debugging. `planning/tool-use-algebra.md` B7 records the fix if the effect
+vocabulary grows: a routing table keyed by kind, which is the same posture the `Algebra` registry
+takes toward clobbering a claim.
+
 ### Anti-corruption layer
 
 > A translation layer between subsystems that do not share semantics, so one subsystem's model does
@@ -346,6 +404,59 @@ them. This is what makes cross-provider comparison honest rather than a comparis
 wire vocabularies. It is also why `ruby_llm`'s `Message` was rejected: it joins text blocks and keeps
 only the first thinking signature, so the original content array cannot be recovered.
 
+### Lens
+
+> In functional programming, a lens is a first-class accessor into a structure: a getter and a setter
+> that compose, so reading a nested field is a value rather than a path respelled at every call site.
+> ([Profunctor optics, Pickering, Gibbons and Wu](https://arxiv.org/abs/1703.10857))
+
+lain's are read-only and deliberately shallow, and the rule is stated in
+`context/message_envelope.rb`'s header: **the string-keyed shape is the pipeline primitive, and a
+value is a lens onto it**. Four classes are one pattern.
+
+| Lens | Over | File |
+|---|---|---|
+| `Middleware::Env` | one middleware environment | `lib/lain/middleware/env.rb` |
+| `Context::MessageEnvelope` | one canonical message hash | `lib/lain/context/message_envelope.rb` |
+| `Response::ToolUse` | one `tool_use` block | `lib/lain/response/tool_use.rb` |
+| `Tool::ResultBlock` | one `tool_result` block | `lib/lain/tool/result_block.rb` |
+
+All four share the same core: an idempotent `.wrap`, a frozen instance, named readers that are
+`fetch`es so an absent key raises where it is read, a delegated `#to_json`, and a `#to_h` that hands
+back **the original object by identity** — which is what makes "no committed digest moves because a
+caller wrapped" provable rather than hoped for. The 2 block lenses go further than the 2 whole-value
+ones, because they sit closer to model-supplied bytes: `new` is private, so wrapping a lens cannot
+nest one and `#to_h` cannot answer a lens where `Canonical` was promised a Hash; `.wrap` refuses a
+non-Hash by class rather than letting it fail 3 different ways downstream; and a `KeyError` quotes a
+length-capped `inspect`, since a `read_file`-shaped block would otherwise put a whole file into an
+exception message and from there into the logs. Both keep a Hash-duck `#[]`/`#fetch` ramp for callers
+still reading raw keys.
+
+`Tool::ResultBlock.of` is the write side, and the sole builder of a string-keyed `tool_result` block
+in `lib/`. Two correctness gates become constructor invariants there rather than lines in a
+dispatcher: a block without a `tool_use_id` is unbuildable, and `is_error` is read off the
+`Tool::Result` and never inferred from the shape of the content. Specs:
+`spec/lain/response/tool_use_spec.rb` and `spec/lain/tool/result_block_spec.rb`, with
+`spec/lain/agent/tool_runner_spec.rb` passing unchanged on either side of the migration.
+
+The hash stays the identity-bearing form for a reason that was measured rather than assumed. A `Hash`
+subclass survives construction, comparison, `Canonical.dump` and `Ractor.shareable?` — and then
+`Canonical.normalize` rebuilds plain hashes, so the subclass is erased at the first commit; a `Data`
+block cannot enter the `Store` at all, because `normalize` raises `UnsupportedType` on any non-Hash.
+That door being shut in both directions is what makes a view the safe move.
+
+`JSON` is the door it does not shut, so every lens delegates `#to_json`. Inherited, a lens serializes
+as the `to_s` of its own object header: *valid* JSON carrying a debug string, which the NDJSON
+[Journal](#ndjson) accepts in silence where a raise would be caught, and `Tool::ResultBlock` sits one
+hop from the Journal's `JSON.generate`.
+
+Adoption is partial on purpose. `Context::DedupeToolCalls`, `Context::PurgeFailedInputs`,
+`Grader::ToolCallIndex` and `Plan::Closure` read through the lenses. `Event::Projection` does not,
+and its comment says why: 2 of the 3 `tool_result` blocks in its own spec fixtures carry no
+`is_error`, because a causal walk has never needed to ask, so a `fetch` reader would raise on the
+project's own test data. The `fetch` readers are sound exactly where `ResultBlock.of` built the
+block — blocks a projection *observes* were not built here.
+
 ### Object capability, attenuation
 
 > A security model where holding an unforgeable reference to an object *is* the authorization to use
@@ -356,6 +467,54 @@ Tools are capabilities, not permissions. A subagent holds what it was handed, at
 construction with `toolset.only(:read_file, :grep)`. There is no permission layer to consult, so the
 answer to "what can this subagent do" is 1 line of code you can read rather than a policy you have
 to audit. `Role` packages an attenuation with a prompt slot and a spawn posture.
+
+Attenuation is also a registered structure (`lib/lain/algebra/attenuation.rb`), declared on `Toolset`
+as `attenuation on: :only, dual: :except`. The dual rides on one claim instead of being a second
+declaration, because `except(x)` *is* `only(names - x)` and that equation is one of the laws; a
+typo'd `dual:` is refused at load by the same `answers?` check the operation gets. 7 laws run from
+`spec/support/shared_examples/attenuation.rb`: idempotence, composition inside the request, duality,
+identity, monotonicity, and 2 **raises** — chaining `except` over the same names, and attenuating
+outside the previous request. The partiality is the structure, so the raises are first-class laws
+rather than edge cases; without them the operation would look total and the no-join reading would
+rest on nothing.
+
+**Monotonicity is stated against the request, not against the receiver**, and that is where the
+security value is. Bounding a result by the receiver's names certifies nearly nothing, since `only`
+fetches out of the receiver's own index and can fail only by inventing a tool. The law is
+`observed(only(s, r)) ⊆ r`, probed with the **dropped** names as well as the kept ones. A `Toolset`
+honest in `#names`, `#each`, `#to_schema` and `#digest` and lying in `#include?` and `#fetch` — the
+2 messages `Effect::Handler::Live` authorizes and dispatches with — passed every other law while a
+dropped tool executed end to end. `spec/lain/toolset_spec.rb` holds that set and runs it through the
+real handler; the escape is now a spec. The rendered schema's names are inside `observed`, so a
+dropped capability cannot come back through `#to_schema` either; the stronger reading of that —
+attenuating then rendering equals rendering then filtering, entry for entry — is not pinned.
+
+There is deliberately **no join**, and no `not_a_join_semilattice` refutation either, since a
+structure with no positive declarer anywhere fails the registry's own "named consumer" bar. A join
+would let a holder recover a capability it had dropped. Union exists only at construction, below the
+trust boundary, where `Tools::Subagent#child_union` assembles a child's set out of tools the parent
+already holds. The claim is scoped to the **model-facing surface** — the rendered schema, plus that
+`#include?`/`#fetch` pair — and is not a claim about the Ruby object graph:
+`only(:subagent).fetch("subagent").attenuates_from` hands back the whole un-attenuated union, and a
+spec pins both halves so neither reading drifts.
+
+The laws needed an equality, and `Toolset`'s is the canonical schema bytes: `#digest` is
+`Canonical.digest(to_schema)`, computed eagerly in `#initialize` because the object freezes itself on
+the next line. It is *schema* equality and not behavioral equality — 2 tools with identical schemas
+and completely different `#perform` bodies compare equal — which is exactly the equality prompt
+caching already lives by. The guard is `instance_of?` where `ContentAddressed` and
+`Capability::DegradedSet` write `is_a?`; the divergence is on purpose (`is_a?` plus a class-embedding
+`hash` is an `==`/`hash` contract violation waiting for the first subclass) and converging the other
+two is owed.
+
+One reading the postures break: **under `:handler_union` the rendered schema does not determine the
+capability set.** Two children with different `only` sets render byte-identical tools blocks, which
+is the point, since sibling cache sharing is what CE-4 measures, and
+`Subagent::RefusingHandler` is what refuses a disallowed call, journaling a `"refused"` record. Under
+`:schema` the name is simply absent from the rendered tools and `Toolset#fetch` raises with nothing
+journaled. That is the *only* designed divergence:
+`spec/lain/tools/subagent_posture_equivalence_spec.rb` pins the 2 postures as extensionally equal
+over every allowed call.
 
 ### Total function
 
@@ -432,9 +591,9 @@ closed set is the point: an unknown kind fails loudly rather than being silently
 > specific inputs.
 
 lain states its laws as RSpec shared example groups and runs them against every implementation:
-`monoid.rb`, `meet_semilattice.rb`, `elementwise.rb`, `pure.rb`, `monoid_homomorphism.rb`,
-`regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`, and
-`provider_parity.rb`. This is also the acceptance test for any Rust port. A Rust `Timeline` has to
+`monoid.rb`, `meet_semilattice.rb`, `elementwise.rb`, `pure.rb`, `attenuation.rb`,
+`monoid_homomorphism.rb`, `regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`,
+and `provider_parity.rb`. This is also the acceptance test for any Rust port. A Rust `Timeline` has to
 pass the same unchanged law suites as the Ruby one, which is how a port is known to be a swap rather
 than a rewrite.
 
@@ -451,6 +610,14 @@ beside the operations they are about, and `spec/algebra_laws_spec.rb` sweeps tha
 than a hand-kept list: a declaration with no generator fails, a generator for a claim nobody makes
 fails, and a *refutation* is confirmed only by a law that genuinely fails — one that raises instead
 proves nothing and fails the sweep.
+
+The registry **seals** once `lib/lain.rb` has loaded every unit, so a claim is something a class body
+makes and never something a running process does: any declaration verb against the global registry
+afterwards raises `Algebra::Sealed`, and `sealed?` *is* `frozen?` so the two cannot come to disagree.
+Specs go on declaring into injected registries exactly as before. The latch sits on the verbs and not
+only on `Registry#declare`, which is not belt and braces: `Algebra::Elementwise` generates its
+whole-span method *before* it files its claim, so a registry-only latch would refuse the declaration,
+file nothing, and leave a working generated method on the class — silent past the raise.
 
 ### CRDT, causal stability
 

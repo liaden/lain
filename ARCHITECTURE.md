@@ -385,8 +385,13 @@ controls the command string**, not read-versus-write, which is why `write_file` 
 process-global state. `Agent::ToolRunner#gather` fans a contiguous run of safe tools out as
 sibling fibers; every unsafe tool is a barrier that runs alone, in wire order.
 `spec/lain/tools/parallel_safety_spec.rb` pins the true-set and false-set to equal the shipped
-toolset exactly, so a new tool must choose or fail by name. The reasoning behind the barrier
-semantics, and the rejected subset-first alternative, is in
+toolset exactly, so a new tool must choose or fail by name, and
+`spec/lain/tools/parallel_commutation_spec.rb` proves the claim those tools are making: every
+unordered pair of the 10 non-spawning safe tools runs in both orders, each order as 2 single-use
+responses back to back, and the `tool_result` content, the `is_error` flag, and the `Session`
+read-set all agree. Both orders are serial by construction, because a run of 1 is never gathered —
+comparing 2 gathered fan-outs would be a timing probe that proves nothing. The reasoning behind the
+barrier semantics, and the rejected subset-first alternative, is in
 [`docs/concurrency.md`](docs/concurrency.md).
 
 `Toolset` (`lib/lain/toolset.rb`) is a frozen `Enumerable` whose `#only` and `#except` return new
@@ -394,6 +399,29 @@ attenuated sets. That is the whole authorization model: possession is the author
 `toolset.only(:read_file, :grep)` is a capability, not a permission check. `Tool::SpawnPolicy`
 packages an attenuation for a named `Role`, resolved through `Role::Catalog` so a role's tool set
 cannot drift between its definition and a spawn site.
+
+Two Toolsets are `==` when their canonical schema bytes match. The digest is computed eagerly in
+`#initialize`, since the object freezes itself on the next line, and it is *schema* equality rather
+than behavioral equality: 2 tools with identical schemas and different `#perform` bodies compare
+equal, which is the equality prompt caching already lives by. That equality is what let the
+[attenuation](docs/GLOSSARY.md#object-capability-attenuation) laws be stated at all —
+`attenuation on: :only, dual: :except`, swept with the rest of the registry. The security reading
+sits in `toolset.rb`'s doc comment where a reader meets the operations: a capability once dropped
+cannot be regained by the holder, there is no join, and union exists only at construction, below the
+trust boundary, in `Tools::Subagent#child_union`. Monotonicity is what makes that checkable, and it
+is bounded by the **request** rather than by the receiver, over the surface that actually authorizes
+a call (`#include?` and `#fetch`, which `Effect::Handler::Live` uses) rather than the surface a
+reader looks at.
+
+The 2 spawn postures are 2 enforcement semantics for one attenuation, and CE-4 compares their cache
+economics, which is honest only if they agree on everything else.
+`spec/lain/tools/subagent_posture_equivalence_spec.rb` pins that: identical delivered `tool_result`
+blocks over allowed calls, and one designed divergence on a disallowed one — `:schema` never renders
+the name, so `Toolset#fetch` raises with nothing journaled, while `:handler_union` renders the union
+and `Subagent::RefusingHandler` answers an `is_error` result and journals `"refused"`. The
+consequence worth remembering is that **under `:handler_union` the rendered schema does not
+determine the capability set**: 2 children with different `only` sets render byte-identical tools
+blocks, which is what makes the sibling cache sharing the posture exists for possible.
 
 `Tool::Input` (`lib/lain/tool/input.rb`) is ActiveModel: one field declaration yields both the
 JSON Schema the model sees and the local validation, so they cannot diverge, and coercion is
@@ -697,9 +725,9 @@ lain-specific use. One prerequisite runs under everything here: laws are stateme
 
 ### Claims are code, and one spec sweeps them
 
-`Lain::Algebra` (`lib/lain/algebra.rb`) is the vocabulary. `STRUCTURES` is a closed list of 5
-(`monoid`, `commutative_monoid`, `meet_semilattice`, `elementwise`, `pure`), and a claim is a
-declaration written in `lib/`, beside the operation it is about:
+`Lain::Algebra` (`lib/lain/algebra.rb`) is the vocabulary. `STRUCTURES` is a closed list of 6
+(`monoid`, `commutative_monoid`, `meet_semilattice`, `elementwise`, `pure`, `attenuation`), and a
+claim is a declaration written in `lib/`, beside the operation it is about:
 
 ```ruby
 include Algebra::Monoid
@@ -726,6 +754,15 @@ not answer, a duplicate, a declaration facing a refutation (`Contradiction`), a 
 no stated reason (`Unexplained`: an unexplained negative tells a later reader only that somebody
 once knew something). Claims are per-*operation*, not per-class, because `Timeline` has 3 meet-ish
 operations and only 2 are semilattices; `include MeetSemilattice` on the class would be a lie.
+
+Then it **seals**. `lib/lain.rb` calls `Algebra.registry.seal` after its last unit loads, so a
+declaration is something a class body makes and never something a running process does: a verb called
+against the global registry afterwards raises `Sealed`, and a spec-local injected registry goes on
+accepting declarations exactly as before. `sealed?` is `frozen?` with no separate flag, so the 2
+cannot disagree, and `@entries` is frozen too, since a bare `freeze` leaves an Array appendable. The
+latch sits on the verbs rather than only on `Registry#declare`: `Elementwise` defines its generated
+method *before* it files its claim, so a registry-only latch would refuse the declaration, file
+nothing, and leave a working generated method behind, silent past the raise.
 
 `spec/algebra_laws_spec.rb` walks the registry and names no class of its own: declare a
 structure anywhere in `lib/` and it is swept. A claim costs its author a generator in
@@ -760,9 +797,9 @@ enumerable, so no hand-kept list in a spec can drift from what `lib/` asserts.
 flowchart LR
   DECL["declaration, in lib/ beside the operation<br/><i>monoid on: :>>, identity: ...</i>"] --> REG
   REF["refutation, reason mandatory<br/><i>not_a_meet_semilattice on: :causal_meets, because: ...</i>"] --> REG
-  REG["Algebra.registry<br/>refuses at load: unknown · unanswered ·<br/>duplicate · contradiction · unexplained"]
+  REG["Algebra.registry<br/>refuses at load: unknown · unanswered ·<br/>duplicate · contradiction · unexplained<br/>sealed once lain.rb has loaded every unit"]
   REG --> SWEEP["spec/algebra_laws_spec.rb<br/>walks the registry; names no class itself;<br/>a generator per claim, or it fails by name"]
-  SWEEP -->|declaration| GROUPS["shared example groups, unchanged<br/>monoid · meet_semilattice · elementwise · pure"]
+  SWEEP -->|declaration| GROUPS["shared example groups, unchanged<br/>monoid · meet_semilattice · elementwise ·<br/>pure · attenuation"]
   SWEEP -->|refutation| BATTERY["law battery: :holds / :fails / raised<br/>confirmed only by :fails, on the named law,<br/>reason exhibited by witnesses"]
   GROUPS -.->|"pinned both ways: declarations run the<br/>battery too; battery law names matched<br/>to the group's contributed examples"| BATTERY
   GROUPS --> RUST["same groups run against ext/lain's Timeline:<br/>the differential oracle for the Rust port"]
@@ -773,14 +810,15 @@ flowchart LR
 A [monoid](docs/GLOSSARY.md#monoid) is an associative operation with an identity: string
 concatenation with `""`, list append with `[]`, function composition with `id`. Associativity is
 the operationally interesting law: it says grouping is irrelevant, so a *pipeline is fully
-described by its sequence*. 4 instances carry the claim:
+described by its sequence*. 5 instances carry the claim:
 
 | Where | Operation | Unit | The bug the law rules out |
 |---|---|---|---|
 | `Context::Combinator` (`context/base.rb`) | `>>` | `Context::Identity` | the rendered prompt depending on how the combinator chain was bracketed |
 | `Usage` (`usage.rb`) | `+` | `Usage::ZERO` | a session total depending on fold order (commutative as well, so *no* order dependence at all) |
 | `Compaction::Strategy::Replacement` (`compaction/strategy/replacement.rb`) | `+` | `DROP` | an "empty replacement" message the provider would reject; the unit *vanishes* instead of rendering blank |
-| `Middleware` (`middleware.rb`) | `>>` | `Middleware::Identity` | a stack behaving differently depending on assembly order of sub-stacks (property-tested against the same shared group; it predates the registry) |
+| `Middleware::Base` (`middleware.rb`) | `>>` | `Middleware::Identity` | a stack behaving differently depending on assembly order of sub-stacks (declared on `Base` only, the `Context::Combinator` precedent, so `registry.about(Composed)` answers `[]`) |
+| `Compaction::Strategy::Base` (`compaction/strategy/base.rb`) | `\|` | `Strategy::Identity` | 2 policies over one span deriving differently depending on which was written first (commutative as well: ranges fold in ascending index order regardless of operand order) |
 
 The payoff is the [free monoid](docs/GLOSSARY.md#free-monoid). Since bracketing is irrelevant, a
 strategy *description* is exactly its finite sequence of combinators, and the descriptions form
@@ -835,11 +873,31 @@ call, so no function of `(element, analysis)` can reproduce it, whatever the ana
 Related, 1 level down: what a strategy answers from `#ranges` is an
 [interval partition](docs/GLOSSARY.md#interval-partition) of the collapsible span: ascending,
 non-overlapping, non-empty ranges, with the gaps between them retained verbatim. Those
-conditions are well-formedness, refused in 1 place (a private `Partition` value in
-`Strategy::Base`) because the derivation folds the ranges straight into writes, with no
-per-index membership check downstream to catch a bad answer. The partition framing also settles
-what a pin is: a cut point. `Source::Derived::PinCuts` splits the span around a pinned turn
-rather than lifting it out, so the pin survives in place between the 2 replacements either side.
+conditions are well-formedness, refused in 1 place because the derivation folds the ranges straight
+into writes, with no per-index membership check downstream to catch a bad answer. That place is now
+`Lain::IntervalPartition` (`lib/lain/interval_partition.rb`), a public value carrying 7 refusals,
+each stated on its own terms so a message names the fault a reader has to fix rather than whichever
+later check tripped over it. It sits at lib level because it has 3 callers and only 1 is a strategy:
+`Strategy::Base#ranges` validates the hook's proposal, `Source::Derived::PinCuts` builds the runs a
+set of cut points leaves, and `Strategy::Composed` asks 2 proposals for their common refinement. The
+partition framing also settles what a pin is: a cut point. `PinCuts` splits the span around a pinned
+turn rather than lifting it out, so the pin survives in place between the 2 replacements either side.
+
+Combining 2 strategies over one span was designed in `chunk-derived-context-timeline.md` and deferred
+as speculative generality; Joel un-deferred it on 2026-07-29 because building it is what proves the
+extraction, and `Compaction::Strategy::Composed` (`elide | summarize`) is that consumer. It is
+**partial** on purpose: 2 strategies compose only over disjoint stretches, and an overlap refuses
+naming both operands and the shared indices, because collapsing one range twice writes 2 replacement
+events over 1 preimage. "Disjoint" is asked of the value: the 2 proposals' `#meet` has no ranges.
+The dispatch back is stateless, which it has to be — a strategy stays frozen and `Ractor.shareable?`
+— so each proposed range carries its proposer as a frozen `Range` subclass, `IntervalPartition`
+answers an already-inclusive range by identity, and the fold hands back the very object it was given.
+`Base#blocks_for(messages, range)` is where the range enters, and `Source::Derived::PinCuts` forwards
+it, since PinCuts wraps every operator-supplied strategy and is the only path a strategy reaches in
+production. `#blocks` keeps its 1-argument shape, because `Algebra::Elementwise` *generates*
+`Elide`'s with strict arity 1: widening the hook itself would have meant widening the generator one
+structure up, for a parameter no elementwise map can use. `Elide`, `Summarizing` and `Identity` are
+untouched by the widening, which is the test of whether it was done at the right level.
 
 ### Three meets, one lattice question
 
@@ -884,6 +942,48 @@ other, and any singleton answer would be arbitrary. `dominator_meet(C, D)` is `R
 event *every* path to both heads passes through, and therefore the latest point no in-flight
 branch can bypass: the safe place to synchronize or compact. Same graph, different question,
 and only the lattice-lawful ones may be used where the code assumes a unique answer.
+
+A fourth meet lives outside `Timeline`. `IntervalPartition#meet` is the common refinement of 2
+partitions of one span, and it is the pairwise **intersection** of their ranges rather than the union
+of their cut points. The distinction is not pedantry: these partitions are partial, a gap is a
+stretch no range claims and the derivation retains verbatim, so a cut-point reading fills the gaps
+and proposes a collapse neither operand asked for. It also breaks both properties the meet exists
+for — meeting with the uncut partition stops answering the other operand, and the result stops
+refining its own operands. The order it is a meet of is `#refines?`, and the population the sweep
+proves it over is exhaustive rather than sampled: all 34 partial interval partitions of `0..3`, which
+is small enough to enumerate outright, with the bottom, the uncut span and 2 gapped partitions placed
+last so the battery's witnesses are the 4 that bend the laws hardest.
+
+### Attenuation: an operation that only ever takes away
+
+`Algebra::Attenuation` is the 6th structure, and the only one whose motivation is a security property
+rather than a compositional one. `Toolset` declares `attenuation on: :only, dual: :except`. The dual
+rides on the same claim instead of being a second declaration, because `except(x)` *is*
+`only(names - x)` and that equation is one of the laws; a `dual:` the class does not answer is
+refused at load by the same check the operation gets.
+
+7 laws, and 2 of them are **raises**: chaining `except` over the same names, and attenuating outside
+the previous request. The partiality is the structure rather than a rough edge on it, and pinning the
+raises is what keeps the operation from looking total. The alternative reading of the chained
+`except` — "run it twice from the parent" — is `f(p) == f(p)`, determinism wearing idempotence's
+clothes, and it would hold no matter what the operation did.
+
+Monotonicity is where the absent join is checked, and the sentence to take away is that a capability
+the *receiver* lacked is not the security property, while a capability the **attenuation dropped**
+is. Bounding a result by the receiver's names is nearly free and certifies nothing, since `only`
+fetches out of the receiver's own index. The law is `observed(only(s, r)) ⊆ r`, probed with the
+dropped names as well as the kept ones, and `observed` reaches the surface that authorizes rather
+than the surface that reads: a `Toolset` honest in `#names`, `#each`, `#to_schema` and `#digest` and
+lying in `#include?` and `#fetch` passed every other law in the group while `Effect::Handler::Live`
+dispatched a dropped tool end to end. That escape is now a spec, run against the real handler.
+
+There is no join and no refutation of one. A `:join_semilattice` with no positive declarer anywhere
+would fail this codebase's own "named consumer" bar, so the reading lives in `toolset.rb`'s doc
+comment and monotonicity is what holds it: union exists only at construction, below the trust
+boundary, where `Tools::Subagent#child_union` assembles a child's set out of tools the parent already
+holds. The claim covers the model-facing surface and says nothing about the Ruby object graph —
+`only(:subagent).fetch("subagent").attenuates_from` hands back the whole un-attenuated union, and a
+spec pins both halves so neither drifts into the other.
 
 ### The negatives are design decisions
 
@@ -944,7 +1044,8 @@ For a new operation with compositional shape (a `>>`, a `+`, a merge, a collapse
 checklist is short:
 
 1. Name the structure and its unit in the code, beside the operation, with the declaration
-   verbs (`monoid on:`, `meet_semilattice on:`, `elementwise on:`, `pure on:`).
+   verbs (`monoid on:`, `commutative_monoid on:`, `meet_semilattice on:`, `elementwise on:`,
+   `pure on:`, `attenuation on:`), inside the class body — after load the registry is sealed.
 2. Supply a generator in `spec/support/algebra_generators.rb`; the sweep fails by name without
    one.
 3. If the structure is deliberately absent, refute it instead: a reason, the law the refutation
