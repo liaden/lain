@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "forwardable"
 require "neovim"
 require "socket"
 
@@ -32,6 +33,10 @@ module Lain
         # never written, this one is `acwrite`, named, and SHOWN -- the two
         # have nothing in common but the word "editable".
         SET_COMPOSE = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_compose(name, lines, gen) end"
+
+        OPEN_REVIEW = "local path, gen, slug = ...; if _G.__lain then _G.__lain.open_review(path, gen, slug) end"
+
+        REVIEW_REFUSED = "local message = ...; if _G.__lain then _G.__lain.review_refused(message) end"
 
         # One queued command: `args` is exactly what the entry point named by
         # `lua` takes, already in order -- `[lines]` for the journal append,
@@ -92,6 +97,14 @@ module Lain
           @queue.push(Command.new(args: [name, lines, generation], lua: SET_COMPOSE), true)
         end
 
+        def post_review(path, generation, epic_slug)
+          @queue.push(Command.new(args: [path, generation, epic_slug], lua: OPEN_REVIEW), true)
+        end
+
+        def post_review_refusal(message)
+          @queue.push(Command.new(args: [message], lua: REVIEW_REFUSED), true)
+        end
+
         # Send everything currently queued, one nvim_exec_lua notify per
         # command; the caller flushes the connection once, after this returns.
         def drain(client)
@@ -111,6 +124,83 @@ module Lain
 
         def send_command(client, command)
           client.session.notify("nvim_exec_lua", command.lua, command.args)
+        end
+      end
+
+      # The way IN to the editor, for every producer that is not the RPC thread
+      # itself: queue the work, wake the loop, and answer whether it landed.
+      # {RenderQueue} owns the backlog and its backpressure; this owns the
+      # PAIR -- a post that is not followed by a wake is a render that sits
+      # until the next backstop tick -- and the one policy that pair needs,
+      # which is what a refused post answers.
+      #
+      # It exists because {RpcThread} had grown five copies of it: two blocking
+      # posts and three non-blocking opens, each re-stating the queue call, the
+      # wake, and (three times, in two disagreeing ways) what a dead or full
+      # queue means. The RPC thread's own responsibility is attach, the select
+      # loop, and inbound dispatch; being the door every renderer knocks on is
+      # a second one, and this is it.
+      class RenderInlet
+        # The backlog is BUILT here rather than injected: {RpcThread} holding
+        # both the queue and the door to it was how the five copies got there
+        # in the first place. The loop reaches it through {#drain} and
+        # {#close}, which is all the loop ever needed from it.
+        #
+        # @param waker [#call] wakes the select loop; never blocks
+        # @param capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
+        def initialize(waker:, capacity: RenderQueue::DEFAULT_CAPACITY)
+          @queue = RenderQueue.new(capacity:)
+          @waker = waker
+        end
+
+        # The loop's own two messages: send everything queued, and release any
+        # blocked producer once nobody will ever drain again (see
+        # {RenderQueue#close} for why that MUST happen on death, not only on
+        # teardown).
+        def drain(client) = @queue.drain(client)
+        def close = @queue.close
+
+        # The BLOCKING posts: a background producer outpacing nvim is
+        # back-pressured by the queue, and a queue closed by RPC-thread death
+        # raises ClosedQueueError through to the caller ({Neovim#post} rescues
+        # it, having its own reason to treat the last render as a lost race).
+        def post_render(lines) = deliver { @queue.post_render(lines) }
+
+        def post_view(name, lines, editable: false) = deliver { @queue.post_view(name, lines, editable:) }
+
+        # The NON-BLOCKING opens. All three are called from a path that cannot
+        # afford to park -- Reline's input loop, or the reply consumer's fiber
+        # -- so a full queue refuses instead of blocking, and a refusal is the
+        # answer rather than an exception.
+        #
+        # ONE refusal for all three, because from the caller's side there is
+        # one fact: no editor is taking this. A dead thread (closed queue) and
+        # an editor that stopped draining (full queue) are indistinguishable
+        # from here, and so is never having attached -- which is why
+        # {Compose::DETACHED} is the shared answer. The three said this two
+        # different ways before, and the disagreement meant nothing.
+        def open_compose(lines, generation)
+          refusable { @queue.post_compose(Compose::BUFFER, lines, generation) }
+        end
+
+        def open_review(path, generation, epic_slug)
+          refusable { @queue.post_review(path, generation, epic_slug) }
+        end
+
+        def review_refused(message) = refusable { @queue.post_review_refusal(message) }
+
+        private
+
+        def deliver
+          yield
+          @waker.call
+          nil
+        end
+
+        def refusable(&block)
+          deliver(&block)
+        rescue ClosedQueueError, ThreadError
+          Compose::DETACHED
         end
       end
 
@@ -173,6 +263,8 @@ module Lain
       # * Inbound requests are enqueue-and-acked in microseconds -- a slow response
       #   freezes the EDITOR -- so agent work never runs inline here.
       class RpcThread
+        extend Forwardable
+
         # The four hand-offs this thread makes back to its owner: RPC-thread
         # death, an edited lain://request, and lain://compose being written or
         # abandoned. One object with four named methods rather than four
@@ -253,9 +345,9 @@ module Lain
           @protocol = protocol
           @listener = listener
           @router = Router.new(listener:)
-          @render_queue = RenderQueue.new(capacity: render_capacity)
           @command_inbox = Thread::Queue.new
           @wake_read, @wake_write = IO.pipe
+          @inlet = RenderInlet.new(waker: method(:wake), capacity: render_capacity)
           @ready = Thread::Queue.new
           @stopped = @announced = false
         end
@@ -281,49 +373,11 @@ module Lain
           self
         end
 
-        # Hand a batch of rendered lines to the RPC thread and wake it. Safe from
-        # any thread: it touches only the {RenderQueue} and the wake pipe, never
-        # nvim. Backpressure and the ClosedQueueError-on-death behavior are
-        # {RenderQueue}'s (see its docs); {Neovim#post} rescues that error.
-        # @param lines [Array<String>]
-        # @return [void]
-        def post_render(lines)
-          @render_queue.post_render(lines)
-          wake
-        end
-
-        # Replace a named buffer wholesale. `editable:` distinguishes the
-        # read-only state views (4-2.2) from the one editable view, lain://request
-        # (4-2.3); see {RenderQueue#post_view}. Same queue, backpressure, and
-        # death behavior as {#post_render} -- one render pipeline, not two.
-        # @param name [String] the lain:// buffer name
-        # @param lines [Array<String>]
-        # @param editable [Boolean]
-        # @return [void]
-        def post_view(name, lines, editable: false)
-          @render_queue.post_view(name, lines, editable:)
-          wake
-        end
-
-        # {Compose}'s editor inlet (T15): open lain://compose on the human's
-        # draft. Called from Reline's input loop, so BOTH steps are
-        # non-blocking -- {RenderQueue#post_compose} refuses to block on a full
-        # queue, and {#wake} never blocks by construction.
-        #
-        # @param lines [Array<String>] the draft, one entry per line
-        # @param generation [Integer] see {RenderQueue#post_compose}
-        # @return [String, nil] nil when the draft landed, else the notice
-        #   saying it did not. This thread being dead (closed queue) and its
-        #   editor having stopped draining (full queue) are one fact from the
-        #   prompt's side -- there is no editor taking drafts -- so they share
-        #   {Compose::DETACHED} with the never-attached case.
-        def open_compose(lines, generation)
-          @render_queue.post_compose(Compose::BUFFER, lines, generation)
-          wake
-          nil
-        rescue ClosedQueueError, ThreadError
-          Compose::DETACHED
-        end
+        # Every way IN to the editor, delegated whole to the object that owns
+        # the queue-and-wake pair ({RenderInlet}, which documents each). Safe
+        # from any thread: they touch only the {RenderQueue} and the wake pipe,
+        # never nvim.
+        def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_review, :review_refused
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.
@@ -332,7 +386,7 @@ module Lain
           @stopped = true
           wake
           @thread&.join
-          @render_queue.close
+          @inlet.close
           [@socket, @wake_read, @wake_write].each { |io| io.close unless io.nil? || io.closed? }
         end
 
@@ -371,7 +425,7 @@ module Lain
         # forever without this (see {RenderQueue#close}).
         def record_death(error)
           @failure = error
-          @render_queue.close
+          @inlet.close
           @announced ? @listener.died : @ready.push(error)
         end
 
@@ -399,7 +453,7 @@ module Lain
         end
 
         def drain_renders
-          @render_queue.drain(@client)
+          @inlet.drain(@client)
           @connection.flush
         end
 

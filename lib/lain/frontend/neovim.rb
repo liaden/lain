@@ -38,7 +38,7 @@ module Lain
       # "4": T15 added the lain://compose round trip -- the set_compose render
       #   entry point, and the "compose"/"compose_abandon" commands its
       #   BufWriteCmd/BufUnload autocmds send back.
-      PROTOCOL = "4"
+      PROTOCOL = "5"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model
@@ -113,7 +113,35 @@ module Lain
         # collaborator itself, so the two can still be built in either order
         # (see {FrontendListener}'s own comment).
         @compose = Compose.new(rpc: @rpc, notify: compose_notify)
+        @command_inbox = CommandInbox.new(inbox: @rpc.command_inbox, rpc: @rpc)
       end
+
+      # The editor's command rail as a consumer sees it: BOTH directions of the
+      # one conversation. A consumer pops the commands the editor sent and
+      # answers a gesture it had to refuse -- ":LainReviewDone names no open
+      # review" -- and the answer belongs in the editor the gesture came from,
+      # which means the render rail. Two objects to hold that (a queue, and the
+      # RPC thread) would put the burden of knowing they are one conversation
+      # on every consumer; {CLI::HumanReplies::NoEditor} is the same duck for
+      # the session that has no editor at all.
+      #
+      # `pop` forwards its arguments rather than declaring `non_block = false`:
+      # the duck it satisfies is Thread::Queue's, and restating that default
+      # here would be a second place for it to be wrong.
+      class CommandInbox
+        def initialize(inbox:, rpc:)
+          @inbox = inbox
+          @rpc = rpc
+        end
+
+        def pop(...) = @inbox.pop(...)
+        def review_refused(message) = @rpc.review_refused(message)
+
+        # There is an editor. The Null answers false, and that is the whole of
+        # the question a consumer ever has to ask.
+        def attached? = true
+      end
+      private_constant :CommandInbox
 
       # The C-g compose round trip's Ruby end (T15), for the terminal prompt to
       # register a key action against and to settle in its own loop. Exposed
@@ -122,9 +150,20 @@ module Lain
       attr_reader :compose
 
       # Commands the editor invoked, enqueue-and-acked by the RpcThread, for an
-      # agent-side consumer to drain. Exposed as a queue, never the session.
-      # @return [Thread::Queue]
-      def command_inbox = @rpc.command_inbox
+      # agent-side consumer to drain -- and the way back for a gesture that had
+      # to be refused. A collaborator, never the session.
+      # @return [CommandInbox]
+      attr_reader :command_inbox
+
+      # Hand a file on disk to the human, in a focused split, stamped with the
+      # review it belongs to (T16). The editor answers on {#command_inbox} with
+      # `["review_done", [generation, epic_slug, annotations]]`.
+      #
+      # @return [String, nil] nil when the open landed, else the notice saying
+      #   no editor took it (see {RpcThread::RenderInlet})
+      def open_review(path, generation, epic_slug:)
+        @rpc.open_review(path, generation, epic_slug)
+      end
 
       # Attach, start draining the Channel into the editor, yield self, and ALWAYS
       # tear both threads down -- even on a raising block, so a wedged agent never

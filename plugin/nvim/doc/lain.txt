@@ -11,13 +11,14 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 4) .. |lain-contract|
+  6. The attach contract (protocol 5) .. |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
      6.4 Runtime commands .............. |lain-runtime-commands|
      6.5 Composing a message ........... |lain-compose|
-     6.6 Folds ......................... |lain-folds|
+     6.6 Reviewing a document .......... |lain-review|
+     6.7 Folds ......................... |lain-folds|
   7. Without the plugin ................ |lain-zero-install|
 
 ==============================================================================
@@ -124,7 +125,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 4)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 5)                            *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -213,10 +214,13 @@ your own `:highlight link` overrides any of them without a fight:
 6.4 RUNTIME COMMANDS                                   *lain-runtime-commands*
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
-`:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainVersion`. In
-`lain://inbox`, `r` and <CR> prompt for and submit a reply.
+`:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainVersion`, and --
+only meaningful inside a review buffer lain opened (|lain-review|) --
+`:LainAnnotate` and `:LainReviewDone`. In `lain://inbox`, `r` and <CR> prompt
+for and submit a reply.
 
-6.5 COMPOSING A MESSAGE (PROTOCOL 4)                            *lain-compose*
+------------------------------------------------------------------------------
+6.5 COMPOSING A MESSAGE (PROTOCOL 5)                            *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -250,7 +254,33 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 FOLDS                                                         *lain-folds*
+6.6 REVIEWING A DOCUMENT (PROTOCOL 5)                            *lain-review*
+                                                              *:LainAnnotate*
+                                                             *:LainReviewDone*
+
+lain hands a document back to you by opening the REAL FILE -- not a `lain://`
+buffer -- in a split, focused, with the review it belongs to stamped on the
+buffer (`b:lain_review_generation`, `b:lain_review_epic_slug`). While you hold
+it, lain does not write it.
+
+    :LainAnnotate           Prompt for a note and attach it to the line the
+                            cursor is on, shown as virtual text. The note
+                            travels with the line as you keep editing.
+
+    :LainReviewDone         Hand the document back. Refuses while the buffer
+                            is 'modified': lain settles the review from what
+                            is ON DISK, so save first. Your annotations ride
+                            along with it.
+
+Both commands refuse outside a review buffer, and there is currently no way to
+get one from a `lain chat` session: nothing lain ships yet ASKS for a review.
+The editor half described here is complete and is what an asker will drive; the
+asking half is not built. So treat this section as the contract your config can
+already hook (the buffer variables above are set, and the commands exist at
+attach), not as a workflow you can start today.
+
+------------------------------------------------------------------------------
+6.7 FOLDS                                                         *lain-folds*
 
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one

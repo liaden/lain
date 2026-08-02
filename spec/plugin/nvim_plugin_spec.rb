@@ -244,7 +244,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     # T5's panel doc obligations: trust LainAttach data.protocol over
     # g:lain_rpc_version, name the priming burst, and table the User events
     # and lain* highlight groups (source of truth: runtime.lua's comments).
-    it "documents the v3 contract in doc/lain.txt and generates helptags" do
+    it "documents the v5 review command and generates helptags" do
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
       expect(doc).to include("LainAttach").and include("LainRender")
       expect(doc).to include("data.protocol").and include("g:lain_rpc_version")
@@ -253,12 +253,29 @@ RSpec.describe "lain nvim plugin", :nvim do
         expect(doc).to include(group)
       end
 
+      expect(doc).to include("protocol 5").and include("LainReviewDone").and include("LainAnnotate")
+
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)
         system("nvim", "--clean", "--headless", "-c", "helptags #{dir}", "-c", "qa!",
                out: File::NULL, err: File::NULL)
         expect(File.exist?(File.join(dir, "tags"))).to be(true)
       end
+    end
+
+    # `helptags` builds an index of the tags a file DEFINES and never looks at
+    # the ones it REFERENCES, so a |lain-review| pointing at a section that was
+    # never written generates tags happily and answers E149 the moment a human
+    # follows it. The TOC did exactly that. Only lain's own tags are checked --
+    # references to vim's help (|User|, |E89|, |za|) resolve against runtime
+    # files this spec has no business indexing.
+    it "resolves every lain tag it points at" do
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      defined_tags = doc.scan(/\*(lain[^\s*]*|:Lain\w+|b:lain\w+|User-Lain\w+)\*/).flatten
+      referenced = doc.scan(/\|(lain-[^|\s]+)\|/).flatten.uniq
+
+      expect(referenced).not_to be_empty
+      expect(referenced - defined_tags).to be_empty
     end
   end
 

@@ -75,12 +75,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
-  # Reflection into RpcThread's private RenderQueue -- the T6-inherited fix
-  # lives there (see lib/lain/frontend/neovim/rpc_thread.rb), and this is the
-  # same instance_variable_get idiom the rest of the suite already uses to
-  # assert on an internal without widening a class's public API just for a spec.
+  # Reflection into the backlog behind RpcThread's RenderInlet -- the
+  # T6-inherited fix lives there (see lib/lain/frontend/neovim/rpc_thread.rb),
+  # and this is the same instance_variable_get idiom the rest of the suite
+  # already uses to assert on an internal without widening a class's public API
+  # just for a spec. The inlet owns the RenderQueue, which owns the SizedQueue
+  # whose bound is the property under test.
   def raw_render_queue(frontend)
-    frontend.instance_variable_get(:@rpc).instance_variable_get(:@render_queue).instance_variable_get(:@queue)
+    inlet = frontend.instance_variable_get(:@rpc).instance_variable_get(:@inlet)
+    inlet.instance_variable_get(:@queue).instance_variable_get(:@queue)
   end
 
   describe "the views exist from attach" do

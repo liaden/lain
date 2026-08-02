@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "fileutils"
 require "neovim"
 require "socket"
@@ -246,15 +247,156 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 4 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 5 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "4" }
-        expect(described_class::PROTOCOL).to eq("4")
+        wait_until { inspector.get_var("lain_rpc_version") == "5" }
+        expect(described_class::PROTOCOL).to eq("5")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end
+    end
+  end
+
+  # The review buffer's identity, or nil while the split has not opened yet.
+  # `vim.fn.bufnr(path)` answers -1 until nvim has actually loaded the file, and
+  # `vim.b[-1]` raises "Invalid buffer id: -1" -- an exec_lua error escapes
+  # wait_until instead of retrying, which is a flake, not a failure. Answering
+  # nil is what makes the wait a wait.
+  def review_state(path)
+    inspector.exec_lua(<<~LUA, [path])
+      local buf = vim.fn.bufnr(...)
+      if buf == -1 then return nil end
+      return {
+        generation = vim.b[buf].lain_review_generation,
+        slug = vim.b[buf].lain_review_epic_slug,
+        focused = vim.api.nvim_get_current_buf() == buf,
+      }
+    LUA
+  end
+
+  # Settled only once the split is open, focused, AND stamped: three facts that
+  # land in that order, and an example that read any one of them early would
+  # assert against a half-opened review.
+  def opened_review(path)
+    wait_until do
+      state = review_state(path)
+      state if state && state["generation"] && state["focused"]
+    end
+  end
+
+  def next_command(frontend)
+    wait_until do
+      frontend.command_inbox.pop(true)
+    rescue ThreadError
+      nil
+    end
+  end
+
+  describe "the review round trip" do
+    let(:written) do
+      Lain::Epic::Intake::Written.new(
+        graph: Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "b2", title: "the thing")])
+      )
+    end
+
+    # The wire contract, pinned against the editor that actually produces it:
+    # `[verb, args]` with args ONE array, because HumanReplies#pop_command
+    # destructures exactly that -- and annotations String-keyed, because they
+    # crossed msgpack from lua. Sent as flat positionals, every :LainReviewDone
+    # was refused as NotOpen and the payload's third element was never even
+    # looked at; both specs that covered this were green on their own side of
+    # the seam.
+    it "sends done as one array of args, annotations String-keyed" do
+      Dir.mktmpdir("lain-review") do |dir|
+        path = File.join(dir, "epic.md")
+        File.write(path, "## b2 the thing\n")
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.open_review(path, 7, epic_slug: "alpha")
+          expect(opened_review(path)).to include("generation" => 7, "slug" => "alpha", "focused" => true)
+
+          inspector.exec_lua("vim.ui.input = function(_, callback) callback('tighten this AC') end; return true", [])
+          inspector.command("LainAnnotate")
+          inspector.command("LainReviewDone")
+
+          expect(next_command(frontend)).to eq(
+            ["review_done",
+             [7, "alpha", [{ "line" => 1, "text" => "tighten this AC", "anchor_text" => "## b2 the thing" }]]]
+          )
+        end
+      end
+    end
+
+    # The seam itself, crossed once: a REAL editor's done gesture routed through
+    # the REAL consumer into a REAL Epic::Review, so the delta the tool would
+    # await is produced by the bytes a human actually saved. Nothing here is
+    # doubled -- that is the point. Two green specs on either side of this seam
+    # are what let the wire shape drift in the first place.
+    it "settles the bound review with what the human saved, and journals the note they left" do
+      Dir.mktmpdir("lain-review") do |dir|
+        path = File.join(dir, "epic.md")
+        File.write(path, written.bytes)
+        io = StringIO.new
+        review = Lain::Epic::Review.new(journal: Lain::Journal.new(io:), epic_slug: "alpha")
+        token = review.open(path:, written:)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.open_review(path, token.generation, epic_slug: "alpha")
+          opened_review(path)
+          inspector.command("%s/the thing/a sharper thing/")
+          inspector.command("write")
+          # Annotating leaves the buffer unmodified (virtual text, not bytes),
+          # so `done` still has a saved file to settle from.
+          inspector.exec_lua("vim.ui.input = function(_, callback) callback('tighten this AC') end; return true", [])
+          inspector.command("LainAnnotate")
+          inspector.command("LainReviewDone")
+
+          delta = settled_delta(frontend, review, token)
+          expect(delta.account.changes).to eq({ retitled: ["b2"] })
+          expect(Lain::Journal.records(io.string.lines, type: "annotation").to_a).to contain_exactly(
+            hash_including("epic_slug" => "alpha", "generation" => token.generation, "line" => 1,
+                           "text" => "tighten this AC", "issue_id" => "b2", "drifted" => false)
+          )
+        end
+      end
+    end
+  end
+
+  # HumanReplies as the Repl builds it, minus nothing that matters here: the
+  # editor rail is the frontend's own inbox, and the review is bound exactly as
+  # an opener would bind it.
+  def replies_for(frontend, review, token)
+    store = Lain::Store.new
+    parent = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                                  history_path: File.join(Dir.tmpdir, "lain-review-seam-history"))
+    replies = Lain::CLI::HumanReplies.new(tty:, conductor: instance_double(Lain::CLI::Conductor),
+                                          ask_human: Lain::Tools::AskHuman.new(parent:),
+                                          questions: Async::Queue.new)
+    replies.bind_editor(frontend.command_inbox)
+    replies.bind_review(review, token:)
+    replies
+  end
+
+  # Runs the reply surfaces for real and answers with the delta the review's
+  # own promise resolved to -- the value the agent-side awaiter would get.
+  def settled_delta(frontend, review, token, timeout: 8)
+    Sync do |task|
+      replies = replies_for(frontend, review, token)
+      surfaces = replies.surfaces(task)
+      deadline = Async::Clock.now + timeout
+      task.sleep(0.02) until token.resolved? || Async::Clock.now > deadline
+      surfaces.compact.each(&:stop)
+      # Never `await` an unresolved promise here: it parks this fiber forever
+      # and the whole example hangs with no failure to read. A settle that did
+      # not happen is the finding, so say so.
+      raise "the review never settled from the editor's done gesture" unless token.resolved?
+
+      token.await
     end
   end
 
