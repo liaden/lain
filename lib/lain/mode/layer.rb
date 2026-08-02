@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Mode
+  class Mode
     # One composable, orthogonal toggle -- Emacs' minor mode. A layer is
     # DECLARATION only: a name, the lighter it renders, and whether it can move
     # an approval or capability outcome. It constructs nothing and resolves

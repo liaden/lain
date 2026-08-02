@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  module Mode
+  class Mode
     # One rung of the posture ladder -- the single exclusive slot that governs
     # how a turn's output is interpreted. A posture DECLARES four things and
     # resolves none of them: the capability set it permits, the name of a gate
