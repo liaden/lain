@@ -24,7 +24,7 @@ module AlgebraGenerators
       [Lain::Timeline, :causal_meets] => Timelines.causal_meets,
       [Lain::Context::DedupeToolCalls, :call] => Spans.dedupe,
       [Lain::Context::PurgeFailedInputs, :call] => Spans.purge
-    }.merge(strategy_claims).freeze
+    }.merge(strategy_claims).merge(middleware_claims).freeze
   end
 
   # The compaction strategies' claims, kept in their own hash rather than in the
@@ -36,6 +36,12 @@ module AlgebraGenerators
       [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
       [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks,
       [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks }
+  end
+
+  # Middleware's monoid claim, kept apart from `registered` for the same
+  # reason `strategy_claims` is: that hash is at Metrics/MethodLength's limit.
+  def self.middleware_claims
+    { [Lain::Middleware::Base, :>>] => Middlewares.composition }
   end
 
   def self.claims = registered.keys
@@ -75,6 +81,47 @@ module AlgebraGenerators
     # OBSERVATIONAL: same tags out, for the same input.
     def observationally_equal
       observe = ->(combinator) { combinator.call([]).map { |message| message["content"].first["text"] } }
+      ->(a, b) { observe.call(a) == observe.call(b) }
+    end
+  end
+
+  module Middlewares
+    module_function
+
+    # A middleware that records its own entry/exit into env[:trace], the same
+    # shape spec/lain/middleware_spec.rb's own `tag` helper builds.
+    # SUBCLASS-flavored for the same reason {Combinators.tag} is: bare
+    # {Lain::Middleware::Base} instances all behave as the identity, so a
+    # generator drawing from the declared class alone would fold nothing but
+    # units and pass the monoid laws vacuously.
+    def tag(symbol)
+      Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &downstream|
+          entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
+          exited = downstream.call(entered)
+          exited.merge(trace: exited.fetch(:trace) + [[symbol, :out]])
+        end
+      end.new
+    end
+
+    def composition
+      { operation: ->(a, b) { a >> b },
+        generator: draw_from(%i[a b c d].map { |symbol| tag(symbol) }),
+        equal: observationally_equal }
+    end
+
+    # Chains of up to three, seeded with the declared unit so a zero-length
+    # draw answers it -- {Combinators.draw_from}'s same shape.
+    def draw_from(pool)
+      -> { Array.new(rand(0..3)) { pool.sample }.reduce(Lain::Middleware::Identity, :>>) }
+    end
+
+    # Two composed middlewares are never `==` as objects, so equality is
+    # OBSERVATIONAL: the same trace out, for the same input env.
+    def observationally_equal
+      observe = lambda do |middleware|
+        middleware.call(Lain::Middleware::Env.wrap(trace: [])) { |env| env }.fetch(:trace)
+      end
       ->(a, b) { observe.call(a) == observe.call(b) }
     end
   end

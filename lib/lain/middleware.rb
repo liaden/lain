@@ -49,6 +49,7 @@ module Lain
     # behavior, which is why {Identity} is just an instance of it.
     class Base
       include Composable
+      include Algebra::Monoid
 
       def call(env, &app)
         downstream(env, &app)
@@ -67,6 +68,14 @@ module Lain
       def downstream(env, &app)
         app ? yield(env) : env
       end
+
+      # {Identity} is an instance built after this class body closes (below),
+      # so the unit can only be named lazily -- {Context::Combinator}'s same
+      # move. Declared on {Base} only, per the {Context::Combinator} precedent:
+      # `registry.about(Composed)` answers `[]` because `>>` and the monoid it
+      # forms both belong to the base capability every middleware shares, not
+      # to the one subclass that happens to implement composition.
+      monoid on: :>>, identity: Algebra.later { Middleware::Identity }
     end
 
     # The monoid unit: composing it changes nothing. Having a real value for
