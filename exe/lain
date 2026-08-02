@@ -116,6 +116,20 @@ class LainCLI < Thor
                              .submit(stage, slug, issue: options[:issue], digest: options[:digest])
       end
     end
+
+    method_option :resume, type: :boolean, default: false, desc: "Resume an interrupted landing"
+    desc "land ISSUE_ID SHA [SLUG]", "Land one approved issue at an exact commit; --resume continues an interrupted one"
+    def land(issue_id = nil, sha = nil, slug = nil)
+      if options[:resume]
+        raise Thor::Error, "lain epic land --resume accepts at most one slug" unless slug.nil?
+
+        # `--resume` takes no sha -- it derives one from the promote intent the
+        # journal already holds -- so the SECOND positional is the slug there.
+        return render { Lain::CLI::EpicLand.new.resume(issue_id, sha) }
+      end
+
+      render { Lain::CLI::EpicLand.new.land(issue_id, sha, slug) }
+    end
   end
 
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
