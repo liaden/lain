@@ -733,8 +733,15 @@ Scenario: a refused call is reported to the child as a tool error, never raised
 **Reuse:** `lib/lain/tool/spawn_policy.rb:230-232` — `.resolve` accepting an instance *or* a
 short name, with a private `REGISTRY` and a loud `Unknown`. `Snapshot#write(timeline:, paths:)`
 (`snapshot.rb:108`) keeps its signature; the scope is injected at `#initialize` alongside `root:`.
-**Shared-file wiring:** one `require_relative "snapshot/scope"` line in
-`lib/lain/workspace.rb` (this subtree's index)
+**Shared-file wiring:** ~~one `require_relative "snapshot/scope"` line in
+`lib/lain/workspace.rb`~~ — **CORRECTED AT EXECUTION (2026-08-02): none.** This card creates
+`workspace/snapshot/`, so by CLAUDE.md § Requires `snapshot.rb` *becomes* that subtree's index
+and requires `snapshot/*` itself. The panel surveyed every `lib` file with a same-named sibling
+directory: ~90 self-index, one anomaly (`epic/review.rb`). The `effect.rb` → `effect/handler` →
+`handler/*` precedent is exact and at the same depth. Following the card literally would have
+left `snapshot.rb` with a sibling directory it does not index — the state the policy forbids.
+The line goes at the **top** of `snapshot.rb`, because the class body evaluates
+`SCOPE_NOTE = Scope::WriteSet::NOTE` at load time. **Zero orchestrator-owned files touched.**
 
 `Scope::WriteSet` must reproduce today's behavior **byte-for-byte**, including the exact
 `snapshot_scope` note that rides every payload — the default arm is a refactor, not a change.
@@ -779,7 +786,15 @@ Scenario: a scope instance passes through resolution unchanged
 **Reuse:** `lib/lain/isolation/worktree.rb:162-166` — the `git(*)` runner with an injected
 `shell_out_factory` and `GIT_CONTEXT_SCRUB` (`:56-59`), passing an **argv Array**, never a
 string. `lib/lain/paths.rb:158-160` for XDG state resolution and `:177` for `project_hash`.
-**Shared-file wiring:** none (T12 created the index line)
+**Shared-file wiring:** none — but **this card DOES own a require line, and its placement is
+load-bearing (corrected at execution, 2026-08-02).** T12 landed `snapshot/scope.rb` as the
+`scope/` subtree's index, so `require_relative "scope/shadow_git"` goes **at the TOP of
+`lib/lain/workspace/snapshot/scope.rb`**, which is this card's to edit. It must NOT go at the
+bottom: `Scope::REGISTRY` is built and **frozen inside the module body**, so a bottom require
+cannot register a short name — `Scope.resolve(:shadow_git)` then raises `Scope::Unknown` while
+only a passed *instance* resolves. (`effect/handler.rb`'s bottom-placement precedent does not
+transfer: its children subclass the class body; `ShadowGit` subclasses nothing.) Add `ShadowGit`
+to `REGISTRY` in the same edit.
 
 The store is lain-owned and lives under XDG state, **never** in the user's project. Git is only
 the change detector; bytes go into lain's own blake3 `Store` exactly as today.
@@ -992,8 +1007,44 @@ third is the one a designer forgets:
   `heredoc_redirect`, `file_redirect`, `variable_assignment`, `subshell`, `function_definition`,
   `arithmetic_expansion`) — a node-kind check;
 - literal `command_name` only (`eval`, `source`, `.`, `alias`, `xargs`, `sh`, `bash`, `env`,
-  `sudo`, `find`, `nice`, `timeout`, `nohup`, `setsid`, `stdbuf`, `watch`, `awk`, `sed`, `tar`,
-  `rsync`, `less`, `git`) — a name denylist, because these run programs named in their arguments;
+  `sudo`, `find`, **`time`**, **`coproc`**, `nice`, `timeout`, `nohup`, `setsid`, `stdbuf`,
+  `watch`, `awk`, `sed`, `tar`, `rsync`, `less`, `git`) — a name denylist, because these run
+  programs named in their arguments;
+
+  > ⚠️ **`time` ADDED AT EXECUTION (2026-08-02), and it is not a cosmetic addition.** Every
+  > sibling of `time` was already on this list; `time` was the omission. T15's panel found, and
+  > the orchestrator verified, that **tree-sitter-bash does not model `time` as a keyword**, so
+  > a `time` prefix degrades its entire tail to plain `word` nodes inside an ordinary `command`:
+  >
+  > ```
+  > "time { echo PWNED; }"   broken=false  covered=true   argv=[["time","{","echo","PWNED"],["}"]]
+  > "time rm -rf /tmp/x"     broken=false  covered=true   argv=[["time","rm","-rf","/tmp/x"]]
+  > ```
+  >
+  > Both are **structurally clean and fully covered** — the most innocuous kind set the grammar
+  > can produce — so neither the node-kind tier nor the byte-coverage backstop says anything
+  > about them. The first is the very command this plan's Grounding measured as the reason to
+  > execute reconstructed argv, and the Gherkin below requires it to abstain; without `time` on
+  > this list, **nothing in the design makes it abstain**. The second is worse: it is genuinely
+  > literal, so its argv reconstructs faithfully and `/usr/bin/time` runs `rm`.
+  >
+  > The lesson generalises past this one name: **byte coverage is not a total check.** It
+  > catches an anonymous keyword only where the grammar *lexes* it as one. Any leading command
+  > word tree-sitter does not model as a keyword has the same effect, so this list is the only
+  > thing standing between "structurally clean" and "runs its arguments" — which is exactly why
+  > the card already says it must never be described as exhaustive.
+  >
+  > **Two more facts the panel measured, both of which change how this list is APPLIED:**
+  >
+  > 1. **Apply the denylist to EVERY stage's `argv[0]`, never to `stages.first`.** `time` is
+  >    reachable in a non-leading stage and all three of these are `covered=true`:
+  >    `echo hi; time { rm x; }` → `argv0s=["echo","time","}"]`; `ls | time rm x`;
+  >    `true && time rm -rf /tmp/x`. A first-stage-only check is no check.
+  > 2. **`coproc` is the same family** and belongs on the list beside `time`. Twelve bash
+  >    reserved words reach covered-and-unbroken as a leading token (`}`, `do`, `done`, `elif`,
+  >    `else`, `esac`, `fi`, `in`, `then`, `]]`, `time`, `coproc`); `coproc` is the one that
+  >    actually runs its argument. It is benign in *execution* only because no `coproc` binary
+  >    exists, so a reconstructed argv degrades to ENOENT — which is luck, not a defence.
 - word **text** only (glob, tilde, brace) — no node kind exists.
 
 ```gherkin
@@ -1028,6 +1079,18 @@ Scenario: incomplete byte coverage abstains
 Scenario: a brace group that the parser splits abstains
   Given the command "time { echo hi; }"
   Then the verdict is abstain
+  # AMENDED AT EXECUTION: this scenario passes ONLY via the `time` name denylist entry.
+  # Verified against the landed parser: this command is broken=false, covered=true, so the
+  # node-kind tier and the coverage backstop both say nothing. Do not implement it by
+  # special-casing braces -- write it so the denylist is what makes it abstain, and add a
+  # second example proving the same for a command with no braces at all.
+
+Scenario: a literal command behind a program-runner prefix abstains
+  Given the command "time rm -rf /tmp/x"
+  Then the verdict is abstain, because time is on the name denylist
+  # The dangerous half of the pair above: fully literal, fully covered, structurally clean,
+  # and its reconstructed argv executes faithfully -- /usr/bin/time runs rm. Nothing but the
+  # denylist stands between this and an allow.
 
 Scenario: an explicit denial is distinguishable from an abstention
   Given a command naming a tool the session's capability set excludes
@@ -1346,6 +1409,40 @@ Scenario: an abstention parks for the surfaces above
   Given a call the rule chain abstains on
   When it is evaluated
   Then it parks on the approval queue exactly as it does today
+
+# ADDED AT EXECUTION (2026-08-02), from T18's panel. T18 ships fault-poisoning: a rule
+# that raises suppresses a later ALLOW (it may still deny), because the panel proved plain
+# skip-and-continue lets one broken rule flip deny into allow with a Decision that is
+# to_h-identical to a clean one. That makes the fault RECORD the only trace, so a chain
+# wired with the default Faults::Null is silently lenient. It must not be reachable here.
+Scenario: the ladder is wired with a real fault recorder, never the Null
+  Given the escalation ladder as this card wires it
+  When a rule in the deterministic rung raises
+  Then the fault reaches a journal-backed recorder, and the run is not silently lenient
+
+# Also from T18's panel: `decision&.allow?` is falsey for BOTH "denied" and "abstained",
+# and this chunk's whole premise is that those are different outcomes.
+Scenario: abstention is distinguished from denial by absence, not by falsiness
+  Given a denied call and an abstained call
+  When each decision is inspected
+  Then abstention is recognised by asking whether a decision exists, never by !allow?
+
+# THE SHARPEST FORM OF THE ABOVE, found by T18's panel and the reason this card cannot
+# treat `nil` as one thing. T18 ships fault-poisoning, so a chain answers nil for TWO
+# non-interchangeable reasons: "no rule had an opinion", and "an allow was suppressed
+# because a rule faulted". A rung that WRAPS a chain collapses the second into the first:
+#
+#   inner = RuleChain.new([Raiser, Allower])      # poisons correctly -> nil
+#   outer = RuleChain.new([Delegating.new(inner), Allower])
+#   outer.decide(call)                            # => :allow, over a real recorded fault
+#
+# This card builds exactly that shape, and its own text promises "a rung that abstains
+# must not change the outcome, so rungs compose without ordering surprises". Under
+# poisoning that promise needs a second half: a fault must not be LAUNDERABLE either.
+Scenario: a fault cannot be laundered into an abstention by a wrapping rung
+  Given a rung that delegates to a rule chain in which a rule raises before an allow
+  When the ladder evaluates the call
+  Then the ladder does not approve it, and the fault is still attributed to its rung
 
 Scenario: the auto-approve layer only sees what the deterministic rung abstained on
   Given the auto_approve layer enabled and a call the rule chain allows
