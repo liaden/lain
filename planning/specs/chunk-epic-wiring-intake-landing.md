@@ -1,6 +1,9 @@
 # Epic wiring, review intake, and serial landing
 
-status: in-progress
+status: in-progress -- 25 of 26 cards landed (T20 deferred by ruling, T23 remaining).
+        The 2026-07-30 resume's five body-less commits were panel-reviewed on
+        2026-08-02, repaired, and the range rewritten one card per commit; see
+        "The 2026-08-02 panel review" below.
 commit-mode: orchestrator-commits
 language: ruby (plus lua in lib/lain/frontend/neovim/runtime.lua)
 panel: Torvalds, Evans, Metz, Schneeman, Patterson (ruby) with Kmett, Milewski, Wadler, Elliott, Matsakis (algebra/effects seats)
@@ -1202,7 +1205,7 @@ Scenario: a dirty merge state stops the run
   base is always main), stop: that is the next chunk's boundary, and crossing it here
   means the cut was wrong.
 
-### T25 — Land and resume from the CLI                     [wave 4] [risk: low]
+### T25 — Land and resume from the CLI                     [wave 4] [risk: medium]
 
 **Depends on:** T24
 **Files:** `lib/lain/cli/epic_land.rb` (create), `spec/lain/cli/epic_land_spec.rb`
@@ -1248,6 +1251,15 @@ Rulings and corrections made during execution. These supersede the card text abo
 
 **Landed:** T12 `9530b2f`, T4 `e1ec5b1`, T3 `f3fb35a`, T10 `4f4ef2a`, T9 `4e3e109`,
 T11 `ef917ee`, T6 `5fa71a2`, T2 `e2e43b9`, T7 `a645138`.
+
+**Landed in the 2026-07-30 resume (waves 2-4), by a different agent:** T1, T5, T8, T13,
+T14, T15, T16, T17, T18, T19, T21, T22, T24 across five commits — `26a24e5`, `cc8749a`,
+`08a8a8b`, `10bb2cb`, `f573057`. Those five bundle several cards each and carry **no commit
+bodies**, against a repo whose every other commit records its reasoning; the plan doc was
+never updated, so the tracker showed wave 1 only. See the 2026-08-02 review below.
+
+**Landed 2026-08-02:** T25 `ee37954`, T26 `9cbef9a`, the review-intake repairs `0477f5d`.
+T20 stays deferred by the ruling above. T23 is unblocked by T26 and not yet built.
 
 - **T1's AC1 wording is superseded.** Two panels independently found `Approval::Gate`'s
   registry is keyed on artifact digest alone, so an approval at one `(epic, stage)` opened
@@ -1417,6 +1429,167 @@ should land before those three cards touch it, or each pays the extraction cost 
   `Class.new(Policy)` in a spec is an order-dependent flake. Use a named class or the real
   `Policy::Adjudicated`.
 
+### Ruling: T25's SHA is an argument, and `--resume` derives it from its own journal
+
+T25 stopped because "no durable record binds an approved implementation content digest to the
+exact commit it may promote." Verified 2026-08-02: `Approval::GateDecision`
+(`approval/gate.rb:104`) records `artifact_digest` — the COMPOSED `(stage, slug, content)`
+hash — and nothing else journals the content digest, so the approved SHA is genuinely
+unrecoverable from the journal. That gap is real; the conclusion drawn from it was not.
+
+**The binding does not need a record — it is the hash.** `Submission.implementation`
+(`submission.rb:213`) takes its digest as given, and `epic_submit.rb:159` gets that string from
+the human on the command line. So `lain epic land ISSUE_ID SHA [SLUG]` reconstructs
+`Submission.implementation(slug:, issue_id:, digest: sha)` and lets `ensure_approved!` answer:
+a SHA nobody approved produces a digest the registry has never seen, and the run refuses before
+the first intent. Landing a commit other than the approved one is not prevented by bookkeeping,
+it is unrepresentable. `Promotion::Remote#anchored!` (`promotion.rb:154`) already refuses
+anything that is not a full object name naming a commit, so `HEAD`, an abbreviation, and a
+branch are all rejected on the same path — the three identities the stub feared conflating stay
+distinct without a new record.
+
+`--resume` takes the issue id too, and derives the SHA: the journaled `promote` intent carries
+`params["sha"]` (`promotion.rb:225`), which is by construction the SHA the gate already cleared.
+No promote intent for that issue means there is nothing to resume, and the command says so.
+`Intent` carries `epic_slug`/`issue_id` (`intent.rb:85`), so the CLI filters entries to the
+named issue before `Reconcile` folds them — one epic's two landing histories must never
+interleave, which is the whole of the "issue selector" half of the blocker.
+
+Considered and rejected: journaling the content digest at submit time so `land ISSUE_ID` could
+discover it. It widens a landed, mutation-tested value in a subsystem outside this chunk, and it
+reverses `Approval::Gate`'s deliberate ignorance of what it is gating (its header states the
+registry knows nothing of stages or epics) to save the human retyping a SHA they typed once
+already.
+
+### Ruling: T23's blocker is real, and splits into T26 + a narrowed T23
+
+The T23 hand-back (`.handback-T23.md`) is correct on the facts: `Review#open` demands an
+`Intake::Written` (`review.rb:312`), which refuses anything but an `Epic::Graph`
+(`intake.rb:142-146`), while three of the four stages are not graphs. Its conclusion — treating
+prose as an epic document would report ordinary prose as a malformed review — is right, and
+widening `Written` to accept prose would destroy the one invariant it exists for: bytes and
+graph that agree.
+
+**The seam is the baseline, not `Written`.** `Review#open` uses `written` for exactly two
+readers (`byte_digest`, `graph_digest`) and then wraps it in `Baseline`, whose whole body is
+`delta(disk)` (`review.rb:93-99`) — and `Recalled` (`review.rb:115`) already proves a second
+baseline shape is a supported thing to be. `ReviewOpened` already defaults `graph_digest` to nil
+(`records.rb:257`), and `Account.empty` (`intake/delta.rb:42`) already names an account nobody
+compared structurally. So prose reviews cost a sibling value and a sibling baseline, and no
+change to `Written`, `Graph`, or `Document`.
+
+Split, because it is two responsibilities and the first is the one with the invariants:
+
+- **T26 (new, wave 5, risk: medium)** — the prose review baseline. Below.
+- **T23 (narrowed)** — `Tools::RequestReview` over the three DOCUMENT-backed stages, refusing
+  `implementation` by name.
+
+`implementation` is out of T23's scope for good: `Epic::Home` exposes no implementation document
+(`home.rb:108-111`) and the stage gates an external changeset digest, so "review it" means
+reviewing a diff — a surface this chunk does not build. The tool must refuse it with a message
+that says which stages are reviewable and why this one is not, never silently.
+
+### T26 — A prose artifact can be reviewed too            [wave 5] [risk: medium]
+
+**Depends on:** T15
+**Files:** `lib/lain/epic/intake.rb`, `lib/lain/epic/review.rb`,
+`spec/lain/epic/intake_spec.rb`, `spec/lain/epic/review_spec.rb`
+**Reuse:** `Intake::Written` (the shape to sit beside, not to widen); `Review::Recalled` (the
+proof that a second baseline duck is supported); `Account.empty`; `Intake.byte_digest`;
+`Intake.lossy?`
+**Shared-file wiring:** none — both files are already in the manifest, and `Intake::Prose` sits
+in `intake.rb` beside `Written` rather than in a new file.
+
+`Intake::Prose` is the bytes lain last wrote to a prose artifact, with no graph: it answers
+`byte_digest` and answers `graph_digest` as nil. `Review::ProseBaseline` answers the same
+`delta(disk)` duck as `Baseline`, reporting the two byte addresses and `Intake.lossy?` over an
+`Account.empty` — measured, uncompared, and never parsed as an epic document. A prose review
+that comes back rewritten is `byte_identical? == false` with `structural? == false`, which is the
+true sentence about prose: the bytes moved and nothing structural was claimed.
+
+```gherkin
+Scenario: prose comes back edited
+  Given a review opened on prose bytes and disk bytes differing by one sentence
+  When it settles
+  Then the delta is not byte_identical, not structural, not malformed, and not lossy
+
+Scenario: prose that is not an epic document is not malformed
+  Given prose that would fail Document.parse_markdown outright
+  When it settles
+  Then the delta carries no error and asserts nothing structural
+
+Scenario: a truncated prose file is still suspected
+  Given disk bytes under half the written bytesize
+  Then the delta is lossy
+
+Scenario: a prose review journals a nil graph digest
+  Then the review_opened record carries the byte digest and no graph digest
+
+Scenario: prose and graph reviews coexist on one Review
+  Given one path opened with prose and another with a graph
+  Then each settles against its own baseline and neither sees the other's account
+```
+→ spec files: `spec/lain/epic/intake_spec.rb`, `spec/lain/epic/review_spec.rb`
+
+**Escalation triggers:**
+- If `Intake::Written` has to change at all, stop — the split exists precisely to avoid that.
+- If a prose delta cannot be built without `Delta` learning a new member, stop and report:
+  `Delta`'s shape is pinned by `refuse_shapes!` and is not this card's to widen.
+
+### The 2026-08-02 panel review of the resumed waves, and what it cost
+
+Joel asked for the five body-less commits to be reviewed on the grounds that he could not
+tell whether the resuming agent had the right context. Three panels (forge/landing,
+review-intake, supervisor+editor) all returned **REQUEST-CHANGES**. What they found, and
+what it says about the process rather than the code:
+
+1. **The suite had been silently truncated since `f573057`.** `spec/lain/cli/epic_land_spec.rb`
+   called `LainCLI::Epic.start` inside an example; `exe/lain` declares `exit_on_failure?`, so
+   Thor rescued its own error and called `Kernel#exit`, killing the rspec process mid-run.
+   `bundle exec rspec` reported **1160 examples, 0 failures, exit 1** where it should have
+   reported 7728. The COUNT is the tell, not the failure list — the same shape CLAUDE.md
+   documents for a dead parallel worker. **No suite run between `f573057` and `ee37954`
+   meant anything, including this chunk's own integration check.** It was found twice
+   independently: by the forge panel, and by the next commit's pre-commit hook refusing.
+2. **`Forge::Landing` merged commits nobody approved.** It called `promote` and discarded the
+   answer, on both paths. `Promotion` refuses a diverged remote, a namespace conflict and an
+   inexact sha as `ok: false` VALUES; discarding them meant a branch standing at a stranger's
+   commit was opened as a PR, merged into main, and journaled as the issue's approved work.
+   `settled?` also ignored `ok`, so resume skipped a *failed* promote. The tier's whole
+   apparatus exists to make "land only the approved commit" mechanical, and the object at the
+   top of it dropped the one answer that enforced it.
+3. **Two seams that had never worked, both with green specs on either side.** Annotations
+   crossed msgpack String-keyed while Ruby read Symbols (`KeyError` on every real note, after
+   the settlement was journaled); and `runtime.lua` sent `review_done` as flat positionals
+   where the rail destructures `[verb, args]`, so every `:LainReviewDone` was refused. Two
+   green tests either side of a seam nothing crossed is this repo's recurring defect, and it
+   is what a cross-seam spec exists to catch.
+4. **`Supervisor#stop` lost a crashed worker's commits** — bare-releasing the lease where
+   `#register` surrenders. T13's headline guarantee, failing on the likeliest operator path.
+5. **`cc8749a` reintroduced a poison pill directly beneath the comment forbidding it**, making
+   an epic permanently un-rebuildable from two ordinary journal shapes.
+6. **Two `Metrics/*` disables** (`landing.rb`, five cops; `rpc_thread.rb`, ClassLength at
+   120/110), which CLAUDE.md forbids outright and which every other disable in `lib/` respects.
+
+**The provenance explains it.** The execution notes record "T24 isolation was unavailable to
+its agent; the orchestrator completed it locally" — the chunk's one HIGH-risk card was written
+without isolation, without TDD, and without a panel. `landing.rb` is 3% comments (two of its
+four comment lines are the RuboCop pragmas) against 47-65% for its panel-reviewed siblings,
+and its spec pinned 2 of 6 scenarios: deleting the promotion step, replacing `Landing.resume`
+with `nil`, and merging unconditionally all left the suite GREEN.
+
+**Rulings.** T24 is rebuilt from the card by a TDD sub-agent (Joel's call: the shape is what
+hid the defects, so patching it preserves the shape). The other three areas take targeted fix
+passes with red-before-green per finding and probes-become-specs. Every fix pass re-runs the
+panel's own mutation battery.
+
+**Process lessons for the skill, beyond this chunk.** A resumed execution must (a) re-run the
+FULL suite and compare the example COUNT against the recorded baseline, never just the failure
+list; (b) keep one card per commit, because a three-card commit cannot be reverted per card;
+(c) write commit bodies — on a bench whose deliverable is the experiment record, five empty
+bodies is 2,900 lines whose reasoning exists nowhere; and (d) update the plan doc, which is
+the tracker, not a side notes file.
+
 ## Integration checks
 
 - Full suite: `bundle exec rspec` green; example count strictly above the 6441 baseline
@@ -1441,6 +1614,19 @@ should land before those three cards touch it, or each pays the extraction cost 
      integration pass (bedrock-provider.md checks 4 to 7), the toy-epic walk through
      `/plan-epic` and `/iterate-epic`, the `[epics] home = "repo"` flip, and the
      kill-dance resume pass.
+- Follow-up from the T24 rebuild (2026-08-02): `CLI::EpicLand::Scoped` filters
+  `issue_transition` records out of the entries it hands `Reconcile`, so a resume cannot see
+  whether the issue already moved. The rebuild answers the fixpoint law from the run instead
+  (`run.performed ? moved : run`), which is correct for every case the card names, and leaves
+  one residual: a merge the world confirms but whose transition never reached the journal
+  leaves the issue `in_flight` forever. Closing it means widening the scope filter to carry
+  the issue's own transitions, which is a change to what "one issue's entries" means and
+  wants its own card.
+- Follow-up from the intake repairs (2026-08-02): `annotation` records are still WRITE-ONLY --
+  nothing in `lib/` reads them and `Intake::Delta` has no member for them, so T22's "the agent
+  receives them with the delta" is unmet. `Tools::RequestReview` (T23) is the intended reader;
+  the hand-back records the record shape, the `(epic_slug, generation)` join, the order
+  guarantee, and the two meanings of a nil `issue_id`, so T23 can be written against it.
 - Named follow-ups this chunk creates (so they are not lost): render open reviews in
   `lain epic status`; surface parked reviews in the inbox count; the stack-cascade chunk
   (retargeting, `--onto`, `--force-with-lease` semantics); the bench altitude arms and

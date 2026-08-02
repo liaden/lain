@@ -1111,6 +1111,49 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    Panel: ruby roster plus the standing algebra seats (Kmett, Milewski, Wadler, Elliott,
    Matsakis), APPROVE-WITH-FIXES applied. Refreshes `planning/epic-orchestration.md` (T12)
    against the 2026-07-30 critique (`.critique-epic-orchestration.md`).
+   **25 of 26 cards landed as of 2026-08-02** (T26, the prose review baseline, was split out
+   of T23 during execution). **T20 is deferred by ruling** — nothing constructs a chat actor
+   or holds a `WorkerHandoff`, so there is nothing to hand back yet. **T23 is the one card
+   left**: `Tools::RequestReview`, unblocked now that prose artifacts are reviewable, and the
+   reader that would finally make `annotation` records non-write-only.
+   **The 2026-07-30 resume was reviewed and repaired on 2026-08-02.** Thirteen cards had
+   landed in five commits with no commit bodies, written without isolation, TDD, or a panel;
+   three panels returned REQUEST-CHANGES on all of it. What they found is recorded in the
+   plan doc, and the headline items are worth carrying here because each is a *class* of
+   defect this bench should be able to name: a spec that called `Thor.start` inside an
+   example **silently truncated the whole suite** for five commits (1160 examples, 0
+   failures, nonzero exit, where 7728 was the truth — the count is the tell, never the
+   failure list); `Forge::Landing` **discarded the promotion's verdict** and would merge a
+   branch standing at a stranger's commit as the issue's approved work; the annotation seam
+   and `:LainReviewDone` had **never once worked** while carrying green specs on both sides
+   of them; `Supervisor#stop` **lost a crashed worker's commits**; and two `Metrics/*`
+   suppressions stood where CLAUDE.md forbids them outright. T24 was rebuilt from its card
+   by a TDD sub-agent (`Plan`/`Step`/`Evidence`, nine mutations red); the rest took targeted
+   fix passes. The five commits were then rewritten as one commit per card with real bodies
+   — `backup/codex-range-pre-rewrite` and `backup/pre-history-rewrite` keep the originals.
+
+27. **Planned (2026-07-30, panel-reviewed)** —
+   `planning/specs/chunk-question-sets-and-the-answer-document.md`: `ask_human` becomes a
+   **question set** — one tool call carrying several questions, each a markdown body with a
+   closed option list, answered as a folded markdown document the human edits in place (tick a
+   checkbox, indented prose beneath an option for why, `:w` to submit). 17 cards. The document is
+   the artifact and the surfaces are ways of opening it: a new `acwrite` `lain://question` buffer
+   modelled on `lain://compose`, `<CR>` from the inbox to open a set, autoload-the-next on
+   submit; the TTY always answers, in free text, and only its pointer text changes when an editor
+   is attached. Widens `Tool::Input` with array and nested-object fields (migrating `TodoWrite`
+   off its hand-written schema — two callers, and it closes the schema/validation drift that
+   file's header claims not to have), and reverses one capability policy on purpose: subagents
+   may now ask the human, which is what puts several sets in the inbox at once. Grounding found
+   **five** defects where the draft listed three; the two it added are aliasing bugs on
+   `@last_question` (the A event's causal parent, and the delivery commit's retired digest) —
+   the second retires the wrong question, which presents as a haunted inbox rather than a stale
+   digest. Rulings recorded: the parser is handed the set it parses, so a fenced diff or mermaid
+   block is skipped by literal match rather than by a fence tracker (`Epic::Document` *refuses*
+   fences and could not be copied here); the question buffer holds exactly one set, which makes
+   `RequestBuffer`'s clobber defect unreachable rather than defended; `x` ticks on an option line
+   and is vim's `x` everywhere else; submitting is never blocked and an unanswered question says
+   so; no answer timeout, deregistration riding the supervisor lease. Panel: ruby roster,
+   REQUEST-CHANGES → all seven blockers applied.
 
 ---
 
