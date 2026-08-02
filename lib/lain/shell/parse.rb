@@ -242,10 +242,19 @@ module Lain
       # owns the policy (the cap, the refusal, the promise never to raise), and
       # this owns reading one tree that already parsed.
       class Reading
-        # Bytes a shell treats as separation between words. `\n` is here rather
-        # than in {OPERATORS} because tree-sitter-bash has no anonymous `"\n"`
-        # node to query -- it lexes newline as whitespace.
-        BLANK_BYTES = " \t\n\r\f\v".bytes.freeze
+        # Bytes a shell treats as separation between words: bash's default IFS,
+        # exactly. `\n` is here rather than in {OPERATORS} because
+        # tree-sitter-bash has no anonymous `"\n"` node to query -- it lexes
+        # newline as whitespace.
+        #
+        # `\r`, `\f` and `\v` are deliberately NOT here, though the grammar does
+        # split words on them. They are not IFS, so bash keeps them INSIDE the
+        # word, and counting them as blank made `rm tmp/build\f-rf\f/home/joel`
+        # reconstruct as four argv terms where bash passes ONE. That is a
+        # misparse yielding a different VALID argv, which is worse than a broken
+        # one. Left out, the byte is covered by nothing and surfaces as an
+        # uncovered run, which is the signal a verdict already refuses on.
+        BLANK_BYTES = " \t\n".bytes.freeze
 
         Span = Data.define(:range, :text) do
           def contains?(other) = range.begin <= other.range.begin && other.range.end <= range.end

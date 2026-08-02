@@ -96,6 +96,37 @@ RSpec.describe Lain::Shell::Parse do
     end
   end
 
+  # The grammar splits words on `\r`, `\f` and `\v`; bash does not, because they
+  # are not in its default IFS. Counting them as blank therefore reconstructed a
+  # DIFFERENT VALID argv rather than a broken one -- `rm tmp/build\f-rf\f/home`
+  # came back as four terms where bash passes ONE. Reporting them as uncovered is
+  # what keeps the two readings from silently disagreeing.
+  describe "a whitespace byte bash does not split on" do
+    { "\r" => "carriage return", "\f" => "form feed", "\v" => "vertical tab" }.each do |byte, name|
+      it "reports the #{name} as uncovered, since only IFS separates words" do
+        result = result_for("echo a#{byte}b")
+        expect(result).not_to be_broken
+        expect(result).not_to be_covered
+        expect(result.uncovered).to eq([6...7])
+        expect(result.source.byteslice(6, 1)).to eq(byte)
+      end
+    end
+
+    # bash passes this as ONE argument, `tmp/build\f-rf\f/home/joel`. Note that
+    # `Shellwords` is NOT the oracle here -- it splits on Ruby's `\s`, so it
+    # agrees with tree-sitter and not with the shell.
+    it "reports the argument-splitting case, where the two readings disagree outright" do
+      result = result_for("rm tmp/build\f-rf\f/home/joel")
+      expect(result).not_to be_covered
+      expect(result.stages.map(&:argv)).to eq([["rm", "tmp/build", "-rf", "/home/joel"]])
+      expect(result.uncovered.size).to eq(2)
+    end
+
+    it "keeps the IFS bytes blank, so an ordinary command still covers" do
+      expect(result_for("echo\ta \nb")).to be_covered
+    end
+  end
+
   # tree-sitter-bash#315: `$FOO/$BAR/` yields a corrupted `command_name`
   # ("$FOO/$") with ZERO ERROR and ZERO MISSING nodes. Byte coverage is the only
   # thing that catches it, which is why no container kind may count as coverage.

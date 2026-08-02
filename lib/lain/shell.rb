@@ -10,10 +10,15 @@ module Lain
   # That separation is the answer to the objection `Lain::Tool::Input` raises at
   # its own top: a validator claiming to "only permit safe commands" is a
   # comforting lie, but a parser reporting "I did not fully understand this" is
-  # making no claim at all. The verdict that reads these facts is a separate
-  # object, and even it answers only "literal and understood", never "safe".
+  # making no claim at all.
+  #
+  # {Shell::Verdict} is the judgement half, and it is a separate object because
+  # the two answer different questions. Even it answers only "literal and fully
+  # understood", never "safe", and it is free to abstain -- which is what lets
+  # the pair be honest where a regex could not be.
   module Shell
   end
 end
 
 require_relative "shell/parse"
+require_relative "shell/verdict"
