@@ -153,6 +153,22 @@ RSpec.describe Lain::Forge::Journaled do
       expect { journaled.attempt(action: "rm_rf", params: {}) { nil } }.to raise_error(ArgumentError, /action/)
       expect(records).to be_empty
     end
+
+    it "rejects a contradictory answer duck and records a safe failure outcome" do
+      answer = Struct.new(:detail) do
+        def ok? = false
+        def observed? = true
+      end.new({})
+
+      expect do
+        journaled.attempt(action: Lain::Forge::PROMOTE,
+                          params: { "ref" => "refs/heads/epic/demo/a1", "sha" => "abc123" }) { answer }
+      end.to raise_error(ArgumentError, /observed/)
+
+      intent, outcome = records
+      expect(intent["type"]).to eq("forge_intent")
+      expect(outcome).to include("type" => "forge_outcome", "ok" => false, "observed" => false)
+    end
   end
 
   # The whole point of the pair: Reconcile reads it back and says what landed.

@@ -151,6 +151,13 @@ RSpec.describe Lain::Forge::Outcome do
     expect { outcome(intent_id: nil) }.to raise_error(ArgumentError, /intent_id/)
   end
 
+  it "refuses an observed outcome that is not successful, including on replay" do
+    expect { outcome(ok: false, observed: true) }.to raise_error(ArgumentError, /observed/)
+
+    record = outcome.to_journal.merge("ok" => false, "observed" => true)
+    expect { described_class.from_record(record) }.to raise_error(ArgumentError, /observed/)
+  end
+
   it "rebuilds from a journal record" do
     rebuilt = described_class.from_record(outcome(detail: { "error" => "diverged" }).to_journal)
 

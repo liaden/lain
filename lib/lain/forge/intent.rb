@@ -50,6 +50,13 @@ module Lain
         validates :intent_id, presence: { message: "must name the intent it answers, got nil" }
         validates :ok, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :observed, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
+        validate :observed_entails_ok
+
+        def observed_entails_ok
+          return unless observed == true && ok == false
+
+          errors.add(:observed, "means the effect was found already in place, which is a success")
+        end
       end
     end
 
