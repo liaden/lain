@@ -5,6 +5,11 @@ require "stringio"
 require "tmpdir"
 
 RSpec.describe Lain::Frontend::TTY do
+  # What a TERMINAL reads as a line break, which is the property the arrival
+  # note and the inbox listing actually claim -- `"\n"` alone is the pin that
+  # a lone `\r` walks straight through.
+  def line_break = /[\r\n\v\f\u{0085}\u{2028}\u{2029}]/
+
   let(:channel) { Lain::Channel.new }
   let(:output) { StringIO.new }
   let(:input) { StringIO.new }
@@ -43,6 +48,15 @@ RSpec.describe Lain::Frontend::TTY do
   # reline/history path when `input.tty?` is true, which StringIO never is.
   def tty_input
     instance_double(IO, tty?: true)
+  end
+
+  # T14: what production actually announces and lists -- a whole Question::Set
+  # wearing the one clamped line the inbox rows show
+  # (Tools::AskHuman::Announcement). A bare String is still legal on both
+  # seams, and the examples that pass one cover that arm.
+  def announced(*ids, body: nil)
+    questions = ids.map { |id| Lain::Question.new(id:, body: body || "which #{id}?") }
+    Lain::Tools::AskHuman::Announcement.new(Lain::Question::Set.new(questions:))
   end
 
   describe "#drain_and_render" do
@@ -525,6 +539,45 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("/inbox")
       expect(output.string.chomp).not_to include("\n")
     end
+
+    # T14: production announces a whole Question::Set wearing a one-line
+    # summary (Tools::AskHuman::Announcement), and the note now names who is
+    # stuck as well as both surfaces that can answer it.
+    it "names the asker and points at the editor's inbox as well as /inbox" do
+      tty.render_arrival(announced("db"), from: "researcher")
+
+      expect(output.string).to include("researcher").and include("which db?")
+      expect(output.string).to include("nvim").and include("/inbox")
+      expect(output.string.chomp).not_to match(line_break)
+    end
+
+    it "stays one line for a five-question set of multi-line bodies" do
+      tty.render_arrival(announced("db", "region", "budget", "deploy", "owner",
+                                   body: "which database?\n\n| a | b |\n| - | - |"),
+                         from: "orchestrator")
+
+      expect(output.string).to include("which database?").and include("(+4 more)")
+      expect(output.string.chomp).not_to match(line_break)
+    end
+
+    # One line on the TERMINAL, which is what the property is actually about:
+    # a lone \r holds no "\n" and still redraws the note from column 0, so
+    # everything before it -- the asker included -- is overwritten by whatever
+    # the question's author put after it.
+    it "is one line for a terminal, not merely free of newlines" do
+      tty.render_arrival(announced("db", body: "harmless question\rATTACKER OWNS THIS LINE"),
+                         from: "researcher")
+
+      expect(output.string.chomp).not_to match(line_break)
+      expect(output.string).to include("researcher").and include("(/inbox")
+    end
+
+    it "clamps a long asker name to the width the sender column already uses" do
+      tty.render_arrival(announced("db"), from: "an-agent-with-a-very-long-name-indeed")
+
+      expect(output.string).to include("an-agent-with-a-ver ")
+      expect(output.string).not_to include("long-name-indeed")
+    end
   end
 
   # I6: the TTY-only drain surface. Lists what is pending (sender and age) and
@@ -538,6 +591,21 @@ RSpec.describe Lain::Frontend::TTY do
 
     def item(question:, from: "orchestrator", asked_at: Time.at(880))
       Struct.new(:question, :from, :asked_at).new(question, from, asked_at)
+    end
+
+    # The arrival's twin, and it had the same defect: an Announcement's bytes
+    # are a LONE question's body verbatim, so a question carrying a table was
+    # a five-line "row" that buried the item beneath it -- and then repeated
+    # itself, verbatim, in the document below.
+    it "lists one line per item however long the question's body is" do
+      input.string = "postgres\n"
+      wordy = announced("db", body: "Which database?\n\n| option | cost |\n| --- | --- |\n| pg | low |")
+
+      drain_tty.drain_inbox([item(question: wordy), item(question: announced("region"))]) { |_answer| nil }
+
+      listed = output.string.lines.take(2)
+      expect(listed.first).to include("Which database?").and(satisfy { |line| !line.include?("| pg |") })
+      expect(listed.last).to include("which region?")
     end
 
     it "lists every pending item with sender and age before prompting" do
@@ -574,6 +642,19 @@ RSpec.describe Lain::Frontend::TTY do
         .not_to yield_control
     end
 
+    # A set made this worse than a lost keystroke: a whitespace-only line was
+    # yielded, its prose was dropped as blank by the AnswerSet, and what came
+    # back was a document asserting the human answered nothing -- a claim they
+    # never made, delivered to the model as their reply. `Blankness` rather
+    # than `strip` so the drain's idea of "nothing at all" is the same one the
+    # value object uses to drop it (U+00A0 and the zero-width set included).
+    it "does not yield for a whitespace-only line, and never fabricates a record from one" do
+      input.string = "    \n"
+
+      expect { |probe| drain_tty.drain_inbox([item(question: announced("db"))], &probe) }
+        .not_to yield_control
+    end
+
     it "reads the answer through an injected reader (the conductor's read_reply seam)" do
       prompts = []
       reader = lambda do |prompt|
@@ -586,6 +667,89 @@ RSpec.describe Lain::Frontend::TTY do
 
       expect(resolved).to eq(["from-conductor"])
       expect(prompts).to eq(["human> "])
+    end
+
+    # T14: a set carries more than a line, so the drain prints the same
+    # markdown document the editor opens -- for the item a typed answer will
+    # actually answer, which is the oldest one listed.
+    it "prints the markdown of the set a typed answer will answer" do
+      input.string = "postgres\n"
+
+      drain_tty.drain_inbox([item(question: announced("db", "region"))]) { |_answer| nil }
+
+      expect(output.string).to include("## `db` (write your answer below)").and include("which db?")
+      expect(output.string).to include("## `region` (write your answer below)")
+    end
+
+    it "prints the document only for the oldest item -- the one an answer reaches" do
+      input.string = "postgres\n"
+      items = [item(question: announced("db")), item(question: announced("region"))]
+
+      drain_tty.drain_inbox(items) { |_answer| nil }
+
+      expect(output.string).to include("## `db`")
+      expect(output.string).not_to include("## `region`")
+    end
+
+    it "yields a typed reply as the whole set answered in prose" do
+      input.string = "use postgres everywhere\n"
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: announced("db", "region"))]) { |answer| resolved << answer }
+
+      expect(resolved.first).to include("answered the whole set in prose rather than by selection")
+      expect(resolved.first).to include("> use postgres everywhere")
+    end
+
+    # A validating constructor now stands between the human's keystrokes and
+    # the resolve, and a refusal there is NOT a dead question: the set is
+    # still pending, so the reason is rendered where they typed it and the
+    # prompt comes round again. Raising instead unwound into the caller's
+    # `ensure`, which retired the only line the question could be answered
+    # through -- an agent parked forever on a paste.
+    it "refuses an answer the record cannot carry and reads again rather than raising" do
+      reads = 0
+      reader = lambda do |_prompt|
+        reads += 1
+        reads == 1 ? "x" * (70 * 1024) : "postgres"
+      end
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: announced("db"))], reader:) { |answer| resolved << answer }
+
+      expect(output.string).to include("beyond the 65536-byte maximum")
+      expect(resolved.first).to include("> postgres")
+      expect(reads).to eq(2)
+    end
+
+    # The encoding arm, which raised from the event write long before this
+    # card and reached the human as the same dead line. Refused at the read,
+    # where a human can retype it, and on the bare-String arm too -- that one
+    # builds no AnswerSet, so nothing else would have looked.
+    it "refuses a reply that is not valid UTF-8, on a bare String as on a set" do
+      reads = 0
+      reader = lambda do |_prompt|
+        reads += 1
+        reads == 1 ? (+"caf\xE9 please").force_encoding(Encoding::UTF_8) : "postgres"
+      end
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: "which db?")], reader:) { |answer| resolved << answer }
+
+      expect(output.string).to include("not valid UTF-8")
+      expect(resolved).to eq(["postgres"])
+    end
+
+    it "renders that answer as unstructured -- never as a selection" do
+      input.string = "use postgres\n"
+      set = announced("db")
+      resolved = []
+
+      drain_tty.drain_inbox([item(question: set)]) { |answer| resolved << answer }
+
+      expect(resolved.first).to eq(Lain::Question::AnswerSet.new(questions: set.set, text: "use postgres").render)
+      expect(resolved.first).not_to include("Chose:")
+      expect(resolved.first).not_to include("The human answered 1 of 1 question")
     end
   end
 

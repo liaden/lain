@@ -210,8 +210,14 @@ module Lain
       # I6: a question ARRIVES as one line, not as {#render_question}'s modal
       # block -- the human keeps whatever they were doing and drains at their
       # own pace (/inbox here, or the nvim lain://inbox buffer).
-      def render_arrival(question)
-        @inbox.arrival(question)
+      #
+      # @param question [Tools::AskHuman::Announcement, String] a whole set
+      #   wearing its one-line summary, or one question's bytes
+      # @param from [#to_s, nil] who is stuck -- the item's own attribution
+      #   (T14). Absent, the note is today's unattributed line rather than a
+      #   placeholder standing in for a name nobody supplied.
+      def render_arrival(question, from: nil)
+        @inbox.arrival(question, from:)
       end
 
       # I6: the TTY-only drain. Lists every pending item (sender, age,
@@ -222,8 +228,20 @@ module Lain
       # read_reply: while a countdown ticker owns the bottom line, a bare
       # prompt read would race it for stdin (see exe/lain's approval_surface
       # comment); specs and direct callers get the plain prompt.
-      def drain_inbox(items, reader: method(:prompt), &on_answer)
-        @inbox.drain(items, reader:, &on_answer)
+      #
+      # The item that answer belongs to is yielded BESIDE it (T14), and that
+      # is the fix for a defect this card would otherwise have made dangerous:
+      # the caller used to work out which set an answer resolved on its own,
+      # and the two answers disagreed the moment the human drained from a
+      # prompt that was not the oldest item's. Now one value names both the
+      # document that was printed and the set that gets the answer, so they
+      # cannot come apart.
+      #
+      # @param answering [#question] the item this drain answers -- the oldest
+      #   listed by default, which is what `/inbox` at `you>` means, and the
+      #   parked item when a reply prompt drains mid-ask
+      def drain_inbox(items, reader: method(:prompt), answering: items.first, &on_answer)
+        @inbox.drain(items, reader:, answering:, &on_answer)
       end
 
       # One countdown tick (T21): render remaining time + offered keys on the
@@ -508,6 +526,36 @@ module Lain
       # `tty.rb` alone. Presentation only: the reply RESOLUTION stays with the
       # caller's block (AskHuman#reply is the Repl's seam).
       class Inbox
+        # Both surfaces, always, and that is ruling 7 rendered: which one is
+        # live is not a fact this class can hold -- nvim dies mid-session
+        # (hence {Compose::Detached}) and `/inbox` answers regardless -- so a
+        # note naming only one would be wrong the moment the editor came or
+        # went.
+        POINTER = "/inbox here, or the inbox buffer in nvim"
+
+        # The sender column's width, which the arrival note now shares:
+        # {CLI::Wiring::Askers::NAME_WIDTH} clamps the same names for the
+        # desktop notification. Stated here rather than reached for across the
+        # layer, because a frontend that has to load the CLI to draw a line is
+        # a dependency in the wrong direction; the two are held together by
+        # being the one width a human reads names in.
+        NAME_WIDTH = 19
+
+        # What a human can do HERE, said once above the prompt. The document
+        # below renders the same checkboxes the editor ticks and a terminal
+        # has no gesture for them, so prose is the only answer this surface
+        # takes -- and a row of `- [ ]` with nothing that can tick it is a
+        # puzzle nobody should have to solve.
+        GESTURE = "type a reply -- ticking boxes is the nvim buffer"
+
+        # A note is one line on the TERMINAL, which is a stronger claim than
+        # "holds no \n": a lone \r redraws it from column 0, so the asker and
+        # everything before it is overwritten by whatever follows. Every
+        # character a terminal reads as a line break is replaced by a space.
+        # Stated here because this class owns the screen -- the value object
+        # bounds its summary, but what a terminal does with the bytes is ours.
+        BREAKS = /[\r\n\v\f\u{0085}\u{2028}\u{2029}]/
+
         # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
         def initialize(output:, pastel:, clock:)
           @output = output
@@ -515,35 +563,142 @@ module Lain
           @clock = clock
         end
 
-        # One line, never {TTY#render_question}'s modal block.
-        def arrival(question)
-          @output.puts(@pastel.yellow("? #{question}  (/inbox to answer)"))
+        # One line, never {TTY#render_question}'s modal block -- and one line
+        # whatever the set's size, because what is announced is
+        # {Announcement#summary}, already clamped and already the row the
+        # editor's inbox shows.
+        def arrival(question, from: nil)
+          @output.puts(@pastel.yellow(one_line("? #{asker(from)}#{summarized(question)}  (#{POINTER})")))
           @output.flush
         end
 
-        # List, read one answer through `reader`, yield it when non-empty.
-        # An empty inbox says so and never prompts.
-        def drain(items, reader:)
+        # List, print the document of the set being answered, read one answer
+        # through `reader`, and yield it when the human typed one. An empty
+        # inbox says so and never prompts.
+        #
+        # `answering` is the caller's own object and is not handed back: it
+        # already knows which item it named, and a round trip would only offer
+        # a second place for the two to disagree.
+        def drain(items, reader:, answering:)
           return render_empty if items.empty?
 
-          items.each { |item| @output.puts(line_for(item)) }
+          @output.puts(listing(items, answering))
           @output.flush
-          answer = reader.call("human> ").to_s
+          answer = accepted(answering, reader)
           yield answer unless answer.empty?
         end
 
         private
+
+        # Read until the human types something the record can carry. Three
+        # outcomes, two of which end the read: nothing typed (""), an answer
+        # the record accepts, and a REFUSAL -- a reply past the answer set's
+        # byte bound, or bytes that are not UTF-8 -- which is rendered where
+        # they typed it and asked again. A refused answer is not a dead
+        # question: the set is still pending, and a shorter or legible reply
+        # still answers it. Raising instead unwound into the caller's `ensure`
+        # and retired the only line the question could be answered through.
+        #
+        # Lazy, so the first settled line stops the reads; iterative rather
+        # than recursive, because a caller that never types anything
+        # acceptable is a real caller and each attempt would cost a frame.
+        def accepted(answering, reader)
+          Enumerator.produce { reader.call("human> ").to_s }
+                    .lazy.filter_map { |typed| settled(answering, typed) }.first
+        end
+
+        # nil is "ask again", the one value `filter_map` drops. {Blankness}
+        # rather than `strip` so this agrees, character for character, with
+        # what {Question::AnswerSet} treats as no prose at all: a
+        # whitespace-only line used to be yielded, dropped there as blank, and
+        # rendered back as a document asserting the human had answered
+        # nothing -- a claim they never made, delivered as their reply.
+        def settled(answering, typed)
+          return "" if Blankness.blank?(typed)
+
+          answered(answering, typed)
+        rescue ArgumentError => e
+          refuse(e)
+          nil
+        end
+
+        def refuse(error)
+          @output.puts(@pastel.yellow("that reply cannot be recorded -- #{error.message}"))
+          @output.flush
+        end
 
         def render_empty
           @output.puts(@pastel.dim("(no questions pending)"))
           @output.flush
         end
 
-        # Sender and age lead so a glance answers "who is stuck, and for how
-        # long" before the question itself is read.
-        def line_for(item)
-          "#{@pastel.yellow(item.from.to_s[0, 19])} #{@pastel.dim(age_of(item.asked_at))}  #{item.question}"
+        # Every pending item as one line, then the document of the ONE item
+        # this drain answers -- never a document per item. The drain reads
+        # exactly one answer, so a document for any other set would show a
+        # human the questions their reply is not going to answer, which is the
+        # one thing a reply surface must never do.
+        def listing(items, answering)
+          [*items.map { |item| line_for(item) }, *document_for(answering.question)]
         end
+
+        # The same markdown the editor opens the set in, so the two surfaces
+        # show one document rather than two renderings that can disagree. A
+        # question that carries no set (a bare String on this seam) has none.
+        def document_for(question)
+          return [] unless question.is_a?(Tools::AskHuman::Announcement)
+
+          ["", Question::Document.unanswered(question.set).chomp, "", @pastel.dim(GESTURE)]
+        end
+
+        # A typed reply answers the WHOLE set in prose ({Question::AnswerSet}'s
+        # second arm), and what the caller resolves with is that value's own
+        # rendering -- byte-identical to the editor's `:w` path, which is why
+        # the model cannot tell which surface a prose answer came from and why
+        # the record says "in prose rather than by selection" rather than
+        # leaving an unstructured line to be mistaken for a choice. The human's
+        # words are blockquoted there, so nothing they type can forge the
+        # grammar.
+        #
+        # A question carrying no set answers with the line as typed -- but it
+        # is still held to what the record can hold, because an answer that
+        # cannot be written reaches the Store and raises THERE, one frame past
+        # every surface that could have let the human retype it.
+        def answered(item, answer)
+          question = item.question
+          return Question::Rules.prose(answer, "a typed reply") unless question.is_a?(Tools::AskHuman::Announcement)
+
+          Question::AnswerSet.new(questions: question.set, text: answer).render
+        end
+
+        # Sender and age lead so a glance answers "who is stuck, and for how
+        # long" before the question itself is read. One line per item, which
+        # is the summary's job and not the bytes': for a LONE question those
+        # bytes are the body verbatim, so a question with a table in it was a
+        # five-line row that buried the item under it and then repeated,
+        # verbatim, in the document below.
+        def line_for(item)
+          one_line("#{@pastel.yellow(clamped(item.from))} #{@pastel.dim(age_of(item.asked_at))}  " \
+                   "#{summarized(item.question)}")
+        end
+
+        # An {Announcement}'s BYTES are a lone question's body verbatim -- a
+        # table or a fenced diff, deliberately, because the document below
+        # renders them -- so every one-line surface reads the summary it
+        # derived instead. Clamped there, never re-clamped here.
+        def summarized(question)
+          question.is_a?(Tools::AskHuman::Announcement) ? question.summary : question
+        end
+
+        def one_line(text) = text.gsub(BREAKS, " ")
+
+        # "" for an arrival nobody attributed, so the note concatenates back to
+        # the unattributed line rather than branching on a missing name.
+        def asker(from)
+          name = clamped(from)
+          name.empty? ? "" : "#{name} "
+        end
+
+        def clamped(from) = from.to_s[0, NAME_WIDTH]
 
         # Coarse on purpose: the inbox answers "how stale", not "when exactly".
         def age_of(asked_at)
