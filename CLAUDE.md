@@ -44,13 +44,27 @@ failures", which reads like a clean run.
 Single runs vary by ±50% (the runtime log redistributes files every run), so take a best-of-N
 before believing any timing here.
 
-**A preloader (spring/zeus-style fork-after-load) is not worth it.** Per-worker load is only
-**0.73-1.26s** -- each worker loads its own SLICE of the 465 spec files, not the whole suite -- so
-forking after one load saves ~1s of an ~19s wall. COW would genuinely help the loaded-box case,
-cutting maybe half of the 1.32G, but it cannot buy more workers, because on a quiet box cores bind
-first. Bootsnap already takes the cheap half: **1.7s warm vs 3.6s cold** for all 465 files, ~53%
-off, from a 33M iseq cache under `tmp/cache`. A cold cache is the likely explanation for any
-surprisingly slow boot.
+**What actually sets the wall time is ONE FILE, and no amount of parallelism touches it.**
+`parallel_tests` packs whole FILES into groups, so the longest single file is a hard floor.
+`spec/lain/isolation/worktree_handback_spec.rb` runs **14.5s alone** against a ~19s wall; the
+counterfactual is decisive -- move it and `worker_handoff_spec.rb` aside, and wall drops
+**19.9s -> 14.1s for 1.3% of the examples**. It also explains the CPU reading: `-n 7` averages
+only **541% of a possible 800%**, because at the tail six workers are finished and one is still
+grinding that file. That is why n=10 and n=14 measured *slower* -- extra workers add spawn
+contention early and cannot shorten the tail.
+
+**So the lever is splitting the long files, not adding workers.** The runtime log
+(`tmp/parallel_runtime_rspec.log`) ranks them: worktree_handback 17.7s, worker_handoff 12.9s,
+promotion 7.7s, neovim_request 5.8s. Split the top few by concern and packing can spread them; the
+floor falls to whatever is longest afterwards.
+
+**A preloader (spring/zeus-style fork-after-load) is not the answer**, and hyperthreading does not
+rescue it either. Per-worker load is only **0.73-1.26s** -- a worker loads its own SLICE, not the
+whole suite -- so fork-after-load saves ~1s of a wall that is floored at 14.5s by one file. COW
+would genuinely help the loaded-box case (roughly half of the 1.32G), which is a memory argument,
+not a speed one. Bootsnap already takes the cheap half: **1.7s warm vs 3.6s cold** for all 465
+files, ~53% off, from a 33M iseq cache under `tmp/cache`. A cold cache is the likely explanation
+for any surprisingly slow boot.
 
 Things measured that do **not** help: `TMPDIR=/dev/shm` (-8.6%; the page cache already had it),
 `core.fsync=none` (nothing -- git here is spawn-bound at ~5ms/spawn, not fsync-bound), and mocking
