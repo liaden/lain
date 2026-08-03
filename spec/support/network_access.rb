@@ -2,7 +2,7 @@
 
 require "net/http"
 
-# The one true way through the offline default, for :integration and :live.
+# The one true way through the offline default, for :api_integration and :live.
 #
 # `WebMock.allow_net_connect!` is NOT sufficient once VCR has hooked into
 # WebMock (see vcr_configuration.rb): from that point VCR -- not WebMock --
@@ -17,7 +17,7 @@ require "net/http"
 # spec/network_posture_spec.rb (a real spec file, so parallel workers run them
 # once, not once per worker): if someone re-breaks the path -- e.g. drops the
 # `VCR.turned_off` and trusts `allow_net_connect!` alone -- the default
-# `rspec` run goes red. A regression spec tagged :integration would be
+# `rspec` run goes red. A regression spec tagged :api_integration would be
 # excluded by default and catch nothing, which is exactly how this bug
 # slipped in the first time.
 module NetworkAccess

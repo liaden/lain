@@ -6,14 +6,19 @@
 # example; a tag is the only way through. This file owns the gating for every such tag, so
 # there is exactly one place to read the answer to "can this spec cost me money?"
 #
-#   :integration  hits the real API. Opt-in, requires BOTH env vars.
+#   :api_integration  hits the real API. Opt-in, requires BOTH env vars. Named for what it
+#                 integrates WITH: :seam below is integration with the rest of lain, and
+#                 calling both of them "integration" hid the distinction that matters --
+#                 one costs money and can fail because somebody else's service is down.
 #   :vcr          replays a recorded cassette. Free, offline. See vcr_configuration.rb.
 #   :live         end-to-end differential run against the API. Opt-in, costs real money.
 #   :spike        measurement experiments (spec/spikes/). Free and offline, but slow and
 #                 environment-shaped -- they pin scheduler behavior, not lain behavior.
 
-# Integration specs talk to the real Claude API. They cost money and are nondeterministic,
-# so they are skipped unless BOTH are set:
+# :api_integration specs talk to the real Claude API. They cost money and are
+# nondeterministic, so they are skipped unless BOTH are set. The env var keeps its
+# name: `LAIN_` already says whose integration it is, and it is documented in the
+# README, in docs/providers, and in whatever anybody has in their shell history.
 #
 #     LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 INTEGRATION_ENABLED = ENV["LAIN_INTEGRATION"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
@@ -24,16 +29,16 @@ RSpec.configure do |config|
   # BOTH the WebMock and the VCR switch -- flipping WebMock alone is not enough
   # once VCR has taken the hook, and that is exactly the trap NetworkAccess
   # exists to make un-re-breakable (see spec/support/network_access.rb).
-  config.around(:each, :integration) do |example|
+  config.around(:each, :api_integration) do |example|
     NetworkAccess.permit { example.run }
   end
 
   unless INTEGRATION_ENABLED
-    config.filter_run_excluding(:integration)
+    config.filter_run_excluding(:api_integration)
 
     config.before(:suite) do
       RSpec.configuration.reporter.message(
-        "Skipping :integration specs. Set LAIN_INTEGRATION=1 and ANTHROPIC_API_KEY to run them."
+        "Skipping :api_integration specs. Set LAIN_INTEGRATION=1 and ANTHROPIC_API_KEY to run them."
       )
     end
   end
@@ -53,7 +58,7 @@ end
 
 # :live specs run a full round trip against the real API with no cassette to
 # fall back to -- real money on every single run, not just the first. Opt-in
-# on exactly the same shape as :integration: BOTH env vars, or it is skipped.
+# on exactly the same shape as :api_integration: BOTH env vars, or it is skipped.
 #
 #     LAIN_LIVE=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 LIVE_ENABLED = ENV["LAIN_LIVE"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
@@ -95,13 +100,43 @@ RSpec.configure do |config|
   config.filter_run_excluding(:nvim) unless NVIM_ENABLED
 end
 
+# :seam names a LEVEL, where every other tag in this file names a COST.
+#
+# The tags above answer "may this spend money, or touch the network?". None of
+# them answers "how much of the app is under test?", so the tier between a unit
+# spec and an end-to-end one had no name -- and it is the tier where this
+# codebase's real defects have lived: a check-then-act across two threads, an
+# index that compacted while a buffer still showed the old rows, a gesture that
+# reached the rail and was silently dropped because nothing consumed it. None of
+# those is visible to a spec that doubles its collaborators.
+#
+# A :seam spec wires TWO OR MORE real components together with NO test double
+# between them, and may drive a real local resource -- git, an editor, the
+# compiled extension, a live fd. It costs no money and touches no network, which
+# is what separates it from :api_integration (the real API) and :live (a full
+# differential run). `spec/lain/seams/` is the home for seams belonging to no
+# single subject; a seam WITH an obvious subject stays at its mirror path and
+# carries the tag instead, because a spec should sit where its subject does.
+#
+# Opt-OUT, for :nvim's reason: these are where the bugs are, so they run by
+# default and the tag exists to buy a fast inner loop, not to hide them.
+#
+#     bundle exec rspec --tag '~seam'   # unit-only: the tight edit-run loop (QUOTE it -- zsh
+#                                       # reads a bare ~seam as a home directory)
+#     LAIN_SEAM=0 bundle exec rspec     # the same, for a whole run
+SEAM_ENABLED = ENV["LAIN_SEAM"] != "0"
+
+RSpec.configure do |config|
+  config.filter_run_excluding(:seam) unless SEAM_ENABLED
+end
+
 # :services specs provision REAL Postgres/Redis for the DB-index isolation
 # strategy (spec/lain/isolation/db_index_spec.rb). They cost no money and touch
 # no network -- they shell out to createdb/dropdb/redis-cli against a local
 # server -- but they need that server running, so they are opt-in like :nvim,
 # run only with LAIN_SERVICES=1. When opted in but the CLI tools are absent, an
 # example SKIPS (never fails): a missing server is an environment gap, not a
-# lain regression. Kept separate from :integration precisely because it needs no
+# lain regression. Kept separate from :api_integration precisely because it needs no
 # ANTHROPIC_API_KEY.
 #
 #     LAIN_SERVICES=1 bundle exec rspec spec/lain/isolation/db_index_spec.rb

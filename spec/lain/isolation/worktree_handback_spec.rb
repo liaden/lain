@@ -20,8 +20,9 @@ require "mixlib/shellout"
 #   dirty parent, a mid-merge parent, not blocking a later `#call`, the
 #   compare-and-swap on the ref's old value, reflog attributability, and the
 #   `rescue Exception` journal case the subject documents at length.
-# * INTEGRATION? Not by this repo's meaning of the word: `:integration` is "hits
-#   the real API and costs money". Driving a subprocess is not that.
+# * INTEGRATION WITH WHAT? `:api_integration` is "hits the real API and costs
+#   money", which this is not. It IS integration with the rest of lain, and that
+#   tier now has a name: this file is tagged `:seam`.
 # * IS THE SUBJECT DOING TOO MUCH? No, and this is the one that would have
 #   justified splitting. {Handback}'s four public verbs are four lines each over
 #   one shared vocabulary -- `Naming`, `journaled`, `broke`, `Checkout` -- with a
@@ -33,7 +34,7 @@ require "mixlib/shellout"
 # which is inherent. What WAS removable has been removed: rebuilding the seed
 # repo per example cost five git subprocesses for a byte-identical directory,
 # and copying it instead took this file from 1517 git spawns to 1162.
-RSpec.describe Lain::Isolation::Worktree::Handback do
+RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   subject(:handback) { described_class.new(repo_root: @repo_root, journal:) }
 
   around do |example|

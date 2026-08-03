@@ -11,7 +11,7 @@
 # that populates memory in the read-back example is the Agent's own
 # memory_write tool, run through the real ToolRunner -- the same shape as
 # spec/lain/seams/memory_snapshot_seam_spec.rb.
-RSpec.describe "Memory read path seam" do
+RSpec.describe "Memory read path seam", :seam do
   def item(id, description)
     Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
   end

@@ -7,7 +7,7 @@ require "net/http"
 # examples. There is nothing further to configure -- WebMock is the layer VCR
 # hooks into (see vcr_configuration.rb), not a place we register our own global
 # stubs. What we own instead is PROVING that posture holds: "a spec with no
-# cassette and no :integration/:live tag cannot reach the network" is an
+# cassette and no :api_integration/:live tag cannot reach the network" is an
 # acceptance criterion for this branch, not just an assumption about a gem's
 # defaults.
 #

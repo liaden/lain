@@ -17,7 +17,7 @@ require "stringio"
 # the recorder between the two committed turns is the Agent's own
 # `memory_write` tool, called by the scripted model turn and run through the
 # real ToolRunner -- there is no bench-side scripted write standing in for it.
-RSpec.describe "Memory snapshot x Journal seam" do
+RSpec.describe "Memory snapshot x Journal seam", :seam do
   def item(id, description)
     Lain::Memory::Item.new(id:, description:, body: "body of #{id}")
   end

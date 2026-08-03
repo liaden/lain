@@ -8,7 +8,7 @@ require "open3"
 # * "against a real tmux server" shells out to an ACTUAL tmux on a scratch
 #   socket (`-L tmux-surface-spec-...`), never Joel's real session. It skips
 #   outright (never fails) when no tmux binary is on PATH -- the same inline
-#   guard up_spec.rb uses for :nvim/:integration-style environment gaps.
+#   guard up_spec.rb uses for :nvim/:api_integration-style environment gaps.
 # * "degrading loudly" / detection-branch examples inject a FAKE
 #   shell_out_factory, so the control-mode / old-tmux / no-tmux scenarios run
 #   on every machine regardless of what tmux (if any) is actually installed.

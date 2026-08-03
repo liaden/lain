@@ -94,7 +94,7 @@ lesson: keep Homebrew out of the Ruby build.
 bundle exec rake pspec         # THE suite command: ~30s. Plain `rspec` is the same 9452 examples
                                # SERIALLY and takes ~2m35s -- 5x slower, for no extra signal.
 bundle exec rspec path/to/one_spec.rb   # one file, or one example: use this, not a bare `rspec`
-bundle exec rspec              # :integration and :core excluded by default; measure the count,
+bundle exec rspec              # :api_integration and :core excluded by default; measure the count,
                                # do not trust a number written down here
 bundle exec rubocop -a         # safe autocorrect; see the warning below
 bundle exec rake compile       # builds the Rust extension into lib/lain/lain.so
@@ -102,13 +102,13 @@ cargo test && cargo clippy --all-targets -- -D warnings
 pre-commit run --all-files     # what the git hook runs
 ```
 
-Integration specs hit the real API and cost money. They run only with **both**:
+`:api_integration` specs hit the real API and cost money. They run only with **both**:
 
 ```bash
 LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 ```
 
-`:core` specs need the compiled lain-core daemon (excluded by default, like `:integration`):
+`:core` specs need the compiled lain-core daemon (excluded by default, like `:api_integration`):
 
 ```bash
 bundle exec rake core:build && bundle exec rspec --tag core
@@ -201,8 +201,18 @@ means the entry is too early).
 
 ## Testing
 
-Write specs alongside the code — unit specs plus lightweight `:integration` specs that hit the
-live API.
+Write specs alongside the code. Three levels, and the middle one is where this codebase's real
+defects have lived:
+
+- **unit** — one subject, collaborators doubled. The default, and 97.5% of the examples.
+- **`:seam`** — two or more REAL components with no double between them, driving a real local
+  resource (git, an editor, the compiled extension, a live fd). Costs nothing, touches no network,
+  runs by DEFAULT. `spec/lain/seams/` is for seams belonging to no single subject; a seam with an
+  obvious subject stays at its mirror path and carries the tag. **239 examples — 2.5% of the suite
+  — but 54s of a 155s serial run**, which is what makes `--tag '~seam'` a useful inner loop.
+- **`:api_integration`** — hits the live API, costs money, opt-in. Named for what it integrates
+  WITH: calling both tiers "integration" hid the distinction that actually matters, which is that
+  one of them can fail because somebody else's service is down.
 
 Specs require nothing internal: `spec/spec_helper.rb` does `require "lain"` and `.rspec` loads
 it everywhere. The corollary is a commit-grouping rule — see Committing.

@@ -4,7 +4,7 @@ require "net/http"
 
 # The offline-by-default posture, PROVEN in the default suite -- these guards
 # were asked for by the coordinator and are untagged on purpose: a regression
-# spec tagged :integration/:ollama would be excluded by default and catch
+# spec tagged :api_integration/:ollama would be excluded by default and catch
 # nothing, which is exactly how the permit bug slipped in the first time.
 #
 # They live HERE, not next to the configuration they guard in spec/support/,

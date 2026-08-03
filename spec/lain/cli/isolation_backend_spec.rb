@@ -38,7 +38,7 @@ end
 # concrete backend, which decorators over it, and where a worktree's checkouts
 # live. Operates on a THROWAWAY repo and a throwaway XDG_RUNTIME_DIR it creates
 # itself, never the lain repo it runs in.
-RSpec.describe Lain::CLI::IsolationBackend do
+RSpec.describe Lain::CLI::IsolationBackend, :seam do
   around do |example|
     Dir.mktmpdir("lain-isolation-project") do |project|
       Dir.mktmpdir("lain-isolation-runtime") do |runtime|

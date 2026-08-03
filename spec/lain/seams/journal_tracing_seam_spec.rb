@@ -12,7 +12,7 @@ require "lain/lain" # the compiled Rust extension: Lain.hello, Lain::Ext.init_tr
 # the fd; Rust `dup`s it (so closing one never closes the other) and writes whole
 # lines under its own mutex, the mirror of the Journal's whole-line write. If the
 # two disciplines hold, the merged stream parses line by line.
-RSpec.describe "Journal x Rust tracing seam" do
+RSpec.describe "Journal x Rust tracing seam", :seam do
   it "merges Ruby events and Rust spans into one parseable NDJSON stream" do
     Dir.mktmpdir("lain-seam-tracing") do |dir|
       path = File.join(dir, "session.ndjson")

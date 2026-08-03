@@ -51,7 +51,7 @@ end
 # the lain repo it runs in -- the posture worktree_spec.rb and the D4 handback
 # spec both take, and the reason this stays in the default suite: git is always
 # present, a model is not.
-RSpec.describe Lain::Isolation::WorkerHandoff do
+RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
   subject(:handoff) { described_class.new(handback:, repo_root: @repo_root, resolver:) }
 
   around do |example|

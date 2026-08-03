@@ -6,7 +6,7 @@ require "tmpdir"
 # These drive REAL tools through the REAL loop, because the correctness gates are
 # claims about what happens when those two meet -- a fixture tool proves the loop,
 # not the tools, and a bare tool spec proves the tool, not the loop.
-RSpec.describe "tools x Agent loop" do
+RSpec.describe "tools x Agent loop", :seam do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
   let(:channel) { RecordingChannel.new }
 

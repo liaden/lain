@@ -4,7 +4,7 @@ require "tmpdir"
 require "fileutils"
 require "mixlib/shellout"
 
-RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit do
+RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # Two roots, always: the project the scope watches, and the XDG state home the
   # lain-owned repo lives under. An example that reached the real
   # `~/.local/state` would also be an example that git-added the developer's

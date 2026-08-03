@@ -7,7 +7,7 @@ require "mixlib/shellout"
 # Operates on a THROWAWAY repo it creates itself (git init in a mktmpdir), never
 # the lain repo it runs in. git is always present, so this stays in the default
 # suite.
-RSpec.describe Lain::Isolation::Worktree do
+RSpec.describe Lain::Isolation::Worktree, :seam do
   subject(:backend) { described_class.new(repo_root: @repo_root, root: @root) }
 
   around do |example|

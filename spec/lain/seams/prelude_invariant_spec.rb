@@ -15,7 +15,7 @@ require "rbconfig"
 # The subprocess is spawned via `RbConfig.ruby`, never a bare "ruby" -- the
 # shell's default ruby is 3.2.3 (see CLAUDE.md), and version skew would
 # present exactly like the nondeterminism leak this spec exists to catch.
-RSpec.describe "the byte-identical prelude invariant across processes (CE-3)" do
+RSpec.describe "the byte-identical prelude invariant across processes (CE-3)", :seam do
   def fixture_path
     File.expand_path("../../fixtures/sessions/variance/one.ndjson", __dir__)
   end

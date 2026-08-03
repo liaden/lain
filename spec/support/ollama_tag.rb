@@ -4,11 +4,11 @@ require "net/http"
 
 # Gating for the :ollama tag -- the local, free, temperature-0 bench arm.
 #
-# Mirrors spec/support/tags.rb's :integration idiom exactly: :ollama examples
+# Mirrors spec/support/tags.rb's :api_integration idiom exactly: :ollama examples
 # hit a REAL Ollama server on localhost, so they are skipped unless LAIN_OLLAMA=1,
 # and they reach the network only through NetworkAccess.permit (which moves BOTH
 # the WebMock and the VCR switch -- see spec/support/network_access.rb). Unlike
-# :integration these cost no money, but they are still nondeterministic and need
+# :api_integration these cost no money, but they are still nondeterministic and need
 # a running server + a pulled model, so the default posture stays offline.
 #
 #   LAIN_OLLAMA=1 bundle exec rspec spec/integration/provider/ollama_spec.rb
@@ -59,7 +59,7 @@ end
 
 RSpec.configure do |config|
   # :ollama examples reach localhost for their duration only, then isolation is
-  # restored even on raise -- same NetworkAccess.permit the :integration tag uses.
+  # restored even on raise -- same NetworkAccess.permit the :api_integration tag uses.
   # The permit wraps the before(:each) hook too, so the reachability probe below
   # runs with the network open.
   config.around(:each, :ollama) do |example|

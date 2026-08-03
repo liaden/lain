@@ -9,7 +9,7 @@ require "stringio"
 # totals from THOSE BYTES ALONE (io.string, never the in-memory events); Compare
 # reads the difference between two runs. The invariant under test is that the
 # journal bytes are a sufficient record.
-RSpec.describe "Agent x Journal x Ledger x Compare accounting seam" do
+RSpec.describe "Agent x Journal x Ledger x Compare accounting seam", :seam do
   # The bare family key from PriceBook::DEFAULTS, so pricing the mocked runs
   # depends on an exact lookup, not on family matching surviving.
   def model = "sonnet"

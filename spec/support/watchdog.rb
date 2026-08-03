@@ -29,7 +29,7 @@
 # spawn.
 module SpecWatchdog
   # Seconds. Overridable for runs that legitimately wait on somebody else's
-  # network -- `:integration` hits a real API -- but never as a way to make a
+  # network -- `:api_integration` hits a real API -- but never as a way to make a
   # slow example pass.
   BUDGET = Float(ENV.fetch("LAIN_SPEC_BUDGET", "30"))
 

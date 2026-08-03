@@ -7,7 +7,7 @@
 #
 # The default suite runs against an INJECTED fake shell factory and a stub Paths
 # -- deterministic, no Postgres or Redis needed. The real end-to-end round trip
-# is the :integration context at the bottom (guarded on pg/redis being present).
+# is the :api_integration context at the bottom (guarded on pg/redis being present).
 # Records every argv it is asked to run and hands back a fake shell whose exit
 # status is scripted -- so a spec asserts the exact createdb/dropdb command
 # line, and drives the collision path by scripting a nonzero exit.

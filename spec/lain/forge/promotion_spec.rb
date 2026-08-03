@@ -7,7 +7,7 @@ require "mixlib/shellout"
 # BARE remote under one mktmpdir -- never the lain repo it runs in, and never the
 # network. Same posture worktree_handback_spec.rb takes, and the reason this stays
 # in the default suite: git is always present, GitHub is not.
-RSpec.describe Lain::Forge::Promotion do
+RSpec.describe Lain::Forge::Promotion, :seam do
   subject(:promotion) { build_promotion }
 
   around do |example|
