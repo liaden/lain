@@ -197,17 +197,29 @@ module Lain
       return validate_with_model(input) if input_model
 
       errors = SchemaValidator.new(input_schema).errors_for(input)
-      raise InvalidInput, "invalid input for #{name}: #{errors.join("; ")}" unless errors.empty?
+      invalid!(errors.join("; ")) unless errors.empty?
 
       input
     end
 
     def validate_with_model(input)
-      model = input_model.build(input)
+      model = built_input(input)
       return model if model.valid?
 
-      raise InvalidInput, "invalid input for #{name}: #{model.errors.full_messages.join("; ")}"
+      invalid!(model.errors.full_messages.join("; "))
     end
+
+    # `Input.build` raises rather than returning an invalid model whenever the
+    # failure has no per-attribute home -- a malformed array ELEMENT is the
+    # motivating case, since only the raw input knows its index -- so the
+    # tool-name prefix every other failure carries has to be added here too.
+    def built_input(input)
+      input_model.build(input)
+    rescue InvalidInput => e
+      invalid!(e.message)
+    end
+
+    def invalid!(detail) = raise(InvalidInput, "invalid input for #{name}: #{detail}")
   end
 
   class Tool
