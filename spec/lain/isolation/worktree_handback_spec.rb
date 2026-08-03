@@ -4,9 +4,35 @@ require "tmpdir"
 require "fileutils"
 require "mixlib/shellout"
 
-# Operates on a THROWAWAY repo it creates itself (git init in a mktmpdir), never
-# the lain repo it runs in -- the same posture worktree_spec.rb takes, and the
-# reason this stays in the default suite: git is always present, docker is not.
+# Operates on a THROWAWAY repo it copies per example ({SeedRepo}), never the lain
+# repo it runs in -- the same posture worktree_spec.rb takes, and the reason this
+# stays in the default suite: git is always present, docker is not.
+#
+# == Why this file is long, and why it stays ONE file
+#
+# It is the slowest file in the suite (~12s, 72 examples at a uniform ~0.17s) and
+# therefore sets the floor on a parallel run, since parallel_tests packs whole
+# FILES. Splitting it was considered and rejected, and the three questions worth
+# asking were all answered no:
+#
+# * REDUNDANT? No. The 17 `#anchor` examples name 17 distinct invariants --
+#   idempotence, an unmoved worktree, a parent that already has the commits, a
+#   dirty parent, a mid-merge parent, not blocking a later `#call`, the
+#   compare-and-swap on the ref's old value, reflog attributability, and the
+#   `rescue Exception` journal case the subject documents at length.
+# * INTEGRATION? Not by this repo's meaning of the word: `:integration` is "hits
+#   the real API and costs money". Driving a subprocess is not that.
+# * IS THE SUBJECT DOING TOO MUCH? No, and this is the one that would have
+#   justified splitting. {Handback}'s four public verbs are four lines each over
+#   one shared vocabulary -- `Naming`, `journaled`, `broke`, `Checkout` -- with a
+#   single invariant (never raise, always journal). It carries no `ClassLength`
+#   offence; its 570 lines are overwhelmingly documentation. Three spec files
+#   would tear apart things that share everything.
+#
+# So the size reflects a subject with four verbs times several git states each,
+# which is inherent. What WAS removable has been removed: rebuilding the seed
+# repo per example cost five git subprocesses for a byte-identical directory,
+# and copying it instead took this file from 1517 git spawns to 1162.
 RSpec.describe Lain::Isolation::Worktree::Handback do
   subject(:handback) { described_class.new(repo_root: @repo_root, journal:) }
 
