@@ -30,6 +30,12 @@ module Lain
     # process-local coordination that carries the value to the parked fiber, is
     # this tool's own business, never something the frontend reaches into.
     #
+    # An answer NAMES the set it answers ({Outstanding}), and both edges written
+    # from it -- A's causal parent, and the delivery commit's -- come from that
+    # name. "The set asked most recently" is a different thing, and citing it is
+    # how an answered question stays in the inbox forever while an unanswered
+    # one silently vanishes (see {Pending}).
+    #
     # == One call, a whole SET of questions
     #
     # What a call carries is a {Lain::Question::Set}, and that is a cost
@@ -45,12 +51,13 @@ module Lain
     # `parent:` is the live parent-Timeline handle (a Timeline or a `-> Timeline`
     # thunk, since the toolset is built before the Agent) -- the shared Store
     # rides on it (`parent.store`), and the asker's identity is the parent
-    # chain's correlation, exactly as Subagent's Lineage derives it. The tool
-    # holds the one outstanding promise on an ivar: an instance belongs to one
-    # agent's toolset, and a synchronous tool dispatch has no interleaving
-    # writer, so there is at most one set awaiting a reply at a time (the
-    # OM-2-only statefulness Subagent documents). An actor mode that asks
-    # concurrently must carry its promises on events, not on this ivar.
+    # chain's correlation, exactly as Subagent's Lineage derives it. An instance
+    # belongs to one agent's toolset, and a synchronous tool dispatch has no
+    # interleaving writer, so at most one set awaits a reply at a time (the
+    # OM-2-only statefulness Subagent documents) -- and {Outstanding} now
+    # ENFORCES that rather than assuming it: a second ask over an unanswered set
+    # is refused. An actor mode that asks concurrently must carry its promises
+    # on events, not here.
     class AskHuman < Tool
       HUMAN = "human"
 
@@ -61,6 +68,128 @@ module Lain
       FREE_TEXT_ID = "question"
 
       class NoPendingQuestion < Error; end
+      class QuestionOutstanding < Error; end
+
+      # The promise a question set is answered through, wearing the digest of
+      # the Q event it answers. That digest is the whole point: `@last_question`
+      # says "asked most recently", which is NOT "being answered", and every
+      # edge written from it -- the A event's causal parent, and the delivery
+      # commit's -- is written against whichever ask happened last. A :turn edge
+      # is the ONLY consumption {Event::Projection#pending} counts, so the wrong
+      # digest there leaves an answered question in the human's inbox forever
+      # while an unanswered one silently vanishes.
+      #
+      # Still a {Lain::Promise}, so nothing holding this as one (the
+      # `#ask`-shaped duck {Approval::Gate} awaits) sees any change.
+      class Pending < Promise
+        attr_reader :digest
+
+        def initialize(digest)
+          super()
+          @digest = digest
+        end
+
+        def answers?(digest) = @digest == digest
+
+        # What this asker is holding, for a refusal that has to name it.
+        def held = "the question set #{@digest}"
+      end
+
+      # The at-most-one question set this asker is holding, addressable by name.
+      # An instance of the tool belongs to one agent's toolset and is not
+      # `parallel_safe?`, so a second set opening while one is unanswered is a
+      # coordination bug, not a queue -- and refusing it is what makes "the
+      # pending one" an unambiguous default for {AskHuman#reply}'s digest.
+      #
+      # The two guards are one rule: a promise nobody can address by name is a
+      # promise a late answer resolves by accident, which is exactly the
+      # cross-resolution two surfaces racing over one asker produce.
+      #
+      # A guard, not a lock: {#open}'s check and its claim straddle the Q write,
+      # which an attached observer's journal can turn into a yield point, so two
+      # fibers sharing ONE asker could both pass it. Unreachable today rather
+      # than impossible -- one asker is built (`Wiring#wire_agent`) and only the
+      # top-level toolset holds it; `research_subagent` and `role_spawn_seam`
+      # are handed the `base` set, which excludes it, so no child can ask at all.
+      # The card that lets children ask owes them their own askers; a mutex here
+      # would not answer it.
+      class Outstanding
+        # What a human sees when they answer a question this asker no longer
+        # holds -- an inbox line that outlived its set. Written to be read at a
+        # `human>` prompt: what happened, and that nothing was lost by it.
+        WITHDRAWN = "no question is awaiting a reply -- it was answered already, or withdrawn when the run " \
+                    "that asked it was stopped. The inbox line offering it is stale: nothing you type here " \
+                    "is recorded, and nothing is waiting on it."
+
+        # Nothing outstanding: where an asker starts, and what an abandoned
+        # question leaves behind. It answers the same four messages a {Pending}
+        # does, so no guard below asks whether one exists.
+        module Nothing
+          def self.resolved? = true
+          def self.digest = nil
+          def self.answers?(_digest) = false
+          def self.held = "no question set at all"
+        end
+
+        def initialize = @pending = Nothing
+
+        def pending? = !@pending.resolved?
+        def digest = @pending.digest
+
+        # Open a set for answering, the Q event's digest coming from the block.
+        # The guard runs BEFORE the block, so a refused ask writes no Q to the
+        # append-only Store and leaves nothing behind for a later reply to cite.
+        def open
+          raise QuestionOutstanding, still_outstanding if pending?
+
+          @pending = Pending.new(yield)
+        end
+
+        # The set `digest` names, ready to take an answer -- or the refusal that
+        # says why it cannot. Both refusals happen before the caller's Store
+        # write: the refusal happens or the A event lands, never both.
+        def answerable!(digest)
+          named!(digest)
+          raise Promise::AlreadyResolved, "the question set #{digest} was already answered" if @pending.resolved?
+
+          @pending
+        end
+
+        # Stop holding a set whose answer can no longer be delivered (the sync
+        # gate unwound). Identity, not digest: only the opener may abandon what
+        # it opened, and an already-answered set is history worth keeping -- a
+        # second reply naming it must still be refused as answered, not as
+        # unknown.
+        def abandon(pending)
+          @pending = Nothing if pending? && @pending.equal?(pending)
+        end
+
+        private
+
+        def still_outstanding
+          "the question set #{digest} is already awaiting a reply on this asker -- answer it before asking another"
+        end
+
+        def named!(digest)
+          return if @pending.answers?(digest)
+
+          raise NoPendingQuestion, unnamed(digest)
+        end
+
+        # Two mistakes, two sentences, and both are read by a HUMAN at a reply
+        # prompt, not only by the model: `/inbox` lists items the drain shifts
+        # on its own, so an item can outlive the set it names (a cancelled run
+        # withdraws the set; the line stays). "Nothing is pending" is true and
+        # useless there -- it reads as a bug in the reply rather than as a stale
+        # line -- so the first says what happened and what to do about it. The
+        # second names the state this asker IS in, never the ivar behind it,
+        # because "holds nil" tells a reader nothing.
+        def unnamed(digest)
+          return WITHDRAWN if digest.nil?
+
+          "no question set #{digest} is awaiting a reply -- this asker holds #{@pending.held}"
+        end
+      end
 
       # One question set, wearing the text a human is shown for it -- and the
       # ONLY way a set reaches {#ask}.
@@ -223,6 +352,7 @@ module Lain
         @parent = parent
         @name = name
         @chain_writer = Event::ChainWriter.new(observer:)
+        @outstanding = Outstanding.new
       end
 
       # The description is data, not computation: it is the single
@@ -263,43 +393,59 @@ module Lain
       # @param question [Announcement, String] a set wearing the text a human
       #   is shown, or one free-text question -- a bare String is the set of
       #   one, which is what every `#ask`-shaped duck sends.
+      # Asking a second set while one is unanswered is refused ({Outstanding}),
+      # and refused before the Q event is written.
+      #
       # @raise [ArgumentError] when the String cannot be a {Question} body
-      # @return [Lain::Promise] resolved by {#reply} with the human's answer
+      # @raise [QuestionOutstanding] when a set is already awaiting a reply
+      # @return [Pending] a {Lain::Promise} wearing the Q event's digest,
+      #   resolved by {#reply} with the human's answer
       def ask(question)
         announcement = announcement_for(question)
-        parent = parent_timeline
-        @last_question = write_message(parent, from: identity(parent), to: HUMAN,
-                                               body: emitted_body(announcement),
-                                               causal_parents: [parent.head_digest].compact)
-        @pending = Promise.new
+        @outstanding.open { emit_question(announcement) }
       end
 
-      # Deliver the human's answer: write A back to the asker AND resolve the
-      # pending promise. The frontend reply-path calls this with nothing but the
-      # answer string.
+      # Deliver the human's answer to the set it answers: write A back to the
+      # asker AND resolve that set's promise.
+      #
+      # `digest` NAMES the set being answered, so both edges this writes -- A's
+      # causal parent here, and the delivery commit's through
+      # {#take_answered_questions} -- come from the answer rather than from
+      # "whichever set was asked last".
+      #
+      # The default is TRANSITIONAL, and it is not safe. It answers "which set
+      # is outstanding", which is a different question from "which set was this
+      # answer written for": withdraw a set (a stopped run, see {#awaited}), ask
+      # another, and an answer typed for the first resolves the second and is
+      # cited against it. The live way in is a stale `/inbox` line, which the
+      # drain can leave listed after the run that asked it is gone. It exists
+      # only so the frontend reply-path keeps compiling while the caller that
+      # can name the set is written; nothing here makes it correct, and the
+      # fix is a REQUIRED digest taken from what {#ask} returns.
       #
       # Both guards run BEFORE the Store write: the Store is the append-only
       # record, so a reply this method is about to refuse must leave no A event
       # behind -- the refusal happens or the event lands, never both.
       #
+      # @param answer [String] what the human typed
+      # @param digest [String] the Q event of the set this answers
+      # @raise [NoPendingQuestion] naming the digest, when no set of that name
+      #   is awaiting a reply
+      # @raise [Promise::AlreadyResolved] when that set was already answered
       # @return [Lain::Event] the A :message event
-      def reply(answer)
-        raise NoPendingQuestion, "no question is awaiting a reply" if @pending.nil?
-        raise Promise::AlreadyResolved, "the pending question was already answered" if @pending.resolved?
-
+      def reply(answer, digest = @outstanding.digest)
+        pending = @outstanding.answerable!(digest)
         parent = parent_timeline
         @last_answer = write_message(parent, from: HUMAN, to: identity(parent),
                                              body: { "answer" => answer },
-                                             causal_parents: [@last_question.digest])
-        @pending.resolve(answer)
+                                             causal_parents: [pending.digest])
+        pending.resolve(answer)
         @last_answer
       end
 
       # Whether a question is emitted and still unanswered -- what a frontend
       # polls to decide it must prompt the human.
-      def pending?
-        !@pending.nil? && !@pending.resolved?
-      end
+      def pending? = @outstanding.pending?
 
       # The delivery-commit consumption seam (I6, ruled): the digests of every
       # question whose answer has passed the sync gate since the last
@@ -323,17 +469,39 @@ module Lain
       # The sync gate: emit the question, then await the answer and return it as
       # the tool_result. Awaiting parks this fiber until {#reply} resolves the
       # promise; a reply already in hand returns at once. The await returning
-      # means THIS tool_result carries the answer into the conversation, so Q's
-      # digest is remembered for the delivery commit to cite (see
+      # means THIS tool_result carries the answer into the conversation, so the
+      # digest of THIS set -- read off the promise, never off `@last_question` --
+      # is remembered for the delivery commit to cite (see
       # {#take_answered_questions}).
       def perform(input, _invocation)
-        promise = ask(Announcement.new(requested_set(input)))
-        answer = promise.await
-        (@answered_questions ||= []) << @last_question.digest
+        pending = ask(Announcement.new(requested_set(input)))
+        answer = awaited(pending)
+        (@answered_questions ||= []) << pending.digest
         Tool::Result.ok(answer)
       end
 
       private
+
+      # The await, plus the abandonment an unwind owes this asker: a stop raised
+      # while parked here (the Ctrl-C path, or a caller's timeout) means nobody
+      # will ever deliver this answer, so the set stops being outstanding and
+      # the asker can ask again -- the same shape {Approval::Queue#settle} uses
+      # for a requester that vanished. The Q :message stays UNCONSUMED in the
+      # record, because a cancelled question is genuinely unanswered.
+      def awaited(pending)
+        pending.await
+      ensure
+        @outstanding.abandon(pending)
+      end
+
+      # Q, and the digest {Outstanding} names its set by.
+      def emit_question(announcement)
+        parent = parent_timeline
+        @last_question = write_message(parent, from: identity(parent), to: HUMAN,
+                                               body: emitted_body(announcement),
+                                               causal_parents: [parent.head_digest].compact)
+        @last_question.digest
+      end
 
       # The model's input as the value everything below speaks. `from_body` is
       # Question's one documented door in from raw data, and what it refuses --

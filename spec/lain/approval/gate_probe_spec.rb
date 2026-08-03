@@ -170,12 +170,19 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
   end
 
   # ---- P7: shared asker ----
+  # The property under test is the GATE's: a verdict resolved on one promise must
+  # not approve the other gate's artifact. The asker here is a deliberately
+  # unguarded stand-in -- it hands out a promise per call and holds them all.
+  # `Tools::AskHuman` no longer has that shape: since T7 it refuses a second ask
+  # over an unanswered set, and its replies name the set they answer, so nothing
+  # can silently overwrite the promise a parked gate holds. Routing ACROSS askers
+  # is a later card; this example keeps pinning the gate side of it.
   describe "P7 two gates, one asker" do
     it "does not silently cross-resolve when one AskHuman-shaped asker serves two gates" do
       pendings = []
       shared = Object.new
       shared.define_singleton_method(:ask) do |_q|
-        Lain::Promise.new.tap { |p| pendings << p } # last-write-wins, AskHuman's shape
+        Lain::Promise.new.tap { |p| pendings << p }
       end
       a = gate_class.new(journal:, timeout: 0.05)
       b = gate_class.new(journal:, timeout: 0.05)

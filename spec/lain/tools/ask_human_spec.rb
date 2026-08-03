@@ -568,4 +568,153 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(description).to match(/`options`.*optional|optional.*`options`/)
     end
   end
+
+  # ---- T7: a reply NAMES the set it answers ----------------------------------
+
+  # `@last_question` is "the set asked most recently", which is not "the set
+  # being answered". Every edge written from it is written against whichever
+  # ask happened last: the A event's causal parent, and -- the dangerous one --
+  # the digest handed to the delivery commit. A :turn edge is the ONLY thing
+  # Event::Projection#pending counts as consumption, so citing the wrong one
+  # retires a question nobody answered and leaves the answered one in the
+  # human's inbox forever. That presents as a haunted inbox, not as a stale
+  # digest, so the promise carries the digest of the set it answers and every
+  # edge is written from THAT.
+  describe "naming the set a reply answers (T7)" do
+    # The observer is the only way to see Q and A: they are exactly the events
+    # a Timeline walk can never reach, and the projection here needs the whole
+    # log, not just the last pair.
+    def observed_tool(seen) = described_class.new(parent:, observer: seen.method(:push))
+
+    # The delivery commit the Agent's tool_runner writes: a :turn citing the
+    # answered questions, which is the edge that retires them.
+    def delivery(answered)
+      parent.commit(role: :user, content: [{ "type" => "text", "text" => "tool_result" }],
+                    causal_parents: answered).head
+    end
+
+    # NEVER name a local `pending` in an example: it shadows RSpec's own
+    # `pending`, so a later edit that drops the assignment marks the example
+    # pending and GREEN instead of failing. `asked` throughout.
+    it "cites the set it answers among the A event's causal parents" do
+      Sync do
+        asked = tool.ask("which file?")
+        answer = tool.reply("config.rb", asked.digest)
+
+        expect(asked.digest).to eq(tool.last_question.digest)
+        expect(answer.causal_parents).to eq([asked.digest])
+      end
+    end
+
+    # The aliasing, exactly as it happens: the reply wakes the parked gate but
+    # does not schedule it, so a second set can open before `perform` resumes.
+    # Reading `@last_question` there hands the delivery commit the digest of
+    # the set nobody answered.
+    it "hands over the answered set, and the projection retires that one only" do
+      seen = []
+      tool = observed_tool(seen)
+      first = second = answered = nil
+
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which db?" }, invocation) }
+        first = tool.last_question
+        tool.reply("postgres")
+        tool.ask("which port?")
+        second = tool.last_question
+        run.wait
+        answered = tool.take_answered_questions
+      end
+
+      # The observable, not the returned Array: retiring the wrong digest
+      # leaves the ANSWERED question listed and drops the unanswered one.
+      inbox = Lain::Event::Projection.new([*seen, delivery(answered)]).pending("human")
+      expect(inbox.to_a.map(&:digest)).to eq([second.digest])
+      expect(answered).to eq([first.digest])
+    end
+
+    it "refuses a reply naming a set that is not pending, without touching the one that is" do
+      Sync do
+        first = tool.ask("which file?")
+        tool.reply("config.rb")
+        second = tool.ask("which port?")
+        after_first = store.size
+
+        expect { tool.reply("a late answer", first.digest) }
+          .to raise_error(described_class::NoPendingQuestion, /#{first.digest}/)
+        expect(second.resolved?).to be(false)
+        expect(store.size).to eq(after_first)
+      end
+    end
+
+    it "refuses a second reply naming the same set, before writing anything to the Store" do
+      Sync do
+        asked = tool.ask("which file?")
+        tool.reply("config.rb", asked.digest)
+        after_first = store.size
+
+        expect { tool.reply("config.rb, again", asked.digest) }
+          .to raise_error(Lain::Promise::AlreadyResolved)
+        expect(store.size).to eq(after_first)
+      end
+    end
+
+    # One set at a time, enforced rather than assumed: a second ask used to
+    # overwrite the promise and orphan the first, parking whoever awaited it
+    # forever. The refusal lands BEFORE the Q event is written, so a refused ask
+    # leaves nothing behind for a later reply to cite. (It does NOT make
+    # #reply's default digest safe -- see the withdrawn-set example below.)
+    it "refuses a second set while one is outstanding, leaving the first pending and the Store untouched" do
+      Sync do
+        first = tool.ask("which file?")
+        asked = tool.last_question
+        after_ask = store.size
+
+        expect { tool.ask("which port?") }.to raise_error(described_class::QuestionOutstanding)
+        expect(first.resolved?).to be(false)
+        expect(tool.pending?).to be(true)
+        expect(store.size).to eq(after_ask)
+        expect(tool.last_question).to equal(asked)
+        expect(tool.reply("config.rb").causal_parents).to eq([asked.digest])
+      end
+    end
+
+    # An unwind through the sync gate (Ctrl-C, a gate's timeout) means nobody
+    # will ever deliver this answer, so the asker stops holding the set and can
+    # ask again. The Q :message stays UNCONSUMED in the record -- a cancelled
+    # question is genuinely unanswered -- which is what the projection must
+    # keep saying (pinned in agent_cancellation_spec.rb).
+    it "stops holding a set whose sync gate unwound, so the asker can ask again" do
+      Sync do |task|
+        expect do
+          task.with_timeout(0.01) { tool.call({ "question" => "which db?" }, invocation) }
+        end.to raise_error(Async::TimeoutError)
+
+        expect(tool.pending?).to be(false)
+        expect { tool.ask("which port?") }.not_to raise_error
+        expect(tool.take_answered_questions).to eq([])
+      end
+    end
+
+    # Both refusals are read by a HUMAN at a `human>` prompt, because the way in
+    # is a stale `/inbox` line: the drain shifts its own items, so a Ctrl-C that
+    # stops the answer loop leaves an item listing a set this asker no longer
+    # holds. "Nothing is pending" is true and useless there. Naming the withdrawal
+    # (and the state, never the ivar) is what tells the human the LINE is stale
+    # rather than their answer.
+    it "explains a withdrawn set to the human, and names the state it is in rather than a nil" do
+      Sync do |task|
+        expect do
+          task.with_timeout(0.01) { tool.call({ "question" => "which db?" }, invocation) }
+        end.to raise_error(Async::TimeoutError)
+        withdrawn = tool.last_question
+
+        expect { tool.reply("too late", withdrawn.digest) }
+          .to raise_error(described_class::NoPendingQuestion, /this asker holds no question set at all/)
+        expect { tool.reply("too late") }
+          .to raise_error(described_class::NoPendingQuestion, /withdrawn when the run that asked it was stopped/)
+        expect { tool.reply("too late") }
+          .to raise_error(described_class::NoPendingQuestion, /inbox line offering it is stale/)
+      end
+    end
+  end
 end
