@@ -487,7 +487,7 @@ module Lain
 
       # The wire's refusal is a record's refusal (ArgumentError), and this is the
       # one place that is the wrong exception: the only caller
-      # ({CLI::HumanReplies#settle_review}) rescues {NotOpen} to render the
+      # ({CLI::HumanReplies::Reviews#settle}) rescues {NotOpen} to render the
       # editor a refusal, and anything else escapes and kills the fiber reading
       # the editor's replies -- so one stale buffer would take the whole reply
       # loop down with it. A generation that is not a generation names no open

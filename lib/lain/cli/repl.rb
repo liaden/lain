@@ -73,7 +73,7 @@ module Lain
       # converse so the very first read is the side-question, not the terminal.
       def run(nvim:, store:, session:, first_prompt: nil)
         frontend = attach_editor(nvim, store:, session:)
-        @replies.bind_editor(frontend&.command_inbox)
+        @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers)
         @prompt = composed_prompt(frontend)
         Sync do |task|
           @supervisor.run(task)

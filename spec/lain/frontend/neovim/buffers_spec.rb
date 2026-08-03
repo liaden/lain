@@ -59,8 +59,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # directly from the inspector connection -- `_G.__lain` is nvim-process-wide
   # Lua state, reachable from any RPC connection, not just the one that
   # injected it (the same fact {RpcThread}'s own render queue relies on).
-  def set_view(name, lines)
-    inspector.exec_lua("local name, lines = ...; _G.__lain.set_view(name, lines)", [name, lines])
+  # `generation` is the OPTIONAL rendering stamp (T16), sent exactly as
+  # {Lain::Frontend::Neovim::RenderQueue#post_view} sends it: present for the
+  # one view whose gesture resolves through a rendering index (lain://inbox),
+  # ABSENT -- not nil -- for every other, because a nil crosses msgpack as
+  # `vim.NIL`, which is truthy in lua.
+  def set_view(name, lines, generation = nil)
+    inspector.exec_lua("local name, lines, gen = ...; _G.__lain.set_view(name, lines, gen)",
+                       [name, lines, generation].compact)
   end
 
   def render(lines)
@@ -249,11 +255,30 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
       frontend.run do |handle|
         wait_until { bufnr("lain://inbox") != -1 }
-        set_view("lain://inbox", ["researcher  12s  deploy now?", "orchestrator  3m  which db?"])
+        set_view("lain://inbox", ["researcher  12s  deploy now?", "orchestrator  3m  which db?"], 41)
 
         feed("lain://inbox", "<CR>", cursor: [2, 0])
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 41]])
+      end
+    end
+
+    # T16: the stamp, not the line count. Two renderings are routinely the same
+    # height -- the retire-then-arrive sequence produces exactly that -- so a
+    # count cannot say which one the human is holding, and Ruby resolved the
+    # gesture against the wrong one. What the editor sends back is what the
+    # render that drew those lines stamped this buffer with.
+    it "carries the stamp the rendering was posted with, not how many lines it holds" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        wait_until { bufnr("lain://inbox") != -1 }
+        set_view("lain://inbox", ["researcher  12s  deploy now?", "orchestrator  3m  which db?"], 6)
+        set_view("lain://inbox", ["planner  4s  ship it?", "orchestrator  3m  which db?"], 7)
+
+        feed("lain://inbox", "<CR>", cursor: [1, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, 7]])
       end
     end
   end

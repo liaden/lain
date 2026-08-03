@@ -210,8 +210,16 @@ module Lain
         # @param timeline [TimelineView, nil] the chain view and its line ->
         #   digest index (B4); built over the same store by default, injectable
         #   for the same reason `inbox` is
-        def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil, timeline: nil)
-          @inbox = inbox || InboxView.new(store:)
+        # @param questions [#open] where a set the human chose in the inbox is
+        #   opened for answering ({QuestionView}), threaded through to the view
+        #   that resolves the gesture. It was NOT threaded before T16, so
+        #   production built its inbox over {InboxView::Unwired} and every
+        #   `<CR>` would have been refused however well the consumer was wired
+        #   -- invisible to a spec that injects `inbox:` ready-made, which is
+        #   how it stayed hidden.
+        def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil, timeline: nil,
+                       questions: InboxView::Unwired)
+          @inbox = inbox || InboxView.new(store:, questions:)
           @timeline = timeline || TimelineView.new(store:, session:)
           @session = session
           @last_reminders = nil
@@ -225,6 +233,30 @@ module Lain
 
         # See {TimelineView#pin}.
         def pin(line) = @timeline.pin(line)
+
+        # See {InboxView#open} -- the `<CR>`/`r` gesture's Ruby end, delegated
+        # here for {#pin}'s reason: {Buffers} is the one façade the frontend
+        # hands to the editor's command consumer, and each index belongs to the
+        # view that renders the lines it indexes.
+        def open(line, generation:) = @inbox.open(line, generation:)
+
+        # See {InboxView#open_next} -- the advance after a submitted document.
+        def open_next = @inbox.open_next
+
+        # See {InboxView#answered}: one set answered, by whichever surface took
+        # it, so neither gesture offers it again while its row waits for the
+        # committed turn that clears it.
+        def answered(digest) = @inbox.answered(digest)
+
+        # The stamp a view's post carries into the editor (T16), and only ONE
+        # view has one: lain://inbox is the only projection whose gesture
+        # resolves through a rendering index, so it is the only one that has to
+        # be able to say WHICH rendering a buffer is holding. Every other view
+        # answers nothing, and {RenderQueue#post_view} then sends the argument
+        # not at all rather than sending a nil -- which crosses msgpack as
+        # `vim.NIL`, and `vim.NIL` is TRUTHY in lua.
+        # @return [Integer, nil]
+        def generation_of(name) = name == InboxView::NAME ? @inbox.generation : nil
 
         # The at-rest projection, posted once at attach: every view exists (and
         # says what it awaits) before the first event, so an idle session's

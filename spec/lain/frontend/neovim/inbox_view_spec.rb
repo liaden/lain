@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "json"
+require "timeout"
 require "tmpdir"
 
 # I6: the human inbox. lain://inbox IS {Event::Projection#pending}("human")
@@ -182,10 +183,11 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
   # T15/ruling 12: `<CR>` (and `r`, repointed to it) opens the set the cursor
   # sits on. The LINE is what rides back from the editor -- :LainPin's recorded
-  # rule -- beside the one other thing only the editor knows: HOW MANY lines it
-  # is holding, which is what says WHICH rendering the human is looking at.
-  # Without it the view must guess between the rendering it just handed out and
-  # the one still on screen, and guessing is how `<CR>` opens the neighbour.
+  # rule -- beside the one other thing that says WHICH rendering the human is
+  # looking at: the GENERATION this view stamped that rendering's buffer with
+  # (T16). Without it the view must guess between the rendering it just handed
+  # out and the one still on screen, and guessing is how `<CR>` opens the
+  # neighbour.
   describe "the line -> digest index" do
     it "answers, for every rendered line, the digest of the item on that line" do
       first = asked(one_question("db", "which db?"), seed: "a")
@@ -193,7 +195,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       view.update(record(first))
       lines = view.update(record(second))
 
-      expect((1..lines.size).map { |line| view.digest_at(line, showing: lines.size) })
+      expect((1..lines.size).map { |line| view.digest_at(line, generation: view.generation) })
         .to eq([first.digest, second.digest])
       expect(lines.first).to include("which db?")
       expect(lines.last).to include("deploy now?")
@@ -202,20 +204,20 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     it "names no set off either end of the rendering" do
       view.update(record(asked(one_question("db", "which db?"))))
 
-      expect(view.digest_at(0, showing: 1)).to be_nil
-      expect(view.digest_at(2, showing: 1)).to be_nil
+      expect(view.digest_at(0, generation: view.generation)).to be_nil
+      expect(view.digest_at(2, generation: view.generation)).to be_nil
     end
 
     it "names nothing at rest, where the buffer holds only the placeholder" do
       view.initial
 
-      expect(view.digest_at(1, showing: 1)).to be_nil
+      expect(view.digest_at(1, generation: view.generation)).to be_nil
     end
 
     it "names nothing for a rendering it cannot identify, rather than the nearest one it has" do
       view.update(record(asked(one_question("db", "which db?"))))
 
-      expect(view.digest_at(1, showing: 9)).to be_nil
+      expect(view.digest_at(1, generation: 9_999)).to be_nil
     end
 
     it "empties with the placeholder, so a drained inbox names no set on line 1" do
@@ -223,7 +225,22 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       view.update(record(question))
       view.update(turn_usage(citing_timeline(question.digest).head_digest))
 
-      expect(view.digest_at(1, showing: 1)).to be_nil
+      expect(view.digest_at(1, generation: view.generation)).to be_nil
+    end
+
+    # The stamp is what the editor's buffer carries and sends back, so it has
+    # to MOVE with the rendering: a stamp that repeated would name two
+    # different sets on one line, which is the whole defect it exists to close.
+    it "stamps every rendering with its own generation, the placeholder included" do
+      view.initial
+      at_rest = view.generation
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+      one_item = view.generation
+      view.update(record(asked(one_question("when", "deploy now?"), seed: "b")))
+      two_items = view.generation
+
+      expect([at_rest, one_item, two_items].uniq.size).to eq(3)
+      expect([at_rest, one_item, two_items].sort).to eq([at_rest, one_item, two_items])
     end
   end
 
@@ -233,7 +250,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       second = asked(one_question("when", "deploy now?"), seed: "b")
       view.update(record(second))
 
-      opened = view.open(2, showing: 2)
+      opened = view.open(2, generation: view.generation)
 
       expect(opened).to be_opened
       expect(opened.digest).to eq(second.digest)
@@ -244,7 +261,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     it "opens nothing from the empty-state placeholder, and reports the line naming no set" do
       view.initial
 
-      opened = view.open(1, showing: 1)
+      opened = view.open(1, generation: view.generation)
 
       expect(opened).not_to be_opened
       expect(editor.opened).to be_empty
@@ -252,34 +269,28 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
 
     # The placeholder and a one-item list are BOTH one line high, so the height
-    # cannot separate them -- the digests on the line must. `Enumerable#one?`
-    # counts truthy elements, so `[digest, nil].uniq.one?` reads as unanimous
-    # and this gesture would open a set the human has never seen, reporting it
-    # as a success. Both examples pass under the wrong reading too if the
-    # placeholder rendering is not still held, so `initial` comes first.
-    it "refuses the gesture when the held renderings disagree about that line" do
+    # could never separate them; the stamp does, exactly. Under the height key
+    # this pair was the ambiguity the view had to REFUSE (two held renderings
+    # disagreeing about line 1); under the stamp each names its own rendering,
+    # so the placeholder answers "no set here" and the list opens its item --
+    # two right answers where there used to be one refusal.
+    it "tells a held placeholder from a held one-item list of the same height" do
       view.initial
-      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+      at_rest = view.generation
+      question = asked(one_question("db", "which db?"), seed: "a")
+      view.update(record(question))
 
-      opened = view.open(1, showing: 1)
-
-      expect(opened).not_to be_opened
-      expect(editor.opened).to be_empty
-    end
-
-    it "names no digest when a held placeholder and a held one-item list collide on the line" do
-      view.initial
-      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
-
-      expect(view.digest_at(1, showing: 1)).to be_nil
+      expect(view.open(1, generation: at_rest)).not_to be_opened
+      expect(view.digest_at(1, generation: at_rest)).to be_nil
+      expect(view.digest_at(1, generation: view.generation)).to eq(question.digest)
     end
 
     it "hands back the question surface's own refusal rather than reporting an open that did not happen" do
       view.update(record(asked(one_question("db", "which db?"), seed: "a")))
       view.update(record(asked(one_question("when", "deploy now?"), seed: "b")))
-      view.open(1, showing: 2)
+      view.open(1, generation: view.generation)
 
-      opened = view.open(2, showing: 2)
+      opened = view.open(2, generation: view.generation)
 
       expect(opened).not_to be_opened
       expect(opened.report).to include(Lain::Frontend::Neovim::QuestionView::BUFFER)
@@ -300,16 +311,22 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
     # Both listed, then the first consumed by a citing turn: the buffer still
     # shows two rows, this view has already produced the one-row rendering.
+    # Answers the generation of the TWO-ROW rendering -- the one the human is
+    # looking at, and the only thing their keypress can honestly name.
     def retire_the_first
+      list_both
+      view.generation.tap { view.update(turn_usage(citing_timeline(keep.digest).head_digest)) }
+    end
+
+    def list_both
       view.update(record(keep))
       view.update(record(drop))
-      view.update(turn_usage(citing_timeline(keep.digest).head_digest))
     end
 
     it "says the set on that row is gone rather than opening the row below it" do
-      retire_the_first
+      two_listed = retire_the_first
 
-      opened = view.open(1, showing: 2)
+      opened = view.open(1, generation: two_listed)
 
       expect(opened).not_to be_opened
       expect(opened.report).to include("no longer pending")
@@ -317,9 +334,9 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
 
     it "still opens the survivor from the row the human is looking at" do
-      retire_the_first
+      two_listed = retire_the_first
 
-      opened = view.open(2, showing: 2)
+      opened = view.open(2, generation: two_listed)
 
       expect(opened.digest).to eq(drop.digest)
       expect(editor.digests).to eq([drop.digest])
@@ -328,7 +345,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     it "opens the survivor from its new row once the render that removed the other has landed" do
       retire_the_first
 
-      opened = view.open(1, showing: 1)
+      opened = view.open(1, generation: view.generation)
 
       expect(opened.digest).to eq(drop.digest)
       expect(editor.digests).to eq([drop.digest])
@@ -337,10 +354,30 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     it "refuses a rendering it no longer holds rather than guessing which one that is" do
       retire_the_first
 
-      opened = view.open(1, showing: 7)
+      opened = view.open(1, generation: 7_777)
 
       expect(opened).not_to be_opened
-      expect(opened.report).to include("7")
+      expect(opened.report).to include("7777")
+      expect(editor.opened).to be_empty
+    end
+
+    # ⚠️ THE GATE (T15's panel probe, ported). The HEIGHT was a weak key and
+    # this is the sequence that broke it: `[keep, drop]` -> retire keep ->
+    # `[drop]` -> a third set arrives -> `[drop, third]`. The human is still
+    # holding the FIRST rendering, which is two lines high -- and so is the
+    # newest. Under the height key the human's rendering had aged out of the
+    # two held, the height ALIASED onto `[drop, third]`, and `open(1,
+    # showing: 2)` answered `opened? == true` having put `drop`'s document --
+    # the row BELOW the one they pressed on -- in the editor, reported as a
+    # success. The stamp cannot alias: it names the rendering or nothing.
+    it "opens no document at all for a row whose set retired and whose height a later rendering reused" do
+      two_listed = retire_the_first
+      view.update(record(asked(one_question("t", "third?"), seed: "e")))
+
+      opened = view.open(1, generation: two_listed)
+
+      expect(opened).not_to be_opened
+      expect(opened.digest).to be_nil
       expect(editor.opened).to be_empty
     end
   end
@@ -368,12 +405,193 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       updating = Thread.new { parked.update(record(question)) }
       inside.pop
-      gesturing = Thread.new { parked.open(1, showing: 1) }
+      gesturing = Thread.new { parked.open(1, generation: parked.generation) }
 
       expect(gesturing.join(0.25)).to be_nil
       go << :go
       expect(updating.join(2)).to be(updating)
       expect(gesturing.join(2)).to be(gesturing)
+    end
+  end
+
+  # T16: the advance, which is the submit's own continuation rather than a
+  # cursor -- so it names no line and no rendering, and it must skip the set
+  # just answered, because a reply retires nothing (the pinned consumption
+  # rule) and that set is therefore still listed.
+  describe "#open_next -- the set that follows a submitted one" do
+    it "opens the one still pending that this view lists first" do
+      first = asked(one_question("db", "which db?"), seed: "a")
+      second = asked(one_question("when", "deploy now?"), seed: "b")
+      view.update(record(first))
+      view.update(record(second))
+      view.answered(first.digest)
+
+      opened = view.open_next
+
+      expect(opened.digest).to eq(second.digest)
+      expect(editor.documents.last.join("\n")).to include("deploy now?")
+    end
+
+    it "opens nothing, and says the inbox holds nothing further, when the answered set was the last" do
+      only = asked(one_question("db", "which db?"))
+      view.update(record(only))
+      view.answered(only.digest)
+
+      opened = view.open_next
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to eq(described_class::Gestures::NOTHING_NEXT)
+      expect(editor.opened).to be_empty
+    end
+
+    it "opens nothing at all from an empty inbox" do
+      view.initial
+
+      expect(view.open_next).not_to be_opened
+      expect(editor.opened).to be_empty
+    end
+
+    # The panel's PROBE N, ported. The advance used to be told ONE digest -- the
+    # set just answered -- which is the same mistake in miniature that the whole
+    # card is about: an item leaves this view only when a committed TURN cites
+    # it, and that is a model round trip away (for a set another agent asked,
+    # it may not arrive until THAT agent commits). So every set answered in a
+    # burst is still listed, not just the last one, and skipping only the last
+    # one walks the human backwards: A -> B -> A -> B, with C unreachable and
+    # each re-open a FRESH UNANSWERED document over the ticks they just made.
+    # It was silent too -- the second answer to A is dropped as AlreadyResolved.
+    # The human's `:w` on whatever is on screen, then the consumer's own two
+    # steps in their production order -- record the answer, open the next. The
+    # write is what closes {QuestionView}'s slot, so this is also why the
+    # advance can open anything at all (ruling 2 refuses over an open set).
+    def submit_and_advance(digest)
+      expect(questions.wrote(editor.documents.last, digest)).to be_nil
+      view.answered(digest)
+      view.open_next
+    end
+
+    it "walks forward through a burst rather than back onto a set already answered" do
+      first = asked(one_question("a", "which db?"), seed: "a")
+      second = asked(one_question("b", "deploy now?"), seed: "b")
+      third = asked(one_question("c", "ship it?"), seed: "c")
+      [first, second, third].each { |question| view.update(record(question)) }
+      view.open(1, generation: view.generation)
+
+      expect(submit_and_advance(first.digest).digest).to eq(second.digest)
+      expect(submit_and_advance(second.digest).digest).to eq(third.digest)
+      expect(editor.digests).to eq([first.digest, second.digest, third.digest])
+    end
+
+    it "runs out honestly once every listed set has been answered" do
+      first = asked(one_question("a", "which db?"), seed: "a")
+      second = asked(one_question("b", "deploy now?"), seed: "b")
+      [first, second].each do |question|
+        view.update(record(question))
+        view.answered(question.digest)
+      end
+
+      opened = view.open_next
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to eq(described_class::Gestures::NOTHING_NEXT)
+    end
+
+    # The row stays listed until the delivery commit lands, so the human can
+    # still put their cursor on it. Re-rendering it would hand them a fresh
+    # unanswered document over the answer they already gave -- PROBE O's finding
+    # -- so the gesture is refused with the reason instead.
+    it "refuses the row of a set already answered, rather than re-opening it unanswered" do
+      question = asked(one_question("a", "which db?"))
+      view.update(record(question))
+      view.answered(question.digest)
+
+      opened = view.open(1, generation: view.generation)
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to include("answered")
+      expect(editor.opened).to be_empty
+    end
+
+    it "stops offering an answered set once the consuming turn retires its row" do
+      question = asked(one_question("a", "which db?"))
+      view.update(record(question))
+      view.answered(question.digest)
+      view.update(turn_usage(citing_timeline(question.digest).head_digest))
+
+      expect(view.open_next).not_to be_opened
+      expect(view.digest_at(1, generation: view.generation)).to be_nil
+    end
+
+    # The example above is true whether or not the tombstone is pruned, which is
+    # how it stayed green while the set grew for the whole session. Nothing
+    # black-box can see the pruning -- `@consumed` already refuses a re-listed
+    # digest, so a stale tombstone changes no behaviour, only memory -- so this
+    # one reaches in on purpose rather than pretending to observe it.
+    it "drops the answered tombstone with the row, rather than holding it for the session" do
+      answered_then_retired = Array.new(3) do |i|
+        asked(one_question("q#{i}", "which db?"), seed: "s#{i}").tap do |question|
+          view.update(record(question))
+          view.answered(question.digest)
+          view.update(turn_usage(citing_timeline(question.digest).head_digest))
+        end
+      end
+
+      expect(answered_then_retired.size).to eq(3)
+      expect(view.instance_variable_get(:@answered)).to be_empty
+    end
+
+    # The set just answered is still listed until a committed turn cites it, so
+    # skipping it is what stops the advance handing the human the document they
+    # have this second finished.
+    it "never re-opens the set it was told was answered" do
+      only = asked(one_question("db", "which db?"))
+      view.update(record(only))
+
+      expect(view.open_next.digest).to eq(only.digest)
+      view.answered(only.digest)
+      expect(view.open_next).not_to be_opened
+    end
+  end
+
+  # THE INVARIANT THE WHOLE GESTURE RESTS ON: nothing holding this view's lock
+  # may wait on the editor. `#open` takes `@slot` and calls {QuestionView#open},
+  # which takes ITS OWN non-reentrant lock and posts the document -- so if that
+  # post could block on a full render queue, a keypress would hold both locks
+  # while waiting for the RPC thread, which is the one thread that empties that
+  # queue AND the thread that serves the editor's own writes. The queue is
+  # drained once per RPC tick, so "full" is a state a burst reaches, not a
+  # hypothetical.
+  #
+  # Both objects already answer this the only way that is safe -- the post is
+  # {RenderQueue#post_question}'s NON-BLOCKING push, refused rather than
+  # awaited -- and both say so in prose. This is the prose made mechanical,
+  # over the REAL inlet with a saturated queue: a refusal in bounded time, so a
+  # regression fails in two seconds instead of hanging a CI worker forever (a
+  # hung worker reports as "fewer examples, zero failures", which is not a
+  # failure anyone reads).
+  describe "the render queue is full and the human presses enter" do
+    let(:inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}, capacity: 1) }
+    let(:questions) { Lain::Frontend::Neovim::QuestionView.new(rpc: inlet) }
+
+    it "refuses in bounded time rather than holding the lock until the editor drains" do
+      inlet.post_view("lain://inbox", ["saturating the queue"])
+      view.update(record(asked(one_question("db", "which db?"))))
+
+      opened = Timeout.timeout(2) { view.open(1, generation: view.generation) }
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to eq(Lain::Frontend::Neovim::QuestionView::DETACHED)
+    end
+
+    # The advance runs on the same fiber, under the same two locks, and is the
+    # path a submitted document takes -- so it owes the same guarantee.
+    it "refuses the advance in bounded time too" do
+      inlet.post_view("lain://inbox", ["saturating the queue"])
+      view.update(record(asked(one_question("db", "which db?"))))
+
+      opened = Timeout.timeout(2) { view.open_next }
+
+      expect(opened).not_to be_opened
     end
   end
 
@@ -618,8 +836,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # T15/ruling 12, at the editor. What rides back is the LINE (:LainPin's rule)
   # -- the Ruby side's line -> digest index is the only thing that may name a
   # set -- and both keys invoke the COMMAND, so a human typing :LainOpen by
-  # hand takes provably the same path.
+  # hand takes provably the same path. Beside it rides the RENDERING STAMP
+  # (T16): the generation the view put on that buffer, read back off the view
+  # itself here, because "the editor sends back what the render stamped" is the
+  # property, not any particular number.
   describe "the open gesture on lain://inbox" do
+    def inbox_stamp(handle) = handle.buffers.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
+
     def two_pending
       asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
       asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
@@ -637,7 +860,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         feed("lain://inbox", "<CR>", cursor: [2, 0])
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, inbox_stamp(handle)]])
       end
     end
 
@@ -649,7 +872,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
         feed("lain://inbox", "r", cursor: [2, 0])
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, inbox_stamp(handle)]])
       end
     end
 
@@ -682,7 +905,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         feed("lain://journal", ":LainOpen<CR>", cursor: [1, 0])
         feed("lain://inbox", "<CR>", cursor: [1, 0])
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, 2]])
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, inbox_stamp(handle)]])
       end
     end
   end

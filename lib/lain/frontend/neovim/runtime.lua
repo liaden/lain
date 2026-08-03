@@ -12,7 +12,7 @@ local gem_version, protocol, chan = ...
 -- gem release, which is why the handshake does not compare gem versions. A
 -- mismatch WARNS and keeps going: a stale editor half-works (commands still
 -- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "7"
+local RUNTIME_PROTOCOL = "8"
 if protocol ~= RUNTIME_PROTOCOL then
   vim.api.nvim_echo({
     { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },
@@ -653,8 +653,22 @@ end
 -- shared prefix is stable), so the trimmed write makes the natural
 -- preservation the folds rely on the common case -- and skips redraw work
 -- for free.
-function _G.__lain.set_view(name, lines)
+--
+-- b:lain_view_generation is the RENDERING STAMP (T16), and it is optional: a
+-- view whose gesture resolves through a Ruby-side line -> digest index sends
+-- one, every other view sends nothing and the buffer never gains the variable.
+-- lain://inbox is the only such view today. It matters because this buffer's
+-- positions are NOT stable -- a retired item takes its row out and every row
+-- below moves up -- so the line a human presses on means nothing without
+-- saying WHICH rendering it is a line of, and the line COUNT cannot say that:
+-- two renderings are routinely the same height. `set_compose` and
+-- `set_question` have stamped their buffers for exactly this reason since they
+-- existed; this is that same idea on a projection.
+function _G.__lain.set_view(name, lines, gen)
   local buf = named_buf(name)
+  if gen ~= nil then
+    vim.b[buf].lain_view_generation = gen
+  end
   local old = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local shared = 0
   while shared < #old and shared < #lines and old[shared + 1] == lines[shared + 1] do
@@ -1222,17 +1236,23 @@ end, { nargs = "+" })
 -- thing that can name the set -- and that index is built by the same pass that
 -- produced the lines.
 --
--- WHAT THIS SENDS THAT :LainPin DOES NOT, and it is not decoration: the LINE
--- COUNT, because a line number alone names a POSITION and this buffer's
+-- WHAT THIS SENDS THAT :LainPin DOES NOT, and it is not decoration: the
+-- RENDERING STAMP this buffer carries (b:lain_view_generation, written by
+-- set_view), because a line number alone names a POSITION and this buffer's
 -- positions are not stable the way lain://timeline's are. A timeline only ever
 -- grows, so line 7 means one turn forever; the inbox RETIRES rows, and every
 -- row below a retired one moves up -- while the render that removes it is still
 -- sitting in lain's render queue. In that window Ruby holds a rendering the
 -- human is not looking at, and resolving their cursor against it opens the
--- NEIGHBOURING question set. How many lines this buffer holds is the one fact
--- only the editor has about WHICH rendering is on screen, so the editor says
--- it. It is still not a digest: both numbers are facts about what the human is
--- looking at, and Ruby remains the only side that can name a set.
+-- NEIGHBOURING question set.
+--
+-- T15 sent the LINE COUNT for this, which was the only fact the editor had
+-- before the stamp existed -- and a weak one: the queue drains once per RPC
+-- tick, so the screen can be several renderings behind, and two renderings of
+-- equal height are indistinguishable by count. Ruby then resolved the gesture
+-- against the WRONG rendering and reported success. The stamp is exact, and it
+-- is still not a digest: it says what the human is looking at, and Ruby remains
+-- the only side that can name a set.
 --
 -- The buffer check is NOT redundant with the buffer-local maps below. `define`
 -- makes every :Lain* command GLOBAL, and this one reads the CURRENT window's
@@ -1255,7 +1275,7 @@ define("LainOpen", function()
   local lines = cached_lines(buf)
   local line = vim.api.nvim_win_get_cursor(0)[1]
   if RECORD_START[INBOX](lines, line) then
-    vim.rpcrequest(chan, "lain_command", "open", { line, #lines })
+    vim.rpcrequest(chan, "lain_command", "open", { line, vim.b[buf].lain_view_generation })
   end
 end)
 

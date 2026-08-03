@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+# {Renderings} must exist before this file's body runs `private_constant` on it,
+# so it loads FIRST -- the same "load it early" exception neovim.rb documents
+# for {RpcThread}, and still this subtree's index owning the require.
+require_relative "inbox_view/renderings"
+
 module Lain
   module Frontend
     class Neovim
@@ -23,19 +28,30 @@ module Lain
       # it turns records into plain lines; {RpcThread} does the rendering.
       #
       # THREAD CONTRACT, AND THE LOCK. {#update} runs on the frontend's drain
-      # thread; {#open} and {#digest_at} run on whichever thread serves the
-      # editor's commands (the reply consumer's fiber, on the reactor). They
-      # share `@pending` -- mutated by an arrival or a retirement, ITERATED by
-      # the render that indexes it -- and the rendering index that gesture then
-      # resolves through, so all four methods take one `Mutex`. It is
-      # {QuestionView}'s `@slot` for {QuestionView}'s reason: a check-then-act
-      # across this seam does not fail loudly, it opens the wrong thing.
+      # thread; {#open}, {#open_next} and {#digest_at} run on whichever thread
+      # serves the editor's commands (the reply consumer's fiber, on the
+      # reactor); and {#answered} is reached from the TTY's own reply fibers as
+      # well, since a set answered at the terminal must stop being offered by
+      # the editor's advance. They share `@pending` -- mutated by an arrival or a
+      # retirement, ITERATED by the render that indexes it -- and the rendering
+      # index that a gesture then resolves through, so every one of them takes
+      # one `Mutex`. It is {QuestionView}'s `@slot` for {QuestionView}'s reason:
+      # a check-then-act across this seam does not fail loudly, it opens the
+      # wrong thing. Holding it is also what lets {Renderings} and {Gestures} be
+      # lock-free -- they are only ever reached from inside it.
       #
-      # Nothing under the lock can park. The one call it spans into another
-      # object is `@questions.open`, which is the editor's NON-BLOCKING path --
-      # {QuestionView} holds its own lock across the same post -- and nothing on
-      # the far side of it ever calls back here, so the two locks are only ever
-      # taken in one order.
+      # NOTHING UNDER THIS LOCK MAY WAIT ON THE EDITOR, and that is the
+      # invariant the whole gesture rests on rather than a preference. A
+      # gesture holds this lock, and {QuestionView#open} takes ITS lock inside
+      # it, and posts from there; if that post could block on a full render
+      # queue, a keypress would hold both locks waiting for the RPC thread --
+      # the one thread that empties that queue AND the thread that serves the
+      # editor's own writes. It cannot: the post is
+      # {RenderQueue#post_question}'s non-blocking push, which REFUSES a full
+      # queue rather than waiting on it, and the refusal comes back as this
+      # gesture's report. Nothing on the far side ever calls back here either,
+      # so the two locks are only ever taken in one order. There is a spec that
+      # saturates the queue and holds this to a bounded refusal.
       class InboxView
         NAME = "lain://inbox"
         EMPTY = ["(no questions pending)"].freeze
@@ -55,19 +71,6 @@ module Lain
         # never sees an arrival, so it reads it off the record.
         ASKED_BY = "asked_by"
 
-        # Four ways a keypress names no openable set, and four sentences because
-        # four different things happened: the buffer the human is holding is not
-        # one this view can still identify; the line names no set in it (the
-        # placeholder, or past the end); it names one that has since been
-        # answered or withdrawn; or the record on it is no question set at all.
-        UNSHOWN = "#{NAME} is showing %<lines>d lines, which is not a rendering this view still holds -- " \
-                  "it has re-rendered since, so line %<line>d could name two different sets and this " \
-                  "will not guess between them".freeze
-        NO_SET = "no question set on #{NAME} line %d".freeze
-        RETIRED = "the question set on #{NAME} line %d is no longer pending -- it was answered or " \
-                  "withdrawn since that line was rendered".freeze
-        UNREADABLE = "the question set on #{NAME} line %d cannot be read -- %s".freeze
-
         # One listed question: who asked, what, when this view first saw it, and
         # the record's own body. `asked_at` is OBSERVATION time by necessity --
         # events are content-addressed and carry no wall clock -- which is
@@ -78,63 +81,11 @@ module Lain
         Item = Data.define(:from, :question, :asked_at, :body)
         private_constant :Item
 
-        # What this view has handed out, and which of it the editor can still be
-        # holding. Separate from {InboxView} because reconciling "what I drew"
-        # with "what you are looking at" is its own rule, and the gesture is only
-        # safe while that rule is stated in one place.
-        class Renderings
-          # One rendering, as a gesture has to read it back: how many LINES the
-          # editor holds, and which set sits on each of them. Deliberately two
-          # fields and not one list -- the empty-state placeholder is ONE line
-          # naming NO set -- and collapsing them is how `<CR>` on
-          # "(no questions pending)" would resolve against a one-item rendering
-          # of the same height.
-          Rendering = Data.define(:height, :digests) do
-            def shows?(lines) = height == lines
-
-            # The 1-based/0-based seam, guarded here rather than at each caller:
-            # line 0 would index -1, which is the LAST set -- a cursor nvim never
-            # reports would silently open the newest one.
-            def at(line) = line.positive? ? digests[line - 1] : nil
-          end
-          private_constant :Rendering
-
-          # How many stay resolvable, and the bound is the render pipeline's own
-          # shape rather than a number: {Neovim#post} hands each rendering to the
-          # render queue and WAKES the RPC thread, which drains everything queued
-          # in one tick and in order -- so what is on a human's screen is the
-          # rendering just handed out or the one it replaced. A buffer older than
-          # that is refused ({UNSHOWN}), never guessed at.
-          HELD = 2
-
-          def initialize = @held = [].freeze
-
-          # Newest first, bounded -- so a rendering stays resolvable exactly as
-          # long as it can still be the one on screen, and the retired digest on
-          # it stays reachable until the render that removes its row has landed.
-          def remember(height:, digests:)
-            @held = [Rendering.new(height:, digests:), *@held].first(HELD).freeze
-          end
-
-          # WHICH rendering the editor is holding, among those still resolvable:
-          # the one whose height it reports. nil when none has that height (it
-          # holds something already forgotten), and nil when TWO do and they name
-          # different sets on that line -- both are "I cannot say which rendering
-          # you are looking at", and the whole point of the height riding along
-          # is to stop this guessing.
-          #
-          # Two renderings of one height that AGREE on the line are not ambiguous
-          # at all: whichever the human holds, the answer is the same set.
-          def shown(line, showing)
-            candidates = @held.select { |rendering| rendering.shows?(showing) }
-            # `size == 1`, never `one?`: Enumerable#one? counts TRUTHY elements,
-            # so `[digest, nil].uniq.one?` is true and a pair that DISAGREES --
-            # one naming a set, one naming none -- would read as unanimous. That
-            # is the empty-state placeholder and a one-item list, both one line
-            # high, which is exactly the collision the height is here to catch.
-            candidates.first if candidates.map { |rendering| rendering.at(line) }.uniq.size == 1
-          end
-        end
+        # Its own file (inbox_view/renderings.rb): reconciling "what I drew"
+        # with "what you are looking at" is a rule of its own, and this class
+        # was over `Metrics/ClassLength` carrying it -- the same thing
+        # {CommandInbox}'s extraction answered, and the cop naming the object
+        # that was missing.
         private_constant :Renderings
 
         # The set the `<CR>` gesture opened, or the reason none did:
@@ -171,16 +122,26 @@ module Lain
           @questions = questions
           @pending = {}
           @consumed = Set.new
+          @answered = Set.new
           @renderings = Renderings.new
+          @gestures = Gestures.new(pending: @pending, answered: @answered, renderings: @renderings, questions:)
           @slot = Mutex.new
         end
 
-        # The at-rest projection (see {Neovim#prime_views}): the inbox exists
+        # The at-rest projection (see {Surfaces#prime}): the inbox exists
         # from attach, saying it is empty rather than reading as broken.
         # @return [Hash{String=>Array<String>}]
         def initial
           @slot.synchronize { { NAME => placeholder } }
         end
+
+        # The stamp the rendering now on its way to the editor carries, for
+        # whoever posts that rendering to send along with it
+        # ({Buffers#generation_of}). Read on the drain thread, immediately after
+        # the render that produced the lines and from the same thread, so the
+        # lines posted and the stamp posted are always one rendering's.
+        # @return [Integer]
+        def generation = @slot.synchronize { @renderings.generation }
 
         # Which set this view rendered on `line` OF THE RENDERING THE EDITOR IS
         # HOLDING -- {Buffers::TimelineView#digest_at}'s twin, plus the argument
@@ -190,17 +151,18 @@ module Lain
         # retirement removes a row and every row below it moves up, while the
         # render that removes it is still queued for nvim.
         #
-        # So the editor says which rendering its position is IN, using the only
-        # fact it has about that: how many lines it is holding. A rendering the
-        # editor cannot be shown to hold answers nothing, rather than the
-        # nearest rendering this view happens to have.
+        # So the editor says which rendering its position is IN, by sending back
+        # the GENERATION this view stamped that buffer with. A rendering this
+        # view no longer holds answers nothing, rather than the nearest
+        # rendering it happens to have.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
-        # @param showing [Integer] lines in the buffer the human is looking at
+        # @param generation [Integer] the stamp on the buffer the human is
+        #   looking at (runtime.lua's b:lain_view_generation)
         # @return [String, nil] that set's Q digest; nil when the line names no
         #   set (line 0, past the end, or the empty-state placeholder) or when
-        #   no rendering still held here can be the one on screen
-        def digest_at(line, showing:) = @slot.synchronize { shown(line, showing)&.at(line) }
+        #   the rendering it names is not one still held here
+        def digest_at(line, generation:) = @slot.synchronize { @renderings.digest_at(line, generation) }
 
         # The `<CR>`/`r` gesture from lain://inbox (runtime.lua's :LainOpen):
         # open the question set the cursor sits on. The LINE rides -- :LainPin's
@@ -209,9 +171,45 @@ module Lain
         # the human is looking at.
         #
         # @param line [Integer] 1-based cursor line
-        # @param showing [Integer] lines in the buffer the human is looking at
+        # @param generation [Integer] the stamp on the buffer the human is
+        #   looking at
         # @return [Opened]
-        def open(line, showing:) = @slot.synchronize { resolved(line, showing) }
+        def open(line, generation:) = @slot.synchronize { @gestures.open(line, generation) }
+
+        # The ADVANCE (T16): the human just submitted a document, so open the
+        # next set they have to answer -- of those still pending, the one this
+        # view lists FIRST, which is the one they would have pressed enter on.
+        # No line and no rendering, because this gesture is not a cursor: it is
+        # the submit's own continuation, and it is the CONSUMER of the answer
+        # rail that calls it. It cannot be the `submit` callable and it cannot
+        # be {QuestionView#wrote}: that lock is not reentrant, and this ends in
+        # {QuestionView#open}.
+        #
+        # It opens the first set NOT already answered ({#answered}), which has
+        # to be a standing record rather than "the one just submitted": an item
+        # leaves this view only when a committed turn CITES it (the pinned
+        # consumption rule -- a reply is a :message and retires nothing), so
+        # every set answered in a burst is still listed, not merely the last.
+        #
+        # @return [Opened]
+        def open_next = @slot.synchronize { @gestures.open_next }
+
+        # A listed set has been answered -- by the editor's document, by
+        # :LainReply, or at the terminal prompt; the consumer reports all three
+        # through its one delivery path, so this view never has to guess which
+        # surface took it.
+        #
+        # It is remembered rather than retired, because retiring it here would
+        # break the pinned consumption rule ({StatusFeed} parity: a reply is a
+        # :message and clears nothing). The row stays; what changes is that
+        # neither gesture will hand the human a blank document over an answer
+        # they already gave, and {#open_next} walks past it to a set they have
+        # not seen.
+        # @return [void]
+        def answered(digest)
+          @slot.synchronize { @answered << digest }
+          nil
+        end
 
         # @param event [Object] one Channel event
         # @return [Array<String>, nil] full replacement lines when the pending
@@ -225,38 +223,6 @@ module Lain
         end
 
         private
-
-        def shown(line, showing) = @renderings.shown(line, showing)
-
-        # The gesture, once the buffer it came from is identified.
-        def resolved(line, showing)
-          rendering = shown(line, showing)
-          return unopened(format(UNSHOWN, lines: showing, line:)) if rendering.nil?
-
-          listed(rendering.at(line), line)
-        end
-
-        # One listed set, opened -- or the reason a digest the rendering named
-        # is not one this view can still open. The rebuild is
-        # {Question::Set.from_body}, which reads only the keys it owns, so the
-        # same body that rendered the one-line summary rebuilds exactly the set
-        # that was asked. A body that is no set at all (a bare `{"question" =>
-        # ...}` from before sets existed) is REPORTED rather than raised: this
-        # answers a keystroke, and a gesture that cannot be honoured owes the
-        # human a sentence, not an exception on somebody else's thread.
-        def listed(digest, line)
-          return unopened(format(NO_SET, line)) if digest.nil?
-
-          item = @pending[digest]
-          return unopened(format(RETIRED, line)) if item.nil?
-
-          refusal = @questions.open(Question::Set.from_body(item.body), digest)
-          refusal.nil? ? Opened.new(digest:, report: "opened #{digest}") : unopened(refusal)
-        rescue ArgumentError => e
-          unopened(format(UNREADABLE, line, e.message))
-        end
-
-        def unopened(report) = Opened.new(digest: nil, report:)
 
         def question?(event)
           event.respond_to?(:kind) && event.kind == :message && event.to == RECIPIENT
@@ -292,6 +258,12 @@ module Lain
 
           cited_by_chain(event.digest).inject(false) do |moved, digest|
             @consumed << digest
+            # The tombstone dies with the row it was standing in for. It exists
+            # only to stop an answered-but-not-yet-retired set being offered
+            # again; once the consuming turn has retired it, `@consumed` is what
+            # keeps it from being re-listed, and keeping both is a set that grows
+            # for the life of the session.
+            @answered.delete(digest)
             !@pending.delete(digest).nil? || moved
           end
         end
@@ -322,7 +294,7 @@ module Lain
         def render
           return placeholder if @pending.empty?
 
-          @renderings.remember(height: @pending.size, digests: @pending.keys.freeze)
+          @renderings.remember(digests: @pending.keys.freeze)
           @pending.values.map { |item| line_for(item) }
         end
 
@@ -332,7 +304,7 @@ module Lain
         # the row they can see (that its set retired) rather than being told the
         # buffer they are looking at never existed.
         def placeholder
-          @renderings.remember(height: EMPTY.size, digests: [].freeze)
+          @renderings.remember(digests: [].freeze)
           EMPTY.dup
         end
 
@@ -353,3 +325,8 @@ module Lain
     end
   end
 end
+
+# LAST, and the twin of the require at the top: {Gestures} names {InboxView}'s
+# own NAME and {Opened} in its body, so it can only be read once that body has
+# run -- where {Renderings} had to be read BEFORE it, to be made private there.
+require_relative "inbox_view/gestures"

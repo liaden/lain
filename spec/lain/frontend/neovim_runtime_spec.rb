@@ -246,13 +246,114 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # T16, and the reason the card exists: `<CR>` on an inbox row must put that
+  # set's document in lain://question. Every piece of that path shipped before
+  # this -- the keys, the :LainOpen command, the view that resolves the line,
+  # the surface that renders the set -- with NOTHING popping the verb in
+  # between, so pressing enter did nothing whatsoever in a live session and
+  # both halves had green specs. This drives the REAL consumer
+  # ({Lain::CLI::HumanReplies}, bound exactly as `Repl#run` binds it) against a
+  # REAL editor, because the seam between them is the only place the hole was
+  # ever visible -- and it is the same seam that hid production's inbox being
+  # built with no question surface at all.
+  describe "the inbox's open gesture, end to end" do
+    let(:store) { Lain::Store.new }
+    let(:set) do
+      Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")])
+    end
+
+    it "opens the set under the cursor in lain://question when the human presses enter" do
+      parent = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      asker = Lain::Tools::AskHuman.new(parent:)
+      Sync { asker.ask(Lain::Tools::AskHuman::Announcement.new(set)) }
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        channel.push(Lain::Telemetry::Message.from_event(asker.last_question))
+        wait_until { buffer_lines("lain://inbox").join.include?("which db?") }
+
+        with_consumer(frontend) do
+          press("lain://inbox", "<CR>", cursor: [1, 0])
+          wait_until { buffer_lines("lain://question").join.include?("which db?") }
+        end
+
+        expect(buffer_lines("lain://question").join("\n")).to include("which db?").and include("`db`")
+        expect(question_state["digest"]).to eq(asker.last_question.digest)
+      end
+    end
+  end
+
+  # Feeds keys through nvim's OWN mapping resolution (feedkeys, never
+  # `:normal!`, which bypasses mappings) so the buffer-local map is what runs.
+  def press(bufname, keys, cursor: [])
+    inspector.exec_lua(<<~LUA, [bufname, keys, cursor])
+      local bufname, keys, cursor = ...
+      vim.cmd("buffer " .. bufname)
+      if cursor[1] then
+        vim.api.nvim_win_set_cursor(0, cursor)
+      end
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+    LUA
+  end
+
+  # The production consumer, wired the way `Repl#run` wires it -- the rail AND
+  # the view set its gestures resolve through -- running for the block's
+  # duration and stopped in an ensure.
+  #
+  # IT RUNS ON ITS OWN THREAD, AND THE INSPECTOR MUST NOT: the neovim gem
+  # decides "block on the socket" vs "yield the fiber" by comparing
+  # `Fiber.current` against the fiber that BUILT the session
+  # (neovim-0.10.0/lib/neovim/session.rb:24,59). A gem call issued from inside
+  # an Async task therefore takes the yielding branch and tries to `Fiber.yield`
+  # across a fiber ASYNC owns, which on ruby 4.0.6 / async 2.42 RAISES
+  # `FiberError` rather than parking. `FiberError < StandardError`, so it is
+  # swallowed and retried: measured while writing this example, 7m28s for one
+  # example with both processes idle at ~0% CPU. (Two earlier diagnoses of that
+  # run -- a mutex cycle across the RPC boundary, then a parked reactor sitting
+  # in epoll -- were both WRONG, and are recorded here only so neither is
+  # rediscovered as an explanation.) It
+  # is a harness hazard only; production's consumer never calls nvim (it pushes
+  # onto the render queue, and the RPC thread owns every nvim call), which is
+  # exactly the rule this file exists to hold.
+  #
+  # Bounded on both ends -- `wait_until` raises at its deadline, the join is
+  # capped -- because a hung editor spec is indistinguishable from a slow one,
+  # and under parallel_rspec a hung worker reports as "fewer examples, zero
+  # failures".
+  def with_consumer(frontend)
+    stop = Thread::Queue.new
+    conductor = instance_double(Lain::CLI::Conductor)
+    worker = Thread.new { serve_editor(frontend, conductor, stop) }
+    yield
+  ensure
+    stop.close
+    raise "the editor consumer thread never stopped" unless worker.join(5)
+  end
+
+  def serve_editor(frontend, conductor, stop)
+    Sync do |task|
+      replies = Lain::CLI::HumanReplies.new(tty: null_tty, conductor:,
+                                            ask_human: Lain::Tools::AskHuman::Directory.new,
+                                            questions: Async::Queue.new)
+      replies.bind_editor(frontend.command_inbox, views: frontend.buffers)
+      surfaces = replies.surfaces(task)
+      task.sleep(0.02) until stop.closed?
+      surfaces.each(&:stop)
+    end
+  end
+
+  def null_tty
+    Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                            history_path: File.join(Dir.tmpdir, "lain-open-gesture-history"))
+  end
+
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 7 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 8 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "7" }
-        expect(described_class::PROTOCOL).to eq("7")
+        wait_until { inspector.get_var("lain_rpc_version") == "8" }
+        expect(described_class::PROTOCOL).to eq("8")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end

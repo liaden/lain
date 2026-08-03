@@ -25,6 +25,29 @@ class RecordingEditorRail
   def attached? = true
 end
 
+# The nvim end of the question round trip, recorded: what
+# {Lain::Frontend::Neovim::QuestionView} posts a document through
+# (`open_question`), so an example can assert WHICH set's document reached the
+# editor rather than merely that something did. The same double
+# inbox_view_spec/question_view_spec use, here because T16's consumer wiring is
+# only real if both production objects are on the far side of it.
+class RecordingQuestionEditor
+  def initialize(refusal: nil)
+    @refusal = refusal
+    @opened = []
+  end
+
+  attr_reader :opened
+
+  def open_question(lines, digest)
+    @opened << [lines, digest]
+    @refusal
+  end
+
+  def documents = @opened.map(&:first)
+  def digests = @opened.map(&:last)
+end
+
 # T13: #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
 # SAME TTY drain UX #answer_loop's read_drained_answer calls at `human>`
 # (`@tty.drain_inbox`), reused rather than a second presentation, and the
@@ -693,6 +716,264 @@ RSpec.describe Lain::CLI::HumanReplies do
     def answer_set(text)
       set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?")])
       Lain::Question::AnswerSet.new(questions: set, text:)
+    end
+  end
+
+  # T16: the inbox's OWN gestures, which is where this consumer had a hole
+  # rather than a defect. T15 bound <CR> and `r` to :LainOpen and the editor
+  # has been sending `["open", [line, generation]]` ever since -- and nothing
+  # popped it, so the verb fell through this loop in silence and pressing enter
+  # on an inbox item did nothing whatsoever in a live session.
+  #
+  # Wired with the PRODUCTION objects on both sides deliberately: a real
+  # {Lain::Frontend::Neovim::Buffers} over a real InboxView and a real
+  # QuestionView. The second half of the same hole was that production Buffers
+  # built its InboxView with NO question surface, so it resolved to `Unwired`
+  # and would have refused every gesture a consumer sent it -- invisible to
+  # T15's specs, which injected the surface themselves.
+  describe "the inbox's gestures on the editor rail" do
+    let(:editor) { RecordingEditorRail.new }
+    let(:nvim) { RecordingQuestionEditor.new }
+    let(:question_view) { Lain::Frontend::Neovim::QuestionView.new(rpc: nvim) }
+    let(:session) { Lain::Session.new }
+    let(:views) { Lain::Frontend::Neovim::Buffers.new(store:, session:, questions: question_view) }
+    # Every rendering the inbox has produced, newest last: what the human would
+    # be looking at, which is how "the new set is listed" is asserted without
+    # reaching into the view.
+    let(:renderings) { [] }
+
+    before do
+      replies.bind_editor(editor, views:)
+      views.initial
+    end
+
+    # Ask, announce, leave the item LISTED (`listed`'s own contract: a blank
+    # answer resolves nothing), and render the arrival into the inbox view --
+    # which is the drain thread's job in production, done inline here. Answers
+    # the Q event, whose digest is what an answer names.
+    def list(asker, question)
+      Sync { listed(asker, question) }
+      asker.last_question.tap do |event|
+        renderings << views.updates(Lain::Telemetry::Message.from_event(event))
+                           .fetch(Lain::Frontend::Neovim::InboxView::NAME)
+      end
+    end
+
+    # What the editor sends back with the gesture: the stamp on the rendering
+    # it is holding, which for a spec is always the newest one.
+    def stamp = views.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
+
+    it "opens the set the cursor's line names, in the editor the gesture came from" do
+      question = list(ask_human, "which db?")
+      editor.push(["open", [1, stamp]])
+
+      with_surfaces { nvim.opened.any? }
+
+      expect(nvim.digests).to eq([question.digest])
+      expect(nvim.documents.last.join("\n")).to include("which db?")
+      expect(editor.refusals).to be_empty
+    end
+
+    it "opens the set on the line pressed, not whichever the inbox lists first" do
+      list(ask_human, "which db?")
+      second = list(other_asker, "deploy now?")
+      editor.push(["open", [2, stamp]])
+
+      with_surfaces { nvim.opened.any? }
+
+      expect(nvim.digests).to eq([second.digest])
+    end
+
+    it "tells the editor when the line names no set, rather than opening nothing in silence" do
+      editor.push(["open", [1, stamp]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/no question set/))
+      expect(nvim.opened).to be_empty
+    end
+
+    # The gate, from the consumer's side: a stamp this view no longer holds is
+    # REFUSED, never resolved against whatever rendering happens to be newest.
+    it "refuses a gesture from a rendering the view no longer holds" do
+      list(ask_human, "which db?")
+      editor.push(["open", [1, stamp + 999]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(nvim.opened).to be_empty
+    end
+
+    # `pin` has sat in the same state as `open` since B4: the editor sends it,
+    # the view can honour it, and nothing popped it.
+    it "pins the turn a :LainPin gesture names" do
+      timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+      views.updates(Lain::Telemetry::TurnUsage.new(digest: timeline.head_digest, model: "m",
+                                                   stop_reason: :end_turn, usage: {}))
+      editor.push(["pin", [1]])
+
+      with_surfaces { session.pins.any? }
+
+      expect(session.pins).to eq([timeline.head_digest])
+      expect(editor.refusals).to be_empty
+    end
+
+    it "tells the editor when the pinned line names no turn" do
+      editor.push(["pin", [4]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/no turn/))
+      expect(session.pins).to be_empty
+    end
+
+    # Null over a nil check, one object further: a session with no editor has
+    # no views either, and the gestures that can only come FROM an editor
+    # answer without anybody asking whether one is attached.
+    it "answers the gestures honestly with no editor bound at all" do
+      replies.bind_editor(nil)
+
+      expect { replies.send(:open_set, [1, 1]) }.not_to raise_error
+      expect { replies.send(:pin_turn, [1]) }.not_to raise_error
+    end
+
+    # T16's own ACs. The advance belongs HERE, on the consumer, and nowhere
+    # else: {Frontend::Neovim::QuestionView}'s lock is not reentrant and its
+    # `submit` runs inside it, so a set opened from the submit callable raises
+    # `ThreadError: recursive locking` on the human's `:w` (question_view_spec
+    # pins that). The consumer pops the hand-off AFTER the write has returned
+    # and the lock is long gone, which is the only place the next set can open
+    # from.
+    describe "advancing after a submitted document" do
+      # Exactly {Frontend::Neovim::CommandInbox#answered}'s push -- the verb and
+      # the ONE array of arguments -- so what this spec puts on the rail is what
+      # production's QuestionView hands it.
+      let(:question_view) do
+        Lain::Frontend::Neovim::QuestionView.new(
+          rpc: nvim, submit: ->(digest, answers) { editor.push(["question_answered", [digest, answers]]) }
+        )
+      end
+
+      # The human's `:w`, minus nvim: the document as it was handed to the
+      # editor, written back citing the set it was opened for.
+      def submit_open_document(digest)
+        expect(question_view.wrote(nvim.documents.last, digest)).to be_nil
+      end
+
+      def open_first
+        editor.push(["open", [1, stamp]])
+        with_surfaces { nvim.opened.any? }
+      end
+
+      it "loads the next pending set when one is submitted" do
+        first = list(ask_human, "which db?")
+        second = list(other_asker, "deploy now?")
+        open_first
+        submit_open_document(first.digest)
+
+        with_surfaces { nvim.opened.size > 1 }
+
+        expect(nvim.digests).to eq([first.digest, second.digest])
+        expect(nvim.documents.last.join("\n")).to include("deploy now?")
+      end
+
+      it "loads the one the inbox lists first among those remaining" do
+        first = list(ask_human, "which db?")
+        second = list(other_asker, "deploy now?")
+        list(other_asker, "ship it?")
+        open_first
+        submit_open_document(first.digest)
+
+        with_surfaces { nvim.opened.size > 1 }
+
+        expect(nvim.digests).to eq([first.digest, second.digest])
+      end
+
+      # The panel's PROBE N at the seam that produced it: two submits in a row.
+      # A row is retired by the agent's committed turn, not by the answer, so
+      # after the second `:w` the FIRST set is still listed -- and an advance
+      # that skipped only the set just answered handed it back as a blank
+      # document, losing the human's ticks and making the third set unreachable.
+      # Silently, because the second answer to a resolved set is dropped.
+      it "keeps walking forward through a burst of submits, never back onto an answered set" do
+        first = list(ask_human, "which db?")
+        second = list(other_asker, "deploy now?")
+        third = list(other_asker, "ship it?")
+        open_first
+        submit_open_document(first.digest)
+        with_surfaces { nvim.opened.size > 1 }
+
+        submit_open_document(second.digest)
+        with_surfaces { nvim.opened.size > 2 }
+
+        expect(nvim.digests).to eq([first.digest, second.digest, third.digest])
+        expect(nvim.documents.last.join("\n")).to include("ship it?")
+      end
+
+      # The other surface answering is the same fact: :LainReply and the
+      # terminal prompt both route through the ONE delivery path, so a set
+      # answered there is not offered again by the editor's advance either.
+      it "counts an answer that arrived at another surface, not only the editor's own" do
+        first = list(ask_human, "which db?")
+        second = list(other_asker, "deploy now?")
+        editor.push(["reply", ["postgres"]])
+        with_surfaces { !ask_human.pending? }
+
+        editor.push(["open", [2, stamp]])
+        with_surfaces { nvim.opened.any? }
+        submit_open_document(second.digest)
+        with_surfaces(timeout: 0.3) { false }
+
+        expect(nvim.digests).to eq([second.digest])
+        expect(first).not_to be_nil
+      end
+
+      # "Returns to the inbox" is the absence of a second document plus a view
+      # holding no set: the human is left where the remaining rows are. The
+      # advance says nothing on this path on purpose -- see
+      # {Lain::CLI::HumanReplies#advance} -- so a stray warning would be the
+      # failure, not the silence.
+      it "returns to the inbox when the last set is submitted" do
+        only = list(ask_human, "which db?")
+        open_first
+        submit_open_document(only.digest)
+
+        with_surfaces(timeout: 0.3) { false }
+
+        expect(nvim.opened.size).to eq(1)
+        expect(question_view).not_to be_open
+        expect(editor.refusals).to be_empty
+        expect(renderings.last.join("\n")).to include("which db?")
+      end
+
+      # Ruling 2 is what makes this hold: {QuestionView#open} refuses while a
+      # set is open and does NOT post on refusal, so no arrival can re-render
+      # over a half-ticked document. If one ever can, the RequestBuffer clobber
+      # defect is back.
+      it "leaves an open set untouched when another arrives, and lists the new one" do
+        first = list(ask_human, "which db?")
+        open_first
+        list(other_asker, "deploy now?")
+
+        with_surfaces(timeout: 0.3) { false }
+
+        expect(nvim.opened.size).to eq(1)
+        expect(question_view.digest).to eq(first.digest)
+        expect(renderings.last.join("\n")).to include("which db?").and include("deploy now?")
+      end
+
+      it "does not advance when the set is abandoned rather than submitted" do
+        first = list(ask_human, "which db?")
+        list(other_asker, "deploy now?")
+        open_first
+        question_view.abandoned(first.digest)
+
+        with_surfaces(timeout: 0.3) { false }
+
+        expect(nvim.opened.size).to eq(1)
+        expect(question_view).not_to be_open
+        expect(renderings.last.join("\n")).to include("which db?")
+      end
     end
   end
 end

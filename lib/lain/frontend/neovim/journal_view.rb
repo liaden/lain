@@ -15,7 +15,7 @@ module Lain
       class JournalView
         NAME = "lain://journal"
 
-        # The at-rest projection (see {Neovim#prime_views}): the journal exists
+        # The at-rest projection (see {Surfaces#prime}): the journal exists
         # from attach in the SAME one-empty-line state a fresh buffer holds, so
         # runtime.lua's first-append-replaces check still sees a fresh buffer
         # and the journal never leads with a blank.

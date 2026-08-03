@@ -63,6 +63,32 @@ module Lain
         def self.attached? = false
       end
 
+      # The views nobody wired ({NoEditor}'s other half): no editor means no
+      # inbox rendering to resolve a line against and no timeline to pin a turn
+      # in. Every gesture answers {Nothing}, so the consumer never asks whether
+      # views were bound -- and the sentence it hands back goes to {NoEditor},
+      # which renders it nowhere, so there is no nil to check on that side
+      # either.
+      module NoViews
+        # Nothing happened, and here is why -- the shape both
+        # {Frontend::Neovim::InboxView::Opened} and
+        # {Frontend::Neovim::Buffers::TimelineView::Pin} answer, since the two
+        # gestures share one refusal path here.
+        module Nothing
+          def self.opened? = false
+          def self.pinned? = false
+          def self.report = "no editor is attached, so there is nothing to open or pin"
+        end
+
+        # `**` rather than the named keyword ({Frontend::Neovim::Buffers#open}
+        # takes `generation:`): a keyword is its own name, so there is no
+        # underscore spelling that both matches the caller and reads as unused.
+        def self.open(_line, **) = Nothing
+        def self.open_next = Nothing
+        def self.pin(_line) = Nothing
+        def self.answered(_digest) = nil
+      end
+
       # `ask_human:` is the ask_human REPLY SEAM -- whatever answers
       # `#reply(answer, digest)` for the set a digest names. Production hands
       # over the run's {Tools::AskHuman::Directory} (many askers, one routing
@@ -75,29 +101,32 @@ module Lain
         @ask_human = ask_human
         @questions = questions
         @editor = NoEditor
-        @reviews = {}
+        @views = NoViews
+        @reviews = Reviews.new
         @inbox = Pending.new
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
       end
 
-      # The editor's command rail -- :LainReply and :LainReviewDone -- bound
-      # before converse runs so #editor_reply_loop knows whether to spawn its
-      # consumer fiber. The frontend hands over its own inbox adapter, or nil
-      # when no editor is attached; that is the ONE nil check in this class,
-      # and it lives here so no other line has to repeat it.
-      def bind_editor(editor) = @editor = editor || NoEditor
-
-      # Hold a review open for the editor's `done` gesture to settle. Keyed on
-      # the PAIR the wire carries -- a bare generation cannot say which epic it
-      # means, and two epics both hand out 1 (see {Epic::Review}).
+      # The editor's command rail -- :LainReply, :LainReviewDone, :LainOpen,
+      # :LainPin -- bound before converse runs so #editor_reply_loop knows
+      # whether to spawn its consumer fiber. The frontend hands over its own
+      # inbox adapter and its view set, or nil for both when no editor is
+      # attached; those are the ONLY nil checks in this class, and they live
+      # here so no other line has to repeat them.
       #
-      # The generation goes through {Epic::WireInteger} on BOTH sides of this
-      # lookup, because a key read two ways is a key that misses: `.to_i` turns
-      # `"7abc"` and `7.9` into 7 and `nil` into 0, so a shallow reading here
-      # would name somebody else's review rather than refuse.
-      def bind_review(review, token:)
-        @reviews[review_key(token.epic_slug, token.generation)] = [review, token.path]
+      # `views` is the frontend's {Frontend::Neovim#buffers}: an `open` or a
+      # `pin` names a LINE, and only the view that rendered that line can say
+      # which set or turn it is. Bound beside the rail because the two are one
+      # conversation -- the gesture arrives on the rail, resolves through the
+      # views, and a refusal goes back out on the rail.
+      def bind_editor(editor, views: nil)
+        @editor = editor || NoEditor
+        @views = views || NoViews
       end
+
+      # Hold a review open for the editor's `done` gesture to settle -- see
+      # {Reviews#bind}, which is where the keying rule lives.
+      def bind_review(review, token:) = @reviews.bind(review, token:)
 
       # A human question is waiting for an answer: an item mid-drain (@inbox) or
       # one a subagent enqueued while the human sat idle at `you>`, which no
@@ -226,8 +255,19 @@ module Lain
       # the set it named IS answered.
       def deliver(answer, digest)
         @ask_human.reply(answer, digest)
-        @inbox.retire(digest)
+        answered(digest)
       rescue Lain::Promise::AlreadyResolved
+        answered(digest)
+      end
+
+      # What "this set is answered" means to everything that lists it, in ONE
+      # place because there is one delivery path: the line leaves the terminal's
+      # own list, and the editor's views stop offering the set -- whichever
+      # surface actually took the answer. Reported rather than inferred: a row
+      # is retired by the agent's committed turn, a model round trip later, so
+      # until then only this knows.
+      def answered(digest)
+        @views.answered(digest)
         @inbox.retire(digest)
       end
 
@@ -258,14 +298,51 @@ module Lain
       # comes back as AlreadyResolved, which {#deliver} drops.
       def serve_editor_command
         verb, args = pop_command
-        deliver(args.first.to_s, @inbox.oldest.digest) if verb == "reply"
-        answer_document(args) if verb == "question_answered"
-        settle_review(args) if verb == "review_done"
-        sleep(IDLE_TICK) if verb.nil?
+        verb.nil? ? sleep(IDLE_TICK) : routes[verb]&.call(args)
       rescue Lain::Promise::AlreadyResolved
         nil
       rescue StandardError => e
         @editor.review_refused(e.message)
+      end
+
+      # One verb, one reaction -- {Frontend::Neovim::Router}'s shape on the
+      # consumer's side of the same rail, and its `&.` for the same reason: the
+      # editor's commands are not this object's to validate, so a verb no route
+      # claims falls through in silence (it rode its own path to the frontend).
+      # It became a table when `open` and `pin` made five branches of it and
+      # Metrics said what that was.
+      def routes
+        @routes ||= {
+          "reply" => ->(args) { deliver(args.first.to_s, @inbox.oldest.digest) },
+          "question_answered" => ->(args) { answer_document(args) },
+          "review_done" => ->(args) { @reviews.settle(args) },
+          "open" => ->(args) { open_set(args) },
+          "pin" => ->(args) { pin_turn(args) }
+        }.freeze
+      end
+
+      # The inbox's `<CR>`/`r` gesture (T16): the wire's `["open", [line,
+      # generation]]`. The LINE is all the editor can send -- an inbox row
+      # renders no digest -- and the GENERATION is the stamp on the rendering
+      # the human is looking at, without which a line number names a position
+      # in a buffer whose positions move under it.
+      def open_set(args)
+        line, generation = args
+        gestured(@views.open(line, generation:), &:opened?)
+      end
+
+      # :LainPin's `["pin", [line]]` (B4), which has been sent and dropped for
+      # as long as `open` was: the timeline only ever grows, so a line names one
+      # turn forever and no stamp is needed.
+      def pin_turn(args) = gestured(@views.pin(args.first), &:pinned?)
+
+      # A gesture that did not land owes the human a sentence, and it belongs in
+      # the editor the gesture came from -- the same rail a refused
+      # :LainReviewDone answers on. The predicate rides as a block because the
+      # two gestures name their own success ("opened", "pinned") and neither
+      # should be renamed to share a word with the other.
+      def gestured(outcome)
+        @editor.review_refused(outcome.report) unless yield(outcome)
       end
 
       # The written question document ({Neovim::QuestionView}): the wire's
@@ -276,34 +353,32 @@ module Lain
       def answer_document(args)
         digest, answers = args
         deliver(answers.render, digest)
+        advance
       end
 
-      # The wire's `["review_done", [generation, epic_slug, annotations]]` --
-      # ONE array of arguments, like every other verb on this rail, because the
-      # pop above destructures `verb, args`. Annotations arrive String-keyed:
-      # they crossed msgpack from lua and nothing here re-keys them, so the
-      # journal records what the editor actually sent.
-      def settle_review(args)
-        generation, epic_slug, annotations = args
-        key = review_key(epic_slug, generation)
-        review, path = @reviews.fetch(key) do
-          raise Lain::Epic::Review::NotOpen,
-                "review generation #{generation} is not open for epic #{epic_slug.inspect}"
-        end
-        review.settle(generation, disk: File.binread(path), annotations: annotations || [])
-        @reviews.delete(key)
-      end
-
-      # The identity BOTH sides of the lookup must read the same way: the
-      # epic's slug, and the generation through the ONE wire reader
-      # ({Epic::WireInteger}). It refuses `"7abc"`, `7.9`, `0` and negatives
-      # instead of coercing them, so a malformed `done` is answered rather than
-      # silently keyed onto somebody else's review; the refusal reaches the
-      # human because {#serve_editor_command} turns any raise into an editor
-      # refusal.
-      def review_key(epic_slug, generation)
-        [epic_slug.to_s, Lain::Epic::WireInteger.read(generation, field: "generation")]
-      end
+      # T16: one document submitted, so open the next set the human owes an
+      # answer to -- or tell them there is none and leave them at the inbox.
+      #
+      # IT HAPPENS HERE, ON THE CONSUMER, AND IT CANNOT HAPPEN ANYWHERE ELSE.
+      # {Frontend::Neovim::QuestionView} holds a non-reentrant Mutex across the
+      # write and calls its `submit` INSIDE it, so a chain from the submit
+      # callable (or from `#wrote`) re-enters that lock and raises
+      # `ThreadError: deadlock; recursive locking` on the human's `:w`, with
+      # the answer already handed on. This runs after the write returned and
+      # the lock is long gone, which is the whole reason the hand-off is a
+      # queue somebody else pops.
+      #
+      # It needs no argument: {#deliver} has already told the views that this
+      # set was answered, and every set answered before it too, so "the next
+      # one" is a question the views can answer for themselves.
+      #
+      # Its outcome is deliberately NOT echoed, which is the one place this
+      # differs from {#open_set}: the human asked for no particular set here,
+      # and everything the advance could say is already on their screen -- a
+      # document opened, or the inbox with the remaining rows in it. A set it
+      # could not open keeps its row, so pressing enter on it is what asks for
+      # a sentence, and that path gives one.
+      def advance = @views.open_next
 
       def pop_command
         @editor.pop(true)
@@ -316,6 +391,50 @@ module Lain
     # for the same reason: each collaborator is its own responsibility, and the
     # split keeps each body inside Metrics/ClassLength instead of loosening it.
     class HumanReplies
+      # The reviews the editor is holding open, and the ONE rule that keying
+      # them needs. Its own object because "which review does this `done`
+      # gesture mean" is not the business of a class about human replies: it
+      # rides the same rail and shares nothing else, and {HumanReplies} was
+      # over `Metrics/ClassLength` carrying it.
+      #
+      # Keyed on the PAIR the wire carries -- a bare generation cannot say which
+      # epic it means, and two epics both hand out 1 (see {Epic::Review}) -- and
+      # the generation goes through {Epic::WireInteger} on BOTH sides of the
+      # lookup, because a key read two ways is a key that misses: `.to_i` turns
+      # `"7abc"` and `7.9` into 7 and `nil` into 0, so a shallow reading would
+      # name somebody else's review rather than refuse.
+      class Reviews
+        def initialize = @open = {}
+
+        def bind(review, token:) = @open[key(token.epic_slug, token.generation)] = [review, token.path]
+
+        # The wire's `["review_done", [generation, epic_slug, annotations]]` --
+        # ONE array of arguments, like every other verb on this rail, because
+        # the consumer destructures `verb, args`. Annotations arrive
+        # String-keyed: they crossed msgpack from lua and nothing here re-keys
+        # them, so the journal records what the editor actually sent.
+        #
+        # A `done` naming no open review RAISES, which is how it reaches the
+        # human: {HumanReplies#serve_editor_command} turns any raise into a
+        # refusal rendered back in the editor the gesture came from.
+        def settle(args)
+          generation, epic_slug, annotations = args
+          named = key(epic_slug, generation)
+          review, path = @open.fetch(named) do
+            raise Lain::Epic::Review::NotOpen,
+                  "review generation #{generation} is not open for epic #{epic_slug.inspect}"
+          end
+          review.settle(generation, disk: File.binread(path), annotations: annotations || [])
+          @open.delete(named)
+        end
+
+        private
+
+        def key(epic_slug, generation)
+          [epic_slug.to_s, Lain::Epic::WireInteger.read(generation, field: "generation")]
+        end
+      end
+
       # The lines a human can see, and the digest each one is answered by.
       # Split out because "which items are listed, and which one does a
       # nameless answer mean" is a responsibility of its own -- {HumanReplies}

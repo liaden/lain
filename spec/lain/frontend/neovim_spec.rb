@@ -114,7 +114,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # Priming (see Neovim#prime_views): the journal exists from attach in the
+    # Priming (see Neovim::Surfaces#prime): the journal exists from attach in the
     # exact one-empty-line state a fresh named_buf holds, so :buffers shows it
     # before any event and the render above still replaces rather than appends
     # (the example below pins that the leading blank never survives).
@@ -206,20 +206,26 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "drain-thread death discipline (T9)" do
+    # The malformed event this whole discipline exists for: `bytes` that is not
+    # a String, which {JournalView#attribute_lines}' `chomp` raises
+    # NoMethodError on -- ON THE DRAIN THREAD, which is the point. A real event
+    # rather than a stubbed collaborator, so these examples assert the rescue
+    # without reaching through the frontend for a view to break.
+    def malformed_output = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: 42)
+
     # AC1: an unexpected drain exception (a malformed event's render raising
     # NoMethodError, say) is recorded and closes the channel like its two
     # siblings (the RPC thread, the resend worker) already do, instead of
     # dying silently and wedging a producer against a Channel nobody drains
-    # anymore. Stubbing the JournalView collaborator is the cleanest way to
-    # make ONE specific render raise without a purpose-built event type --
-    # the same ivar idiom the resend-death example uses on @request_buffer.
+    # anymore. The event itself is the malformed one this rescue exists for --
+    # see {#malformed_output} -- rather than a stubbed view: it makes the same
+    # render raise the same NoMethodError, and it needs no reach-in to do it.
     it "records an unexpected drain exception, closes the channel, and re-raises it after teardown" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "boom")
 
       error = begin
         frontend.run do
-          channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
+          channel.push(malformed_output)
           wait_until { channel.closed? }
         end
         nil
@@ -238,7 +244,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # indistinguishable from a drain death in the one message the exe shows.
     it "labels a resend-worker death with its source" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      request_buffer = frontend.instance_variable_get(:@request_buffer)
+      request_buffer = frontend.instance_variable_get(:@surfaces).request_buffer
       allow(request_buffer).to receive(:resend).and_raise(RuntimeError, "journal torn")
 
       error = begin
@@ -265,13 +271,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # reason the card names, not an incidental one.
     it "still stops the RPC thread when the drainer already died" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "boom")
       rpc_thread = nil
 
       begin
         frontend.run do
           rpc_thread = frontend.instance_variable_get(:@rpc).instance_variable_get(:@thread)
-          channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
+          channel.push(malformed_output)
           wait_until { channel.closed? }
         end
       rescue Lain::Error
@@ -289,12 +294,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # observability here means "not silently dropped", not a public reader.
     it "propagates the block's own exception unswapped, and still records the drainer's death" do
       frontend = described_class.new(channel:, socket_path: @socket)
-      allow(frontend.instance_variable_get(:@journal_view)).to receive(:lines).and_raise(NoMethodError, "drain boom")
       block_error = Class.new(StandardError)
 
       error = begin
         frontend.run do
-          channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi"))
+          channel.push(malformed_output)
           wait_until { channel.closed? }
           raise block_error, "block boom"
         end

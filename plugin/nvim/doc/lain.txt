@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 7) .. |lain-contract|
+  6. The attach contract (protocol 8) .. |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -125,7 +125,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 7)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 8)                            *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -178,9 +178,14 @@ read-only projections), and `lain://request`, the one editable buffer (edit
 it, then `:LainResend`). A seventh, `lain://compose`, appears only while you
 are composing -- see |lain-compose|.
 
+A `lain://question` buffer appears the same way while you are answering a
+question set -- see |lain-runtime-commands|.
+
 The read-only record views share the single `lain` filetype; `b:lain_view`
 names the specific view on EVERY lain:// buffer, and is set before the
-FileType autocmd fires. Dispatch on it: >lua
+FileType autocmd fires. `lain://inbox` also carries
+`b:lain_view_generation`, the rendering it is currently showing, which its
+gestures send back to lain. Dispatch on it: >lua
 
     vim.api.nvim_create_autocmd("FileType", {
       pattern = "lain",
@@ -218,17 +223,30 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainVersion`, and -- only meaningful inside a review buffer lain opened
 (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 
-Answering a question in `lain://inbox` today means `:LainReply {answer}`, which
-answers the OLDEST pending question -- not the one under your cursor.
+In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
+set your cursor is on in `lain://question` for you to tick and `:w`. Answer one
+and lain opens the next set you have NOT answered; answer the last and you are
+left at the inbox.
 
-In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which tells lain which
-question set your cursor is on. *Nothing opens yet*: this half of the gesture
-ships now, and the half that renders the set into `lain://question` for you to
-tick and `:w` lands with the next release. Until it does, the keys are a no-op
-and `:LainReply` is the way to answer.
+A row does not clear when you write it. It clears when the agent that asked has
+taken your answer -- a whole model round trip later -- so the set you just
+submitted stays listed for a moment. That is the list being honest, not the
+write failing. Pressing <CR> on such a row says so and opens nothing: reopening
+it would replace what you wrote with a blank document.
+
+`:LainReply {answer}` still answers the OLDEST pending question -- not the one
+under your cursor -- as a hand-typed one-liner. A set of several questions has
+no single-line answer, so the keys are the way to answer one.
+
+The gesture carries your cursor's line AND the rendering the buffer is holding
+(`b:lain_view_generation`, stamped by lain on every inbox render). Both are
+needed: the inbox retires rows as questions are answered, so a line number
+alone names a position in a listing that may already have moved. A gesture from
+a rendering lain no longer holds is refused, and says so, rather than opening
+whatever now sits on that line.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 7)                            *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 8)                            *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -262,7 +280,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 REVIEWING A DOCUMENT (PROTOCOL 7)                            *lain-review*
+6.6 REVIEWING A DOCUMENT (PROTOCOL 8)                            *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 

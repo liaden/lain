@@ -93,7 +93,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     Timeout.timeout(8) { journal.pop }
   end
 
-  # Priming (see Neovim#prime_views) gives every view placeholder text from
+  # Priming (see Neovim::Surfaces#prime) gives every view placeholder text from
   # attach, so a bare `.any?` wait would pass before the render under test
   # lands -- wait for the rendered JSON itself.
   def request_json_lines

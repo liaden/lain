@@ -51,7 +51,15 @@ module Lain
       # "7": T15 added the inbox's open gesture -- :LainOpen and the "open"
       #   command it sends, carrying the CURSOR LINE (:LainPin's rule, since
       #   the inbox row renders no digest), with <CR> and `r` both bound to it.
-      PROTOCOL = "7"
+      # "8": set_view gained an OPTIONAL third argument, the rendering stamp it
+      #   writes to b:lain_view_generation, and "open"'s second argument moved
+      #   from the line COUNT to that stamp. The count aliased between
+      #   renderings of equal height, which opened the wrong document and
+      #   reported it as a success; the stamp cannot. (No card id: this history
+      #   is read to DATE a change, and the ids above already repeat -- two
+      #   T15s, two T16s, from different chunks -- which is the failure mode.
+      #   Say what changed.)
+      PROTOCOL = "8"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model
@@ -113,9 +121,6 @@ module Lain
                      compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
-        @buffers = Buffers.new(store:, session:)
-        @request_buffer = RequestBuffer.new(journal:)
-        @journal_view = JournalView.new
         # Edited lain://request lines land here from the RPC thread's inbound
         # dispatch and are drained by the resend worker ({#resend_loop}). An
         # unbounded Thread::Queue so {FrontendListener#resend} never blocks the
@@ -124,8 +129,13 @@ module Lain
         @resend_inbox = Thread::Queue.new
         @resend_failure = nil
         @rpc = build_rpc(socket_path:, version:, protocol:, render_capacity:)
-        @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge, request_buffer: @request_buffer)
-        build_surfaces(compose_notify:, question_notify:)
+        build_round_trips(compose_notify:, question_notify:)
+        # `questions:` is what makes the inbox's `<CR>` a real gesture rather
+        # than a refusal: the view that resolves the line needs the surface the
+        # set opens in, and it is built above (it takes the RPC thread).
+        @surfaces = Surfaces.new(rpc: @rpc, store:, session:, journal:, questions: @question_view)
+        @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge,
+                                 request_buffer: @surfaces.request_buffer)
       end
 
       # The C-g compose round trip's Ruby end (T15), for the terminal prompt to
@@ -145,6 +155,15 @@ module Lain
       # to be refused. A collaborator, never the session.
       # @return [CommandInbox]
       attr_reader :command_inbox
+
+      # The view set the editor's gestures resolve THROUGH: an `open` names a
+      # line of a rendering only {InboxView} can identify, a `pin` names a line
+      # of a chain only {Buffers::TimelineView} can. Exposed for the same reason
+      # {#command_inbox} is -- the consumer that pops the rail is agent-side and
+      # holds neither the frontend nor the session -- and it is a collaborator,
+      # never the session.
+      # @return [Buffers]
+      def buffers = @surfaces.buffers
 
       # Hand a file on disk to the human, in a focused split, stamped with the
       # review it belongs to (T16). The editor answers on {#command_inbox} with
@@ -241,26 +260,10 @@ module Lain
       # thread, inside the editor's write, under that view's lock, so it must be
       # an unbounded never-closed queue push -- something that cannot park and
       # cannot raise -- and never a promise resolution.
-      def build_surfaces(compose_notify:, question_notify:)
+      def build_round_trips(compose_notify:, question_notify:)
         @command_inbox = CommandInbox.new(inbox: @rpc.command_inbox, rpc: @rpc)
         @compose = Compose.new(rpc: @rpc, notify: compose_notify)
         @question_view = QuestionView.new(rpc: @rpc, notify: question_notify, submit: @command_inbox.method(:answered))
-      end
-
-      # Post every projection's at-rest state so the full lain:// buffer set is
-      # in `:buffers` from attach -- an idle session that shows no buffers reads
-      # as "broken" (the first manual verification pass stumbled exactly there).
-      # Runs FIRST on the drain thread ({#drain}), so priming strictly precedes
-      # every event render. The rescue mirrors {#post}'s: an RPC thread dead
-      # this early is already loud through {FrontendListener#died} and
-      # {#run}'s re-raise.
-      def prime_views
-        [@journal_view, @buffers].each do |view|
-          view.initial.each { |name, lines| @rpc.post_view(name, lines) }
-        end
-        @request_buffer.initial.each { |name, lines| @rpc.post_view(name, lines, editable: true) }
-      rescue ClosedQueueError
-        nil
       end
 
       # The failures the background threads RECORDED rather than raised (a raise
@@ -319,8 +322,8 @@ module Lain
       # wedge against a full queue. Same record-and-die shape as the resend
       # worker ({#record_worker_death}); the drainer's inlet IS the channel.
       def drain
-        prime_views
-        @channel.drain { |event| post(event) }
+        @surfaces.prime
+        @channel.drain { |event| @surfaces.post(event) }
       rescue StandardError => e
         @drain_failure = record_worker_death(e)
       end
@@ -340,7 +343,7 @@ module Lain
       # the RPC thread, so its Channel push always drains.
       def resend_loop
         while (lines = @resend_inbox.pop)
-          @resender.deliver(@request_buffer.resend(lines))
+          @resender.deliver(@surfaces.resend(lines))
         end
       rescue ClosedQueueError
         # Teardown closed the Channel out from under an in-flight resend; a
@@ -383,25 +386,6 @@ module Lain
       rescue ClosedQueueError
         nil
       end
-
-      # Journal lines (append) and view updates (whole-buffer replace, 4-2.2:
-      # {Buffers}) are two independent projections of the SAME event, so both
-      # are attempted regardless of which (if either) actually produces
-      # anything. A ClosedQueueError here means the RPC thread died between this
-      # event's arrival and its post -- its failure already rides {RpcThread#failure}
-      # and re-raises from {#run} once teardown completes, so dropping this one
-      # event is not additional data loss, just the last render racing the death.
-      def post(event)
-        lines = @journal_view.lines(event)
-        @rpc.post_render(lines) unless lines.empty?
-        @buffers.updates(event).each { |name, view_lines| @rpc.post_view(name, view_lines) }
-        # The editable view is posted with editable: true, so the runtime leaves
-        # the buffer modifiable for the human -- a read-only post would flip it
-        # nomodifiable and lock out the edit :LainResend depends on.
-        @request_buffer.updates(event).each { |name, view_lines| @rpc.post_view(name, view_lines, editable: true) }
-      rescue ClosedQueueError
-        nil
-      end
     end
   end
 end
@@ -415,3 +399,6 @@ require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
 require_relative "neovim/question_view"
+# LAST: it builds the three views above, so every one of them must exist by the
+# time its body is read (the same load-order rule {Context::REQUIRES} states).
+require_relative "neovim/surfaces"

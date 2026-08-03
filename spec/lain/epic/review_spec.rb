@@ -272,7 +272,7 @@ RSpec.describe Lain::Epic::Review do
   end
 
   # The generation arrives off a wire, so it can be junk. Its only caller
-  # (`CLI::HumanReplies#settle_review`) rescues NotOpen and renders a refusal to
+  # (`CLI::HumanReplies::Reviews#settle`) rescues NotOpen and renders a refusal to
   # the editor; anything else escapes and kills the fiber that reads the
   # editor's replies, so a stale buffer takes the reply loop down with it.
   it "refuses a wire generation that names no review as NotOpen, not as a bare ArgumentError" do

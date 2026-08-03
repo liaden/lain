@@ -327,6 +327,34 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
     end
   end
 
+  # T16's constraint, made mechanical. The next set has to be opened by the
+  # RAIL'S CONSUMER -- the fiber that pops the hand-off queue -- and never by
+  # the `submit` callable, because `submit` runs INSIDE this object's lock and
+  # that lock is not reentrant. The failure is not subtle and not silent, which
+  # is the point of pinning it: a caller who "chains" the next set off the
+  # submit gets a ThreadError on the human's `:w`, with the answer already
+  # handed on and the buffer left modified.
+  describe "the advance cannot chain from inside the write" do
+    let(:opened_from_submit) { [] }
+    let(:submit) do
+      lambda do |digest, answers|
+        handed << [digest, answers]
+        opened_from_submit << subject_holder.first.open(later, "digest-b")
+      end
+    end
+    let(:subject_holder) { [] }
+
+    it "raises rather than quietly re-entering, which is why the consumer owns the advance" do
+      subject = view
+      subject_holder << subject
+      subject.open(asked, "digest-a")
+      lines = tick(buffer, "sqlite")
+
+      expect { subject.wrote(lines, "digest-a") }.to raise_error(ThreadError, /recursive locking/)
+      expect(opened_from_submit).to be_empty
+    end
+  end
+
   # {Lain::Promise} wraps an Async::Variable and must be resolved on the reactor
   # thread; this object runs on the RPC thread. So the answer leaves here the
   # way every other editor command does -- pushed onto a rail somebody else pops

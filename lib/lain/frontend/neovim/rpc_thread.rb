@@ -20,8 +20,11 @@ module Lain
         APPEND = "local lines = ...; if _G.__lain then _G.__lain.render(lines) end"
 
         # Whole-buffer replace for a named state view (4-2.2). Same
-        # not-yet-injected guard as {APPEND}.
-        SET_VIEW = "local name, lines = ...; if _G.__lain then _G.__lain.set_view(name, lines) end"
+        # not-yet-injected guard as {APPEND}. The third argument is OPTIONAL and
+        # is the rendering stamp (T16): the one view that carries one is
+        # lain://inbox, whose gesture has to name the rendering it came from,
+        # and every other view calls this with two arguments exactly as before.
+        SET_VIEW = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_view(name, lines, gen) end"
 
         # Whole-buffer replace for the ONE editable view, lain://request (4-2.3).
         # Distinct from {SET_VIEW} only in the lua entry point it calls (which
@@ -86,8 +89,16 @@ module Lain
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
         # @param editable [Boolean]
-        def post_view(name, lines, editable: false)
-          @queue.push(Command.new(args: [name, lines], lua: editable ? SET_REQUEST : SET_VIEW))
+        # @param generation [Integer, nil] stamps the buffer (T16) so a gesture
+        #   from it can say WHICH rendering the human is looking at -- today
+        #   lain://inbox alone. Its absence is ARITY, not a nil argument: a nil
+        #   crosses msgpack and arrives in lua as `vim.NIL`, which is TRUTHY
+        #   there. Built by branch and never by `compact`, which cannot tell
+        #   "no stamp" from "no lines" -- it would send `[name, generation]`
+        #   and lua would bind the stamp as the buffer's lines.
+        def post_view(name, lines, editable: false, generation: nil)
+          args = generation.nil? ? [name, lines] : [name, lines, generation]
+          @queue.push(Command.new(args:, lua: editable ? SET_REQUEST : SET_VIEW))
         end
 
         # The ONE non-blocking post (T15). Every other producer is a background
@@ -196,7 +207,9 @@ module Lain
         # it, having its own reason to treat the last render as a lost race).
         def post_render(lines) = deliver { @queue.post_render(lines) }
 
-        def post_view(name, lines, editable: false) = deliver { @queue.post_view(name, lines, editable:) }
+        def post_view(name, lines, editable: false, generation: nil)
+          deliver { @queue.post_view(name, lines, editable:, generation:) }
+        end
 
         # The NON-BLOCKING opens. All four are called from a path that cannot
         # afford to park -- Reline's input loop, the reply consumer's fiber, or
