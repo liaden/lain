@@ -582,6 +582,8 @@ module Lain
   end
 end
 
-# Subclasses reopen AskHuman, so they load after the class body -- this file
-# is the ask_human subtree's index (see CLAUDE.md, Requires).
+# Both reopen AskHuman -- Notifying subclasses it -- so they load after the
+# class body; this file is the ask_human subtree's index (see CLAUDE.md,
+# Requires).
+require_relative "ask_human/directory"
 require_relative "ask_human/notifying"
