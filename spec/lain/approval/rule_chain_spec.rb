@@ -81,6 +81,17 @@ module RuleChainSpecSupport
     def decide(_call) = raise(Consulted, "a rule past the deciding one was consulted")
   end
 
+  # A rule that OWNS an inner chain: the nesting shape the chain has to compose
+  # under, and the one a plain `nil` for "poisoned" quietly broke.
+  class Delegating < Lain::Approval::Rule
+    def initialize(inner)
+      super()
+      @inner = inner
+    end
+
+    def decide(call) = @inner.decide(call)
+  end
+
   # A fault recorder: the seam a chain reports a broken rule through.
   class Recorder
     attr_reader :faults
@@ -237,14 +248,32 @@ RSpec.describe Lain::Approval::RuleChain do
     end
 
     it "poisons the allow side: an allow reached over a fault becomes an escalation" do
-      expect(chain(RuleChainSpecSupport::Raiser.new, RuleChainSpecSupport::Allower.new).decide(call)).to be_nil
+      answer = chain(RuleChainSpecSupport::Raiser.new, RuleChainSpecSupport::Allower.new).decide(call)
+
+      expect(answer).to be_a(described_class::Poisoned)
+      expect(answer).not_to be_allow
+      expect(answer.decision).to be_nil
     end
 
-    it "leaves the deny side working, still attributed" do
-      decision = chain(RuleChainSpecSupport::Raiser.new, RuleChainSpecSupport::Denier.new).decide(call)
+    # The distinction the whole Poisoned value exists for: a caller must be able
+    # to tell "nobody had an opinion" from "an allow was suppressed", and `nil`
+    # for both is what let a nesting rule launder a fault.
+    it "answers a poisoned value, never the same nothing an abstention answers" do
+      abstained = chain(RuleChainSpecSupport::Silent.new).decide(call)
+      poisoned = chain(RuleChainSpecSupport::Raiser.new).decide(call)
 
-      expect(decision).to be_deny
-      expect(decision.rule).to eq("denier")
+      expect(abstained).to be_nil
+      expect(poisoned).not_to be_nil
+      expect(poisoned).to be_faulted
+      expect(poisoned.fault.rule).to eq("raiser")
+    end
+
+    it "leaves the deny side working, still attributed, and still says a rule broke" do
+      answer = chain(RuleChainSpecSupport::Raiser.new, RuleChainSpecSupport::Denier.new).decide(call)
+
+      expect(answer).to be_deny
+      expect(answer).to be_faulted
+      expect(answer.decision.rule).to eq("denier")
     end
 
     it "leaves a clean chain untouched" do
@@ -263,25 +292,71 @@ RSpec.describe Lain::Approval::RuleChain do
     end
 
     it "leaves no decision behind when it was the only rule" do
-      expect(chain(RuleChainSpecSupport::Raiser.new).decide(call)).to be_nil
+      expect(chain(RuleChainSpecSupport::Raiser.new).decide(call).decision).to be_nil
       expect(recorder.faults.size).to eq(1)
     end
 
     it "records nowhere at all when the chain was built with no recorder" do
-      expect(described_class.new([RuleChainSpecSupport::Raiser.new]).decide(call)).to be_nil
+      answer = described_class.new([RuleChainSpecSupport::Raiser.new]).decide(call)
+
+      # Poisoning is the chain's own and does not depend on the recorder, which
+      # is what keeps a Null-wired chain safe even while it is silent.
+      expect(answer).to be_faulted
+      expect(answer.decision).to be_nil
+    end
+  end
+
+  # The card's illustration, and the reason a poisoned answer is a value rather
+  # than a nil: a rule that OWNS an inner chain used to hand the outer chain the
+  # inner's `nil`, which the outer read as an abstention and promoted the next
+  # rule's allow over.
+  describe "a rule that owns an inner chain" do
+    def nested(inner_rules, *outer_rules)
+      chain(RuleChainSpecSupport::Delegating.new(described_class.new(inner_rules, faults: recorder)), *outer_rules)
+    end
+
+    it "does not launder the inner chain's fault into an abstention" do
+      answer = nested([RuleChainSpecSupport::Raiser.new, RuleChainSpecSupport::Allower.new],
+                      RuleChainSpecSupport::Allower.new).decide(call)
+
+      expect(answer).to be_a(described_class::Poisoned)
+      expect(answer).not_to be_allow
+      expect(answer.fault.rule).to eq("raiser")
+    end
+
+    it "propagates a clean inner decision untouched" do
+      expect(nested([RuleChainSpecSupport::Denier.new]).decide(call)).to be_deny
+    end
+
+    it "reaches the outer rules when the inner chain abstains" do
+      expect(nested([RuleChainSpecSupport::Silent.new], RuleChainSpecSupport::Allower.new).decide(call)).to be_allow
+    end
+
+    # ATTRIBUTION is what the unwrap actually buys, and it is the assertion that
+    # tells the fix from its absence: without it a returned Poisoned becomes a
+    # NotADecision fault OF THE DELEGATING RULE, which poisons too -- so the
+    # outcome still fails closed and only the name is wrong. `raiser`, never
+    # `delegating`.
+    it "lets a deny past the inner fault decide, still saying WHICH rule broke" do
+      answer = nested([RuleChainSpecSupport::Raiser.new], RuleChainSpecSupport::Denier.new).decide(call)
+
+      expect(answer).to be_deny
+      expect(answer).to be_faulted
+      expect(answer.fault.rule).to eq("raiser")
+      expect(answer.fault.error).to eq("RuleChainSpecSupport::Raiser::Boom")
     end
   end
 
   describe "a rule that answers something other than a decision" do
     it "is a fault, not a decision the caller discovers by crashing" do
-      expect(chain(RuleChainSpecSupport::Booleanish.new).decide(call)).to be_nil
+      expect(chain(RuleChainSpecSupport::Booleanish.new).decide(call)).to be_faulted
       expect(recorder.faults.first.error).to eq("Lain::Approval::RuleChain::NotADecision")
     end
   end
 
   describe "nothing may take the chain down" do
     it "not a rule that does not implement the seam" do
-      expect(described_class.new([Lain::Approval::Rule.new], faults: recorder).decide(call)).to be_nil
+      expect(described_class.new([Lain::Approval::Rule.new], faults: recorder).decide(call)).to be_faulted
       expect(recorder.faults.first.error).to eq("Lain::Approval::Rule::NotImplemented")
     end
 
@@ -290,7 +365,7 @@ RSpec.describe Lain::Approval::RuleChain do
       rule = Class.new(RuleChainSpecSupport::Silent) { define_method(:decide) { |_c| raise nameless, "boom" } }
       stub_const("RuleChainSpecSupport::NamelessRaiser", rule)
 
-      expect(chain(rule.new).decide(call)).to be_nil
+      expect(chain(rule.new).decide(call)).to be_faulted
       expect(recorder.faults.first.error).to include("Class")
     end
 
@@ -305,7 +380,7 @@ RSpec.describe Lain::Approval::RuleChain do
       broken = Object.new
       def broken.call(_fault) = raise("the journal is broken")
 
-      expect(described_class.new([RuleChainSpecSupport::Raiser.new], faults: broken).decide(call)).to be_nil
+      expect(described_class.new([RuleChainSpecSupport::Raiser.new], faults: broken).decide(call)).to be_faulted
     end
 
     it "and an unattributable rule cannot get into a chain in the first place" do

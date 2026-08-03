@@ -897,7 +897,11 @@ RSpec.describe Lain::CLI::Wiring do
       env = wiring.command_env
 
       expect(env.policy_switch).to be_a(Lain::Approval::PolicySwitch)
-      expect(env.policy_switch.current).to be(wiring.approvals)
+      # T21: what the Gate holds is the LADDER, and the identity that matters is
+      # one rung down -- its asking rung must park on the session's ONE queue,
+      # the same object /approve drains.
+      expect(env.policy_switch.current).to be_a(Lain::Approval::Escalation)
+      expect(env.policy_switch.current.find { |rung| rung.name == "surfaces" }.queue).to be(wiring.approvals)
 
       expect(env.model_switch).to be_a(Lain::Context::ModelSwitch)
       expect(env.agent.context.model).to eq(env.model_switch.current)

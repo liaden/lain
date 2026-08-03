@@ -34,9 +34,24 @@ module Lain
     # {AutoSurface} already follows one rung up: a failed spawn there decides
     # nothing (`auto_surface.rb:110-114`) -- it does not let some other surface's
     # yes through in its place. Promoting the next rule's allow is not a no-op.
-    # A deny after a fault still denies and is still attributed; the cost is that
-    # a suppressed allow is indistinguishable from "nobody had an opinion", and
-    # both escalate, which is the safe direction.
+    # A deny after a fault still denies and is still attributed.
+    #
+    # == A poisoned answer is NOT the same nothing as an abstention
+    #
+    # This chain first shipped answering `nil` for both, and that was a defect
+    # rather than a simplification: `nil` then meant "nobody had an opinion" AND
+    # "an allow was suppressed", which are not interchangeable to a composer. A
+    # rule that OWNS an inner chain -- the shape this class exists to make
+    # possible -- would hand the outer chain the inner's poisoned `nil`, the
+    # outer would read it as a plain abstention, and the next rule's allow would
+    # be promoted over a fault that really happened:
+    #
+    #   inner = RuleChain.new([Raiser, Allower])          # poisons correctly
+    #   RuleChain.new([Delegating.new(inner), Allower]).decide(call)   # => allow
+    #
+    # So a poisoned answer is a {Poisoned}, and {#consult} understands one when a
+    # rule hands it back. Nesting then composes for free, and a caller can tell
+    # the two nothings apart without keeping its own tally of the fault stream.
     class RuleChain
       # A subject that is not a {Rule::Call}. The chain type-checks exactly here
       # -- normally it would depend on messages, not types, but "a rule sees the
@@ -71,6 +86,29 @@ module Lain
               error: -(error.class.name || error.class.inspect).to_s,
               message: -error.message.to_s)
         end
+      end
+
+      # What a chain answers when a rule faulted: the decision that survived the
+      # fault (a deny, or nothing once an allow was suppressed) travelling
+      # WITH the fault that poisoned it.
+      #
+      # It is a value rather than a bare sentinel because a caller needs both
+      # halves -- "did anything break" and "what, if anything, was still
+      # decided". A deny reached after a fault is still a deny and is still
+      # attributed; a record of it that does not say a rule broke is a clean
+      # denial that was not one.
+      Poisoned = Data.define(:decision, :fault)
+
+      # Reopened rather than written in the `Data.define` block, per
+      # {Request::SYSTEM_PREFIX}.
+      class Poisoned
+        # Answers the same three questions a {Rule::Decision} does, so a caller
+        # branching on the verdict does not have to unwrap first. `allow?` is
+        # unconditionally false: an allow is exactly what poisoning suppresses,
+        # so one can never be inside.
+        def allow? = false
+        def deny? = !decision.nil? && decision.deny?
+        def faulted? = true
       end
 
       # Where a broken rule is reported: anything answering `#call(Fault)`.
@@ -118,35 +156,72 @@ module Lain
       end
 
       # @param call [Rule::Call] the validated call to judge
-      # @return [Rule::Decision, nil] the first decision made, or nil when no
-      #   rule had an opinion (or when a fault poisoned an allow) -- the caller
-      #   escalates
+      # @return [Rule::Decision, Poisoned, nil] the first decision made; a
+      #   {Poisoned} when a rule faulted, carrying whatever survived it; nil when
+      #   no rule had an opinion at all. The last two both escalate, and a caller
+      #   that treats them as the same thing is the laundering bug in the class
+      #   comment.
       def decide(call)
         raise NotACall, "a rule chain decides a Rule::Call, got #{call.class}" unless call.is_a?(Rule::Call)
 
         # A local rather than instance state: #initialize freezes the chain, so
-        # a `@faulted` would be a FrozenError on the first broken rule.
-        faulted = false
+        # a `@faulted` would be a FrozenError on the first broken rule. The FIRST
+        # fault is kept, because what a poisoned answer has to name is the rule
+        # that broke.
+        faulted = nil
+        remember = ->(fault) { faulted ||= fault }
         # Lazy, so the rules past the deciding one are never consulted: a chain
         # is a lookup, not a survey, and a later rule must not pay (or fault)
         # for a call an earlier one already settled.
-        decision = @consulted.lazy.filter_map { |rule, name| consult(rule, name, call) { faulted = true } }.first
-        return nil if faulted && decision&.allow?
+        decision = @consulted.lazy.filter_map { |rule, name| consult(rule, name, call, remember) }.first
+        return decision unless faulted
 
-        decision
+        Poisoned.new(decision: decision&.allow? ? nil : decision, fault: faulted)
       end
 
       private
 
-      def consult(rule, name, call)
+      # A rule may hand back another chain's {Poisoned} -- that is what a rule
+      # OWNING an inner chain does, and it is the case a plain type check would
+      # turn into a NotADecision fault of its own. Unwrapping it here is what
+      # makes nesting compose: the inner fault propagates as this chain's fault,
+      # and whatever survived it goes on being the answer.
+      # `remember` is a plain argument rather than a block because this method
+      # passes it ON to {#propagate}, and a block that only exists to be
+      # re-yielded is the shape `Style/ExplicitBlockArgument` and
+      # `Performance/RedundantBlockCall` disagree about. It is the same
+      # accumulator {Escalation#settle} threads one layer up.
+      def consult(rule, name, call, remember)
         answer = rule.decide(call)
         return answer if answer.nil? || answer.is_a?(Rule::Decision)
+        return propagate(answer, remember) if answer.is_a?(Poisoned)
 
         raise NotADecision, "#{name} answered #{answer.class}; a rule decides or says nothing"
       rescue StandardError => e
-        report(Fault.for(rule: name, call:, error: e))
-        yield
+        fault = Fault.for(rule: name, call:, error: e)
+        report(fault)
+        remember.call(fault)
         nil
+      end
+
+      # An inner chain's poison, carried out as this chain's own: the fault it
+      # names becomes this chain's fault, and whatever survived it goes on being
+      # the answer -- a deny still decides, a suppressed allow still escalates.
+      #
+      # It does NOT re-{#report} the fault, and with {Faults::Null} as the
+      # default constructor argument that is worth stating: a rule that writes
+      # `RuleChain.new([...])` with no recorder -- the likely spelling -- keeps
+      # its fault out of the recorder stream entirely, because the only chain
+      # that ever saw it had nowhere to send it. The OUTCOME is unaffected (the
+      # poison propagates either way, and the raising rule is named in the
+      # {Fault} this carries, which {Approval::Escalation::Rules} renders into
+      # its ruling's reason). What is lost is the fault RECORD, so a nested
+      # author who wants one passes the outer chain's recorder inward.
+      # Re-reporting here instead would double-record every fault in the common
+      # case, where both chains share a recorder.
+      def propagate(poisoned, remember)
+        remember.call(poisoned.fault)
+        poisoned.decision
       end
 
       # The report is itself total. Behind this seam is a journal, and a journal

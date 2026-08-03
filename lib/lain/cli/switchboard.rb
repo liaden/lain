@@ -14,8 +14,9 @@ module Lain
     #   `/yolo` flips the delegate inside it, Gate stays construction-fixed.
     #   `--yolo` wires NO queue ({#approvals} is nil then, so Wiring's callers
     #   keep their existing no-queue paths); otherwise the {Approval::Queue} is
-    #   both the parked list `/approve` drains and, through the ladder, the
-    #   policy the asking rungs resolve to.
+    #   the parked list `/approve` drains, and the {Approval::Escalation} ladder
+    #   OVER it is what the asking rungs resolve to -- so the deterministic rungs
+    #   answer first and the queue is where a call lands when they abstain.
     # * ONE {Context::ModelSwitch} the main agent's Context reads at render
     #   time -- `/model` writes it, {#graft} installs it.
     # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
@@ -41,7 +42,12 @@ module Lain
       # call (/dev/null under --no-journal) -- the leak wiring.rb:363-366
       # documents and fixed for #goal_driver. This class resolves that journal
       # exactly once and builds all of them over it.
-      attr_reader :approvals, :policy_switch, :model_switch, :mode_switch, :toolset
+      # `ladder` is read-only in the strongest sense: {Approval::Escalation} is a
+      # frozen value with no writer at all, so exposing it hands out the reading
+      # ("which rungs are in force, in what order") and no authority. That is the
+      # same line {LiveToolset} draws below, and it is why it can sit beside the
+      # switches without being one.
+      attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
@@ -95,13 +101,34 @@ module Lain
       # initial policy is the wiring's choice and is already visible in the
       # session's flags, which is the rule {Approval::PolicySwitch} and
       # {Mode::Switch} each state for themselves.
+      # The live toolset slot and the ladder are built FIRST, before the first
+      # {#resolve}: the ladder is what the asking rungs resolve TO, and its
+      # deterministic rung reads the tier off the live capability set. The slot
+      # answers through a thunk, so it may be built while `@resolved` is still
+      # nil -- nothing asks it anything until a call is gated.
       def seed(initial, journal:)
+        @toolset = LiveToolset.new(-> { @resolved })
+        @ladder = build_ladder(journal:)
         resolution = resolve(initial)
         @resolved = resolution.toolset
         @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
-        @toolset = LiveToolset.new(-> { @resolved })
         @mode_switch = BoundSwitch.new(Mode::Switch.new(initial, journal:),
                                        resolve: method(:resolve), apply: method(:apply))
+      end
+
+      # T21: what an asking posture actually resolves to is the LADDER, not the
+      # bare queue. The queue is still the parked list `/approve` drains and is
+      # still the bottom rung -- the deterministic rungs simply get asked first,
+      # so a call the session has already decided about never reaches a human,
+      # and every rung's answer lands in the same journal the flips do.
+      #
+      # `nil` under --yolo, because that session wired no queue: the sentinel in
+      # {#resolve} then fires and {#refuse_queueless} explains why, exactly as it
+      # did when the queue itself was what a posture asked through.
+      def build_ladder(journal:)
+        return nil unless @approvals
+
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:)
       end
 
       # The posture's declared symbols as this session's live collaborators.
@@ -117,7 +144,7 @@ module Lain
       # resolution handed it back reads no table at all: whatever the ladder
       # grows, "this rung wanted the queue" is exactly "the queue arm fired".
       def resolve(mode)
-        resolution = Mode::Resolution.for(mode:, base: @base, queue: @approvals || NO_QUEUE)
+        resolution = Mode::Resolution.for(mode:, base: @base, queue: @ladder || NO_QUEUE)
         refuse_queueless(mode.posture) if resolution.gate_policy.equal?(NO_QUEUE)
         resolution
       end

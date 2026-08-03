@@ -122,10 +122,19 @@ module Lain
       # answers runs as a SIBLING fiber in the same reactor (the exe hosts it
       # beside the Repl's answer_loop) -- the identical two-fiber shape
       # ask_human's perform/reply already proves out.
-      def call(effect, _context)
+      def call(effect, context) = adjudicate(effect, context).approved?
+
+      # The same lifecycle, answering the SETTLED {Pending} instead of its
+      # Boolean. A caller that has to attribute the verdict needs the SURFACE
+      # that made it -- {Approval::Escalation} treats a human's approval and an
+      # {AutoSurface}'s as different kinds of authority -- and a Boolean is the
+      # one thing that cannot carry it. {#call} stays exactly the two-valued duck
+      # {Effect::Handler::Gate} wants, so nothing that held this object as a
+      # policy sees any change.
+      def adjudicate(effect, _context)
         pending = admit(effect)
         settle(pending)
-        pending.approved?
+        pending
       end
 
       # The surface seam: park until a gated call arrives, answer its {Pending}.

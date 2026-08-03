@@ -32,10 +32,30 @@ module Lain
     # this file stops a rule from prefix-matching it. That is the comforting lie
     # `lib/lain/tool/input.rb:15-40` names, one layer up. The doctrine is that a
     # shell command reaches policy as a parsed term (`Shell::Parse` /
-    # `Shell::Verdict`, T15/T16) or not at all, and the place to MECHANIZE it is
-    # the ladder that builds the Call (T21): build a bash Call from a parsed
-    # term, never from the raw input. Until then it is doctrine, and this
-    # paragraph is the warning rather than the enforcement.
+    # `Shell::Verdict`, T15/T16) or not at all.
+    #
+    # T21 named itself the place to mechanize that and DID NOT. It built the
+    # ladder ({Approval::Escalation}) and its `rules` rung still calls
+    # `Call.for(tool:, input: effect.input)` with the model's raw input, because
+    # discharging it needs a decision this Call cannot express today: a term is
+    # `[["git", "-c", "...", "status"]]`, no {Tool::Input} declares a field
+    # shaped like one, and most commands ABSTAIN at the verdict, so a
+    # term-carrying Call would be absent for exactly the calls a rule most wants
+    # to read. Widening {Call} to carry both is a reviewed change, not a detail
+    # of the ladder's wiring.
+    #
+    # So this stays doctrine, and the hazard is now specific enough to state:
+    # the ladder consults {Approval::Escalation::Triage} FIRST, which abstains on
+    # `git ...` (git is a program runner), and then hands the `rules` rung the
+    # raw string anyway. A hand-written prefix rule -- `command.start_with?("git
+    # ")` -- would therefore allow `git -c core.fsmonitor=id status`, which
+    # executes `id`. `Remembered` is not that rule (it matches an exact call
+    # shape, not a prefix), so nothing shipped is exploitable today.
+    #
+    # It is carried as **MA-1** (`planning/specs/chunk-modes-approval-undo.md`):
+    # give {Call} a term-carrying door and build a command tool's Call from the
+    # parsed term. Grep the ID rather than looking for a role to blame -- "the
+    # next person to write a rule" is not a trigger anything fires on.
     #
     # == Identity travels with the decision
     #

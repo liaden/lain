@@ -25,11 +25,31 @@ RSpec.describe Lain::CLI::Switchboard do
   def policy_records = Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
 
   describe "the approval side" do
-    it "wires the queue as BOTH the parked list and the gate's starting policy" do
+    # T21: the queue is still the parked list, but what the gate holds is the
+    # LADDER over it -- the deterministic rungs answer first, and the queue is
+    # where a call lands when they abstain.
+    it "wires the queue as the parked list and the ladder over it as the gate's starting policy" do
       board = switchboard
 
       expect(board.approvals).to be_a(Lain::Approval::Queue)
-      expect(board.policy_switch.current).to be(board.approvals)
+      expect(board.ladder).to be_a(Lain::Approval::Escalation)
+      expect(board.policy_switch.current).to be(board.ladder)
+    end
+
+    it "wires the deterministic rungs below the surfaces, journaling to the session journal" do
+      board = switchboard
+
+      expect(board.ladder.map(&:name)).to eq(%w[triage rules surfaces])
+
+      Sync do |task|
+        parked = task.async { board.policy_switch.call(gated_call, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }
+
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
+                            .map { |record| record["rung"] }.to_a).to eq(%w[triage rules])
+      ensure
+        parked&.stop
+      end
     end
 
     it "wires NO queue under --yolo, starting the switch on ApproveAll" do
@@ -115,14 +135,14 @@ RSpec.describe Lain::CLI::Switchboard do
         board = switchboard
 
         board.mode_switch.switch(mode(:auto), surface: "tty")
-        # The board STARTS on the queue, so asserting only the destination is
+        # The board STARTS on the ladder, so asserting only the destination is
         # vacuous -- "never moved" and "moved back" are the same reading. This
         # is the leg that tells them apart.
-        expect(board.policy_switch.current).not_to be(board.approvals)
+        expect(board.policy_switch.current).not_to be(board.ladder)
 
         board.mode_switch.switch(mode(:manual), surface: "tty")
 
-        expect(board.policy_switch.current).to be(board.approvals)
+        expect(board.policy_switch.current).to be(board.ladder)
       end
 
       # The gate flip rides the SAME journal /yolo's does, so a transcript shows
