@@ -322,6 +322,45 @@ themselves `around`s, and a watchdog inside them would miss a hang in the spawn.
 should be addressed on its own merits; the 30s budget is only where "slow" has clearly become
 "stuck".
 
+## Suite performance and allocations — MEASURED 2026-08-03, mostly negative results
+
+Ran before proposing any work, and it collapsed the proposal: **the suite does not need
+optimising, it needs invoking correctly.**
+
+**The finding.** Serial `bundle exec rspec` is **155s**; `rake pspec` is **~30s** for the identical
+9452 examples. The suite is subprocess-bound (44s user against **92s system**) because the
+isolation/forge/workspace specs drive real `git` and the frontend specs drive real `nvim`/`tmux` —
+which are the subjects under test, so the cost is not removable, but it parallelises almost
+perfectly. CLAUDE.md documented the serial command as the default, which is what every run in this
+chunk used. Fixed there, with the numbers.
+
+**Worker count is already optimal and more is worse:** `-n 7` **18s**, `-n 12` 22s, `-n 16` 29s on
+a 16-core box. The Rakefile's comment already explained why (each worker loads the whole suite, so
+the ceiling is memory), and `spec_workers` was already right.
+
+**Measured and rejected — do not retry these without new evidence:**
+- `TMPDIR=/dev/shm`: **-8.6%** at suite scale (a microbenchmark promised 16.5%; the page cache
+  already had it).
+- `core.fsync=none` / `fsyncMethod=nothing`: **nothing**. Git here is spawn-bound (~5ms/spawn),
+  not fsync-bound.
+- **Mocking `git`**: the `shell_out_factory` seam already exists and the heavy specs already use
+  it — for **failure injection**. The semantics under test are git's own, so a fake would test the
+  fake. The one real inefficiency is that every example pays a 5-spawn `init_repo` even when it
+  immediately replaces git with an exploding lambda; a copied template repo is 27.1ms → 3.5ms, but
+  setup is only ~5% of those files' time, so it is worth ~2s of 155s.
+- Sleeps: 37 calls, but the large ones (3600s, 60s, 30s) are inside stubs testing timeouts and
+  never fire. Real waste is ~3s.
+
+**Allocations: no hot-path problem found.** `Canonical.digest` — the genuine per-turn path, one per
+`Timeline#commit` — is **24 allocations/call**. `Question::Set.from_body` is 178/call, but it runs
+per *gesture* and per tool call, never per turn. The allocation-heaviest groups are spec-side
+(`tty_spec` at 25.8% of 4.25M in its subset), not library code. `test-prof` ships `memory_prof`, so
+none of this needed a new gem.
+
+**If a real perf chunk is ever wanted**, the remaining levers are small and known: the template-repo
+setup (~2s), the ~3s of genuine sleeps, and whatever `TAG_PROF`/`EVENT_PROF` turn up. The 5x was
+free.
+
 ## Proposed next chunk — suite performance and allocations
 
 Joel's call, to run **after T17 lands**. Recorded here with the data this chunk already gathered,

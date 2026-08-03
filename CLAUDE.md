@@ -25,6 +25,17 @@ in a multi-Ractor process a later class-variable READ finds no cache entry and a
 gets read first — for us `i18n/config.rb:176`, which is a victim, not the cause. Fixed in 4.0.6,
 along with two more Ractor crashes (#22075, #22084).
 
+**Why `pspec` and not `rspec`.** The suite is subprocess-bound, not CPU-bound: measured at 44s
+user against 92s *system*, because the isolation, forge and workspace specs drive real `git`, and
+the frontend specs drive real `nvim` and `tmux`. Those are the subjects under test, so the cost is
+not removable -- but it parallelises almost perfectly. Measured on a 16-core box: serial 155s,
+`-n 7` **18s**, `-n 12` 22s, `-n 16` 29s. More workers is WORSE, which is why `spec_workers` is
+one fewer than physical cores: each worker loads the whole suite, so the ceiling is memory, not
+CPU. Things that were measured and do **not** help: `TMPDIR=/dev/shm` (-8.6%, the page cache
+already had it), `core.fsync=none` (nothing -- git here is spawn-bound, not fsync-bound), and
+mocking git (the `shell_out_factory` seam exists and is used for *failure injection*; the
+semantics under test are git's own, so a fake would test the fake).
+
 The failure is easy to misread: `parallel_tests` reports only the examples that SURVIVED, so a
 dead worker looks like "fewer examples, 0 failures, non-zero exit" — the same shape an OOM kill
 produces. Check the example COUNT against a serial run before blaming memory.
@@ -45,6 +56,9 @@ a deleted Homebrew `gmkdir`/`ginstall`. Both it and the OpenSSL breakage above a
 lesson: keep Homebrew out of the Ruby build.
 
 ```bash
+bundle exec rake pspec         # THE suite command: ~30s. Plain `rspec` is the same 9452 examples
+                               # SERIALLY and takes ~2m35s -- 5x slower, for no extra signal.
+bundle exec rspec path/to/one_spec.rb   # one file, or one example: use this, not a bare `rspec`
 bundle exec rspec              # :integration and :core excluded by default; measure the count,
                                # do not trust a number written down here
 bundle exec rubocop -a         # safe autocorrect; see the warning below
