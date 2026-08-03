@@ -20,8 +20,10 @@ module Lain
     # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
     # time, as one {Seam} value -- provider, a child-Context factory, the live
     # parent handle, a journal, the {Supervisor} a model-dispatched actor
-    # launches under, the lineage observer, and the session posture's gate
-    # policy and permitted capabilities -- plus this tool's OWN axes: the
+    # launches under, the lineage observer, the session posture's gate policy
+    # and permitted capabilities, and the run's ask-the-human seam (a child is
+    # enrolled on it and holds an asker of its OWN, never the parent's -- see
+    # {ChildBuilder#build}) -- plus this tool's OWN axes: the
     # union toolset it attenuates from, the spawn {Tool::SpawnPolicy}, a Budget,
     # and a spawn-depth ceiling. The dispatch duck stays the Session (the
     # `context:` a tool receives), which this tool does not read: everything it
@@ -106,12 +108,21 @@ module Lain
       # {Seam.resolve} turns into the same value. What is left here is this tool's
       # OWN axes -- the union, the policy, the budget, and the config triple
       # {#seed_config} closes over.
+      # `announces_as` is what a HUMAN is told is asking when this spawn's
+      # child puts a question to them (T10), and it defaults to `name` because
+      # for most spawns they are the same word. They come apart on the one
+      # child path that ships: the chat's `research_subagent` is NAMED
+      # "subagent" because that is what the model calls, and IS a researcher,
+      # which is what the arrival note and the desktop must say. A separate
+      # keyword rather than a rename, because `name` is the model-facing tool
+      # name and renaming it would change the rendered schema bytes.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
-                     max_depth: 1, name: "subagent", mode: :one_shot, log: Log::Null,
-                     persona: Role::Persona::Null, **spawn_over)
+                     max_depth: 1, name: "subagent", announces_as: name, mode: :one_shot,
+                     log: Log::Null, persona: Role::Persona::Null, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
-        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:)
+        @announces_as = announces_as
+        @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, name: announces_as)
         seed_config(max_depth, name, mode, log)
       end
 
@@ -201,7 +212,14 @@ module Lain
         # Per launch, mirroring #perform: AC4's floor note has no lifecycle
         # exemption, so an actor-mode sibling under the floor is reported too.
         policy.prefix.journal_floor(journal)
-        Actor.new(agent: build_child(parent, worker_env), lineage:, parent:, journal:).launch(prompt)
+        # The actor holds its child's asker registration because it holds the
+        # child's LIFETIME: `Supervisor#stop` farewells every row through
+        # `registration.actor.stop`, so a `deregister` there rides the same
+        # lease teardown that reaps the fiber (T10). {ChildBuilder::Child}
+        # owns what happens when no actor comes out of the launch at all.
+        build_child(parent, worker_env).launched do |agent, registration|
+          Actor.new(agent:, registration:, lineage:, parent:, journal:).launch(prompt)
+        end
       end
 
       # A nested copy of this tool, for a child's union: the same {Seam} and the
@@ -214,7 +232,8 @@ module Lain
       # Subagent, so `protected` can no longer say "only the spawn machinery".
       def descend(parent:, ceiling:)
         config = @builder.config(parent:)
-        self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name, mode: @mode, log: @log)
+        self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name,
+                                 announces_as: @announces_as, mode: @mode, log: @log)
       end
 
       protected
@@ -282,9 +301,7 @@ module Lain
       # loop to settle -- fresh starts that turn as a root, inherit starts it
       # on the parent's head (O(1) fork).
       def run_child(prompt, parent, on_stream_started: nil)
-        child = build_child(parent, WorkerEnv.default)
-        response = child.ask(prompt, on_stream_started:)
-        [child.timeline, response]
+        build_child(parent, WorkerEnv.default).answered { |child| child.ask(prompt, on_stream_started:) }
       end
 
       def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
@@ -383,12 +400,49 @@ module Lain
       # a gate", not "deny".
       UNGATED = Effect::Handler::Gate::ApproveAll.new.freeze
 
+      # The ask-the-human seam a spawn was never taught about -- {Seam}'s
+      # `askers` default, answering the one message a spawn sends it.
+      #
+      # It enrols a bare {AskHuman}: a child built over it HOLDS the capability
+      # and writes its Q into the shared Store, but announcement lives in
+      # {AskHuman::Notifying}, so the question reaches no queue and no desktop,
+      # and {AskHuman::Directory::Unheld} is the registration, so no answer can
+      # be routed to it either. That is deliberately the same wired-to-nothing
+      # state {CLI::Wiring::Askers.unwired} is, said in the layer that may not
+      # name it: `lain.rb` loads `lain/cli` before `lain/tools`, so this file
+      # cannot reference that class, and neither should it -- a spawn asks for
+      # an enrolment, not for the CLI's way of making one.
+      #
+      # It is NOT a sanctioned production state: a child parked on a question
+      # nobody can see is the exact failure the arrival seam exists to prevent,
+      # and the exe passes the run's own {CLI::Wiring::Askers}.
+      #
+      # A module rather than an instance, for {NO_OBSERVER}'s reason: a fresh
+      # object per default would make two otherwise identical Seams compare
+      # unequal. It holds no state, so sharing one is free.
+      module NoAskers
+        # The same two halves {CLI::Wiring::Askers::Enrolled} carries, because
+        # this answers the same duck: the child's own asker, and the thing
+        # whoever owns that child's lifetime `deregister`s.
+        Enrolled = Data.define(:asker, :registration)
+
+        # `**` and not `agent:`, because there is nobody to name an asker TO.
+        def self.enrol(parent, **)
+          Enrolled.new(asker: AskHuman.new(parent:), registration: AskHuman::Directory::Unheld)
+        end
+
+        def self.inspect = "Lain::Tools::Subagent::NoAskers"
+        def self.to_s = inspect
+      end
+
       # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses -- the run's provider, a child-Context
       # factory, the live parent handle, the journal, the {Supervisor} a
       # model-dispatched actor adopts onto, the lineage observer, and the two
       # axes the SESSION's posture governs (T11): the approval policy a tier-3
-      # call must pass, and which capabilities a child may hold at all.
+      # call must pass, and which capabilities a child may hold at all -- plus
+      # the run's ask-the-human seam (T10), which is where a child gets an
+      # asker OF ITS OWN rather than inheriting the parent's.
       #
       # They were six loose keywords on three signatures ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) plus one Hash literal in
@@ -414,10 +468,13 @@ module Lain
       # be -- `context_factory` is always a callable, a provider is always a live
       # client, and `parent` is a thunk or a Timeline (measured: neither is
       # shareable). The journal is NOT among the reasons: its default here is
-      # `Channel::Null.instance`, which IS shareable. This bundles collaborators;
-      # it is not a value in the {Event}/{Canonical} sense.
+      # `Channel::Null.instance`, which IS shareable. Neither is `askers`, whose
+      # default is a module: T10 added a ninth member and moved that claim in
+      # NEITHER direction, which is the thing a new member has to say out loud.
+      # This bundles collaborators; it is not a value in the {Event}/{Canonical}
+      # sense.
       Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
-                         :gate_policy, :permits) do
+                         :gate_policy, :permits, :askers) do
         # Everything after `parent` defaults to its Null object, so a caller who
         # wires none of them gets byte-identically what the pre-seam constructors'
         # own defaults gave -- {UNGATED} and {Mode::Posture::Permits::All} are the
@@ -426,7 +483,7 @@ module Lain
         # loud failure, unwritten.
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
-                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All)
+                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers)
           super
         end
 
@@ -464,14 +521,57 @@ module Lain
       # at initialize -- so one builder serves every spawn and every descended
       # copy ({#config}) without carrying spawn-specific state.
       class ChildBuilder
+        # A built child and the enrolment that came with it. Two halves because
+        # a child now has TWO lifetimes to answer for: the Agent, which the
+        # caller runs, and the {AskHuman::Directory::Registration}, which
+        # nothing but a `deregister` releases -- so whoever owns the child owns
+        # both, and neither may be discovered later by reaching into the other.
+        #
+        # Holding the pair is also what lets it own the release, and there are
+        # exactly two lifetimes to release against -- which is why both live
+        # here rather than as two shapes of the same `ensure` copied into
+        # {Subagent}. Both are `ensure`, never `rescue StandardError`: a
+        # cancelled dispatch raises `Async::Stop`, which is not a
+        # StandardError, and a child cancelled mid-ask is as unreachable as
+        # one that returned.
+        Child = Data.define(:agent, :registration) do
+          # A one-shot child's lifetime IS the dispatch, so the release lands
+          # on every exit from it -- answered, refused, raised or unwound.
+          # `timeline` is read AFTER the block, because the caller wants the
+          # child's settled head and not the one it started from.
+          def answered
+            response = yield(agent)
+            [agent.timeline, response]
+          ensure
+            registration.deregister
+          end
+
+          # An actor's lifetime outlives the launch, so the registration goes
+          # WITH it -- unless no actor comes out of the launch at all, in
+          # which case the release happens here or never: the Actor reference
+          # goes with the raise, so nothing else could ever hold this. That is
+          # the whole reason enrolment happens inside the launch.
+          def launched
+            actor = nil
+            actor = yield(agent, registration)
+          ensure
+            registration.deregister unless actor
+          end
+        end
+
         attr_reader :policy, :toolset
 
-        def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null)
+        # `name` is what a human is TOLD is asking when this child puts a
+        # question to them ({CLI::Wiring::Askers#enrol}'s `agent:`) -- the
+        # spawn's own name, so a role spawn announces as "researcher" rather
+        # than as a 71-character correlation.
+        def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null, name: "subagent")
           @seam = seam
           @toolset = toolset
           @policy = policy
           @budget = budget
           @persona = persona
+          @name = name
         end
 
         # The constructor kwargs a descended copy re-injects ({Subagent#descend}):
@@ -490,21 +590,74 @@ module Lain
 
         # A fresh child Agent over the base Timeline the prefix strategy chose,
         # rendering the toolset the posture chose, enforced by the handler the
-        # posture chose. `child` is late-bound through the thunk EXACTLY as the
-        # exe wires the tool itself: the union must exist before the Agent, but
-        # a grandchild's lineage must name the child's LIVE head at its own
-        # spawn instant. The `tap` is forced: the obvious
-        # `child = spawn_agent(...); child` trips Style/RedundantAssignment,
-        # whose "correction" would delete the very assignment the thunk's
-        # binding depends on -- the Timeline#commit story again, so the code is
-        # shaped to give the cop nothing to break.
+        # posture chose -- and the asker enrolled for it (T10). `child` is
+        # late-bound through the thunk EXACTLY as the exe wires the tool
+        # itself: the union must exist before the Agent, but a grandchild's
+        # lineage must name the child's LIVE head at its own spawn instant, and
+        # the child's asker must attribute its questions to the child's own
+        # chain rather than to the parent's.
+        #
+        # The handle is therefore the ONE thing the asker and the union share,
+        # and it is why enrolment happens here rather than at the tool: nothing
+        # above this method can name a child that does not exist yet.
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
-          union = child_union(-> { child.timeline }, ceiling)
-          spawn_agent(parent, union, permitted(@policy.attenuate(union)), worker_env).tap { |agent| child = agent }
+          handle = -> { child.timeline }
+          union = child_union(handle, ceiling)
+          spawned(@seam.askers.enrol(handle, agent: @name), parent, union, worker_env)
+            .tap { |built| child = built.agent }
         end
 
         private
+
+        # The enrolment, released if the child never comes into being. A spawn
+        # that raises past this point ({NoCapability}, a Context that will not
+        # render) leaves no lifetime for anyone to hang a `deregister` on, and
+        # retention runs from `register` to `deregister` and nothing else --
+        # so this method is the only place that release can live.
+        def spawned(enrolled, parent, union, worker_env)
+          child = nil
+          asker = enrolled.asker
+          allowed = granted(permitted(@policy.attenuate(union)), asker)
+          child = Child.new(agent: spawn_agent(parent, granted(union, asker), allowed, worker_env),
+                            registration: enrolled.registration)
+        ensure
+          # Keyed on the handle rather than written as `rescue StandardError`,
+          # so a CANCELLED spawn releases too -- `Async::Stop` is not a
+          # StandardError, and a child cancelled mid-build is as unreachable
+          # as one that raised.
+          enrolled.registration.deregister unless child
+        end
+
+        # The child's own asker, granted ON TOP of the attenuated set rather
+        # than folded into the union it attenuates from: no role in the catalog
+        # names `ask_human` in its `only`-set (`role/catalog.rb`), so a set that
+        # went through {Tool::SpawnPolicy#attenuate} would have dropped it.
+        # {#permitted} runs BEFORE this for the same reason it always did --
+        # "the posture permits none of the SPAWN's tools" is a wiring error
+        # whether or not the child could still ask a human about it.
+        #
+        # The session posture still governs the grant, which is the half a
+        # future reader must not lose: a rung that stopped permitting
+        # `ask_human` would MUTE every child rather than being quietly granted
+        # past. It is in `plan`'s READ_ONLY today, deliberately and with the
+        # reasoning beside it; specs pin both directions.
+        #
+        # REPLACING rather than appending, and that is the important half: a
+        # union that already holds an `ask_human` holds the PARENT's, whose
+        # questions would be attributed to the parent's chain and whose promise
+        # the parent's {AskHuman::Outstanding} holds. (Appending would also
+        # raise {Toolset::DuplicateTool}, which is the same fact said louder.)
+        # The strip is UNCONDITIONAL and the grant is not, which is the whole
+        # of the muted case: a posture that does not permit `ask_human` must
+        # leave the child holding none at all, and an early return here would
+        # leave the PARENT's standing in the dispatch union -- reachable by
+        # the very child the posture just muted (under `handler_union` it is
+        # also rendered), resolving into the parent's own {Outstanding}.
+        def granted(set, asker)
+          own = @seam.permits.include?(asker.name) ? [asker] : []
+          Toolset.new(set.reject { |tool| tool.name == asker.name } + own)
+        end
 
         # The child's capability set: the spawn policy's own attenuation, and
         # then the SESSION posture's -- a `plan`-mode parent must not be able to

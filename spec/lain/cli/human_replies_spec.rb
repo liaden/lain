@@ -83,10 +83,44 @@ RSpec.describe Lain::CLI::HumanReplies do
   # Asking IS announcing ({Wiring::Askers#announce}): the arrival lands on the
   # queue by itself. What comes back is the item that landed, read off the Q
   # event the ask just wrote.
+  #
+  # It announces an {Announcement} -- a whole set wearing its one-line summary
+  # -- because that is what `Notifying#ask` hands its thunk on every model-path
+  # ask, and therefore what every item in a real run carries. It used to
+  # forward the bare String it was handed, and that is not a small difference:
+  # the two arms take different code paths through the drain, so a file whose
+  # every item took the String arm could not see a defect on the arm production
+  # always takes. Two of them were live here (a whitespace-only line resolving
+  # a set with a fabricated record; a refused answer parking the agent) under
+  # green examples. {#announced_text} is the other arm, and it says so.
   def announced(asker, question)
+    announced_text(asker, announcement(question))
+  end
+
+  # The bare-String arm, which is production too: the approval gate and
+  # {Gherkin::Approval} ask through an `#ask`-shaped duck, and `Notifying`
+  # hands the thunk the String they passed rather than the set `#ask` wraps it
+  # in. Named so an example that means this arm says so.
+  def announced_text(asker, question)
     asker.ask(question)
     Lain::CLI::HumanReplies::InboxItem.asked(question, asker.last_question)
   end
+
+  # One free-text question, wearing its summary -- the set `AskHuman#ask`
+  # builds from a String, which is what the model path announces.
+  def announcement(question)
+    return question if question.is_a?(Lain::Tools::AskHuman::Announcement)
+
+    announcement_of(Lain::Question.new(id: "answer", body: question))
+  end
+
+  # A set whose questions are NAMED, for an example that has to tell which set
+  # received an answer: the ids are what the prose answer prints back.
+  def announcement_of(*questions)
+    Lain::Tools::AskHuman::Announcement.new(Lain::Question::Set.new(questions:))
+  end
+
+  def question_of(id) = Lain::Question.new(id:, body: "which #{id}?")
 
   # Ask, announce, and leave the item LISTED: a blank answer resolves nothing
   # and retires nothing, so this is how an example gets an item into the inbox
@@ -118,6 +152,11 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
 
   describe "#drain_at_prompt" do
+    # A typed reply answers the WHOLE set in prose (T14), so what reaches the
+    # asker is the AnswerSet's own rendering rather than the bare line -- the
+    # human's words blockquoted inside a record that says they were typed, not
+    # chosen. `eq("go left")` used to pass here only because the harness put a
+    # String on the queue where production puts a set.
     it "lists every queued question and resolves the live promise with one read answer" do
       Sync do
         announced(ask_human, "what now?")
@@ -125,8 +164,21 @@ RSpec.describe Lain::CLI::HumanReplies do
 
         answer = replies.drain_at_prompt
 
-        expect(answer).to eq("go left")
+        expect(answer).to include("in prose rather than by selection").and include("> go left")
         expect(output.string).to include("what now?")
+        expect(ask_human.last_answer.body["answer"]).to eq(answer)
+      end
+    end
+
+    # The other arm, and it is not a legacy one: an `#ask`-shaped duck (the
+    # approval gate) hands `Notifying`'s thunk a String, so there is no set to
+    # render an answer against and the line the human typed IS the answer.
+    it "delivers the typed line verbatim for a question asked as a bare String" do
+      Sync do
+        announced_text(ask_human, "what now?")
+        allow(conductor).to receive(:read_reply).and_return("go left")
+
+        expect(replies.drain_at_prompt).to eq("go left")
         expect(ask_human.last_answer.body["answer"]).to eq("go left")
       end
     end
@@ -163,6 +215,23 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
 
       expect(ask_human.pending?).to be(true) # unanswered -- an empty line never resolves
+    end
+
+    # One space, and the record claimed the human was shown the set and
+    # answered nothing -- a sentence nobody said. The drain guarded
+    # `answer.empty?`, `Given#spoken` then dropped the blank prose, and what
+    # was left rendered through the SELECTIONS arm as a perfectly non-empty
+    # document -- so the caller's own `strip.empty?` guard was testing a
+    # rendered document rather than the human's line, and passed.
+    it "treats a whitespace-only line as no answer at all, on a set as on a bare String" do
+      Sync do
+        announced(ask_human, "q1?")
+        allow(conductor).to receive(:read_reply).and_return("   ")
+
+        expect(replies.drain_at_prompt).to eq("")
+        expect(ask_human.pending?).to be(true)
+        expect(ask_human.last_answer).to be_nil
+      end
     end
 
     it "keeps a blank-answered question listable -- a still-pending item is never dropped from the view" do
@@ -232,6 +301,102 @@ RSpec.describe Lain::CLI::HumanReplies do
         expect(output.string).to include("blake3:deadbeef").and include("inbox line offering it is stale")
         expect(replies.pending?).to be(true)
       end
+    end
+  end
+
+  # T14: the arrival note is the FIRST thing a human sees, and the item has
+  # carried its own attribution since T11 -- so a two-agent fleet's arrivals
+  # are told apart before the drain is ever opened, not only once it is.
+  describe "the arrival note" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    it "names the asker that asked it" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task) { output.string.include?("which db?") }
+        surfaces.each(&:stop)
+        run.stop
+      end
+
+      expect(output.string).to include("? #{ask_human.last_question.from.to_s[0, 19]} which db?")
+    end
+  end
+
+  # T14, and the sharpest edge this chunk opened. The drain prints a whole
+  # markdown DOCUMENT now, naming specific questions -- so `/inbox` typed at
+  # the `human>` prompt of a PARKED set must render, and answer, that set. It
+  # used to render the document (and build the prose answer) against whichever
+  # item was OLDEST, then resolve the set actually being served with it: the
+  # human read one set's questions and a different set got their answer, which
+  # is exactly what `compose.rb`'s "NOTHING IS EVER SUBMITTED THAT THE HUMAN
+  # DID NOT SEE" forbids.
+  describe "`/inbox` typed at the reply prompt of a parked set" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    it "answers the set whose document it printed -- the one being served, never the oldest listed" do
+      other = other_asker
+      Sync { listed(ask_human, announcement_of(question_of("db"))) } # older, still pending, still listed
+      typed = ["/inbox", "use postgres"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(other, announcement_of(question_of("region"))) }
+      already_printed = output.string.size # only what the SERVED item's drain prints is under test
+      with_surfaces { other.last_answer }
+      drained = output.string[already_printed..]
+
+      expect(other.last_answer.body["answer"]).to include("`region`")
+      expect(other.last_answer.body["answer"]).not_to include("`db`")
+      expect(drained).to include("## `region`")
+      expect(drained).not_to include("## `db`")
+      expect(ask_human.pending?).to be(true) # the older set is untouched by an answer it never saw
+    end
+  end
+
+  # T14 round 3: an answer the record cannot carry is a REFUSAL, not a dead
+  # line. Everything else that ends a served question -- answered, withdrawn,
+  # unwound, raised out of the read -- means the item is gone and
+  # #serve_question's ensure retires it unconditionally, which is what keeps a
+  # set withdrawn while the human types from listing forever. A refused answer
+  # is the one exit where the opposite is true: the question is still
+  # outstanding, and the human can simply retype something the record can hold.
+  # Getting that wrong parks the agent forever AND deletes the only line that
+  # could unpark it.
+  describe "an answer the record cannot carry" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    it "refuses it, keeps the question answerable, and takes the retry" do
+      typed = ["/inbox", "x" * (70 * 1024), "postgres"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("beyond the 65536-byte maximum")
+      expect(ask_human.last_answer.body["answer"]).to include("> postgres")
+      expect(replies.pending?).to be(false)
+    end
+
+    it "leaves the question pending and still listed when the human gives up instead of retyping" do
+      Sync do
+        typed = ["x" * (70 * 1024), ""]
+        allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+        announced(ask_human, "q1?")
+
+        replies.drain_at_prompt
+      end
+
+      expect(output.string).to include("beyond the 65536-byte maximum")
+      expect(ask_human.pending?).to be(true)
+
+      already_printed = output.string.size
+      Sync do
+        allow(conductor).to receive(:read_reply).and_return("")
+        replies.drain_at_prompt
+      end
+      expect(output.string[already_printed..]).to include("q1?") # a later drain still offers it
     end
   end
 

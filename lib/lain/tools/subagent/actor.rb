@@ -53,11 +53,24 @@ module Lain
         # the child's first commit gives its chain a correlation).
         attr_reader :address, :parent_correlation
 
-        def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance)
+        # `registration` is the child's ask-the-human enrolment (T10), held
+        # here because this object holds the child's LIFETIME: retention in
+        # the {AskHuman::Directory} runs from `register` to `deregister` and
+        # nothing else releases it, and {Supervisor#stop} reaches every row --
+        # crashed ones included -- through `registration.actor.stop`. So the
+        # release rides the same lease teardown that reaps this fiber, with no
+        # timeout, no reaper, and no new Supervisor API.
+        #
+        # {AskHuman::Directory::Unheld} by default: an actor built over a seam
+        # that enrolled nothing has nothing to release, and answers the same
+        # `#deregister` rather than making this object ask whether it has one.
+        def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance,
+                       registration: AskHuman::Directory::Unheld)
           @agent = agent
           @lineage = lineage
           @parent = parent
           @journal = journal
+          @registration = registration
           @park = Async::Notification.new
           @ready = Async::Variable.new
           @stopped = false
@@ -130,6 +143,17 @@ module Lain
         # never torn mid-commit -- and `#wait` lets that cancellation settle
         # before returning, so `stopped?` holds the moment `stop` returns.
         # Idempotent: a second stop re-returns the same farewell, emitting nothing.
+        #
+        # The child's asker stops being routable here, and the `ensure` is what
+        # makes that true on EVERY exit. The case it actually buys is the
+        # NEVER-LAUNCHED row: that guard raises before the body, so a
+        # `deregister` written among these lines would never run, and an actor
+        # that will never run is an actor whose questions will never be
+        # answered -- a name held for it is a name held forever. The
+        # already-stopped guard is NOT a second such case, and a spec cannot
+        # prove it is: the first stop released already, so the second only has
+        # to be harmless. Idempotence is what that guard is for; only the
+        # never-launched example can fail if this moves into the body.
         def stop
           raise NotLaunched, "actor was never launched; nothing to stop" unless launched?
           return @farewell if @stopped
@@ -139,6 +163,8 @@ module Lain
           @task.stop
           @task.wait
           @farewell
+        ensure
+          @registration.deregister
         end
 
         # `launch` is what fixes the address, the correlation, and the fiber, so

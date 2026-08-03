@@ -53,9 +53,11 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
     request = provider.last_request
 
-    # The dev only-set, rendered under the default schema posture.
+    # The dev only-set, rendered under the default schema posture -- plus the
+    # `ask_human` T10 grants every child on top of its role's set, which no
+    # role in the catalog names and every posture permits.
     expect(request.tools.map { |t| t["name"] })
-      .to match_array(%w[read_file list_files glob grep edit_file write_file todo_write bash])
+      .to match_array(%w[read_file list_files glob grep edit_file write_file todo_write bash ask_human])
 
     # inherit prefix: the child forked the parent, so H's turns precede the prompt.
     expect(request.messages.first["content"].first["text"]).to eq("hi")
@@ -151,8 +153,9 @@ RSpec.describe Lain::Skill::RoleSpawn do
       dev_tools = provider.last_request.tools.map { |tool| tool["name"] }
       spawn.call(:reviewer_sre, :fresh, "two")
 
-      expect(provider.last_request.tools.map { |tool| tool["name"] }).to match_array(%w[read_file list_files bash])
-      expect(dev_tools.size).to eq(8)
+      expect(provider.last_request.tools.map { |tool| tool["name"] })
+        .to match_array(%w[read_file list_files bash ask_human])
+      expect(dev_tools.size).to eq(9)
       expect(seen.map(&:kind)).to eq(%i[spawn message spawn message])
     end
 

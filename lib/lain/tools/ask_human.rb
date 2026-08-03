@@ -212,20 +212,24 @@ module Lain
       #
       # == Two renderings, derived once
       #
-      # The bytes this value IS are what the arrival line, the `/inbox` drain
-      # (`Tty::Inbox#line_for`) and the dunstify argv show, so for a LONE
-      # question they are the body VERBATIM -- byte-for-byte what this seam
-      # carried before sets existed. Clamping there was a real regression: the
-      # description invites tables and fenced diffs, and a question cut to its
-      # first line is one a human cannot answer.
+      # The bytes this value IS are the WHOLE question a human answers, so for
+      # a LONE question they are the body VERBATIM -- byte-for-byte what this
+      # seam carried before sets existed, and what the dunstify argv shows.
+      # Clamping them would be a real regression: the description invites
+      # tables and fenced diffs, and a question cut to its first line is one a
+      # human cannot answer.
       #
-      # {#summary} is the other rendering: one clamped line, and the only thing
-      # that rides the event body's `"question"` key, because that is what
-      # {Frontend::Neovim::InboxView} reads and its `sender  age  text` row is
-      # pinned. Clamped rather than refused, unlike every field {Question}
-      # itself bounds -- these bytes were already accepted as a question, and
-      # this is a RENDER of them, not a value anybody answers. Both are derived
-      # here, once, so the two surfaces cannot drift.
+      # {#summary} is the other rendering: one clamped line, and what every
+      # ONE-LINE surface shows -- the event body's `"question"` key (which is
+      # what {Frontend::Neovim::InboxView} reads, and its `sender  age  text`
+      # row is pinned), and, since T14, the TTY's arrival note and `/inbox`
+      # row too. Those two read the summary rather than the bytes because a
+      # lone question's body is exactly where the bytes are not one line: the
+      # verbatim body belongs in the DOCUMENT the drain prints beneath the
+      # row, not in the row. Clamped rather than refused, unlike every field
+      # {Question} itself bounds -- these bytes were already accepted as a
+      # question, and this is a RENDER of them, not a value anybody answers.
+      # Both are derived here, once, so the surfaces cannot drift.
       class Announcement < String
         WIDTH = 96
         ELLIPSIS = "..."

@@ -23,13 +23,20 @@ module Lain
       # capability floor, and it is ALSO the union a child attenuates from --
       # so the same `base` is what {Skill::RoleSpawn} and {Tools::Subagent}
       # are handed, while `ask_human`, {Tools::RunSkill} and the epic's own
-      # tools are appended AFTER, main-agent-only: a subagent must not be able
-      # to ask the human directly, nor to render a skill scaffold back into a
-      # conversation that is not the one the human is having. The epic's
-      # {Tools::RequestReview} joins that list for ask_human's exact reason --
-      # it is an ask_human whose subject is a file, it PARKS until the human
-      # answers, and a child that could open one would hold an artifact's baton
-      # in a conversation nobody is watching.
+      # tools are appended AFTER, main-agent-only.
+      #
+      # Two of those three are main-agent-only because the CONVERSATION is: a
+      # child must not render a skill scaffold back into a conversation that is
+      # not the one the human is having, and {Tools::RequestReview} PARKS
+      # holding an artifact's baton, which belongs to the epic the human is
+      # watching. `ask_human` was on that list for a third reason, and T10
+      # reversed it: a child may now ask the human. What it must not inherit is
+      # the PARENT's asker -- whose questions would be attributed to the
+      # parent's chain and whose promise the parent's {AskHuman::Outstanding}
+      # holds -- so the floor still carries none, and {Tools::Subagent::
+      # ChildBuilder} enrols one per child on the run's {Askers}, over the
+      # child's own handle. The layering is unchanged; what changed is that a
+      # capability the floor withholds is now GRANTED at the spawn.
       #
       # {#role_spawn} and {#auto_surface} are readable only once {#build} has
       # run, because they are things the build DISCOVERS rather than things it
@@ -110,6 +117,12 @@ module Lain
           alias_method :to_s, :inspect
         end.new.freeze
 
+        # The role the chat's own subagent spawns, named ONCE: what it may do
+        # (its `only`-set, through {Backend#spawn_policy}) and what a human is
+        # told it is (its arrival note) are two readings of one fact, and two
+        # literals is how they drift.
+        RESEARCHER = :researcher
+
         # The repl-phase role-spawn seam a `@role/skill` line folds through
         # (nil until {#build}), and the opt-in third approval surface over it
         # (nil without --auto-approve, so the Repl wires nothing extra by
@@ -166,11 +179,14 @@ module Lain
         #
         # `askers:` is the run's ONE {Wiring::Askers} -- who may ask the human,
         # where an arrival goes, and the directory an answer is routed back
-        # through (T11). It is held here rather than used here: the card that
-        # lets a CHILD ask the human threads it into the spawn seam, and
-        # {Wiring::Askers#enrol} hands back both halves that costs -- the
-        # child's own asker, and the {Tools::AskHuman::Directory::Registration}
-        # whoever owns that child's lifetime must hold and `deregister`.
+        # through (T11) -- and it rides the spawn seam, because T10 is what
+        # made a CHILD able to ask. One object for the whole run, for
+        # `provider:`'s exact reason: a second one built for children would be
+        # a second answer to "who is holding this question", and the human
+        # drains only one queue. Everything a spawn needs from it is one
+        # message -- {Wiring::Askers#enrol} hands back the child's own asker
+        # and the {Tools::AskHuman::Directory::Registration} whoever owns that
+        # child's lifetime must `deregister`.
         #
         # Defaulted for `switchboard:`'s exact reason and with the same
         # warning: {Wiring::Askers.unwired} is the direct-construction seam the
@@ -220,7 +236,7 @@ module Lain
         # captured value.
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
-                                          journal:, supervisor:, observer:,
+                                          journal:, supervisor:, observer:, askers:,
                                           gate_policy: LivePolicy.new(board: switchboard),
                                           permits: PosturePermits.new(board: switchboard))
         end
@@ -246,8 +262,14 @@ module Lain
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1). The observer routes its :spawn/:message lineage events
         # into the session record, exactly as ask_human's Q/A goes.
+        #
+        # `announces_as:` is the human-facing half of the same name (T10): the
+        # tool stays "subagent" because that is what the model calls, and its
+        # child is announced as the role it IS, so an arrival note and a
+        # desktop notification say "researcher" rather than the tool's name.
         def research_subagent(base)
-          Lain::Tools::Subagent.new(seam:, toolset: base, policy: backend.spawn_policy(:researcher), max_depth: 1)
+          Lain::Tools::Subagent.new(seam:, toolset: base, policy: backend.spawn_policy(RESEARCHER),
+                                    max_depth: 1, announces_as: RESEARCHER.to_s)
         end
       end
     end

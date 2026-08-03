@@ -35,6 +35,13 @@ RSpec.describe Lain::Tools::Subagent do
     Lain::Provider::Mock.new(responses:)
   end
 
+  # Every child now holds an `ask_human` of its OWN (T10), granted at the spawn
+  # rather than inherited from the union it attenuates from -- so a rendered
+  # tools block is the set under test PLUS that one, in {Toolset}'s sorted
+  # order. Said once here, because the alternative is nine call sites each
+  # restating a capability none of them is about.
+  def with_asker(*names) = (names.flatten + %w[ask_human]).sort
+
   # The through-the-loop shape: a real parent Agent whose toolset holds the
   # subagent, late-bound through a thunk (the toolset is built before the
   # Agent, exactly the exe wiring). Returns [tool, parent_agent], settled.
@@ -150,7 +157,7 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       rendered = provider.last_request.tools.map { |t| t["name"] }
-      expect(rendered).to eq(%w[read_file])
+      expect(rendered).to eq(with_asker("read_file"))
     end
 
     # handler_union: the child's rendered tools block equals the SHARED UNION --
@@ -168,7 +175,7 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       rendered = provider.requests.first.tools.map { |t| t["name"] }
-      expect(rendered).to eq(union.names)
+      expect(rendered).to eq(with_asker(union.names))
 
       refusal_turn = tool.last_child.to_a.find do |turn|
         turn.role == "user" && turn.content.any? { |b| b["type"] == "tool_result" }
@@ -287,7 +294,7 @@ RSpec.describe Lain::Tools::Subagent do
       # Every sibling request carries the same union schema bytes (position-0
       # sharing preserved)...
       expect(provider.requests.map { |r| Lain::Canonical.dump(r.tools) }.uniq.size).to eq(1)
-      expect(provider.requests.first.tools.map { |t| t["name"] }).to eq(union.names)
+      expect(provider.requests.first.tools.map { |t| t["name"] }).to eq(with_asker(union.names))
 
       # ...and the second child's disallowed echo was refused at the Handler.
       refusal = tool.last_child.to_a.find do |turn|
@@ -511,7 +518,7 @@ RSpec.describe Lain::Tools::Subagent do
       tool = build_subagent(provider:, policy: spawn_policy(posture: :handler_union), max_depth: 2)
       tool.call({ "prompt" => "go" }, invocation)
 
-      expect(provider.last_request.tools.map { |t| t["name"] }).to eq(union.names)
+      expect(provider.last_request.tools.map { |t| t["name"] }).to eq(with_asker(union.names))
     end
   end
 
@@ -632,6 +639,463 @@ RSpec.describe Lain::Tools::Subagent do
     it "defaults to no observer, every existing path byte-identical" do
       tool = build_subagent(provider: mock(text_response("done")))
       expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+    end
+  end
+
+  # ---- T10: a child of its own may ask the human ----------------------------
+  #
+  # The capability policy this chunk reverses. A subagent used to be denied
+  # `ask_human` deliberately ({CLI::Wiring::ToolsetBuild}'s layering comment);
+  # it now holds one of its OWN -- never the parent's, whose questions would be
+  # attributed to the parent's chain and whose promise the parent's
+  # {AskHuman::Outstanding} holds -- enrolled per spawn on the run's ONE
+  # {CLI::Wiring::Askers}. That is what makes several question sets pending at
+  # once, which is the case the inbox has always rendered for and the reply
+  # path could not serve until the directory routed by name.
+  #
+  # Driven through the REAL arrival seam rather than through a directory alone.
+  # A plain {AskHuman} writes Q to the Store and announces to nobody, and
+  # {Event::Projection#pending} reads the Store -- so every other claim in this
+  # block passes for a child whose questions never reach the TTY or the
+  # desktop. The queue and the notifier are what say they do.
+  describe "asking the human from inside a child (T10)" do
+    let(:notified) { [] }
+    let(:notifier) { instance_double(Lain::Notify) }
+    let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
+
+    # The chat the human is having, holding its own asker on the SAME seam --
+    # so "parent and child are pending at once" is a claim about two real
+    # askers and one queue, not about one asker asked twice.
+    let(:parent_asker) { askers.enrol(parent, agent: "lain").asker }
+
+    before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
+
+    def asking_seam(provider)
+      Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, askers:)
+    end
+
+    def asking_subagent(provider, toolset: union, max_depth: 1, name: "subagent",
+                        policy: spawn_policy(only: []), **over)
+      described_class.new(seam: asking_seam(provider), toolset:, policy:, max_depth:, name:, **over)
+    end
+
+    def asks(question = "which db?") = tool_response(["c1", "ask_human", { "question" => question }])
+
+    # Pumps the reactor until the caller's condition holds. A condition that
+    # never comes true is a FAILING example, never a suite that hangs with
+    # nothing to read (the human_replies_spec idiom).
+    def pumped_until(task, timeout: 3)
+      deadline = Async::Clock.now + timeout
+      task.sleep(0.02) until yield || Async::Clock.now > deadline
+      raise "the condition never held within #{timeout}s" unless yield
+    end
+
+    def arrival(task)
+      pumped_until(task) { !askers.questions.empty? }
+      askers.questions.dequeue
+    end
+
+    # Runs a spawn that PARKS on the human, and stops its fiber on every exit.
+    #
+    # The `ensure` is the whole reason these examples can FAIL. A dispatch that
+    # asks a question does not return until the set is answered, so an
+    # expectation that does not hold -- or the timeout above -- raises out of
+    # the `Sync` while the child's fiber is still parked on `Promise#await`,
+    # and a raise out of a Sync with a parked child NEVER RETURNS. The process
+    # wedges, and a killed run prints "1 example, 0 failures" with no progress
+    # character: a green line meaning nothing was measured, in the exact shape
+    # a dead `parallel_rspec` worker takes. Stopping the task first is what
+    # turns a silent child into a failing example instead of a hang, and it is
+    # why every parked example below goes through this method or copies it.
+    def spawning(task, tool)
+      run = task.async { yield_result(tool) }
+      yield run
+    ensure
+      run.stop
+    end
+
+    # The dispatch itself, on the child's fiber. `@dispatched` rather than a
+    # block-local so `spawning`'s caller can read the result after the fiber
+    # has been stopped as well as after it has finished.
+    def yield_result(tool) = @dispatched = tool.call({ "prompt" => "go" }, invocation)
+
+    attr_reader :dispatched
+
+    # An actor parks the same way a one-shot dispatch does, so it is stopped on
+    # every exit for `spawning`'s reason. {Actor#stop} is idempotent, so the
+    # examples that stop it themselves are unaffected by this.
+    def launching(tool, prompt: "go")
+      actor = tool.launch_actor(prompt)
+      yield actor
+    ensure
+      actor&.stop
+    end
+
+    def actor_tool
+      asking_subagent(mock(asks, text_response("done")), mode: :actor, log: Lain::Tools::Subagent::Log.new)
+    end
+
+    def unroutable!(digest)
+      expect { askers.directory.reply("too late", digest) }
+        .to raise_error(Lain::Tools::AskHuman::NoPendingQuestion, /cannot be answered/)
+    end
+
+    # {Directory#size} counts NAMES, so a registration that never opened one is
+    # invisible to it -- and an enrolment stranded by a failed launch is
+    # exactly that shape. This reaches for the count the public surface does
+    # not publish, because the alternative is an assertion that cannot fail.
+    def registrations = askers.directory.instance_variable_get(:@registrations).size
+
+    # Ask, arrive, answer, settle -- the full round trip, with the fiber
+    # guaranteed stopped whichever step gives out.
+    def answered(tool, answer: "postgres")
+      item = nil
+      Sync do |task|
+        spawning(task, tool) do |run|
+          item = arrival(task)
+          askers.directory.reply(answer, item.digest)
+          run.wait
+        end
+      end
+      [dispatched, item]
+    end
+
+    it "offers ask_human to a spawned child, though the union it attenuates from holds none" do
+      provider = mock(text_response("done"))
+
+      asking_subagent(provider).call({ "prompt" => "go" }, invocation)
+
+      expect(union.names).not_to include("ask_human")
+      expect(provider.last_request.tools.map { |tool| tool["name"] }).to include("ask_human")
+    end
+
+    # THE acceptance criterion of this card: announcement lives in
+    # {AskHuman::Notifying}, so a child wired to a bare asker satisfies every
+    # other example here while its questions reach nobody.
+    it "lands a child's question on the arrival queue a parent's goes to, and tells the desktop" do
+      tool = asking_subagent(mock(asks, text_response("done")), name: "researcher")
+
+      result, item = answered(tool)
+
+      expect(result).to be_ok
+      expect(result.content).to eq("done")
+      expect(item.question.to_s).to eq("which db?")
+      expect(notified).to eq([["researcher", "which db?"]])
+    end
+
+    # Who the human is TOLD is asking, at both surfaces that render a sender.
+    #
+    # The identifier is the asker's NAME, not its chain correlation.
+    # `ChainWriter.correlation_of` is a chain's ROOT digest and an `:inherit`
+    # child is `parent.fork`, so parent and child share a root permanently --
+    # and `:inherit` is the DEFAULT posture for a `@role` spawn
+    # (`middleware/skill_dispatch.rb`), which makes that the COMMON case
+    # rather than a corner of one. Both postures are driven for exactly that
+    # reason: the point of naming the asker is that who-is-asking stops
+    # depending on which prefix strategy a spawn happened to use.
+    describe "who the human is told is asking" do
+      # A parent and a child holding a question each, at the same time, over
+      # one queue -- the situation this whole card exists to create.
+      def pending_pair(prefix)
+        tool = asking_subagent(mock(asks("deploy now?"), text_response("done")),
+                               policy: spawn_policy(only: [], prefix:), announces_as: "researcher")
+        Sync { |task| spawning(task, tool) { |run| both_asked(task, run) } }
+        @pair
+      end
+
+      # The parent asks beside the child, both are listed, then both are
+      # answered so the dispatch can settle rather than the fiber being cut.
+      def both_asked(task, run)
+        parent_asker.ask("which db?")
+        pumped_until(task) { askers.questions.size == 2 }
+        @pair = answered_pair
+        run.wait
+      end
+
+      # Both listed items, taken off the queue and answered -- so the child's
+      # dispatch settles on its own rather than being cut by `spawning`'s
+      # ensure, which would leave the example proving less than it says.
+      def answered_pair
+        [askers.questions.dequeue, askers.questions.dequeue]
+          .each { |item| askers.directory.reply("ok", item.digest) }
+      end
+
+      # The sender column, as a surface prints it: both clamp, and two names
+      # that differ only PAST the clamp collide on screen even though the
+      # values do not.
+      def senders(lines) = lines.map { |line| line.split("  ").first }
+
+      # Surface 1 -- the TTY. `Frontend::TTY::Inbox` renders `item.from` in
+      # both places it names an asker: the arrival note (`#arrival`, through
+      # `HumanReplies#render_arrival`) and the `/inbox` drain (`#line_for`).
+      # Clamped here to the width the three surfaces share.
+      def tty_senders(items)
+        items.map { |item| item.from.to_s[0, Lain::CLI::Wiring::Askers::NAME_WIDTH] }
+      end
+
+      # Surface 2 -- the nvim inbox buffer. It does NOT consume the arrival:
+      # it folds the RECORD stream ({Telemetry::Message}, the shape its own
+      # spec drives) and builds its own row, so what it renders is
+      # `event.from` and never the name the arrival carries.
+      def nvim_senders(items)
+        view = Lain::Frontend::Neovim::InboxView.new(store:, clock: -> { Time.at(0) })
+        senders(items.map { |item| Lain::Telemetry::Message.from_event(store.fetch(item.digest)) }
+                     .map { |record| view.update(record) }.last)
+      end
+
+      %i[fresh inherit].each do |prefix|
+        it "names the child apart from its parent at the TTY drain, on a #{prefix} spawn" do
+          expect(tty_senders(pending_pair(prefix))).to contain_exactly("lain", "researcher")
+        end
+      end
+
+      # The old identifier, named so a regression to it cannot pass: this is
+      # the exact value that made an `:inherit` child indistinguishable.
+      it "uses the asker's name and not the correlation an :inherit child shares with its parent" do
+        items = pending_pair(:inherit)
+
+        expect(items.map(&:from)).not_to include(Lain::Event::ChainWriter.correlation_of(parent))
+      end
+
+      it "names the child apart from its parent in the nvim inbox, on a fresh spawn" do
+        expect(nvim_senders(pending_pair(:fresh)).uniq.size).to eq(2)
+      end
+
+      # PINNED PENDING, and it is the half the arrival fix does NOT reach.
+      # `HumanReplies::InboxItem.asked` now prefers the asker's name, which
+      # closes the TTY; the nvim view never sees an InboxItem, so it still
+      # renders the shared root digest and the two rows still collide. Closing
+      # it means the NAME riding the record -- the Q event's body, or
+      # {Telemetry::Message} -- neither of which is in this card's files.
+      # Written as the behaviour wanted, so it goes green when that lands.
+      it "names the child apart from its parent in the nvim inbox, on an inherit spawn" do
+        pending("the nvim view folds the record stream, where the asker's name does not ride: it renders event.from")
+
+        expect(nvim_senders(pending_pair(:inherit)).uniq.size).to eq(2)
+      end
+    end
+
+    it "carries the human's answer back into the child's own conversation" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+
+      answered(tool, answer: "postgres, it is already provisioned")
+
+      delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
+      expect(delivered.map { |block| block["content"] }).to eq(["postgres, it is already provisioned"])
+    end
+
+    it "keeps the parent and the child pending at once, and the inbox projection lists both" do
+      tool = asking_subagent(mock(asks("deploy now?"), text_response("done")))
+
+      Sync do |task|
+        spawning(task, tool) do |run|
+          parent_asker.ask("which db?")
+          pumped_until(task) { askers.questions.size == 2 }
+          items = [askers.questions.dequeue, askers.questions.dequeue]
+
+          expect(parent_asker).to be_pending
+          expect(items.map(&:from).uniq.size).to eq(2)
+          expect(Lain::Event::Projection.new(items.map { |item| store.fetch(item.digest) })
+                                        .pending("human").to_a.size).to eq(2)
+
+          items.each { |item| askers.directory.reply("ok", item.digest) }
+          run.wait
+        end
+      end
+    end
+
+    it "resolves each set through the asker that asked it, never through whoever asked last" do
+      tool = asking_subagent(mock(asks("deploy now?"), text_response("done")))
+
+      Sync do |task|
+        spawning(task, tool) do |run|
+          child_item = arrival(task)
+          parent_set = parent_asker.ask("which db?")
+
+          askers.directory.reply("postgres", parent_set.digest)
+
+          expect(parent_asker.last_answer.body["answer"]).to eq("postgres")
+          expect(dispatched).to be_nil
+
+          askers.directory.reply("kubernetes", child_item.digest)
+          run.wait
+        end
+      end
+
+      expect(dispatched.content).to eq("done")
+      delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
+      expect(delivered.map { |block| block["content"] }).to eq(["kubernetes"])
+    end
+
+    # The union {ChildBuilder#child_union} hands a grandchild is the base one
+    # again, so the capability rides the SEAM rather than the set -- which is
+    # the whole reason a descended copy re-injects the seam verbatim.
+    it "gives a grandchild an asker of its own" do
+      provider = mock(tool_response(["c1", "subagent", { "prompt" => "deeper" }]),
+                      text_response("grandchild done"), text_response("child done"))
+      inner = asking_subagent(provider, max_depth: 9)
+      outer = asking_subagent(provider, toolset: Lain::Toolset.new(union.to_a + [inner]), max_depth: 2)
+
+      expect(outer.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(provider.requests[1].tools.map { |tool| tool["name"] }).to include("ask_human")
+    end
+
+    # The grant passes through the SAME posture gate the rest of the child's
+    # set does -- it is not handed out past the session.
+    it "keeps the child's asker whenever the session posture permits ask_human" do
+      provider = mock(text_response("done"))
+      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file ask_human]))
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[ask_human read_file])
+    end
+
+    # The second gate {ChildBuilder#permitted} stands: a posture that does not
+    # permit ask_human MUTES the child rather than silently handing it an
+    # asker the session itself may not use.
+    it "withholds the asker from a child whose session posture does not permit it" do
+      provider = mock(text_response("done"))
+      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file]))
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []), max_depth: 1)
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[read_file])
+    end
+
+    # The muted path must not leave the PARENT's asker standing. Under
+    # `handler_union` the union is what the child is SHOWN and what
+    # {Effect::Handler::Live} dispatches against, so an `ask_human` surviving
+    # there is the parent's own -- reachable by the very child the posture
+    # just muted, and resolving into the parent's {AskHuman::Outstanding}.
+    it "strips the parent's asker from the dispatch union too when the posture mutes it" do
+      provider = mock(text_response("done"))
+      poisoned = Lain::Toolset.new(union.to_a + [Lain::Tools::AskHuman.new(parent:)])
+      seam = asking_seam(provider).with(permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file echo]))
+      tool = described_class.new(seam:, toolset: poisoned, max_depth: 1,
+                                 policy: spawn_policy(only: [], posture: :handler_union))
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[echo read_file])
+    end
+
+    # Retention runs from `register` to `deregister` and NOTHING else releases
+    # it, so the release has to ride the lifetime that owns the child. For a
+    # one-shot that lifetime IS the dispatch.
+    it "releases a one-shot child's registration when its dispatch ends" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+
+      result, item = answered(tool)
+
+      expect(result).to be_ok
+      unroutable!(item.digest)
+    end
+
+    # And for an actor it is the lease that reaps the fiber. Both directions
+    # are pinned: still routable while the actor runs (a second answer is
+    # refused as ALREADY ANSWERED, by the registration's own tombstone), and
+    # no longer routable once it has stopped (refused as unknown).
+    it "releases a child's registration when its actor stops, so a late answer is refused not misrouted" do
+      Sync do |task|
+        launching(actor_tool) do |actor|
+          item = arrival(task)
+          askers.directory.reply("postgres", item.digest)
+          actor.settle
+
+          expect { askers.directory.reply("again", item.digest) }.to raise_error(Lain::Promise::AlreadyResolved)
+
+          actor.stop
+
+          unroutable!(item.digest)
+          expect(parent_asker.last_answer).to be_nil
+        end
+      end
+    end
+
+    # The whole point of enrolling INSIDE the launch is that a launch which
+    # never produced an actor must not leave an asker nothing will release:
+    # the Actor reference goes with the raise, so nothing else could ever
+    # `deregister` it. Driven through the seam's observer, which
+    # {Event::ChainWriter#put} documents as raising OUT of the write.
+    it "releases the child's registration when the launch itself raises" do
+      seam = asking_seam(mock(text_response("unused"))).with(observer: ->(_e) { raise "the record is on fire" })
+      tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []),
+                                 max_depth: 1, mode: :actor, log: Lain::Tools::Subagent::Log.new)
+
+      Sync { expect { tool.launch_actor("go") }.to raise_error(/the record is on fire/) }
+
+      expect(registrations).to eq(0)
+    end
+
+    # The arrival note names what the child IS, not what the model calls the
+    # tool. `research_subagent` is the one child path that ships today, and its
+    # tool is named "subagent" because that is the model-facing name -- the
+    # human must be told "researcher".
+    it "announces under the spawn's own name, which need not be the model-facing tool name" do
+      tool = asking_subagent(mock(asks, text_response("done")), name: "subagent", announces_as: "researcher")
+
+      answered(tool)
+
+      expect(notified).to eq([["researcher", "which db?"]])
+    end
+
+    it "falls back to the tool's own name when a spawn has no separate one" do
+      tool = asking_subagent(mock(asks, text_response("done")), name: "subagent")
+
+      answered(tool)
+
+      expect(notified).to eq([["subagent", "which db?"]])
+    end
+
+    # ---- The `ensure` on Actor#stop, pinned (S2) ---------------------------
+    #
+    # That `ensure` is the entire reason this card touched `actor.rb`, and a
+    # release written among the method's own lines would be skipped by BOTH of
+    # its early exits -- silently, with every other example in this block
+    # still green. Those two exits are also the shapes {Supervisor#stop}'s
+    # rescue-less `each { farewell }` meets in a real teardown, so what is
+    # pinned here is both halves: the release happens, and #stop stays
+    # incapable of stranding the rows behind it.
+    describe "the release on Actor#stop" do
+      # A registered asker with a question outstanding, wearing an Actor that
+      # has NOT been launched: the state a supervisor row is in when its
+      # launch block raised, and the one `raise NotLaunched` returns from.
+      def never_launched
+        enrolled = askers.enrol(parent, agent: "orphan")
+        digest = enrolled.asker.ask("who is stuck?").digest
+        actor = Lain::Tools::Subagent::Actor.new(
+          agent: instance_double(Lain::Agent), parent:, registration: enrolled.registration,
+          lineage: Lain::Tools::Subagent::Lineage.new(policy: spawn_policy)
+        )
+        [actor, digest]
+      end
+
+      it "releases the registration of an actor that was never launched, and still refuses loudly" do
+        Sync do
+          actor, digest = never_launched
+
+          expect { actor.stop }.to raise_error(Lain::Tools::Subagent::Actor::NotLaunched)
+
+          unroutable!(digest)
+        end
+      end
+
+      it "releases when stopped with the child's question still outstanding, and re-answers the same farewell" do
+        Sync do |task|
+          launching(actor_tool) do |actor|
+            item = arrival(task)
+
+            first = actor.stop
+            second = actor.stop
+
+            expect(second).to be(first)
+            unroutable!(item.digest)
+          end
+        end
+      end
     end
   end
 
@@ -839,6 +1303,13 @@ RSpec.describe Lain::Tools::Subagent do
       expect(seam.supervisor).to be(Lain::Supervisor::Null)
       expect(seam.observer).to be(Lain::Tools::Subagent::NO_OBSERVER)
       expect(Lain::Tools::Subagent::NO_OBSERVER).to be_frozen
+    end
+
+    # T10's member. Its Null is a module rather than an instance for the same
+    # reason the three above are singletons: a fresh object per default would
+    # make two otherwise identical seams compare unequal.
+    it "defaults the ask-the-human seam to the one wired to nothing" do
+      expect(seam.askers).to be(Lain::Tools::Subagent::NoAskers)
     end
 
     # A value object whose `==` depends on WHICH member the caller let default is

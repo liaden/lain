@@ -24,8 +24,16 @@ module Lain
         # attributions are true. Read at drain time instead, `from` is
         # whoever asked most recently and the digest is not recoverable at
         # all.
-        def self.asked(question, event)
-          new(question:, from: event.from, digest: event.digest, asked_at: Time.now)
+        # `agent` wins over the event's own `from` because `from` is the chain's
+        # ROOT digest, and an `:inherit` child forks its parent -- so the two
+        # share a root and are permanently indistinguishable at every surface
+        # that renders the sender. `:inherit` is the DEFAULT for a @role spawn,
+        # so that is the common case, not an edge one. The asker's name is the
+        # honest identifier and was already carried this far for the desktop
+        # notification; it just stopped there.
+        def self.asked(question, event, agent: nil)
+          named = Blankness.blank?(agent) ? event.from : agent
+          new(question:, from: named, digest: event.digest, asked_at: Time.now)
         end
       end
 
@@ -64,12 +72,12 @@ module Lain
       # point: this class no longer knows or cares WHICH agent is stuck.
       def initialize(tty:, conductor:, ask_human:, questions:)
         @tty = tty
-        @conductor = conductor
         @ask_human = ask_human
         @questions = questions
         @editor = NoEditor
         @reviews = {}
-        @inbox = []
+        @inbox = Pending.new
+        @reply = Reply.new(tty:, conductor:, inbox: @inbox)
       end
 
       # The editor's command rail -- :LainReply and :LainReviewDone -- bound
@@ -108,32 +116,31 @@ module Lain
       # it. This is that second watcher, run on demand instead of a second
       # background fiber.
       #
-      # Lists every item (drained non-blockingly first, so a `you>`-time
+      # Lists every item (gathered non-blockingly first, so a `you>`-time
       # `/inbox` shows the WHOLE backlog, not just the head), reads exactly
-      # ONE answer (`Inbox#drain`'s own contract), and resolves it through
-      # the SAME reply seam the human> path uses -- never a second answer
-      # path. The listing offers no selection, so what one typed answer
-      # answers is the OLDEST item listed: the first line the human read, and
-      # the one the drain has always meant. It is now named by its digest
-      # rather than taken by position, so the set that gets the answer and the
-      # line that gets retired cannot be two different questions.
+      # ONE answer ({Reply}'s own contract), and resolves it through the SAME
+      # reply seam the human> path uses -- never a second answer path. The
+      # listing offers no selection, so what one typed answer answers here is
+      # the OLDEST item listed: nothing is parked on this read, so the first
+      # line the human read is the only thing it can mean. {Reply} hands that
+      # item back beside the answer, so the set that gets the answer, the
+      # document that was printed, and the line that gets retired are one
+      # question rather than three lookups that can disagree.
       #
       # A blank answer must resolve NOTHING and retire NOTHING, or the item
-      # leaves the human's only view of a still-pending question. `Inbox#drain`
-      # already guards this today (it yields only a non-empty answer, so
-      # `answer` stays nil on a blank line); the `strip.empty?` check keeps
-      # that property local and also treats a whitespace-only line as
-      # no-answer, so the item stays queued for the next drain instead of
-      # being retired without a real reply.
+      # leaves the human's only view of a still-pending question. The drain
+      # guards that at the source (a line of nothing but whitespace is never
+      # an answer, see {Frontend::TTY::Inbox#settled}); the `strip.empty?`
+      # check keeps the property local to the resolve as well.
       #
-      # @return [String] the answer read, or "" (nothing pending, or the
-      #   human typed nothing)
+      # @return [String] the answer as it will be delivered -- for a question
+      #   carrying a set that is the answer set's rendering, not the line the
+      #   human typed -- or "" (nothing pending, or they typed nothing)
       def drain_at_prompt
-        @inbox.concat(drained_arrivals)
-        answer = nil
-        @tty.drain_inbox(@inbox, reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }) { |a| answer = a }
-        resolve_reply(answer, oldest.digest) unless answer.to_s.strip.empty?
-        answer.to_s
+        @inbox.gather(@questions)
+        answer, answered = @reply.at_prompt
+        resolve_reply(answer, answered.digest) unless answer.strip.empty?
+        answer
       end
 
       # The concurrent reply surfaces for one ask: the TTY drain loop, and --
@@ -180,44 +187,26 @@ module Lain
       # cancelled read keeps climbing.
       #
       # The line is retired on EVERY exit, and unconditionally, because every
-      # exit means it is dead: answered, refused, raised, or unwound. Testing
+      # exit means it is dead: answered, withdrawn, raised, or unwound. Testing
       # the read's own unwind instead covered exactly one of those shapes --
       # and missed the one that matters, a set withdrawn WHILE the human types,
       # which left a line that lists forever and can only ever refuse. The
       # digest is this item's own, so this can never retire somebody else's.
+      #
+      # A REFUSED answer is the one exit that does not belong on that list --
+      # the question is still outstanding and the human can retype -- and it
+      # never reaches here: {Reply} refuses and re-reads, so what comes back
+      # is always something the record can carry. Retiring on a refusal parked
+      # the agent forever AND deleted the only line that could unpark it.
       def serve_question(item)
         @inbox << item
-        @tty.render_arrival(item.question)
-        resolve_reply(read_drained_answer, item.digest)
+        @tty.render_arrival(item.question, from: item.from)
+        answer, answered = @reply.for(item)
+        resolve_reply(answer, answered.digest)
       rescue StandardError => e
         @tty.render_error(e.message)
       ensure
-        retire(item.digest)
-      end
-
-      # The reply read routes through the conductor's #read_reply (not the tty
-      # directly) so the conductor KNOWS Reline owns stdin for the span and
-      # suppresses its countdown ticker's render + key-read. `.to_s` is
-      # load-bearing on both reads: EOF returns nil, and an empty answer is
-      # honest where Tool::Result.ok(nil) would raise.
-      def read_drained_answer
-        line = @conductor.read_reply(@tty, "human> ").to_s
-        return line unless line.strip == "/inbox"
-
-        answer = nil
-        @tty.drain_inbox(@inbox, reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }) { |a| answer = a }
-        answer.to_s
-      end
-
-      # Non-blocking: every arrival sitting in `@questions` right now, without
-      # parking a fiber on an empty one. `Enumerator.produce` calling
-      # `dequeue(timeout: 0)` (nil on empty, per Async::Queue) stops pulling
-      # the instant `take_while` sees the first nil -- an infinite producer
-      # is safe here because nothing forces it past that point. Each item
-      # arrives carrying its own attribution, so nothing here has to ask an
-      # asker who asked.
-      def drained_arrivals
-        Enumerator.produce { @questions.dequeue(timeout: 0) }.take_while { |item| !item.nil? }
+        @inbox.retire(item.digest)
       end
 
       # The TTY's answer: the refusal is rendered where the human typed. A
@@ -237,21 +226,10 @@ module Lain
       # the set it named IS answered.
       def deliver(answer, digest)
         @ask_human.reply(answer, digest)
-        retire(digest)
+        @inbox.retire(digest)
       rescue Lain::Promise::AlreadyResolved
-        retire(digest)
+        @inbox.retire(digest)
       end
-
-      # By NAME, never by position: the item an answer belongs to need not be
-      # the one at the head, and retiring the head instead drops a question
-      # nobody answered out of the human's only view of it.
-      def retire(digest) = @inbox.delete_if { |item| item.digest == digest }
-
-      # What an answer that names no set of its own means: the oldest item
-      # listed -- the first line the drain printed, and what the editor's
-      # digest-less :LainReply is replying to. {Unlisted} when nothing is
-      # listed, so the refusal is the directory's rather than a nil's.
-      def oldest = @inbox.first || Unlisted
 
       # The editor reply leg (I6): the :LainReply command lands on the frontend's
       # rail and this fiber resolves the pending ask from it. Spawned only for
@@ -280,7 +258,7 @@ module Lain
       # comes back as AlreadyResolved, which {#deliver} drops.
       def serve_editor_command
         verb, args = pop_command
-        deliver(args.first.to_s, oldest.digest) if verb == "reply"
+        deliver(args.first.to_s, @inbox.oldest.digest) if verb == "reply"
         answer_document(args) if verb == "question_answered"
         settle_review(args) if verb == "review_done"
         sleep(IDLE_TICK) if verb.nil?
@@ -331,6 +309,143 @@ module Lain
         @editor.pop(true)
       rescue ThreadError
         nil
+      end
+    end
+
+    # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
+    # for the same reason: each collaborator is its own responsibility, and the
+    # split keeps each body inside Metrics/ClassLength instead of loosening it.
+    class HumanReplies
+      # The lines a human can see, and the digest each one is answered by.
+      # Split out because "which items are listed, and which one does a
+      # nameless answer mean" is a responsibility of its own -- {HumanReplies}
+      # was carrying it beside routing an answer to the asker that asked, and
+      # the review panel and Metrics named the same seam.
+      #
+      # An Array with an opinion, not a wrapper: every method here is one of
+      # the four rules the list actually has.
+      class Pending
+        include Enumerable
+
+        def initialize = @items = []
+
+        def each(&block) = @items.each(&block)
+        def <<(item) = @items << item
+        def empty? = @items.empty?
+
+        # Non-blocking: every arrival sitting on the queue right now, without
+        # parking a fiber on an empty one. `Enumerator.produce` calling
+        # `dequeue(timeout: 0)` (nil on empty, per Async::Queue) stops pulling
+        # the instant `take_while` sees the first nil -- an infinite producer
+        # is safe because nothing forces it past that point. Each item arrives
+        # carrying its own attribution, so nothing here asks an asker who
+        # asked.
+        def gather(queue)
+          @items.concat(Enumerator.produce { queue.dequeue(timeout: 0) }.take_while { |item| !item.nil? })
+        end
+
+        # By NAME, never by position: the item an answer belongs to need not be
+        # the one at the head, and retiring the head instead drops a question
+        # nobody answered out of the human's only view of it.
+        def retire(digest) = @items.delete_if { |item| item.digest == digest }
+
+        # What an answer that names no set of its own means: the oldest item
+        # listed -- the first line the drain printed, and what the editor's
+        # digest-less :LainReply is replying to. {Unlisted} when nothing is
+        # listed, so the refusal is the directory's rather than a nil's.
+        def oldest = @items.first || Unlisted
+      end
+
+      # One human answer, read -- and the pairing of that answer with the set
+      # it answers. Holds the terminal it happens on, the conductor that owns
+      # stdin while it does, and the list the `/inbox` detour lists.
+      #
+      # Its own object because "read until the human types something the
+      # record can carry" is not {HumanReplies}' business of routing an answer
+      # to an asker: the detour, the refusal-and-retry, and the pairing all
+      # belong to the READ, and the panel's note that the pair should be built
+      # where the knowledge is points at exactly this seam.
+      class Reply
+        def initialize(tty:, conductor:, inbox:)
+          @tty = tty
+          @conductor = conductor
+          @inbox = inbox
+        end
+
+        # The reply prompt of a PARKED set. `/inbox` detours to the drain for
+        # THIS item -- the set the run is parked on, whose note the human is
+        # looking at -- so the document they read and the set their reply
+        # answers are one question. It used to drain for whatever was oldest
+        # and hand the answer back to be resolved against this item, which was
+        # invisible while an answer was an opaque line and is not any more:
+        # the prose answer NAMES the questions it answers, so the wrong set
+        # received a reply naming another set's ids and the set the human
+        # actually read stayed pending.
+        #
+        # Any other line answers this item directly, which is the no-inbox
+        # fallback and the common path.
+        #
+        # @return [Array(String, InboxItem)] the answer, and the item it answers
+        def for(item) = accepted { read(item) }
+
+        # `/inbox` at `you>`: nothing is parked on this read, so one typed
+        # answer answers the oldest item listed.
+        def at_prompt = accepted { drained(answering: @inbox.oldest) }
+
+        private
+
+        # The read routes through the conductor's #read_reply (not the tty
+        # directly) so the conductor KNOWS Reline owns stdin for the span and
+        # suppresses its countdown ticker's render + key-read. `.to_s` is
+        # load-bearing: EOF returns nil, and an empty answer is honest where
+        # `Tool::Result.ok(nil)` would raise.
+        # `legible` runs BEFORE the `/inbox` test, not after: `String#strip` on
+        # invalid bytes raises Encoding::CompatibilityError, which is not the
+        # ArgumentError the refusal path rescues, so it would climb past every
+        # guard here to `#serve_question`'s ensure -- retiring the line while
+        # leaving the promise pending, which is the exact end state `legible`
+        # exists to prevent, reached one line above it.
+        def read(item)
+          line = legible(@conductor.read_reply(@tty, "human> ").to_s)
+          return [line, item] unless line.strip == "/inbox"
+
+          drained(answering: item)
+        end
+
+        # The drain answers the item it was NAMED, and that item is what the
+        # answer is paired with here -- the caller's own object, never one
+        # shipped out to the frontend and back.
+        def drained(answering:)
+          answer = ""
+          reader = ->(prompt) { @conductor.read_reply(@tty, prompt) }
+          @tty.drain_inbox(@inbox, answering:, reader:) { |typed| answer = typed }
+          [answer, answering]
+        end
+
+        # Read until the human types something the record can carry. A refusal
+        # is NOT a dead question -- the set is still pending and a shorter or
+        # legible reply still answers it -- so the reason is rendered where
+        # they typed it and the prompt comes round again. Every other exit
+        # from a served question means the line is dead, which is what lets
+        # {HumanReplies#serve_question}'s `ensure` retire unconditionally.
+        #
+        # The drain does this for itself ({Frontend::TTY::Inbox#accepted}), so
+        # in practice this catches the INLINE prompt -- where a line that
+        # cannot be written used to reach the Store, raise there, and take the
+        # `ensure` with it.
+        def accepted(&read) = Enumerator.produce { refusable(&read) }.lazy.compact.first
+
+        def refusable
+          yield
+        rescue ArgumentError => e
+          @tty.render_error(e.message)
+          nil
+        end
+
+        # What the Store can hold, checked where the human can still retype
+        # it: invalid UTF-8 used to reach the event write and raise there,
+        # which is the same dead line by a longer route.
+        def legible(line) = Question::Rules.prose(line, "a typed reply")
       end
     end
   end

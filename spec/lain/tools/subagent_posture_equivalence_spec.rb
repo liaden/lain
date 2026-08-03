@@ -107,7 +107,11 @@ RSpec.describe "Subagent posture equivalence" do
     union_provider = mock(text_response("done"))
     build_subagent(provider: union_provider, posture: :handler_union).call({ "prompt" => "go" }, invocation)
 
-    expect(schema_provider.last_request.tools.map { |t| t["name"] }).to eq(%w[echo])
-    expect(union_provider.last_request.tools.map { |t| t["name"] }).to eq(union.names)
+    # T10 grants every child an `ask_human` of its own, on TOP of whichever
+    # set the posture declares -- so both blocks carry it, and what this
+    # example is about (schema renders the allowed set, handler_union renders
+    # the whole union) is the rest of each list.
+    expect(schema_provider.last_request.tools.map { |t| t["name"] }).to eq(%w[ask_human echo])
+    expect(union_provider.last_request.tools.map { |t| t["name"] }).to eq((union.names + %w[ask_human]).sort)
   end
 end

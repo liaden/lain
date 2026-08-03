@@ -192,7 +192,7 @@ RSpec.describe "Subagent gating" do
       provider = mock(text_response("done"))
       build_subagent(provider:, permits:).call({ "prompt" => "go" }, invocation)
 
-      expect(rendered(provider)).to eq(%w[glob grep list_files read_file])
+      expect(rendered(provider)).to eq(%w[ask_human glob grep list_files read_file])
     end
 
     # `:merge_resolver`'s four names are not a superset of the posture's set, and
@@ -204,7 +204,7 @@ RSpec.describe "Subagent gating" do
 
       expect { build_subagent(provider:, role: :merge_resolver, permits:).call({ "prompt" => "go" }, invocation) }
         .not_to raise_error
-      expect(rendered(provider)).to eq(%w[grep read_file])
+      expect(rendered(provider)).to eq(%w[ask_human grep read_file])
     end
 
     # A child with nothing at all is a wiring error, not a tighter child. It is
@@ -228,7 +228,7 @@ RSpec.describe "Subagent gating" do
       build_subagent(provider:, permits: Lain::Mode::Posture.for(:manual).permits)
         .call({ "prompt" => "go" }, invocation)
 
-      expect(rendered(provider)).to eq(union.names)
+      expect(rendered(provider)).to eq((union.names + %w[ask_human]).sort)
     end
   end
 
@@ -320,7 +320,11 @@ RSpec.describe "Subagent gating" do
       build_subagent(provider:).call({ "prompt" => "go" }, invocation)
 
       expect(tools[:bash].runs.size).to eq(1)
-      expect(rendered(provider)).to eq(union.names)
+      # "Unchanged" is about GATING and ATTENUATION, which is what this seam
+      # wires nothing for. The `ask_human` beside them is T10's grant, which
+      # every child holds and {Subagent::NoAskers} is the wired-to-nothing
+      # answer for -- an asker whose question reaches no queue.
+      expect(rendered(provider)).to eq((union.names + %w[ask_human]).sort)
     end
 
     it "is still a value: two all-default seams with the same members compare equal" do

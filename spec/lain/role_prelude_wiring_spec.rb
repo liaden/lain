@@ -127,7 +127,11 @@ RSpec.describe "a spawned role's persona (PS-3)" do
 
       # The researcher holds read + egress capabilities (web_fetch/web_search
       # are tier-1 structural, no tree mutation) but never edit_file/write_file.
-      expect(tools.map { |t| t["name"] }).to match_array(%w[read_file list_files web_fetch web_search])
+      # `ask_human` rides beside them because T10 grants every child one of its
+      # own, on top of its role's only-set: a question is not a tree mutation,
+      # which is the same judgement `plan`'s READ_ONLY already records.
+      expect(tools.map { |t| t["name"] })
+        .to match_array(%w[read_file list_files web_fetch web_search ask_human])
     end
   end
 

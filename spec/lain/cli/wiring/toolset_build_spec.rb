@@ -256,6 +256,115 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(rendered).not_to include("bash", "edit_file", "write_file")
           expect(rendered).to include("read_file", "grep")
         end
+
+        # T10: the capability this chunk grants, end to end through the
+        # assembly the exe runs. `:dev`'s `only`-set never names ask_human
+        # (`role/catalog.rb:22`) and neither does the capability floor a child
+        # attenuates from, so the tool can only be there because the SPAWN
+        # granted it -- one asker per child, over the child's own handle.
+        it "renders ask_human to a dev child, though neither the floor nor the role names it" do
+          expect(Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)).not_to include("ask_human")
+          expect(spawn_dev).to include("ask_human")
+        end
+
+        # The pin the escalation trigger asks for: {ChildBuilder#permitted}
+        # intersects a child's set with the session posture's, so a rung that
+        # stopped permitting ask_human would MUTE every child's questions,
+        # silently and with this file still green. `plan` is the only rung that
+        # attenuates at all, and it names ask_human deliberately
+        # (`mode/posture.rb`'s READ_ONLY, with the reasoning beside it) -- this
+        # is what fails if that decision is ever quietly reversed.
+        it "keeps rendering ask_human to a dev child after /mode plan, because every rung permits it" do
+          switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+
+          expect(spawn_dev).to include("ask_human")
+        end
+      end
+    end
+
+    # T10: who a child asks the human THROUGH. The run has ONE
+    # {Wiring::Askers} -- one queue the human drains, one directory an answer
+    # is routed back through -- and it reaches a child on the spawn seam, for
+    # `provider:`'s exact reason: a second one built down there would be a
+    # second answer to "who is holding this question".
+    describe "the ask-the-human seam a child inherits" do
+      let(:notified) { [] }
+      let(:notifier) { instance_double(Lain::Notify) }
+      let(:askers) do
+        Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new)
+      end
+
+      before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
+
+      it "hands the spawn seam the run's own askers, never a second one" do
+        build = build_with(options, askers:)
+        build.build(recorder, ask_human:)
+
+        expect(build.role_spawn.seam.askers).to be(askers)
+        expect(build.role_spawn.seam.askers).to be(build.build(recorder, ask_human:).fetch("subagent").seam.askers)
+      end
+
+      # Defaulted for `switchboard:`'s exact reason and with the same warning:
+      # the direct-construction seam the specs drive, where a child's question
+      # would reach no queue and no desktop. The exe always passes the run's.
+      it "falls back to the seam wired to nothing when a build is handed none" do
+        toolset_build.build(recorder, ask_human:)
+
+        expect(toolset_build.role_spawn.seam.askers).to be_a(Lain::CLI::Wiring::Askers)
+      end
+
+      # The one child path that ships today, driven end to end: the chat's own
+      # `subagent` really asking a question, over the run's real Askers. Its
+      # TOOL is named "subagent" because that is what the model calls; what it
+      # IS is a researcher, and that is what the arrival note and the desktop
+      # must say. Naming the tool would have changed the rendered schema bytes,
+      # so the two names are separate keywords -- and this is what says they
+      # are wired to the right ends.
+      context "when the chat's own subagent asks the human" do
+        let(:store) { Lain::Store.new }
+        let(:parent) { -> { Lain::Timeline.empty(store:) } }
+        let(:provider) do
+          Lain::Provider::Mock.new(responses: [tool_response(["c1", "ask_human", { "question" => "which db?" }]),
+                                               text_response("done")])
+        end
+
+        def dispatch(subagent)
+          subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+        end
+
+        # The arrival, or a failing example: a queue that never fills is a
+        # defect, never a suite that hangs with nothing to read.
+        def arrival(task, timeout: 3)
+          deadline = Async::Clock.now + timeout
+          task.sleep(0.02) until !askers.questions.empty? || Async::Clock.now > deadline
+          raise "no question reached the human's queue within #{timeout}s" if askers.questions.empty?
+
+          askers.questions.dequeue
+        end
+
+        # The `ensure` is what lets this example FAIL rather than wedge: an
+        # unannounced child never returns from its dispatch, and a raise out
+        # of a Sync with a task parked on `Promise#await` never comes back --
+        # a hang the runner reports as a pass.
+        def spawned_asking(subagent)
+          Sync do |task|
+            run = task.async { dispatch(subagent) }
+            begin
+              askers.directory.reply("postgres", arrival(task).digest)
+              run.wait
+            ensure
+              run.stop
+            end
+          end
+        end
+
+        it "tells the human the ROLE is asking, not the model-facing tool name" do
+          build = build_with(options, askers:)
+
+          spawned_asking(build.build(recorder, ask_human:).fetch("subagent"))
+
+          expect(notified).to eq([["researcher", "which db?"]])
+        end
       end
     end
 

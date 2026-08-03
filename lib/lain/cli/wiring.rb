@@ -142,7 +142,7 @@ module Lain
         # to a human who could then answer it faster than it was registered
         # would be refused as unknown.
         def announce(question, asker:, registration:, agent:)
-          item = HumanReplies::InboxItem.asked(question, asker.last_question)
+          item = HumanReplies::InboxItem.asked(question, asker.last_question, agent:)
           registration.asked(item.digest)
           @questions.enqueue(item)
           @notifier.question(agent: desktop_name(agent, item), text: question)
