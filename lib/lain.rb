@@ -22,6 +22,7 @@ require_relative "lain/algebra"
 # in its own class body, so the verb has to exist by the time this loads.
 require_relative "lain/interval_partition"
 require_relative "lain/guard"
+require_relative "lain/question"
 require_relative "lain/telemetry"
 require_relative "lain/mode"
 require_relative "lain/improvement"
