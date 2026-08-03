@@ -20,7 +20,8 @@ module Lain
     # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
     # time, as one {Seam} value -- provider, a child-Context factory, the live
     # parent handle, a journal, the {Supervisor} a model-dispatched actor
-    # launches under, and the lineage observer -- plus this tool's OWN axes: the
+    # launches under, the lineage observer, and the session posture's gate
+    # policy and permitted capabilities -- plus this tool's OWN axes: the
     # union toolset it attenuates from, the spawn {Tool::SpawnPolicy}, a Budget,
     # and a spawn-depth ceiling. The dispatch duck stays the Session (the
     # `context:` a tool receives), which this tool does not read: everything it
@@ -59,6 +60,10 @@ module Lain
 
       input_model Input
 
+      # A spawn whose session posture permits none of its tools. Loud rather
+      # than an empty child -- see {ChildBuilder#permitted}.
+      class NoCapability < Error; end
+
       # The lifecycle axis (OM-2 vs OM-3), closed and loud: a mode outside this
       # set raises at construction rather than defaulting.
       MODES = %i[one_shot actor].freeze
@@ -96,7 +101,7 @@ module Lain
       # {Lineage} writes every event to -- the actor's mailbox folds it; the
       # one-shot defaults to {Log::Null} because nothing folds its stream.
       #
-      # The six spawn collaborators arrive as one `seam:` ({Seam}); the loose
+      # The spawn collaborators arrive as one `seam:` ({Seam}); the loose
       # keywords they used to be still work and land in `**spawn_over`, which
       # {Seam.resolve} turns into the same value. What is left here is this tool's
       # OWN axes -- the union, the policy, the budget, and the config triple
@@ -362,10 +367,28 @@ module Lain
       # constant lookup is lexical from here anyway.
       NO_OBSERVER = Event::ChainWriter::Null.new.freeze
 
-      # What a child spawn is built OVER: the six collaborators every spawn needs
+      # The gate a child runs behind when nothing wired one: approve every tier-3
+      # call, which is byte-for-byte the behaviour children had before they were
+      # gated at all. It is a shared frozen instance for {NO_OBSERVER}'s exact
+      # reason -- a fresh `ApproveAll.new` per default would make two otherwise
+      # identical Seams compare unequal -- and it is safe to share because the
+      # policy holds no state.
+      #
+      # Approving rather than denying is the deliberate direction, against
+      # {Effect::Handler::Gate}'s own fail-closed default: a child spawned by a
+      # harness that never wired a queue has no surface to answer it, and the
+      # roles the harness spawns UNATTENDED would then park or refuse forever
+      # (`role/catalog.rb`'s note on `:merge_resolver`). A caller that wants the
+      # session's gate passes it; absence means "this seam was never taught about
+      # a gate", not "deny".
+      UNGATED = Effect::Handler::Gate::ApproveAll.new.freeze
+
+      # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses -- the run's provider, a child-Context
       # factory, the live parent handle, the journal, the {Supervisor} a
-      # model-dispatched actor adopts onto, and the lineage observer.
+      # model-dispatched actor adopts onto, the lineage observer, and the two
+      # axes the SESSION's posture governs (T11): the approval policy a tier-3
+      # call must pass, and which capabilities a child may hold at all.
       #
       # They were six loose keywords on three signatures ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) plus one Hash literal in
@@ -393,13 +416,17 @@ module Lain
       # shareable). The journal is NOT among the reasons: its default here is
       # `Channel::Null.instance`, which IS shareable. This bundles collaborators;
       # it is not a value in the {Event}/{Canonical} sense.
-      Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer) do
-        # The last three default to their Null objects, so a caller who wires none
-        # of them gets byte-identically what the pre-seam constructors' own
-        # defaults gave. The first three have no Null and stay required: Data's
-        # own missing-keyword error is the loud failure, unwritten.
+      Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
+                         :gate_policy, :permits) do
+        # Everything after `parent` defaults to its Null object, so a caller who
+        # wires none of them gets byte-identically what the pre-seam constructors'
+        # own defaults gave -- {UNGATED} and {Mode::Posture::Permits::All} are the
+        # two that say "no posture has been bound to this seam". The first three
+        # have no Null and stay required: Data's own missing-keyword error is the
+        # loud failure, unwritten.
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
-                       supervisor: Supervisor::Null, observer: NO_OBSERVER)
+                       supervisor: Supervisor::Null, observer: NO_OBSERVER,
+                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All)
           super
         end
 
@@ -474,10 +501,58 @@ module Lain
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
           union = child_union(-> { child.timeline }, ceiling)
-          spawn_agent(parent, union, @policy.attenuate(union), worker_env).tap { |agent| child = agent }
+          spawn_agent(parent, union, permitted(@policy.attenuate(union)), worker_env).tap { |agent| child = agent }
         end
 
         private
+
+        # The child's capability set: the spawn policy's own attenuation, and
+        # then the SESSION posture's -- a `plan`-mode parent must not be able to
+        # hand a child the `bash` it does not itself hold, which four shipped
+        # roles would otherwise take (`role/catalog.rb:22-27`).
+        #
+        # An INTERSECTION, deliberately, rather than {Mode::Posture#attenuate}:
+        # that goes through {Toolset#only}, which raises on a name the set does
+        # not hold, so asking `plan` to attenuate a `:merge_resolver` child's
+        # four tools would die on the nine read-only names the child never held.
+        # A spawn under a restrictive posture must ANSWER "here is what you may
+        # hold", not blow up. `Permits#include?` is the other half of that duck
+        # for exactly this: it asks one name at a time, so no arm of the ladder
+        # needs the child's set to be a superset of its own.
+        #
+        # == This is read PER SPAWN, and `gate_policy` is read per CALL
+        #
+        # The two axes a posture governs do not have the same liveness, and the
+        # difference is observable. A child renders a plain frozen {Toolset}
+        # once, here; the gate answers through a live policy on every call. So a
+        # `:one_shot` child, which begins and ends inside one dispatch, cannot
+        # straddle a flip -- but an `:actor` adopted onto the {Supervisor} can,
+        # and it keeps the set it was rendered. Under `/mode plan` the parent
+        # loses `edit_file` that same turn while an in-flight actor does not,
+        # and `plan`'s `DenyAll` intercepts only TIER 3, so that actor's
+        # `edit_file` still runs. "Plan mutates nothing" is therefore a claim
+        # about the session and about every child spawned AFTER the flip -- not
+        # about a child already running. Making it true for those too means a
+        # live toolset slot in the child ({CLI::Switchboard::LiveToolset} is the
+        # shape), which is a design change this card did not make.
+        def permitted(allowed)
+          permitted = allowed.only(*allowed.names.select { |name| @seam.permits.include?(name) })
+          raise NoCapability, no_capability(allowed) if permitted.empty?
+
+          permitted
+        end
+
+        # A child with nothing at all is a wiring error, not a tighter child:
+        # it renders an empty tools block, can do nothing about its prompt, and
+        # will burn a round trip discovering that. Unreachable from the shipped
+        # catalog -- every built-in role holds `read_file`, which every posture
+        # permits -- so this names both halves, because the reader hit it by
+        # pairing a custom `only:` with a posture that shares no name with it
+        # and needs to know which of the two to change.
+        def no_capability(allowed)
+          "a #{@seam.permits} session permits none of the spawn's tools " \
+            "(#{allowed.names.join(", ")}), so the child would hold nothing"
+        end
 
         # The child's union: the injected one, with every Subagent in it
         # replaced by a descended copy -- the transitive-ceiling fix (T19
@@ -532,13 +607,40 @@ module Lain
         # RefusingHandler enforces the `only`-set the model can now see but
         # must not use. Both dispatch against the DESCENDED union, never the
         # injected toolset, so a permitted nested subagent runs at its
-        # decremented ceiling.
+        # decremented ceiling. Both run behind {#gated}.
+        #
+        # Under `handler_union` a `plan`-mode child is SHOWN the tools the
+        # posture forbids it and refused at dispatch, which reads against
+        # {Mode::Posture}'s own note that plan is safe because "the rendered
+        # schema simply does not contain `edit_file`". The capability reading is
+        # the correct one, and that note describes the DEFAULT posture's
+        # mechanism rather than the guarantee: what plan promises is that the
+        # child cannot dispatch a mutating tool, and {Toolset}'s attenuation
+        # comment already names both halves of the model-facing surface -- the
+        # rendered schema AND the `include?`/`fetch` pair {Effect::Handler::Live}
+        # authorizes against. `schema` withholds the name; `handler_union` shows
+        # it and refuses it. Neither can dispatch it, which is the promise.
         def child_handler(union, allowed)
-          return Effect::Handler::Live.new(toolset: allowed) unless @policy.posture.refuses_over_union?
+          return gated(Effect::Handler::Live.new(toolset: allowed)) unless @policy.posture.refuses_over_union?
 
           RefusingHandler.new(allowed: allowed.names, journal: @seam.journal,
-                              inner: Effect::Handler::Live.new(toolset: union))
+                              inner: gated(Effect::Handler::Live.new(toolset: union)))
         end
+
+        # The session's approval gate, in front of the child's executor: a child
+        # holding a tier-3 tool asks the SAME policy its parent asks, so `bash`
+        # is not ungated merely because a subagent is the one calling it (T11).
+        # A denial arrives as an is_error {Tool::Result}, never a raise -- that
+        # is {Effect::Handler::Gate}'s own contract, and it is what keeps the
+        # child's loop running rather than wedging on a refusal.
+        #
+        # It is composed INSIDE the RefusingHandler above, not around it, and
+        # the order is the whole point: a call the child was never attenuated to
+        # must be refused outright, not parked for a human who would then watch
+        # it be refused anyway. Under `schema` there is no refusal layer to sit
+        # behind -- a name outside the rendered set resolves to no tool, so the
+        # gate declines it and {Effect::Handler::Live} reports the unknown tool.
+        def gated(inner) = Effect::Handler::Gate.new(policy: @seam.gate_policy, inner:)
       end
     end
   end

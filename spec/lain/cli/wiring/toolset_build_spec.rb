@@ -38,8 +38,23 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # The example that DOES care wires a real {Lain::CLI::EpicMount}.
   let(:epic) { Lain::CLI::EpicMount::NoEpic }
 
-  def build_with(options)
-    described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:)
+  # The run's real switches, not a double: `/mode` and `/yolo` write these, and
+  # the whole T11 claim is that a child reads them LIVE. A stub with a fixed
+  # posture would pass whether or not the read is live, which is the one thing
+  # worth asserting here.
+  # Its own journal, not this file's `RecordingChannel`: a switch flip goes
+  # through `#record`, which is the Journal duck rather than the Channel one.
+  # `toolset:` is the whole shipped registry, the base `switchboard_spec.rb`
+  # itself resolves postures against -- `plan` names `ask_human`, so a narrower
+  # base would raise {Toolset::UnknownTool} on the flip rather than attenuate.
+  let(:switchboard) do
+    Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "test-model",
+                               toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }))
+  end
+
+  def build_with(options, **over)
+    described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
+                        **over)
   end
 
   describe "#build" do
@@ -153,6 +168,128 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       toolset_build.build(recorder, ask_human:)
 
       expect(toolset_build.role_spawn.instance_variable_get(:@slots)).to be(library.slots)
+    end
+
+    # T11: the two axes the session's posture governs reach a child through the
+    # ONE spawn seam, read LIVE off the run's switches.
+    describe "the session posture the children inherit" do
+      # A THUNK, exactly as `wiring.rb` passes one: the board requires the
+      # session's base `toolset:` (T10) and that toolset is what #build
+      # RETURNS, so a board cannot exist when this seam is constructed. Both
+      # axes are therefore delegators that read through it at call time.
+      subject(:toolset_build) { build_with(options, switchboard: -> { switchboard }) }
+
+      def child_permits
+        toolset_build.build(recorder, ask_human:)
+        toolset_build.role_spawn.seam.permits
+      end
+
+      def child_gate
+        toolset_build.build(recorder, ask_human:)
+        toolset_build.role_spawn.seam.gate_policy
+      end
+
+      # Asserted through behaviour rather than by identity: the seam holds a
+      # delegator, and what matters is that the answer comes from the board's
+      # ONE policy switch -- so flipping that switch must change the answer.
+      it "answers a child's gated call through the board's own policy switch" do
+        gate = child_gate
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
+
+        switchboard.policy_switch.switch(Lain::Effect::Handler::Gate::ApproveAll.new, surface: "spec")
+        expect(gate.call(effect, nil)).to be(true)
+
+        switchboard.policy_switch.switch(Lain::Effect::Handler::Gate::DenyAll.new, surface: "spec")
+        expect(gate.call(effect, nil)).to be(false)
+      end
+
+      it "permits everything under the default posture" do
+        expect(child_permits.include?(:bash)).to be(true)
+      end
+
+      # The card's live-read requirement, and the reason `permits` is a
+      # delegator rather than a captured value: the seam is a frozen Data built
+      # ONCE, above, and the flip happens AFTER it exists. A captured
+      # `Permits` would answer `true` here and hand every child a `bash` the
+      # session no longer holds.
+      it "stops permitting bash the moment /mode plan flips, though the seam was built before the flip" do
+        permits = child_permits
+        switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+
+        expect(permits.include?(:bash)).to be(false)
+        expect(permits.include?(:read_file)).to be(true)
+      end
+
+      it "permits bash again when the posture leaves plan, since attenuation is per-spawn and not cumulative" do
+        permits = child_permits
+        switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+        switchboard.mode_switch.switch(Lain::Mode.new(posture: :manual), surface: "spec")
+
+        expect(permits.include?(:bash)).to be(true)
+      end
+
+      # End to end, through the assembly the exe actually runs: a real
+      # Switchboard, this build's real seam, the real role-spawn seam, a real
+      # `:dev` Subagent, and the schema its child was really rendered. `:dev`
+      # holds `bash` in the catalog (`role/catalog.rb:22`) and the capability
+      # floor really ships one, so the tool is genuinely there to lose.
+      context "when a dev child is spawned over a scripted provider" do
+        let(:provider) { Lain::Provider::Mock.new(responses: [text_response("done")]) }
+        # A real handle, where the outer `let` only ever has its identity
+        # asserted: this context is the one that actually CALLS the thunk.
+        let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+
+        def spawn_dev
+          toolset_build.build(recorder, ask_human:)
+          toolset_build.role_spawn.call(:dev, :fresh, "go")
+          provider.last_request.tools.map { |tool| tool["name"] }
+        end
+
+        it "renders bash to a dev child while the session is in accept_edits" do
+          expect(spawn_dev).to include("bash")
+        end
+
+        it "renders no bash to a dev child spawned after /mode plan" do
+          switchboard.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec")
+
+          rendered = spawn_dev
+          expect(rendered).not_to include("bash", "edit_file", "write_file")
+          expect(rendered).to include("read_file", "grep")
+        end
+      end
+    end
+
+    # A build handed no board at all -- the direct-construction seam the rest
+    # of this file drives. It must behave exactly as every spawn did before
+    # children were gated, or this card's default would be a live behaviour
+    # change nobody asked for.
+    it "leaves a boardless build's children ungated and unattenuated" do
+      toolset_build.build(recorder, ask_human:)
+      seam = toolset_build.role_spawn.seam
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: {})
+
+      expect(seam.gate_policy.call(effect, nil)).to be(true)
+      expect(seam.permits.include?(:bash)).to be(true)
+    end
+
+    # The live thunk reads nil until {Wiring#build_agent} has run. That must
+    # raise rather than fall back to {NoSwitchboard}: a fallback would silently
+    # ungate a real session if the assembly order ever changed, which is the
+    # one failure this card exists to remove.
+    #
+    # BOTH axes, because they fail differently and the gate is the sharper one:
+    # a `|| NoSwitchboard` on `permits` alone hands a child the capabilities the
+    # session no longer holds, but the same fallback on `gate_policy` resolves
+    # to {NoSwitchboard#policy_switch} -- which is `UNGATED`, an `ApproveAll` --
+    # and silently ungates every child in the run. Pinning only one axis leaves
+    # the worse regression free to land green.
+    it "refuses loudly, rather than ungating, if a spawn beats the board into existence" do
+      build = build_with(options, switchboard: -> {})
+      build.build(recorder, ask_human:)
+      seam = build.role_spawn.seam
+
+      expect { seam.permits.include?(:bash) }.to raise_error(NoMethodError, /mode_switch/)
+      expect { seam.gate_policy.call(nil, nil) }.to raise_error(NoMethodError, /policy_switch/)
     end
 
     # The pair arrives as one keyword and it is required: a forgotten library

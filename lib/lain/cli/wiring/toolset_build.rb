@@ -36,6 +36,80 @@ module Lain
       # is told -- Wiring delegates both, and its own callers (the Repl's
       # command surface) read them well after the toolset exists.
       class ToolsetBuild
+        # == Why BOTH seam axes are delegators over a thunk, not values
+        #
+        # {Tools::Subagent::Seam} is a frozen `Data` built ONCE, here, and the
+        # run's {Switchboard} does not exist yet when it is built: the board
+        # requires the session's base `toolset:` (T10), and that toolset is what
+        # {#build} RETURNS. Asking for the board here is a construction cycle,
+        # not an argument that was forgotten. So the board arrives as a thunk
+        # read at call time, and each axis reads its own switch through it.
+        #
+        # That would be required even without the cycle. A captured
+        # `mode_switch.posture.permits` freezes the child's capability rule at
+        # session start, so a mid-session `/mode plan` would journal, repaint
+        # the HUD, attenuate the parent -- and leave every child holding `bash`,
+        # silently, which is the same failure as not gating at all. A captured
+        # `policy_switch` has the identical shape one axis over. This is the
+        # {Context::ModelSwitch} / {Approval::PolicySwitch} rule: a live change
+        # is a slot the holder already has, never a setter on the holder.
+        #
+        # The two are separate objects because they read separate switches and
+        # answer separate ducks -- one `include?(name)`, one
+        # `call(effect, context)`. Each is exactly the one message its consumer
+        # asks, which is what keeps them delegators rather than second
+        # implementations of a Permits and a policy.
+        #
+        # ⚠️ The two axes do NOT have the same liveness, and the difference is
+        # visible: `gate_policy` is consulted per CALL, so a flip reaches a
+        # running child's next tool call, while `permits` is consulted per
+        # SPAWN, so a child already running keeps the plain {Toolset} it was
+        # rendered. See {Tools::Subagent::ChildBuilder#permitted} for what that
+        # means for an in-flight `:actor` under `/mode plan`.
+        PosturePermits = Data.define(:board) do
+          def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
+        end
+
+        # The gate half of the same late binding: {Effect::Handler::Gate}'s
+        # policy duck, answering through whichever policy the board's ONE
+        # {Approval::PolicySwitch} currently holds -- so `/yolo` and a posture
+        # flip both reach a child's next tier-3 call, exactly as they reach the
+        # parent's.
+        LivePolicy = Data.define(:board) do
+          def call(effect, context) = board.call.policy_switch.call(effect, context)
+        end
+
+        # A frozen {Lain::Mode} answers `#posture` exactly as {Mode::Switch}
+        # does, and `#posture` is the whole of what {PosturePermits} asks -- so
+        # the Null below stands in for a switch with a real value rather than
+        # with a fake duck. `accept_edits` because it is the ladder's default
+        # and its {Mode::Posture::Permits} is `All`: a build with no live board
+        # attenuates nothing, which is what "no posture was ever bound here"
+        # has to mean.
+        UNSWITCHED = Lain::Mode.new(posture: :accept_edits)
+        private_constant :UNSWITCHED
+
+        # The board a directly-constructed build runs under: children are
+        # ungated and unattenuated, byte-for-byte what every spawn did before
+        # T11 gated them.
+        #
+        # This is for the direct-construction seams the specs drive, and it is
+        # NOT a sanctioned production state: the exe always passes a thunk over
+        # the run's real {Switchboard}, because a session whose parent gates
+        # `bash` while its children do not is the security property this chunk
+        # claims and would not have. `policy_switch` resolves inside the method
+        # body on purpose -- `lain.rb` requires `lain/cli` fifteen entries
+        # BEFORE `lain/tools`, so an eager `Tools::Subagent::UNGATED` in this
+        # class body is a hard NameError at load, the same debt
+        # `mode/resolution.rb` records and defers the same way.
+        NoSwitchboard = Class.new do
+          def policy_switch = Lain::Tools::Subagent::UNGATED
+          def mode_switch = UNSWITCHED
+
+          def inspect = "Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard"
+          alias_method :to_s, :inspect
+        end.new.freeze
+
         # The repl-phase role-spawn seam a `@role/skill` line folds through
         # (nil until {#build}), and the opt-in third approval surface over it
         # (nil without --auto-approve, so the Repl wires nothing extra by
@@ -66,17 +140,44 @@ module Lain
         # is asked of it is one message -- so a chat outside an epic hands over
         # {EpicMount::NoEpic} and no line below asks whether there is an epic.
         #
+        # `switchboard:` is a THUNK over the run's live switches, and the seam
+        # reads two of them (T11): the {Approval::PolicySwitch} a child's tier-3
+        # call must pass, and the {Mode::Switch} that says which capabilities a
+        # child may hold at all. A thunk and not the board itself, because the
+        # board does not exist yet -- see the two delegators above for the
+        # construction cycle that forces it. It is the run's ONE board, injected
+        # for `provider:`'s exact reason: a second Switchboard built here would
+        # be a second answer to "what mode is this session in", and the two
+        # would disagree the moment either was flipped.
+        #
+        # The live thunk (`-> { @switchboard }`, wiring.rb) reads nil until
+        # {Wiring#build_agent} has run, and that is deliberately left to raise
+        # `NoMethodError` rather than falling back to {NoSwitchboard}: a
+        # fallback would silently ungate a real session if the assembly order
+        # ever changed, which is the one failure this card exists to remove. No
+        # spawn can reach it in practice -- a child is spawned from a tool
+        # dispatch, which is turns after the Agent was built.
+        #
+        # It is DEFAULTED where `library:` and `epic:` are required, and the
+        # default is a thunk over {NoSwitchboard}: children then behave exactly
+        # as they did before they were gated at all. That is a deliberately
+        # narrow escape hatch for the direct-construction seams the specs
+        # drive, not a sanctioned production state.
+        #
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:)
+        def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
+                       switchboard: -> { NoSwitchboard })
           @library = library
           @backend = backend
           @options = options
           @epic = epic
           @seam = Lain::Tools::Subagent::Seam.new(
             provider:, context_factory: -> { backend.context }, parent:,
-            journal:, supervisor:, observer: chronicle.observer
+            journal:, supervisor:, observer: chronicle.observer,
+            gate_policy: LivePolicy.new(board: switchboard),
+            permits: PosturePermits.new(board: switchboard)
           )
         end
 

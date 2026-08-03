@@ -236,6 +236,7 @@ module Lain
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
+                                          switchboard: -> { @switchboard },
                                           epic: EpicMount.for(chronicle:, options:, notice:, notify: @notifier,
                                                               bindings: -> { @replies }))
         @toolset_build.build(recorder, ask_human:)

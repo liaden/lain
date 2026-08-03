@@ -244,4 +244,27 @@ RSpec.describe Lain::Approval::AutoSurface do
       expect(spawn.calls.size).to eq(1)
     end
   end
+
+  # T11 gated subagents, which put this surface one step from a stall that
+  # would corrupt its own record. {#sweep} blocks INSIDE `@role_spawn.call`:
+  # one fiber, sequential. So if the adjudicating child ever parked on a gated
+  # call, it would park on the SAME queue this surface is sweeping -- and the
+  # only surface that could answer it is the one waiting for it. Not permanent
+  # (the fail-closed clock breaks it) but it stalls for
+  # {Approval::Queue::DEFAULT_TIMEOUT} = 300s, and the pending is then denied
+  # BY THE CLOCK rather than judged, which is a lie in the transcript: the
+  # record would read `timeout` for a call an adjudicator was mid-way through
+  # answering.
+  #
+  # The only thing preventing it is that {ROLE}'s catalog set is read-only, so
+  # it is pinned HERE, beside the constant, rather than only in the subagent
+  # spec: a reader who changes `ROLE` -- or widens `auto_approver`'s tools --
+  # will not go looking in spec/lain/tools for the reason they must not.
+  describe "the role it adjudicates as" do
+    it "holds no tier-3 tool, so a gated child can never park on the queue this surface sweeps" do
+      tools = Lain::Role::Catalog[described_class::ROLE].only.map { |name| ToolRegistry.build(name.to_s) }
+
+      expect(tools.select(&:requires_approval?)).to be_empty
+    end
+  end
 end
