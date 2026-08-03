@@ -1663,6 +1663,57 @@ with their cards because no two same-wave cards touch the same index.
   3. Run a session's worth of ordinary commands and read the journal: confirm the abstention rate
      is roughly the measured 25%, and that every approval names the rung that decided it.
 
+## Execution log (orchestrator, 2026-08-02)
+
+status: **22 of 23 cards landed.** Suite 8856 → **8972, 0 failures, 2 pending** (both
+pre-existing and environment-gated). `rubocop` 1041 files, no offenses. `.rubocop.yml`
+**zero diff** across all 41 commits — no `Metrics/*` loosened anywhere. No Rust touched.
+`DryReplay` 8/8 byte-identical, and `context.rb`/`request.rb` contain **zero** references to a
+posture, so the mode cannot reach a rendered `Request` — purity and cache-hit intact.
+
+### T14 (`/undo`) NOT DELIVERED — blocked on a card that does not exist
+
+`Workspace::Restore` needs a `projection:`, and **nothing on the chat path accumulates
+`:snapshot` events into a log `Event::Projection` can fold.** Snapshots reach the Store and
+become unreachable: they carry no `render_parent` so `Timeline#ancestors` never yields one,
+`Store` has no forward enumerator (`chain_writer.rb:15-17`), and `agent.rb:101` takes
+`Workspace::Snapshot.new` with all defaults, so the `observer:` seam that could accumulate them
+is unused. `Event::Projection`'s only two `lib/` construction sites are `context/mailbox.rb:53`
+and `supervisor/restart.rb:177` (from a *supervisor recording*, not a chat).
+
+**T5 deliberately shipped no `restore` member, not even a Null** — a Null there would make
+`/undo` answer "nothing to restore" *convincingly*, which is worse than the member's absence.
+
+**This also strands T13.** `ShadowGit` landed and works, but its output is unreadable on the
+chat path, so the undo half of this chunk is built and unreachable.
+
+**The question that decides the card's shape, and must be settled first:** `snapshot.rb:13-20`
+records W4's owed "scribe wiring" — but that debt is about **persistence** (journalling blob
+bytes so a *replay-restart* can restore). This gap is about **reachability inside one live
+process**: `/undo` cannot see a snapshot taken thirty seconds ago with the bytes still in the
+Store. Different failures — you could journal every blob perfectly and `/undo` would still fail
+mid-session. *Does W4's scribe wiring produce an in-process readable log as a by-product, or
+only a durable record?* That answer decides whether this is a rider on W4 or its own card, and
+it also decides the lifetime and memory-bounding questions.
+
+### Release gates (not follow-ups — these block trusting what shipped)
+
+1. **The session record lies about a turn's capability set after a posture flip.** The header
+   still declares the start-of-session toolset (20 tools incl. `edit_file`) while the live set
+   is 13, and `Grader::ToolSteering#build_declared` computes declared shares from exactly that
+   header. Nothing journals the resolved set — `Telemetry::ModeSwitch` carries posture names and
+   layers only. **A graded run that flipped posture is scored against tools the agent was never
+   shown.** Fix: a resolved-toolset digest on the mode-switch record. `/mode` has landed, so
+   this is reachable today.
+2. **The escalation ladder is a pass-through.** Both deterministic rungs are inert as wired:
+   `rules:` ships empty (T20's `Remembered` read side needs a project root the board does not
+   hold), and `Triage`'s deny arm is unreachable because nothing in `lib/` builds a restricting
+   capability set. A user gets two journal lines per gated call and nothing else. The mechanism
+   is correctly *placed*; populating it is owed.
+3. **`auto` is unfunded.** Its safety argument is reversibility, but `snapshot_scope` resolves
+   and is **not bound** — no live slot exists on `Agent`'s `snapshot_writer:`. No regression
+   (`--yolo` was already this), but `/mode auto` now reaches it by typing four characters.
+
 ## Execution log — follow-ups found while building (2026-08-02)
 
 ### ⚠️ A LIVE DEFECT IN LANDED CODE, found by T4's panel and verified by the orchestrator
