@@ -649,7 +649,11 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   escalations (TODO 74–80) are inbox items with an urgency field, not interrupts. **✅ The inbox
   half landed 2026-07-17** (`d0a3960`): `lain://inbox` + `:LainReply`, the TTY `/inbox` drain
   command, dunst arrival notifications (`d42cb44`), and the tmux status-line flag/count
-  (`9b9ecd2`). Orchestrator escalations with an urgency field remain `[exp]`.
+  (`9b9ecd2`). **✅ An `[exp]` tail — richer inbox items and per-item targeting — landed
+  2026-08-03** (item 27): `ask_human` asks a SET, answered as a markdown document in
+  `lain://question`, opened per-item with `<CR>` from the inbox and attributed to the asker, which
+  is now a subagent as often as the session's own agent. Orchestrator escalations with an urgency
+  field remain `[exp]`.
 
 **Prompting-area autocomplete** `[exp]` (TODO 31)
 - The ollama meta-task arm (M3b fold-in) names "local autocomplete / interactive prompting" but not

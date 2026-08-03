@@ -1,9 +1,16 @@
 -- The lain nvim plugin: the CONVENTIONS around lain's editor frontend, and
 -- nothing that belongs to the wire. Everything protocol-shaped -- the lain://
 -- buffers, the :LainSend/:LainReply/... commands, all RPC -- is injected by
--- the gem's runtime.lua at attach (protocol 3), so this module must never
--- define buffer logic or RPC handling: a bare `nvim --listen` with no plugin
--- attaches identically (zero-install is the contract, this plugin is sugar).
+-- the gem's runtime.lua at attach, so this module must never define buffer
+-- logic or RPC handling: a bare `nvim --listen` with no plugin attaches
+-- identically (zero-install is the contract, this plugin is sugar).
+--
+-- No protocol number is quoted here, deliberately. This file said "protocol 3"
+-- through five bumps of it, because nothing could tell it had gone stale: the
+-- version lives in ONE place (Frontend::Neovim::PROTOCOL) and is stamped into
+-- doc/lain.txt, where a spec pins every stamp to that constant. A copy with no
+-- guard on it is worse than no copy.
+--
 -- What lives here instead:
 --
 --   * the deterministic per-project server socket, served on VimEnter
@@ -11,8 +18,8 @@
 --   * lain.socket_path() / lain.status() -- read-only conveniences
 --   * :LainStart -- a window layout over the runtime-injected buffers
 --
--- doc/lain.txt documents the full v3 attach contract (User Lain* events,
--- lain* highlight groups) as this plugin's users consume it.
+-- doc/lain.txt documents the whole attach contract (User Lain* events, the
+-- lain:// buffers, lain* highlight groups) as this plugin's users consume it.
 local config = require("lain.config")
 
 local M = {}

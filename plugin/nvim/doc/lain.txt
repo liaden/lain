@@ -17,8 +17,9 @@ CONTENTS                                                       *lain-contents*
      6.3 Highlight groups .............. |lain-highlights|
      6.4 Runtime commands .............. |lain-runtime-commands|
      6.5 Composing a message ........... |lain-compose|
-     6.6 Reviewing a document .......... |lain-review|
-     6.7 Folds ......................... |lain-folds|
+     6.6 Answering a question set ...... |lain-question|
+     6.7 Reviewing a document .......... |lain-review|
+     6.8 Folds ......................... |lain-folds|
   7. Without the plugin ................ |lain-zero-install|
 
 ==============================================================================
@@ -179,7 +180,7 @@ it, then `:LainResend`). A seventh, `lain://compose`, appears only while you
 are composing -- see |lain-compose|.
 
 A `lain://question` buffer appears the same way while you are answering a
-question set -- see |lain-runtime-commands|.
+question set -- see |lain-question|.
 
 The read-only record views share the single `lain` filetype; `b:lain_view`
 names the specific view on EVERY lain:// buffer, and is set before the
@@ -219,14 +220,14 @@ your own `:highlight link` overrides any of them without a fight:
 6.4 RUNTIME COMMANDS                                   *lain-runtime-commands*
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
-`:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`,
+`:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, and -- only meaningful inside a review buffer lain opened
 (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
-set your cursor is on in `lain://question` for you to tick and `:w`. Answer one
-and lain opens the next set you have NOT answered; answer the last and you are
-left at the inbox.
+set your cursor is on in `lain://question` (|lain-question|) for you to tick
+and `:w`. Answer one and lain opens the next set you have NOT answered; answer
+the last and you are left at the inbox.
 
 A row does not clear when you write it. It clears when the agent that asked has
 taken your answer -- a whole model round trip later -- so the set you just
@@ -244,6 +245,15 @@ needed: the inbox retires rows as questions are answered, so a line number
 alone names a position in a listing that may already have moved. A gesture from
 a rendering lain no longer holds is refused, and says so, rather than opening
 whatever now sits on that line.
+
+In `lain://timeline`, `p` runs `:LainPin`: the turn under the cursor is pinned,
+which is a standing instruction that compaction may not elide it. It carries no
+rendering stamp and needs none -- a timeline only ever grows, so a line names
+one turn forever.
+
+Both are ordinary global commands reading the CURRENT window's cursor, so each
+refuses outside the buffer it is about rather than acting on whatever happens
+to sit on that line somewhere else.
 
 ------------------------------------------------------------------------------
 6.5 COMPOSING A MESSAGE (PROTOCOL 8)                            *lain-compose*
@@ -280,7 +290,78 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 REVIEWING A DOCUMENT (PROTOCOL 8)                            *lain-review*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 8)                      *lain-question*
+                                                             *lain://question*
+
+The agent asks in SETS: one question or several in a single ask, each with a
+markdown body of its own, a closed list of options, and a stated number of them
+you may pick. A set arrives as one row in `lain://inbox`, attributed to whoever
+asked it -- the session's own agent, or a subagent it spawned -- and is
+answered by editing a document: tick a checkbox, write why underneath, `:w`.
+
+Open one with <CR> or `r` on its inbox row (|lain-runtime-commands|). It
+renders here folded one fold per question, with the FIRST question open and the
+cursor on it: a form is filled from the top.
+
+A question reads like this: >
+
+    ## `rollback` (choose one)
+    The migration is half applied. What should I do?
+
+    - [ ] `retry` Run it again from the top
+    - [x] `revert` Roll it back and stop
+      staging carries the same schema, so a revert costs us nothing
+
+<
+The heading names the question and how many options it takes: "choose one",
+"choose any", or "write your answer below" for a question offering none.
+Everything from the heading down to the options is the agent's own text and is
+compared byte for byte when you submit, so it cannot be edited. Two things are
+yours: the character inside a checkbox, and prose indented exactly two spaces
+beneath an option. The buffer sets 'expandtab', 'shiftwidth' and 'softtabstop'
+so that indent is what you type whatever your own config does.
+
+                                                             *lain-question-x*
+`x` on an option line ticks it, and un-ticks one already ticked. On a "choose
+one" question, ticking also clears the sibling it replaces. Anywhere else in
+the buffer -- and this buffer is one you type prose into -- `x` is vim's own
+`x`, count and register included, so `"a3x` still deletes three characters into
+register a. Both halves repeat with `.`.
+
+Nothing leaves the editor until you write. `:w` submits the document as it
+stands; the answer goes to the agent that asked, and lain opens the next set
+you have not answered -- or leaves you at the inbox when that was the last one.
+
+A `:w` is REFUSED in two cases, and nothing is submitted in either:
+
+  - nothing in the buffer has been typed. A plain `:w` there would answer
+    every question as unanswered, which is a decision rather than a default,
+    and a stray `:wall` or an autosave plugin must not make it for you.
+    Declining the whole set stays available, deliberately, as `:w!`.
+  - a line the grammar has no slot for. The message names the line and what
+    was expected there, and the buffer stays 'modified' holding your text
+    exactly as you left it. Nothing re-renders over a refused write, because
+    the text you have to go fix is the only copy of it -- which is also what
+    happens when the write cannot reach lain at all.
+
+                                                       *lain-question-abandon*
+Close the buffer without writing (`:bd!`, `:bw!`, `:q!`, or quitting nvim) and
+NOTHING is submitted: the set is still pending and still listed in the inbox.
+`:close` and `:enew` do not abandon it -- the buffer is hidden, not unloaded --
+so `:buffer lain://question` is always the way back to what you were writing.
+
+One set is open at a time. While you hold an unanswered one, opening another
+says so and opens nothing rather than replacing what you have typed. The
+buffer also carries the set's own content digest, so a write whose set was
+answered elsewhere in the meantime -- at the terminal, or by you a moment ago
+-- is refused rather than filed against whichever set is open now.
+
+The terminal answers the same sets, and differently: `/inbox` prints this same
+document and reads a typed reply, which answers the WHOLE set in prose rather
+than by selection. Ticking is the editor's gesture, and the only one.
+
+------------------------------------------------------------------------------
+6.7 REVIEWING A DOCUMENT (PROTOCOL 8)                            *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -298,29 +379,35 @@ it, lain does not write it.
                             is ON DISK, so save first. Your annotations ride
                             along with it.
 
-Both commands refuse outside a review buffer, and there is currently no way to
-get one from a `lain chat` session: nothing lain ships yet ASKS for a review.
-The editor half described here is complete and is what an asker will drive; the
-asking half is not built. So treat this section as the contract your config can
-already hook (the buffer variables above are set, and the commands exist at
-attach), not as a workflow you can start today.
+Both commands refuse outside a review buffer. lain DOES ship an asker -- an
+epic hands the agent a request_review tool -- but the editor it would open a
+review in is deliberately left unwired, so the request is announced and never
+rendered here. The editor half described above is complete and is what that
+asker will drive once the two are connected. So treat this section as the
+contract your config can already hook (the buffer variables above are set, and
+the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.7 FOLDS                                                         *lain-folds*
+6.8 FOLDS                                                         *lain-folds*
 
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one
-fold per pending question) -- set window-local expr folds when first shown:
-older records start closed and the newest open. That default applies once, at
-display; renders never re-fold, so turns you open (|za|/|zo|) and |zR| stick
-while the session streams -- at most lain re-opens the newest record after a
-render. Because a turn or question is often a single line, lain sets
-'foldminlines' to 0, so single-line records render |hl-Folded| at rest -- the
-fold summary line (the record's own first line, plus a hidden-line count when
-there is one) is what you see, not blank collapse markers. Fold boundaries are
-exactly the |]]|/|[[| record boundaries. When the window moves on to another
-buffer, your previous fold options are restored. `lain://request`,
-`lain://diff`, and `lain://workspace` are left to your own fold config.
+fold per pending question set), `lain://question` (one fold per question in the
+set) -- set window-local expr folds when first shown: every record starts
+closed but one, and which one differs by view. A LOG's live record is its last,
+so the timeline, the journal and the inbox open the newest; a FORM's is its
+first, so a question document opens the question at the top (|lain-question|).
+
+That default applies once, at display; renders never re-fold, so turns you open
+(|za|/|zo|) and |zR| stick while the session streams -- at most lain re-opens
+the record it left open after a render. Because a turn or a question set's
+inbox row is often a single line, lain sets 'foldminlines' to 0, so single-line
+records render |hl-Folded| at rest -- the fold summary line (the record's own
+first line, plus a hidden-line count when there is one) is what you see, not
+blank collapse markers. Fold boundaries are exactly the |]]|/|[[| record
+boundaries. When the window moves on to another buffer, your previous fold
+options are restored. `lain://request`, `lain://diff`, and `lain://workspace`
+are left to your own fold config.
 
 Set `vim.g.lain_fold = false` to opt out (it also un-installs live,
 mid-session); set `vim.g.lain_foldlevel` >= 1 to keep every record open at

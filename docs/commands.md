@@ -276,6 +276,22 @@ Promote this ephemeral (`--btw`) session into a durable one. Run it inside the `
 
 List and answer pending human questions. Same drain as the `human>` prompt.
 
+A question arrives as a **set** — one `ask_human` call carrying one question or several, each
+with a markdown body, a closed list of options, and how many of them you may pick. Every row is
+attributed to the agent that asked it, so a subagent's question is answerable without knowing
+which agent is stuck.
+
+`/inbox` lists every pending row, then prints the document of the set it is about to answer and
+reads one reply. **A typed reply answers the whole set in prose**, not option by option: the
+model is told the human answered in prose rather than by selection, and your words are
+blockquoted so nothing you type can be read as a choice. That is the terminal's only gesture,
+and it stays available whether or not an editor is attached.
+
+Ticking boxes is the editor's. With `--nvim`, `<CR>` on an inbox row opens the set in
+`lain://question` as a folded markdown document: `x` ticks the option under the cursor, two-space
+indented prose beneath an option says why, and `:w` submits the whole document and opens the next
+set you have not answered. See `:help lain-question`.
+
 ### /approve
 
 Answer each pending tool approval `y/N`.

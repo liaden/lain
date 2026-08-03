@@ -244,7 +244,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     # T5's panel doc obligations: trust LainAttach data.protocol over
     # g:lain_rpc_version, name the priming burst, and table the User events
     # and lain* highlight groups (source of truth: runtime.lua's comments).
-    it "documents the v5 review command and generates helptags" do
+    it "documents the injected contract and generates helptags" do
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
       expect(doc).to include("LainAttach").and include("LainRender")
       expect(doc).to include("data.protocol").and include("g:lain_rpc_version")
@@ -257,13 +257,20 @@ RSpec.describe "lain nvim plugin", :nvim do
       # already learned that a hardcoded token turns every bump into a false
       # green -- and this line then certified "protocol 5" through T12's bump to
       # "6", which is exactly the drift the assertion exists to catch.
-      expect(doc).to include("protocol #{Lain::Frontend::Neovim::PROTOCOL}")
-        .and include("LainReviewDone").and include("LainAnnotate")
+      expect(doc).to include("LainReviewDone").and include("LainAnnotate")
       # `include` is case-sensitive and satisfied by ONE marker, so it pinned
-      # line 14 and let the other three drift. The doc carries the current
-      # contract version in four places; all four move together or the bump was
-      # not atomic, which is the only property worth asserting here.
-      expect(doc.scan(/protocol #{Lain::Frontend::Neovim::PROTOCOL}/io).size).to eq(4)
+      # line 14 and let the other three drift. Counting them instead pinned how
+      # MANY sections the doc has, which is not a property of anything -- adding
+      # the question section broke a green assertion about protocol numbers.
+      # What holds is the shape: a PARENTHESIZED "(protocol n)" is this file's
+      # current-contract stamp, every one of them states the same contract, and
+      # that contract is the constant. Prose recording when a feature landed is
+      # deliberately not this shape and is left alone.
+      stamps = doc.scan(/\(protocol (\d+)\)/i).flatten
+      expect(stamps).not_to be_empty
+      expect(stamps.uniq).to eq([Lain::Frontend::Neovim::PROTOCOL]),
+                             "(protocol n) stamps disagree: found #{stamps.uniq.inspect}, expected " \
+                             "every one to be #{Lain::Frontend::Neovim::PROTOCOL.inspect}"
 
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)
@@ -271,6 +278,29 @@ RSpec.describe "lain nvim plugin", :nvim do
                out: File::NULL, err: File::NULL)
         expect(File.exist?(File.join(dir, "tags"))).to be(true)
       end
+    end
+
+    # The command list is READ OFF runtime.lua rather than written down here,
+    # because a written-down list is what drifted: :LainPin shipped undocumented
+    # and stayed that way through two doc passes. runtime.lua's `define` is the
+    # one place a runtime command comes into existence, so scanning it makes
+    # "documented" a property of the runtime rather than of somebody's memory --
+    # a new command now fails this example BY NAME until doc/lain.txt names it.
+    #
+    # Only the runtime's own commands are checked. :LainStart is the plugin's
+    # and is documented in |lain-api|, which is the section this doc owns
+    # outright; the contract section documents what the gem injects.
+    it "documents every command the runtime defines" do
+      runtime = File.read(File.expand_path("../../lib/lain/frontend/neovim/runtime.lua", __dir__))
+      commands = runtime.scan(/define\("(\w+)"/).flatten
+      expect(commands).to include("LainPin", "LainOpen", "LainSend")
+
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      # Word-boundaried on purpose: a bare include? lets a LONGER command certify
+      # a shorter one, so `:LainReviewDone` in the doc would satisfy a runtime
+      # that had just added `:LainReview`. No name is a prefix of another today,
+      # which is exactly when it is cheap to close.
+      expect(commands.reject { |name| doc.match?(/:#{name}\b/) }).to be_empty
     end
 
     # `helptags` builds an index of the tags a file DEFINES and never looks at

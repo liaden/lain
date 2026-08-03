@@ -31,34 +31,35 @@ module Lain
       # shape -- and never for a gem release: the gem version is display
       # (:LainVersion), this is compatibility, and conflating them made every
       # future gem bump a false mismatch warning.
-      # "2": I6 added :LainReply and the inbox drain autocmd.
-      # "3": T5 added the User LainAttach/LainRender events, b:lain_view on
-      #   every lain:// buffer, lain://workspace in the runtime's buffer set,
-      #   and the six documented lain* syntax groups.
-      # "4": T15 added the lain://compose round trip -- the set_compose render
-      #   entry point, and the "compose"/"compose_abandon" commands its
+      # The history below says WHAT CHANGED and names no card. It is read to
+      # date a change and to tell whether a running runtime has some feature,
+      # and a card id answers neither: the ids are chunk-local and repeat, so
+      # this list once carried two T15s and two T16s from different chunks.
+      # "2": :LainReply and the inbox drain autocmd.
+      # "3": the User LainAttach/LainRender events, b:lain_view on every
+      #   lain:// buffer, lain://workspace in the runtime's buffer set, and the
+      #   six documented lain* syntax groups.
+      # "4": the lain://compose round trip -- the set_compose render entry
+      #   point, and the "compose"/"compose_abandon" commands its
       #   BufWriteCmd/BufUnload autocmds send back.
-      # "5": T16 added the review surface -- the open_review/review_refused
-      #   render entry points, :LainAnnotate and :LainReviewDone, and the
-      #   b:lain_review_generation / b:lain_review_epic_slug stamps. Backfilled
-      #   by T12: d125aba shipped the bump without its history line, and a
-      #   history that skips a version is worse than none.
-      # "6": T12 added the lain://question round trip -- the set_question render
-      #   entry point, b:lain_question_digest, the question fold predicate, and
-      #   the "question"/"question_abandon" commands. "question" is the FIRST
+      # "5": the review surface -- the open_review/review_refused render entry
+      #   points, :LainAnnotate and :LainReviewDone, and the
+      #   b:lain_review_generation / b:lain_review_epic_slug stamps. Backfilled:
+      #   d125aba shipped the bump without its history line, and a history that
+      #   skips a version is worse than none.
+      # "6": the lain://question round trip -- the set_question render entry
+      #   point, b:lain_question_digest, the question fold predicate, and the
+      #   "question"/"question_abandon" commands. "question" is the FIRST
       #   command whose answer is not an ack: its response is the write's
       #   verdict (see {RpcThread#answer}).
-      # "7": T15 added the inbox's open gesture -- :LainOpen and the "open"
-      #   command it sends, carrying the CURSOR LINE (:LainPin's rule, since
-      #   the inbox row renders no digest), with <CR> and `r` both bound to it.
+      # "7": the inbox's open gesture -- :LainOpen and the "open" command it
+      #   sends, carrying the CURSOR LINE (:LainPin's rule, since the inbox row
+      #   renders no digest), with <CR> and `r` both bound to it.
       # "8": set_view gained an OPTIONAL third argument, the rendering stamp it
       #   writes to b:lain_view_generation, and "open"'s second argument moved
       #   from the line COUNT to that stamp. The count aliased between
       #   renderings of equal height, which opened the wrong document and
-      #   reported it as a success; the stamp cannot. (No card id: this history
-      #   is read to DATE a change, and the ids above already repeat -- two
-      #   T15s, two T16s, from different chunks -- which is the failure mode.
-      #   Say what changed.)
+      #   reported it as a success; the stamp cannot.
       PROTOCOL = "8"
 
       # Seconds teardown waits on the resend worker before giving up the join
