@@ -30,19 +30,27 @@ along with two more Ractor crashes (#22075, #22084).
 specs drive real `nvim`/`tmux`. Those are the subjects under test, so the cost is not removable --
 but it parallelises. Serial 155s; `rake pspec` ~19-30s.
 
-**The ceiling is PHYSICAL CORES, not memory** -- correcting the comment beside `spec_workers`.
-Measured on a Ryzen 7 3700X (8 physical, 16 logical, 15G RAM): seven workers peak at **~200MB each,
-1.2GB total**, against 6GB free. Memory is not close to binding. What binds is cores, and
-`spec_workers = physical - 1` already lands on it: best-of-3, **n=7 18.7s, n=10 21.0s, n=14 22.2s**
--- monotonically worse past the core count. Single runs vary by ±50% (the runtime log redistributes
-files every run), so take a best-of-N before believing any number here.
+**`spec_workers = physical - 1` is right, and the two reasons bind under different conditions.**
+Measured on a Ryzen 7 3700X (8 physical, 16 logical, 15.9G): the suite peaks at **245MB per worker,
+1.32GB total** for seven. On a QUIET box that is nowhere near binding and the ceiling is CORES --
+best-of-3, **n=7 18.7s, n=10 21.0s, n=14 22.2s**, monotonically worse past the core count, so
+raising the count buys nothing even with RAM to spare. On a WORKING box the memory note beside
+`spec_workers` earns its place: `ollama` with a model resident is +3G or so, and this machine
+already carries a 4.3G `mempalace` before any of that -- so the 1.32G is competing for a headroom
+that moves. `LAIN_SPEC_WORKERS` exists for exactly that; drop it when the box is loaded. And
+remember what a squeeze looks like: the OOM killer takes a worker and you get "fewer examples, 0
+failures", which reads like a clean run.
 
-**A preloader (spring/zeus-style fork-after-load) is not worth it, and not for the obvious reason.**
-Per-worker load is only **0.73-1.26s** (each worker loads its own subset), so forking after one
-load saves ~1s of an ~19s wall. It would also save ~0.6GB of the 1.2GB, which we are not short of --
-and it cannot unlock more workers, because the limit is 8 cores, not RAM. Bootsnap already does the
-cheap half: **1.7s warm vs 3.6s cold** for all 465 spec files, ~53% off, from a 33M iseq cache under
-`tmp/cache`. A cold cache is the likely explanation for any surprisingly slow boot you see.
+Single runs vary by ±50% (the runtime log redistributes files every run), so take a best-of-N
+before believing any timing here.
+
+**A preloader (spring/zeus-style fork-after-load) is not worth it.** Per-worker load is only
+**0.73-1.26s** -- each worker loads its own SLICE of the 465 spec files, not the whole suite -- so
+forking after one load saves ~1s of an ~19s wall. COW would genuinely help the loaded-box case,
+cutting maybe half of the 1.32G, but it cannot buy more workers, because on a quiet box cores bind
+first. Bootsnap already takes the cheap half: **1.7s warm vs 3.6s cold** for all 465 files, ~53%
+off, from a 33M iseq cache under `tmp/cache`. A cold cache is the likely explanation for any
+surprisingly slow boot.
 
 Things measured that do **not** help: `TMPDIR=/dev/shm` (-8.6%; the page cache already had it),
 `core.fsync=none` (nothing -- git here is spawn-bound at ~5ms/spawn, not fsync-bound), and mocking
