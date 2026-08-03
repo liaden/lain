@@ -395,3 +395,5 @@ module Lain
 end
 
 require_relative "question/set"
+require_relative "question/answer"
+require_relative "question/answer_set"

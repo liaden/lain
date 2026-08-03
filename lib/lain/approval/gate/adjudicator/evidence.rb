@@ -64,25 +64,6 @@ module Lain
         # journaled nothing. Seconds and not tokens because {Skill::RoleSpawn}
         # hands back a {Tool::Result} with no usage on it -- the child's own turns
         # journal their usage, and a reader joins the two.
-        # What "no findings" MEANS, written once.
-        #
-        # `String#strip` was the first attempt and it is ASCII-ONLY. A spike
-        # answering a single U+00A0 satisfied `strip != ""`, was content-
-        # addressed, and let a bare APPROVE close the gate on an empty evidence
-        # section -- the same fail-open as an empty string, through a narrower
-        # door (reproduced end-to-end at `approved=true parked=0` for U+00A0,
-        # U+3000, U+2007, U+200B and U+FEFF alike).
-        #
-        # POSIX `[[:space:]]` is Unicode-aware in Ruby and covers the space
-        # separators. The zero-width set is NOT space to any locale and has to
-        # be named: U+200B..U+200D, U+2060, U+FEFF.
-        #
-        # Written out here rather than inside the `Data.define` block, because a
-        # constant assigned in that block binds to the enclosing module instead
-        # of the Data class (see {Request::SYSTEM_PREFIX} for the same trap).
-        NOTHING_AT_ALL = /\A[[:space:]\u{200B}-\u{200D}\u{2060}\u{FEFF}]*\z/
-        private_constant :NOTHING_AT_ALL
-
         GateEvidence = Data.define(:artifact_digest, :epic_slug, :stage, :question, :digest, :text,
                                    :latency, :reason) do
           include Telemetry::Journalable
@@ -99,12 +80,13 @@ module Lain
           # genuinely independent predicate would be a second definition of
           # "nothing", and two definitions are what we just paid for.
           #
-          # Undecodable bytes are replaced rather than raised on: a spike that
-          # came back as mojibake gathered nothing usable either, so it belongs
-          # on the missing arm rather than in an exception.
-          def self.blank?(value)
-            value.to_s.encode("UTF-8", invalid: :replace, undef: :replace, replace: "").match?(NOTHING_AT_ALL)
-          end
+          # The predicate itself now lives in {Lain::Blankness}, which this
+          # delegates DOWN to: {Question::Answer} needs the same test and
+          # `question` loads long before `approval`, so the shared rule moved
+          # below both rather than one unit reaching up into the other. The name
+          # and the behaviour here are unchanged, which is what keeps every
+          # caller and every spec of this class pinning the same thing.
+          def self.blank?(value) = Blankness.blank?(value)
 
           # The digest is taken from the record's OWN stored text, after
           # construction has clamped it -- not from the argument. That makes
