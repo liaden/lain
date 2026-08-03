@@ -18,50 +18,32 @@ module Lain
     # closed enum rather than free text so a rendered list is always one of
     # three unambiguous words, not a model-invented synonym.
     #
-    # This tool declares its schema directly (no {Tool::Input} subclass): an
-    # array of nested objects is exactly the shape {Tool#input_schema}
-    # documents the raw-Hash path for, and {Tool::SchemaValidator} already
-    # walks array/object nesting and required keys. `perform` still checks the
-    # one thing the validator does not -- that `status` is one of the three
-    # allowed words -- and reports a bad one as an error {Result} rather than
-    # writing a list the render would show verbatim.
     class TodoWrite < Tool
       STATUSES = %w[pending in_progress completed].freeze
 
-      # One todo, as the session stores and renders it. A tiny value object
-      # rather than a bare Hash so {Session#write_todos} can depend on the
-      # `#content`/`#status` message rather than on a key-spelling convention.
-      Item = Data.define(:content, :status)
-      private_constant :Item
+      # One declaration, so the schema the model reads and the check the call
+      # is refused by cannot drift: the `inclusion` validator on `status` IS
+      # the emitted `enum`, and each element arrives as a coerced object
+      # answering `#content`/`#status` -- the duck {Session#write_todos}
+      # documents -- rather than a Hash whose key spelling a reader would have
+      # to guess at. A bad status is therefore refused by {Tool#call}, BEFORE
+      # `perform` runs, so there is no error {Result} to return; the executing
+      # {Effect::Handler} converts that raise into the one the model sees.
+      class Input < Tool::Input
+        field :todos, :array, required: true, blank_ok: true,
+                              description: "The complete replacement todo list, in the order it should be shown." do
+          field :content, :string, description: "What the todo is.", required: true
+          field :status, :string, description: "One of pending, in_progress, completed.", required: true
+          # The message names the offending value, as the hand-rolled check it
+          # replaces did: "is not included in the list" leaves a model guessing
+          # which of its items was wrong. Only `in:` reaches the emitted
+          # `enum`, so this costs the schema nothing.
+          validates :status,
+                    inclusion: { in: STATUSES, message: "must be one of #{STATUSES.join(", ")}, got %<value>s" }
+        end
+      end
 
-      ITEM_SCHEMA = {
-        "type" => "object",
-        "properties" => {
-          "content" => { "type" => "string", "description" => "What the todo is." },
-          "status" => {
-            "type" => "string",
-            "description" => "One of pending, in_progress, completed.",
-            "enum" => STATUSES
-          }
-        },
-        "required" => %w[content status],
-        "additionalProperties" => false
-      }.freeze
-      private_constant :ITEM_SCHEMA
-
-      INPUT_SCHEMA = {
-        "type" => "object",
-        "properties" => {
-          "todos" => {
-            "type" => "array",
-            "description" => "The complete replacement todo list, in the order it should be shown.",
-            "items" => ITEM_SCHEMA
-          }
-        },
-        "required" => ["todos"],
-        "additionalProperties" => false
-      }.freeze
-      private_constant :INPUT_SCHEMA
+      input_model Input
 
       def name = "todo_write"
 
@@ -73,32 +55,15 @@ module Lain
           "on every following turn until the next todo_write call."
       end
 
-      def input_schema = INPUT_SCHEMA
-
       protected
 
+      # `input.todos` is already the list {Session#write_todos} wants: coerced
+      # elements answering `#content`/`#status`, in the order sent. An empty
+      # one is a real call -- it is how a run CLEARS its list -- which is what
+      # `blank_ok:` admits while still requiring the key.
       def perform(input, invocation)
-        items = dig(input, "todos").map { |raw| item_for(raw) }
-        session_of(invocation).write_todos(items)
-        Tool::Result.ok("todo list replaced with #{items.size} item(s)")
-      rescue ArgumentError => e
-        Tool::Result.error(e.message)
-      end
-
-      private
-
-      # Keys are the String forms the schema declares, so {Tool#dig} resolves
-      # them with the SAME precedence {Tool::SchemaValidator} used to validate
-      # -- on a mixed-key item, the value stored is the value validated, never
-      # a different spelling's.
-      def item_for(raw)
-        content = dig(raw, "content")
-        status = dig(raw, "status")
-        unless STATUSES.include?(status)
-          raise ArgumentError, "status #{status.inspect} must be one of #{STATUSES.join(", ")}"
-        end
-
-        Item.new(content:, status:)
+        session_of(invocation).write_todos(input.todos)
+        Tool::Result.ok("todo list replaced with #{input.todos.size} item(s)")
       end
     end
   end

@@ -105,6 +105,24 @@ end
 RSpec.describe Lain::Approval::RuleChain do
   let(:read_file) { Lain::Tools::ReadFile.new }
   let(:bash) { Lain::Tools::Bash.new }
+
+  # A tool with no {Tool::Input} declaration -- the precondition these examples
+  # actually assert. It is declared HERE rather than borrowed from
+  # `Lain::Tools::*` because a shipped tool is a moving target for this: this
+  # spec used `TodoWrite` until T3 migrated it onto the field DSL, at which
+  # point both examples failed over a fact about TodoWrite they never meant to
+  # depend on. No shipped tool lacks an `input_model` any more (all 24 declare
+  # one), so a local stand-in is the only honest subject as well as a stable one.
+  #
+  # The name is deliberately arbitrary: what the Undeclared message must prove
+  # is that THIS tool's name travelled into it, and a name that restated the
+  # concept would match its own regexp no matter which tool raised.
+  let(:nameless_probe) do
+    Class.new(Lain::Tool) do
+      def name = "nameless_probe"
+      def description = "declares no Tool::Input, so it falls back to Tool#input_schema's empty default"
+    end.new
+  end
   let(:call) { Lain::Approval::Rule::Call.for(tool: read_file, input: { "path" => "README.md" }) }
   let(:gated_call) { Lain::Approval::Rule::Call.for(tool: bash, input: { "command" => "ls" }) }
   let(:recorder) { RuleChainSpecSupport::Recorder.new }
@@ -224,13 +242,13 @@ RSpec.describe Lain::Approval::RuleChain do
     end
 
     it "refuses to build a call for a tool that declares no input model" do
-      expect { Lain::Approval::Rule::Call.for(tool: Lain::Tools::TodoWrite.new, input: { "todos" => [] }) }
-        .to raise_error(Lain::Approval::Rule::Call::Undeclared, /todo_write/)
+      expect { Lain::Approval::Rule::Call.for(tool: nameless_probe, input: { "anything" => 1 }) }
+        .to raise_error(Lain::Approval::Rule::Call::Undeclared, /nameless_probe/)
     end
 
     it "answers whether a tool can be described at all, so a caller need not rescue" do
       expect(Lain::Approval::Rule::Call.describable?(read_file)).to be(true)
-      expect(Lain::Approval::Rule::Call.describable?(Lain::Tools::TodoWrite.new)).to be(false)
+      expect(Lain::Approval::Rule::Call.describable?(nameless_probe)).to be(false)
     end
 
     it "refuses a subject that is not a Call, rather than passing it to a rule" do

@@ -9,12 +9,48 @@ RSpec.describe Lain::Tools::TodoWrite do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
-  it "declares a required array of content/status items" do
-    schema = tool.input_schema
-    expect(schema["required"]).to eq(["todos"])
-    items = schema["properties"]["todos"]["items"]
-    expect(items["required"]).to eq(%w[content status])
-    expect(items["properties"]["status"]["enum"]).to eq(%w[pending in_progress completed])
+  # Scenario: the emitted schema is unchanged by the migration
+  #
+  # Pinned as literal bytes rather than as a handful of probes: every tool's
+  # schema folds into {Oracle::Definition}'s Canonical.digest and the tools
+  # block is the prompt-cache prefix, so a re-emission that moved one key or
+  # dropped one nested description would break every cached prefix in the
+  # bench while passing any spec that only asked about `required` and `enum`.
+  describe "the schema the model sees" do
+    let(:emitted) do
+      {
+        "type" => "object",
+        "properties" => {
+          "todos" => {
+            "type" => "array",
+            "description" => "The complete replacement todo list, in the order it should be shown.",
+            "items" => {
+              "type" => "object",
+              "properties" => {
+                "content" => { "type" => "string", "description" => "What the todo is." },
+                "status" => {
+                  "type" => "string",
+                  "description" => "One of pending, in_progress, completed.",
+                  "enum" => %w[pending in_progress completed]
+                }
+              },
+              "required" => %w[content status],
+              "additionalProperties" => false
+            }
+          }
+        },
+        "required" => ["todos"],
+        "additionalProperties" => false
+      }
+    end
+
+    it "is byte-identical to what it promised before the field-DSL migration, key order included" do
+      expect(tool.input_schema.to_json).to eq(emitted.to_json)
+    end
+
+    it "comes from a Tool::Input declaration, so the wire schema and the local check cannot drift" do
+      expect(described_class.input_model).to be < Lain::Tool::Input
+    end
   end
 
   it "does not care about the invocation it is handed" do
@@ -58,19 +94,69 @@ RSpec.describe Lain::Tools::TodoWrite do
       expect(result.is_error).to be(false)
     end
 
-    # An item carrying BOTH a String and a Symbol spelling of a key must
-    # validate and store the SAME value: the validator resolves the schema's
-    # String key, so a lookup that resolved the Symbol first (the old bug)
-    # could store a value the validator never saw. Tool#dig fixes the
-    # precedence so store == validated.
-    it "stores the value the schema validated, not a different key spelling, on a mixed-key item" do
+    # An item carrying BOTH a String and a Symbol spelling of a key used to be
+    # RESOLVED, by matching Tool#dig's precedence to the raw-schema validator's
+    # so the stored value was the validated one. Under {Tool::Input} the
+    # ambiguity is refused outright instead -- the same call {Lain::Canonical}
+    # makes -- because nothing justifies preferring either spelling, and a rule
+    # nobody remembers is worse than a loud failure. Renegotiated with T3.
+    it "refuses a mixed-key item rather than picking a spelling, naming the element by index" do
       mixed = { "content" => "canonical", :content => "shadow",
                 "status" => "in_progress", :status => "completed" }
 
-      result = tool.call({ "todos" => [mixed] }, invocation_with(session))
+      expect { tool.call({ "todos" => [mixed] }, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*content/)
+      expect(session.reminders).to eq([])
+    end
+
+    # Scenario: perform receives coerced items rather than a raw Hash
+    it "hands the session coerced items answering #content/#status, in the order given" do
+      written = nil
+      allow(session).to receive(:write_todos).and_wrap_original do |original, todos|
+        written = todos.to_a
+        original.call(todos)
+      end
+
+      tool.call({ todos: [{ content: "first", status: "in_progress" },
+                          { content: "second", status: "pending" }] },
+                invocation_with(session))
+
+      expect(written.map(&:content)).to eq(%w[first second])
+      expect(written.map(&:status)).to eq(%w[in_progress pending])
+      expect(session.reminders)
+        .to eq(["Current todo list:\n- [in_progress] first\n- [pending] second"])
+    end
+  end
+
+  # Scenario: an empty todo list is still accepted
+  #
+  # This is how a run CLEARS its list, it succeeds on main, and no spec pinned
+  # it before T3. Schema equality cannot catch its loss: `todos` stays in the
+  # emitted `required` either way, so a `required:` that rejected `[]` as blank
+  # would leave the bytes identical and break the tool. Pinned on the real
+  # tool, not on a stand-in declaration.
+  describe "clearing the list" do
+    let(:session) { Lain::Session.new }
+
+    it "accepts an empty todos array and reports the 0-item shape" do
+      result = tool.call({ "todos" => [] }, invocation_with(session))
+
+      expect(result).to have_attributes(is_error: false, content: "todo list replaced with 0 item(s)")
+      expect(session.reminders).to eq([])
+    end
+
+    it "clears a list that a previous call populated" do
+      tool.call({ todos: [{ content: "a", status: "pending" }] }, invocation_with(session))
+
+      result = tool.call({ todos: [] }, invocation_with(session))
 
       expect(result.is_error).to be(false)
-      expect(session.reminders).to eq(["Current todo list:\n- [in_progress] canonical"])
+      expect(session.reminders).to eq([])
+    end
+
+    it "still requires the key itself: an omitted todos list is refused" do
+      expect { tool.call({}, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /todos/i)
     end
   end
 
@@ -178,13 +264,57 @@ RSpec.describe Lain::Tools::TodoWrite do
     end
   end
 
+  # Scenario: a bad status is refused before perform runs
+  #
+  # Renegotiated with T3: this used to be an error Result, because the enum
+  # check was hand-rolled inside #perform. Declared as an `inclusion` validator
+  # on the element, the SAME declaration emits the schema's `enum` and refuses
+  # the call, and it refuses it in {Tool#call} -- before #perform, so there is
+  # no Result to return. The executing Effect::Handler turns the raise into an
+  # error Result for the model (see Tool's header), so what the model sees is
+  # unchanged; what cannot happen any more is #perform running at all.
   describe "rejecting a malformed status" do
     let(:session) { Lain::Session.new }
 
-    it "reports an error Result rather than writing, when status is not one of the allowed values" do
-      result = tool.call({ todos: [{ content: "a", status: "done" }] }, invocation_with(session))
+    it "raises InvalidInput naming the offending status, rather than writing" do
+      expect { tool.call({ todos: [{ content: "a", status: "done" }] }, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /done/)
+      expect(session.reminders).to eq([])
+    end
 
-      expect(result).to have_attributes(is_error: true, content: /status/)
+    it "names the element by index, so one bad item in a long list is findable" do
+      expect do
+        tool.call({ todos: [{ content: "a", status: "pending" }, { content: "b", status: "nearly" }] },
+                  invocation_with(session))
+      end.to raise_error(Lain::Tool::InvalidInput, /todos\[1\].*[Ss]tatus/)
+    end
+
+    it "refuses an item missing content outright" do
+      expect { tool.call({ todos: [{ status: "pending" }] }, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*[Cc]ontent/)
+    end
+  end
+
+  # Two refusals the field DSL introduces. Both inputs were SILENTLY ACCEPTED
+  # before T3 -- the raw-Hash validator checked types and required keys and
+  # nothing else -- so both are behaviour changes, and a behaviour change
+  # nobody pins is one that regresses without a spec noticing. Refusing beats
+  # accepting for the same reason everywhere else in this repo: an empty todo
+  # renders as `- [pending] ` with nothing after it, and a key the schema never
+  # declared means the model believes in a field that does not exist.
+  describe "what the raw-Hash validator used to let through" do
+    let(:session) { Lain::Session.new }
+
+    it "refuses an item whose content is the empty string" do
+      expect { tool.call({ todos: [{ content: "", status: "pending" }] }, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*[Cc]ontent/)
+      expect(session.reminders).to eq([])
+    end
+
+    it "refuses an item carrying a key the schema never declared" do
+      expect do
+        tool.call({ todos: [{ content: "a", status: "pending", priority: "high" }] }, invocation_with(session))
+      end.to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*priority/)
       expect(session.reminders).to eq([])
     end
   end
