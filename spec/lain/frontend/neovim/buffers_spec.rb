@@ -239,19 +239,21 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    it "invokes :LainReply when <CR> is pressed on an inbox item" do
+    # T15/ruling 12 repointed this key: <CR> used to raise a one-line answer
+    # prompt and invoke :LainReply with it, and a set of N questions has no
+    # single-line answer. What survives is the PROPERTY the old example pinned
+    # -- the key invokes a COMMAND a human could type by hand, never a private
+    # helper -- so both are provably one path.
+    it "invokes :LainOpen when <CR> is pressed on an inbox item, carrying that line and the rendering it is in" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do |handle|
         wait_until { bufnr("lain://inbox") != -1 }
-        set_view("lain://inbox", ["researcher  12s  deploy now?"])
-        inspector.exec_lua('vim.ui.input = function(_, cb) cb("postgres") end', [])
+        set_view("lain://inbox", ["researcher  12s  deploy now?", "orchestrator  3m  which db?"])
 
-        feed("lain://inbox", "<CR>", cursor: [1, 0])
+        feed("lain://inbox", "<CR>", cursor: [2, 0])
 
-        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
-        expect(verb).to eq("reply")
-        expect(args).to eq(["postgres"])
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
       end
     end
   end

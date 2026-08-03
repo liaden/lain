@@ -15,9 +15,54 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   let(:store) { Lain::Store.new }
   # A fixed wall clock so age rendering is arithmetic, never a race.
   let(:now) { Time.at(1_000) }
-  let(:view) { described_class.new(store:, clock: -> { now }) }
+
+  # The editor as {QuestionView} addresses it, recorded rather than driven --
+  # question_view_spec's own double, because the `<CR>` gesture is only "the
+  # set opens" if the document that lands in the editor is that set's.
+  let(:editor) do
+    Class.new do
+      attr_reader :opened
+
+      def initialize(refusal: nil)
+        @refusal = refusal
+        @opened = []
+      end
+
+      def open_question(lines, digest)
+        @opened << [lines, digest]
+        @refusal
+      end
+
+      def documents = @opened.map(&:first)
+      def digests = @opened.map(&:last)
+    end.new
+  end
+
+  let(:questions) { Lain::Frontend::Neovim::QuestionView.new(rpc: editor) }
+  let(:view) { described_class.new(store:, clock: -> { now }, questions:) }
 
   def text(body) = [{ "type" => "text", "text" => body }]
+
+  # The sender column as the buffer prints it -- the leading field of
+  # {InboxView#line_for}'s two-space-padded row.
+  def senders(lines) = lines.map { |line| line.split("  ").first }
+
+  def one_question(id, body) = Lain::Question::Set.new(questions: [Lain::Question.new(id:, body:)])
+
+  def parent_chain(seed) = Lain::Timeline.empty(store:).commit(role: :user, content: text(seed))
+
+  def record(event) = Lain::Telemetry::Message.from_event(event)
+
+  # A Q written by the REAL asker, which is what pins the body spellings this
+  # view names for itself ({RECIPIENT}, {ASKED_BY}) against the tool that
+  # writes them rather than against a hand-built hash.
+  def ask_on(parent, set, agent: nil)
+    asker = Lain::Tools::AskHuman.new(parent:, agent:)
+    Sync { asker.ask(Lain::Tools::AskHuman::Announcement.new(set)) }
+    asker.last_question
+  end
+
+  def asked(set, agent: nil, seed: "seed") = ask_on(parent_chain(seed), set, agent:)
 
   def question_record(digest, from: "orchestrator", question: "which db?", to: "human")
     Lain::Telemetry::Message.new(digest:, kind: :message, from:, to:,
@@ -135,6 +180,246 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
+  # T15/ruling 12: `<CR>` (and `r`, repointed to it) opens the set the cursor
+  # sits on. The LINE is what rides back from the editor -- :LainPin's recorded
+  # rule -- beside the one other thing only the editor knows: HOW MANY lines it
+  # is holding, which is what says WHICH rendering the human is looking at.
+  # Without it the view must guess between the rendering it just handed out and
+  # the one still on screen, and guessing is how `<CR>` opens the neighbour.
+  describe "the line -> digest index" do
+    it "answers, for every rendered line, the digest of the item on that line" do
+      first = asked(one_question("db", "which db?"), seed: "a")
+      second = asked(one_question("when", "deploy now?"), seed: "b")
+      view.update(record(first))
+      lines = view.update(record(second))
+
+      expect((1..lines.size).map { |line| view.digest_at(line, showing: lines.size) })
+        .to eq([first.digest, second.digest])
+      expect(lines.first).to include("which db?")
+      expect(lines.last).to include("deploy now?")
+    end
+
+    it "names no set off either end of the rendering" do
+      view.update(record(asked(one_question("db", "which db?"))))
+
+      expect(view.digest_at(0, showing: 1)).to be_nil
+      expect(view.digest_at(2, showing: 1)).to be_nil
+    end
+
+    it "names nothing at rest, where the buffer holds only the placeholder" do
+      view.initial
+
+      expect(view.digest_at(1, showing: 1)).to be_nil
+    end
+
+    it "names nothing for a rendering it cannot identify, rather than the nearest one it has" do
+      view.update(record(asked(one_question("db", "which db?"))))
+
+      expect(view.digest_at(1, showing: 9)).to be_nil
+    end
+
+    it "empties with the placeholder, so a drained inbox names no set on line 1" do
+      question = asked(one_question("db", "which db?"))
+      view.update(record(question))
+      view.update(turn_usage(citing_timeline(question.digest).head_digest))
+
+      expect(view.digest_at(1, showing: 1)).to be_nil
+    end
+  end
+
+  describe "#open -- the <CR>/r gesture on lain://inbox" do
+    it "opens the document of the set rendered on that line, stamped with its digest" do
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+      second = asked(one_question("when", "deploy now?"), seed: "b")
+      view.update(record(second))
+
+      opened = view.open(2, showing: 2)
+
+      expect(opened).to be_opened
+      expect(opened.digest).to eq(second.digest)
+      expect(editor.digests).to eq([second.digest])
+      expect(editor.documents.last.join("\n")).to include("`when`").and include("deploy now?")
+    end
+
+    it "opens nothing from the empty-state placeholder, and reports the line naming no set" do
+      view.initial
+
+      opened = view.open(1, showing: 1)
+
+      expect(opened).not_to be_opened
+      expect(editor.opened).to be_empty
+      expect(opened.report).to include("line 1")
+    end
+
+    # The placeholder and a one-item list are BOTH one line high, so the height
+    # cannot separate them -- the digests on the line must. `Enumerable#one?`
+    # counts truthy elements, so `[digest, nil].uniq.one?` reads as unanimous
+    # and this gesture would open a set the human has never seen, reporting it
+    # as a success. Both examples pass under the wrong reading too if the
+    # placeholder rendering is not still held, so `initial` comes first.
+    it "refuses the gesture when the held renderings disagree about that line" do
+      view.initial
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+
+      opened = view.open(1, showing: 1)
+
+      expect(opened).not_to be_opened
+      expect(editor.opened).to be_empty
+    end
+
+    it "names no digest when a held placeholder and a held one-item list collide on the line" do
+      view.initial
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+
+      expect(view.digest_at(1, showing: 1)).to be_nil
+    end
+
+    it "hands back the question surface's own refusal rather than reporting an open that did not happen" do
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+      view.update(record(asked(one_question("when", "deploy now?"), seed: "b")))
+      view.open(1, showing: 2)
+
+      opened = view.open(2, showing: 2)
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to include(Lain::Frontend::Neovim::QuestionView::BUFFER)
+      expect(editor.digests.size).to eq(1)
+    end
+  end
+
+  # The panel's index probe (.review-T15/index_probe.rb §3), ported. The render
+  # that removes a retired row is QUEUED, not landed -- `Neovim#post` hands it
+  # to the render queue and the RPC thread writes it a tick later -- so between
+  # the retire and the redraw the human is holding a rendering this view has
+  # already moved past. Resolving their keypress against the NEW one opens the
+  # neighbouring set into a single-slot buffer, and then refuses the right one
+  # with OCCUPIED; nothing anywhere says a word about it.
+  describe "a set retired between the render and the keypress" do
+    let(:keep) { asked(one_question("k", "keep?"), seed: "c") }
+    let(:drop) { asked(one_question("d", "drop?"), seed: "d") }
+
+    # Both listed, then the first consumed by a citing turn: the buffer still
+    # shows two rows, this view has already produced the one-row rendering.
+    def retire_the_first
+      view.update(record(keep))
+      view.update(record(drop))
+      view.update(turn_usage(citing_timeline(keep.digest).head_digest))
+    end
+
+    it "says the set on that row is gone rather than opening the row below it" do
+      retire_the_first
+
+      opened = view.open(1, showing: 2)
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to include("no longer pending")
+      expect(editor.opened).to be_empty
+    end
+
+    it "still opens the survivor from the row the human is looking at" do
+      retire_the_first
+
+      opened = view.open(2, showing: 2)
+
+      expect(opened.digest).to eq(drop.digest)
+      expect(editor.digests).to eq([drop.digest])
+    end
+
+    it "opens the survivor from its new row once the render that removed the other has landed" do
+      retire_the_first
+
+      opened = view.open(1, showing: 1)
+
+      expect(opened.digest).to eq(drop.digest)
+      expect(editor.digests).to eq([drop.digest])
+    end
+
+    it "refuses a rendering it no longer holds rather than guessing which one that is" do
+      retire_the_first
+
+      opened = view.open(1, showing: 7)
+
+      expect(opened).not_to be_opened
+      expect(opened.report).to include("7")
+      expect(editor.opened).to be_empty
+    end
+  end
+
+  # {#update} runs on the frontend's drain thread and {#open} on the reactor
+  # (the editor consumer's fiber), over one Hash that `arrive`/`consume` mutate
+  # and `render` iterates. {QuestionView} took a lock for exactly this seam
+  # after a panel walked a check-then-act there into a lost question.
+  #
+  # Proven rather than asserted: the clock is called from INSIDE the render, so
+  # parking there parks the whole update mid-rewrite -- and a gesture arriving
+  # then must not get through until it lets go.
+  describe "the two threads that reach this object" do
+    it "does not let a gesture read the index while an update is rewriting it" do
+      inside = Thread::Queue.new
+      go = Thread::Queue.new
+      parking = 1
+      clock = lambda do
+        parking -= 1
+        (inside << :in) && go.pop if parking.zero?
+        now
+      end
+      parked = described_class.new(store:, clock:, questions:)
+      question = asked(one_question("db", "which db?"))
+
+      updating = Thread.new { parked.update(record(question)) }
+      inside.pop
+      gesturing = Thread.new { parked.open(1, showing: 1) }
+
+      expect(gesturing.join(0.25)).to be_nil
+      go << :go
+      expect(updating.join(2)).to be(updating)
+      expect(gesturing.join(2)).to be(gesturing)
+    end
+  end
+
+  # The other half of a defect the TTY closed alone (T10): `event.from` is the
+  # asker chain's ROOT digest, and an `:inherit` child is `parent.fork`, so a
+  # child and its parent share one PERMANENTLY. Two askers over ONE parent
+  # chain is that situation exactly, and `:inherit` is the default posture for
+  # a @role spawn -- the common path, not a corner of one.
+  describe "who the sender column names" do
+    it "renders the asker's name, not the correlation an inherit child shares with its parent" do
+      shared = parent_chain("shared")
+      first = ask_on(shared, one_question("db", "which db?"), agent: "lain")
+      second = ask_on(shared, one_question("when", "deploy now?"), agent: "researcher")
+      view.update(record(first))
+      lines = view.update(record(second))
+
+      expect(first.from).to eq(second.from)
+      expect(senders(lines)).to eq(%w[lain researcher])
+    end
+
+    it "falls back to the envelope's attribution for a record that carries no name" do
+      lines = view.update(question_record("blake3:q1", from: "orchestrator"))
+
+      expect(senders(lines)).to eq(["orchestrator"])
+    end
+  end
+
+  # Ruling 3: what fills the sender column moved; the row did not.
+  describe "the rendered row" do
+    it "still reads sender, age and the set's summary, with the padding the runtime anchors on" do
+      lines = view.update(record(asked(one_question("db", "which db?"), agent: "researcher")))
+
+      expect(lines).to eq(["researcher  0s  which db?"])
+      expect(lines.first).to match(/  \d+[smh]  /)
+    end
+
+    it "names a set's further questions through the summary it already carried, not a new column" do
+      set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?"),
+                                                Lain::Question.new(id: "when", body: "deploy now?")])
+
+      lines = view.update(record(asked(set, agent: "researcher")))
+
+      expect(lines).to eq(["researcher  0s  which db? (+1 more)"])
+    end
+  end
+
   # AC: "the state feed's inbox_count matches the pending projection after each
   # arrival and drain." One logical stream, two consumers on their production
   # diets: StatusFeed folds the Event log, the view folds the tee's records
@@ -225,6 +510,21 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   def text(body) = [{ "type" => "text", "text" => body }]
 
+  # Switches to the buffer, seats the cursor, and feeds `keys` through nvim's
+  # OWN mapping resolution (feedkeys, never `:normal!`, which bypasses
+  # mappings) -- buffers_spec's helper, for its reason: this must exercise the
+  # actual buffer-local map.
+  def feed(bufname, keys, cursor: [])
+    inspector.exec_lua(<<~LUA, [bufname, keys, cursor])
+      local bufname, keys, cursor = ...
+      vim.cmd("buffer " .. bufname)
+      if cursor[1] then
+        vim.api.nvim_win_set_cursor(0, cursor)
+      end
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+    LUA
+  end
+
   def parent_chain(seed)
     Lain::Timeline.empty(store:).commit(role: :user, content: text(seed))
   end
@@ -311,6 +611,78 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
           inspector.exec_lua("local m = vim.fn.maparg('r', 'n', false, true); return m and m.buffer or 0", [])
         end
         expect(buffer_local).to eq(1)
+      end
+    end
+  end
+
+  # T15/ruling 12, at the editor. What rides back is the LINE (:LainPin's rule)
+  # -- the Ruby side's line -> digest index is the only thing that may name a
+  # set -- and both keys invoke the COMMAND, so a human typing :LainOpen by
+  # hand takes provably the same path.
+  describe "the open gesture on lain://inbox" do
+    def two_pending
+      asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
+      asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
+      Sync { [asker_a.ask("deploy now?"), asker_b.ask("which db?")] }
+      push_question(asker_a)
+      push_question(asker_b)
+      wait_until { buffer_lines("lain://inbox").size == 2 }
+    end
+
+    it "enqueues an open command naming the cursor's line when the human presses enter" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_pending
+
+        feed("lain://inbox", "<CR>", cursor: [2, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
+      end
+    end
+
+    it "opens the same set from r, which no longer prompts for a one-line answer" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_pending
+
+        feed("lain://inbox", "r", cursor: [2, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, 2]])
+      end
+    end
+
+    # No sleep: the placeholder gesture is followed by a real command, and the
+    # FIRST thing to reach the inbox must be that real one (the :LainPin
+    # refusal example's idiom).
+    it "sends nothing at all from the empty-state placeholder" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        wait_until { buffer_lines("lain://inbox").any? }
+
+        feed("lain://inbox", "<CR>", cursor: [1, 0])
+        inspector.command("LainSend")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["send"])
+      end
+    end
+
+    # :Lain* commands are GLOBAL (runtime.lua's `define`) and this one reads the
+    # CURRENT window's cursor, so hand-typed from lain://journal it would open
+    # whatever inbox line shares that number -- a set the human never looked at.
+    it "refuses to open from a buffer that is not the inbox, and says so" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_pending
+        wait_until { buffer_lines("lain://journal").any? }
+
+        feed("lain://journal", ":LainOpen<CR>", cursor: [1, 0])
+        feed("lain://inbox", "<CR>", cursor: [1, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, 2]])
       end
     end
   end

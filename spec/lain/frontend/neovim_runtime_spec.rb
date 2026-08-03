@@ -247,12 +247,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 6 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 7 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "6" }
-        expect(described_class::PROTOCOL).to eq("6")
+        wait_until { inspector.get_var("lain_rpc_version") == "7" }
+        expect(described_class::PROTOCOL).to eq("7")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end

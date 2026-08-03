@@ -48,7 +48,10 @@ module Lain
       #   the "question"/"question_abandon" commands. "question" is the FIRST
       #   command whose answer is not an ack: its response is the write's
       #   verdict (see {RpcThread#answer}).
-      PROTOCOL = "6"
+      # "7": T15 added the inbox's open gesture -- :LainOpen and the "open"
+      #   command it sends, carrying the CURSOR LINE (:LainPin's rule, since
+      #   the inbox row renders no digest), with <CR> and `r` both bound to it.
+      PROTOCOL = "7"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model

@@ -116,10 +116,15 @@ module Lain
         #   Per-asker, never per-seam: one name for every arrival is the
         #   hardcoded `"lain"` this widening removed. Absent, the correlation
         #   stands in, clamped -- see {#desktop_name}.
+        #
+        #   It is handed to the ASKER as well as to the announcement (T15), so
+        #   it rides the Q event ({Tools::AskHuman::ASKED_BY}) and the surfaces
+        #   that never see an arrival -- {Frontend::Neovim::InboxView} folds the
+        #   record stream -- name the asker the same way this one does.
         def enrol(parent, agent: nil)
           registration = nil
           asker = Lain::Tools::AskHuman::Notifying.new(
-            parent:, observer: @observer,
+            parent:, observer: @observer, agent:,
             notify: ->(question) { announce(question, asker:, registration:, agent:) }
           )
           registration = @directory.register(asker)

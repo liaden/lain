@@ -861,16 +861,14 @@ RSpec.describe Lain::Tools::Subagent do
         expect(nvim_senders(pending_pair(:fresh)).uniq.size).to eq(2)
       end
 
-      # PINNED PENDING, and it is the half the arrival fix does NOT reach.
-      # `HumanReplies::InboxItem.asked` now prefers the asker's name, which
-      # closes the TTY; the nvim view never sees an InboxItem, so it still
-      # renders the shared root digest and the two rows still collide. Closing
-      # it means the NAME riding the record -- the Q event's body, or
-      # {Telemetry::Message} -- neither of which is in this card's files.
-      # Written as the behaviour wanted, so it goes green when that lands.
+      # Was PINNED PENDING until T15, and it is the half the arrival fix did
+      # NOT reach: `HumanReplies::InboxItem.asked` prefers the asker's name,
+      # which closes the TTY, but the nvim view never sees an InboxItem -- it
+      # folds the record stream, so it rendered the shared root digest and the
+      # two rows collided. Closed by the NAME riding the RECORD: the asker
+      # writes it into the Q event's body ({Tools::AskHuman::ASKED_BY}) and the
+      # view reads it there, so both surfaces name an asker the same way.
       it "names the child apart from its parent in the nvim inbox, on an inherit spawn" do
-        pending("the nvim view folds the record stream, where the asker's name does not ride: it renders event.from")
-
         expect(nvim_senders(pending_pair(:inherit)).uniq.size).to eq(2)
       end
     end

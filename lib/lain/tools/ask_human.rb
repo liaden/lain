@@ -67,6 +67,20 @@ module Lain
       # one.
       FREE_TEXT_ID = "question"
 
+      # The body key the asker's NAME rides on, and it exists because the
+      # ENVELOPE cannot carry it: `from` is the asker chain's correlation --
+      # its ROOT digest -- and an `:inherit` child is `parent.fork`, so a child
+      # and its parent share a root PERMANENTLY and render one sender at every
+      # surface that reads the record. `:inherit` is the default posture for a
+      # `@role` spawn, so that is the common case rather than a corner of one.
+      #
+      # The TTY reads the name off the ARRIVAL
+      # ({CLI::HumanReplies::InboxItem.asked}), which is why that surface was
+      # closed alone. {Frontend::Neovim::InboxView} never sees an arrival -- it
+      # folds the record stream -- so the name has to be IN the record for the
+      # two surfaces to name an asker the same way.
+      ASKED_BY = "asked_by"
+
       class NoPendingQuestion < Error; end
       class QuestionOutstanding < Error; end
 
@@ -352,10 +366,19 @@ module Lain
       # exactly the events a Timeline walk can never find, so the session
       # scribe attaches here or not at all. Null default, same as Lineage's --
       # nothing about the unobserved path changes.
-      def initialize(parent:, name: "ask_human", observer: Event::ChainWriter::Null.new)
+      #
+      # `agent` is who a HUMAN is told is asking, and it is NOT `name`: that one
+      # is the TOOL's name, the bytes the model sees in the tools block. This is
+      # per-asker (the main chat's, a child's role), it rides the Q event under
+      # {ASKED_BY}, and it is the same value {CLI::Wiring::Askers#enrol} already
+      # announced to the TTY and the desktop -- passed down here so every
+      # surface, including the ones that only ever see the record, reads one
+      # name. Absent, the envelope's correlation stands in as it always did.
+      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new)
         super()
         @parent = parent
         @name = name
+        @agent = agent
         @chain_writer = Event::ChainWriter.new(observer:)
         @outstanding = Outstanding.new
       end
@@ -557,11 +580,16 @@ module Lain
       end
 
       # The set, plus the one-line summary the inbox reads under the key it has
-      # always read -- both taken off the announcement, which derived them once.
+      # always read -- both taken off the announcement, which derived them once
+      # -- plus this asker's name, when it has one to give ({ASKED_BY}).
       # {Question::Set#to_body} hands back a fresh copy, so merging here reaches
-      # nothing the frozen set holds.
+      # nothing the frozen set holds, and {Question::Set.from_body} reads only
+      # the keys it owns, so a richer body still rebuilds exactly the set that
+      # was asked. Nothing about the tools block moves: this is the event, not
+      # the schema.
       def emitted_body(announcement)
-        announcement.set.to_body.merge("question" => announcement.summary)
+        body = announcement.set.to_body.merge("question" => announcement.summary)
+        Blankness.blank?(@agent) ? body : body.merge(ASKED_BY => @agent)
       end
 
       # A :message event in the shared Store, delegated to the shared
