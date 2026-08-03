@@ -307,4 +307,386 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end.not_to raise_error
     end
   end
+
+  # T13: `x` in lain://question. Same harness and the same idiom as everything
+  # above -- the document is injected straight through the runtime's own
+  # `set_question` entry point, because the keymap is a fact about what
+  # runtime.lua does with rendered lines, and the claim it has to earn is that
+  # it does it from BUFFER TEXT ALONE. The arity rides in the heading
+  # {Question::Document} writes ("## `id` (choose one)"), so a question's
+  # boundary and how many ticks it may carry are both recoverable with no RPC;
+  # spec/lain/question/document_spec.rb pins the same scan in ruby.
+  #
+  # Every expected document below is what the GRAMMAR would render for those
+  # selections, never hand-written markdown -- so an example asserts the whole
+  # buffer against bytes the parse would accept, not against a substitution.
+  describe "`x` ticks an option in lain://question" do
+    def option(id, label) = Lain::Question::Option.new(id:, label:)
+
+    def question(id, body, options: [], arity: Lain::Question::SINGLE)
+      Lain::Question.new(id:, body:, options:, arity:)
+    end
+
+    let(:storage) do
+      question("storage", "Which storage engine?",
+               options: [option("pg", "Postgres"), option("sqlite", "SQLite")])
+    end
+    let(:checks) do
+      question("checks", "Which checks run?", arity: Lain::Question::MULTI,
+                                              options: [option("lint", "RuboCop"), option("test", "RSpec")])
+    end
+    let(:notes) { question("notes", "Anything else?") }
+    let(:asked) { Lain::Question::Set.new(questions: [storage, checks, notes]) }
+    let(:digest) { "blake3:c0ffee" }
+    let(:frontend) { described_class.new(channel:, socket_path: @socket) }
+
+    def lines_of(markdown) = markdown.lines.map { |line| line.delete_suffix("\n") }
+
+    def rendered(selected = {}, commented = {})
+      answers = asked.questions.map do |asked_question|
+        Lain::Question::Answer.new(question_id: asked_question.id, comment: commented[asked_question.id],
+                                   option_ids: selected.fetch(asked_question.id, []))
+      end
+      lines_of(Lain::Question::Document.to_markdown(Lain::Question::AnswerSet.new(questions: asked, answers:)))
+    end
+
+    def row_of(lines, text) = lines.index(text) + 1
+
+    # The document straight into the buffer, then zR. The at-rest fold state
+    # (T12) leaves every question but the first CLOSED, and these examples are
+    # about the keymap rather than the fold surface -- neovim_runtime_spec pins
+    # that -- so opening them keeps a cursor seated inside a fold out of it.
+    #
+    # The priming wait is this file's own idiom and not decoration: {#run}
+    # returns once the runtime is injected, but the drain thread is still
+    # posting every projection's at-rest state, and those renders reach the
+    # editor on the RPC thread while the inspector connection drives it from
+    # here. Waiting for priming to land is what keeps a keymap example from
+    # interleaving with one.
+    def open_question(lines)
+      wait_until { bufnr("lain://timeline") != -1 }
+      inspector.exec_lua(<<~LUA, [lines, digest])
+        local lines, digest = ...
+        _G.__lain.set_question("lain://question", lines, digest)
+        vim.cmd("normal! zR")
+        return true
+      LUA
+    end
+
+    def question_lines
+      inspector.exec_lua('return vim.api.nvim_buf_get_lines(vim.fn.bufnr("lain://question"), 0, -1, false)', [])
+    end
+
+    def write_question
+      inspector.exec_lua(<<~LUA, [])
+        local ok, err = pcall(function()
+          vim.api.nvim_buf_call(vim.fn.bufnr("lain://question"), function() vim.cmd("write") end)
+        end)
+        return { ok = ok, err = tostring(err) }
+      LUA
+    end
+
+    it "ticks the option under the cursor, sending nothing" do
+      frontend.run do |handle|
+        document = rendered
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `pg` Postgres"), 0])
+
+        expect(question_lines).to eq(rendered("storage" => %w[pg]))
+        expect { handle.command_inbox.pop(true) }.to raise_error(ThreadError)
+      end
+    end
+
+    it "clears a tick the cursor sits on" do
+      frontend.run do
+        document = rendered("storage" => %w[pg])
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [x] `pg` Postgres"), 0])
+
+        expect(question_lines).to eq(rendered)
+      end
+    end
+
+    it "keeps at most one tick on a single-select question, clearing the sibling" do
+      frontend.run do
+        document = rendered("storage" => %w[pg])
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `sqlite` SQLite"), 0])
+
+        expect(question_lines).to eq(rendered("storage" => %w[sqlite]))
+      end
+    end
+
+    it "accumulates ticks on a multi-select question" do
+      frontend.run do
+        document = rendered
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `lint` RuboCop"), 0])
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `test` RSpec"), 0])
+
+        expect(question_lines).to eq(rendered("checks" => %w[lint test]))
+      end
+    end
+
+    # Ruling 11: lain://question is `acwrite` and the human types PROSE into it,
+    # so an unconditional map would break deleting a character while writing a
+    # comment. The whole buffer still renders as a document the grammar accepts,
+    # one character shorter.
+    it "is vim's own `x` on the prose line a human is writing" do
+      frontend.run do
+        document = rendered({ "storage" => %w[sqlite] }, "storage" => "because it is embedded")
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "  because it is embedded"), 2])
+
+        expect(question_lines).to eq(rendered({ "storage" => %w[sqlite] }, "storage" => "ecause it is embedded"))
+      end
+    end
+
+    # `.` is the most reflexive key a vim user reaches for after "do a thing to
+    # a line", and the tick is the one line this card made special. A bare
+    # buffer write leaves NO redo entry, so `.` silently replayed the previous
+    # real change -- the raw `x` from the line before -- and ate the option's
+    # "- ". The panel's P1 sequence exactly, and the resulting document is still
+    # one the grammar renders: a repeated toggle is an untick.
+    it "repeats the tick with `.`, never a stale `x`, on the line the tick made special" do
+      frontend.run do
+        document = rendered
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "Which storage engine?"), 0])
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `pg` Postgres"), 0])
+        feed("lain://question", ".")
+
+        expect(question_lines).to eq(rendered.map do |line|
+          line.sub("Which storage engine?", "hich storage engine?")
+        end)
+      end
+    end
+
+    # The other half of the same mechanism, and the reason it is worth having
+    # rather than merely worth not breaking: `.` is how a human ticks the next
+    # option without moving their hand.
+    it "carries the tick to the next option with `.`" do
+      frontend.run do
+        document = rendered
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `lint` RuboCop"), 0])
+        feed("lain://question", ".", cursor: [row_of(document, "- [ ] `test` RSpec"), 0])
+
+        expect(question_lines).to eq(rendered("checks" => %w[lint test]))
+      end
+    end
+
+    # A single-select tick is TWO nvim_buf_set_text calls (the new tick, the
+    # sibling it clears) and must still be ONE change to undo: a human who
+    # mis-clicks and presses `u` expects the document back, not half of it.
+    it "undoes a single-select tick and the sibling it cleared in one `u`" do
+      frontend.run do
+        document = rendered("storage" => %w[pg])
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `sqlite` SQLite"), 0])
+        expect(question_lines).to eq(rendered("storage" => %w[sqlite]))
+        feed("lain://question", "u")
+
+        expect(question_lines).to eq(document)
+      end
+    end
+
+    # `.` replays `g@l` DIRECTLY -- the map does not run again -- so the operator
+    # function is the only guard a repeat passes through, and what it repeats is
+    # "tick this", not "delete a character". A repeat that fell through to vim's
+    # `x` would make the most reflexive key in vim destructive on the prose the
+    # human is in the middle of writing.
+    it "repeats to nothing when `.` lands where there is nothing to tick" do
+      frontend.run do
+        document = rendered({ "storage" => %w[sqlite] }, "storage" => "because it is embedded")
+        open_question(document)
+
+        feed("lain://question", "x", cursor: [row_of(document, "- [ ] `pg` Postgres"), 0])
+        feed("lain://question", ".", cursor: [row_of(document, "  because it is embedded"), 2])
+
+        expect(question_lines).to eq(rendered({ "storage" => %w[pg] }, "storage" => "because it is embedded"))
+      end
+    end
+
+    # v:count and v:register are PENDING when a mapping fires, and an expr map's
+    # returned keys are executed with both still pending -- so `3x` and `"ax`
+    # off an option line are vim's own, byte for byte, with nothing
+    # reconstructed. These two pin that the fall-through really is `x` and not
+    # an imitation of it.
+    it "carries a count through to vim's `x`" do
+      frontend.run do
+        document = rendered({ "storage" => %w[sqlite] }, "storage" => "because it is embedded")
+        open_question(document)
+
+        feed("lain://question", "3x", cursor: [row_of(document, "  because it is embedded"), 2])
+
+        expect(question_lines).to eq(rendered({ "storage" => %w[sqlite] }, "storage" => "ause it is embedded"))
+      end
+    end
+
+    it "carries a register through to vim's `x`" do
+      frontend.run do
+        document = rendered
+        open_question(document)
+
+        feed("lain://question", '"ax', cursor: [row_of(document, "Which storage engine?"), 0])
+
+        expect(inspector.exec_lua('return vim.fn.getreg("a")', [])).to eq("W")
+        expect(question_lines).to eq(rendered.map do |line|
+          line.sub("Which storage engine?", "hich storage engine?")
+        end)
+      end
+    end
+
+    # `[x]` and `[ ]` are the only marks Question::Document writes, and a mark
+    # it does not write is not an option line here either -- so `x` deletes the
+    # offending character, which is exactly the edit the grammar's own refusal
+    # ("[?] is not a checkbox mark this grammar writes") asks the human for.
+    # Toggling it instead would be this keymap normalizing text the grammar
+    # refuses, and a nil mark reaching the buffer write is an error in their face.
+    #
+    # The cursor is at column 0 and NOT on the mark, deliberately: widening the
+    # pattern to any mark deletes the mark itself (a nil replacement is an empty
+    # one), which from column 3 is byte-identical to vim's `x` -- the mutation
+    # survived this example until the cursor moved off it. Vim's `x` deletes the
+    # character under the CURSOR, and that is what is asserted.
+    it "is vim's own `x` on a checkbox the grammar would refuse" do
+      frontend.run do
+        mangled = rendered.map { |line| line.sub("- [ ] `pg`", "- [?] `pg`") }
+        open_question(mangled)
+
+        feed("lain://question", "x", cursor: [row_of(mangled, "- [?] `pg` Postgres"), 0])
+
+        expect(question_lines).to eq(mangled.map { |line| line.sub("- [?] `pg`", " [?] `pg`") })
+      end
+    end
+
+    it "leaves the map buffer-local, so `x` is untouched in every other buffer" do
+      frontend.run do
+        wait_until { bufnr("lain://timeline") != -1 }
+        open_question(rendered)
+
+        expect(buffer_local_map?("lain://question", "x")).to be(true)
+        expect(buffer_local_map?("lain://timeline", "x")).to be(false)
+      end
+    end
+
+    # A tick is a real edit, so the untouched-write refusal (T12) is done with
+    # and a PLAIN `:w` submits -- which is the path a human actually takes.
+    # The real QuestionView here rather than the injected document: the write's
+    # verdict is Ruby's, and it is the half a bare set_question cannot exercise.
+    it "leaves a plain `:w` submitting the answer the tick made" do
+      one = Lain::Question::Set.new(questions: [storage])
+
+      frontend.run do |handle|
+        expect(frontend.question_view.open(one, digest)).to be_nil
+        wait_until { bufnr("lain://question") != -1 }
+
+        feed("lain://question", "x", cursor: [row_of(lines_of(Lain::Question::Document.unanswered(one)),
+                                                     "- [ ] `pg` Postgres"), 0])
+        expect(write_question).to include("ok" => true)
+
+        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
+        expect(verb).to eq("question_answered")
+        expect(args.last.fetch("storage").option_ids).to eq(%w[pg])
+      end
+    end
+
+    # The heading shape is implemented TWICE -- Question::Document::HEADING and
+    # KIND_LABELS in ruby, `question_heading` and QUESTION_ARITIES in lua -- and
+    # the arity WORDS were the half nothing held to the other. lua patterns have
+    # no alternation, so the three labels have to be spelled out as a set; add a
+    # fourth kind in ruby and that question goes invisible to the folds, to
+    # ]]/[[ AND to `x` at once, with a green suite, because all three read that
+    # one predicate. The motion is the cheapest observable of it: `]]` walks
+    # heading to heading, so a heading lua does not recognize is one `]]` skips.
+    describe "every kind the grammar can write" do
+      def question_for(kind, index)
+        return question("q#{index}", "Body #{index}") if kind == Lain::Question::Document::FREE_TEXT
+
+        question("q#{index}", "Body #{index}", arity: kind, options: [option("o#{index}", "Option #{index}")])
+      end
+
+      let(:kinds) { Lain::Question::Document::KIND_LABELS.keys }
+      let(:asked) do
+        Lain::Question::Set.new(questions: kinds.each_with_index.map { |kind, index| question_for(kind, index) })
+      end
+
+      it "is a heading the runtime recognizes, so folds, motions and `x` see every question" do
+        frontend.run do
+          document = rendered
+          open_question(document)
+          headings = document.each_index.select { |index| document[index].start_with?("## `") }
+                                        .map { |index| index + 1 }
+          expect(headings.size).to eq(kinds.size)
+
+          feed("lain://question", "", cursor: [1, 0])
+          walked = Array.new(headings.size - 1) { feed("lain://question", "]]").first }
+
+          expect([1, *walked]).to eq(headings)
+        end
+      end
+    end
+
+    # T5's caveat: a question BODY is rendered verbatim and may legally hold a
+    # line matching OPTION -- a fenced diff showing `- [x] `no` No` is the
+    # documented case, and here it is byte-identical to a real option line.
+    # DECIDED: `x` falls through to vim's own there. The keymap takes only the
+    # LAST run of option lines in a question (the renderer emits the options as
+    # one unbroken run, always after a blank line, and the comment beneath them
+    # is indented), so a body line is never in it. Ticking it would not corrupt
+    # the document silently -- the next `:w` refuses it by name -- but it would
+    # read as a broken keymap.
+    describe "a question body that shows the grammar" do
+      let(:fenced) do
+        question("fenced", "Is this diff right?\n\n```\n- [x] `no` No\n```",
+                 options: [option("yes", "Yes"), option("no", "No")])
+      end
+      let(:asked) { Lain::Question::Set.new(questions: [fenced]) }
+
+      it "falls through to vim's `x` on an option-shaped line inside the body" do
+        frontend.run do
+          document = rendered
+          open_question(document)
+          body = row_of(document, "- [x] `no` No")
+
+          feed("lain://question", "x", cursor: [body, 0])
+
+          expect(question_lines).to eq(document.each_with_index.map do |line, index|
+            index + 1 == body ? " [x] `no` No" : line
+          end)
+        end
+      end
+    end
+
+    # The other half of the same caveat, and the one the last-run rule alone
+    # cannot answer: this question has NO options, so its body's option-shaped
+    # line IS the last run. The heading is what refuses it -- "write your answer
+    # below" says there is nothing here to tick.
+    describe "a free-text question whose body ends in an option-shaped line" do
+      let(:asked) { Lain::Question::Set.new(questions: [question("notes", "Anything else?\n\n- [ ] `x` y")]) }
+
+      it "falls through to vim's `x`, because the heading says the question offers no options" do
+        frontend.run do
+          document = rendered
+          open_question(document)
+          body = row_of(document, "- [ ] `x` y")
+
+          feed("lain://question", "x", cursor: [body, 0])
+
+          expect(question_lines).to eq(document.each_with_index.map do |line, index|
+            index + 1 == body ? " [ ] `x` y" : line
+          end)
+        end
+      end
+    end
+  end
 end
