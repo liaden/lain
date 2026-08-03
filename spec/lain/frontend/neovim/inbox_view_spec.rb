@@ -284,7 +284,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(verb).to eq("reply")
         expect(args).to eq(["postgres"])
 
-        Sync { asker.reply(args.first) }
+        Sync { asker.reply(args.first, asker.last_question.digest) }
         expect(promise.resolved?).to be(true)
         expect(promise.await).to eq("postgres")
         expect(asker.last_answer.kind).to eq(:message)

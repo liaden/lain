@@ -39,6 +39,15 @@ module Lain
       # already reaps the actor -- this card provides the message; it does not
       # reach into {Supervisor} to send it.
       #
+      # So "bounded by registration lifetime" is a bound on the MECHANISM, and
+      # says nothing about how long any given registration lives. The run's own
+      # asker is registered once by {CLI::Wiring#wire_askers} and deliberately
+      # never deregistered -- it is answerable for exactly as long as the chat
+      # -- so its names, tombstones included, are bounded by the SESSION. That
+      # is one asker growing by one entry per question a human is asked, which
+      # is human-paced; a fleet of children is where the difference between the
+      # two bounds is worth having, and where `deregister` has a lease to ride.
+      #
       # There is no timeout and no reaper (ruling 10): a pending question stays
       # pending, which is the honest state and is visible in the inbox.
       class Directory
@@ -48,7 +57,17 @@ module Lain
         # that outlived its set -- must not read two ways depending on which
         # object noticed it; the digest is named ahead of it for the reader
         # (and the model) that has one.
+        #
+        # A nil digest is an answer that names NOTHING -- the editor's
+        # digest-less `:LainReply` arriving with nothing listed -- and it is
+        # said as that rather than interpolated into a sentence with a hole
+        # where the name goes ("the question set  cannot be answered").
+        # {AskHuman::Outstanding#unnamed} draws the same distinction.
+        UNNAMED = "no question set was named, so nothing here can be answered"
+
         def self.unanswerable(digest)
+          return "#{UNNAMED}: #{Outstanding::WITHDRAWN}" if digest.nil?
+
           "the question set #{digest} cannot be answered: #{Outstanding::WITHDRAWN}"
         end
 

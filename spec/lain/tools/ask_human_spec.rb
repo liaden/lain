@@ -28,6 +28,13 @@ RSpec.describe Lain::Tools::AskHuman do
     described_class.new(parent:)
   end
 
+  # T11: `#reply` NAMES the set it answers -- the transitional default that
+  # answered "whichever set is outstanding" is gone. An example with exactly
+  # one set in flight means "the set this asker just asked", and says it once
+  # here rather than at twenty call sites; the examples that are ABOUT naming
+  # (see "naming the set a reply answers") pass their digest by hand.
+  def answered(tool, answer) = tool.reply(answer, tool.last_question.digest)
+
   def projection
     Lain::Event::Projection.new(store_events)
   end
@@ -90,7 +97,7 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(log).to eq(%i[awaiting worker_ran])
       expect(promise.resolved?).to be(false)
 
-      tool.reply("config.rb")
+      answered(tool, "config.rb")
       waiter.wait
       expect(log.last).to eq([:answer, "config.rb"])
     end
@@ -102,7 +109,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "resolves the pending promise with the answer" do
       Sync do
         promise = tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
 
         expect(promise.resolved?).to be(true)
         expect(promise.await).to eq("config.rb")
@@ -112,7 +119,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "records Q and A as replayable :message events, Q in the human mailbox and A back to the asker" do
       Sync do
         tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
       end
 
       q = tool.last_question
@@ -129,7 +136,7 @@ RSpec.describe Lain::Tools::AskHuman do
     end
 
     it "raises loudly when nothing is awaiting a reply" do
-      expect { tool.reply("nobody asked") }.to raise_error(described_class::NoPendingQuestion)
+      expect { tool.reply("nobody asked", nil) }.to raise_error(described_class::NoPendingQuestion)
     end
 
     # The append-only Store is the record: a rejected reply must be rejected
@@ -137,11 +144,11 @@ RSpec.describe Lain::Tools::AskHuman do
     it "rejects a second reply before writing anything to the Store" do
       Sync do
         tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
       end
       after_first = store.size
 
-      expect { tool.reply("config.rb, again") }.to raise_error(Lain::Promise::AlreadyResolved)
+      expect { tool.reply("config.rb, again", tool.last_question.digest) }.to raise_error(Lain::Promise::AlreadyResolved)
       expect(store.size).to eq(after_first)
       expect(tool.last_answer.body.fetch("answer")).to eq("config.rb")
     end
@@ -157,7 +164,7 @@ RSpec.describe Lain::Tools::AskHuman do
         # The child ran synchronously up to its await, so the question is
         # already pending -- no sleep, no timing race.
         expect(tool.pending?).to be(true)
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
 
         result = run.wait
         expect(result).to be_ok
@@ -168,7 +175,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "is a plain synchronous answer when the reply is already in hand (await immediately)" do
       Sync do
         promise = tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
 
         # Awaiting an already-resolved promise returns at once: the degenerate
         # sync gate, no extra API.
@@ -188,7 +195,7 @@ RSpec.describe Lain::Tools::AskHuman do
     def complete_exchange(question, answer)
       Sync do |task|
         run = task.async { tool.call({ "question" => question }, invocation) }
-        tool.reply(answer)
+        answered(tool, answer)
         run.wait
       end
     end
@@ -215,7 +222,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "hands over nothing for an ask/reply that never passed the sync gate" do
       Sync do
         tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
       end
 
       # No perform ran, so no tool_result delivers this answer -- there is no
@@ -237,7 +244,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       Sync do
         tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
       end
 
       expect(seen).to eq([tool.last_question, tool.last_answer])
@@ -251,7 +258,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       Sync do
         notifying.ask("which file?")
-        notifying.reply("config.rb")
+        answered(notifying, "config.rb")
       end
 
       expect(seen.size).to eq(2)
@@ -260,7 +267,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "defaults to no observer, every existing path byte-identical" do
       Sync do
         tool.ask("which file?")
-        expect(tool.reply("config.rb").kind).to eq(:message)
+        expect(answered(tool, "config.rb").kind).to eq(:message)
       end
     end
   end
@@ -346,7 +353,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "accepts the set from the model as tool input" do
       Sync do |task|
         run = task.async { tool.call(set_input, invocation) }
-        tool.reply("sqlite")
+        answered(tool, "sqlite")
         run.wait
       end
 
@@ -358,7 +365,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "returns the human's answer as an ok Tool::Result naming the selection" do
       result = Sync do |task|
         run = task.async { tool.call(set_input, invocation) }
-        tool.reply("sqlite -- smaller footprint, and no migrations for now")
+        answered(tool, "sqlite -- smaller footprint, and no migrations for now")
         run.wait
       end
 
@@ -377,7 +384,7 @@ RSpec.describe Lain::Tools::AskHuman do
       expect do
         Sync do |task|
           run = task.async { tool.call(set_input, invocation) }
-          tool.reply({ "db" => "sqlite" })
+          answered(tool, { "db" => "sqlite" })
           run.wait
         end
       end.to raise_error(Lain::Tool::InvalidResult)
@@ -386,7 +393,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "still takes a bare free-text question, and the typed reply resolves it" do
       result = Sync do |task|
         run = task.async { tool.call({ "question" => "which file?" }, invocation) }
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
         run.wait
       end
 
@@ -427,7 +434,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       Sync do |task|
         run = task.async { notifying.call(set_input, invocation) }
-        notifying.reply("sqlite")
+        answered(notifying, "sqlite")
         run.wait
       end
 
@@ -456,7 +463,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       Sync do |task|
         run = task.async { notifying.call({ "question" => long_body }, invocation) }
-        notifying.reply("approve")
+        answered(notifying, "approve")
         run.wait
       end
 
@@ -495,7 +502,7 @@ RSpec.describe Lain::Tools::AskHuman do
 
       Sync do |task|
         run = task.async { notifying.call(one, invocation) }
-        notifying.reply("approve")
+        answered(notifying, "approve")
         run.wait
       end
 
@@ -593,6 +600,24 @@ RSpec.describe Lain::Tools::AskHuman do
                     causal_parents: answered).head
     end
 
+    # The transitional default is GONE (T11), and this is what "not safe"
+    # meant: the invariant fixes which set is OUTSTANDING, never which set an
+    # answer was written FOR. Withdraw a set, ask another, and a defaulted
+    # reply resolves the new one with A's causal edge citing it. A caller that
+    # cannot say which set it means is a caller with a bug, so the arity says
+    # so at the door -- before anything is written and before any promise
+    # moves.
+    it "requires an answer to name its set, rather than defaulting to whatever is outstanding" do
+      Sync do
+        asked = tool.ask("which file?")
+
+        expect { tool.reply("config.rb") }.to raise_error(ArgumentError, /wrong number of arguments/)
+        expect(asked.resolved?).to be(false)
+        expect(tool.pending?).to be(true)
+        expect(tool.last_answer).to be_nil
+      end
+    end
+
     # NEVER name a local `pending` in an example: it shadows RSpec's own
     # `pending`, so a later edit that drops the assignment marks the example
     # pending and GREEN instead of failing. `asked` throughout.
@@ -618,7 +643,7 @@ RSpec.describe Lain::Tools::AskHuman do
       Sync do |task|
         run = task.async { tool.call({ "question" => "which db?" }, invocation) }
         first = tool.last_question
-        tool.reply("postgres")
+        answered(tool, "postgres")
         tool.ask("which port?")
         second = tool.last_question
         run.wait
@@ -635,7 +660,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "refuses a reply naming a set that is not pending, without touching the one that is" do
       Sync do
         first = tool.ask("which file?")
-        tool.reply("config.rb")
+        answered(tool, "config.rb")
         second = tool.ask("which port?")
         after_first = store.size
 
@@ -674,7 +699,7 @@ RSpec.describe Lain::Tools::AskHuman do
         expect(tool.pending?).to be(true)
         expect(store.size).to eq(after_ask)
         expect(tool.last_question).to equal(asked)
-        expect(tool.reply("config.rb").causal_parents).to eq([asked.digest])
+        expect(tool.reply("config.rb", asked.digest).causal_parents).to eq([asked.digest])
       end
     end
 
@@ -710,9 +735,9 @@ RSpec.describe Lain::Tools::AskHuman do
 
         expect { tool.reply("too late", withdrawn.digest) }
           .to raise_error(described_class::NoPendingQuestion, /this asker holds no question set at all/)
-        expect { tool.reply("too late") }
+        expect { tool.reply("too late", nil) }
           .to raise_error(described_class::NoPendingQuestion, /withdrawn when the run that asked it was stopped/)
-        expect { tool.reply("too late") }
+        expect { tool.reply("too late", nil) }
           .to raise_error(described_class::NoPendingQuestion, /inbox line offering it is stale/)
       end
     end

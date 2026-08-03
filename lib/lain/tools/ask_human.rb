@@ -98,8 +98,9 @@ module Lain
       # The at-most-one question set this asker is holding, addressable by name.
       # An instance of the tool belongs to one agent's toolset and is not
       # `parallel_safe?`, so a second set opening while one is unanswered is a
-      # coordination bug, not a queue -- and refusing it is what makes "the
-      # pending one" an unambiguous default for {AskHuman#reply}'s digest.
+      # coordination bug, not a queue. It is NOT what makes an answer
+      # unambiguous -- that is the digest {#reply} now requires; this refusal
+      # only keeps one asker from holding two sets it could not tell apart.
       #
       # The two guards are one rule: a promise nobody can address by name is a
       # promise a late answer resolves by accident, which is exactly the
@@ -413,15 +414,16 @@ module Lain
       # {#take_answered_questions} -- come from the answer rather than from
       # "whichever set was asked last".
       #
-      # The default is TRANSITIONAL, and it is not safe. It answers "which set
-      # is outstanding", which is a different question from "which set was this
-      # answer written for": withdraw a set (a stopped run, see {#awaited}), ask
-      # another, and an answer typed for the first resolves the second and is
-      # cited against it. The live way in is a stale `/inbox` line, which the
-      # drain can leave listed after the run that asked it is gone. It exists
-      # only so the frontend reply-path keeps compiling while the caller that
-      # can name the set is written; nothing here makes it correct, and the
-      # fix is a REQUIRED digest taken from what {#ask} returns.
+      # `digest` is REQUIRED, and the default it replaced was the transitional
+      # one T7 left for its callers to convert (T11 converted them). The
+      # default answered "which set is outstanding", which is a different
+      # question from "which set was this answer written for": withdraw a set
+      # (a stopped run, see {#awaited}), ask another, and an answer typed for
+      # the first resolved the second and was cited against it. The live way
+      # in was a stale `/inbox` line, which the drain could leave listed after
+      # the run that asked it was gone. So a caller that cannot name its set
+      # is a caller with a bug, and the arity says so at the door -- before
+      # any promise moves and before anything is written.
       #
       # Both guards run BEFORE the Store write: the Store is the append-only
       # record, so a reply this method is about to refuse must leave no A event
@@ -433,7 +435,7 @@ module Lain
       #   is awaiting a reply
       # @raise [Promise::AlreadyResolved] when that set was already answered
       # @return [Lain::Event] the A :message event
-      def reply(answer, digest = @outstanding.digest)
+      def reply(answer, digest)
         pending = @outstanding.answerable!(digest)
         parent = parent_timeline
         @last_answer = write_message(parent, from: HUMAN, to: identity(parent),

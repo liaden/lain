@@ -172,7 +172,7 @@ RSpec.describe Lain::Agent do
         # The ask ran synchronously up to its await, so the question is
         # already pending -- no sleep, no timing race (ask_human_spec's idiom).
         expect(ask.pending?).to be(true)
-        ask.reply("postgres")
+        ask.reply("postgres", ask.last_question.digest)
         run.wait
       end
 
@@ -200,12 +200,12 @@ RSpec.describe Lain::Agent do
       Sync do |task|
         run = task.async { a.ask("hi") }
         first_question = ask.last_question
-        ask.reply("postgres")
+        ask.reply("postgres", first_question.digest)
         # In a reactor, sleep yields this fiber, so the resumed loop commits
         # the first delivery and parks on the second ask before we continue.
         sleep(0.01)
         expect(ask.last_question).not_to eq(first_question)
-        ask.reply("5432")
+        ask.reply("5432", ask.last_question.digest)
         run.wait
 
         turns = a.timeline.to_a

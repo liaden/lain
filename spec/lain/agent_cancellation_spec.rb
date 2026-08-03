@@ -164,7 +164,7 @@ RSpec.describe "Lain::Agent cancellation" do
         # own question -- the cancelled Q was neither dropped into a phantom
         # cite nor double-cited later.
         run = task.async { agent.ask("go on") }
-        ask.reply("5432")
+        ask.reply("5432", ask.last_question.digest)
         run.wait
 
         deliveries = agent.timeline.to_a.select { |turn| turn.causal_parents.any? }

@@ -164,21 +164,31 @@ module Lain
         # narrow escape hatch for the direct-construction seams the specs
         # drive, not a sanctioned production state.
         #
+        # `askers:` is the run's ONE {Wiring::Askers} -- who may ask the human,
+        # where an arrival goes, and the directory an answer is routed back
+        # through (T11). It is held here rather than used here: the card that
+        # lets a CHILD ask the human threads it into the spawn seam, and
+        # {Wiring::Askers#enrol} hands back both halves that costs -- the
+        # child's own asker, and the {Tools::AskHuman::Directory::Registration}
+        # whoever owns that child's lifetime must hold and `deregister`.
+        #
+        # Defaulted for `switchboard:`'s exact reason and with the same
+        # warning: {Wiring::Askers.unwired} is the direct-construction seam the
+        # specs drive, where a child's question would reach no queue and no
+        # desktop. The exe always passes the run's own.
+        #
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       switchboard: -> { NoSwitchboard })
+                       switchboard: -> { NoSwitchboard }, askers: Askers.unwired)
           @library = library
           @backend = backend
           @options = options
           @epic = epic
-          @seam = Lain::Tools::Subagent::Seam.new(
-            provider:, context_factory: -> { backend.context }, parent:,
-            journal:, supervisor:, observer: chronicle.observer,
-            gate_policy: LivePolicy.new(board: switchboard),
-            permits: PosturePermits.new(board: switchboard)
-          )
+          @askers = askers
+          @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
+                             observer: chronicle.observer)
         end
 
         # The run's toolset: the capability floor, plus the child seams and
@@ -199,7 +209,21 @@ module Lain
 
         private
 
-        attr_reader :backend, :library, :options, :seam, :epic
+        attr_reader :backend, :library, :options, :seam, :epic, :askers
+
+        # The ONE {Lain::Tools::Subagent::Seam} every child spawn is built
+        # over, in a method of its own because the constructor above is now
+        # "read the run's collaborators" and this is "assemble what a child is
+        # built from" -- two jobs, and MethodLength said so when the eleventh
+        # line landed. Both posture axes arrive as delegators over the
+        # switchboard thunk; see the class comment for why neither may be a
+        # captured value.
+        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:)
+          Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
+                                          journal:, supervisor:, observer:,
+                                          gate_policy: LivePolicy.new(board: switchboard),
+                                          permits: PosturePermits.new(board: switchboard))
+        end
 
         # One seam serves every role: the role, policy, and persona are chosen
         # PER CALL from the parsed role name and context mode, so what is

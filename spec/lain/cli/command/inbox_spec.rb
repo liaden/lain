@@ -41,10 +41,20 @@ RSpec.describe Lain::CLI::Command::Inbox do
     build_command_env(replies:, status:)
   end
 
+  # T11: what rides the arrival queue is the inbox item, not the question's
+  # bytes -- it carries the digest an answer names its set by, and the asker
+  # that asked ({Lain::CLI::Wiring::Askers#announce} is what does this in a
+  # run). The reply seam here is the lone asker rather than the run's
+  # directory, which is the single-agent case: it answers the same
+  # `#reply(answer, digest)`, and this command's job is the same either way.
+  def announced(question)
+    ask_human.ask(question)
+    questions.enqueue(Lain::CLI::HumanReplies::InboxItem.asked(question, ask_human.last_question))
+  end
+
   it "runs the same drain UX HumanReplies exposes for human> -- TTY renders it, the command adds nothing" do
     Sync do
-      ask_human.ask("two pending?")
-      questions.enqueue("two pending?")
+      announced("two pending?")
       allow(conductor).to receive(:read_reply).and_return("yes")
 
       text = command.call("", env_with(replies:))
@@ -75,9 +85,8 @@ RSpec.describe Lain::CLI::Command::Inbox do
   # hand-back, not solved here by diverging from the parity spec.
   it "does not retire on the reply alone -- the pre-existing, escalated gap, unchanged by this card" do
     Sync do
-      ask_human.ask("q1?")
+      announced("q1?")
       expect(status_feed.state["inbox_count"]).to eq(1)
-      questions.enqueue("q1?")
       allow(conductor).to receive(:read_reply).and_return("42")
 
       command.call("", env_with(replies:, status: status_feed))
