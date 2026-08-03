@@ -25,16 +25,29 @@ in a multi-Ractor process a later class-variable READ finds no cache entry and a
 gets read first — for us `i18n/config.rb:176`, which is a victim, not the cause. Fixed in 4.0.6,
 along with two more Ractor crashes (#22075, #22084).
 
-**Why `pspec` and not `rspec`.** The suite is subprocess-bound, not CPU-bound: measured at 44s
-user against 92s *system*, because the isolation, forge and workspace specs drive real `git`, and
-the frontend specs drive real `nvim` and `tmux`. Those are the subjects under test, so the cost is
-not removable -- but it parallelises almost perfectly. Measured on a 16-core box: serial 155s,
-`-n 7` **18s**, `-n 12` 22s, `-n 16` 29s. More workers is WORSE, which is why `spec_workers` is
-one fewer than physical cores: each worker loads the whole suite, so the ceiling is memory, not
-CPU. Things that were measured and do **not** help: `TMPDIR=/dev/shm` (-8.6%, the page cache
-already had it), `core.fsync=none` (nothing -- git here is spawn-bound, not fsync-bound), and
-mocking git (the `shell_out_factory` seam exists and is used for *failure injection*; the
-semantics under test are git's own, so a fake would test the fake).
+**Why `pspec` and not `rspec`.** The suite is subprocess-bound, not CPU-bound: 44s user against
+92s *system*, because the isolation, forge and workspace specs drive real `git` and the frontend
+specs drive real `nvim`/`tmux`. Those are the subjects under test, so the cost is not removable --
+but it parallelises. Serial 155s; `rake pspec` ~19-30s.
+
+**The ceiling is PHYSICAL CORES, not memory** -- correcting the comment beside `spec_workers`.
+Measured on a Ryzen 7 3700X (8 physical, 16 logical, 15G RAM): seven workers peak at **~200MB each,
+1.2GB total**, against 6GB free. Memory is not close to binding. What binds is cores, and
+`spec_workers = physical - 1` already lands on it: best-of-3, **n=7 18.7s, n=10 21.0s, n=14 22.2s**
+-- monotonically worse past the core count. Single runs vary by ±50% (the runtime log redistributes
+files every run), so take a best-of-N before believing any number here.
+
+**A preloader (spring/zeus-style fork-after-load) is not worth it, and not for the obvious reason.**
+Per-worker load is only **0.73-1.26s** (each worker loads its own subset), so forking after one
+load saves ~1s of an ~19s wall. It would also save ~0.6GB of the 1.2GB, which we are not short of --
+and it cannot unlock more workers, because the limit is 8 cores, not RAM. Bootsnap already does the
+cheap half: **1.7s warm vs 3.6s cold** for all 465 spec files, ~53% off, from a 33M iseq cache under
+`tmp/cache`. A cold cache is the likely explanation for any surprisingly slow boot you see.
+
+Things measured that do **not** help: `TMPDIR=/dev/shm` (-8.6%; the page cache already had it),
+`core.fsync=none` (nothing -- git here is spawn-bound at ~5ms/spawn, not fsync-bound), and mocking
+git (the `shell_out_factory` seam exists and the heavy specs already use it for *failure
+injection*; the semantics under test are git's own, so a fake would test the fake).
 
 The failure is easy to misread: `parallel_tests` reports only the examples that SURVIVED, so a
 dead worker looks like "fewer examples, 0 failures, non-zero exit" — the same shape an OOM kill
