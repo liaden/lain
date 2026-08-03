@@ -30,6 +30,16 @@ module Lain
     # process-local coordination that carries the value to the parked fiber, is
     # this tool's own business, never something the frontend reaches into.
     #
+    # == One call, a whole SET of questions
+    #
+    # What a call carries is a {Lain::Question::Set}, and that is a cost
+    # decision rather than a taxonomy: this tool does not override
+    # `parallel_safe?`, so {Agent::ToolRunner} runs it as a barrier. N questions
+    # asked one at a time are N barriers -- the human answers, the model
+    # round-trips, asks again -- which is N model turns and N context renders
+    # for one decision. A set collapses that to one, and the price is that it
+    # resolves as a whole.
+    #
     # == Injection, and the single-question invariant
     #
     # `parent:` is the live parent-Timeline handle (a Timeline or a `-> Timeline`
@@ -38,20 +48,163 @@ module Lain
     # chain's correlation, exactly as Subagent's Lineage derives it. The tool
     # holds the one outstanding promise on an ivar: an instance belongs to one
     # agent's toolset, and a synchronous tool dispatch has no interleaving
-    # writer, so there is at most one question awaiting a reply at a time (the
+    # writer, so there is at most one set awaiting a reply at a time (the
     # OM-2-only statefulness Subagent documents). An actor mode that asks
     # concurrently must carry its promises on events, not on this ivar.
     class AskHuman < Tool
       HUMAN = "human"
 
+      # The id a bare free-text question is asked under. Every question in a set
+      # carries one -- it is the join key the answer document renders and the
+      # parser reads back -- and a caller who handed over a String never chose
+      # one.
+      FREE_TEXT_ID = "question"
+
       class NoPendingQuestion < Error; end
 
-      # The model-facing input: just the question. The human, the addressing,
-      # and the promise are the mechanism, not something the model negotiates.
+      # One question set, wearing the text a human is shown for it -- and the
+      # ONLY way a set reaches {#ask}.
+      #
+      # A String subclass, which is a shape to justify rather than assume. The
+      # arrival seam is {Notifying#ask}, and it hands the notifier ITS OWN
+      # argument verbatim: whatever `#ask` was called with is what reaches
+      # `Wiring#announce`, which enqueues it for the TTY's arrival line
+      # (`"? #{question}"`) AND drops it into a dunstify **argv** element. Both
+      # were String-shaped before sets existed -- a Data value renders there as
+      # an inspect and puts a non-String in an argv -- so the value handed to
+      # `#ask` stays a String, and {#set} is how this tool still gets the whole
+      # set off it.
+      #
+      # Structural rather than a convention: because a bare {Question::Set} is
+      # refused, no caller can put a non-String on that seam. Widening the
+      # queue to carry the set and its asker belongs to the card that owns
+      # BOTH ends of it; that card reads {#set} off this value.
+      #
+      # == Two renderings, derived once
+      #
+      # The bytes this value IS are what the arrival line, the `/inbox` drain
+      # (`Tty::Inbox#line_for`) and the dunstify argv show, so for a LONE
+      # question they are the body VERBATIM -- byte-for-byte what this seam
+      # carried before sets existed. Clamping there was a real regression: the
+      # description invites tables and fenced diffs, and a question cut to its
+      # first line is one a human cannot answer.
+      #
+      # {#summary} is the other rendering: one clamped line, and the only thing
+      # that rides the event body's `"question"` key, because that is what
+      # {Frontend::Neovim::InboxView} reads and its `sender  age  text` row is
+      # pinned. Clamped rather than refused, unlike every field {Question}
+      # itself bounds -- these bytes were already accepted as a question, and
+      # this is a RENDER of them, not a value anybody answers. Both are derived
+      # here, once, so the two surfaces cannot drift.
+      class Announcement < String
+        WIDTH = 96
+        ELLIPSIS = "..."
+
+        def initialize(set)
+          @set = a_set!(set)
+          @summary = summarized(set).freeze
+          super(set.size == 1 ? set.first.body : @summary)
+          freeze
+        end
+
+        # `+str` and `String#encode` hand back THIS class with the ivars
+        # dropped, while every other copying operation carries them and every
+        # non-copying one returns a plain String. So the husk is refused by
+        # name here rather than returning a nil that dies two frames later
+        # inside {Question::Set}.
+        def set = carried!(@set, "question set")
+        def summary = carried!(@summary, "summary line")
+
+        private
+
+        # {#ask}'s own refusal sends callers straight to this constructor, so
+        # it has to answer a `Question` or a String in the same voice rather
+        # than with `undefined method 'first'`.
+        def a_set!(set)
+          return set if set.is_a?(Question::Set)
+
+          raise ArgumentError, "an announcement carries a Question::Set (got #{set.class}) -- build one " \
+                               "with Question::Set.new(questions:) or Question::Set.from_body"
+        end
+
+        def carried!(value, what)
+          return value unless value.nil?
+
+          raise ArgumentError, "this announcement lost the #{what} it carried -- `+str` and String#encode " \
+                               "copy the bytes without the ivars. Announce the original, or wrap the set again."
+        end
+
+        def summarized(set)
+          lead = headline(set.first.body)
+          set.size == 1 ? lead : "#{lead} (+#{set.size - 1} more)"
+        end
+
+        # The first line with anything on it. {Blankness} rather than
+        # `String#empty?`: a line of U+200B is not empty and is not
+        # `[[:space:]]`, and it would render as an invisible inbox row.
+        def headline(body)
+          line = body.each_line.lazy.map(&:strip).find { |text| !Blankness.blank?(text) }.to_s
+          line.length <= WIDTH ? line : "#{line[0, WIDTH - ELLIPSIS.length]}#{ELLIPSIS}"
+        end
+      end
+
+      # The model-facing input: one free-text question, or a whole set of them.
+      # The human, the addressing, and the promise are the mechanism, not
+      # something the model negotiates.
+      #
+      # Two spellings, because they are two different asks. A bare `question` is
+      # the free-text case, and it is also what every non-model caller sends
+      # (the approval gate asks through an `#ask`-shaped duck with a rendered
+      # String); `questions` carries ids, options, and arities. Exactly one per
+      # call, checked below rather than in the schema, because `oneOf` is not in
+      # the subset a strict tool schema enforces.
       class Input < Tool::Input
-        field :question, :string, required: true,
-                                  description: "A question to put to the human operator; " \
-                                               "their answer comes back as this tool's result."
+        FORMS = "send `question` for one free-text question, or `questions` for a set"
+
+        field :question, :string,
+              description: "One free-text question, in markdown, when there is nothing to choose " \
+                           "between. Send this or `questions`, never both."
+        field :questions, :array,
+              description: "Several questions the human answers in ONE reply. Send this or " \
+                           "`question`, never both." do
+          field :id, :string, required: true,
+                              description: "A short, stable id for this question; the answer cites it."
+          field :body, :string, required: true,
+                                description: "The question itself, in markdown -- a table, a fenced diff " \
+                                             "or a list is often what makes a question answerable."
+          field :arity, :string,
+                description: "Whether one of the options may be chosen or several. Defaults to single, " \
+                             "and means nothing when `options` is omitted."
+          field :options, :array,
+                description: "The closed list this question may be answered from. Optional: leave it " \
+                             "off for a free-text answer." do
+            field :id, :string, required: true, description: "A short, stable id for this option."
+            field :label, :string, required: true,
+                                   description: "The one line a human reads beside the checkbox."
+          end
+          validates :arity, inclusion: { in: Question::ARITIES }, allow_nil: true
+        end
+
+        validate :one_form
+
+        private
+
+        # `:base`, because neither field is at fault on its own -- what is wrong
+        # is the pair, and a message hung on `question` would send the model to
+        # fix the one it did not send.
+        #
+        # The priced trade: this leaves top-level `required` EMPTY, so the
+        # schema permits `{}` and this tool is the only one in the set that
+        # does. `oneOf` would say it on the wire, and it is outside the subset
+        # a strict tool schema enforces -- so the rule reaches the model one
+        # turn later, through a message written to be acted on rather than
+        # merely parsed.
+        def one_form
+          asked = [question, questions].reject(&:blank?)
+          return if asked.one?
+
+          errors.add(:base, asked.empty? ? "asks nothing -- #{FORMS}" : "asks two ways -- #{FORMS}, never both")
+        end
       end
 
       input_model Input
@@ -72,22 +225,51 @@ module Lain
         @chain_writer = Event::ChainWriter.new(observer:)
       end
 
-      def description
-        "Asks the human operator `question` and returns their answer as the " \
-          "result. Use it when a decision needs a human -- a missing detail, a " \
-          "judgement call, an approval -- rather than guessing. The call waits " \
-          "for the reply."
-      end
+      # The description is data, not computation: it is the single
+      # highest-leverage lever on tool-call accuracy, and hoisting it out of the
+      # method is what keeps a paragraph the model actually needs from arguing
+      # with Metrics/MethodLength.
+      DESCRIPTION = "Asks the human operator and returns their answer as the result. Use it " \
+                    "when a decision needs a human -- a missing detail, a judgement call, " \
+                    "an approval -- rather than guessing. The call waits for the reply, " \
+                    "which stops the run until the human is back, so ask for everything " \
+                    "you need in ONE call rather than calling this again later. Count the " \
+                    "decisions you are stuck on first: exactly one, and send `question`; " \
+                    "more than one, and send `questions` with an entry per decision. Every " \
+                    "question body is markdown, and a table, a fenced diff or a list is " \
+                    "often what makes a question answerable. `options` is optional -- give " \
+                    "it to close the answer to a fixed list (`arity` says whether one may " \
+                    "be chosen or several), leave it off for a free-text answer."
+
+      def description = DESCRIPTION
 
       # The async-continue seam: emit Q to the human's inbox and return a pending
       # promise. Does not await -- the caller decides when (or whether) to block
       # on the answer.
       #
+      # Every value this takes is a String, and {Announcement} is why.
+      #
+      # The String arm now builds a {Question} where it used to write the bytes
+      # straight into the body, so it answers {Question}'s rules and raises
+      # where it never used to: an unclosed ``` fence, a body past
+      # {Question::MAX_BODY}, a blank body, invalid UTF-8, and nil. That is a
+      # contract change to a published duck ({Approval::Gate} and
+      # {Gherkin::Approval} both ask through one) and it is documented rather
+      # than swallowed -- a rescue here would hand the human a question whose
+      # bytes are not the ones the caller wrote, which is the failure this tool
+      # exists to prevent. The model-facing path DOES convert them, in
+      # {#requested_set}, because a model can act on a legible refusal.
+      #
+      # @param question [Announcement, String] a set wearing the text a human
+      #   is shown, or one free-text question -- a bare String is the set of
+      #   one, which is what every `#ask`-shaped duck sends.
+      # @raise [ArgumentError] when the String cannot be a {Question} body
       # @return [Lain::Promise] resolved by {#reply} with the human's answer
       def ask(question)
+        announcement = announcement_for(question)
         parent = parent_timeline
         @last_question = write_message(parent, from: identity(parent), to: HUMAN,
-                                               body: { "question" => question },
+                                               body: emitted_body(announcement),
                                                causal_parents: [parent.head_digest].compact)
         @pending = Promise.new
       end
@@ -145,13 +327,68 @@ module Lain
       # digest is remembered for the delivery commit to cite (see
       # {#take_answered_questions}).
       def perform(input, _invocation)
-        promise = ask(input.question)
+        promise = ask(Announcement.new(requested_set(input)))
         answer = promise.await
         (@answered_questions ||= []) << @last_question.digest
         Tool::Result.ok(answer)
       end
 
       private
+
+      # The model's input as the value everything below speaks. `from_body` is
+      # Question's one documented door in from raw data, and what it refuses --
+      # a duplicate id, an unclosed fence, a set past its byte bound -- is an
+      # input defect, so it is re-raised as one and reaches the model carrying
+      # this tool's name.
+      #
+      # `to_h.compact` drops the members the model left out, so Question's own
+      # permissive defaults (single, no options) apply rather than a nil
+      # reaching a rule that would refuse it.
+      def requested_set(input)
+        return free_text_set(input.question) if input.questions.blank?
+
+        Question::Set.from_body("questions" => input.questions.map { |question| question.to_h.compact })
+      rescue ArgumentError => e
+        invalid!(e.message)
+      end
+
+      # What {#ask} was handed, as the announcement it carries: our own wrapper
+      # passes through, and any other String is one free-text question.
+      #
+      # `is_a?` rather than `respond_to?(:set)`, which is the one place this
+      # file does not duck-type: {Announcement} is this class's own currency,
+      # not a duck anyone outside implements, and `+str`/`String#encode` return
+      # the class with its ivars dropped -- a husk that answers `respond_to?`
+      # and holds nil. The type test, plus the reader's own guard, is what
+      # makes that fail at the door instead of inside {Question::Set}.
+      def announcement_for(question)
+        bare_set!(question)
+        question.is_a?(Announcement) ? question : Announcement.new(free_text_set(question))
+      end
+
+      # Named, because the mistake it catches would otherwise surface as "a
+      # question body must be a String or a Symbol", which names neither the
+      # fix nor the reason there is one.
+      def bare_set!(question)
+        return unless question.is_a?(Question::Set)
+
+        raise ArgumentError, "wrap a question set as #{Announcement}.new(set): the value #ask is handed is " \
+                             "also the value the arrival seam announces, and that must be a String"
+      end
+
+      # One question, no options: the free-text arm, which is a real arm of the
+      # design rather than a degenerate set (see {Question#free_text?}).
+      def free_text_set(question)
+        Question::Set.new(questions: [Question.new(id: FREE_TEXT_ID, body: question)])
+      end
+
+      # The set, plus the one-line summary the inbox reads under the key it has
+      # always read -- both taken off the announcement, which derived them once.
+      # {Question::Set#to_body} hands back a fresh copy, so merging here reaches
+      # nothing the frozen set holds.
+      def emitted_body(announcement)
+        announcement.set.to_body.merge("question" => announcement.summary)
+      end
 
       # A :message event in the shared Store, delegated to the shared
       # {Event::ChainWriter}: a :message Payload out of line, an envelope
