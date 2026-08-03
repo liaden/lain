@@ -193,6 +193,81 @@ RSpec.describe Lain::Question do
     end
   end
 
+  # T5/B1: a label is rendered at the END of an option line in the answer
+  # document, and that document's parse strips every line it reads -- so a label
+  # that does not survive an `rstrip` is one the renderer writes and the parser
+  # then refuses, blaming the human for a line they never touched and leaving
+  # the question permanently unanswerable. The rule is stated as the rstrip
+  # itself rather than as a whitespace class, because `String#rstrip` is
+  # ASCII-only: a label ending in U+00A0 round-trips untouched and is not this
+  # defect.
+  describe "a label the answer document could not read back" do
+    it "refuses a label ending in a space, naming it rather than trimming it" do
+      expect { Lain::Question::Option.new(id: "yes", label: "Ship now ") }
+        .to raise_error(ArgumentError, /"Ship now ".*refused rather than trimmed/m)
+    end
+
+    it "refuses a label ending in a tab" do
+      expect { Lain::Question::Option.new(id: "yes", label: "Ship now\t") }
+        .to raise_error(ArgumentError, /ends in whitespace/)
+    end
+
+    it "accepts a label ending in whitespace an rstrip does not eat, since it survives the round trip" do
+      # Written as an escape on purpose: the offending byte is invisible otherwise, which is
+      # the same trap S3 names in the mark refusal.
+      label = "Ship now\u00A0"
+
+      expect(Lain::Question::Option.new(id: "yes", label:).label).to end_with("\u00A0")
+    end
+
+    it "accepts a label that BEGINS with whitespace, which the document renders and reads back whole" do
+      expect(Lain::Question::Option.new(id: "yes", label: " Ship now").label).to eq(" Ship now")
+    end
+  end
+
+  # T5: the answer document finds a question by its heading, and so does the `x`
+  # keymap above it -- by scanning UP from an option line to the nearest one,
+  # out of buffer text alone, with no RPC and no fence state. A body line
+  # wearing that exact shape would put every option below it under the wrong
+  # question. Refused HERE rather than at render, because a question that exists
+  # but cannot be displayed is worse than a refused tool call: the model gets a
+  # named refusal and retries, where the human would get an inbox item that will
+  # not open and no way out of it from the editor.
+  describe "a body that forges the answer document's heading" do
+    def body_for(text) = described_class.new(id: "q", body: text)
+
+    it "refuses a line matching a heading the document would write, naming the line" do
+      expect { body_for("Pick one:\n\n## `other` (choose one)\n") }
+        .to raise_error(ArgumentError, /"## `other` \(choose one\)".*question heading/m)
+    end
+
+    it "refuses one for every kind of question the document can write" do
+      Lain::Question::Document::KIND_LABELS.each_value do |label|
+        expect { body_for("## `other` (#{label})") }.to raise_error(ArgumentError, /question heading/)
+      end
+    end
+
+    it "refuses one inside a fence, because the editor's scan does not track fences either" do
+      expect { body_for("```\n## `other` (choose one)\n```\n") }.to raise_error(ArgumentError, /question heading/)
+    end
+
+    it "refuses one whose line ends in a CR, which the document's parse strips before it matches" do
+      expect { body_for("## `other` (choose one)\r\n") }.to raise_error(ArgumentError, /question heading/)
+    end
+
+    it "leaves an ordinary markdown heading alone" do
+      expect(body_for("## Overview\n\nWhich one?\n").body).to include("## Overview")
+    end
+
+    it "leaves a heading-shaped line carrying no backticked id alone" do
+      expect(body_for("## other (choose one)\n").body).to include("choose one")
+    end
+
+    it "leaves a deeper heading alone, since the document writes only two hashes" do
+      expect(body_for("### `other` (choose one)\n").body).to include("choose one")
+    end
+  end
+
   # S3: one member policy for both lists in this unit. A member arrives BUILT;
   # `from_body` is the documented way in from raw data.
   describe "member policy" do

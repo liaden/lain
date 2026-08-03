@@ -74,6 +74,27 @@ module Lain
     ID_PADDED = /\A[[:space:]]|[[:space:]]\z/
     LINE_BREAK = /[\r\n]/
 
+    # The answer document's question heading, and the one rule a body carries on
+    # that document's behalf.
+    #
+    # {Document::HEADING} is the same shape with capture groups, built from
+    # {Document::KIND_LABELS}. This is a second, deliberate statement of it, for
+    # {ID_RESERVED}'s reason and with a stronger remedy: Document loads AFTER
+    # this file and a value must not reach forward to its own renderer, so the
+    # two copies are held to each other by a spec that matches every heading the
+    # writer emits against BOTH patterns (spec/lain/question/document_spec.rb).
+    # Change a label there and that spec fails, rather than this rule silently
+    # widening what a body may hold.
+    #
+    # Why the VALUE refuses it, rather than the renderer: the editor's `x` keymap
+    # finds a question by scanning UP from an option line to the nearest heading,
+    # out of buffer text alone -- so a body line wearing this shape would put
+    # every option below it under the wrong question. Refusing at render would
+    # fire after the set was built and the question was pending, leaving a human
+    # an inbox item that cannot be opened; refusing here hands the model a named
+    # error it can retry. Fence-blind on purpose, because that scan is.
+    DOCUMENT_HEADING = /\A## `[^`]+` \((?:choose one|choose any|write your answer below)\)\z/
+
     # CommonMark's fenced-code-block rule, and exactly as much of it as a
     # balance check needs.
     #
@@ -125,6 +146,79 @@ module Lain
       end
 
       private_class_method :step, :opener, :closes?
+    end
+
+    # What a value must be for the ANSWER DOCUMENT to render it and read it back
+    # unchanged. Every rule here refuses bytes that would survive construction
+    # and then not survive the round trip, and each names the mechanism it is
+    # protecting rather than a taste.
+    #
+    # A family, and named as one because the missing name is what cost us: ids
+    # were held to {padded!} and labels to nothing, so a model writing "Yes "
+    # built a question the renderer would write and the parser would then refuse
+    # -- blaming the human for a line they never touched. The asymmetry is
+    # obvious once the four sit together and was invisible while they were four
+    # rules among fifteen. A fuzzer found it: 109 unparseable documents in 1240.
+    #
+    # These are the only rules in this unit that exist for a DOWNSTREAM artifact
+    # rather than for the value itself: {Rules.bounded} and {Rules.normalized}
+    # would still be right with no document at all, and not one of these would.
+    module Renderable
+      module_function
+
+      def padded!(id, field)
+        return unless id.match?(ID_PADDED)
+
+        raise ArgumentError, "#{field} #{id.inspect} is padded with whitespace -- refused rather than trimmed, " \
+                             "because a code span drops one leading and one trailing space and the id would " \
+                             "read back as a different one"
+      end
+
+      # {padded!}'s sibling, for the other value the answer document renders:
+      # a label lands at the END of an option line, and that document's parse
+      # strips every line it reads -- so a label that does not survive an
+      # `rstrip` is one the renderer writes and the parser then refuses, telling
+      # the human to fix a line they never touched and leaving the question
+      # permanently unanswerable. `ask_human`'s label is model-written text, so
+      # a trailing space is entirely ordinary and the failure lands on the wrong
+      # person. Found by a fuzzer: 109 unparseable documents in 1240.
+      #
+      # Stated as the rstrip itself rather than as a whitespace class, because
+      # `String#rstrip` is ASCII-only and also eats NUL: a label ending in
+      # U+00A0 round-trips untouched and is not this defect, while one ending in
+      # a NUL is. The document's own emit rules are defined the same way
+      # ({Document::STRIPPED_BYTES}), so the two agree by construction rather
+      # than by coincidence. Refused rather than trimmed, for {padded!}'s reason.
+      def trimmed!(line, field)
+        return line if line == line.rstrip
+
+        raise ArgumentError, "#{field} #{line.inspect} ends in whitespace -- refused rather than trimmed, " \
+                             "because the answer document renders it at the end of a line and its parse " \
+                             "strips every line it reads, so it would read back as a different label"
+      end
+
+      def fenced!(body, field)
+        opened = Fence.unclosed(body)
+        return body if opened.nil?
+
+        raise ArgumentError, "#{field} opens a #{opened.marker.inspect} fence at line #{opened.line} and never " \
+                             "closes it -- the document a human answers in would render every option below " \
+                             "that line as code"
+      end
+
+      # {fenced!}'s sibling: the same body, the same document, read from the
+      # editor's side rather than the renderer's. Compared line by line with the
+      # trailing whitespace removed, because that is exactly what the document's
+      # parse strips before it matches -- a CRLF body would otherwise forge a
+      # heading this rule could not see.
+      def headed!(body, field)
+        forged = body.each_line.find { |line| DOCUMENT_HEADING.match?(line.rstrip) }
+        return body if forged.nil?
+
+        raise ArgumentError, "#{field} holds #{forged.rstrip.inspect}, which reads as a question heading in the " \
+                             "answer document -- the editor finds a question by scanning up to the nearest one, " \
+                             "so every option below this line would answer the wrong question"
+      end
     end
 
     # The construction rules this unit's values share, in one place because
@@ -212,7 +306,7 @@ module Lain
       def identifier(value, field, maximum)
         id = bounded(normalized(value, field), field, maximum)
         reserved!(id, field)
-        padded!(id, field)
+        Renderable.padded!(id, field)
         id
       end
 
@@ -224,20 +318,12 @@ module Lain
                              "#{ID_GRAMMARS.fetch(offender)}"
       end
 
-      def padded!(id, field)
-        return unless id.match?(ID_PADDED)
-
-        raise ArgumentError, "#{field} #{id.inspect} is padded with whitespace -- refused rather than trimmed, " \
-                             "because a code span drops one leading and one trailing space and the id would " \
-                             "read back as a different one"
-      end
-
       def one_line(value, field, maximum)
         line = bounded(normalized(value, field), field, maximum)
         raise ArgumentError, "#{field} #{line.inspect} is one line and cannot hold a line break" if
           line.match?(LINE_BREAK)
 
-        line
+        Renderable.trimmed!(line, field)
       end
 
       def bounded(value, field, maximum)
@@ -245,15 +331,6 @@ module Lain
 
         raise ArgumentError, "#{field} is #{value.bytesize} bytes, beyond the #{maximum}-byte maximum -- " \
                              "refused rather than truncated"
-      end
-
-      def fenced!(body, field)
-        opened = Fence.unclosed(body)
-        return body if opened.nil?
-
-        raise ArgumentError, "#{field} opens a #{opened.marker.inspect} fence at line #{opened.line} and never " \
-                             "closes it -- the document a human answers in would render every option below " \
-                             "that line as code"
       end
 
       # Asserted rather than ducked, for {Epic::Issue#clean_edges}' reason:
@@ -379,7 +456,8 @@ module Lain
 
     def markdown(body)
       text = Rules.bounded(Rules.prose(body, "a question body"), "a question body", MAX_BODY)
-      Rules.fenced!(text, "a question body")
+      Renderable.fenced!(text, "a question body")
+      Renderable.headed!(text, "a question body")
     end
 
     # Option order is meaning -- it is the order a human reads them in -- so the
@@ -397,3 +475,4 @@ end
 require_relative "question/set"
 require_relative "question/answer"
 require_relative "question/answer_set"
+require_relative "question/document"
