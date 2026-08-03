@@ -703,14 +703,13 @@ RSpec.describe Lain::CLI::Wiring do
                              environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
       end
 
-      def seed_repo(dir)
-        run_git(dir, "init", "-q")
-        run_git(dir, "config", "user.email", "test@example.com")
-        run_git(dir, "config", "user.name", "Test")
-        File.write(File.join(dir, "README"), "seed\n")
-        run_git(dir, "add", "README")
-        run_git(dir, "commit", "-q", "-m", "seed")
-      end
+      # Copied, not rebuilt: five git subprocesses per example for a directory that
+      # is identical every time (see {SeedRepo}). A method, not a constant --
+      # a constant inside a top-level `RSpec.describe do ... end` lands on Object,
+      # where a second spec file spelling the same name silently clobbers it.
+      def seed_repo(dir) = FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", dir)
+
+      def seed_files = { "README" => "seed\n" }
 
       # A throwaway repo AND a throwaway XDG_RUNTIME_DIR: the leased checkouts
       # land under the tmpdir, never the machine's real runtime dir and never the

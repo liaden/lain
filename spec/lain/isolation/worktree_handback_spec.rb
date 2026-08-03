@@ -24,14 +24,15 @@ RSpec.describe Lain::Isolation::Worktree::Handback do
   let(:journal) { [] }
   let(:backend) { Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @root) }
 
-  def init_repo(dir)
-    run_git(dir, "init", "-q")
-    run_git(dir, "config", "user.email", "test@example.com")
-    run_git(dir, "config", "user.name", "Test")
-    File.write(File.join(dir, "README"), "seed\n")
-    run_git(dir, "add", "README")
-    run_git(dir, "commit", "-q", "-m", "seed")
-  end
+  # Copied, not rebuilt: five git subprocesses per example for a directory that
+  # is identical every time (see {SeedRepo}).
+  def init_repo(dir) = FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", dir)
+
+  # A method, not a constant: a constant assigned inside a top-level
+  # `RSpec.describe do ... end` is lexically scoped to Object, so a second
+  # spec file spelling the same name silently clobbers this one -- the trap
+  # CLAUDE.md records for `Data.define` blocks, in a new costume.
+  def seed_files = { "README" => "seed\n" }
 
   # The spec's OWN git calls scrub the git-context env too, so building and
   # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted

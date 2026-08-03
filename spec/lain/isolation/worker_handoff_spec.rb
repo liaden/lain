@@ -87,14 +87,15 @@ RSpec.describe Lain::Isolation::WorkerHandoff do
                          environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command
   end
 
-  def init_repo(dir)
-    run_git(dir, "init", "-q")
-    run_git(dir, "config", "user.email", "test@example.com")
-    run_git(dir, "config", "user.name", "Test")
-    %w[alpha.txt beta.txt].each { |file| File.write(File.join(dir, file), "seed\n") }
-    run_git(dir, "add", "-A")
-    run_git(dir, "commit", "-q", "-m", "seed")
-  end
+  # Copied, not rebuilt: five git subprocesses per example for a directory that
+  # is identical every time (see {SeedRepo}).
+  def init_repo(dir) = FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", dir)
+
+  # A method, not a constant: a constant assigned inside a top-level
+  # `RSpec.describe do ... end` is lexically scoped to Object, so a second
+  # spec file spelling the same name silently clobbers this one -- the trap
+  # CLAUDE.md records for `Data.define` blocks, in a new costume.
+  def seed_files = { "alpha.txt" => "seed\n", "beta.txt" => "seed\n" }
 
   def commit_all(dir, message)
     run_git(dir, "add", "-A")

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "fileutils"
+
 require "async"
 require "async/queue"
 require "json"
@@ -1145,14 +1147,13 @@ RSpec.describe Lain::Supervisor do
         shell.stdout
       end
 
-      def init_repo(dir)
-        run_git(dir, "init", "-q")
-        run_git(dir, "config", "user.email", "test@example.com")
-        run_git(dir, "config", "user.name", "Test")
-        File.write(File.join(dir, "seed.txt"), "seed\n")
-        run_git(dir, "add", "-A")
-        run_git(dir, "commit", "-q", "-m", "seed")
-      end
+      # Copied, not rebuilt: five git subprocesses per example for a directory that
+      # is identical every time (see {SeedRepo}). A method, not a constant --
+      # a constant inside a top-level `RSpec.describe do ... end` lands on Object,
+      # where a second spec file spelling the same name silently clobbers it.
+      def init_repo(dir) = FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", dir)
+
+      def seed_files = { "seed.txt" => "seed\n" }
 
       def commit_work(dir)
         File.write(File.join(dir, "worker.txt"), "the crashed worker's only copy\n")

@@ -26,14 +26,13 @@ RSpec.describe Lain::Isolation::Worktree do
     File.join(@root, Lain::Paths.new.project_hash(worker_id.to_s))
   end
 
-  def init_repo(dir)
-    run_git(dir, "init", "-q")
-    run_git(dir, "config", "user.email", "test@example.com")
-    run_git(dir, "config", "user.name", "Test")
-    File.write(File.join(dir, "README"), "seed\n")
-    run_git(dir, "add", "README")
-    run_git(dir, "commit", "-q", "-m", "seed")
-  end
+  # Copied, not rebuilt: five git subprocesses per example for a directory that
+  # is identical every time (see {SeedRepo}). A method, not a constant --
+  # a constant inside a top-level `RSpec.describe do ... end` lands on Object,
+  # where a second spec file spelling the same name silently clobbers it.
+  def init_repo(dir) = FileUtils.cp_r("#{SeedRepo.at(seed_files)}/.", dir)
+
+  def seed_files = { "README" => "seed\n" }
 
   # The spec's OWN git calls scrub the git-context env too, so building and
   # inspecting the throwaway repo is hermetic under an ambient GIT_*-polluted
