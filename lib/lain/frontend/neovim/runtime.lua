@@ -12,7 +12,7 @@ local gem_version, protocol, chan = ...
 -- gem release, which is why the handshake does not compare gem versions. A
 -- mismatch WARNS and keeps going: a stale editor half-works (commands still
 -- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "5"
+local RUNTIME_PROTOCOL = "6"
 if protocol ~= RUNTIME_PROTOCOL then
   vim.api.nvim_echo({
     { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },
@@ -30,6 +30,7 @@ local DIFF = "lain://diff"
 local INBOX = "lain://inbox"
 local REQUEST = "lain://request"
 local COMPOSE = "lain://compose"
+local QUESTION = "lain://question"
 
 -- The full buffer set, in render order, as ONE value user config can iterate
 -- (it rides the User LainAttach payload below). WORKSPACE joining the set is
@@ -37,10 +38,11 @@ local COMPOSE = "lain://compose"
 -- named it, so set_view built it as an orphan -- filetype "" (the nil lookup
 -- landed as an unset option), no syntax, outside the lain contract.
 --
--- COMPOSE is deliberately NOT in the set (T15). Every name here is a
--- projection primed at attach; lain://compose exists only while the human is
--- composing, is created by their own C-g gesture, and is the one buffer that
--- takes focus -- priming it would open an empty editor window at every attach.
+-- COMPOSE is deliberately NOT in the set (T15), and QUESTION is out for the
+-- same reason (T12). Every name here is a projection primed at attach;
+-- lain://compose exists only while the human is composing, lain://question only
+-- while a set is open, each is created by a gesture, and each takes focus --
+-- priming either would open an empty editor window at every attach.
 local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST }
 
 -- I7: filetype attached at buffer CREATION (see `named_buf`/`editable_buf`
@@ -73,6 +75,27 @@ local function journal_prefix(line)
   return line:match("^%[([^%]]*)%]")
 end
 
+-- lain://question's record is one QUESTION, and its start is the heading
+-- Question::Document writes: "## `id` (arity)". The ARITY WORD rides in the
+-- heading, so this is the same line the `x` keymap recovers a question's
+-- boundary from -- one shape read by both, never two.
+--
+-- The arity is captured and looked up rather than spelled into the pattern:
+-- lua patterns have no alternation, so a set of the three labels
+-- Question::Document::KIND_LABELS emits is how the disjunction is expressed at
+-- all. A body line wearing this shape cannot forge a boundary here --
+-- Question::DOCUMENT_HEADING refuses one where the body is BUILT.
+local QUESTION_ARITIES = {
+  ["choose one"] = true,
+  ["choose any"] = true,
+  ["write your answer below"] = true,
+}
+
+local function question_heading(line)
+  local arity = line:match("^## `[^`]+` %((.+)%)$")
+  return arity ~= nil and QUESTION_ARITIES[arity] == true
+end
+
 local RECORD_START = {
   [TIMELINE] = function(lines, i) return lines[i]:match("^%a+:") ~= nil end,
   -- Not anchored at column 1: `from` is a variable-length sender name
@@ -88,6 +111,7 @@ local RECORD_START = {
   [JOURNAL] = function(lines, i)
     return i == 1 or journal_prefix(lines[i]) ~= journal_prefix(lines[i - 1])
   end,
+  [QUESTION] = function(lines, i) return question_heading(lines[i]) end,
 }
 
 -- direction: 1 for ]] (forward), -1 for [[ (backward). Walks from the cursor
@@ -185,6 +209,20 @@ end
 -- foldlevel write is a no-op, so the option alone shows nothing closed --
 -- verified live. vim.g.lain_foldlevel (>= 1 covers these level-1 folds)
 -- skips the forced close for a human who wants everything open at rest.
+-- WHICH record stays open at rest, and it is not one answer for every view. A
+-- LOG's live record is its LAST -- a human follows a timeline or a journal
+-- downward, and the newest line is the one they are waiting for. A FORM's is
+-- its FIRST: lain://question is a document to fill in from the top, and the
+-- older-closed default handed the human a form with the cursor on line 1
+-- INSIDE a closed fold, two collapsed summaries above the only open question.
+-- A `dd` there deletes a whole question they never saw.
+local function open_at_rest(buf)
+  if vim.b[buf].lain_view == QUESTION then
+    return 1
+  end
+  return vim.api.nvim_buf_line_count(buf)
+end
+
 local function default_folds(win, buf)
   local level = vim.g.lain_foldlevel or 0
   vim.wo[win][0].foldlevel = level
@@ -192,7 +230,7 @@ local function default_folds(win, buf)
     if level == 0 then
       vim.cmd("silent! %foldclose!")
     end
-    vim.cmd(("silent! %dfoldopen!"):format(vim.api.nvim_buf_line_count(buf)))
+    vim.cmd(("silent! %dfoldopen!"):format(open_at_rest(buf)))
   end)
 end
 
@@ -237,7 +275,7 @@ local function refresh_folds(buf)
     if vim.w[win].lain_fold_saved ~= nil then
       if fold_enabled() then
         vim.api.nvim_win_call(win, function()
-          vim.cmd(("silent! %dfoldopen!"):format(vim.api.nvim_buf_line_count(buf)))
+          vim.cmd(("silent! %dfoldopen!"):format(open_at_rest(buf)))
         end)
       else
         uninstall_folds(win)
@@ -427,6 +465,64 @@ local function compose_buf(name)
   return buf
 end
 
+-- lain://question (T12): compose_buf's shape exactly -- `acwrite` so `:w` can
+-- be intercepted at all, a name so `:write` does not answer E32, "hide" so
+-- BufUnload means the human closed it rather than merely looked away, markdown
+-- because the document IS markdown -- plus the two indent options, which are
+-- not preferences either.
+--
+-- Question::Document's comment slot is prose indented EXACTLY two spaces, and
+-- a line indented any other way is refused BY NAME rather than dedented (the
+-- grammar will not guess what a tab meant, because guessing is how a round trip
+-- starts editing the human's whitespace). A human whose own config indents with
+-- tabs would otherwise type a comment the grammar rejects on `:w`, on a line
+-- they were invited to write. So the buffer produces the grammar's bytes
+-- itself: 'expandtab' makes every indent spaces, 'shiftwidth' makes >> and
+-- autoindent two of them, and 'softtabstop' makes the Tab KEY two -- the last
+-- is not redundant, because with 'softtabstop' unset a Tab keypress inserts
+-- 'tabstop' (8) spaces no matter what 'shiftwidth' says.
+--
+-- WHERE THIS DIVERGES FROM COMPOSE, and why it had to. `:wall` and autosave
+-- plugins fire BufWriteCmd on text the human did not finish, which compose
+-- accepts as a known limitation. The blast radius here is LARGER, not smaller,
+-- and an earlier version of this comment claimed the opposite: a half-answered
+-- document does not fail the grammar. It parses perfectly -- Question::AnswerSet
+-- fills an untouched question in as an explicitly unanswered Answer, by design,
+-- and `parse_markdown(to_markdown(a), set) == a` is the unit's stated law. So a
+-- stock `:wall` over the document as lain rendered it told the model the human
+-- had DECLINED EVERY QUESTION, closed the view, and answered their real `:w`
+-- with STALE.
+--
+-- So the write below refuses a buffer byte-identical to what lain rendered,
+-- and names `:w!` as the way through. That is not "you must answer before you
+-- may submit" (Question::AnswerSet's ruling is explicit that an unanswered
+-- question is a legal answer); it is refusing to read a keystroke nobody typed
+-- as a decision. b:lain_question_rendered is that comparison's other half,
+-- stamped beside the digest in set_question.
+local function question_buf(name)
+  local existing = vim.fn.bufnr(name)
+  if existing ~= -1 then
+    return claim(existing, name)
+  end
+
+  local buf = claim(vim.api.nvim_create_buf(true, true), name)
+  vim.api.nvim_buf_set_name(buf, name)
+  vim.bo[buf].buftype = "acwrite"
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].filetype = "markdown"
+  vim.bo[buf].expandtab = true
+  vim.bo[buf].shiftwidth = 2
+  vim.bo[buf].softtabstop = 2
+  -- AFTER 'filetype', deliberately: setting it fires FileType synchronously and
+  -- nvim's own markdown ftplugin maps ]] and [[ to its section motions. lain's
+  -- records ARE the questions, so lain's maps must be the ones that survive --
+  -- this is the first buffer where RECORD_START serves folds and motions from
+  -- the same predicate and the motions were not bound.
+  bind_motions(buf, name)
+  return buf
+end
+
 _G.__lain = _G.__lain or {}
 
 -- Folds: fold boundaries ARE record boundaries. The foldexpr reuses
@@ -593,6 +689,48 @@ function _G.__lain.set_compose(name, lines, generation)
   if vim.fn.win_findbuf(buf)[1] == nil then
     vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
   end
+  announce_render(name, buf)
+end
+
+-- Open lain://question on a pending set's rendered document (T12), taking the
+-- cursor for set_compose's reason: lain is handing the human something and
+-- asking them to answer it.
+--
+-- FOCUSING an already-shown buffer is this function's job and not Ruby's, and
+-- that division is deliberate. QuestionView REFUSES to open a set while one is
+-- open, so nothing above ever re-renders over a half-ticked document -- which
+-- means the only window-already-there case that reaches here is a fresh set
+-- landing in a window the human left open, and putting them back in it is
+-- exactly right. set_compose merely declines to stack a second split; this one
+-- also moves the cursor, because a document that appears off-screen reads as
+-- nothing having happened.
+--
+-- b:lain_question_digest is the set's CONTENT digest, not a counter: it stamps
+-- the buffer, rides back with every write and abandon, and is what lets a write
+-- naming a set nobody holds be dropped rather than reinterpreted against
+-- whatever is open now.
+-- b:lain_question_rendered is the OTHER half of the untouched-write refusal
+-- (see question_buf): the bytes lain wrote, kept so the write can tell "the
+-- human decided to answer nothing" from "nobody has touched this yet". Stamped
+-- here rather than recovered later, because by the time `:w` fires the buffer
+-- is the only copy of anything and it is the copy under suspicion.
+--
+-- The cursor lands on line 1, which open_at_rest has just made the OPEN
+-- question: a form starts at the top, and being dropped inside a closed fold
+-- is how a `dd` eats a question the human never read.
+function _G.__lain.set_question(name, lines, digest)
+  local buf = question_buf(name)
+  vim.b[buf].lain_question_digest = digest
+  vim.b[buf].lain_question_rendered = lines
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modified = false
+  local win = vim.fn.win_findbuf(buf)[1]
+  if win == nil then
+    win = vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
+  else
+    vim.api.nvim_set_current_win(win)
+  end
+  vim.api.nvim_win_set_cursor(win, { 1, 0 })
   announce_render(name, buf)
 end
 
@@ -797,6 +935,75 @@ vim.api.nvim_create_autocmd("BufUnload", {
   pattern = COMPOSE,
   callback = function(ev)
     pcall(vim.rpcrequest, chan, "lain_command", "compose_abandon", vim.b[ev.buf].lain_compose_generation)
+  end,
+})
+
+-- The question round trip's return leg (T12). Same gesture as compose -- `:w`
+-- is "I am done with this text" -- and the same order, rpcrequest FIRST and
+-- 'modified' cleared only once it returns.
+--
+-- What is NOT the same, and is the whole reason this buffer exists: this write
+-- can be REFUSED. Ruby parses the document synchronously inside this request,
+-- so a line the grammar has no slot for comes back as the request's ERROR
+-- rather than as an ack, and erroring here leaves the buffer modified with the
+-- human's own text for them to go fix. Nothing re-renders over it. The two
+-- failures therefore share one path on purpose: "the grammar refused line 6"
+-- and "lain was not there" are both a `:w` that did not save, and the message
+-- carries which one it was.
+--
+-- The message rides the ERROR rather than an nvim_echo, and that is a choice
+-- worth recording: nvim 0.12 appends a lua stack traceback under it (naming a
+-- byte offset in an injected string, which is noise no human can act on), and
+-- `error(msg, 0)` does not suppress that. The dodge -- echo the sentence, then
+-- `error("", 0)` -- would move the one thing a human needs off the failure and
+-- into `:messages`, where a scripted `:w` and a pcall cannot see it at all. The
+-- sentence belongs to the write that failed.
+local question_group = vim.api.nvim_create_augroup("lain_question", { clear = true })
+
+-- The write nobody typed. `vim.v.cmdbang` is what `:w!` sets, and it is the
+-- override: declining every question stays possible and stays CHOSEN.
+local UNTOUCHED = "lain: nothing in this buffer has been typed, and a plain :w would answer every question as " ..
+  "unanswered -- which is a decision, not a default. Answer something, or use :w! to submit it as it stands."
+
+local function untouched(buf, lines)
+  return vim.v.cmdbang == 0 and vim.deep_equal(lines, vim.b[buf].lain_question_rendered)
+end
+
+vim.api.nvim_create_autocmd("BufWriteCmd", {
+  group = question_group,
+  pattern = QUESTION,
+  callback = function(ev)
+    local lines = vim.api.nvim_buf_get_lines(ev.buf, 0, -1, false)
+    if untouched(ev.buf, lines) then
+      error(UNTOUCHED, 0)
+    end
+    local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "question", lines,
+      vim.b[ev.buf].lain_question_digest)
+    if not ok then
+      error("lain: question NOT saved: " .. tostring(err), 0)
+    end
+    vim.bo[ev.buf].modified = false
+  end,
+})
+
+-- BufUnload is the ABANDON signal, pcall'd for the compose leg's reason: one of
+-- these cases is nvim EXITING, where Ruby may already have torn the RPC thread
+-- down and an unanswered rpcrequest would surface as an autocmd error in the
+-- human's face on the way out. Nothing is stranded by the loss -- no fiber
+-- waits on a question, and the set stays pending in the inbox either way.
+--
+-- WHICH GESTURES UNLOAD, measured: `:bd!`, `:bw!`, `:q!` in the question
+-- window, and quitting nvim all do, and each abandons carrying the digest.
+-- `:close`, `:enew` and nvim_win_close do NOT -- `bufhidden = "hide"` means the
+-- buffer survives being looked away from, which is the point, so the set stays
+-- open with no window showing it. That is not a leak: QuestionView answers the
+-- NEXT set with OCCUPIED naming this buffer, so `:buffer lain://question` is
+-- always the way back.
+vim.api.nvim_create_autocmd("BufUnload", {
+  group = question_group,
+  pattern = QUESTION,
+  callback = function(ev)
+    pcall(vim.rpcrequest, chan, "lain_command", "question_abandon", vim.b[ev.buf].lain_question_digest)
   end,
 })
 

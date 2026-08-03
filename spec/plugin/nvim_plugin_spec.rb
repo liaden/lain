@@ -253,7 +253,17 @@ RSpec.describe "lain nvim plugin", :nvim do
         expect(doc).to include(group)
       end
 
-      expect(doc).to include("protocol 5").and include("LainReviewDone").and include("LainAnnotate")
+      # Read from the constant, never as a literal: this file's LAST example
+      # already learned that a hardcoded token turns every bump into a false
+      # green -- and this line then certified "protocol 5" through T12's bump to
+      # "6", which is exactly the drift the assertion exists to catch.
+      expect(doc).to include("protocol #{Lain::Frontend::Neovim::PROTOCOL}")
+        .and include("LainReviewDone").and include("LainAnnotate")
+      # `include` is case-sensitive and satisfied by ONE marker, so it pinned
+      # line 14 and let the other three drift. The doc carries the current
+      # contract version in four places; all four move together or the bump was
+      # not atomic, which is the only property worth asserting here.
+      expect(doc.scan(/protocol #{Lain::Frontend::Neovim::PROTOCOL}/io).size).to eq(4)
 
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)

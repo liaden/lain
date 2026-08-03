@@ -38,7 +38,17 @@ module Lain
       # "4": T15 added the lain://compose round trip -- the set_compose render
       #   entry point, and the "compose"/"compose_abandon" commands its
       #   BufWriteCmd/BufUnload autocmds send back.
-      PROTOCOL = "5"
+      # "5": T16 added the review surface -- the open_review/review_refused
+      #   render entry points, :LainAnnotate and :LainReviewDone, and the
+      #   b:lain_review_generation / b:lain_review_epic_slug stamps. Backfilled
+      #   by T12: d125aba shipped the bump without its history line, and a
+      #   history that skips a version is worse than none.
+      # "6": T12 added the lain://question round trip -- the set_question render
+      #   entry point, b:lain_question_digest, the question fold predicate, and
+      #   the "question"/"question_abandon" commands. "question" is the FIRST
+      #   command whose answer is not an ack: its response is the write's
+      #   verdict (see {RpcThread#answer}).
+      PROTOCOL = "6"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model
@@ -88,11 +98,16 @@ module Lain
       #   taking the draft -- is news for the human sitting at the prompt, and
       #   the editor is by definition the thing that just failed to answer.
       #   Silent by default, so an un-wired frontend reports nowhere.
+      # @param question_notify [#call] where {QuestionView}'s one notice goes
+      #   (T12) -- an abandoned question buffer, which has no caller to return
+      #   to. The terminal's warning renderer for `compose_notify`'s reason, and
+      #   a SEPARATE seam because the two say different things about different
+      #   surfaces; a caller wiring both hands over the same renderer.
       # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
       def initialize(channel:, socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
                      store: Buffers::DetachedStore.instance, session: Session::Null.instance,
                      journal: Channel::Null.instance, resend_bridge: Unbridged,
-                     compose_notify: Compose::SILENT,
+                     compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
         @buffers = Buffers.new(store:, session:)
@@ -107,47 +122,20 @@ module Lain
         @resend_failure = nil
         @rpc = build_rpc(socket_path:, version:, protocol:, render_capacity:)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge, request_buffer: @request_buffer)
-        # Constructed here because it needs the RPC thread as its editor inlet,
-        # and handed out through {#compose} for the prompt to bind C-g to.
-        # {FrontendListener} holds a bound `method(:compose)` rather than this
-        # collaborator itself, so the two can still be built in either order
-        # (see {FrontendListener}'s own comment).
-        @compose = Compose.new(rpc: @rpc, notify: compose_notify)
-        @command_inbox = CommandInbox.new(inbox: @rpc.command_inbox, rpc: @rpc)
+        build_surfaces(compose_notify:, question_notify:)
       end
-
-      # The editor's command rail as a consumer sees it: BOTH directions of the
-      # one conversation. A consumer pops the commands the editor sent and
-      # answers a gesture it had to refuse -- ":LainReviewDone names no open
-      # review" -- and the answer belongs in the editor the gesture came from,
-      # which means the render rail. Two objects to hold that (a queue, and the
-      # RPC thread) would put the burden of knowing they are one conversation
-      # on every consumer; {CLI::HumanReplies::NoEditor} is the same duck for
-      # the session that has no editor at all.
-      #
-      # `pop` forwards its arguments rather than declaring `non_block = false`:
-      # the duck it satisfies is Thread::Queue's, and restating that default
-      # here would be a second place for it to be wrong.
-      class CommandInbox
-        def initialize(inbox:, rpc:)
-          @inbox = inbox
-          @rpc = rpc
-        end
-
-        def pop(...) = @inbox.pop(...)
-        def review_refused(message) = @rpc.review_refused(message)
-
-        # There is an editor. The Null answers false, and that is the whole of
-        # the question a consumer ever has to ask.
-        def attached? = true
-      end
-      private_constant :CommandInbox
 
       # The C-g compose round trip's Ruby end (T15), for the terminal prompt to
       # register a key action against and to settle in its own loop. Exposed
       # like {#command_inbox}: a collaborator, never the session.
       # @return [Compose]
       attr_reader :compose
+
+      # The question round trip's Ruby end (T12), for whoever holds a pending
+      # {Question::Set} to open and for the editor's write to answer. A
+      # collaborator, never the session.
+      # @return [QuestionView]
+      attr_reader :question_view
 
       # Commands the editor invoked, enqueue-and-acked by the RpcThread, for an
       # agent-side consumer to drain -- and the way back for a gesture that had
@@ -161,9 +149,7 @@ module Lain
       #
       # @return [String, nil] nil when the open landed, else the notice saying
       #   no editor took it (see {RpcThread::RenderInlet})
-      def open_review(path, generation, epic_slug:)
-        @rpc.open_review(path, generation, epic_slug)
-      end
+      def open_review(path, generation, epic_slug:) = @rpc.open_review(path, generation, epic_slug)
 
       # Attach, start draining the Channel into the editor, yield self, and ALWAYS
       # tear both threads down -- even on a raising block, so a wedged agent never
@@ -206,34 +192,56 @@ module Lain
         # @param channel [Lain::Channel] closed on RPC-thread death
         # @param compose [#call] returns the live {Compose}
         # @param resend [#call] hands edited lain://request lines to the resend worker
-        def initialize(channel:, compose:, resend:)
+        # @param question [#call] returns the live {QuestionView}, bound for
+        #   `compose:`'s reason -- it too is built after the RPC thread
+        def initialize(channel:, compose:, resend:, question:)
           super()
           @channel = channel
           @compose = compose
           @resend = resend
+          @question = question
         end
 
         def died
           @channel.close unless @channel.closed?
         end
 
-        def resend(lines)
-          @resend.call(lines)
-        end
+        # Every hand-off but {#died} is one delegation and is written as one:
+        # the guard is what keeps that method a block.
+        def resend(lines) = @resend.call(lines)
+        def compose_written(lines, generation) = @compose.call.wrote(lines, generation)
+        def compose_abandoned(generation) = @compose.call.abandoned(generation)
 
-        def compose_written(lines, generation)
-          @compose.call.wrote(lines, generation)
-        end
-
-        def compose_abandoned(generation)
-          @compose.call.abandoned(generation)
-        end
+        # The one hand-off that ANSWERS (T12): its return value is what the
+        # editor's `:w` succeeds or fails with, and {QuestionView#wrote}
+        # produces exactly that -- nil once the answer is handed on, else the
+        # failure naming the line the human has to go fix.
+        def question_written(lines, digest) = @question.call.wrote(lines, digest)
+        def question_abandoned(digest) = @question.call.abandoned(digest)
       end
       private_constant :FrontendListener
 
       def build_rpc(socket_path:, version:, protocol:, render_capacity:)
-        listener = FrontendListener.new(channel: @channel, compose: method(:compose), resend: method(:post_resend))
+        listener = FrontendListener.new(channel: @channel, compose: method(:compose), resend: method(:post_resend),
+                                        question: method(:question_view))
         RpcThread.new(socket_path:, version:, protocol:, render_capacity:, listener:)
+      end
+
+      # The three collaborators that take the RPC THREAD as their editor inlet,
+      # which is the whole reason they are built after it and in one place: the
+      # rail both directions of a gesture ride, and the two round trips whose
+      # answers come back along it. {FrontendListener} holds bound accessors
+      # rather than these objects, so the listener can still be built first (see
+      # its own comment).
+      #
+      # {QuestionView}'s `submit` is the rail's own push: it runs on the RPC
+      # thread, inside the editor's write, under that view's lock, so it must be
+      # an unbounded never-closed queue push -- something that cannot park and
+      # cannot raise -- and never a promise resolution.
+      def build_surfaces(compose_notify:, question_notify:)
+        @command_inbox = CommandInbox.new(inbox: @rpc.command_inbox, rpc: @rpc)
+        @compose = Compose.new(rpc: @rpc, notify: compose_notify)
+        @question_view = QuestionView.new(rpc: @rpc, notify: question_notify, submit: @command_inbox.method(:answered))
       end
 
       # Post every projection's at-rest state so the full lain:// buffer set is
@@ -395,6 +403,7 @@ module Lain
   end
 end
 
+require_relative "neovim/command_inbox"
 require_relative "neovim/unbridged"
 require_relative "neovim/compose"
 require_relative "neovim/resender"

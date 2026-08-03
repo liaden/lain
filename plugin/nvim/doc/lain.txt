@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 5) .. |lain-contract|
+  6. The attach contract (protocol 6) .. |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -125,7 +125,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 5)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 6)                            *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -220,7 +220,7 @@ only meaningful inside a review buffer lain opened (|lain-review|) --
 for and submit a reply.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 5)                            *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 6)                            *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -254,7 +254,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 REVIEWING A DOCUMENT (PROTOCOL 5)                            *lain-review*
+6.6 REVIEWING A DOCUMENT (PROTOCOL 6)                            *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 

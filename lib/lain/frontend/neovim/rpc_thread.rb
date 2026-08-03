@@ -34,6 +34,14 @@ module Lain
         # have nothing in common but the word "editable".
         SET_COMPOSE = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_compose(name, lines, gen) end"
 
+        # Open lain://question on a pending set's rendered document (T12).
+        # {SET_COMPOSE}'s shape with the set's content digest in place of the
+        # counter -- one more entry point rather than a flag, because that
+        # buffer folds per question, indents to the grammar's two spaces, and
+        # its write can be REFUSED; none of that is compose's.
+        SET_QUESTION = "local name, lines, digest = ...; " \
+                       "if _G.__lain then _G.__lain.set_question(name, lines, digest) end"
+
         OPEN_REVIEW = "local path, gen, slug = ...; if _G.__lain then _G.__lain.open_review(path, gen, slug) end"
 
         REVIEW_REFUSED = "local message = ...; if _G.__lain then _G.__lain.review_refused(message) end"
@@ -97,6 +105,16 @@ module Lain
           @queue.push(Command.new(args: [name, lines, generation], lua: SET_COMPOSE), true)
         end
 
+        # Non-blocking like {#post_compose}, and for a sharper reason: this one
+        # is posted from inside {QuestionView}'s lock, so a blocking push
+        # against a full queue would hold that lock -- and the same lock is what
+        # a write in the editor takes.
+        # @param digest [String] the set's content digest, stamped onto the
+        #   buffer so every write and abandon says WHICH set it answers
+        def post_question(name, lines, digest)
+          @queue.push(Command.new(args: [name, lines, digest], lua: SET_QUESTION), true)
+        end
+
         def post_review(path, generation, epic_slug)
           @queue.push(Command.new(args: [path, generation, epic_slug], lua: OPEN_REVIEW), true)
         end
@@ -148,6 +166,18 @@ module Lain
         #
         # @param waker [#call] wakes the select loop; never blocks
         # @param capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
+        # The two surfaces with no view object of their own to keep their
+        # sentence in. {Compose::DETACHED} and {QuestionView::DETACHED} live
+        # with the objects that answer them; a review has no such half, so its
+        # words live here beside the door that speaks them.
+        REVIEW_DETACHED = "opening a review in the editor needs an attached editor"
+
+        # The one refusal nobody reads: this leg exists to carry a notice INTO
+        # the editor, so its failure is "the notice did not land" and there is
+        # no further surface to send it to. Named rather than nil so the four
+        # answers are four facts.
+        UNREPORTED = "the editor did not take this notice"
+
         def initialize(waker:, capacity: RenderQueue::DEFAULT_CAPACITY)
           @queue = RenderQueue.new(capacity:)
           @waker = waker
@@ -168,26 +198,34 @@ module Lain
 
         def post_view(name, lines, editable: false) = deliver { @queue.post_view(name, lines, editable:) }
 
-        # The NON-BLOCKING opens. All three are called from a path that cannot
-        # afford to park -- Reline's input loop, or the reply consumer's fiber
-        # -- so a full queue refuses instead of blocking, and a refusal is the
-        # answer rather than an exception.
+        # The NON-BLOCKING opens. All four are called from a path that cannot
+        # afford to park -- Reline's input loop, the reply consumer's fiber, or
+        # (the question) somebody else's lock -- so a full queue refuses instead
+        # of blocking, and a refusal is the answer rather than an exception.
         #
-        # ONE refusal for all three, because from the caller's side there is
-        # one fact: no editor is taking this. A dead thread (closed queue) and
-        # an editor that stopped draining (full queue) are indistinguishable
-        # from here, and so is never having attached -- which is why
-        # {Compose::DETACHED} is the shared answer. The three said this two
-        # different ways before, and the disagreement meant nothing.
+        # ONE refusal MECHANISM for all four, because from the caller's side
+        # there is one fact: no editor is taking this. A dead thread (closed
+        # queue) and an editor that stopped draining (full queue) are
+        # indistinguishable from here, and so is never having attached.
+        #
+        # The SENTENCE is the caller's, and the argument is REQUIRED so it
+        # cannot be forgotten. Every refusal here once read "composing needs an
+        # attached editor", which is untrue of a human answering a question; a
+        # default kept that defect alive one caller over the moment the
+        # parameter was added, so there is no default.
         def open_compose(lines, generation)
-          refusable { @queue.post_compose(Compose::BUFFER, lines, generation) }
+          refusable(Compose::DETACHED) { @queue.post_compose(Compose::BUFFER, lines, generation) }
+        end
+
+        def open_question(lines, digest)
+          refusable(QuestionView::DETACHED) { @queue.post_question(QuestionView::BUFFER, lines, digest) }
         end
 
         def open_review(path, generation, epic_slug)
-          refusable { @queue.post_review(path, generation, epic_slug) }
+          refusable(REVIEW_DETACHED) { @queue.post_review(path, generation, epic_slug) }
         end
 
-        def review_refused(message) = refusable { @queue.post_review_refusal(message) }
+        def review_refused(message) = refusable(UNREPORTED) { @queue.post_review_refusal(message) }
 
         private
 
@@ -197,10 +235,10 @@ module Lain
           nil
         end
 
-        def refusable(&block)
+        def refusable(refusal, &block)
           deliver(&block)
         rescue ClosedQueueError, ThreadError
-          Compose::DETACHED
+          refusal
         end
       end
 
@@ -210,11 +248,19 @@ module Lain
       # RPC thread is a socket and a select loop, and the two only ever met
       # because both were in the same class.
       #
-      # Every command still lands in {RpcThread#command_inbox} regardless of
-      # what happens here (a future agent-side consumer may want it), and every
-      # route runs AFTER the ack, so a slow hand-off never delays the editor.
-      # A verb no route claims falls through silently -- the editor's commands
-      # are not this object's to validate.
+      # An ACKED command lands in {RpcThread#command_inbox} regardless of what
+      # happens here (a future agent-side consumer may want it), and its route
+      # runs AFTER the ack, so a slow hand-off never delays the editor. A verb
+      # no route claims falls through silently -- the editor's commands are not
+      # this object's to validate.
+      #
+      # An ANSWERED command is the other kind, and there is exactly one (T12).
+      # Its route's RETURN VALUE is what the editor gets, so it must run BEFORE
+      # any ack -- a question `:w` is refused when the document does not parse,
+      # and a refusal that arrived after a `true` would be a buffer marked saved
+      # over text the grammar rejected. Two tables rather than a flag, because
+      # the two kinds differ in every respect that matters: when the route runs,
+      # what the editor is told, and whether the inbox ever sees it.
       class Router
         # Each route is handed the WHOLE command and destructures it itself,
         # because the verbs genuinely differ in what they carry: resend sends
@@ -222,20 +268,39 @@ module Lain
         # abandon sends only that generation.
         #
         # @param listener [RpcThread::Listener] duck: #resend(lines),
-        #   #compose_written(lines, generation), #compose_abandoned(generation).
+        #   #compose_written(lines, generation), #compose_abandoned(generation),
+        #   #question_written(lines, digest), #question_abandoned(digest).
         #   {RpcThread} is the only caller and always resolves one first (real
         #   or {RpcThread::Listener::Null}), so there is no default here.
         def initialize(listener:)
-          @routes = {
-            "resend" => ->(args) { listener.resend(args[1] || []) },
-            "compose" => ->(args) { listener.compose_written(args[1] || [], args[2]) },
-            "compose_abandon" => ->(args) { listener.compose_abandoned(args[1]) }
-          }.freeze
+          @routes = acked(listener)
+          @answers = answered(listener)
         end
 
         # @param arguments [Array] the command as the editor sent it: the verb,
         #   then whatever that verb carries
         def call(arguments) = @routes[arguments.first]&.call(arguments)
+
+        def answers?(verb) = @answers.key?(verb)
+
+        # @return [String, nil] the failure the editor must fail its write with,
+        #   or nil once the command has been taken
+        def answer(arguments) = @answers.fetch(arguments.first).call(arguments)
+
+        private
+
+        def acked(listener)
+          {
+            "resend" => ->(args) { listener.resend(args[1] || []) },
+            "compose" => ->(args) { listener.compose_written(args[1] || [], args[2]) },
+            "compose_abandon" => ->(args) { listener.compose_abandoned(args[1]) },
+            "question_abandon" => ->(args) { listener.question_abandoned(args[1]) }
+          }.freeze
+        end
+
+        def answered(listener)
+          { "question" => ->(args) { listener.question_written(args[1] || [], args[2]) } }.freeze
+        end
       end
 
       # The single thread that owns the nvim RPC session -- exactly one, because the
@@ -302,14 +367,44 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
           end
 
+          # The ONE hand-off whose RETURN VALUE the editor waits on (T12): the
+          # human wrote lain://question, and this answers whether the document
+          # parsed. It runs before the ack and inside nvim's own `:w`, so it
+          # must not block for the usual reason AND must not raise -- a raise
+          # here would kill the session over a mistyped line, which is why
+          # {QuestionView#wrote} returns its failure instead.
+          #
+          # @param lines [Array<String>] the buffer as the human left it
+          # @param digest [String] the set this buffer was opened for
+          # @return [String, nil] the failure naming the offending line, or nil
+          def question_written(_lines, _digest)
+            raise NotImplementedError, "#{self.class} must implement #question_written"
+          end
+
+          # @param digest [String] the set whose buffer was unloaded unwritten
+          def question_abandoned(_digest)
+            raise NotImplementedError, "#{self.class} must implement #question_abandoned"
+          end
+
           # The no-op Listener, mirroring {Sink::Null}: satisfies the same duck
           # so an {RpcThread} (or {Router}) built with none of these reactions
           # wired never needs an `if listener` guard. The default for both.
           class Null < Listener
+            # The ONE hand-off a Null must not answer with silence. nil means
+            # "taken" to the editor, which clears 'modified' and reports the
+            # human's text saved -- and `bufhidden = "hide"` means a
+            # lain://question buffer OUTLIVES the attach that made it, so a
+            # write really can arrive at a frontend wiring no view. Every other
+            # answer here is a no-op because nothing downstream reads it.
+            UNANSWERABLE = "this editor has no question surface wired, so there is no set to answer -- " \
+                           "nothing was submitted and your text is untouched"
+
             def died = nil
             def resend(_lines) = nil
             def compose_written(_lines, _generation) = nil
             def compose_abandoned(_generation) = nil
+            def question_written(_lines, _digest) = UNANSWERABLE
+            def question_abandoned(_digest) = nil
           end
         end
 
@@ -377,7 +472,8 @@ module Lain
         # the queue-and-wake pair ({RenderInlet}, which documents each). Safe
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
-        def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_review, :review_refused
+        def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
+                       :review_refused
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.
@@ -468,19 +564,56 @@ module Lain
           dispatch(message) if message.respond_to?(:sync?) && message.sync?
         end
 
+        # Every editor command reaches this thread as an ordinary `lain_command`
+        # rpcREQUEST -- the compose and question round trips' return legs
+        # included -- so nothing here handles notifications and this thread's
+        # single-owner discipline is untouched. What differs is WHEN the route
+        # runs relative to the ack, and {Router} owns that distinction.
         def dispatch(request)
-          if request.method_name == "lain_command"
-            @command_inbox.push(request.arguments)
-            respond(request.id, true)
-            # The frontend's own reaction, driven AFTER the ack ({Router}).
-            # Every editor command reaches this thread as an ordinary
-            # `lain_command` rpcREQUEST -- the compose round trip's return leg
-            # (T15) included -- so nothing here handles notifications and this
-            # thread's single-owner discipline is untouched.
-            @router.call(request.arguments)
-          else
-            respond(request.id, nil, "lain: unknown request #{request.method_name}")
-          end
+          return respond(request.id, nil, "lain: unknown request #{request.method_name}") unless
+            request.method_name == "lain_command"
+
+          @router.answers?(request.arguments.first) ? answer(request) : acknowledge(request)
+        end
+
+        # The ordinary path: enqueue-and-ack in microseconds, react afterwards,
+        # so a slow hand-off never freezes the editor.
+        def acknowledge(request)
+          @command_inbox.push(request.arguments)
+          respond(request.id, true)
+          @router.call(request.arguments)
+        end
+
+        # The answered path (T12), and the ONLY place a route runs before the
+        # ack. A question `:w` is the one editor gesture lain can refuse, so its
+        # answer IS the response: a failure comes back as the request's error,
+        # which is what makes the write fail and leaves the buffer modified with
+        # the human's text. It stays OUT of the command inbox on purpose -- what
+        # a consumer wants is the parsed answer set, which the view hands on
+        # itself once the document is taken, not the raw lines it refused.
+        #
+        # THE RESCUE IS THE ORDERING'S PRICE. {#acknowledge} is structurally
+        # immune to a raising listener -- the editor already has its answer --
+        # and inverting that order inherits the obligation to answer anyway.
+        # Measured without it: a listener raising NoMethodError left nvim
+        # blocked in `vim.rpcrequest` for over 20 seconds, main loop frozen and
+        # the human unable to type, unblocking only when the whole session tore
+        # down. {Listener#question_written}'s doc has always said "must not
+        # raise"; a comment is not a guard, least of all on the one path where a
+        # Ruby exception freezes the editor.
+        #
+        # It answers a REFUSAL naming the internal error rather than an ack: a
+        # frozen editor and a silently-swallowed bug are both worse than a
+        # visible failure, and an ack here would clear 'modified' over text
+        # nothing consumed. The raise then continues, so the death is still
+        # recorded and still loud ({#record_death}).
+        def answer(request)
+          failure = @router.answer(request.arguments)
+          failure.nil? ? respond(request.id, true) : respond(request.id, nil, failure)
+        rescue StandardError => e
+          respond(request.id, nil, "lain: #{e.class} answering this write, so nothing was submitted and your " \
+                                   "text is untouched (#{e.message})")
+          raise
         end
 
         # Answer an inbound request, then flush by hand -- the gem otherwise defers
