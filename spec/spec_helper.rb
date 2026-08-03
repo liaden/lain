@@ -25,6 +25,13 @@ require "webmock/rspec"
 #   EVENT_PROF=...    bundle exec rspec ...   time per instrumented event
 require "test_prof"
 
+# The stuck-example watchdog is required HERE, ahead of the glob, for the same class of reason
+# webmock is above: `around` hooks nest in DEFINITION order, and the support files that spawn
+# editors and daemons register `around`s of their own. Loaded alphabetically it would sit inside
+# those and time only the example body, missing a hang in the spawn -- so it goes first, and is
+# outermost.
+require_relative "support/watchdog"
+
 # Every spec-suite concern is one file under spec/support. Parallel branches ADD a file here
 # rather than editing this one, which is why this file is allowed to be boring. `Dir[]` has
 # sorted its results since Ruby 3.0, so the order is stable without an explicit `.sort`.

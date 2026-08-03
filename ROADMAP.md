@@ -1147,7 +1147,18 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    fix passes. The five commits were then rewritten as one commit per card with real bodies
    — `backup/codex-range-pre-rewrite` and `backup/pre-history-rewrite` keep the originals.
 
-27. **Planned (2026-07-30, panel-reviewed)** —
+27. **Landed 2026-08-03** (17 commits, `9fbae30`..`a83477d`; planned 2026-07-30, panel-reviewed) —
+   every card panel-reviewed, 11 of 17 needing a fix round. Suite **9452 examples, 0 failures**
+   (from 8972); `cargo test` 277, clippy clean, `pre-commit --all-files` green; no `Metrics/*`
+   limit loosened, and eleven objects were extracted rather than a cop widened. The tools block
+   moved for `ask_human` **only** — `TodoWrite` migrated off its hand-written schema without
+   shifting a byte. What the plan did not anticipate: subagent questions needed a second gate
+   (`Permits`) taught about them, an `:inherit` child shares its parent's chain root so the
+   asker's NAME had to ride the record, and the editor gesture needed a generation stamp because
+   keying it on a rendering's height aliases under a burst. Seven manual passes remain owed. The
+   original plan follows.
+
+   **Planned (2026-07-30, panel-reviewed)** —
    `planning/specs/chunk-question-sets-and-the-answer-document.md`: `ask_human` becomes a
    **question set** — one tool call carrying several questions, each a markdown body with a
    closed option list, answered as a folded markdown document the human edits in place (tick a
