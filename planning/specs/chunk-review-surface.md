@@ -158,6 +158,15 @@ so its full-suite count reads exactly **one lower** than the primary tree's
 (`gherkin_spec.rb:428` globs `planning/specs/*.md` into one example per doc). Wave-1 hand-back
 counts must be read against a 9538 worktree baseline, not the primary tree's 9539.
 
+**STANDING RULE — any timing in a hand-back must state the box was quiet.** Twice in this chunk a
+benchmark was taken while a 7-worker `pspec` was running, and both times it was wrong by enough to
+reverse the conclusion rather than merely inflate it: T7 reported its parse at 1.03s against the
+spike's 0.26s and concluded it was 4× slower, when best-of-3 on a quiet box is **0.16s** — *faster*
+than the spike, while doing strictly more work. CLAUDE.md already warns that single runs vary by
+±50% and to take a best-of-N; the missing half is that a number measured under the suite is not a
+slow number, it is a meaningless one. Quote best-of-3, say the box was quiet, and say what else was
+running if it was not.
+
 **STANDING RULE for every remaining card — closed sets live in `vocabulary.rb`, in the String
 form.** This trap formed **three separate times** in this chunk before wave 2 was done, so treat it
 as the default failure mode rather than a curiosity:
@@ -273,6 +282,18 @@ it was deferred.
    analyses the floor at length and names `worktree_handback` as it; **that analysis is now stale**.
    Owes a split by concern, and a re-measurement of the numbers CLAUDE.md quotes.
 8. **`up_spec.rb:175` flake** — see below.
+9. **`open_review` and `review_open` are near-anagrams on one rail meaning unrelated things.**
+   T14's panel: `open_review` is Ruby→lua and opens the epic's **prose** document review; `review_open`
+   is lua→Ruby and is the **changeset** sidebar's open gesture. Different capability, lifetime, buffer
+   variable (`b:lain_review_generation` vs `b:lain_view_generation`) and direction — no mechanical
+   collision, and leaving both was ruled correct. But `:h lain-review` lands on the document review
+   with no "not to be confused with", and the pair is a reading hazard. Rename one and cross-reference;
+   `review_open` was named by T11, so this spans cards.
+10. **The row object's `#numstat` name collision, resolved by ruling rather than by code.**
+    `Changeset::CommitScope#numstat` is an `Array<Source::FileStat>`; T14 assumed an aggregate
+    answering `#added`/`#deleted`. Ruled: the commit entry answers **`#added`/`#deleted` as scalars**
+    and nothing shadows `numstat`. Worth a look later at whether `CommitScope#numstat` should be
+    named `file_stats`, since "numstat" reads as an aggregate to everyone who meets it.
 
 ## Pre-existing defects found while executing this chunk
 
@@ -1848,6 +1869,20 @@ Scenario: an unsupported placement is refused by name
 `spec/lain/frontend/neovim_runtime_spec.rb` (the protocol-lockstep example)
 **Reuse:** the 8-entry history block at `neovim.rb:29-62`, whose own comment says a history that
 skips a version is worse than none.
+
+**Added during execution (T15, 2026-08-04): this card owes TWO documentation corrections, not just
+a stanza.**
+
+1. **`b:lain_view` now carries a per-file value.** Protocol 3 documents it as naming a *view*, and
+   T15's old-side buffers put `lain://review/OLD/lib/foo.rb` in it — a consequence of reusing
+   `named_buf`, which was the right call. The widening is real and undocumented; the "9" history
+   entry must say so. T15 also sets explicit `b:lain_review_side` and `b:lain_review_path` so a
+   gesture reads a variable instead of parsing the URI out of a name.
+2. **There is no `:LainDiffOpen`.** The plan assumed one; T15 established that every AC there is
+   about the *render entry point*, and the only verb carrying an open gesture is `review_open` —
+   the sidebar's `<CR>`, wired as `:LainReviewOpen` by T14. A `:LainDiffOpen` would be a command
+   with no gesture behind it. The doc owes a `*lain-review-diff*` paragraph covering the new buffer
+   names and stamps instead, which T15 hands back.
 **Shared-file wiring:** `plugin/nvim/doc/lain.txt` — a `6.8 REVIEWING A CHANGESET (PROTOCOL 9)`
 stanza, the doc entries for every `:Lain*` command this chunk added, and updating every existing
 `(PROTOCOL 8)` heading to 9. Hand back as one diff.
