@@ -90,6 +90,27 @@ module Lain
       # lost -- only what reaches the human by default is tamed.
       class SessionFailure < Lain::Error; end
 
+      # No changeset review is open in THIS editor (T11) -- the answer both
+      # review WRITES get until one is bound. A Null rather than a nil check for
+      # {CLI::HumanReplies::NoReview}'s reason, and it answers a SENTENCE rather
+      # than nil for {RpcThread::Listener::Null::UNANSWERABLE}'s: nil means
+      # "taken" to the editor, which clears 'modified' and reports the human's
+      # note recorded when nothing on this side has anywhere to put it.
+      #
+      # Its sentence is deliberately NOT
+      # {RpcThread::Listener::Null::UNREVIEWABLE}'s. That one is a frontend
+      # wiring no review surface at all; this one is a live editor with no
+      # review OPEN, which is the ordinary state of every session that has not
+      # started one. Two different facts, and two different things for the human
+      # to do about them.
+      module NoReviewWrites
+        UNOPENED = "no review is open in this editor, so there is nothing to record this against -- " \
+                   "nothing was submitted and your text is untouched"
+
+        def self.wrote_annotation(_note) = UNOPENED
+        def self.wrote_verdict(_verdict) = UNOPENED
+      end
+
       # @param channel [Lain::Channel] drained by {#run}'s background thread
       # @param socket_path [String] a listening nvim's unix socket
       # @param version [String] the gem version, surfaced by :LainVersion
@@ -126,6 +147,11 @@ module Lain
                      compose_notify: Compose::SILENT, question_notify: QuestionView::SILENT,
                      render_capacity: RenderQueue::DEFAULT_CAPACITY)
         @channel = channel
+        # Bound long after this returns (see {#bind_changeset_review}), so it
+        # has to hold its Null from the start: {FrontendListener} resolves it
+        # per call and the first review write may arrive before anyone opens a
+        # review at all.
+        @changeset_review = NoReviewWrites
         # Edited lain://request lines land here from the RPC thread's inbound
         # dispatch and are drained by the resend worker ({#resend_loop}). An
         # unbounded Thread::Queue so {FrontendListener#resend} never blocks the
@@ -178,6 +204,27 @@ module Lain
       #   no editor took it (see {RpcThread::RenderInlet})
       def open_review(path, generation, epic_slug:) = @rpc.open_review(path, generation, epic_slug)
 
+      # The changeset review this editor WRITES to (T11): the object whose
+      # answer is what a `review_annotate` or `review_verdict` `:w` succeeds or
+      # fails with. Bound after construction, and it has to be -- the session
+      # that owns a changeset is built by whoever opened the review, long after
+      # the frontend attached and often mid-run.
+      #
+      # The twin of {CLI::HumanReplies#bind_changeset_review}, and a wiring
+      # binds ONE object to both: the same review is reached from two rails,
+      # which differ only in whether lain can refuse what arrives on them. The
+      # acked gestures (open, mark, ask) ride the command inbox to the consumer
+      # fiber; these two are answered here, on the RPC thread, because their
+      # return value IS the editor's response.
+      #
+      # @param review [#wrote_annotation, #wrote_verdict, nil] nil restores
+      #   {NoReviewWrites}, so closing a review is a bind like any other and no
+      #   caller writes an unbind of its own
+      # @return [void]
+      def bind_changeset_review(review)
+        @changeset_review = review || NoReviewWrites
+      end
+
       # Attach, start draining the Channel into the editor, yield self, and ALWAYS
       # tear both threads down -- even on a raising block, so a wedged agent never
       # strands the editor half-rendered. If the RPC thread died mid-session
@@ -221,12 +268,19 @@ module Lain
         # @param resend [#call] hands edited lain://request lines to the resend worker
         # @param question [#call] returns the live {QuestionView}, bound for
         #   `compose:`'s reason -- it too is built after the RPC thread
-        def initialize(channel:, compose:, resend:, question:)
+        # @param review [#call] returns the bound changeset review, and this one
+        #   is bound LATEST of all: not merely after the RPC thread but after
+        #   the whole frontend is running, whenever a human opens a review. A
+        #   held reference would be {NoReviewWrites} for the life of the session
+        #   and every note would be refused; resolving per call is the only
+        #   shape that sees a review opened mid-run.
+        def initialize(channel:, compose:, resend:, question:, review:)
           super()
           @channel = channel
           @compose = compose
           @resend = resend
           @question = question
+          @review = review
         end
 
         def died
@@ -245,14 +299,32 @@ module Lain
         # failure naming the line the human has to go fix.
         def question_written(lines, digest) = @question.call.wrote(lines, digest)
         def question_abandoned(digest) = @question.call.abandoned(digest)
+
+        # The changeset review's two writes (T11), {#question_written}'s shape
+        # for {#question_written}'s reason: the return value is what the human's
+        # `:w` succeeds or fails with, so the review answers its own refusal
+        # rather than raising one -- a raise here reaches {RpcThread#answer},
+        # which answers the editor and then re-raises, ending the session over a
+        # note. The note has already been read for SHAPE by
+        # {Neovim::ReviewWrite}; what is left is whether THIS review can take
+        # it, which only the session holding the changeset knows.
+        def review_annotated(note) = @review.call.wrote_annotation(note)
+        def review_verdict_given(verdict) = @review.call.wrote_verdict(verdict)
       end
       private_constant :FrontendListener
 
       def build_rpc(socket_path:, version:, protocol:, render_capacity:)
         listener = FrontendListener.new(channel: @channel, compose: method(:compose), resend: method(:post_resend),
-                                        question: method(:question_view))
+                                        question: method(:question_view), review: method(:changeset_review))
         RpcThread.new(socket_path:, version:, protocol:, render_capacity:, listener:)
       end
+
+      # What {FrontendListener}'s `review:` accessor is bound to. Private
+      # because {#bind_changeset_review} is the whole of this collaborator's
+      # public surface -- a reader beside a binder would be a second way to ask
+      # the same question. `Object#method` reaches a private method, so the
+      # binding is unaffected.
+      attr_reader :changeset_review
 
       # The three collaborators that take the RPC THREAD as their editor inlet,
       # which is the whole reason they are built after it and in one place: the

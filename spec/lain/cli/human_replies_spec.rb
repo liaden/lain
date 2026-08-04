@@ -48,6 +48,44 @@ class RecordingQuestionEditor
   def digests = @opened.map(&:last)
 end
 
+# The changeset review as {Lain::CLI::HumanReplies} sees it (T11): the three
+# gestures the sidebar and the diff pair send back, each answering an outcome
+# that says in its own word whether it landed, and what to tell the human when
+# it did not. Recorded rather than doubled so an example can assert WHICH row,
+# WHICH stamp and WHICH direction reached the far side -- the half of the wire
+# that a `have_received` on the consumer cannot see.
+class RecordingChangesetReview
+  # The three gestures name their own success, so the outcome answers all three
+  # words: {Lain::CLI::HumanReplies#gestured} takes the predicate as a block
+  # precisely so neither gesture has to be renamed to share one with the other.
+  Outcome = Struct.new(:landed, :report) do
+    def opened? = landed
+    def marked? = landed
+    def asked? = landed
+  end
+
+  def initialize(landed: true, raising: nil)
+    @landed = landed
+    @raising = raising
+    @gestures = []
+  end
+
+  attr_reader :gestures
+
+  def open(line, generation: nil) = record([:open, line, generation])
+  def mark(line, state, generation: nil) = record([:mark, line, state, generation])
+  def ask(anchor_id, question) = record([:ask, anchor_id, question])
+
+  private
+
+  def record(gesture)
+    raise @raising if @raising
+
+    @gestures << gesture
+    Outcome.new(@landed, "the sidebar has re-rendered since you looked")
+  end
+end
+
 # T13: #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
 # SAME TTY drain UX #answer_loop's read_drained_answer calls at `human>`
 # (`@tty.drain_inbox`), reused rather than a second presentation, and the
@@ -729,6 +767,154 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # T11's inbound half, on the consumer's side of the rail. Three acked verbs,
+  # which is why they arrive here at all: an acked command lands on the command
+  # inbox and this fiber is the sole consumer of every verb on it. All three
+  # obey the recorded rule -- the editor sends a LINE or a STAMP, never a
+  # digest -- because a hunk key IS a digest and only the rendering that drew
+  # the row can turn a row back into one.
+  describe "the changeset review's gestures on the editor rail" do
+    let(:editor) { RecordingEditorRail.new }
+    let(:review) { RecordingChangesetReview.new }
+
+    before do
+      replies.bind_editor(editor)
+      replies.bind_changeset_review(review)
+    end
+
+    it "opens the row a sidebar gesture names, carrying the rendering's stamp" do
+      editor.push(["review_open", [4, 3]])
+
+      with_surfaces { review.gestures.any? }
+
+      expect(review.gestures).to eq([[:open, 4, 3]])
+      expect(editor.refusals).to be_empty
+    end
+
+    # The STATE rides the wire rather than being toggled here: what the human
+    # pressed says which way they meant it, and a toggle computed from a
+    # rendering that has since moved flips the wrong hunk.
+    it "marks the hunk a row names, in the direction the human pressed" do
+      editor.push(["review_mark", [4, "reviewed", 3]])
+
+      with_surfaces { review.gestures.any? }
+
+      expect(review.gestures).to eq([[:mark, 4, "reviewed", 3]])
+    end
+
+    # No stamp, and the difference is real: an anchor id is one Ruby minted and
+    # handed to the editor, so it names the same anchor in every rendering,
+    # while a line only names one in the rendering that drew it.
+    it "asks about the anchor an id names, with no stamp beside it" do
+      editor.push(["review_ask", ["anchor-1", "why this way?"]])
+
+      with_surfaces { review.gestures.any? }
+
+      expect(review.gestures).to eq([[:ask, "anchor-1", "why this way?"]])
+    end
+
+    it "tells the editor, in the editor, when a gesture did not land" do
+      replies.bind_changeset_review(RecordingChangesetReview.new(landed: false))
+      editor.push(["review_open", [4, 1]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/re-rendered/))
+    end
+
+    # Null over a nil check, one surface further: no review open is an object
+    # that answers, so no route here asks whether one was bound.
+    it "refuses every gesture when no review is open" do
+      replies.bind_changeset_review(nil)
+      editor.push(["review_mark", [4, "reviewed", 1]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/no changeset review is open/))
+    end
+
+    # The killer this loop already had an answer for, now covering three more
+    # verbs: a raise on ANY route would take :LainReply -- the other surface on
+    # this one fiber -- down with it, and the editor would go quiet with no sign
+    # why.
+    it "keeps serving :LainReply after a review gesture that raises" do
+      replies.bind_changeset_review(RecordingChangesetReview.new(raising: "the changeset moved under you"))
+      Sync { listed(ask_human, "still there?") }
+      editor.push(["review_open", [4, 1]])
+      editor.push(["reply", ["yes"]])
+
+      with_surfaces { !ask_human.pending? }
+
+      expect(ask_human.last_answer.body["answer"]).to eq("yes")
+      expect(editor.refusals).to contain_exactly(a_string_matching(/the changeset moved under you/))
+    end
+
+    # `NotImplementedError` is a `ScriptError`, not a `StandardError`, so the
+    # guard that exists precisely because NOTHING a command does may kill this
+    # fiber walked straight past it: :LainReply died with no refusal rendered
+    # and the editor went quiet with no sign why. An abstract duck is not
+    # hypothetical here -- {Frontend::Neovim::RpcThread::Listener}'s own base
+    # raises exactly this class.
+    it "keeps serving :LainReply after a review gesture raises something that is not a StandardError" do
+      replies.bind_changeset_review(RecordingChangesetReview.new(raising: NotImplementedError.new("abstract")))
+      Sync { listed(ask_human, "still there?") }
+      editor.push(["review_open", [4, 1]])
+      editor.push(["reply", ["yes"]])
+
+      with_surfaces { !ask_human.pending? }
+
+      expect(ask_human.last_answer.body["answer"]).to eq("yes")
+      expect(editor.refusals).to contain_exactly(a_string_matching(/abstract/))
+    end
+
+    # The refusal's OWN failure, which is the last line of the one method whose
+    # comment forbids anything killing this fiber -- and it reaches the editor,
+    # the thing that just proved it can fail. It escaped every guard above it.
+    it "survives the editor raising while being told a gesture did not land" do
+      replies.bind_changeset_review(RecordingChangesetReview.new(raising: "hunk gone"))
+      allow(editor).to receive(:review_refused).and_raise("editor gone")
+      Sync { listed(ask_human, "still there?") }
+      editor.push(["review_open", [4, 1]])
+      editor.push(["reply", ["yes"]])
+
+      with_surfaces { !ask_human.pending? }
+
+      expect(ask_human.last_answer.body["answer"]).to eq("yes")
+    end
+
+    # A surface that answers the gesture but not the OUTCOME duck used to hand
+    # the human "undefined method 'opened?' for nil", which names nothing they
+    # can act on. The NoMethodError still rides along -- nothing is masked here,
+    # it is labelled.
+    it "says what went wrong when a review surface answers an outcome lain cannot read" do
+      replies.bind_changeset_review(Class.new { def open(_line, **) = nil }.new)
+      editor.push(["review_open", [4, 1]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/could not answer this gesture.*opened\?/m))
+    end
+
+    # WHY {Gestures} resolves its surfaces per call rather than holding them.
+    # The route table is memoized, so a Gestures built once and held would have
+    # frozen whatever was bound THEN -- and a review opened afterwards would be
+    # ignored in silence, the exact failure the frontend rail uses a bound
+    # accessor to prevent. Serving one command first is what makes the memo real
+    # before the bind, so this cannot pass by accident.
+    it "sees a review bound after the route table has already been built" do
+      replies.bind_changeset_review(nil)
+      later = RecordingChangesetReview.new
+      editor.push(["review_open", [1, 1]])
+      with_surfaces { editor.refusals.any? }
+
+      replies.bind_changeset_review(later)
+      editor.push(["review_mark", [4, "reviewed", 3]])
+      with_surfaces { later.gestures.any? }
+
+      expect(later.gestures).to eq([[:mark, 4, "reviewed", 3]])
+    end
+  end
+
   # T16: the inbox's OWN gestures, which is where this consumer had a hole
   # rather than a defect. T15 bound <CR> and `r` to :LainOpen and the editor
   # has been sending `["open", [line, generation]]` ever since -- and nothing
@@ -839,12 +1025,15 @@ RSpec.describe Lain::CLI::HumanReplies do
 
     # Null over a nil check, one object further: a session with no editor has
     # no views either, and the gestures that can only come FROM an editor
-    # answer without anybody asking whether one is attached.
+    # answer without anybody asking whether one is attached. Driven through the
+    # route table rather than the resolvers, which moved to
+    # {Lain::CLI::HumanReplies::Gestures} -- so this now also pins that
+    # unbinding REBUILDS that object, which a stale memoized table would hide.
     it "answers the gestures honestly with no editor bound at all" do
       replies.bind_editor(nil)
 
-      expect { replies.send(:open_set, [1, 1]) }.not_to raise_error
-      expect { replies.send(:pin_turn, [1]) }.not_to raise_error
+      expect { replies.send(:routes)["open"].call([1, 1]) }.not_to raise_error
+      expect { replies.send(:routes)["pin"].call([1]) }.not_to raise_error
     end
 
     # T16's own ACs. The advance belongs HERE, on the consumer, and nowhere

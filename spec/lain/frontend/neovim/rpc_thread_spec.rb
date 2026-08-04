@@ -2,6 +2,30 @@
 
 require "timeout"
 
+# The changeset review as the EDITOR's two answering writes see it (T11): the
+# far side of {Lain::Frontend::Neovim#bind_changeset_review}, recording what
+# reached it and answering whatever verdict an example asked for. The same duck
+# {Lain::CLI::HumanReplies} binds for the acked gestures -- a wiring binds one
+# object to both rails -- so this records only the two messages this rail sends.
+class RecordingReviewWrites
+  def initialize(refusal: nil)
+    @refusal = refusal
+    @wrote = []
+  end
+
+  attr_reader :wrote
+
+  def wrote_annotation(note)
+    @wrote << [:annotation, note]
+    @refusal
+  end
+
+  def wrote_verdict(verdict)
+    @wrote << [:verdict, verdict]
+    @refusal
+  end
+end
+
 # {RpcThread::Listener}'s own contract, plain Ruby -- no editor needed. The
 # round trip that actually WIRES a listener into a live nvim session is the
 # :nvim group's job (neovim_spec.rb, neovim_request_spec.rb,
@@ -38,6 +62,16 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread::Listener do
       expect { listener.question_abandoned("blake3:x") }
         .to raise_error(NotImplementedError, /must implement #question_abandoned/)
     end
+
+    it "refuses a review annotate write" do
+      expect { listener.review_annotated({ "side" => "new" }) }
+        .to raise_error(NotImplementedError, /must implement #review_annotated/)
+    end
+
+    it "refuses a review verdict write" do
+      expect { listener.review_verdict_given("approve") }
+        .to raise_error(NotImplementedError, /must implement #review_verdict_given/)
+    end
   end
 end
 
@@ -61,6 +95,15 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread::Listener::Null do
     expect(described_class::UNANSWERABLE).to include("no question")
   end
 
+  # {UNANSWERABLE}'s reason, one surface over: both review writes ANSWER, so nil
+  # from a Null would clear 'modified' and report the human's note recorded by a
+  # frontend that has nowhere to put it.
+  it "refuses both review writes rather than claiming they were recorded" do
+    expect(null.review_annotated({ "side" => "new" })).to eq(described_class::UNREVIEWABLE)
+    expect(null.review_verdict_given("approve")).to eq(described_class::UNREVIEWABLE)
+    expect(described_class::UNREVIEWABLE).to include("no review surface")
+  end
+
   it "is the RpcThread default, so a caller wiring none of the four gets a real duck" do
     rpc = Lain::Frontend::Neovim::RpcThread.new(socket_path: "/nonexistent")
 
@@ -78,8 +121,12 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
   let(:wakes) { [] }
   let(:waker) { -> { wakes << :woke } }
 
+  # T11's three review entry points are the same door, one capability wider:
+  # a queue push and a wake, answering nil when it landed.
+  let(:revisions) { { "old" => "base0", "new" => "head1" } }
+
   it "wakes the loop for every post and answers that it landed" do
-    inlet = described_class.new(waker:, capacity: 8)
+    inlet = described_class.new(waker:, capacity: 16)
 
     expect(inlet.post_render(["a"])).to be_nil
     expect(inlet.post_view("lain://timeline", ["b"])).to be_nil
@@ -87,7 +134,10 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.open_question(["## `q` (choose one)"], "blake3:c0ffee")).to be_nil
     expect(inlet.open_review("/epics/alpha/epic.md", 7, "alpha")).to be_nil
     expect(inlet.review_refused("generation 7 is not open")).to be_nil
-    expect(wakes.size).to eq(6)
+    expect(inlet.set_review(["  M lib/lain/agent.rb"], 3)).to be_nil
+    expect(inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions)).to be_nil
+    expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
+    expect(wakes.size).to eq(9)
   end
 
   # An editor that stopped draining and an editor that died are ONE fact from a
@@ -100,34 +150,40 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     { compose: inlet.open_compose(["draft"], 1),
       question: inlet.open_question(["## `q` (choose one)"], "blake3:c0ffee"),
       review: inlet.open_review("/epics/alpha/epic.md", 1, "alpha"),
-      refusal: inlet.review_refused("nobody will read this") }
+      refusal: inlet.review_refused("nobody will read this"),
+      sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3),
+      changeset: inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions),
+      thread: inlet.set_thread("anchor-1", ["why this way?"]) }
   end
 
   def own_words
     { compose: Lain::Frontend::Neovim::Compose::DETACHED,
       question: Lain::Frontend::Neovim::QuestionView::DETACHED,
       review: described_class::REVIEW_DETACHED,
-      refusal: described_class::UNREPORTED }
+      refusal: described_class::UNREPORTED,
+      sidebar: described_class::SIDEBAR_DETACHED,
+      changeset: described_class::CHANGESET_DETACHED,
+      thread: described_class::THREAD_DETACHED }
   end
 
-  it "refuses all four opens in their own words when the queue is full" do
+  it "refuses all seven opens in their own words when the queue is full" do
     inlet = described_class.new(waker:, capacity: 1)
     inlet.post_render(["fills the one slot"])
 
     expect(refusals(inlet)).to eq(own_words)
   end
 
-  it "refuses all four opens in their own words once the loop is gone" do
+  it "refuses all seven opens in their own words once the loop is gone" do
     inlet = described_class.new(waker:, capacity: 8)
     inlet.close
 
     expect(refusals(inlet)).to eq(own_words)
   end
 
-  # The four sentences are four, and each names the surface the human was
+  # The seven sentences are seven, and each names the surface the human was
   # actually using -- which is the whole reason the refusal is a parameter.
   it "gives every surface a distinct sentence" do
-    expect(own_words.values.uniq.size).to eq(4)
+    expect(own_words.values.uniq.size).to eq(7)
   end
 
   # {QuestionView} posts from INSIDE its own lock, so a blocking push here
@@ -196,6 +252,53 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
       "nvim_exec_lua", described_class::SET_QUESTION,
       ["lain://question", ["## `q` (choose one)"], "blake3:c0ffee"]
     )
+  end
+
+  # The sidebar is a SINGLETON in the review's own tabpage, so the lua half
+  # names its own buffer and there is no `name` argument to disambiguate one
+  # from another -- the difference from {SET_VIEW}, which serves five.
+  it "sends a review-sidebar render carrying the lines and the rendering's stamp" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post_review_sidebar(["  M lib/lain/agent.rb"], 3)
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_REVIEW,
+                                                   [["  M lib/lain/agent.rb"], 3])
+  end
+
+  # Ruby runs git, never the editor: the old side arrives as LINES this side
+  # already read, and the revisions ride along because only Ruby knows which
+  # two commits the pair is showing.
+  it "sends a changeset open carrying the path, the old side's lines, the target line and both revisions" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post_changeset("lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" })
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with(
+      "nvim_exec_lua", described_class::OPEN_CHANGESET,
+      ["lib/lain/agent.rb", ["was"], 12, { "old" => "base0", "new" => "head1" }]
+    )
+  end
+
+  it "sends a thread render keyed by the anchor id rather than a line" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post_thread("anchor-1", ["why this way?"])
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_THREAD,
+                                                   ["anchor-1", ["why this way?"]])
   end
 
   # The flag itself, at the object that carries it: every OTHER producer here is
@@ -274,6 +377,75 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
     expect(session).to have_received(:respond).with(7, nil, a_string_matching(/NoMethodError.*nothing was submitted/m))
   end
 
+  # T11's acked half. A mark is a hand-off nothing on this thread answers, so it
+  # takes {#acknowledge}'s path exactly as `reply` does: the editor has its
+  # answer before any consumer has looked at the command.
+  it "acks a review mark and only then routes it" do
+    dispatch("review_mark", [4, "reviewed", 3])
+
+    expect(session).to have_received(:respond).with(7, true, nil)
+    expect(rpc.command_inbox.pop(true)).to eq(["review_mark", [4, "reviewed", 3]])
+  end
+
+  it "acks a review open and a docent question the same way" do
+    dispatch("review_open", [4, 3])
+    dispatch("review_ask", ["anchor-1", "why this way?"])
+
+    expect(rpc.command_inbox.pop(true)).to eq(["review_open", [4, 3]])
+    expect(rpc.command_inbox.pop(true)).to eq(["review_ask", ["anchor-1", "why this way?"]])
+  end
+
+  # T11's answered half, and the reason it is answered: a note whose side lain
+  # cannot read must fail the `:w`, so the buffer stays modified and the human's
+  # words are still theirs to fix.
+  it "fails an annotate write naming the side it could not read, and never records it" do
+    allow(listener).to receive(:review_annotated)
+
+    dispatch("review_annotate", [annotation("side" => "both")])
+
+    expect(session).to have_received(:respond).with(7, nil, a_string_matching(%r{side must be one of old/new.*both}))
+    expect(listener).not_to have_received(:review_annotated)
+    expect { rpc.command_inbox.pop(true) }.to raise_error(ThreadError)
+  end
+
+  it "answers an annotate write with the verdict its listener returned" do
+    allow(listener).to receive(:review_annotated).and_return(nil)
+
+    dispatch("review_annotate", [annotation])
+
+    expect(listener).to have_received(:review_annotated).with(annotation)
+    expect(session).to have_received(:respond).with(7, true, nil)
+  end
+
+  def annotation(overrides = {})
+    { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
+      "anchor_text" => "  @store.write(input)", "text" => "why this way?",
+      "kind" => "question" }.merge(overrides)
+  end
+
+  # `NotImplementedError` IS NOT A `StandardError` -- it is a `ScriptError`, and
+  # `rescue StandardError` walks straight past it. On the answered path that
+  # means the editor is never answered AT ALL, which is the >20s frozen nvim
+  # this rescue was written to prevent, reached by the one exception class the
+  # rescue could not see. This card widened that surface from one abstract
+  # listener method to three, all three on the answered path.
+  it "answers the editor even when the listener raises something that is not a StandardError" do
+    expect(NotImplementedError.ancestors).not_to include(StandardError)
+    allow(listener).to receive(:review_annotated).and_raise(NotImplementedError, "abstract")
+
+    expect { dispatch("review_annotate", [annotation]) }.to raise_error(NotImplementedError)
+
+    expect(session).to have_received(:respond).with(7, nil, a_string_matching(/NotImplementedError.*untouched/m))
+  end
+
+  it "does the same for a bare ScriptError, and still lets the death be loud" do
+    allow(listener).to receive(:review_verdict_given).and_raise(ScriptError, "nope")
+
+    expect { dispatch("review_verdict", ["approve"]) }.to raise_error(ScriptError)
+
+    expect(session).to have_received(:respond).with(7, nil, a_string_matching(/ScriptError/))
+  end
+
   it "refuses a request that is not a lain command at all" do
     other = instance_double(Neovim::Message::Request, id: 9, method_name: "nvim_buf_attach", arguments: [])
 
@@ -289,10 +461,154 @@ RSpec.describe Lain::Frontend::Neovim::Router do
 
   let(:listener) { Lain::Frontend::Neovim::RpcThread::Listener::Null.new }
 
-  it "names the question write as the one command whose route answers the editor" do
-    expect(router).to be_answers("question")
-    %w[reply resend compose compose_abandon question_abandon review_done].each do |verb|
+  # T11 made it three. The split is wire semantics, not routing convenience:
+  # these three are the gestures lain can REFUSE, so their route's return value
+  # has to be the response.
+  it "names the three writes whose route answers the editor" do
+    %w[question review_annotate review_verdict].each { |verb| expect(router).to be_answers(verb) }
+    %w[reply resend compose compose_abandon question_abandon review_done
+       review_open review_mark review_ask].each do |verb|
       expect(router).not_to be_answers(verb)
+    end
+  end
+
+  # This card adds the RUBY half of five verbs and three render entry points and
+  # deliberately leaves the handshake alone: the lua `_G.__lain.*` functions
+  # arrive three waves later, and a bumped token would advertise a contract with
+  # nothing behind it to exercise.
+  it "leaves the protocol where it found it, having shipped only half of each entry point" do
+    expect(Lain::Frontend::Neovim::PROTOCOL).to eq("8")
+  end
+
+  describe "an annotate write's wire shape" do
+    def annotation(overrides = {})
+      { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
+        "anchor_text" => "  @store.write(input)", "text" => "why this way?",
+        "kind" => "question" }.merge(overrides)
+    end
+
+    def answer(note) = router.answer(["review_annotate", [note]])
+
+    it "hands a readable note to the listener and returns its verdict" do
+      allow(listener).to receive(:review_annotated).and_return(nil)
+
+      expect(answer(annotation)).to be_nil
+      expect(listener).to have_received(:review_annotated).with(annotation)
+    end
+
+    it "refuses a kind outside the vocabulary, naming what arrived" do
+      expect(answer(annotation("kind" => "nit"))).to match(%r{kind must be one of note/question/blocker.*"nit"})
+    end
+
+    # The failure this check exists for, and it is not hypothetical: a nil value
+    # removes its key from a lua table entirely, and the hole reaching a
+    # listener raises on the RPC thread -- which {RpcThread#answer} answers and
+    # then RE-RAISES, killing the session over one bookkeeping slip.
+    it "refuses a note the wire dropped a key from, rather than letting it raise on this thread" do
+      allow(listener).to receive(:review_annotated)
+
+      expect(answer(annotation.except("anchor_text", "text"))).to include("anchor_text, text")
+      expect(listener).not_to have_received(:review_annotated)
+    end
+
+    # A blank line in a diff IS an anchorable position, so the key's PRESENCE is
+    # what is checked; the human's own words are the part nobody can
+    # reconstruct, so those are checked for content.
+    it "keeps a blank anchor line and refuses a note with nothing in it" do
+      allow(listener).to receive(:review_annotated).and_return(nil)
+
+      expect(answer(annotation("anchor_text" => ""))).to be_nil
+      expect(answer(annotation("text" => "    "))).to include("nothing in it")
+    end
+
+    it "refuses a payload that is not a table at all" do
+      expect(router.answer(["review_annotate", ["just a string"]])).to include("must arrive as a table")
+    end
+
+    # THE FLAT-POSITIONAL SHAPE, which is what this guard is actually for.
+    # `runtime/65_review.lua:75-79` records a verb sending flat positionals and
+    # everything after the first being dropped on the floor; T14, T15 and T18
+    # write the next three lua halves, so this is the mistake they are most
+    # likely to make. A bare String or Integer where the one array belongs used
+    # to raise NoMethodError INSIDE the guard whose whole purpose is that the
+    # wire can never raise -- and {RpcThread#answer} answers that and re-raises,
+    # ending the session over a lua typo.
+    it "refuses flat positionals in both verbs rather than raising inside the guard" do
+      allow(listener).to receive(:review_annotated)
+      allow(listener).to receive(:review_verdict_given)
+
+      %w[review_annotate review_verdict].each do |verb|
+        [annotation, "why this way?", 12, nil].each do |flat|
+          expect(router.answer([verb, flat])).to include("ONE array"), "#{verb} with #{flat.inspect}"
+        end
+      end
+      expect(listener).not_to have_received(:review_annotated)
+      expect(listener).not_to have_received(:review_verdict_given)
+    end
+
+    # `line` is the one member with a DOMAIN rather than a vocabulary, and it
+    # was checked only for its key's presence. Downstream `WireInteger.read`
+    # RAISES on each of these, from inside a listener, which the RPC thread
+    # answers and then re-raises -- so leaving it open moved the obligation
+    # silently to T13/T19/T20 and turned it into a session death when they meet
+    # it. The domain is {Review::Anchor}'s, asked here rather than restated.
+    it "refuses a line that names no position, and never hands it on" do
+      allow(listener).to receive(:review_annotated)
+
+      ["abc", 0, -3, nil, 1.5].each do |line|
+        expect(answer(annotation("line" => line))).to include("positive Integer"), line.inspect
+      end
+      expect(listener).not_to have_received(:review_annotated)
+    end
+
+    it "refuses a note naming no file, the same way it refuses one with no words" do
+      expect(answer(annotation("path" => "   "))).to include("must name the file")
+    end
+
+    # The verdict verb has always handed on a `Wire.token`-normalized value
+    # while the annotation handed on the RAW note, which worked only because
+    # {Review::AnnotationPlaced} re-tokens everything. Normalizing at the ONE
+    # boundary makes that record's normalization idempotent instead of the only
+    # thing standing between a `" new "` off the wire and a side nothing
+    # recognises.
+    it "hands on the note normalized, stripping tokens and never the text" do
+      taken = nil
+      allow(listener).to receive(:review_annotated) { |note| taken = note }
+
+      answer(annotation("side" => " new ", "path" => " lib/lain/agent.rb ",
+                        "anchor_text" => "  @store.write(input)  "))
+
+      expect(taken).to eq(annotation("anchor_text" => "  @store.write(input)  "))
+    end
+
+    # An extra key is either noise or a version skew, and passing one through
+    # would let a later reader act on a field this boundary never judged.
+    it "hands on exactly the declared keys, never a field it did not judge" do
+      taken = nil
+      allow(listener).to receive(:review_annotated) { |note| taken = note }
+
+      answer(annotation("severity" => "blocker-ish"))
+
+      expect(taken.keys).to eq(Lain::Frontend::Neovim::ReviewWrite::KEYS)
+    end
+  end
+
+  describe "a verdict write's wire shape" do
+    it "hands a known verdict to the listener and returns its answer" do
+      allow(listener).to receive(:review_verdict_given).and_return("3 hunks are still unreviewed")
+
+      expect(router.answer(["review_verdict", ["approve"]])).to eq("3 hunks are still unreviewed")
+      expect(listener).to have_received(:review_verdict_given).with("approve")
+    end
+
+    # The vocabulary is one member wide on purpose ({Lain::Review::VERDICTS}),
+    # and widening it is a decision taken there, not a string the editor can
+    # start sending.
+    it "refuses a verdict outside the vocabulary, naming what arrived" do
+      allow(listener).to receive(:review_verdict_given)
+
+      expect(router.answer(["review_verdict", ["request-changes"]])).to match(/must be approve.*request-changes/)
+      expect(listener).not_to have_received(:review_verdict_given)
     end
   end
 
@@ -312,5 +628,122 @@ RSpec.describe Lain::Frontend::Neovim::Router do
 
   it "ignores a verb no route claims -- the editor's commands are not its to validate" do
     expect(router.call(["not_a_verb", []])).to be_nil
+  end
+end
+
+# The FRONTEND's half of the answered pair, which is the half a live session
+# actually wires. {Listener::Null} answers the duck above, but production builds
+# {Neovim}'s own FrontendListener -- and a listener inheriting the abstract base's
+# NotImplementedError would raise on the RPC thread, where {RpcThread#answer}
+# answers the editor and then RE-RAISES, ending the session over one note. Both
+# halves or neither: that is the seam this chunk's waves are built to keep in one
+# card, and it is exercised here through a REAL {Neovim} rather than a double,
+# because what is being pinned is the object production assembles.
+#
+# The frontend is never STARTED -- the socket does not exist -- so no editor is
+# spawned and nothing here reaches lua. That is deliberate: the lua half of
+# `set_review`/`open_changeset`/`set_thread` arrives in T14, T15 and T18, and a
+# spec that needed it would be reaching into their scope.
+RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
+  subject(:frontend) { described_class.new(channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
+
+  let(:review) { RecordingReviewWrites.new }
+  let(:session) { instance_double(Neovim::Session, respond: nil) }
+  let(:connection) { instance_double(Neovim::Connection, flush: nil) }
+  let(:client) { instance_double(Neovim::Client, session:) }
+  let(:rpc) { frontend.instance_variable_get(:@rpc) }
+
+  before do
+    rpc.instance_variable_set(:@client, client)
+    rpc.instance_variable_set(:@connection, connection)
+  end
+
+  def dispatch(*arguments)
+    rpc.send(:dispatch,
+             instance_double(Neovim::Message::Request, id: 7, method_name: "lain_command", arguments:))
+  end
+
+  def annotation(overrides = {})
+    { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
+      "anchor_text" => "  @store.write(input)", "text" => "why this way?",
+      "kind" => "question" }.merge(overrides)
+  end
+
+  it "carries a note from the editor to the bound review and answers that it was taken" do
+    frontend.bind_changeset_review(review)
+
+    dispatch("review_annotate", [annotation])
+
+    expect(review.wrote).to eq([[:annotation, annotation]])
+    expect(session).to have_received(:respond).with(7, true, nil)
+  end
+
+  it "carries a verdict the same way" do
+    frontend.bind_changeset_review(review)
+
+    dispatch("review_verdict", ["approve"])
+
+    expect(review.wrote).to eq([[:verdict, "approve"]])
+    expect(session).to have_received(:respond).with(7, true, nil)
+  end
+
+  # The review's OWN refusal, not the wire's: the note is well-formed and this
+  # review still cannot take it. That answer is the write's verdict, so the
+  # buffer stays modified with the human's words in it.
+  it "fails the write with the refusal the review itself gave" do
+    frontend.bind_changeset_review(RecordingReviewWrites.new(refusal: "that hunk is not in this changeset"))
+
+    dispatch("review_annotate", [annotation])
+
+    expect(session).to have_received(:respond).with(7, nil, "that hunk is not in this changeset")
+  end
+
+  # THE HOLE THIS CARD CLOSED. Before the frontend answered these, an annotate
+  # arriving at a real session hit the abstract base's NotImplementedError on the
+  # RPC thread -- an editor answered and then a dead thread. A live editor with
+  # no review open is the ORDINARY state of a session, not an error in it.
+  it "refuses both writes when no review is open, rather than raising on the RPC thread" do
+    expect { dispatch("review_annotate", [annotation]) }.not_to raise_error
+    expect { dispatch("review_verdict", ["approve"]) }.not_to raise_error
+
+    expect(session).to have_received(:respond)
+      .with(7, nil, Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).twice
+  end
+
+  # Why the listener holds a bound ACCESSOR rather than the review itself: a
+  # human opens a review mid-run, long after the frontend attached. A held
+  # reference would be the Null for the life of the session and every note would
+  # be refused with a sentence about a review that IS open.
+  it "sees a review bound after the frontend was built, and unbound again" do
+    dispatch("review_annotate", [annotation])
+    frontend.bind_changeset_review(review)
+    dispatch("review_annotate", [annotation])
+    frontend.bind_changeset_review(nil)
+    dispatch("review_annotate", [annotation])
+
+    expect(review.wrote.size).to eq(1)
+    expect(session).to have_received(:respond)
+      .with(7, nil, Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).twice
+  end
+
+  # The wire read runs BEFORE the listener, so a malformed note never reaches
+  # the review at all -- the whole reason {Neovim::ReviewWrite} sits where it
+  # does, restated at the seam a live session actually uses.
+  it "never lets a malformed note reach the review" do
+    frontend.bind_changeset_review(review)
+
+    dispatch("review_annotate", [annotation("side" => "both")])
+
+    expect(review.wrote).to be_empty
+    expect(session).to have_received(:respond).with(7, nil, a_string_matching(/side must be one of/))
+  end
+
+  # The two Nulls say two different things, and the difference is what a human
+  # would do about it: no review surface wired at all is a defect in the wiring;
+  # no review open is Tuesday.
+  it "distinguishes no review OPEN from no review surface wired at all" do
+    expect(Lain::Frontend::Neovim::NoReviewWrites::UNOPENED)
+      .not_to eq(Lain::Frontend::Neovim::RpcThread::Listener::Null::UNREVIEWABLE)
+    expect(Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).to include("no review is open")
   end
 end

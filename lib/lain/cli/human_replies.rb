@@ -89,6 +89,30 @@ module Lain
         def self.answered(_digest) = nil
       end
 
+      # The changeset review nobody wired (T11) -- {NoEditor} and {NoViews}'
+      # third sibling, and a third object because it is a third fact: the rail,
+      # the views and the review the human is reading are bound at three
+      # different moments by three different callers, and a run can easily have
+      # the first two and not the last.
+      module NoReview
+        # {NoViews::Nothing}'s shape, kept APART from it rather than shared: the
+        # two say different things, and a human who has an editor open and no
+        # review would otherwise be told the editor is missing -- the same defect
+        # {Frontend::Neovim::RenderInlet}'s three separate sentences exist to
+        # avoid, on the outbound side.
+        module Nothing
+          def self.opened? = false
+          def self.marked? = false
+          def self.asked? = false
+          def self.report = "no changeset review is open, so there is nothing to open, mark or ask about"
+        end
+
+        # `**` rather than the named keyword, for {NoViews.open}'s reason.
+        def self.open(_line, **) = Nothing
+        def self.mark(_line, _state, **) = Nothing
+        def self.ask(_anchor_id, _question) = Nothing
+      end
+
       # `ask_human:` is the ask_human REPLY SEAM -- whatever answers
       # `#reply(answer, digest)` for the set a digest names. Production hands
       # over the run's {Tools::AskHuman::Directory} (many askers, one routing
@@ -102,9 +126,14 @@ module Lain
         @questions = questions
         @editor = NoEditor
         @views = NoViews
+        @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
+        # Readers, never the surfaces: all three are bound after this returns,
+        # and {Gestures} resolves each per call so a late bind is seen without
+        # anybody remembering to rebuild anything.
+        @gestures = Gestures.new(editor: -> { @editor }, views: -> { @views }, review: -> { @changeset_review })
       end
 
       # The editor's command rail -- :LainReply, :LainReviewDone, :LainOpen,
@@ -127,6 +156,15 @@ module Lain
       # Hold a review open for the editor's `done` gesture to settle -- see
       # {Reviews#bind}, which is where the keying rule lives.
       def bind_review(review, token:) = @reviews.bind(review, token:)
+
+      # Hold the CHANGESET review the editor is reading (T11), so its gestures --
+      # opening a row, marking a hunk, asking a docent about one -- resolve
+      # against the rendering that produced the line they name. Deliberately not
+      # {#bind_review}, which holds an EPIC's prose review keyed by (slug,
+      # generation): the two ride the same rail and share nothing else, and
+      # folding them together would mean one object answering `settle` and
+      # `mark` for two unrelated notions of "review".
+      def bind_changeset_review(review) = @changeset_review = review || NoReview
 
       # A human question is waiting for an answer: an item mid-drain (@inbox) or
       # one a subagent enqueued while the human sat idle at `you>`, which no
@@ -296,13 +334,33 @@ module Lain
       # replying or refusing -- so a child's question stays answerable from the
       # editor while the parent holds nothing, and a race the TTY already won
       # comes back as AlreadyResolved, which {#deliver} drops.
+      # `ScriptError` beside `StandardError` because `NotImplementedError` is
+      # NOT a StandardError, and it is the likeliest one to arrive: an abstract
+      # duck raises exactly that ({Frontend::Neovim::RpcThread::Listener}'s base
+      # does), and it walked straight past the guard whose whole paragraph says
+      # nothing may kill this fiber -- :LainReply died with no refusal rendered
+      # at all. `Exception` is still refused, so `Interrupt` and `Async::Stop`
+      # keep climbing.
       def serve_editor_command
         verb, args = pop_command
         verb.nil? ? sleep(IDLE_TICK) : routes[verb]&.call(args)
       rescue Lain::Promise::AlreadyResolved
         nil
-      rescue StandardError => e
-        @editor.review_refused(e.message)
+      rescue StandardError, ScriptError => e
+        report(e.message)
+      end
+
+      # The REFUSAL'S own failure, which had nowhere to go and so went
+      # everywhere: this is the last line of the method above, it reaches the
+      # editor -- the thing that just proved it can fail -- and a raise here
+      # escaped every guard and ended :LainReply permanently, the one outcome
+      # that method's comment forbids. Swallowed rather than re-reported
+      # because there is no third surface to report it to: an editor that
+      # cannot take a refusal cannot take the refusal about the refusal either.
+      def report(message)
+        @editor.review_refused(message)
+      rescue StandardError, ScriptError
+        nil
       end
 
       # One verb, one reaction -- {Frontend::Neovim::Router}'s shape on the
@@ -310,39 +368,18 @@ module Lain
       # editor's commands are not this object's to validate, so a verb no route
       # claims falls through in silence (it rode its own path to the frontend).
       # It became a table when `open` and `pin` made five branches of it and
-      # Metrics said what that was.
+      # Metrics said what that was, and two tables when T11's three made eight
+      # and Metrics said it again -- this time naming a real seam rather than
+      # mere size. What stays here SUBMITS: an answer for a parked set, a written
+      # document, a settled review, each of which reaches the Store or a promise
+      # and can raise, which is what {#serve_editor_command} rescues. What moved
+      # to {Gestures} names a position and submits nothing.
       def routes
         @routes ||= {
           "reply" => ->(args) { deliver(args.first.to_s, @inbox.oldest.digest) },
           "question_answered" => ->(args) { answer_document(args) },
-          "review_done" => ->(args) { @reviews.settle(args) },
-          "open" => ->(args) { open_set(args) },
-          "pin" => ->(args) { pin_turn(args) }
-        }.freeze
-      end
-
-      # The inbox's `<CR>`/`r` gesture (T16): the wire's `["open", [line,
-      # generation]]`. The LINE is all the editor can send -- an inbox row
-      # renders no digest -- and the GENERATION is the stamp on the rendering
-      # the human is looking at, without which a line number names a position
-      # in a buffer whose positions move under it.
-      def open_set(args)
-        line, generation = args
-        gestured(@views.open(line, generation:), &:opened?)
-      end
-
-      # :LainPin's `["pin", [line]]` (B4), which has been sent and dropped for
-      # as long as `open` was: the timeline only ever grows, so a line names one
-      # turn forever and no stamp is needed.
-      def pin_turn(args) = gestured(@views.pin(args.first), &:pinned?)
-
-      # A gesture that did not land owes the human a sentence, and it belongs in
-      # the editor the gesture came from -- the same rail a refused
-      # :LainReviewDone answers on. The predicate rides as a block because the
-      # two gestures name their own success ("opened", "pinned") and neither
-      # should be renamed to share a word with the other.
-      def gestured(outcome)
-        @editor.review_refused(outcome.report) unless yield(outcome)
+          "review_done" => ->(args) { @reviews.settle(args) }
+        }.merge(@gestures.routes).freeze
       end
 
       # The written question document ({Neovim::QuestionView}): the wire's
@@ -391,6 +428,117 @@ module Lain
       # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
       # for the same reason: each collaborator is its own responsibility, and the
       # split keeps each body inside Metrics/ClassLength instead of loosening it.
+
+      # Every editor verb that names a POSITION and submits nothing (T11). Five
+      # of the eight, and they are one thing: each takes a LINE or an id off the
+      # wire, resolves it through the surface that rendered it, and answers only
+      # whether it landed -- so each ends at {#gestured}, which reports a
+      # refusal back in the editor the gesture came from.
+      #
+      # Its own object because {HumanReplies} was over `Metrics/ClassLength`
+      # carrying it, and the cop was naming a real seam rather than a size: the
+      # class it left behind routes ANSWERS -- a reply, a written document, a
+      # settled review -- each of which reaches the Store or a promise and can
+      # raise. These reach neither. They resolve a position or they do not.
+      #
+      # It holds its three surfaces rather than reaching for them, which is why
+      # {HumanReplies#rebind} rebuilds it: the surfaces are bound after
+      # construction, at two different call sites, by callers that may bind
+      # either one or neither.
+      class Gestures
+        # All three are READERS, not the surfaces -- the bound-accessor shape
+        # {Frontend::Neovim}'s listener uses, and for the same reason: every one
+        # is bound after this object exists, at its own call site, and a review
+        # is opened mid-run. Holding them instead worked only with a `rebind` at
+        # every binder PLUS an invalidation of the memoized route table, and a
+        # future binder forgetting either would be ignored in SILENCE -- which
+        # is the exact failure the accessor exists to prevent. One answer to one
+        # problem, in both directions.
+        #
+        # @param editor [#call] returns where a gesture that did not land is
+        #   reported -- {NoEditor} when none was bound
+        # @param views [#call] returns what resolves an inbox line and a timeline
+        #   line -- {NoViews} when none were bound
+        # @param review [#call] returns what resolves a review sidebar row and an
+        #   anchor id -- {NoReview} when none was bound
+        def initialize(editor:, views:, review:)
+          @editor = editor
+          @views = views
+          @review = review
+        end
+
+        # {Frontend::Neovim::Router}'s shape, on the consumer's side of the same
+        # rail: one verb, one reaction, merged into {HumanReplies#routes}.
+        def routes
+          {
+            "open" => ->(args) { open_set(args) },
+            "pin" => ->(args) { pin_turn(args) },
+            "review_open" => ->(args) { open_hunk(args) },
+            "review_mark" => ->(args) { mark_hunk(args) },
+            "review_ask" => ->(args) { ask_docent(args) }
+          }
+        end
+
+        private
+
+        # The inbox's `<CR>`/`r` gesture (T16): the wire's `["open", [line,
+        # generation]]`. The LINE is all the editor can send -- an inbox row
+        # renders no digest -- and the GENERATION is the stamp on the rendering
+        # the human is looking at, without which a line number names a position
+        # in a buffer whose positions move under it.
+        def open_set(args)
+          line, generation = args
+          gestured(@views.call.open(line, generation:), &:opened?)
+        end
+
+        # :LainPin's `["pin", [line]]` (B4), which has been sent and dropped for
+        # as long as `open` was: the timeline only ever grows, so a line names one
+        # turn forever and no stamp is needed.
+        def pin_turn(args) = gestured(@views.call.pin(args.first), &:pinned?)
+
+        # The review sidebar's `<CR>` (T11): the wire's `["review_open", [line,
+        # generation]]`, which is {#open_set}'s shape for {#open_set}'s two
+        # reasons. The LINE is all the editor can send, because a sidebar row
+        # renders no hunk key -- and a hunk key is a DIGEST, which the editor
+        # never sends in either direction. The GENERATION is the stamp on the
+        # rendering the human is looking at, without which a row number names a
+        # position in a buffer whose rows move every time the scope toggles.
+        def open_hunk(args)
+          line, generation = args
+          gestured(@review.call.open(line, generation:), &:opened?)
+        end
+
+        # `["review_mark", [line, state, generation]]`, stamped for {#open_hunk}'s
+        # reason. The STATE rides the wire rather than being toggled here: what
+        # the human pressed is what they meant, and a toggle computed from a
+        # rendering that has since moved flips the wrong hunk -- silently, since
+        # both values are legal.
+        def mark_hunk(args)
+          line, state, generation = args
+          gestured(@review.call.mark(line, state, generation:), &:marked?)
+        end
+
+        # `["review_ask", [anchor_id, question]]` -- the docent question, and the
+        # ONE gesture here carrying no stamp. An anchor id is one Ruby minted and
+        # handed to the editor, so it names the same anchor in every rendering,
+        # while a line only names one in the rendering that drew it.
+        def ask_docent(args)
+          anchor_id, question = args
+          gestured(@review.call.ask(anchor_id, question), &:asked?)
+        end
+
+        # A gesture that did not land owes the human a sentence, and it belongs in
+        # the editor the gesture came from -- the same rail a refused
+        # :LainReviewDone answers on. The predicate rides as a block because the
+        # gestures name their own success ("opened", "pinned", "marked", "asked")
+        # and none should be renamed to share a word with another.
+        def gestured(outcome)
+          @editor.call.review_refused(outcome.report) unless yield(outcome)
+        rescue NoMethodError => e
+          @editor.call.review_refused("the surface answering this gesture could not answer this gesture's " \
+                                      "outcome, so nothing happened and lain cannot say why (#{e.message})")
+        end
+      end
 
       # The reviews the editor is holding open, and the ONE rule that keying
       # them needs. Its own object because "which review does this `done`
