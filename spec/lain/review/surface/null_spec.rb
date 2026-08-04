@@ -3,7 +3,10 @@
 RSpec.describe Lain::Review::Surface::Null do
   subject(:surface) { described_class.new }
 
-  it_behaves_like "a review surface"
+  # Discarding every message is this surface's whole point, so it declines
+  # the transcript law EXPLICITLY -- a declaration, not a silent omission
+  # (spec/support/shared_examples/review_surface.rb's class doc, #3a).
+  it_behaves_like "a review surface", transcript: :no_observation_channel
 
   describe "the whole port, accepted and discarded" do
     it "returns nil from #present" do

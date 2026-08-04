@@ -3,15 +3,12 @@
 # What {Lain::Review::Surface} adapters -- {Surface::Null} here, {Surface::Text}
 # (T9) and {Surface::Neovim} (T19) after it -- are held to in common. Say
 # plainly what this is, because a review-panel pass on this card found the
-# previous doc overclaimed it: this is a SIGNATURE check plus ONE ordering
-# law, not "the port's contract" in full. It cannot and does not check that
-# an adapter renders correctly, records an annotation, or answers a verdict
-# truthfully -- those are BEHAVIOURAL and belong to each adapter's own spec.
-# T9 and T19 each owe this group's including spec one behavioural law of its
-# own as they land (T9: what a presented changeset actually renders; T19:
-# what a gesture actually reaches the session as). Until then, two things
-# are checked here, both true of the port regardless of what an adapter does
-# with a call:
+# previous doc overclaimed it: this is a SIGNATURE check plus two BEHAVIOURAL
+# laws, not "the port's contract" in full. It cannot and does not check that
+# an adapter renders a changeset correctly or answers a verdict truthfully --
+# those stay in each adapter's own spec. T19 still owes this group one law of
+# its own as it lands (what a gesture actually reaches the session as).
+# Three things are checked here:
 #
 # 1. the exact SHAPE of each message -- which arguments are positional,
 #    which are required keywords -- read from {Lain::Review::Surface::MESSAGES},
@@ -39,16 +36,62 @@
 #    catch, and nothing here would detect it. T9 and T19: use a plain
 #    `subject { described_class.new }` (or equivalent per-example
 #    construction), not a shared/memoized-once instance.
+# 3. a surface told to `#annotate`, `#mark`, or `#refuse` can SAY it was --
+#    the law T9 owes this group (see below), HARDENED once by a fix-round
+#    panel past its own first cut. That first cut checked only `#annotate`,
+#    against an OPT-IN key that silently defaulted to "not configured, skip"
+#    -- and the panel broke it two ways: a non-Null surface that drops every
+#    message on the floor and simply never mentions the key passes cleanly
+#    (11 examples, 0 failures, 1 pending -- declining costs nothing but
+#    silence); and a surface that annotates HONESTLY but discards `#mark`'s
+#    `state`, discards `#refuse`'s `message`, and answers `#verdict` at
+#    random is FULLY GREEN (two thirds of the T4 counterexample still walks
+#    through). Both reproduced against this file before the fix below, and
+#    both are now caught.
+#
+#    Three changes, together:
+#
+#    a) the config key is `transcript:`, and it is now REQUIRED -- a MISSING
+#       key raises `ArgumentError` at group-definition time (the same guard
+#       `fixture` already used for a bad VALUE, extended to a bad ABSENCE).
+#       {Surface::Null} declines EXPLICITLY, `transcript: :no_observation_channel`
+#       -- a declaration, not a silence -- and only that literal Symbol skips
+#       the checks below; every other surface must supply a real callable.
+#    b) whether to skip is decided from that literal, at definition time --
+#       never by calling the configured callable early to see what it
+#       answers. T19's real transcript can legitimately raise before the
+#       first gesture reaches nvim, and a group that invoked it eagerly to
+#       decide "configured or not" would force T19 to fake one just to be
+#       included here.
+#    c) the callable is asserted against THREE messages, not one:
+#       `#annotate` (as before), `#mark` (that its `state` argument -- not
+#       merely that IT ran -- reached the transcript), and `#refuse` (same,
+#       for `message`). `#verdict` stays uncovered: it is a QUERY with no
+#       argument to echo back, and truthfulness is exactly the "renders
+#       correctly" territory #1's own doc says stays in each adapter's own
+#       spec, not this group's.
+#
+#    `transcript:` is resolved FRESH, via `resolve_review_fixture`, after
+#    each call whose evidence it checks -- `Surface::Text`'s is
+#    `-> { sink.string }`, reading the same `StringIO` its `subject` was
+#    built with, so each read reflects whatever has accumulated so far.
 #
 # Include as `it_behaves_like "a review surface"` for a surface that is
-# genuinely indifferent to its arguments (Null is). A surface that inspects
-# what it is handed (Text, Neovim) passes real domain objects instead --
-# ALWAYS AS CALLABLES, never bare values:
+# genuinely indifferent to its arguments (Null is) -- but even then,
+# `transcript:` must be given explicitly (see #3a above):
 #
-#   it_behaves_like "a review surface", changeset: -> { real_changeset }, anchor: -> { real_anchor }
+#   it_behaves_like "a review surface", transcript: :no_observation_channel
 #
-# every key optional; anything not given falls back to a generic stand-in.
-# Callables, not values, because `config.fetch` below runs where this group
+# A surface that inspects what it is handed (Text, Neovim) passes real
+# domain objects instead, ALWAYS AS CALLABLES, never bare values, and a real
+# `transcript:` callable to be held to the hardened law:
+#
+#   it_behaves_like "a review surface",
+#                   changeset: -> { real_changeset }, anchor: -> { real_anchor },
+#                   transcript: -> { sink.string }
+#
+# every OTHER key optional; anything not given falls back to a generic
+# stand-in. Callables, not values, because `config.fetch` below runs where this group
 # is INCLUDED, at example-group DEFINITION time, with `self` bound to the
 # group's CLASS -- a `let`-built fixture is an instance method and does not
 # exist yet at that point (T19's fixtures come from a running nvim and can
@@ -83,6 +126,30 @@ RSpec.shared_examples "a review surface" do |config = {}|
   kind = fixture.call(:kind, -> { :note })
   message = fixture.call(:message, -> { "not today" })
 
+  # `transcript:` alone is NOT soft-defaulted like every key above -- see the
+  # class doc's #3a/#3b. A missing key raises here, at definition time, naming
+  # both ways to satisfy it; the literal `:no_observation_channel` is the
+  # explicit opt-out and is checked WITHOUT calling anything. A local, not a
+  # constant: this block body re-runs once per `it_behaves_like` inclusion,
+  # and a top-level `CONST =` here would both warn on the second run and land
+  # on the wrong namespace (no enclosing module/class lexically wraps it).
+  no_observation_channel = :no_observation_channel
+
+  transcript_config = config.fetch(:transcript) do
+    raise ArgumentError,
+          "config value for transcript is required: pass a callable (transcript: -> { ... }) that reads " \
+          "back everything this surface has recorded so far, or the literal " \
+          "transcript: :no_observation_channel to DECLARE -- not merely omit -- that it offers no way " \
+          "to observe what happened"
+  end
+  transcript_declined = transcript_config == no_observation_channel
+  if !transcript_declined && !transcript_config.respond_to?(:call)
+    raise ArgumentError,
+          "config value for transcript must be a callable (transcript: -> { ... }) or exactly " \
+          ":no_observation_channel to decline"
+  end
+  transcript = transcript_config unless transcript_declined
+
   define_method(:resolve_review_fixture) { |callable| instance_exec(&callable) }
 
   Lain::Review::Surface::MESSAGES.each do |port_message, shape|
@@ -101,6 +168,49 @@ RSpec.shared_examples "a review surface" do |config = {}|
       subject.verdict
       subject.refuse(resolve_review_fixture(message))
     end.not_to raise_error
+  end
+
+  # The hardened law (class doc's #3). Skipped, not vacuously green, when the
+  # including spec DECLARES `transcript: :no_observation_channel` --
+  # {Surface::Null} does, because discarding every message is its whole
+  # point. Every other surface must supply a real callable (missing entirely
+  # is now a definition-time `ArgumentError`, not a silent skip -- #3a).
+  #
+  # Each example checks that the ARGUMENT itself, not merely a generic "it
+  # ran" marker, reached the transcript -- the probe that forced this
+  # (`probe_partial_honesty.rb`) annotated honestly while discarding `#mark`'s
+  # `state` and `#refuse`'s `message`, and a check for "did #mark run" alone
+  # would have missed it.
+  it "leaves evidence, in its transcript, that #annotate's text actually ran" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    note = resolve_review_fixture(text)
+    subject.annotate(resolve_review_fixture(anchor), note, kind: resolve_review_fixture(kind))
+
+    expect(resolve_review_fixture(transcript)).to include(note)
+  end
+
+  it "leaves evidence, in its transcript, that #mark's state actually reached it" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    # A word-boundary match, not `#include?`: Review::MARK_STATES's own
+    # members are `reviewed`/`unreviewed`, and `"unreviewed".include?("reviewed")`
+    # is true -- a plain substring check would pass a surface that echoed the
+    # WRONG state back, which is exactly the defect this example exists to
+    # catch.
+    marked_state = resolve_review_fixture(state)
+    subject.mark(resolve_review_fixture(hunk_key), marked_state)
+
+    expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(marked_state.to_s)}\b/)
+  end
+
+  it "leaves evidence, in its transcript, that #refuse's message actually reached it" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    reason = resolve_review_fixture(message)
+    subject.refuse(reason)
+
+    expect(resolve_review_fixture(transcript)).to include(reason)
   end
 
   # Three orders -- natural, fully reversed, and one scrambled -- rather than

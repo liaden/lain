@@ -36,6 +36,19 @@ module Lain
     # same fact, free to disagree with the derivation.
     MARK_STATES = %w[reviewed unreviewed].freeze
 
+    # The derivation MARK_STATES' own doc anticipates: what a FILE (or a commit)
+    # shows once T8 folds its hunks' marks together. `reviewed`/`unreviewed`
+    # are MARK_STATES' own two spellings restated (not computed with `+`,
+    # because the order a legend reads best-to-worst in is not the order
+    # MARK_STATES declares its binary pair in); `partial` is this set's own new
+    # member, for the case where some hunks are marked and some are not. A
+    # SECOND, independent declaration of `reviewed`/`unreviewed` here would be
+    # exactly the trap this file's own doc warns against (`Anchor::SIDES`'s
+    # spec pins that pair equal for the same reason) -- so a spec pins these
+    # two against MARK_STATES rather than trusting the restatement by eye
+    # (`spec/lain/review/vocabulary_spec.rb`).
+    FILE_STATES = %w[reviewed partial unreviewed].freeze
+
     # What a note claims to be. `blocker` is the one a verdict policy can read;
     # the other two are for the human and the agent reading afterwards.
     ANNOTATION_KINDS = %w[note question blocker].freeze
@@ -48,5 +61,14 @@ module Lain
     # question settled, rather than a string that quietly starts appearing in
     # journals and sets the vocabulary by accident.
     VERDICTS = %w[approve].freeze
+
+    # The CLI's `--scope commits|cumulative` (T20), and what {Surface::Text}
+    # and {Surface::Neovim} (T19) both render: `cumulative` is one flat table,
+    # `commits` groups rows under their commit subject. Declared here, not
+    # restated as a private literal inside either surface, for the same reason
+    # every other set in this file is -- a typo'd scope (`:cumulatve`) must
+    # fail loudly rather than silently fall through to whichever branch a
+    # bare `==` happened to leave as the default.
+    SCOPES = %w[commits cumulative].freeze
   end
 end

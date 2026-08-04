@@ -31,6 +31,29 @@ module Lain
     #   verdict                       ask the human for their decision
     #   refuse(message)               decline the review, naming why
     #
+    # == What `present`'s `changeset` argument answers
+    #
+    # `Lain::Review::Changeset` (T7) and `Lain::Review::Marks` (T8) had not
+    # landed when {Surface::Text} was written, so the duck `present` actually
+    # needs is stated ONCE here rather than in each adapter's own doc -- the
+    # drift {MESSAGES} exists to prevent for a message's SHAPE applies just as
+    # much to what one argument of one message answers, and a second adapter
+    # inventing its own reading (T19) is exactly that drift.
+    #
+    # `changeset.files` answers an Enumerable of file entries (`#path`,
+    # `#state` -- one of `Review::FILE_STATES`) for `scope: :cumulative`.
+    # `changeset.by_commit` answers an Enumerable of commit entries
+    # (`#subject`, `#files` -- same file-entry shape) for `scope: :commits`.
+    #
+    # Neither `Changeset` nor `Marks` alone answers this: a changeset (T7) is
+    # files/hunks/anchorable lines with no notion of review state, and marks
+    # (T8) derives that state from hunks with no notion of files-as-such. The
+    # object that answers `#files`/`#by_commit` above has to be built by
+    # JOINING the two -- T13's session is the one place both are held
+    # together, so it is T13's job to produce it (from a real `Changeset`'s
+    # structure and `Marks`' derived tri-state per file), not either T7 or T8
+    # alone, and not a surface reaching for both on its own.
+    #
     # == Why `check!` is a duck probe, not a base class
     #
     # A surface is never required to subclass anything -- forcing one would
@@ -137,3 +160,4 @@ module Lain
 end
 
 require_relative "surface/null"
+require_relative "surface/text"
