@@ -47,6 +47,55 @@ RSpec.describe "Lain::Ext canonical (Rust)" do
     end
   end
 
+  # The differential belongs HERE, not in canonical_laws.rb: that shared group
+  # is parameterised by a single `dump:` lambda (one canonicalizer under test
+  # at a time) and structurally cannot compare two implementations against
+  # each other. `ext/lain/CLAUDE.md` names `spec/lain/rust/*` the sole
+  # authority on cross-implementation agreement, so this is where an arbitrary
+  # (not hand-picked) structure gets checked. If this ever fails, it is a live
+  # content-addressing defect -- Turn hashing and prompt-cache stability both
+  # rest on Ruby and Rust producing the same bytes for the same value -- so a
+  # failure here means STOP and escalate, never adjust either implementation
+  # to make the property pass.
+  describe "byte-for-byte agreement over arbitrary generated input" do
+    # Deliberately duplicated rather than shared with
+    # spec/support/shared_examples/canonical_laws.rb's generator of the same
+    # shape, for the reason above: that file's shared group cannot express a
+    # two-implementation comparison, so this generator has nowhere shared to
+    # live.
+    #
+    # `real_float`, not `float` -- `Generators#float` injects NaN/Infinity by
+    # design, which both canonicalizers refuse rather than encode, so it would
+    # only test the refusal path the fixed examples above already pin.
+    # `printable_ascii_string` keeps every String and every Hash key plain
+    # ASCII, so no draw can land on the UTF-8-validity edge cases the fixed
+    # examples above also already pin. Nesting depth is bounded far below the
+    # ≤100 ceiling proven above: `tree`'s own depth is O(log(size)), and
+    # sampling measured a maximum observed depth of 6 at this suite's n_runs.
+    def json_leaf_generator
+      generators = PropCheck::Generators
+      generators.one_of(generators.constant(nil), generators.boolean, generators.integer,
+                        generators.real_float, generators.printable_ascii_string)
+    end
+
+    def json_value_generator
+      generators = PropCheck::Generators
+      generators.tree(json_leaf_generator) do |subtree|
+        generators.one_of(
+          generators.array(subtree, max: 5),
+          generators.hash_of(generators.printable_ascii_string, subtree, max: 5)
+        )
+      end
+    end
+
+    it "dumps identically to the Ruby canonicalizer for an arbitrary generated structure",
+       aggregate_failures: false do
+      forall(value: json_value_generator) do |value:|
+        expect(Lain::Ext.canonical_dump(value)).to eq(Lain::Canonical.dump(value))
+      end
+    end
+  end
+
   describe ".canonical_digest" do
     it "is the prefixed blake3 of the canonical dump" do
       # Independently checked with `b3sum` over the bytes of `{"a":1}`.
