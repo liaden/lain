@@ -22,10 +22,16 @@ module Lain
   # choice of ActiveModel is an implementation detail of HOW we validate, not
   # part of a constructor's contract).
   #
+  # `check!` itself lives in {Lain::Guardable}, whose `guard do ... end` builds
+  # an anonymous subclass of this class for a value that would never mention its
+  # carrier by name. Subclassing and declaring are two entry points onto one
+  # mechanism; this class is the carrier both of them validate.
+  #
   # Like {Lain::Tool::Input}, these validations check SHAPE, not safety.
   class Guard
     include ActiveModel::Model
     include ActiveModel::Attributes
+    include Guardable
 
     # ActiveModel::Naming needs a name for `errors.full_messages`; an anonymous
     # carrier (built by a DSL) would raise before it could report the error.
@@ -33,18 +39,6 @@ module Lain
     # {Lain::Tool::Input.model_name}.
     def self.model_name
       @model_name ||= ActiveModel::Name.new(self, nil, name || "Guard")
-    end
-
-    # Validate the kwargs and raise ArgumentError naming the first offending
-    # attribute. The message is `"<attribute> <message>"` -- the lower-cased
-    # attribute plus the validator's own message -- so it reads as diagnostically
-    # as the guard clause it replaces and matches the same `/attribute/` regexes
-    # the specs already pin. The carrier is never returned or stored.
-    def self.check!(**attrs)
-      carrier = new(**attrs)
-      return if carrier.valid?
-
-      raise ArgumentError, carrier.errors.map { |error| "#{error.attribute} #{error.message}" }.join(", ")
     end
   end
 end

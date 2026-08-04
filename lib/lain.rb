@@ -11,6 +11,11 @@ require_relative "lain/error"
 require_relative "lain/paths"
 require_relative "lain/project_dir"
 require_relative "lain/dsl_catalog"
+# Before `config`, not after: a `guard` block builds its carrier by subclassing
+# Guard as the class body evaluates, so both have to exist before the first
+# value class declares one.
+require_relative "lain/guardable"
+require_relative "lain/guard"
 require_relative "lain/config"
 require_relative "lain/cache_profile"
 require_relative "lain/canonical"
@@ -23,7 +28,6 @@ require_relative "lain/algebra"
 # in its own class body, so the verb has to exist by the time this loads.
 require_relative "lain/interval_partition"
 require_relative "lain/blankness"
-require_relative "lain/guard"
 require_relative "lain/question"
 require_relative "lain/telemetry"
 require_relative "lain/mode"
