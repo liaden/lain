@@ -14,4 +14,5 @@ end
 require_relative "review/vocabulary"
 require_relative "review/wire"
 require_relative "review/anchor"
+require_relative "review/hunk"
 require_relative "review/records"
