@@ -294,8 +294,12 @@ RSpec/IncludeExamples:
 # describe one member of a subsystem (approval_spec covers Approval::Queue,
 # pipeline_source_spec covers its Null), some describe a relationship rather than a
 # class (core/grep_parity_spec pins the Rust and Ruby greps against each other), and
-# spec/integration/ is a deliberate second tree. Renaming 28 files to satisfy a
+# spec/integration/ is a deliberate second tree. Renaming 30 files to satisfy a
 # mirror rule would cost every one of those names its meaning.
+#
+# It also compounds with RSpec/DescribeMethod below: this cop folds the docstring of a
+# `describe Klass, "scope"` into the expected FILENAME, so the two together would want
+# supervisor_as_an_actor_reactor_spec.rb. Keeping one means disabling the other.
 RSpec/SpecFilePathFormat:
   Enabled: false
 

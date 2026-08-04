@@ -728,7 +728,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  describe "state (public reader, T13)" do
+  describe "state (public reader)" do
     it "answers the SAME derivation #<< publishes, without touching the file -- Command::Env's live seam" do
       feed = described_class.new(path:, run_clock: frozen_run_clock)
 

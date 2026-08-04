@@ -6,8 +6,11 @@ require "async"
 # the cache breakpoint, the cache_control census on the real wire, and the fresh-rooted
 # child timelines. Grown from adversarial review probes; no gap here is still open.
 # A probe for an OPEN gap belongs here as an inverted `pending` example, never as a
-# green assertion of the buggy behavior -- see spec/lain/supervisor/reactor_spec.rb.
-RSpec.describe Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate do
+# green assertion of the buggy behavior -- see spec/lain/supervisor_reactor_spec.rb.
+#
+# The subject is the Subagent tool rather than the strategy: every example drives a
+# real spawn through it, and two of them go all the way to the Anthropic encoder.
+RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template" do
   let(:store) { Lain::Store.new }
   let(:parent) do
     Lain::Timeline.empty(store:)
@@ -18,7 +21,7 @@ RSpec.describe Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate do
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:template) { "Shared sibling brief, the bulk every worker reads first. " * 40 }
-  let(:sibling_template) { described_class }
+  let(:sibling_template) { Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate }
 
   def policy(prefix:, posture: :handler_union, only: %i[read_file])
     Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:)
@@ -83,10 +86,10 @@ RSpec.describe Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate do
       .to eq(Lain::Canonical.dump(pb.last_request.cache_prefix))
   end
 
-  # ---- The T24 census, on the ACTUAL Anthropic wire encoding -----------------
-  # Linus: the card spec counts neutral marks on the Request; the wire is what
-  # 400s. Encode and count cache_control across system_ AND messages: exactly
-  # one system-slot mark, on the template.
+  # The cache-marker census, on the ACTUAL Anthropic wire encoding: counting neutral
+  # marks on the Request is not the same as counting what ships, and the wire is what
+  # 400s. Encode and count cache_control across system_ AND messages: exactly one
+  # system-slot mark, on the template.
   it "the encoded wire carries exactly one system cache_control, on the template block" do
     provider = mock(text_response("done"))
     tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
@@ -205,7 +208,7 @@ RSpec.describe Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate do
   it "launch_actor threads the template AND journals the floor note" do
     journal = Lain::Channel.new
     provider = mock(text_response("actor done"))
-    tool = Lain::Tools::Subagent.new(
+    tool = described_class.new(
       provider:, context_factory: -> { child_context }, toolset: union,
       policy: policy(prefix: sibling_template.new(template: "tiny"), posture: :schema),
       parent:, journal:, budget: Lain::Agent::Budget.new,
