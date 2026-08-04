@@ -2011,8 +2011,20 @@ Scenario: CLAUDE.md matches measurement
 - A speed-up needs an assertion dropped, a seam faked, or `:seam` coverage moved out of the default
   run. Stop — CLAUDE.md's testing section says the seam tier is 2.5% of examples for a third of the
   serial time **on purpose**, and the inner loop already exists as `--tag '~seam'`.
-- Profiling says the cost is in git itself rather than in fixture setup. Then the honest answer is
-  splitting the file by concern so packing can spread it, not making it faster.
+- Profiling says the cost is in git itself rather than in fixture setup. **Then the answer is NOT to
+  split the file so packing can spread it.** One spec file per code file, at the mirrored path and
+  name, is a convention that earns its keep — it is how a reader finds the spec for a subject without
+  searching — and carving a unit spec into shards to game the packer trades that away for wall-clock
+  the profiler said was not in our control anyway. Take the floor instead, or say plainly that the
+  file is as fast as its subject allows.
+
+  **Seam and integration specs are the exception**, because they are not unit specs and the mirror
+  convention is not describing them. But CLAUDE.md already draws that line precisely, and it is not a
+  licence to split: **a seam with an obvious subject stays at its mirror path and carries the `:seam`
+  tag**; `spec/lain/seams/` exists only for seams belonging to **no single subject**. Both files here
+  have an obvious subject (`LocalBranch`, `GithubPr`), so they stay where they are. Moving a genuinely
+  subject-less seam example out is legitimate; relocating examples that plainly belong to one class
+  is not.
 
 ---
 
