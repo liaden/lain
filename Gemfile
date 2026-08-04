@@ -58,7 +58,7 @@ group :test do
   # parallel-safe by construction (tmpdirs, per-pid sockets, injected env).
   # Roughly halves the wall clock every commit hook pays.
   gem "parallel_tests", "~> 5.0"
-  gem "rantly", "~> 3.0" # property tests for the algebra: monoid/semilattice laws
+  gem "prop_check", "~> 1.0" # property tests for the algebra: monoid/semilattice laws
   gem "rspec", "~> 3.0"
   # Suite profiling lenses, dormant until their env vars ask: TEST_STACK_PROF=1
   # (flamegraphs, via stackprof), TAG_PROF=type, EVENT_PROF=... -- required from

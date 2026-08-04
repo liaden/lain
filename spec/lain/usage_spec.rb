@@ -6,6 +6,21 @@ RSpec.describe Lain::Usage do
                         cache_creation_input_tokens: creation, cache_read_input_tokens: read)
   end
 
+  # A token count has no upper bound worth pinning, so unlike `population`
+  # below (which needs concrete bounded numbers for its own separate fold
+  # assertion) this draws unbounded and lets prop_check grow the value with
+  # the run index -- and, on a failing law, shrink toward zero. Shared by the
+  # law groups below and by the shrinking demonstration, which needs the same
+  # generator to show shrinking against a real draw, not a specially-tame one.
+  def self.usage_generator
+    PropCheck::Generators.fixed_hash(
+      input_tokens: PropCheck::Generators.nonnegative_integer,
+      output_tokens: PropCheck::Generators.nonnegative_integer,
+      cache_creation_input_tokens: PropCheck::Generators.nonnegative_integer,
+      cache_read_input_tokens: PropCheck::Generators.nonnegative_integer
+    ).map { |fields| described_class.new(**fields) }
+  end
+
   let(:population) do
     Array.new(12) do
       usage(input: rand(0..5000), output: rand(0..2000), creation: rand(0..3000), read: rand(0..9000))
@@ -64,18 +79,14 @@ RSpec.describe Lain::Usage do
   # turns in no particular order; the laws are what make the total independent of
   # the walk order.
   describe "the commutative monoid laws" do
-    random_usage = lambda do
-      usage(input: rand(0..5000), output: rand(0..2000), creation: rand(0..3000), read: rand(0..9000))
-    end
-
     include_examples "a monoid",
                      operation: ->(a, b) { a + b },
                      identity: described_class.zero,
-                     generator: random_usage
+                     generator: usage_generator
 
     include_examples "a commutative monoid",
                      operation: ->(a, b) { a + b },
-                     generator: random_usage
+                     generator: usage_generator
 
     it "sums the same regardless of the order it is folded in" do
       shuffled = population.shuffle.reduce(described_class.zero, :+)
@@ -85,6 +96,64 @@ RSpec.describe Lain::Usage do
 
     it "refuses to add a non-Usage" do
       expect { usage + 1 }.to raise_error(TypeError, /cannot add Integer/)
+    end
+  end
+
+  # Not a law Usage claims -- the point is the opposite. prop_check's whole
+  # advantage over the engine it replaced is SHRINKING: a failing property
+  # reports a minimal counterexample instead of whatever large values the
+  # draw happened to land on first. This proves that advantage against a
+  # real generator rather than asserting it in prose.
+  describe "shrinking, demonstrated against a deliberately broken operation" do
+    # `usage_generator` is a class method (see the top of this file), resolved
+    # here at group-definition time, same as its use above in `include_examples`.
+    # Captured to a local because `it`'s block runs against an example
+    # INSTANCE, which does not inherit a class method by unqualified call.
+    generator = usage_generator
+
+    # Usage's own #+ is never exercised here. This is `#+` with output_tokens
+    # subtracted instead of added on one side, which breaks commutativity
+    # whenever two draws differ in that one field -- true of nearly every
+    # random pair, so the property fails almost immediately and what is left
+    # to check is what the failure REPORTS.
+    let(:broken_add) do
+      lambda do |a, b|
+        described_class.new(
+          input_tokens: a.input_tokens + b.input_tokens,
+          output_tokens: a.output_tokens - b.output_tokens,
+          cache_creation_input_tokens: a.cache_creation_input_tokens + b.cache_creation_input_tokens,
+          cache_read_input_tokens: a.cache_read_input_tokens + b.cache_read_input_tokens
+        )
+      end
+    end
+
+    it "shrinks the failing pair to the smallest values that still differ in the broken field",
+       aggregate_failures: false do
+      failure = nil
+      begin
+        forall(a: generator, b: generator) do |a:, b:|
+          expect(broken_add.call(a, b)).to eq(broken_add.call(b, a))
+        end
+      rescue RSpec::Expectations::ExpectationNotMetError => e
+        failure = e
+      end
+
+      raise "expected the broken law to fail at least once" if failure.nil?
+
+      info = failure.prop_check_info
+      shrunk_a, shrunk_b = info[:shrunken_input].values_at(:a, :b)
+
+      # Minimal here means: every field NOT implicated in the break is
+      # driven to zero, and the two implicated output_tokens are as close
+      # together as they can be while still differing (0 and 1) -- the
+      # smallest pair that still exhibits the bug. A non-shrinking engine
+      # would leave whatever the first failing draw happened to be, which
+      # nonnegative_integer draws as large, arbitrary numbers.
+      expect([shrunk_a.input_tokens, shrunk_a.cache_creation_input_tokens, shrunk_a.cache_read_input_tokens,
+              shrunk_b.input_tokens, shrunk_b.cache_creation_input_tokens, shrunk_b.cache_read_input_tokens])
+        .to all(eq(0))
+      expect([shrunk_a.output_tokens, shrunk_b.output_tokens].sort).to eq([0, 1])
+      expect(info[:n_shrink_steps]).to be > 0
     end
   end
 

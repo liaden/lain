@@ -6,7 +6,15 @@ RSpec.describe Lain::Middleware do
   # returned env's trace on the way out, never mutating shared state. That makes
   # two composed stacks OBSERVATIONALLY EQUAL exactly when they produce the same
   # trace for the same input, which is how we make "monoid law" concrete.
-  def tag(symbol)
+  #
+  # Held as a local, not written straight into an instance method, because the
+  # property-test generator below builds middlewares from inside a
+  # PropCheck::Generator#map block. That block runs at group-definition time
+  # with no example instance to call an instance method against -- unlike
+  # `operation`/`equal` in shared_examples/monoid.rb, it is never
+  # `instance_exec`'d per draw. `tag` stays as a thin delegate purely so the
+  # Stack examples below keep reading as `tag(:a)`.
+  build_tag = lambda do |symbol|
     Class.new(Lain::Middleware::Base) do
       define_method(:call) do |env, &downstream|
         entered = env.merge(trace: env.fetch(:trace, []) + [[symbol, :in]])
@@ -15,6 +23,7 @@ RSpec.describe Lain::Middleware do
       end
     end.new
   end
+  define_method(:tag) { |symbol| build_tag.call(symbol) }
 
   # The observation: run a middleware over an empty-trace env, terminating in the
   # identity app, and read the trace it produced. The env is wrapped so the trace
@@ -36,10 +45,21 @@ RSpec.describe Lain::Middleware do
   # precisely because middleware order is meaningful -- so only "a monoid" is
   # included, never "a commutative monoid".
   describe "the monoid law (property-tested)" do
+    # Draws a short sequence of tag symbols and folds it into a composed
+    # middleware the same way `compose` does -- through `build_tag` directly,
+    # since (per the note above) this generator has no example instance to
+    # call `compose`/`pool` against.
+    symbol_generator = PropCheck::Generators.one_of(
+      *%i[a b c d].map { |symbol| PropCheck::Generators.constant(symbol) }
+    )
+    composed_generator = PropCheck::Generators.array(symbol_generator, min: 0, max: 3).map do |symbols|
+      symbols.map { |symbol| build_tag.call(symbol) }.reduce(Lain::Middleware::Identity, :>>)
+    end
+
     include_examples "a monoid",
                      operation: ->(a, b) { a >> b },
                      identity: Lain::Middleware::Identity,
-                     generator: -> { compose(Array.new(rand(0..3)) { %i[a b c d].sample }) },
+                     generator: composed_generator,
                      equal: ->(a, b) { observe(a) == observe(b) }
   end
 

@@ -200,7 +200,7 @@ RSpec/DescribeClass:
 # the monoid folds the same in any order, and strategy_spec's own comment names
 # `inject(:+)` as the shape that invited a deep-copy bug. `sum` gives the same answer
 # and hides the fold being tested, so the spec would stop exercising what it
-# documents. The populations are 4 and a Rantly sample; the allocation is noise.
+# documents. The populations are 4 and a generated sample; the allocation is noise.
 Performance/Sum:
   Exclude:
     - "spec/lain/compaction/strategy_spec.rb"
