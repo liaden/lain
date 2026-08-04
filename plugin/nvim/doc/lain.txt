@@ -19,7 +19,8 @@ CONTENTS                                                       *lain-contents*
      6.5 Composing a message ........... |lain-compose|
      6.6 Answering a question set ...... |lain-question|
      6.7 Reviewing a document .......... |lain-review|
-     6.8 Folds ......................... |lain-folds|
+     6.8 Reading a changeset ........... |lain-review-diff|
+     6.9 Folds ......................... |lain-folds|
   7. Without the plugin ................ |lain-zero-install|
 
 ==============================================================================
@@ -420,7 +421,40 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.8 FOLDS                                                         *lain-folds*
+6.8 READING A CHANGESET                                     *lain-review-diff*
+
+A changeset review opens each changed file as a PAIR. On the right is the real
+file: 'buftype' is empty, so your language server and treesitter attach to it
+exactly as they would to a file you opened yourself, and you can edit and `:w`
+it. On the left is a read-only `nofile` buffer named `lain://review/OLD/{path}`
+holding that file as of the merge base.
+
+Both windows are in nvim's native diff mode, so 'foldmethod' is "diff" --
+unchanged regions fold away and `zo`/`zr` expand them -- `]c`/`[c` walk the
+changes, and `do`/`dp` work as they always do. Opening a file focuses the new
+side on the line the review sent you to, opening just enough fold to show it.
+
+Each side carries which side it is, which commit it came from, and which file:
+
+    b:lain_review_side          "old" or "new"
+    b:lain_review_revision      the commit that side was read at
+    b:lain_review_path          the file's path, as the review names it
+
+Those variables are true of the file you are looking at and of nothing else:
+they are withdrawn from a file as soon as you move on from it.
+
+Paths are resolved against the project directory as it was when lain attached,
+so `:cd`, `:lcd` and directory-changing plugins cannot send a review to the
+wrong file. Set `g:lain_review_root` if you started nvim outside the repository
+you are reviewing.
+
+The old side cannot be written -- `:w` fails with E382 -- because those bytes
+are history, and lain settles the review from the revision rather than from a
+file. The pair is reused as you move between files, and the old side's buffer
+is wiped as it is replaced, so a long review leaves no buffer per file behind.
+
+------------------------------------------------------------------------------
+6.9 FOLDS                                                         *lain-folds*
 
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one
