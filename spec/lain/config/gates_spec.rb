@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "open3"
 
 RSpec.describe Lain::Config::Epics::Gates do
   it "answers interactive for a stage it does not name" do
@@ -49,6 +50,68 @@ RSpec.describe Lain::Config::Epics::Gates do
     accepted = names.map { |name| described_class.new(table: { "research" => name }).policy_for("research") }
 
     expect(accepted).to eq(names)
+  end
+
+  # Pinned literally rather than by a regex, because each message is computed
+  # from the OFFENDING VALUE and then spells out the closed set the reader is
+  # being measured against -- the typo AND its fix, in one line. A refusal that
+  # named only the attribute at fault would still satisfy every /reserch/ above.
+  describe "the message a refusal carries" do
+    # If you got here by adding a STAGE, this pin is what you owe: widening
+    # {Epic::STAGES} must update the pipeline spelled out below. It is written
+    # out rather than derived from the constant on purpose -- deriving it would
+    # assert only that the message interpolates something, which is the tautology
+    # this example exists to avoid.
+    it "names the unknown stages and the pipeline they were measured against" do
+      expect { described_class.new(table: { "reserch" => "deferred" }) }
+        .to raise_error(Lain::Config::Epics::Gates::UnknownStages,
+                        "[epics.gates] has no stages \"reserch\"; " \
+                        "the pipeline is research -> epic_plan -> issue_plan -> implementation")
+    end
+
+    # Likewise: widening {Approval::Gate::Policies} must update the list below,
+    # and the red you are reading is this pin doing its job, not a broken factory.
+    it "names the unknown policies and every policy the factory does build" do
+      expect { described_class.new(table: { "research" => "yolo" }) }
+        .to raise_error(Lain::Config::Epics::Gates::UnknownPolicies,
+                        "[epics.gates] names unknown gate policies \"yolo\"; " \
+                        "known policies: interactive, hands_off, deferred, adjudicated")
+    end
+
+    it "names the type it got where the sub-table is not a table" do
+      expect { described_class.new(table: "deferred") }
+        .to raise_error(Lain::Config::Epics::Gates::NotATable,
+                        "[epics.gates] must be a table, got String: \"deferred\"")
+    end
+  end
+
+  # `Epic::STAGES` and `Approval::Gate::Policies` are read inside METHOD BODIES,
+  # at call time, and this pins them there. `lain.rb` loads config eight units in
+  # and epic sixty further down, so a class-body reference to either -- the shape
+  # a declarative closed-set validation naturally takes -- would resolve during
+  # `require` and take the whole library down, not merely this file's specs.
+  # EMPTY is the proof case: built while this file loads, and surviving only
+  # because an empty table is answered before either set is read.
+  describe "the load order it is declared under" do
+    # The manifest is the authority on what precedes config, so the prefix is
+    # read from it rather than restated here and left to rot.
+    def manifest_prefix_through_config
+      root = File.expand_path("../../..", __dir__)
+      units = File.readlines(File.join(root, "lib", "lain.rb"))
+                  .filter_map { |line| line[/^require_relative "(.+)"/, 1] }
+
+      units[0..units.index("lain/config")].map { |unit| File.join(root, "lib", "#{unit}.rb") }
+    end
+
+    it "loads the whole config unit without defining Epic or Approval" do
+      script = manifest_prefix_through_config.map { |file| "require #{file.inspect}" }.join("\n")
+      script += "\nprint [Lain::Config.empty.class.name, Object.const_defined?(\"Lain::Epic\"), " \
+                "Object.const_defined?(\"Lain::Approval\")].inspect"
+
+      out, status = Open3.capture2e(RbConfig.ruby, "-e", script)
+
+      expect([out, status.success?]).to eq(['["Lain::Config", false, false]', true])
+    end
   end
 end
 
@@ -182,5 +245,44 @@ RSpec.describe Lain::Config do
         end
       end
     end
+
+    # Spells out {Epic::STAGES} for the reason the hand-built pin above does, and
+    # carries the same debt: a new stage updates both, or both go red together.
+    it "names the file, the unknown stages, and the pipeline" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Epics::Gates::UnknownStages,
+                          "#{config_path(root)}: [epics.gates] has no stages \"reserch\"; " \
+                          "the pipeline is research -> epic_plan -> issue_plan -> implementation")
+      end
+    end
+
+    # Stated as a RELATION between the two refusals rather than as two literals,
+    # because what has to hold is that they cannot DRIFT: {Gates#initialize}
+    # re-runs the same closed-set check `.from` does, so the only difference a
+    # hand-built value is entitled to is the config path it has no way to know.
+    it "refuses a hand-built value as it refuses a loaded one, minus the path prefix" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics.gates]\nreserch = \"deferred\"\n")
+
+        loaded = refusal_from { described_class.load(root:) }
+        hand_built = refusal_from { Lain::Config::Epics::Gates.new(table: { "reserch" => "deferred" }) }
+
+        expect([loaded.class, loaded.message])
+          .to eq([hand_built.class, "#{config_path(root)}: #{hand_built.message}"])
+      end
+    end
+  end
+
+  # Captures a refusal so that two of them can be COMPARED. `raise_error` matches
+  # one in place and cannot state a relation between the loaded and hand-built
+  # forms, which is the whole point of the example that uses this.
+  def refusal_from
+    yield
+    raise "expected a refusal, and nothing was raised"
+  rescue Lain::Error => e
+    e
   end
 end

@@ -71,6 +71,23 @@ RSpec.describe Lain::Config::Epics do
   it "refuses a value outside the closed set at construction, not just through .from" do
     expect { described_class.new(home: :bogus) }.to raise_error(Lain::Config::Epics::InvalidHome, /bogus/)
   end
+
+  # Pinned literally, not by a regex that would survive a rewording. Each of
+  # these messages is computed from the OFFENDING VALUE -- the symbol, the set
+  # difference -- and not from the name of the attribute that carried it, so a
+  # rewrite that reported only which attribute was at fault would still match
+  # every /bogus/ above while telling a reader strictly less than this does.
+  describe "the message a refusal carries" do
+    it "names the offending home and both permitted values" do
+      expect { described_class.new(home: :bogus) }
+        .to raise_error(Lain::Config::Epics::InvalidHome, "epics_home :bogus is not one of xdg, repo")
+    end
+
+    it "renders a wrong-typed home as the value it was, not as its attribute" do
+      expect { described_class.new(home: 3) }
+        .to raise_error(Lain::Config::Epics::InvalidHome, "epics_home 3 is not one of xdg, repo")
+    end
+  end
 end
 
 # A second describe, because these examples reach `[epics]` the way a project
@@ -233,6 +250,41 @@ RSpec.describe Lain::Config do
           expect(error.path).to eq(config_path(root))
           expect(error.value).to eq(3)
         end
+      end
+    end
+  end
+
+  # The loaded path's messages, pinned literally for the reason the hand-built
+  # ones are, plus one this path alone can state: the file to open comes FIRST,
+  # so a refusal read out of a CI log is actionable without a second run.
+  describe "the message a loaded refusal carries" do
+    it "names the file, the unknown keys, and the keys it does know" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nhoem = \"repo\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Epics::UnknownKeys,
+                          "#{config_path(root)}: [epics] has no keys \"hoem\"; known keys: home, gates")
+      end
+    end
+
+    it "names the file, the offending home, and both permitted values" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nhome = \"somewhere_else\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Epics::InvalidHome,
+                          "#{config_path(root)}: epics_home \"somewhere_else\" is not one of xdg, repo")
+      end
+    end
+
+    it "names the file and the type it got where [epics] is not a table at all" do
+      Dir.mktmpdir do |root|
+        write_config(root, "epics = \"x\"\n")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Config::Epics::NotATable,
+                          "#{config_path(root)}: [epics] must be a table, got String: \"x\"")
       end
     end
   end

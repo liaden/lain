@@ -20,7 +20,14 @@ module Lain
       # constants and nested classes defined THERE are lexically scoped to
       # `Lain::Config`, not to `Epics` itself -- a documented trap, see
       # `Request::SYSTEM_PREFIX` for the precedent.
+
+      # Where an epic tree may live, spelled as the TOML spells it. Strings, not
+      # Symbols, because membership is tested against what the parser produced --
+      # a wrong-TYPED `home` has to fail that test rather than be coerced first.
       HOME_VALUES = %w[xdg repo].freeze
+
+      # Every key `[epics]` understands. An unknown one is refused rather than
+      # ignored, so this list is also the correction {UnknownKeys} offers back.
       KEYS = %w[home gates].freeze
 
       # `[epics]` present but not a table -- TOML permits a scalar or an array
