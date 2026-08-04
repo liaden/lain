@@ -324,6 +324,27 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(referenced).not_to be_empty
       expect(referenced - defined_tags).to be_empty
     end
+
+    # The same rule as above, from the OTHER side, and nothing else can see it.
+    # `helptags` indexes the tags a doc DEFINES and never the ones it
+    # REFERENCES; the sweep above closes that by scanning the DOC for |tag|. A
+    # `:h <tag>` held in Ruby or Lua source is structurally outside its reach --
+    # and lain's source does hold them, because a rendered buffer can be too
+    # narrow to carry its own caveats and has to point at help instead
+    # (`ReviewView::WALK_LEGEND`, 38 columns of a 40-column sidebar). Written
+    # against a tag that was never defined, such a pointer generates tags
+    # happily, passes every example here, and answers E149 to the first human
+    # who follows it. That is exactly what happened while T14 was in review.
+    it "resolves every :h tag the gem's own source points at" do
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      defined_tags = doc.scan(/\*(lain[^\s*]*|:Lain\w+|b:lain\w+|User-Lain\w+)\*/).flatten
+
+      sources = Dir[File.expand_path("../../lib/**/*.{rb,lua}", __dir__)]
+      referenced = sources.flat_map { |path| File.read(path).scan(/:h ([^\s"'`]+)/) }.flatten.uniq
+
+      expect(referenced).not_to be_empty
+      expect(referenced - defined_tags).to be_empty
+    end
   end
 
   describe "works without the plugin" do

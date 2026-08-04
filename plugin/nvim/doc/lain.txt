@@ -221,8 +221,8 @@ your own `:highlight link` overrides any of them without a fight:
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
-`:LainVersion`, and -- only meaningful inside a review buffer lain opened
-(|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
+`:LainVersion`, `:LainReviewOpen`, and -- only meaningful inside a review
+buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
 set your cursor is on in `lain://question` (|lain-question|) for you to tick
@@ -254,6 +254,38 @@ one turn forever.
 Both are ordinary global commands reading the CURRENT window's cursor, so each
 refuses outside the buffer it is about rather than acting on whatever happens
 to sit on that line somewhere else.
+
+                                                            *:LainReviewOpen*
+                                                              *lain://review*
+
+In `lain://review` -- the changeset review's sidebar, opened in its own tabpage
+beside your session -- <CR> runs `:LainReviewOpen`, which opens the file your
+cursor is on at its first hunk. It carries your cursor's line AND the rendering
+the buffer is holding (`b:lain_view_generation`), for the reason `:LainOpen`
+does: sidebar rows move every time the scope toggles or a mark redraws a row,
+so a line number alone names a position in a listing that may already have
+changed. A gesture from a rendering lain no longer holds is refused, and says
+so, rather than opening whatever now sits on that line.
+
+The sidebar has two scopes. Cumulative is one flat file list. The commit walk
+shows each commit's own `+added -deleted` and, beneath it, the files whose
+hunks are reachable at that commit -- which is NOT the same as what that commit
+authored, and the buffer's first line says so. Rows that name no file (the
+legend, a commit header) refuse the gesture rather than opening something else.
+
+Two more things the walk cannot tell you, and does not pretend to. A MERGE's
+own `+added -deleted` is the whole side branch, so `+9 -9  Merge branch 'side'`
+can outrank the commit that actually wrote the code; lain cannot suppress it,
+because the changeset carries no parent count and guessing from a subject line
+is not a fact. And the `[x]`/`[~]`/`[ ]` marker on a file under a commit is
+that file's state across the WHOLE changeset, not its state within that commit.
+A commit listing no files at all is normal: attribution is per FILE, last
+writer wins, so a merge absorbs everything it re-reports and the commit that
+authored it shows `(no hunks reachable here)` with its numstat still beside it.
+
+It is an ordinary global command reading the CURRENT window's cursor, so it
+refuses outside `lain://review` rather than acting on whatever happens to sit
+on that line somewhere else.
 
 ------------------------------------------------------------------------------
 6.5 COMPOSING A MESSAGE (PROTOCOL 8)                            *lain-compose*

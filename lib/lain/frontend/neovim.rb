@@ -476,6 +476,7 @@ require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
 require_relative "neovim/question_view"
+require_relative "neovim/review_view"
 # LAST: it builds the three views above, so every one of them must exist by the
 # time its body is read (the same load-order rule {Context::REQUIRES} states).
 require_relative "neovim/surfaces"
