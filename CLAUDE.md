@@ -311,6 +311,36 @@ Structures that plausibly qualify, and what they buy:
 - Constants and nested classes defined **inside a `Data.define(...) do ... end` block** are
   lexically scoped to the enclosing module, not the Data class. Reopen the class after the
   block instead (see `Request::SYSTEM_PREFIX`).
+- **A reopened class gets exactly ONE docstring, and it goes on the REOPEN.** The
+  `Data.define` assignment above it stays bare. YARD keeps one docstring per namespace and
+  **silently discards the rest**, so documenting both loses content with no warning at write
+  time; `yard-lint`'s `Documentation/DuplicateNamespaceComment` is what catches it, at commit.
+  RuboCop's `Style/Documentation` pulls the other way but does not conflict in practice: it
+  fires on the `class` keyword, which the reopen satisfies, and never on the assignment. Two
+  shapes both pass, so pick by whether the reopen carries behavior:
+
+  ```ruby
+  Anchor = Data.define(:path, :side) do   # bare: no comment above this line
+    include Telemetry::Journalable
+  end
+
+  # One reviewable position: ... <- the docstring lives HERE
+  class Anchor
+    SIDES = Review::SIDES.map(&:to_sym).freeze
+  end
+  ```
+
+  A reopen holding *only* a constant (`JOURNAL_TYPE` and nothing else) is a pure namespace, and
+  `Style/Documentation` does not fire on it, so that shape may instead keep its docstring above
+  the `Data.define` — but then any explanation of the reopen goes **inside** the class body,
+  never above the `class` keyword, or it becomes the second docstring again.
+  `lib/lain/review/records.rb` is the pure-namespace case, `lib/lain/review/anchor.rb` and
+  `lib/lain/review/hunk.rb` the behavior-carrying one; both shapes are clean under
+  `rubocop --only Style/Documentation` and under `yard-lint`, which is the pair to check when
+  in doubt.
+- **YARD reads `@word` at the start of a comment line as a tag**, so a prose reference to a
+  keyword argument wraps into `Warnings/UnknownTag` and fails the commit. Write it inline
+  (`the `compose:` note on {Neovim#initialize}`), not as the first token of a wrapped line.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
   parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
   A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default
