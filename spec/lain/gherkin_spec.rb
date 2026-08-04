@@ -268,6 +268,162 @@ RSpec.describe Lain::Gherkin::Criteria do
     end
   end
 
+  # The single example above pins the round trip at one fixed shape. These
+  # extend it to arbitrary criteria via prop_check (spec/support/prop_check_setup.rb).
+  #
+  # The generator is deliberately narrower than the grammar: plain alphanumeric
+  # words joined by single spaces, so nothing it produces can collide with a
+  # token the parser assigns structural meaning to -- there is no `:` for the
+  # by-design refusals at gherkin.rb:216 (a colon-suffixed first token), :227
+  # (an empty scenario name), or :240 (an empty clause) to ever fire on. The
+  # first clause of every scenario draws its keyword from Given/When/Then
+  # only, never And, which is what keeps the :242 leading-And refusal out of
+  # reach by construction rather than by luck. `#` is absent for a different
+  # reason: it is not refused (`ignorable?`, gherkin.rb:205-213, routes a
+  # comment line to nil), it is legal input that VANISHES on parse -- a
+  # generated comment could never round-trip regardless of what the parser
+  # does with it, so there is nothing a comment could usefully assert here.
+  describe "the round trip and digest hold for any generated criteria (property-tested)" do
+    word = PropCheck::Generators.alphanumeric_string(min: 1, max: 8)
+    phrase = PropCheck::Generators.array(word, min: 1, max: 4).map { |words| words.join(" ") }
+
+    keyword_from = lambda do |pool|
+      PropCheck::Generators.one_of(*pool.map { |keyword| PropCheck::Generators.constant(keyword) })
+    end
+
+    clause_with = lambda do |keyword_pool|
+      PropCheck::Generators.tuple(keyword_from.call(keyword_pool), phrase)
+                           .map { |keyword, text| Lain::Gherkin::Clause.new(keyword:, text:) }
+    end
+
+    opening_clause = clause_with.call(%w[Given When Then])
+    later_clause = clause_with.call(%w[Given When Then And])
+    clauses = PropCheck::Generators.tuple(opening_clause, PropCheck::Generators.array(later_clause, max: 4))
+                                   .map { |first, rest| [first, *rest] }
+
+    # Fixed at mechanical: true (Scenario.new's default) -- Scenario#render has
+    # no way to emit the `# rubric` marker, so these two feed only the
+    # round-trip and digest-stability properties below, both of which render.
+    scenario = PropCheck::Generators.tuple(phrase, clauses)
+                                    .map { |name, scenario_clauses| Lain::Gherkin::Scenario.new(name:, clauses: scenario_clauses) }
+
+    criteria = PropCheck::Generators.array(scenario, min: 1, max: 3)
+                                    .map { |scenarios| described_class.new(scenarios:) }
+
+    # Criteria itself carries no #render (only Scenario does) -- fencing each
+    # scenario's own rendering back into one block is exactly what a plan doc's
+    # markdown does between prose paragraphs.
+    def fence(criteria)
+      "```gherkin\n#{criteria.scenarios.map(&:render).join("\n\n")}\n```\n"
+    end
+
+    def reparse(criteria)
+      described_class.parse(fence(criteria))
+    end
+
+    it "renders and reparses to an equal value for any generated criteria", aggregate_failures: false do
+      forall(criteria:) do |criteria:|
+        expect(reparse(criteria)).to eq(criteria)
+      end
+    end
+
+    it "keeps the digest stable across a render and parse cycle", aggregate_failures: false do
+      forall(criteria:) do |criteria:|
+        expect(reparse(criteria).digest).to eq(criteria.digest)
+      end
+    end
+
+    # The lossy half of the asymmetry the note above states: rendering a
+    # rubric (mechanical: false) scenario and reparsing it silently drops the
+    # flag, because #render has no syntax for the marker that set it. Pinned
+    # here, next to the properties that route around it by never rendering a
+    # mechanical: false scenario in the first place.
+    it "renders a rubric scenario as mechanical: true after a parse cycle -- render cannot carry the marker" do
+      judged = described_class.parse(markdown).scenarios.last
+      expect(judged.mechanical).to be(false)
+
+      reparsed = described_class.parse("```gherkin\n#{judged.render}\n```")
+
+      expect(reparsed.scenarios.first.mechanical).to be(true)
+    end
+
+    # This generator, unlike the mechanical: true-only one above, feeds the
+    # digest-uniqueness property below -- that property never renders, so
+    # (per the pinned example above) it is free to vary mechanical, and doing
+    # so is what lets it catch a digest that silently drops the flag.
+    scenario_with_mechanical = PropCheck::Generators.tuple(phrase, clauses, PropCheck::Generators.boolean)
+                                                    .map do |name, scenario_clauses, mechanical|
+                                                      Lain::Gherkin::Scenario.new(name:, clauses: scenario_clauses,
+                                                                                  mechanical:)
+                                                    end
+    mutation_criteria = PropCheck::Generators.array(scenario_with_mechanical, min: 1, max: 3)
+                                             .map { |scenarios| described_class.new(scenarios:) }
+
+    # Which single field to mutate, and where. Earlier this test pinned
+    # scenario 0 / clause 0 / text -- a real digest defect that drops a field,
+    # ignores every scenario but the first, or ignores every clause but the
+    # first, walks straight through a mutation that never touches that site.
+    # Drawing the scenario index, the clause index and the field from the
+    # generator instead means each of prop_check's 100 draws exercises a
+    # different site, so a defect confined to one field or one position past
+    # the first is what shrinking converges on rather than what hides from it.
+    mutation_kind = PropCheck::Generators.one_of(
+      *%i[name mechanical keyword text].map { |kind| PropCheck::Generators.constant(kind) }
+    )
+    scenario_pick = PropCheck::Generators.nonnegative_integer
+    clause_pick = PropCheck::Generators.nonnegative_integer
+
+    def replace_at(array, index, value)
+      array.each_with_index.map { |item, i| i == index ? value : item }
+    end
+
+    def mutate_clause(clause, kind)
+      case kind
+      when :keyword
+        Lain::Gherkin::Clause.new(keyword: (%w[Given When Then And] - [clause.keyword]).first, text: clause.text)
+      when :text
+        Lain::Gherkin::Clause.new(keyword: clause.keyword, text: "#{clause.text} changed")
+      end
+    end
+
+    def mutate_scenario_field(scenario, kind)
+      case kind
+      when :name
+        Lain::Gherkin::Scenario.new(name: "#{scenario.name} changed", clauses: scenario.clauses,
+                                    mechanical: scenario.mechanical)
+      when :mechanical
+        Lain::Gherkin::Scenario.new(name: scenario.name, clauses: scenario.clauses, mechanical: !scenario.mechanical)
+      end
+    end
+
+    def mutate_scenario_clause(scenario, clause_index, kind)
+      changed = mutate_clause(scenario.clauses[clause_index], kind)
+      Lain::Gherkin::Scenario.new(name: scenario.name, clauses: replace_at(scenario.clauses, clause_index, changed),
+                                  mechanical: scenario.mechanical)
+    end
+
+    def mutate_scenario(scenario, clause_index, kind)
+      return mutate_scenario_field(scenario, kind) if %i[name mechanical].include?(kind)
+
+      mutate_scenario_clause(scenario, clause_index, kind)
+    end
+
+    it "changes the digest when exactly one field changes -- a scenario's name or mechanical flag, " \
+       "or one clause's keyword or text", aggregate_failures: false do
+      forall(criteria: mutation_criteria, scenario_pick:, clause_pick:,
+             kind: mutation_kind) do |criteria:, scenario_pick:, clause_pick:, kind:|
+        scenario_index = scenario_pick % criteria.scenarios.length
+        target = criteria.scenarios[scenario_index]
+        clause_index = clause_pick % target.clauses.length
+
+        mutated_scenario = mutate_scenario(target, clause_index, kind)
+        mutated = described_class.new(scenarios: replace_at(criteria.scenarios, scenario_index, mutated_scenario))
+
+        expect(mutated.digest).not_to eq(criteria.digest)
+      end
+    end
+  end
+
   describe "the real plan-doc corpus (house-format smoke check)" do
     corpus = Dir.glob(File.expand_path("../../planning/specs/*.md", __dir__))
 
