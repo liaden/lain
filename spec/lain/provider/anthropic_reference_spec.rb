@@ -275,7 +275,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
   # CE-5: the transient first-token scheduling signal (cache-economics.md).
   # Unit-level ordering/observer coverage over the doubled client; the "over
   # the wire" group below re-proves it against a REAL Anthropic::MessageStream.
-  describe "#complete CE-5 stream_started" do
+  describe "#complete stream_started" do
     let(:request) { Lain::Request.new(model: "m", max_tokens: 1, messages: [{ role: "user", content: "hi" }]) }
 
     it "pushes exactly one attributed stream_started, and hands the digest to an observer, " \
@@ -439,7 +439,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
     # not double-consume the stream -- the SDK's `fused_enum` guard is what
     # makes that safe (see Provider::AnthropicReference#stream_dispatch), and only a
     # real MessageStream, not an instance_double, can actually exercise it.
-    it "still parses the full response correctly when CE-5 drives the first pass over the real stream" do
+    it "still parses the full response correctly when the observer drives the first pass over the real stream" do
       stub_request(:post, "https://api.anthropic.com/v1/messages")
         .to_return(status: 200, body: sse, headers: { "Content-Type" => "text/event-stream" })
       channel = RecordingChannel.new

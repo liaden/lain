@@ -136,7 +136,7 @@ RSpec.describe Lain::Agent::RequestOverride do
     end
   end
 
-  describe "mid-turn interposition (panel probe 2): permitted here, refused at T18's bridge" do
+  describe "mid-turn interposition: permitted here, refused at the resend bridge" do
     # Orchestrator decision: this seam PERMITS a mid-turn queue -- refusing a
     # mid-flight resend is T18's ResendBridge's mandate, not the slot's. This
     # spec pins the splice so the permitted behavior is a documented contract:
@@ -218,7 +218,7 @@ RSpec.describe Lain::Agent::RequestOverride do
   end
 
   describe "RequestOverride::None" do
-    it "is the Agent default, reachable at Agent#request_override (T18's access path)" do
+    it "is the Agent default, reachable at Agent#request_override" do
       provider = Lain::Provider::Mock.new(responses: [text_response])
       agent = Lain::Agent.new(provider:, toolset:, context:)
 

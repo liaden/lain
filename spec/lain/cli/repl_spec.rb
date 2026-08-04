@@ -63,7 +63,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  describe "command dispatch (T9)" do
+  describe "command dispatch" do
     it "consults the registry before the skill middleware: /help runs lib-side, zero model turns" do
       Dir.mktmpdir do |dir|
         output = run_chat("/help\n", dir:)
@@ -98,7 +98,7 @@ RSpec.describe Lain::CLI::Repl do
   # through the PUBLIC #converse (a conductor whose next read is nil ends the
   # loop), never a send(:settle_command) -- the same no-ivar-pokes discipline
   # the round trip above keeps.
-  describe "what a command returns (T9)" do
+  describe "what a command returns" do
     let(:colored) { Pastel.new(enabled: true) }
     let(:conductor) { instance_double(Lain::CLI::Conductor, read_prompt: nil, closed?: false) }
 

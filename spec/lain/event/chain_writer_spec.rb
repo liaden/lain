@@ -48,7 +48,7 @@ RSpec.describe Lain::Event::ChainWriter do
   describe "#put" do
     subject(:writer) { described_class.new }
 
-    it "stores the payload before the envelope, fetchable under payload_digest (T4's edge validation)" do
+    it "stores the payload before the envelope, fetchable under payload_digest" do
       event = writer.put(parent, kind: :message, from: "a", to: "b", causal_parents: [], body: { "text" => "hi" })
 
       stored = store.fetch(event.payload_digest)

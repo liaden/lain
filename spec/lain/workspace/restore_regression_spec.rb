@@ -3,12 +3,10 @@
 require "tmpdir"
 require "fileutils"
 
-# W2 review-panel probes over Lain::Workspace::Restore, promoted to a permanent
-# regression suite. Each example exercises one panel condition or claim from the
-# implementer's hand-back (.handback-W2.md) that the acceptance-criteria spec
-# (restore_spec.rb) does not already pin -- which is exactly why they are worth
-# keeping rather than discarding with the worktree.
-RSpec.describe "W2 panel probes: Workspace::Restore" do
+# Conditions that restore_spec.rb does not pin: byte-for-byte binary round trips,
+# repeated restores over one instance, dirty detection against a non-in-force blob,
+# what `force:` does and does not waive, and turn-addressing parity with Projection.
+RSpec.describe Lain::Workspace::Restore do
   def block(text) = [{ "type" => "text", "text" => text }]
 
   def write_file(root, name, bytes)
@@ -33,7 +31,6 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
 
   let(:store) { Lain::Store.new }
   let(:log) { [] }
-  let(:described_class) { Lain::Workspace::Restore }
 
   def restorer(root: dir, projection_log: log)
     described_class.new(projection: Lain::Event::Projection.new(projection_log), store:, root:)
@@ -46,9 +43,7 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 1: byte-for-byte round trip, including binary/invalid-UTF-8 -----
-
-  describe "probe 1: binary / invalid-UTF-8 round trip" do
+  describe "binary / invalid-UTF-8 round trip" do
     it "round trips arbitrary bytes byte-for-byte, including invalid UTF-8" do
       binary = (+"\xff\x00\xfe\x01\xC0\xAF").force_encoding(Encoding::BINARY)
       writer = Lain::Workspace::Snapshot.new(root: dir)
@@ -65,9 +60,7 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 2: sequential restores (2 -> 5 -> 2), in-force map correctness -
-
-  describe "probe 2: sequential restores 2 -> 5 -> 2 on ONE Restore instance" do
+  describe "sequential restores 2 -> 5 -> 2 on ONE Restore instance" do
     it "keeps in-force correct across a back-forward-back sequence" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
       t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
@@ -97,9 +90,7 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 3: dirty vs an OLDER snapshot's blob ----------------------------
-
-  describe "probe 3: bytes matching an older (not the in-force) snapshot" do
+  describe "bytes matching an older (not the in-force) snapshot" do
     it "does NOT flag as dirty when disk bytes equal turn-2's blob but turn-5 is in force" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
       t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
@@ -135,9 +126,7 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 4: force waives Dirty but never EscapesRoot ---------------------
-
-  describe "probe 4: force semantics" do
+  describe "force semantics" do
     it "force: true waives Dirty" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
       t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)
@@ -161,9 +150,7 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 5: empty total-deletion map refuses nothing ---------------------
-
-  describe "probe 5: empty map restore refuses nothing, even with prior dirt" do
+  describe "empty map restore refuses nothing, even with prior dirt" do
     it "restoring an empty snapshot deletes everything without raising Dirty, " \
        "because an in-force-present/disk-absent pairing to a NEW absence isn't the check" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
@@ -180,16 +167,13 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 6: partial-failure atomicity -------------------------------------
   # CONVERTED (fix round, FIX 2): the defect this probe pinned -- raw Errno
   # escaping and a stale in-force ledger after a mid-apply failure -- is fixed;
   # the fixed behavior (PartialApply naming what landed, per-operation ledger,
   # clean unforced retry) is a permanent spec in restore_spec.rb under
   # "mid-apply IO failure".
 
-  # --- Probe 7: relocated root (already covered in main spec; re-probe briefly)
-
-  describe "probe 7: relocated root" do
+  describe "relocated root" do
     it "restores under a DIFFERENT root than capture, ignoring the payload's recorded root" do
       original = File.join(dir, "captured").tap { |p| Dir.mkdir(p) }
       writer = Lain::Workspace::Snapshot.new(root: original)
@@ -205,16 +189,13 @@ RSpec.describe "W2 panel probes: Workspace::Restore" do
     end
   end
 
-  # --- Probe 8: symlink in the target path — confinement hole? ---------------
   # CONVERTED (fix round, FIX 1): the hole this probe demonstrated -- restore
   # writing recorded bytes THROUGH an in-root symlink to an outside target --
   # is closed; a symlink at any managed path now refuses as EscapesRoot before
   # any IO, force notwithstanding. Permanent specs live in restore_spec.rb
   # under "confinement / symlinks at managed paths".
 
-  # --- Probe 9: turn addressing agrees with Projection#workspace_at ----------
-
-  describe "probe 9: turn addressing parity with Projection#workspace_at" do
+  describe "turn addressing parity with Projection#workspace_at" do
     it "restore(turn:) selects the exact same snapshot workspace_at(turn) would return" do
       writer = Lain::Workspace::Snapshot.new(root: dir)
       t2 = commit(commit(Lain::Timeline.empty(store:), 1), 2)

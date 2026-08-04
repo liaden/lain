@@ -376,7 +376,7 @@ RSpec.describe Lain::Supervisor do
       expect(farewell.payload).to eq({ "text" => "actor stopped", "lifecycle" => "stopped" })
     end
 
-    it "feeds I1's fleet field with no StatusFeed changes: the :spawn lands, the messages pass through inertly" do
+    it "feeds the fleet field with no StatusFeed changes: the :spawn lands, the messages pass through inertly" do
       journal = Lain::Channel.new
       actor = journaled_lifecycle(journal)
 

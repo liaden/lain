@@ -81,7 +81,7 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
   end
 
-  describe "/rewind <digest> (T3's resolution rules against this session's own chain)" do
+  describe "/rewind <digest> (resolution rules against this session's own chain)" do
     it "resolves a hex prefix to the recorded turn and rewinds to it" do
       target = agent.timeline.rewind(3).head_digest
 

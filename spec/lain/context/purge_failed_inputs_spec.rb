@@ -26,7 +26,7 @@ RSpec.describe Lain::Context::PurgeFailedInputs do
     ]
   end
 
-  describe "AC2: purge drops old failed inputs but keeps the error" do
+  describe "purge drops old failed inputs but keeps the error" do
     let(:purged) { described_class.new(turns: 2).call(messages) }
 
     it "drops the failed call's input once it ages out of the turn window" do

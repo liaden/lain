@@ -205,7 +205,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  describe "drain-thread death discipline (T9)" do
+  describe "drain-thread death discipline" do
     # The malformed event this whole discipline exists for: `bytes` that is not
     # a String, which {JournalView#attribute_lines}' `chomp` raises
     # NoMethodError on -- ON THE DRAIN THREAD, which is the point. A real event

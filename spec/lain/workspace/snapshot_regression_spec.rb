@@ -15,12 +15,12 @@ class OutOfBandWriteTool < Lain::Tool
   end
 end
 
-# W1 review-panel probes. Each example PINS observed behavior. The fix round
-# converted the "FINDING:" blocks into real specs of the FIXED behavior (the
-# original findings stay in the comments as the record of what was wrong);
-# the remaining probes were updated for the fix round's root-relative payload
-# keys and stay green as regression pins.
-RSpec.describe "W1 panel probes: Workspace::Snapshot" do
+# Snapshot behavior that snapshot_spec.rb does not pin: skip-by-content through a
+# real Agent, blob dedup and domain separation, edge bytes, shareability of the
+# value object, and invisibility of the snapshot in the rendered Request. Grown
+# from adversarial review probes; the original findings stay in the comments as
+# the record of what was wrong, and the assertions track the fixed behavior.
+RSpec.describe Lain::Workspace::Snapshot do
   def committed_timeline(store = Lain::Store.new)
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
   end
@@ -29,7 +29,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     File.join(dir, name).tap { |path| File.binwrite(path, bytes) }
   end
 
-  subject(:writer) { Lain::Workspace::Snapshot.new(observer:, root: dir) }
+  subject(:writer) { described_class.new(observer:, root: dir) }
 
   around do |example|
     Dir.mktmpdir do |dir|
@@ -43,7 +43,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
   let(:events) { [] }
   let(:observer) { ->(event) { events << event } }
 
-  describe "probe (c): skip-by-content vs a dirty flag, through a real Agent" do
+  describe "skip-by-content vs a dirty flag, through a real Agent" do
     let(:toolset) { Lain::Toolset.new([Lain::Tools::EditFile.new, OutOfBandWriteTool.new, EchoTool.new]) }
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
     let(:session) { Lain::Session.new }
@@ -87,7 +87,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "probe (c): revert-to-a-previous-blob dedup" do
+  describe "revert-to-a-previous-blob dedup" do
     # Observed (and pinned): reverting a file to bytes the FIRST snapshot
     # recorded, at the SAME causal parent, re-derives the first payload digest
     # AND the first envelope digest -- the "third" event IS the first event,
@@ -154,7 +154,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "probe: blob domain separation" do
+  describe "blob domain separation" do
     it "keeps a file whose bytes ARE a canonical dump from colliding with that value's canonical digest" do
       value = { "files" => { "/tmp/a" => "blake3:00" }, "snapshot_scope" => "x" }
       canonical_bytes = Lain::Canonical.dump(value)
@@ -176,7 +176,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "probe: edge bytes" do
+  describe "edge bytes" do
     it "snapshots an EMPTY file as a real zero-byte blob" do
       empty = write_file(dir, "empty.txt", "")
       timeline = committed_timeline
@@ -198,7 +198,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "probe: Ractor shareability of the new value object" do
+  describe "Ractor shareability of the new value object" do
     it "keeps Blob deeply frozen and Ractor-shareable" do
       blob = Lain::Workspace::Snapshot::Blob.new(bytes: "hello")
 
@@ -206,7 +206,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "probe: render invisibility, checked at the Request bytes" do
+  describe "render invisibility, checked at the Request bytes" do
     it "renders byte-identical Requests before and after a snapshot lands" do
       path = write_file(dir, "a.txt", "alpha")
       timeline = committed_timeline
@@ -222,7 +222,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
     end
   end
 
-  describe "FINDING (accepted, ticketed for W4): the durable-record story stays a gap" do
+  describe "the durable-record story stays a gap (accepted and ticketed)" do
     # Session::Journaled#record_write deliberately writes no journal line, and
     # the Agent's DEFAULT snapshot writer observes with ChainWriter::Null --
     # nothing in lib/lain/cli wires Workspace::Snapshot to the Chronicle's
@@ -250,7 +250,7 @@ RSpec.describe "W1 panel probes: Workspace::Snapshot" do
       # snapshot leaves is the in-memory Store entry.
       path = write_file(dir, "a.txt", "alpha")
       timeline = committed_timeline
-      default_writer = Lain::Workspace::Snapshot.new
+      default_writer = described_class.new
 
       event = default_writer.write(timeline:, paths: [path])
 

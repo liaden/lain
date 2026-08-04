@@ -63,7 +63,7 @@ RSpec.describe Lain::CLI::Command::Btw do
     end
   end
 
-  describe "the control-mode degrade (T2 Placement)" do
+  describe "the control-mode degrade" do
     it "reports the window and WHY when the popup degraded under tmux -CC" do
       allow(tmux_surface).to receive(:popup)
         .and_return(placement(kind: :window, degraded: true, reason: "control_mode"))
@@ -201,7 +201,7 @@ RSpec.describe Lain::CLI::Command::Keep do
   end
 end
 
-RSpec.describe "the /btw and /keep registration (T17 wiring)" do
+RSpec.describe "the /btw and /keep registration" do
   it "claims both names in the shipped surface, ahead of the skill fallthrough" do
     Dir.mktmpdir do |root|
       surface = Lain::CLI::Command::Surface.new(

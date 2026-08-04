@@ -184,7 +184,7 @@ RSpec.describe Lain::Isolation::Compose do
       expect(lease.worker_env.env.fetch("DATABASE_URL")).to eq("postgres://localhost:32769")
     end
 
-    it "probes for a pre-existing stack BEFORE up, so it never co-opts one" do
+    it "s for a pre-existing stack BEFORE up, so it never co-opts one" do
       shell = happy_shell
       build([db], shell:).acquire("w1")
       subcommands = shell.calls.map { |argv| FakeComposeShell.subcommand(argv) }

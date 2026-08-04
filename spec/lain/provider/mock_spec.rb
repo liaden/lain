@@ -15,7 +15,7 @@ RSpec.describe Lain::Provider::Mock do
   # contract, so a bug in it must not cost #complete a response it already has --
   # exactly the isolation the live {Provider::StreamStartedSignal} path gives.
   # Mock must match that semantics, not diverge from it.
-  describe "the on_stream_started observer (CE-5)" do
+  describe "the on_stream_started observer" do
     let(:request) do
       Lain::Request.new(model: "m", messages: [{ "role" => "user", "content" => "x" }], max_tokens: 8, stream: true)
     end

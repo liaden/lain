@@ -136,7 +136,7 @@ RSpec.describe "Lain::Agent cancellation" do
   # exchange cites ONLY its own question. (Verified red by mutation: appending
   # the digest BEFORE the await makes the resumed delivery cite the cancelled
   # question and this example fail -- see the I6 handback.)
-  describe "a stop raised while ask_human awaits the human (I6)" do
+  describe "a stop raised while ask_human awaits the human" do
     it "appends no hand-over, cites no turn, and a resumed exchange cites only its own question" do
       agent = nil
       ask = Lain::Tools::AskHuman.new(parent: -> { agent.timeline })

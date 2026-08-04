@@ -53,7 +53,7 @@ RSpec.describe Lain::Bench::DisclosureSweep do
       expect(correct_rate.fetch("deferred")).to eq(0.6)
     end
 
-    it "notes the code-API arm is deferred (M6), not silently omitted" do
+    it "notes the code-API arm is deferred, not silently omitted" do
       expect(report).to include("code-API").and match(/out of scope/i)
     end
 

@@ -77,7 +77,7 @@ RSpec.describe Lain::CLI::Command::Goal do
   # command runs lib-side with zero commits, so the head still names the
   # PREVIOUS topic's turn -- pinning that would protect noise forever and let
   # the objective be elided, the exact inverse of the point.
-  describe "auto-pinning the objective (B3)" do
+  describe "auto-pinning the objective" do
     it "pins nothing at dispatch: the objective's turn does not exist yet" do
       agent.ask("an unrelated earlier question")
       stale_head = agent.timeline.head_digest

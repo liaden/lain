@@ -21,7 +21,7 @@ RSpec.describe Lain::Context::DedupeToolCalls do
     ]
   end
 
-  describe "AC1: dedupe keeps the newest identical tool result" do
+  describe "dedupe keeps the newest identical tool result" do
     it "drops the older call+result pair, keeping only the newest" do
       result = described_class.new.call(duplicated_messages)
       expect(result).to eq(

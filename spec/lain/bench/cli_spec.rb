@@ -418,7 +418,7 @@ RSpec.describe Lain::Bench::CLI do
     # The orchestrator amendment: bench record owns PS-2 emission. Each recorded
     # journal carries EXACTLY ONE slot_fills record, built from the slots the
     # Backend's context rendered, and Loader#slot_fills reads it back.
-    describe "slot attribution (PS-2)" do
+    describe "slot attribution" do
       def slot_fills_count(path)
         File.readlines(path).map { |line| JSON.parse(line) }.count { |record| record["type"] == "slot_fills" }
       end

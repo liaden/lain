@@ -59,7 +59,7 @@ RSpec.describe Lain::Plan::Closure do
       expect(timeline.store.fetch(digest)).to eq(closure)
     end
 
-    it "derives the S/M/L size class from the step (P5 calibrates over it from the Journal)" do
+    it "derives the S/M/L size class from the step (calibration reads it back from the Journal)" do
       large = Lain::Plan::Step.new(id: "P9", title: "big one", size: "L", status: "done")
 
       closure = described_class.build(step: large, timeline:, chunk_range: (0..2), grade:, snapshot:)
@@ -191,7 +191,7 @@ RSpec.describe Lain::Plan::Closure do
       end.to raise_error(ArgumentError, /closure_digest/)
     end
 
-    it "raises loudly when the size class is missing (P5's calibration key)" do
+    it "raises loudly when the size class is missing (it is the calibration key)" do
       expect do
         described_class.new(closure_digest: "blake3:c", step_id: "P2", plan_digest: "blake3:p", size: nil,
                             chunk_turn_digests: [])

@@ -2,12 +2,12 @@
 
 require "async"
 
-# C2 review probes, promoted to a permanent regression suite. Each block names the AC
-# or claim it was written to falsify. No gap here is still open -- every probe pins
-# behavior that holds. A probe for an OPEN gap belongs here as an inverted `pending`
-# example, never as a green assertion of the buggy behavior; see
-# spec/lain/supervisor_w3_probes_spec.rb for why.
-RSpec.describe "C2 probes: sibling-template prefix strategy" do
+# Prefix identity across siblings spawned over one shared template: the bytes through
+# the cache breakpoint, the cache_control census on the real wire, and the fresh-rooted
+# child timelines. Grown from adversarial review probes; no gap here is still open.
+# A probe for an OPEN gap belongs here as an inverted `pending` example, never as a
+# green assertion of the buggy behavior -- see spec/lain/supervisor/reactor_spec.rb.
+RSpec.describe Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate do
   let(:store) { Lain::Store.new }
   let(:parent) do
     Lain::Timeline.empty(store:)
@@ -18,7 +18,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
   let(:template) { "Shared sibling brief, the bulk every worker reads first. " * 40 }
-  let(:sibling_template) { Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate }
+  let(:sibling_template) { described_class }
 
   def policy(prefix:, posture: :handler_union, only: %i[read_file])
     Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:)
@@ -49,10 +49,9 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     [system_marks, message_marks]
   end
 
-  # ---- AC1: full-BYTE prefix identity, not just digest identity --------------
   # Linus: compare the actual bytes through the breakpoint, and prove no
   # per-child content leaks forward into any sibling's shared prefix.
-  it "P1: three siblings' full prefix bytes are identical, and no task leaks into any prefix" do
+  it "three siblings' full prefix bytes are identical, and no task leaks into any prefix" do
     provider = mock(text_response("a"), text_response("b"), text_response("c"))
     tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
     tasks = %w[alpha-task beta-task gamma-task]
@@ -72,7 +71,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # and template must still share prefix bytes, because under handler_union the
   # attenuation never reaches the schema. Aaron: this is the CE-4 win stated as
   # bytes.
-  it "P2: two differently-attenuated siblings over one template share full prefix bytes" do
+  it "two differently-attenuated siblings over one template share full prefix bytes" do
     a = build_tool(provider: (pa = mock(text_response("a"))),
                    policy: policy(prefix: sibling_template.new(template:), only: %i[read_file]))
     b = build_tool(provider: (pb = mock(text_response("b"))),
@@ -88,7 +87,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # Linus: the card spec counts neutral marks on the Request; the wire is what
   # 400s. Encode and count cache_control across system_ AND messages: exactly
   # one system-slot mark, on the template.
-  it "P4: the encoded wire carries exactly one system cache_control, on the template block" do
+  it "the encoded wire carries exactly one system cache_control, on the template block" do
     provider = mock(text_response("done"))
     tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
     tool.call({ "prompt" => "go" }, invocation)
@@ -103,7 +102,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # At CacheBreakpoints' FULL 3-message budget (the card spec never drives it
   # there), the template arm must still fit the 4-marker cap. 40 single-block
   # messages force indices [14, 29, 39] -> 3 message marks + 1 system = 4.
-  it "P5: at the full message-marker budget the template arm sits exactly at the cap and encodes" do
+  it "at the full message-marker budget the template arm sits exactly at the cap and encodes" do
     shaped = sibling_template.new(template:).child_context(child_context)
     timeline = (0...40).reduce(Lain::Timeline.empty(store:)) do |tl, i|
       tl.commit(role: i.even? ? :user : :assistant,
@@ -123,7 +122,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # strategy now owns ALL mark placement for the child: caller marks are
   # stripped (and the strip journaled), so exactly Context's tail mark -- the
   # template boundary -- reaches the wire.
-  it "P6: a pre-marked factory system is stripped to exactly one wire mark, journaled, baseline untouched" do
+  it "a pre-marked factory system is stripped to exactly one wire mark, journaled, baseline untouched" do
     marked_ctx = Lain::Context.new(
       model: "child-model", max_tokens: 256,
       system: [{ "type" => "text", "text" => "bulk", "cache" => true }]
@@ -150,8 +149,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     expect(baseline.system.count { |b| b["cache"] }).to eq(1)
   end
 
-  # ---- AC3: handler_union tool bytes on the wire -----------------------------
-  it "P7: two siblings' ENCODED tool schemas are byte-identical; a denied call refuses at the Handler" do
+  it "two siblings' ENCODED tool schemas are byte-identical; a denied call refuses at the Handler" do
     provider = mock(
       text_response("first"),
       tool_response(["t1", "echo", { "text" => "x" }]),
@@ -172,8 +170,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     expect(journal.drain.map { |e| e.to_journal["type"] }).to include("refused")
   end
 
-  # ---- AC4: the floor boundary, both sides, and per-SPAWN (not per-render) ---
-  it "P8: one char under the floor notes; at the floor it does not" do
+  it "one char under the floor notes; at the floor it does not" do
     floor_chars = sibling_template::MINIMUM_CACHEABLE_TOKENS * sibling_template::CHARS_PER_TOKEN
     notes_under = []
     notes_at = []
@@ -184,7 +181,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
     expect(notes_at).to be_empty
   end
 
-  it "P9: the floor note fires once per SPAWN even when the child renders twice, and N times for N spawns" do
+  it "the floor note fires once per SPAWN even when the child renders twice, and N times for N spawns" do
     journal = Lain::Channel.new
     provider = mock(
       tool_response(["t1", "read_file", { "path" => "/nonexistent" }]), # 2 renders in spawn 1
@@ -205,7 +202,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # child through the same child_context seam (the template rides) and now
   # calls journal_floor too -- an actor-mode sibling below the floor is
   # reported, never the "silently un-cacheable" state AC4 forbids.
-  it "P10: launch_actor threads the template AND journals the floor note" do
+  it "launch_actor threads the template AND journals the floor note" do
     journal = Lain::Channel.new
     provider = mock(text_response("actor done"))
     tool = Lain::Tools::Subagent.new(
@@ -230,7 +227,7 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   # Jeremy: the only render-path change is child_context(factory.call); identity
   # passthrough (same OBJECT, not an equal copy) is what makes the fresh and
   # inherit arms byte-identical to the base rendering by construction.
-  it "P11: Fresh, Inherit, and the empty-template SiblingTemplate all pass the factory context through by identity" do
+  it "Fresh, Inherit, and the empty-template SiblingTemplate all pass the factory context through by identity" do
     strategies = Lain::Tool::SpawnPolicy::PrefixStrategy
     expect(strategies.fetch(:fresh).child_context(child_context)).to be(child_context)
     expect(strategies.fetch(:inherit).child_context(child_context)).to be(child_context)
@@ -238,14 +235,14 @@ RSpec.describe "C2 probes: sibling-template prefix strategy" do
   end
 
   # ---- Isolation invariants under the template arm ---------------------------
-  it "P13: the strategy is frozen and its template immutable -- safe under the fiber fan-out" do
+  it "the strategy is frozen and its template immutable -- safe under the fiber fan-out" do
     strategy = sibling_template.new(template:)
     expect(strategy).to be_frozen
     expect(strategy.child_context(child_context)).to be_frozen
     expect(Ractor.shareable?(strategy)).to be(true)
   end
 
-  it "P14: sibling timelines stay fresh-rooted: meet with parent AND with each other is empty" do
+  it "sibling timelines stay fresh-rooted: meet with parent AND with each other is empty" do
     provider = mock(text_response("a"), text_response("b"))
     tool = build_tool(provider:, policy: policy(prefix: sibling_template.new(template:)))
     tool.call({ "prompt" => "one" }, invocation)

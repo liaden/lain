@@ -753,7 +753,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       )
     end
 
-    it "is byte-identical to the pre-T7 format when the posture is the default and no layers are active" do
+    it "is byte-identical to the unlayered format when the posture is the default and no layers are active" do
       old_bytes = pre_t7_format.render(state, color: false)
       new_bytes = shipped.render(state.merge("mode" => nil), color: false)
 

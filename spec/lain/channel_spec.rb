@@ -27,7 +27,7 @@ RSpec.describe Lain::Channel do
       expect(channel.drain).to eq([]) # does not block on an empty channel
     end
 
-    it "with a block, blocks and yields every event until closed-and-drained (T19's exit contract)" do
+    it "with a block, blocks and yields every event until closed-and-drained" do
       channel = described_class.new(capacity: 8)
       channel.push(:a).push(:b)
 

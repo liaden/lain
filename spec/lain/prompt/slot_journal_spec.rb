@@ -11,7 +11,7 @@ require "tmpdir"
 # reader diffs to explain why two runs' prompts differ). Pure attribution: the
 # rendered prompt is recoverable from request_sent, so this record adds identity
 # and diffability, never replay machinery.
-RSpec.describe "Prompt slot journalling (PS-2)" do
+RSpec.describe "Prompt slot journalling" do
   # A throwaway project dir with an optional .lain/slots/ tree, mirroring
   # slots_spec: slots are session-fixed, read once from disk here.
   def with_project(slots = {})

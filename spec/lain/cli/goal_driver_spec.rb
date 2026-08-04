@@ -135,7 +135,7 @@ RSpec.describe Lain::CLI::GoalDriver do
   # #ask. So the driver pins on the poll AFTER its first drive, and it finds
   # the turn by CONTENT: the naive positional read (the head at /goal time)
   # names the previous topic, so no positional assumption is trusted here.
-  describe "auto-pinning the objective (B3)" do
+  describe "auto-pinning the objective" do
     subject(:driver) { described_class.new(journal:) }
 
     let(:provider) do

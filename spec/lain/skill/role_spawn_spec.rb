@@ -127,7 +127,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
   #
   # Every other example above constructs with the loose keywords, so their green
   # beside this block's is the additive claim: both styles are valid.
-  describe "the spawn Seam (T23)" do
+  describe "the spawn Seam" do
     def seam_value(provider:, **extra)
       Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context }, parent:, **extra)
     end

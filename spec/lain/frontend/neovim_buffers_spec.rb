@@ -252,7 +252,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  describe "render backpressure (T6-inherited fix)" do
+  describe "render backpressure" do
     it "bounds the render queue at the configured capacity instead of Thread::Queue's unbounded default" do
       frontend = described_class.new(channel:, socket_path: @socket, render_capacity: 7)
 

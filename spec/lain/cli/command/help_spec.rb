@@ -50,7 +50,7 @@ RSpec.describe Lain::CLI::Command::Help do
     expect(rendered).to be_a(Lain::Renderable)
   end
 
-  describe "the renderable it answers (T9)" do
+  describe "the renderable it answers" do
     it "says exactly the words the String return said" do
       expect(help.call("", env).text)
         .to eq("commands:\n  #{Lain::CLI::Command::Quit.new.usage}\n  #{help.usage}\n\nskills:\n  " \

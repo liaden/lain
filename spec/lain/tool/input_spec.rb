@@ -557,7 +557,7 @@ RSpec.describe "an Input declaring array fields" do
   # T3 migrates TodoWrite onto this DSL, and the tools block is the
   # prompt-cache prefix: the emitted bytes must be identical or every cached
   # prefix in the bench breaks.
-  describe "the declaration T3 migrates TodoWrite onto" do
+  describe "the declaration TodoWrite is migrated onto" do
     subject(:declared) do
       statuses = Lain::Tools::TodoWrite::STATUSES
       Class.new(Lain::Tool::Input) do

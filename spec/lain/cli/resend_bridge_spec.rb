@@ -161,7 +161,7 @@ RSpec.describe Lain::CLI::ResendBridge do
   # write time -- AFTER the wire was billed -- wedging the chat. The bridge must
   # journal the rewind first, through Chronicle#rewound (T15's record-first
   # seam), so the written chain retreats and the fork commits like any turn.
-  describe "B1: a bridged rewind is journaled first, so the live session record never diverges" do
+  describe "a bridged rewind is journaled first, so the live session record never diverges" do
     let(:journal_io) { StringIO.new }
     let(:journal) { Lain::Journal.new(io: journal_io) }
 
@@ -212,7 +212,7 @@ RSpec.describe Lain::CLI::ResendBridge do
   # the resend worker thread and the conductor's ask reactor -- with nothing
   # holding the agent still between. The gate is now re-checked under
   # Agent#dispatch_lock, and a busy agent (the lock already held) is a refusal.
-  describe "B2: the gate is re-checked under the agent's dispatch lock" do
+  describe "the gate is re-checked under the agent's dispatch lock" do
     it "refuses under the lock even when the state still reads settled (the check-then-act window)" do
       provider = Lain::Provider::Mock.new(responses: [text_response("first")])
       agent = build_agent(provider)
@@ -242,7 +242,7 @@ RSpec.describe Lain::CLI::ResendBridge do
   # process, so it must not claim wire ambiguity or a rewind that never
   # happened -- the dishonesty a single static notice produced for the unwired
   # slot.
-  describe "S1: notice honesty distinguishes a pre-wire failure from a wire failure" do
+  describe "notice honesty distinguishes a pre-wire failure from a wire failure" do
     it "a pre-wire failure (unwired slot) claims neither a rewind nor wire ambiguity" do
       provider = Lain::Provider::Mock.new(responses: [text_response("first")])
       stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
@@ -286,7 +286,7 @@ RSpec.describe Lain::CLI::ResendBridge do
   # S2: a queued resend re-checks the gate at fire time, and the human is told
   # up front an attempt is being made -- fired the instant the gate passes and
   # BEFORE the round trip, and only on a real attempt.
-  describe "S2: an upfront attempt notice, at fire time, only when dispatching" do
+  describe "an upfront attempt notice, at fire time, only when dispatching" do
     it "fires on_attempt before the round trip when the gate passes" do
       order = []
       recording = Class.new(Lain::Provider::Mock) do

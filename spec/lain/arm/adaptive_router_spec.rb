@@ -97,7 +97,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
 
   # ---- AC1: each routing decision is journaled at the spawn boundary --------
 
-  describe "AC1 -- the routing decision is journaled as an oracle_answer" do
+  describe "the routing decision is journaled as an oracle_answer" do
     it "journals a Telemetry::OracleAnswer naming the router's own oracle_digest, on the run's own journal" do
       # #run drains the run's journal exactly once, into its own Ledger --
       # so the routing record is caught here, at the one seam it flows
@@ -121,7 +121,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
 
   # ---- AC2: re-routing mid-session is structurally impossible ---------------
 
-  describe "AC2 -- re-routing mid-session is structurally impossible" do
+  describe "re-routing mid-session is structurally impossible" do
     it "never hands the router to the spawned Agent -- nothing returned from #run can reach it" do
       run = arm.run("fix the typo", spawn_seam:, grader:)
 

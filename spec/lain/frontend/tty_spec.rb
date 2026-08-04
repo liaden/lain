@@ -172,7 +172,7 @@ RSpec.describe Lain::Frontend::TTY do
   # I3: the prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
   # shows a warmth glyph -- a snapshot taken once, right before Reline waits
   # (interface-integration.md's fixed-prompt limitation), never mid-wait.
-  describe "prompt warmth (I3)" do
+  describe "prompt warmth" do
     around do |example|
       Dir.mktmpdir { |dir| @state_dir = dir and example.run }
     end
@@ -380,7 +380,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  describe "history (XDG state, T12)" do
+  describe "history (XDG state)" do
     around do |example|
       Dir.mktmpdir { |dir| @history_dir = dir and example.run }
     end

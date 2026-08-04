@@ -128,7 +128,7 @@ RSpec.describe Lain::Provider::Anthropic do
   end
 
   # CE-5: the transient first-token scheduling signal (cache-economics.md).
-  describe "#complete CE-5 stream_started" do
+  describe "#complete stream_started" do
     let(:channel) { RecordingChannel.new }
     let(:canned) { Lain::Response.new(stop_reason: :end_turn, content: [{ "type" => "text", "text" => "hi" }]) }
 
@@ -301,7 +301,7 @@ RSpec.describe Lain::Provider::Anthropic do
   # like the sync retry-journaling group above, because the bug lives in how
   # Faraday's on_data/retry/error-middleware interplay resolves the status,
   # not in anything a transport test double can observe.
-  describe "streamed error classification matches the sync path (RES1)" do
+  describe "streamed error classification matches the sync path" do
     let(:channel) { RecordingChannel.new }
 
     let(:success_sse) do

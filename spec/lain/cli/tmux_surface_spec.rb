@@ -55,7 +55,7 @@ RSpec.describe Lain::CLI::TmuxSurface do
       expect(tmux_windows).to include("probe")
     end
 
-    it "renames a real window in place through an exact-match target (T20's done marker)" do
+    it "renames a real window in place through an exact-match target" do
       surface.window(command: "sleep 60", name: "probe", target_session: "lain")
 
       surface.rename_window(target: "lain:=probe", name: "probe [done]")

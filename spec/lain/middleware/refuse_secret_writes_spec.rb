@@ -215,7 +215,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     end
   end
 
-  describe "the memory-save oracle wired through the seam (T4)" do
+  describe "the memory-save oracle wired through the seam" do
     it "refuses through the SAME seam a plain oracle does, for a write the regex never catches" do
       gate = Lain::Oracle::MemorySave::Gate.new
       guarded = described_class.new(journal:, oracle: gate)

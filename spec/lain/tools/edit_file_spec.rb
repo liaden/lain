@@ -113,7 +113,7 @@ RSpec.describe Lain::Tools::EditFile do
       expect(File.read(path)).to eq('\1 literally world')
     end
 
-    it "honors path-spelling-insensitive read tracking (T11 normalization)" do
+    it "honors path-spelling-insensitive read tracking" do
       path = write("hello.txt", "hello world")
       session = Lain::Session.new
       session.record_read(File.join(tmpdir, ".", "hello.txt"))

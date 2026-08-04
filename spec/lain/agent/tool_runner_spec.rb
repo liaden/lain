@@ -392,7 +392,7 @@ RSpec.describe Lain::Agent::ToolRunner do
   # misses systematically. Worse than a miss: {Oracle::Eager#fire} consumes the
   # digest BEFORE it spawns, so a reaped fire poisons that content's key for
   # the rest of the session.
-  describe "post-dispatch observation (A7)" do
+  describe "post-dispatch observation" do
     # Big enough to clear Summarizing's real byte threshold, and distinct per
     # tool so the two fires do not collapse into one digest.
     def big(name) = "#{name}:#{"x" * 5000}"

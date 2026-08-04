@@ -111,7 +111,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
     end
   end
 
-  describe "a role-bound invocation spawns through the RoleSpawn seam (B3)" do
+  describe "a role-bound invocation spawns through the RoleSpawn seam" do
     it "routes @role/skill to the seam with an :inherit context and the scaffold+args prompt, no downstream turn" do
       fake = SkillDispatchFakeRoleSpawn.new
       with_dispatch(shipped: create_plan, role_spawn: fake) do |dispatch|
@@ -156,7 +156,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
   # out-of-band invariant -- the folded child answer renders, but the PARENT
   # session Timeline head does NOT move (the subagent's turns live in the shared
   # Store, never in the parent's rendered conversation).
-  describe "OM-2: the fold renders but never moves the parent head (real seam)" do
+  describe "the fold renders but never moves the parent head (real seam)" do
     def with_real_seam(&block)
       Dir.mktmpdir do |root|
         catalog, renderer = real_catalog_and_renderer(root)

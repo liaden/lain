@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::Command::Status do
     expect(command.usage).to start_with("/status")
   end
 
-  describe "the renderable it answers (T9)" do
+  describe "the renderable it answers" do
     # A hand-rolled stand-in rather than a real StatusFeed: this asserts the
     # command reads only the three keys it NAMES, so T7 widening the published
     # state with new keys cannot break it.
@@ -118,7 +118,7 @@ RSpec.describe Lain::CLI::Command::Status do
       expect(rendered.map(&:token)).not_to include(:warm)
     end
 
-    it "keeps rendering against a state that grew keys it never named (T7)" do
+    it "keeps rendering against a state that grew keys it never named" do
       feed = feed_publishing(wide_state(cache_deadline: nil))
 
       expect(command.call("", env_with(status: feed)).text).to include("fleet 2", "inbox 3")

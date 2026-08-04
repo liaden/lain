@@ -87,7 +87,7 @@ RSpec.describe Lain::Question do
         .to raise_error(ArgumentError, /Array/)
     end
 
-    it "refuses a body that is not text, rather than inspecting it into one (S7)" do
+    it "refuses a body that is not text, rather than inspecting it into one" do
       expect { described_class.new(id: "deploy", body: %w[one two]) }.to raise_error(ArgumentError, /Array/)
       expect { described_class.new(id: "deploy", body: { "a" => 1 }) }.to raise_error(ArgumentError, /Hash/)
       expect { described_class.new(id: 42, body: "Ship it?") }.to raise_error(ArgumentError, /Integer/)

@@ -376,7 +376,7 @@ RSpec.describe Lain::Tools::Subagent do
   # acceptance (segment sharing, override reach, fused-String failure) lives in
   # spec/lain/role_prelude_wiring_spec.rb; these two pin the seam's presence and
   # its Null default here, beside the tool.
-  describe "the injected role persona (PS-3)" do
+  describe "the injected role persona" do
     it "defaults to Null: with no persona wired the child's system is unchanged" do
       provider = mock(text_response("done"))
       build_subagent(provider:).call({ "prompt" => "go" }, invocation)
@@ -415,7 +415,7 @@ RSpec.describe Lain::Tools::Subagent do
   # dispatch, no actor launch. {#run} is that entry: one prompt to a single
   # final {Tool::Result}, synchronously, over the same {#spawn_one_shot}
   # machinery {#perform} uses (so its records land in @last_* just the same).
-  describe "the public #run entry (T-D2)" do
+  describe "the public #run entry" do
     it "runs one prompt to a single final result without the effect handler or the actor path" do
       tool = build_subagent(provider: mock(text_response("child answer")))
       result = tool.run("go")
@@ -530,7 +530,7 @@ RSpec.describe Lain::Tools::Subagent do
   # `session_of(invocation).read?(input.path)` -- could never be satisfied:
   # Session::Null#read? is unconditionally false. A write-capable child was
   # structurally unable to ever pass its own contract.
-  describe "children get a real Session (T7)" do
+  describe "children get a real Session" do
     around do |example|
       Dir.mktmpdir do |dir|
         @tmpdir = dir
@@ -619,7 +619,7 @@ RSpec.describe Lain::Tools::Subagent do
   # the exe wires), so Subagent must forward an `observer:` to the Lineage it
   # builds -- an observer nobody can wire from the exe is silent record loss
   # one level up.
-  describe "the injectable observer (T13)" do
+  describe "the injectable observer" do
     it "sees the :spawn and :message events a spawn writes, with @log still receiving them" do
       seen = []
       log = Lain::Tools::Subagent::Log.new
@@ -658,7 +658,7 @@ RSpec.describe Lain::Tools::Subagent do
   # {Event::Projection#pending} reads the Store -- so every other claim in this
   # block passes for a child whose questions never reach the TTY or the
   # desktop. The queue and the notifier are what say they do.
-  describe "asking the human from inside a child (T10)" do
+  describe "asking the human from inside a child" do
     let(:notified) { [] }
     let(:notifier) { instance_double(Lain::Notify) }
     let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
@@ -1108,7 +1108,7 @@ RSpec.describe Lain::Tools::Subagent do
   # land in the journal. The stagger POLICY in isolation is proven in
   # spec/lain/tools/subagent/stagger_spec.rb; these prove the wiring reaches it
   # THROUGH the provider signal.
-  describe "the staggered sibling fan-out (B9)" do
+  describe "the staggered sibling fan-out" do
     let(:template) { "You are one of a set of sibling workers over one shared brief. " * 20 }
 
     def sibling_template_policy(template)
@@ -1277,7 +1277,7 @@ RSpec.describe Lain::Tools::Subagent do
   #
   # Every OTHER example in this file constructs with the loose keywords, so this
   # block's green plus theirs is the additive claim: both styles are valid.
-  describe "the spawn Seam (T23)" do
+  describe "the spawn Seam" do
     let(:seam) do
       Lain::Tools::Subagent::Seam.new(provider: mock(text_response("seamed")),
                                       context_factory: -> { child_context }, parent:)

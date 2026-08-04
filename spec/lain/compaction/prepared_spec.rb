@@ -61,7 +61,7 @@ RSpec.describe Lain::Compaction::Prepared do
       expect(result).to include(a_hash_including("content" => [a_hash_including("text" => "SUMMARY-1")]))
     end
 
-    it "makes exactly ONE summarization call across two idle ticks at the same head (CAC-5)" do
+    it "makes exactly ONE summarization call across two idle ticks at the same head" do
       instance = prepared
 
       instance.idle(head_digest: "digest-a", messages: history)
@@ -90,7 +90,7 @@ RSpec.describe Lain::Compaction::Prepared do
       )
     end
 
-    it "discards and RECOMPUTES once a new turn advances the head (CAC-5)" do
+    it "discards and RECOMPUTES once a new turn advances the head" do
       instance = prepared
 
       instance.idle(head_digest: "digest-a", messages: history)
@@ -129,7 +129,7 @@ RSpec.describe Lain::Compaction::Prepared do
     end
   end
 
-  describe "#pipeline (apply on the next real turn -- CAC-5's 'apply on resume')" do
+  describe "#pipeline (apply on the next real turn, not on the idle tick that prepared it)" do
     def rendered(pipeline, messages)
       pipeline.call(Lain::Workspace.empty).call(messages)
     end
@@ -170,7 +170,7 @@ RSpec.describe Lain::Compaction::Prepared do
       expect(summarizer.calls).to eq(1)
     end
 
-    it "the composed pipeline is Ractor-shareable (the T21 injected-pipeline contract)" do
+    it "the composed pipeline is Ractor-shareable (the injected-pipeline contract)" do
       instance = prepared
       instance.idle(head_digest: "digest-a", messages: history)
 

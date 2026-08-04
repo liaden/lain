@@ -6,7 +6,7 @@
 # converted here to pin the FIXED behaviour (panel doctrine: probes that find
 # a real defect become specs, they are not deleted). The ones that found
 # nothing wrong are kept as regression coverage and documentation.
-RSpec.describe "Lain::Approval::Gate.from_journal -- T3 fix round" do
+RSpec.describe "Lain::Approval::Gate.from_journal" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:clock) { -> { 0.0 } }

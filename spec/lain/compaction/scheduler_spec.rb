@@ -235,7 +235,7 @@ RSpec.describe Lain::Compaction::Scheduler do
   # live IO-backed Journal. A provider built inside an instance method captures
   # that `self` in its binding and fails this; the module-scope COMPOSE lambda
   # closes over its shareable args alone.
-  describe "the composed pipeline is Ractor-shareable (T21/T19 contract)" do
+  describe "the composed pipeline is Ractor-shareable" do
     def shared_pipeline
       scheduler(hard_cap: 100).pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:)
     end

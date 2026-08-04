@@ -243,7 +243,7 @@ RSpec.describe Lain::Supervisor::Restart do
       expect(blobs.map { |r| r["digest"] }).to match_array(snapshots.last["payload"].fetch("files").values)
     end
 
-    it "still replays a journal WITHOUT blob records (pre-W4): the head restores, " \
+    it "still replays a journal WITHOUT blob records: the head restores, " \
        "the files honestly do not, and the gap is a loud notice" do
       killed_head = nil
       result = nil
@@ -288,7 +288,7 @@ RSpec.describe Lain::Supervisor::Restart do
 
   # ---- Reuse of W2's restore semantics ---------------------------------------
 
-  it "refuses to clobber post-crash out-of-band bytes (W2's Dirty), waived by force:" do
+  it "refuses to clobber post-crash out-of-band bytes (Restore::Dirty), waived by force:" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
 
     Sync do |task|

@@ -5,15 +5,16 @@ require "async/queue"
 require "json"
 require "tmpdir"
 
-# W3 review probes, promoted to a permanent regression suite. Each block names the AC
-# or claim it was written to falsify; blocks marked FIXED keep the original finding as
-# the record of what was wrong and now pin the fixed behavior.
+# The Supervisor as an actor reactor: adoption, address collisions, the mid-turn
+# message window, the bounded drain, and stop. Grown from adversarial review probes,
+# so blocks marked FIXED keep the original finding as the record of what was wrong
+# and now pin the fixed behavior.
 #
 # A probe for a gap that is still OPEN asserts what SHOULD hold and is marked `pending`.
 # Do not write one that asserts the buggy behavior and passes: it goes red the day
 # someone fixes the bug, which reads as a regression and gets "fixed" back. Pending
 # inverts that -- the fix turns the example green and RSpec fails on the stale marker.
-RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
+RSpec.describe Lain::Supervisor, "as an actor reactor" do
   let(:store) { Lain::Store.new }
   let(:log) { Lain::Tools::Subagent::Log.new }
   let(:parent_timeline) do
@@ -70,9 +71,9 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   # ask while the actor's first turn is parked at provider IO -- the actor must
   # stay registered, alive, and settleable.
   describe "the wedge" do
-    it "PROBE(a1): the actor survives its parent ask being stopped mid-turn" do
+    it "the actor survives its parent ask being stopped mid-turn" do
       Sync do |task|
-        supervisor = Lain::Supervisor.new.run(task)
+        supervisor = described_class.new.run(task)
         actor_entered = Async::Queue.new
         actor_release = Async::Queue.new
         tool = actor_tool(
@@ -114,9 +115,9 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # awaited plus a cancelled adopter orphaned a live, unregistered actor.
     # Registration now happens inside the adopted task, so the ghost window
     # is gone: registered, drained, farewelled.
-    it "PROBE(a2): killing the adopter between launch and registration no longer orphans the actor" do
+    it "killing the adopter between launch and registration no longer orphans the actor" do
       Sync do |task|
-        supervisor = Lain::Supervisor.new.run(task)
+        supervisor = described_class.new.run(task)
         journal = Lain::Channel.new
         tool = actor_tool(provider: mock(text_response("ready")), journal:, supervisor:)
         gate = Async::Queue.new
@@ -153,11 +154,11 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   # events (ChainWriter has no nonce), so they SHARE one content digest ==
   # address. The Array keeps both (the Hash-drop fix). What remains collapsed
   # is everything ADDRESS-grain.
-  it "PROBE(b): identical spawns share an address -- both enumerate and object routing works" do
+  it "identical spawns share an address -- both enumerate and object routing works" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     Sync do |task|
-      supervisor = Lain::Supervisor.new.run(task)
+      supervisor = described_class.new.run(task)
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
       twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
@@ -178,7 +179,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   # as what does. Inverted and pending on purpose: a probe that asserts the buggy
   # behavior goes RED on the day someone fixes it and reads as a regression. This one
   # goes GREEN, and RSpec then fails on the stale marker -- which is the signal we want.
-  it "PROBE(b'): twinned actors are distinguishable at address grain" do
+  it "twinned actors are distinguishable at address grain" do
     pending "Two spawns of one arm from the same head are byte-identical :spawn events " \
             "(ChainWriter has no nonce), so they share a digest == address. Farewells are " \
             "attributable only to that shared address, and StatusFeed folds the twins into " \
@@ -186,7 +187,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     Sync do |task|
-      supervisor = Lain::Supervisor.new.run(task)
+      supervisor = described_class.new.run(task)
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
       twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
@@ -237,7 +238,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
       request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
     end
 
-    it "PROBE(c): a message landing between render and commit enters NEITHER, and the next turn folds it" do
+    it "a message landing between render and commit enters NEITHER, and the next turn folds it" do
       mid_note = nil
       inject = -> { mid_note ||= note("mid-turn arrival") }
       provider = Class.new(Lain::Provider::Mock) do
@@ -267,11 +268,11 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   end
 
   # ---- (d) The REAL journaled lifecycle through an unmodified StatusFeed ----
-  it "PROBE(d): :spawn lands the fleet entry; settle and stop pass through inertly -- stop never RETIRES the entry" do
+  it ":spawn lands the fleet entry; settle and stop pass through inertly -- stop never RETIRES the entry" do
     journal = Lain::Channel.new
     actor = nil
     Sync do |task|
-      supervisor = Lain::Supervisor.new.run(task)
+      supervisor = described_class.new.run(task)
       actor = supervisor.adopt(role: "hud") do
         actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go")
       end
@@ -306,7 +307,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   end
 
   # ---- (e) Refusal byte-identity against main (5b077c9) ---------------------
-  it "PROBE(e): the unwired and not-running refusals are byte-identical to main's" do
+  it "the unwired and not-running refusals are byte-identical to main's" do
     # Literal transcribed from `git show 5b077c9:lib/lain/tools/subagent.rb`
     # during review -- if this drifts, the AC4 byte-for-byte claim is broken.
     expected = "actor mode cannot be launched from a tool call: a long-lived actor needs " \
@@ -317,7 +318,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     expect(result).to be_error
     expect(result.content).to eq(expected)
 
-    not_running = actor_tool(provider: mock(text_response("unused")), supervisor: Lain::Supervisor.new)
+    not_running = actor_tool(provider: mock(text_response("unused")), supervisor: described_class.new)
     expect(not_running.call({ "prompt" => "go" }, invocation).content).to eq(expected)
   end
 
@@ -340,10 +341,10 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # window, the timeout is journaled (never silently dropped), and the
     # session still closes :exit. (run_task.wait remains unbounded --
     # pre-existing shape, out of W3's scope.)
-    it "PROBE(f1): a hung actor no longer wedges wait_responses -- the bounded drain closes within the window" do
+    it "a hung actor no longer wedges wait_responses -- the bounded drain closes within the window" do
       journal = Lain::Channel.new
       Sync do |task|
-        supervisor = Lain::Supervisor.new(journal:).run(task)
+        supervisor = described_class.new(journal:).run(task)
         entered = Async::Queue.new
         release = Async::Queue.new
         tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("late")]),
@@ -374,9 +375,9 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # coordinator: close(:exit) never journaled. The mid-drain failure is now
     # absorbed by Registration#settle (still loud for direct Actor#settle
     # callers, which re-raise the captured failure on every call).
-    it "PROBE(f2): an actor failing DURING the drain no longer kills the coordinator -- the session closes :exit" do
+    it "an actor failing DURING the drain no longer kills the coordinator -- the session closes :exit" do
       Sync do |task|
-        supervisor = Lain::Supervisor.new.run(task)
+        supervisor = described_class.new.run(task)
         entered = Async::Queue.new
         release = Async::Queue.new
         tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("never")]),
@@ -410,10 +411,10 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # The coordinator's hard case: actor 1 settles fast DURING the window,
     # actor 2 hangs. The fast one must be awaited to quiescence before the
     # bound expires on the hung one, and exactly one timeout journals.
-    it "PROBE(f3): the fast actor settles cleanly, the hung one times out, ONE record journals" do
+    it "the fast actor settles cleanly, the hung one times out, ONE record journals" do
       journal = Lain::Channel.new
       Sync do |task|
-        supervisor = Lain::Supervisor.new(journal:).run(task)
+        supervisor = described_class.new(journal:).run(task)
         fast_entered = Async::Queue.new
         fast_release = Async::Queue.new
         fast = supervisor.adopt(role: "fast") do
@@ -456,13 +457,13 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # window closes, and the rest of the fleet's settle loop is abandoned. A
     # dedicated exception (`with_timeout(@within, Drain::Expired)`) would make
     # the pass-through exact.
-    it "PROBE(f4): an actor's own captured Async::TimeoutError is not misread as the drain's bound" do
+    it "an actor's own captured Async::TimeoutError is not misread as the drain's bound" do
       pending "Drain's pass-through keys on the exception CLASS, so it cannot tell its own " \
               "with_timeout bound from an Async::TimeoutError the actor itself captured. " \
               "`with_timeout(@within, Drain::Expired)` makes the pass-through exact."
       journal = Lain::Channel.new
       Sync do |task|
-        supervisor = Lain::Supervisor.new(journal:).run(task)
+        supervisor = described_class.new(journal:).run(task)
         entered = Async::Queue.new
         release = Async::Queue.new
         supervisor.adopt(role: "self-timed-out") do
@@ -487,11 +488,11 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   end
 
   # ---- (g) Supervisor stopped while actors live -----------------------------
-  it "PROBE(g1): stop with an actor mid-turn farewells it, cancels cleanly, and the Sync returns (no orphans)" do
+  it "stop with an actor mid-turn farewells it, cancels cleanly, and the Sync returns (no orphans)" do
     journal = Lain::Channel.new
     actor = nil
     Sync do |task|
-      supervisor = Lain::Supervisor.new.run(task)
+      supervisor = described_class.new.run(task)
       entered = Async::Queue.new
       release = Async::Queue.new
       tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("late")]),
@@ -510,8 +511,8 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   # FIXED (was NIT Jeremy): the guard now enforces the comment -- one reactor
   # per Supervisor's LIFE. Run-after-stop refuses, so the first life's dead
   # rows can never leak into a second; build another Supervisor instead.
-  it "PROBE(g2): run-after-stop refuses -- no second life, no lingering dead rows" do
-    supervisor = Lain::Supervisor.new
+  it "run-after-stop refuses -- no second life, no lingering dead rows" do
+    supervisor = described_class.new
     Sync do |task|
       supervisor.run(task)
       actor = supervisor.adopt(role: "first-life") do

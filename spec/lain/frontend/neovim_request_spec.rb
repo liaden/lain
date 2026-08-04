@@ -197,7 +197,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  describe "resend-worker death is loud (T16 panel fix #2)" do
+  describe "resend-worker death is loud" do
     # The worker journals inside its loop, so a raising journal write is its
     # native death. It must get the same observability discipline as the RPC
     # thread: the channel closes (producers see the loss), teardown stays
@@ -249,7 +249,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # :LainResend journals + diffs exactly as before, and the default
   # {Lain::Frontend::Neovim::Unbridged} never rebuilds or dispatches (its
   # never-forced rebuild is pinned in resend_bridge_spec.rb, default suite).
-  describe "T18: edit, resend, DISPATCH -- the edited request reaches the provider" do
+  describe "edit, resend, DISPATCH -- the edited request reaches the provider" do
     let(:override) { Lain::Agent::RequestOverride.new }
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 64) }
 
@@ -358,7 +358,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # round trip, so a bare `join` at teardown is UNBOUNDED -- a wedged provider
   # would strand the editor's exit forever. The join is now capped
   # (Neovim::TEARDOWN_GRACE); the worker exits itself once the offer settles.
-  describe "S3: teardown stays bounded when a bridged offer holds the worker" do
+  describe "teardown stays bounded when a bridged offer holds the worker" do
     it "returns from run within the teardown grace instead of blocking on the in-flight round trip" do
       parked = Thread::Queue.new
       gate = Thread::Queue.new

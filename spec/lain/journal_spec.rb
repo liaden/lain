@@ -248,7 +248,7 @@ RSpec.describe Lain::Journal do
     # P2. Reachable today: Resume::Salvager reopens a crashed session's file,
     # which it did not create. A zero-byte one is somebody else's empty file,
     # not ours to clean up.
-    it "keeps a zero-byte file that already existed when it opened (P2)" do
+    it "keeps a zero-byte file that already existed when it opened" do
       path = path_for("p2.ndjson")
       File.write(path, "")
 
@@ -273,7 +273,7 @@ RSpec.describe Lain::Journal do
     # descriptor (ext/lain's dup_writer) and interleave its spans. Once the
     # number is handed out, another writer may land bytes after our close --
     # onto an unlinked inode, invisibly, if we still removed the file.
-    it "keeps a file whose descriptor was handed to another writer through #share_fd (P3)" do
+    it "keeps a file whose descriptor was handed to another writer through #share_fd" do
       path = path_for("p3.ndjson")
       journal = described_class.open(path)
       # A real dup(2), which is what ext/lain's dup_writer does. `autoclose:
@@ -305,7 +305,7 @@ RSpec.describe Lain::Journal do
 
     # P4. The comment this replaces reasoned only about a rename AWAY from the
     # path. A rename ONTO it substitutes a different inode under the same name.
-    it "keeps a different file renamed onto the path between open and close (P4)" do
+    it "keeps a different file renamed onto the path between open and close" do
       path = path_for("p4.ndjson")
       journal = described_class.open(path)
       other = path_for("p4-other")
@@ -320,7 +320,7 @@ RSpec.describe Lain::Journal do
     # P5. File.size? follows a symlink while unlink removes the link itself --
     # testing one file and deleting another. O_EXCL refuses to create through a
     # symlink at all, so the split cannot arise.
-    it "keeps both the link and its target when the path is a symlink (P5)" do
+    it "keeps both the link and its target when the path is a symlink" do
       target = path_for("p5-target.ndjson")
       link = path_for("p5-link.ndjson")
       File.write(target, "")
@@ -337,7 +337,7 @@ RSpec.describe Lain::Journal do
     # be closed once; when it cost a duplicate file that was untidy, and if the
     # empty one could unlink the live one's file it would cost a SESSION -- its
     # header and every turn landing on an inode with no name.
-    it "never unlinks the file a second, live Journal on the same path is writing (P6)" do
+    it "never unlinks the file a second, live Journal on the same path is writing" do
       path = path_for("p6.ndjson")
       live = described_class.open(path)
       scratch = described_class.open(path)

@@ -9,7 +9,7 @@ require "tmpdir"
 # and NOT a fused String. The persona rides an injected {Role::Persona}; with
 # none wired the child renders byte-for-byte as before (that Null default is
 # pinned in subagent_spec).
-RSpec.describe "a spawned role's persona (PS-3)" do
+RSpec.describe "a spawned role's persona" do
   let(:store) { Lain::Store.new }
   let(:parent) do
     Lain::Timeline.empty(store:)

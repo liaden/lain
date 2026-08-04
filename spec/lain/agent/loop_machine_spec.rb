@@ -44,7 +44,7 @@ RSpec.describe Lain::Agent::LoopMachine do
   # declared state" -- `contain_exactly` over the same `Lain::Agent::STATES`,
   # which also catches a state this file's `include` would have let through.
   describe "the addition is additive -- nothing legal before is illegal now" do
-    it "keeps every pre-B11 stop_reason event landing exactly where it did" do
+    it "keeps every stop_reason event landing exactly where it did" do
       # The gate this pins: adding stall/replan must not perturb the StopReason
       # transition table. Asserted here directly so a regression is loud in the
       # loop-machine spec, not only in the Agent's own totality spec.

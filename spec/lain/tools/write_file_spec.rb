@@ -142,7 +142,7 @@ RSpec.describe Lain::Tools::WriteFile do
       expect(session.written?(path)).to be(true)
     end
 
-    it "honors path-spelling-insensitive read tracking (T11 normalization)" do
+    it "honors path-spelling-insensitive read tracking" do
       path = write("existing.rb", "original")
       session = Lain::Session.new
       session.record_read(File.join(tmpdir, ".", "existing.rb"))

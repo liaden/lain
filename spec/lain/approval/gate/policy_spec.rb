@@ -121,7 +121,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(described_class::Deferred::NAME).to eq(Lain::Approval::SignoffQueue::DEFERRED_POLICY)
     end
 
-    it "keeps the interactive label equal to the Gate's own default, so T5's path is not relabelled" do
+    it "keeps the interactive label equal to the Gate's own default, so the interactive path is not relabelled" do
       expect(described_class::Interactive::NAME).to eq(Lain::Approval::Gate::DEFAULT_POLICY)
     end
   end

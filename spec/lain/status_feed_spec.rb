@@ -492,7 +492,7 @@ RSpec.describe Lain::StatusFeed do
   # nvim view, a journal reader), `mode_lighter` is the already-composed
   # rendering, so none of the three renderers reading `.lain/state.json` needs
   # its own copy of the posture/layer ladder.
-  describe "the mode (T8)" do
+  describe "the mode" do
     def mode_switch(to:, from: :manual, from_layers: [], to_layers: [], surface: "tty")
       Lain::Telemetry::ModeSwitch.new(from:, to:, from_layers:, to_layers:, surface:)
     end

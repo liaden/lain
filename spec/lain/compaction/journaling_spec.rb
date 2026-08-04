@@ -15,7 +15,7 @@ module JournalingShareableFixtures
   BASE = Ractor.make_shareable(->(_workspace) { Lain::Context::Identity })
 end
 
-RSpec.describe "Compaction journaling (T20/CAC-6)" do
+RSpec.describe "Compaction journaling" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # A deterministic, pure, SHAREABLE summarizer -- the Compact contract. Six

@@ -262,7 +262,7 @@ RSpec.describe Lain::CLI::Resume do
 
   # T18: an open session whose crash left an unanswered request_sent gets one
   # salvage attempt before anything else about it is decided.
-  describe "salvage on resume (T18)" do
+  describe "salvage on resume" do
     let(:committed) { chain("hi", "hello") }
 
     def in_flight_request
@@ -586,7 +586,7 @@ RSpec.describe Lain::CLI::Resume do
   # arbitrary recorded head of the parent. Read-only by construction: the fork
   # path never salvages and never opens a writable handle on the parent, so a
   # LIVE parent's journal stays exactly as its owner is writing it.
-  describe "fork mode (T3)" do
+  describe "fork mode" do
     let(:three) { chain("first", "ack", "second") }
     let(:ancestor) { three.to_a[1].digest }
 

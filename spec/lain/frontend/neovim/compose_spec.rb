@@ -160,7 +160,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   # who read their draft in the editor, decided against it and closed the
   # buffer had it sent to the model unreviewed. That is the same defect the
   # card was told to avoid in Reline's vi_histedit, arriving by another door.
-  describe "abandoning the buffer sends nothing (panel PAC3)" do
+  describe "abandoning the buffer sends nothing" do
     it "answers the caller's re-prompt rather than the abandoned draft" do
       subject = compose
       subject.open("half-finished thought I decided against")
@@ -281,7 +281,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   # ({Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor}). These examples
   # are only possible once it is injected -- a 300s bound that expires
   # instantly is a statement that the real clock is not being read.
-  describe "the timing seam (T33)" do
+  describe "the timing seam" do
     it "bounds the wait against the injected clock, never the real one" do
       clock, readings = scripted_clock(0.0, 1_000.0)
       subject = compose(timeout: 300, clock:)

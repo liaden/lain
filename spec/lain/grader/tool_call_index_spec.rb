@@ -107,7 +107,7 @@ RSpec.describe Lain::Grader::ToolCallIndex do
       expect(described_class.new(journal_turns(turn)).calls).to eq({})
     end
 
-    it "enumerates every paired call flat via #each, the fold GR-2's selection frequency wants" do
+    it "enumerates every paired call flat via #each, the fold selection frequency wants" do
       first = Lain::Timeline.empty(store:)
                             .commit(role: :user, content: text("go"))
                             .commit(role: :assistant, content: [tool_use("tu_1", "echo", { "text" => "a" })])

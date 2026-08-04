@@ -208,7 +208,7 @@ RSpec.describe Lain::Session do
       expect(inner.read?("/tmp/app.rb")).to be(true)
     end
 
-    it "forwards the write-set to the wrapped Session, journaling nothing (persistence is W4's ticket)" do
+    it "forwards the write-set to the wrapped Session, journaling nothing (persistence is a separate ticket)" do
       journaled.record_write("/tmp/app.rb")
 
       expect(journaled.written?("/tmp/app.rb")).to be(true)

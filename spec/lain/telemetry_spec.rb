@@ -22,7 +22,7 @@ RSpec.describe Lain::Telemetry do
   # (Ruling 2). Construction validates a throwaway Lain::Guard carrier BEFORE
   # the auto-frozen Data value exists, so the value never carries ActiveModel's
   # @errors / @context_for_validation ivars and stays Ractor-shareable.
-  describe "validate-then-freeze construction (T6 convention)" do
+  describe "validate-then-freeze construction" do
     it "exposes a reachable ActiveModel Guard carrier per converted event" do
       expect(Lain::Telemetry::Guards::Dropped.new(count: 0)).to be_invalid
       expect(Lain::Telemetry::Guards::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid

@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
-# T5 review probes -- adversarial, written by the panel. Each example names the
-# seam it attacks; failures here are candidate specs for the fix round.
+# Gate behavior that gate_spec.rb does not pin: journal failure, monotonicity of the
+# clock, the artifact duck, timeout and latency accounting, wire shape, two gates over
+# one asker, immutability, and life outside a reactor. Grown from adversarial review
+# probes; each example names the seam it attacks.
 require "stringio"
 
-RSpec.describe "T5 probes: Lain::Approval::Gate" do
-  let(:gate_class) { Lain::Approval::Gate }
+RSpec.describe Lain::Approval::Gate do
+  let(:gate_class) { described_class }
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:plan) { artifact }
@@ -30,8 +32,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
   end
 
-  # ---- P1: does the gate fail CLOSED when the journal write raises? ----
-  describe "P1 journal failure" do
+  describe "journal failure" do
     it "does not leave a standing approval when the journal raises" do
       exploding = Object.new
       exploding.define_singleton_method(:record) { |_| raise IOError, "disk full" }
@@ -52,8 +53,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P2: monotonicity direction ----
-  describe "P2 monotonicity direction" do
+  describe "monotonicity direction" do
     it "deny-then-approve ends approved (add-only, as documented)" do
       subject_gate = gate_class.new(journal:, timeout: 0.02)
       Sync do
@@ -66,8 +66,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P3: artifact duck failures ----
-  describe "P3 artifact duck" do
+  describe "artifact duck" do
     it "fails loudly when the artifact has no #gate_question" do
       half = Data.define(:digest).new(digest: "blake3:x")
       expect { Sync { gate_class.new(journal:).call(half, asker: approve_asker, stage: "s", epic_slug: "e") } }
@@ -83,8 +82,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P4: timeout clock -- injected or wall? ----
-  describe "P4 timeout clock" do
+  describe "timeout clock" do
     # The timeout rides Async's reactor clock; `latency` rides the injected one.
     # Two clocks, no relationship: a 0.3s window journals whatever the injected
     # clock says, so the record can claim 1000s for a 0.3s timeout.
@@ -100,8 +98,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P4b: a malformed Answer from an untrusted surface ----
-  describe "P4b Answer has no construction guard" do
+  describe "a malformed Answer from an untrusted surface" do
     it "refuses a non-boolean verdict rather than treating it as truthy" do
       expect { gate_class::Answer.new(approved: "yes", surface: "human") }
         .to raise_error(ArgumentError, /approved/)
@@ -116,8 +113,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P5: latency typing ----
-  describe "P5 latency" do
+  describe "latency" do
     it "refuses a nil latency rather than silently journaling 0.0" do
       expect do
         Lain::Approval::GateDecision.new(artifact_digest: "d", epic_slug: "e", stage: "s", approved: true,
@@ -140,8 +136,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P6: wire shape round trip ----
-  describe "P6 wire shape" do
+  describe "wire shape" do
     it "round-trips through the Journal with string keys and preserves types" do
       Sync { gate_class.new(journal:).call(plan, asker: approve_asker, stage: :epic_plan, epic_slug: :"lain-epics") }
       row = decisions.first
@@ -169,7 +164,6 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P7: shared asker ----
   # The property under test is the GATE's: a verdict resolved on one promise must
   # not approve the other gate's artifact. The asker here is a deliberately
   # unguarded stand-in -- it hands out a promise per call and holds them all.
@@ -177,7 +171,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
   # over an unanswered set, and its replies name the set they answer, so nothing
   # can silently overwrite the promise a parked gate holds. Routing ACROSS askers
   # is a later card; this example keeps pinning the gate side of it.
-  describe "P7 two gates, one asker" do
+  describe "two gates, one asker" do
     it "does not silently cross-resolve when one AskHuman-shaped asker serves two gates" do
       pendings = []
       shared = Object.new
@@ -203,8 +197,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P8: Ractor / freezing ----
-  describe "P8 immutability" do
+  describe "immutability" do
     it "GateDecision is deeply frozen even with mutable inputs" do
       rec = Lain::Approval::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", approved: false,
                                              answered_by: +"timeout", policy: +"interactive", latency: 1.0,
@@ -221,8 +214,7 @@ RSpec.describe "T5 probes: Lain::Approval::Gate" do
     end
   end
 
-  # ---- P9: reactor precondition ----
-  describe "P9 outside a reactor" do
+  describe "outside a reactor" do
     it "names the missing reactor rather than raising a bare NoMethodError" do
       expect { gate_class.new(journal:).call(plan, asker: approve_asker, stage: "s", epic_slug: "e") }
         .to raise_error(/reactor|Async|task/i)

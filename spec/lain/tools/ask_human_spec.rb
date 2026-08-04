@@ -237,7 +237,7 @@ RSpec.describe Lain::Tools::AskHuman do
   # through the tool's constructor -- the same seam Lineage exposes. Q and A are
   # exactly the events a Timeline walk can never find (panel B1), which is why
   # this observer is the ONLY way they reach the session record.
-  describe "the injectable observer (T13)" do
+  describe "the injectable observer" do
     it "sees Q and then A, in write order, as the exchange happens" do
       seen = []
       tool = described_class.new(parent:, observer: seen.method(:push))
@@ -587,7 +587,7 @@ RSpec.describe Lain::Tools::AskHuman do
   # human's inbox forever. That presents as a haunted inbox, not as a stale
   # digest, so the promise carries the digest of the set it answers and every
   # edge is written from THAT.
-  describe "naming the set a reply answers (T7)" do
+  describe "naming the set a reply answers" do
     # The observer is the only way to see Q and A: they are exactly the events
     # a Timeline walk can never reach, and the projection here needs the whole
     # log, not just the last pair.
