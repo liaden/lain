@@ -13,7 +13,12 @@
 require "stringio"
 require "json"
 
-RSpec.describe "custom matchers (spec/support/matchers/)" do
+# `aggregate_failures` is off for the whole file, and it has to be. These examples assert
+# on matcher FAILURE messages, so they deliberately fail an expectation inside
+# `expect { ... }.to raise_error`. Inside an aggregation context RSpec captures that inner
+# ExpectationNotMetError instead of raising it, so `raise_error` sees nothing and the
+# captured failure is reported besides -- two failures for a matcher that works.
+RSpec.describe "custom matchers (spec/support/matchers/)", aggregate_failures: false do
   describe "be_ractor_shareable" do
     it "passes for a deeply frozen value object" do
       turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])

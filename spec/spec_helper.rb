@@ -32,7 +32,37 @@ require "test_prof"
 # outermost.
 require_relative "support/watchdog"
 
-# Every spec-suite concern is one file under spec/support. Parallel branches ADD a file here
-# rather than editing this one, which is why this file is allowed to be boring. `Dir[]` has
-# sorted its results since Ruby 3.0, so the order is stable without an explicit `.sort`.
+# Every spec-suite CONCERN is one file under spec/support -- VCR, WebMock, the watchdog, tag
+# policy. Parallel branches ADD a file there rather than editing this one. Core RSpec
+# configuration is the exception and lives below, where the community convention puts it.
+# `Dir[]` has sorted its results since Ruby 3.0, so the order is stable without an explicit
+# `.sort`.
 Dir[File.expand_path("support/**/*.rb", __dir__)].each { |file| require file }
+
+RSpec.configure do |config|
+  config.example_status_persistence_file_path = ".rspec_status"
+  config.disable_monkey_patching!
+
+  config.expect_with :rspec do |expectations|
+    expectations.syntax = :expect
+  end
+
+  # A stub for a method the real object does not have is a spec that passes against an
+  # object that cannot exist. Partial doubles are unverified by default, and closing that
+  # gap is the whole reason this block is here.
+  config.mock_with :rspec do |mocks|
+    mocks.verify_partial_doubles = true
+  end
+
+  # Without this, an example stops at its first violated expectation, so a multi-assertion
+  # failure costs one run per assertion to diagnose. Opt out per example with
+  # `aggregate_failures: false` where a later expectation would raise on state an earlier
+  # one was guarding.
+  config.define_derived_metadata do |meta|
+    meta[:aggregate_failures] = true unless meta.key?(:aggregate_failures)
+  end
+
+  # Order-dependent specs are a lie we tell ourselves. Surface them.
+  config.order = :random
+  Kernel.srand config.seed
+end
