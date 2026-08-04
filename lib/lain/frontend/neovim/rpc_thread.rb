@@ -321,7 +321,7 @@ module Lain
       # The single thread that owns the nvim RPC session -- exactly one, because the
       # neovim gem's {::Neovim::Session} is single-threaded by construction
       # (`main_thread_only` raises off-thread). It attaches over a unix socket,
-      # injects {runtime.lua} once, then runs ONE select loop that both serves
+      # injects the runtime once ({RuntimeLoader}), then runs ONE select loop that both serves
       # inbound requests from the editor and drains queued render work outbound --
       # the two directions the gem forces onto one thread (ROADMAP § Interface,
       # verified in planning/rpc_direction_probe.rb).
@@ -423,7 +423,9 @@ module Lain
           end
         end
 
-        RUNTIME = File.expand_path("runtime.lua", __dir__)
+        # The injected chunk is assembled from runtime.lua plus runtime/*.lua --
+        # see {RuntimeLoader} for why it is concatenated rather than required.
+        RUNTIME = RuntimeLoader.new.freeze
 
         # How long the readable-wait may block before re-checking the stop flag and
         # the render queue. The wake pipe is the real signal (posts and stop both
@@ -549,7 +551,7 @@ module Lain
           @socket = Socket.unix(@socket_path)
           @connection = ::Neovim::Connection.new(@socket, @socket)
           @client = ::Neovim::Client.from_event_loop(::Neovim::EventLoop.new(@connection))
-          @client.exec_lua(File.read(RUNTIME), [@version, @protocol, @client.channel_id])
+          @client.exec_lua(RUNTIME.source, [@version, @protocol, @client.channel_id])
         end
 
         def serve

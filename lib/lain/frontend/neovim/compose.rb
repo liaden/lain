@@ -42,7 +42,7 @@ module Lain
       # is why none of the rest needs a lock.
       class Compose
         # The one lain:// buffer nvim must be able to `:write`. Deliberately
-        # absent from runtime.lua's BUFFERS set: it is created by the human's
+        # absent from the runtime's BUFFERS set (00_constants.lua): it is created by the human's
         # own gesture, not primed at attach, so a session that never composes
         # never grows the buffer.
         BUFFER = "lain://compose"

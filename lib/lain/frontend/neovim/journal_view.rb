@@ -17,7 +17,7 @@ module Lain
 
         # The at-rest projection (see {Surfaces#prime}): the journal exists
         # from attach in the SAME one-empty-line state a fresh buffer holds, so
-        # runtime.lua's first-append-replaces check still sees a fresh buffer
+        # the runtime's first-append-replaces check (40_journal.lua) still sees a fresh buffer
         # and the journal never leads with a blank.
         # @return [Hash{String=>Array<String>}]
         def initial

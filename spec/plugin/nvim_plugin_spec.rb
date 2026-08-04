@@ -280,18 +280,25 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
-    # The command list is READ OFF runtime.lua rather than written down here,
+    # The command list is READ OFF the runtime rather than written down here,
     # because a written-down list is what drifted: :LainPin shipped undocumented
-    # and stayed that way through two doc passes. runtime.lua's `define` is the
+    # and stayed that way through two doc passes. The runtime's `define` is the
     # one place a runtime command comes into existence, so scanning it makes
     # "documented" a property of the runtime rather than of somebody's memory --
     # a new command now fails this example BY NAME until doc/lain.txt names it.
+    #
+    # Read through {RuntimeLoader} rather than off runtime.lua, which is now only
+    # the chunk's HEAD: T6 moved every `define` site into runtime/*.lua, so a
+    # single-file read scanned the one file that defines no commands and answered
+    # a confident []. The loader is what nvim is actually sent, which makes this
+    # the one scan that cannot go stale as modules are added -- and adding them is
+    # the plan for the next six cards.
     #
     # Only the runtime's own commands are checked. :LainStart is the plugin's
     # and is documented in |lain-api|, which is the section this doc owns
     # outright; the contract section documents what the gem injects.
     it "documents every command the runtime defines" do
-      runtime = File.read(File.expand_path("../../lib/lain/frontend/neovim/runtime.lua", __dir__))
+      runtime = Lain::Frontend::Neovim::RuntimeLoader.new.source
       commands = runtime.scan(/define\("(\w+)"/).flatten
       expect(commands).to include("LainPin", "LainOpen", "LainSend")
 

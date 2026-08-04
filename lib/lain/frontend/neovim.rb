@@ -6,6 +6,10 @@
 # the same "load it early" exception {Context::REQUIRES} documents, not a
 # departure from the index owning requires (this is still the index; only the
 # ORDER moved).
+#
+# {RuntimeLoader} comes first for the same reason, one level down: {RpcThread}'s
+# body names it.
+require_relative "neovim/runtime_loader"
 require_relative "neovim/rpc_thread"
 
 module Lain
@@ -207,8 +211,8 @@ module Lain
       class FrontendListener < RpcThread::Listener
         # `compose:` is a bound accessor ({Object#method}), not the {Compose}
         # collaborator itself: {Compose} is built AFTER the RPC thread (it
-        # takes the thread as ITS OWN editor inlet -- see {Neovim#initialize}'s
-        # @compose comment), so resolving it fresh on every call is what lets
+        # takes the thread as ITS OWN editor inlet -- see the `compose:` note on
+        # {Neovim#initialize}), so resolving it fresh on every call is what lets
         # the two be constructed in either order, the same trick the closures
         # this replaces relied on.
         #

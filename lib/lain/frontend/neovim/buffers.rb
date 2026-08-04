@@ -8,7 +8,7 @@ module Lain
       # Read-only PROJECTIONS of live harness state onto named nvim buffers --
       # the twin of {Neovim}'s append-only journal, but PULL-shaped: each view is
       # current state, not a log, so an update replaces the whole buffer rather
-      # than growing it (see runtime.lua's `set_view`).
+      # than growing it (see the runtime's `45_views.lua`).
       #
       # Three views, three collaborators, no Agent reference -- 4-2.2's
       # "subscribe, don't reach into Agent": {TimelineView} walks an injected
@@ -70,7 +70,7 @@ module Lain
 
           # What a rendered turn line carries once {Session#record_pin} holds its
           # digest ("compaction may not elide this one"). A SUFFIX, deliberately:
-          # runtime.lua anchors BOTH the lainRole syntax match and
+          # the runtime anchors BOTH the lainRole syntax match (20_buffers.lua) and
           # lain://timeline's ]]/[[ record boundary at "^%a+:", so a marker in
           # FRONT of the role would silently cost the buffer its highlighting,
           # its motions, and its folds at once.
@@ -137,7 +137,7 @@ module Lain
             @line_digests[line - 1] if line.positive?
           end
 
-          # The `p` gesture from lain://timeline (runtime.lua's :LainPin): pin
+          # The `p` gesture from lain://timeline (the runtime's 75_timeline.lua): pin
           # the turn under the cursor. A line naming no turn must never REACH
           # {Session#record_pin}, which refuses a blank digest loudly -- so this
           # reports instead of pinning, and the marker shows on the next render.

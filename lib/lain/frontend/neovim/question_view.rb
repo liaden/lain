@@ -72,7 +72,7 @@ module Lain
       # every other editor command.
       class QuestionView
         # The one lain:// buffer that holds a question set. Like
-        # {Compose::BUFFER} it is absent from runtime.lua's BUFFERS set: it is
+        # {Compose::BUFFER} it is absent from the runtime's BUFFERS set (00_constants.lua): it is
         # created when a set is opened, so a session that answers nothing never
         # grows the buffer.
         BUFFER = "lain://question"

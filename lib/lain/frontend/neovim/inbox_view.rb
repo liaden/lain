@@ -158,13 +158,13 @@ module Lain
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param generation [Integer] the stamp on the buffer the human is
-        #   looking at (runtime.lua's b:lain_view_generation)
+        #   looking at (b:lain_view_generation, stamped by the runtime's 45_views.lua)
         # @return [String, nil] that set's Q digest; nil when the line names no
         #   set (line 0, past the end, or the empty-state placeholder) or when
         #   the rendering it names is not one still held here
         def digest_at(line, generation:) = @slot.synchronize { @renderings.digest_at(line, generation) }
 
-        # The `<CR>`/`r` gesture from lain://inbox (runtime.lua's :LainOpen):
+        # The `<CR>`/`r` gesture from lain://inbox (the runtime's 70_inbox.lua):
         # open the question set the cursor sits on. The LINE rides -- :LainPin's
         # recorded rule, never a digest -- and it is resolved through the index
         # built by the very render that produced that row, so what opens is what
