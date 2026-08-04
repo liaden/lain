@@ -99,7 +99,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # (`RenderInlet#open_changeset` sends "lib/lain/agent.rb"), so the editor's
     # cwd is what resolves it -- and an absolute path in a spec would hide a
     # module that only works because the spec handed it one.
-    pid = spawn("nvim", "--headless", "--clean", "--listen", socket,
+    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
                 chdir: project, out: File::NULL, err: File::NULL)
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
     @editor = Neovim.attach_unix(socket)

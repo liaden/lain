@@ -16,7 +16,7 @@ require "timeout"
 RSpec.describe Lain::Frontend::Neovim, :nvim do
   around do |example|
     socket = File.join(Dir.tmpdir, "lain-nvim-buffers-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
-    pid = spawn("nvim", "--headless", "--clean", "--listen", socket, out: File::NULL, err: File::NULL)
+    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
     @socket = socket
     example.run
