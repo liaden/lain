@@ -1,0 +1,139 @@
+# frozen_string_literal: true
+
+module Lain
+  module Review
+    # The seam between the review model and whatever renders a changeset for a
+    # human. A plain buffer today ({Surface::Neovim}, T19), a table of text
+    # ({Surface::Text}, T9), tomorrow something else -- the port is what lets
+    # the UI be rebuilt without touching the model. {CLAUDE.md}'s Null Object
+    # rule names {Sink::Null} as the exemplar; {Surface::Null} is this chunk's
+    # instance of it, so every review-model spec below the surface runs
+    # without spawning an editor.
+    #
+    # A surface holds NO review state of its own. {Surface::Neovim}'s own card
+    # is where that is enforced, but it is a promise of the PORT, not one
+    # adapter's private discipline: the session (T13), not the surface, is the
+    # aggregate, which is what lets a surface be swapped or dropped mid-review
+    # with nothing lost and no message depending on another having run first.
+    # `spec/support/shared_examples/review_surface.rb` is where the SHAPE of
+    # each message and that ordering promise are checked once so every
+    # adapter is held to the same law -- see that file's own doc for exactly
+    # what it does and does NOT prove; a review-panel pass on this card found
+    # its first cut proved less than its doc claimed, and both were fixed
+    # together.
+    #
+    # Six messages, each a plain method a duck-typed surface answers:
+    #
+    #   present(changeset, scope:)    render this changeset, at this scope
+    #   annotate(anchor, text, kind:) place a note at a position
+    #   mark(hunk_key, state)         set a hunk's reviewed state
+    #   thread(anchor)                open/return the conversation at a position
+    #   verdict                       ask the human for their decision
+    #   refuse(message)               decline the review, naming why
+    #
+    # == Why `check!` is a duck probe, not a base class
+    #
+    # A surface is never required to subclass anything -- forcing one would
+    # make {Surface::Text} (a plain renderer over a {Lain::Sink}) inherit
+    # machinery it does not need just to prove it belongs. {check!} is instead
+    # a lightweight collaborator check callers can run at the point a surface
+    # is handed in, the same shape {CLI::CompactionStrategy#live_tier} already
+    # runs against its `tier:` collaborator: reject what does not answer,
+    # raise naming what's missing. This card's escalation trigger asks
+    # specifically whether {Effect::Handler} already owns this convention --
+    # it does not: `Handler#handles?`/`#perform` is internal dispatch on a
+    # CLOSED effect algebra a handler chooses to interpret, never a check
+    # that an externally supplied collaborator answers a full duck.
+    # {CLI::CompactionStrategy} is the one real precedent, so this reuses its
+    # shape rather than adding a second, competing one.
+    #
+    # {check!} was widened past a bare `respond_to?` reject after a
+    # review-panel probe (`probe_check.rb`) showed the original version
+    # blessed a candidate with every message present but the WRONG ARITY --
+    # exactly the shape {CLI::CompactionStrategy#live_tier} exists to refuse
+    # BEFORE construction rather than let die inside the first real call.
+    # {MESSAGES} is now the single place the port's shape is stated; the
+    # spec above used to keep its own second copy, checked but never
+    # reconciled against this one.
+    module Surface
+      # A candidate surface does not fully, publicly, and correctly answer
+      # the port.
+      class Incomplete < Error; end
+
+      # The port's messages, and each one's exact `Method#parameters` shape,
+      # in the order the class doc above lists them. `check!` and
+      # `spec/support/shared_examples/review_surface.rb` both read this Hash
+      # rather than keeping their own copy of the shape.
+      #
+      # DEEPLY frozen (CLAUDE.md's rule for every value object here): `.freeze`
+      # on the outer Hash alone leaves the `%i[req changeset]`-shaped inner
+      # Arrays mutable, and `MESSAGES[:present] << :whatever` would then mutate
+      # the one shape `check!` and the shared example group both trust.
+      MESSAGES = {
+        present: [%i[req changeset], %i[keyreq scope]],
+        annotate: [%i[req anchor], %i[req text], %i[keyreq kind]],
+        mark: [%i[req hunk_key], %i[req state]],
+        thread: [%i[req anchor]],
+        verdict: [],
+        refuse: [%i[req message]]
+      }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
+
+      # @param candidate [#present, #annotate, #mark, #thread, #verdict, #refuse]
+      # @raise [Incomplete] naming what is wrong -- a message not answered at
+      #   all, one answered only PRIVATELY (present, but not callable the way
+      #   the port needs), or one answered PUBLICLY with the wrong shape.
+      #   Kept apart rather than folded into one "does not answer" verdict:
+      #   a defined-but-private or defined-but-wrong-arity method both used
+      #   to read as "you forgot to write this" when the candidate had not.
+      # @return [void]
+      def self.check!(candidate)
+        absent, private_only, wrong_shape = sort_candidate(candidate)
+        return if absent.empty? && private_only.empty? && wrong_shape.empty?
+
+        raise Incomplete, incomplete_message(candidate, absent:, private_only:, wrong_shape:)
+      end
+
+      # @return [Array(Array<Symbol>, Array<Symbol>, Array<Symbol>)] messages
+      #   `candidate` does not answer at all, answers only PRIVATELY
+      #   (`respond_to?(message, true)` but not the public form), and
+      #   answers PUBLICLY but with a `Method#parameters` shape that does
+      #   not match {MESSAGES}.
+      def self.sort_candidate(candidate)
+        MESSAGES.each_with_object([[], [], []]) do |(message, shape), (absent, private_only, wrong_shape)|
+          if candidate.respond_to?(message)
+            wrong_shape << message unless candidate.method(message).parameters == shape
+          elsif candidate.respond_to?(message, true)
+            private_only << message
+          else
+            absent << message
+          end
+        end
+      end
+      private_class_method :sort_candidate
+
+      def self.incomplete_message(candidate, absent:, private_only:, wrong_shape:)
+        clauses = [
+          [absent, "does not answer %s"],
+          [private_only, "answers %s only privately, never publicly"],
+          [wrong_shape, "answers %s with the wrong shape"]
+        ].filter_map { |names, template| format(template, names.join(", ")) unless names.empty? }
+
+        "#{candidate_name(candidate)} #{clauses.join("; ")}; a review surface must publicly answer " \
+          "the full #{MESSAGES.keys.join(", ")} port, each with its documented shape"
+      end
+      private_class_method :incomplete_message
+
+      # `candidate.class.name` is `nil` for an anonymous class (every
+      # `Class.new do ... end` test double), and `candidate.class` alone
+      # prints a bare memory address (`#<Class:0x...>`) that names nothing a
+      # reader can act on -- both read as noise, not as "here is what was
+      # handed in".
+      def self.candidate_name(candidate)
+        candidate.class.name || "an anonymous class"
+      end
+      private_class_method :candidate_name
+    end
+  end
+end
+
+require_relative "surface/null"
