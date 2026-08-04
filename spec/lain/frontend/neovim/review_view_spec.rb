@@ -299,6 +299,89 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
+  # T19: a row's OTHER identity. The editor sends a line, because a sidebar row
+  # renders no hunk key and a key is a content digest that never crosses the
+  # wire -- so this view is the only object that can say which hunks a marked
+  # row named.
+  describe "the mark gesture" do
+    let(:files) { [file_entry(path: "lib/a.rb", first: 7), file_entry(path: "lib/b.rb", first: 40)] }
+
+    # TWO BYTE-IDENTICAL hunks in one file, which is the only shape that tells a
+    # correct batch from a convenient one: `Hunk.keys` hands duplicates a
+    # span-qualified key and hands a lone hunk its content key, so keying a
+    # SUBSET of a file's hunks produces a key the full file never produces.
+    def duplicated_pair
+      [Lain::Review::Hunk.new(path: "lib/dup.rb", old_start: 10, old_count: 1, new_start: 10, new_count: 1,
+                              lines: [" same"]),
+       Lain::Review::Hunk.new(path: "lib/dup.rb", old_start: 90, old_count: 1, new_start: 90, new_count: 1,
+                              lines: [" same"])]
+    end
+
+    def duplicated_file(hunks) = Struct.new(:path, :state, :hunks).new("lib/dup.rb", "unreviewed", hunks)
+
+    it "resolves a file row to exactly the keys Marks would derive for that file" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      outcome = view.marks(2, generation: rendered.generation)
+
+      expect(outcome).to have_attributes(marked?: true, hunk_keys: Lain::Review::Hunk.keys(files.last.hunks))
+    end
+
+    it "keys a nested row from the WHOLE file, never from the subset that commit reached" do
+      whole = duplicated_pair
+      cumulative = duplicated_file(whole)
+      commits = [commit_entry(subject: "one", files: [duplicated_file([whole.first])])]
+      rendered = view.render(changeset(files: [cumulative], commits:), scope: :commits)
+
+      # 1 legend, 2 commit header, 3 lib/dup.rb
+      outcome = view.marks(3, generation: rendered.generation)
+
+      expect(outcome.hunk_keys).to eq(Lain::Review::Hunk.keys(whole))
+    end
+
+    it "is not merely the subset's keys under another name -- the two genuinely differ" do
+      whole = duplicated_pair
+
+      expect(Lain::Review::Hunk.keys(whole).first).not_to eq(Lain::Review::Hunk.keys([whole.first]).first)
+    end
+
+    it "refuses the commit row itself, which names no hunk to mark" do
+      rendered = view.render(changeset(files:, commits: [commit_entry(subject: "one", files:)]), scope: :commits)
+
+      outcome = view.marks(2, generation: rendered.generation)
+
+      expect(outcome).to have_attributes(marked?: false, hunk_keys: [])
+      expect(outcome.report).to include("no hunk", "line 2")
+    end
+
+    it "refuses line 0 and a line past the end, which name no row at all" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      expect([view.marks(0, generation: rendered.generation), view.marks(9, generation: rendered.generation)])
+        .to all(have_attributes(marked?: false))
+    end
+
+    it "refuses a stamp it never issued with the same sentence the open gesture gets" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation + 5).report)
+        .to eq(view.open(1, generation: rendered.generation + 5).report)
+    end
+
+    it "tells a missing stamp apart from a row that names nothing" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      expect(view.marks(1, generation: nil).report).not_to eq(view.marks(9, generation: rendered.generation).report)
+    end
+
+    it "records nothing itself -- resolving a mark is a query over the renderings" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+      view.marks(1, generation: rendered.generation)
+
+      expect(opener.calls).to be_empty
+    end
+  end
+
   describe "the rendering stamp" do
     let(:first_files) { [file_entry(path: "lib/a.rb", first: 7), file_entry(path: "lib/b.rb", first: 40)] }
     # EQUAL HEIGHT and different content: the exact shape a line COUNT cannot

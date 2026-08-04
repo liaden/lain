@@ -88,6 +88,15 @@ module Lain
       # `spec/support/shared_examples/review_surface.rb` both read this Hash
       # rather than keeping their own copy of the shape.
       #
+      # Compared through {shape_of}, never `==` against this Hash directly:
+      # what the port actually constrains is each argument's KIND and, for a
+      # keyword, its NAME -- a keyword IS its name at every call site, while a
+      # positional's is private to the method. Pinning positional names refused
+      # `def thread(_anchor)` as "the wrong shape", which is a rename, not a
+      # defect; a T19 review panel hit it writing a probe. The names below stay
+      # because this Hash is also the port's documentation -- they say what each
+      # argument MEANS -- and only the comparison relaxes.
+      #
       # DEEPLY frozen (CLAUDE.md's rule for every value object here): `.freeze`
       # on the outer Hash alone leaves the `%i[req changeset]`-shaped inner
       # Arrays mutable, and `MESSAGES[:present] << :whatever` would then mutate
@@ -116,15 +125,30 @@ module Lain
         raise Incomplete, incomplete_message(candidate, absent:, private_only:, wrong_shape:)
       end
 
+      # What the port constrains about one message's arguments: every one's
+      # KIND, and a keyword's NAME. A positional's name is dropped, because it
+      # is the method's own business and never appears at a call site -- see
+      # {MESSAGES}. `**` and `&` are not in this port at all, so a candidate
+      # carrying one lands in `wrong_shape` on kind alone.
+      #
+      # Takes a `Method`/`UnboundMethod` or a {MESSAGES} value, so the two
+      # sides of every comparison are normalized by the same code rather than
+      # by two readings of one rule.
+      # @return [Array<Array<Symbol>>]
+      def self.shape_of(parameters)
+        parameters = parameters.parameters if parameters.respond_to?(:parameters)
+        parameters.map { |kind, name| kind == :keyreq ? [kind, name] : [kind] }
+      end
+
       # @return [Array(Array<Symbol>, Array<Symbol>, Array<Symbol>)] messages
       #   `candidate` does not answer at all, answers only PRIVATELY
       #   (`respond_to?(message, true)` but not the public form), and
-      #   answers PUBLICLY but with a `Method#parameters` shape that does
-      #   not match {MESSAGES}.
+      #   answers PUBLICLY but with a shape ({shape_of}) that does not match
+      #   {MESSAGES}.
       def self.sort_candidate(candidate)
         MESSAGES.each_with_object([[], [], []]) do |(message, shape), (absent, private_only, wrong_shape)|
           if candidate.respond_to?(message)
-            wrong_shape << message unless candidate.method(message).parameters == shape
+            wrong_shape << message unless shape_of(candidate.method(message)) == shape_of(shape)
           elsif candidate.respond_to?(message, true)
             private_only << message
           else
@@ -161,3 +185,7 @@ end
 
 require_relative "surface/null"
 require_relative "surface/text"
+# LAST, and it is the one entry here with a load-order reason: this adapter
+# names `Frontend::Neovim::ReviewView` as its default collaborator, which
+# resolves only because `lain.rb` loads `lain/frontend` before `lain/review`.
+require_relative "surface/neovim"

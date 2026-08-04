@@ -3,12 +3,11 @@
 # What {Lain::Review::Surface} adapters -- {Surface::Null} here, {Surface::Text}
 # (T9) and {Surface::Neovim} (T19) after it -- are held to in common. Say
 # plainly what this is, because a review-panel pass on this card found the
-# previous doc overclaimed it: this is a SIGNATURE check plus two BEHAVIOURAL
-# laws, not "the port's contract" in full. It cannot and does not check that
+# previous doc overclaimed it: this is a SIGNATURE check plus four BEHAVIOURAL
+# families of law, not "the port's contract" in full. It cannot and does not check that
 # an adapter renders a changeset correctly or answers a verdict truthfully --
-# those stay in each adapter's own spec. T19 still owes this group one law of
-# its own as it lands (what a gesture actually reaches the session as).
-# Three things are checked here:
+# those stay in each adapter's own spec.
+# Five things are checked here:
 #
 # 1. the exact SHAPE of each message -- which arguments are positional,
 #    which are required keywords -- read from {Lain::Review::Surface::MESSAGES},
@@ -21,7 +20,7 @@
 #    neither has a legitimate use for it. It also catches the opposite
 #    drift: `#refuse(message)` silently growing a default would let a caller
 #    forget the sentence it must supply, the exact mistake
-#    {Frontend::Neovim::RpcThread::RenderInlet}'s own refusal convention was
+#    {Frontend::Neovim::RenderInlet}'s own refusal convention was
 #    written to make impossible (see its `open_compose`/`open_question`/
 #    `open_review` doc: "the argument is REQUIRED so it cannot be forgotten").
 # 2. no message depends on another having been called first, checked against
@@ -63,18 +62,93 @@
 #       first gesture reaches nvim, and a group that invoked it eagerly to
 #       decide "configured or not" would force T19 to fake one just to be
 #       included here.
-#    c) the callable is asserted against THREE messages, not one:
-#       `#annotate` (as before), `#mark` (that its `state` argument -- not
-#       merely that IT ran -- reached the transcript), and `#refuse` (same,
-#       for `message`). `#verdict` stays uncovered: it is a QUERY with no
-#       argument to echo back, and truthfulness is exactly the "renders
-#       correctly" territory #1's own doc says stays in each adapter's own
-#       spec, not this group's.
+#    c) the callable is asserted against FIVE messages now, and the last two
+#       were added by a T19 review panel that broke the three:
+#       `#annotate`'s TEXT (as before) and its `kind` (a probe annotated
+#       honestly and dropped `kind:` on the floor -- and `kind` is what tells
+#       a blocker from a passing remark, the one member a verdict policy
+#       reads); `#mark`'s `state`, not merely that it ran; `#refuse`'s
+#       `message`; and `#thread`'s POSITION, which had no law at all until a
+#       probe whose `#thread` wrote nothing stayed green. `#thread` is a query
+#       with no argument to echo except where it is, so both halves of the
+#       position are checked -- a surface naming the file and losing the line
+#       points at the top of a diff rather than at the note.
+#
+#       `#verdict` stays uncovered: it is a QUERY with no argument to echo
+#       back at all, and truthfulness is exactly the "renders correctly"
+#       territory #1's own doc says stays in each adapter's own spec.
 #
 #    `transcript:` is resolved FRESH, via `resolve_review_fixture`, after
 #    each call whose evidence it checks -- `Surface::Text`'s is
 #    `-> { sink.string }`, reading the same `StringIO` its `subject` was
 #    built with, so each read reflects whatever has accumulated so far.
+#
+# 4. `#present` RENDERS WHAT IT WAS GIVEN, and the two scopes render
+#    differently -- T19's law, closing the largest hole #3 left: `#present`
+#    had no evidence check at all, so a surface that drew NOTHING, or that
+#    drew the same rows whatever `scope:` it was handed, was fully green.
+#    Checked against the duck {Lain::Review::Surface}'s own class doc states
+#    for `present`'s argument and against nothing else -- at `:cumulative`
+#    every `changeset.files`' `#path` reaches the transcript and no
+#    `changeset.by_commit`'s `#subject` does; at `:commits` every subject
+#    does. That pair is what makes `scope:` carry weight rather than decorate:
+#    a surface ignoring it fails one half or the other, whichever single
+#    rendering it settled on.
+#
+#    TWO MORE HALVES, from the same T19 panel, and both close the gap between
+#    what the first three checked and what the doc claimed. They checked only
+#    that an IDENTIFIER appears, never the STATE beside it -- which is the
+#    surface's entire purpose -- so a probe that flattened every tri-state to
+#    one marker was green; and they checked a commit's subject without its
+#    FILES, so a probe that dropped every nested row at `:commits` was green
+#    too. The state half compares a DISTINCTION rather than any particular
+#    glyph, since the glyph is each adapter's own: strip the path out of the
+#    line it was rendered on, and two files in different states must not be
+#    left saying the same thing.
+#
+#    A surface with a real `transcript:` therefore needs a real `changeset:`
+#    too (the generic `Object.new` stand-in answers neither message), and is
+#    told so by NAME rather than by `NoMethodError` on a fixture three
+#    indirections away. It must be NON-EMPTY on both collections, because
+#    every law here is an `all` and `[].all?` is `true`; it must carry files in
+#    at least two states, or the state half compares nothing; and its commit
+#    subjects must not be substrings of its own file paths, which is the one
+#    way the `:cumulative` half could read as a failure for a surface that is
+#    behaving. All four are refused by name at resolve time.
+#
+# 5. WHAT A MESSAGE ANSWERS WHEN IT LANDED -- T19's other law, and the port
+#    decision behind it. {Frontend::Neovim::RenderInlet} answers a
+#    refusal SENTENCE rather than raising when no editor is taking the post,
+#    and T19's adapter hands that sentence straight up, so the port's five
+#    COMMANDS answer a `String` for "this reached nobody, here is why" and
+#    anything-but-a-String for "taken". `nil` ({Surface::Null}), a byte count
+#    ({Surface::Text}, whose `Sink#write` answers one) and the sentence are
+#    then three distinguishable facts, with no second channel invented to
+#    carry the refusal.
+#
+#    Only the LANDED half is checkable here: neither Null nor Text has a
+#    detached mode to drive, and a config key every surface without one opts
+#    out of is the silent-default shape a fix-round panel already broke this
+#    group over (#3a). The REFUSING half is pinned in T19's own spec, against
+#    a real {RenderInlet} whose queue has been closed -- which is what RPC
+#    thread death actually leaves behind.
+#
+#    `#verdict` is exempt, and not for tidiness: `Review::VERDICTS` are
+#    Strings, so a refusal returned from the one message that answers a
+#    verdict could not be told from a verdict. That the port has nowhere for a
+#    QUERY's refusal to go is the tension {Surface::Null#verdict}'s own
+#    comment records -- still open, and this law states its edge rather than
+#    papering over it.
+#
+#    SAY THE COST OF THIS LAW OUT LOUD, because a T19 review panel found it is
+#    the one place nvim shaped the port: "a String means refused" is
+#    {RenderInlet}'s convention promoted to a port law, and Null and Text
+#    satisfy it ACCIDENTALLY -- `nil` and a byte count -- never exercising the
+#    refusing half at all. The exemption above is that mildness made visible.
+#    What removes both is the object the port is missing: a returned answer
+#    carrying verdict-or-refusal, which would make this law uniform across all
+#    six messages and delete the exemption. Filed as a follow-up; recorded here
+#    so the law is read as provisional rather than settled.
 #
 # Include as `it_behaves_like "a review surface"` for a surface that is
 # genuinely indifferent to its arguments (Null is) -- but even then,
@@ -152,9 +226,15 @@ RSpec.shared_examples "a review surface" do |config = {}|
 
   define_method(:resolve_review_fixture) { |callable| instance_exec(&callable) }
 
+  # Through `Surface.shape_of`, the SAME normalization `check!` applies, so the
+  # group and the constructor-time check cannot disagree about what "the port's
+  # shape" means: every argument's kind, and a keyword's name. A positional's
+  # name is the method's own business -- pinning it made `def thread(_anchor)`
+  # a shape defect, which is a rename.
   Lain::Review::Surface::MESSAGES.each do |port_message, shape|
     it "answers ##{port_message} with exactly the port's shape" do
-      expect(subject.method(port_message).parameters).to eq(shape)
+      expect(Lain::Review::Surface.shape_of(subject.method(port_message)))
+        .to eq(Lain::Review::Surface.shape_of(shape))
     end
   end
 
@@ -204,6 +284,18 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(marked_state.to_s)}\b/)
   end
 
+  # #annotate's OTHER argument. A T19 review panel's probe annotated the text
+  # honestly and dropped `kind:` on the floor -- and `kind` is what tells a
+  # blocker from a passing remark, which is the one thing a verdict policy reads.
+  it "leaves evidence, in its transcript, that #annotate's kind actually reached it" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    annotation_kind = resolve_review_fixture(kind)
+    subject.annotate(resolve_review_anchor(anchor), resolve_review_fixture(text), kind: annotation_kind)
+
+    expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(annotation_kind.to_s)}\b/)
+  end
+
   it "leaves evidence, in its transcript, that #refuse's message actually reached it" do
     skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
 
@@ -211,6 +303,160 @@ RSpec.shared_examples "a review surface" do |config = {}|
     subject.refuse(reason)
 
     expect(resolve_review_fixture(transcript)).to include(reason)
+  end
+
+  # #thread had NO evidence law at all until a T19 review panel wrote a probe
+  # whose `#thread` wrote nothing and stayed green. It is a query with no
+  # argument to echo except the position itself, so the position is what is
+  # checked -- both halves, since a surface naming the file and losing the line
+  # points at the top of a diff rather than at the note.
+  it "leaves evidence, in its transcript, that #thread named the anchor's position" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    at = resolve_review_anchor(anchor)
+    subject.thread(at)
+
+    rendered = resolve_review_fixture(transcript)
+    expect(rendered).to include(at.path.to_s)
+    expect(rendered).to match(/\b#{Regexp.escape(at.line.to_s)}\b/)
+  end
+
+  # The changeset duck `#present` is documented to need, resolved by NAME so a
+  # surface that supplies a real transcript and the generic `Object.new`
+  # stand-in is told which config key to fix rather than handed a
+  # `NoMethodError` from inside an example about rendering (class doc's #4).
+  # Everything a real `transcript:` obliges the OTHER fixtures to be, refused by
+  # name at resolve time rather than as a `NoMethodError` three indirections
+  # away, or -- worse -- as silence. `:empty` is not pedantry: every rendering
+  # law is an `all` over one of these collections and `[].all?` is `true`, so an
+  # empty fixture passes four laws without executing one comparison. Both
+  # current fixtures are non-empty and neither the group nor a reader could say
+  # so, which is the exact shape of vacuity this file has now been broken over
+  # twice. A local Hash rather than a constant, for `no_observation_channel`'s
+  # reason: this block re-runs once per inclusion.
+  fixture_claims = {
+    changeset_duck: "changeset: must answer #files and #by_commit for the rendering laws -- see " \
+                    "Lain::Review::Surface's class doc, \"What present's changeset argument answers\". A " \
+                    "surface that supplies a real transcript: must supply a real changeset: too",
+    changeset_empty: "changeset: must carry at least one file AND at least one commit -- every rendering law " \
+                     "is an `all` over one of those two and `[].all?` is true, so an empty one passes " \
+                     "without comparing anything",
+    changeset_states: "changeset: must carry files in at least TWO of Review::FILE_STATES -- a single-state " \
+                      "fixture cannot tell a tri-state rendering from a constant one",
+    anchor_duck: "anchor: must answer #path and #line for the position laws -- a surface that supplies a " \
+                 "real transcript: must supply a real anchor: too"
+  }.freeze
+
+  define_method(:review_fixture_refusal) { |claim| raise ArgumentError, fixture_claims.fetch(claim) }
+
+  define_method(:resolve_review_changeset) do |callable|
+    resolved = resolve_review_fixture(callable)
+    review_fixture_refusal(:changeset_duck) unless resolved.respond_to?(:files) && resolved.respond_to?(:by_commit)
+    review_fixture_refusal(:changeset_empty) if resolved.files.to_a.empty? || resolved.by_commit.to_a.empty?
+
+    resolved
+  end
+
+  # `#annotate` and `#thread` both say WHERE, so a surface with a real
+  # transcript has to hand over something that can answer where.
+  define_method(:resolve_review_anchor) do |callable|
+    resolved = resolve_review_fixture(callable)
+    review_fixture_refusal(:anchor_duck) unless resolved.respond_to?(:path) && resolved.respond_to?(:line)
+
+    resolved
+  end
+
+  # The transcript line a path was rendered on, with the path itself removed:
+  # whatever is left is the DECORATION the tri-state marker lives in, which is
+  # what law #4d compares across states.
+  define_method(:review_decoration_for) do |rendered, path|
+    line = rendered.to_s.lines.find { |candidate| candidate.include?(path) }
+    line&.sub(path, "")&.strip
+  end
+
+  # Law #4, in three halves. Each drives ONE `#present` against a fresh
+  # subject, so the `:cumulative` half cannot be satisfied by rows a
+  # `:commits` render left in an accumulating transcript.
+  it "renders every file it was given at :cumulative scope" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    presented = resolve_review_changeset(changeset)
+    subject.present(presented, scope: :cumulative)
+
+    rendered = resolve_review_fixture(transcript)
+    expect(presented.files.map(&:path)).to all(satisfy { |path| rendered.include?(path) })
+  end
+
+  it "renders every commit subject it was given at :commits scope" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    presented = resolve_review_changeset(changeset)
+    subject.present(presented, scope: :commits)
+
+    rendered = resolve_review_fixture(transcript)
+    expect(presented.by_commit.map(&:subject)).to all(satisfy { |line| rendered.include?(line) })
+  end
+
+  it "renders no commit subject at :cumulative scope, so the two scopes differ" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    presented = resolve_review_changeset(changeset)
+    subject.present(presented, scope: :cumulative)
+
+    rendered = resolve_review_fixture(transcript)
+    expect(presented.by_commit.map(&:subject)).to all(satisfy { |line| !rendered.include?(line) })
+  end
+
+  # #4d, and the half a T19 review panel proved missing: the three halves above
+  # check only that an identifier APPEARS, never the STATE beside it -- which is
+  # the entire purpose of the surface. A probe that flattened every tri-state to
+  # one marker was green on all three. Checked as a DISTINCTION rather than
+  # against any particular glyph, because the glyph is each adapter's own:
+  # strip the path out of the line it was rendered on, and two files in
+  # different states must not be left saying the same thing.
+  it "renders each file's state beside its path, distinguishably" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    presented = resolve_review_changeset(changeset)
+    by_state = presented.files.group_by { |file| file.state.to_s }
+    review_fixture_refusal(:changeset_states) if by_state.size < 2
+
+    subject.present(presented, scope: :cumulative)
+    rendered = resolve_review_fixture(transcript)
+    decorations = by_state.transform_values { |files| review_decoration_for(rendered, files.first.path) }
+
+    expect(decorations.values.uniq.size).to eq(by_state.size)
+  end
+
+  # #4e: a commit section is its SUBJECT and the files under it. Checking only
+  # the subject passed a probe whose `:commits` rendering dropped every file row.
+  it "renders the files under each commit at :commits scope, not the subjects alone" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    presented = resolve_review_changeset(changeset)
+    subject.present(presented, scope: :commits)
+
+    rendered = resolve_review_fixture(transcript)
+    nested = presented.by_commit.flat_map { |commit| commit.files.map(&:path) }
+    expect(nested).to all(satisfy { |path| rendered.include?(path) })
+  end
+
+  # Law #5. The five COMMANDS only; `#verdict` is exempt for the reason the
+  # class doc gives, and there is no generic way to drive the refusing half
+  # (also the class doc) -- so this pins the landed half, which is what makes
+  # "a String means it did not land" a fact a caller can act on rather than a
+  # convention one adapter happens to follow.
+  it "answers no refusal sentence for a message it took" do
+    taken = [
+      subject.present(resolve_review_fixture(changeset), scope: :cumulative),
+      subject.annotate(resolve_review_fixture(anchor), resolve_review_fixture(text),
+                       kind: resolve_review_fixture(kind)),
+      subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state)),
+      subject.thread(resolve_review_fixture(anchor)),
+      subject.refuse(resolve_review_fixture(message))
+    ]
+
+    expect(taken).to all(satisfy { |answer| !answer.is_a?(String) })
   end
 
   # Three orders -- natural, fully reversed, and one scrambled -- rather than

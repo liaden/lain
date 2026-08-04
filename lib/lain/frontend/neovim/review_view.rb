@@ -61,8 +61,28 @@ module Lain
       # what it does not answer would have crashed this walk. The aggregate
       # belongs on the row object that can honestly supply it.
       #
-      # THREAD CONTRACT. {#render} is driven by the surface and {#open} by
-      # whichever fiber serves the editor's commands, and they share the
+      # == What a row NAMES, and why the keys are cut from the whole changeset
+      #
+      # A row carries the hunk keys the human is marking when they mark it (T19).
+      # The editor cannot send one: a sidebar row renders no key, and a key is a
+      # content DIGEST that never crosses the wire in either direction -- so a
+      # `review_mark` gesture sends a LINE, and this view is the only object that
+      # can say which hunks that line named. Carrying them made {#marks}
+      # possible; without them the gesture rail reached the surface and stopped.
+      #
+      # Cut from `changeset.files` -- the WHOLE file's hunks -- in BOTH scopes,
+      # never from the file entry the row was drawn from. `Hunk.keys` is a batch
+      # operation by construction ("a hunk cannot tell on its own that it is
+      # duplicated"), and a commit-scope entry carries only the hunks reachable
+      # in that commit, so keying that subset can hand a duplicated hunk a
+      # different key than the cumulative view gives it -- a mark landing on a
+      # key `Marks` never produces. `Marks#states` groups by path over the whole
+      # changeset and keys within the group; this does the identical thing, so
+      # the two cannot disagree. It also means a nested row means what its
+      # marker already means: the WHOLE file, not its part in that commit.
+      #
+      # THREAD CONTRACT. {#render} is driven by the surface and {#open}/{#marks}
+      # by whichever fiber serves the editor's commands, and they share the
       # rendering history the second resolves through -- so both take one
       # `Mutex`, {InboxView}'s `@slot` for {InboxView}'s reason: a check-then-act
       # across this seam does not fail loudly, it opens the wrong file. There is
@@ -144,11 +164,24 @@ module Lain
                   "not guess between them".freeze
         NO_FILE = "no file on #{NAME} line %d".freeze
 
+        # {NO_FILE}'s sibling, and NOT a reuse of it: a commit header names no
+        # file and no hunk, but a file row whose path the changeset carries no
+        # hunks for names a file and still nothing to mark. Told apart because
+        # the two gestures fail for different reasons and the human is owed the
+        # one that happened.
+        NO_HUNK = "no hunk on #{NAME} line %d -- nothing on that row can be marked".freeze
+
+        # No hunk keys: every row that is not a file, and the frozen singleton
+        # they all share rather than an Array each.
+        NO_KEYS = [].freeze
+
         # One drawn row: what it says, and what it names. `path` is nil for
         # every row that is not a file -- the legend, a commit header, the
         # absorbed-commit note, a placeholder -- which is what makes "this row
-        # opens nothing" one check rather than four.
-        Row = Data.define(:text, :path, :line)
+        # opens nothing" one check rather than four. `hunk_keys` is {NO_KEYS}
+        # for exactly those same rows, and is the row's OTHER identity: what a
+        # mark gesture on it means (see the class doc).
+        Row = Data.define(:text, :path, :line, :hunk_keys)
         private_constant :Row
 
         # One rendering, as a gesture has to read it back: the STAMP the
@@ -175,6 +208,15 @@ module Lain
         # back". `path` is nil exactly when nothing opened.
         Opened = Data.define(:path, :line, :report) do
           def opened? = !path.nil?
+        end
+
+        # {Opened}'s shape for the OTHER gesture: which hunks the marked row
+        # named, or the reason it named none. `hunk_keys` is empty exactly when
+        # nothing was marked, so `marked?` is one check rather than a nil test,
+        # and it is spelled as {Row}'s own member rather than `keys` -- which
+        # reads as a Hash's, both to a human and to `Style/HashEachMethods`.
+        Marked = Data.define(:hunk_keys, :report) do
+          def marked? = !hunk_keys.empty?
         end
 
         # The diff pair nobody wired ({InboxView::Unwired}'s honesty, one object
@@ -229,6 +271,24 @@ module Lain
           @slot.synchronize { resolve(line, generation) }
         end
 
+        # The mark gesture from the same sidebar (`["review_mark", [line, state,
+        # generation]]`): which hunks does the row on this line name? {#open}'s
+        # shape and every one of its reasons -- the line rides because a row
+        # renders no key, the stamp rides because the row moves -- and the same
+        # three refusals, because a stamp this view cannot resolve is the same
+        # fact for both gestures.
+        #
+        # It RESOLVES and applies nothing. Recording a mark is the session's,
+        # via T19's surface, so this stays a query over the rendering history
+        # and the lock never spans a write to the review model.
+        #
+        # @param line [Integer] 1-based, as nvim's cursor reports it
+        # @param generation [Integer, nil] b:lain_view_generation off that buffer
+        # @return [Marked]
+        def marks(line, generation:)
+          @slot.synchronize { resolve_marks(line, generation) }
+        end
+
         private
 
         def resolve(line, generation)
@@ -258,6 +318,22 @@ module Lain
 
         def unopened(report) = Opened.new(path: nil, line: nil, report:)
 
+        # {#resolve}'s twin. A row this view never drew and a row that names no
+        # hunk both answer nothing to mark; they differ in the sentence, which
+        # is the whole reason {#refused} exists.
+        def resolve_marks(line, generation)
+          rendering = @held.find { |held| held.generation == generation }
+          return unmarked(refused(line, generation)) if rendering.nil?
+
+          row = rendering.at(line)
+          keys = row.nil? ? NO_KEYS : row.hunk_keys
+          keys.empty? ? unmarked(format(NO_HUNK, line)) : Marked.new(hunk_keys: keys, report: naming(row, keys))
+        end
+
+        def unmarked(report) = Marked.new(hunk_keys: NO_KEYS, report:)
+
+        def naming(row, keys) = "#{keys.size} hunk(s) of #{row.path}"
+
         # Newest first, bounded, and stamped with a generation that never
         # repeats -- a stamp that repeated would name two different files on one
         # row, which is the defect it exists to close.
@@ -269,16 +345,32 @@ module Lain
         # The lines and the line -> target index are ONE pass' two outputs: a
         # Row carries both, so an index built by a SECOND walk cannot disagree
         # with the rendering the first time either changes.
-        def file_rows(changeset) = changeset.files.map { |file| file_row(file, "") }
+        def file_rows(changeset)
+          keys = keys_by_path(changeset)
+          changeset.files.map { |file| file_row(file, "", keys) }
+        end
 
         def commit_rows(changeset)
-          sections = changeset.by_commit.flat_map { |commit| commit_section(commit) }
+          keys = keys_by_path(changeset)
+          sections = changeset.by_commit.flat_map { |commit| commit_section(commit, keys) }
           sections.empty? ? [] : [plain(WALK_LEGEND), *sections]
         end
 
-        def commit_section(commit)
-          nested = commit.files.map { |file| file_row(file, "  ") }
+        def commit_section(commit, keys)
+          nested = commit.files.map { |file| file_row(file, "  ", keys) }
           [commit_header(commit), *(nested.empty? ? [plain(NO_HUNKS_HERE)] : nested)]
+        end
+
+        # `Review::Hunk` resolves at CALL time, which is what makes this legal at
+        # all: `lain.rb` loads `lain/frontend` first, so the same reference in a
+        # class body would not resolve (see {STATE_MARKERS}).
+        #
+        # Cut from `changeset.files` in both scopes -- the class doc says why a
+        # commit entry's own subset cannot be keyed. A path the cumulative view
+        # does not carry gets {NO_KEYS} and its row refuses the gesture by name,
+        # rather than being handed keys cut from a narrower batch.
+        def keys_by_path(changeset)
+          changeset.files.to_h { |file| [file.path.to_s, Review::Hunk.keys(file.hunks)] }
         end
 
         # The figures LEAD, ahead of the subject, for the reason the class doc
@@ -287,12 +379,13 @@ module Lain
         # {WALK_LEGEND} points at.
         def commit_header(commit) = plain("+#{commit.added} -#{commit.deleted}  #{legible(commit.subject)}")
 
-        def file_row(file, indent)
+        def file_row(file, indent, keys)
+          path = file.path.to_s
           plain("#{indent}#{STATE_MARKERS.fetch(file.state.to_s)} #{legible(file.path)}")
-            .with(path: file.path.to_s, line: first_line(file))
+            .with(path:, line: first_line(file), hunk_keys: keys.fetch(path, NO_KEYS))
         end
 
-        def plain(text) = Row.new(text:, path: nil, line: nil)
+        def plain(text) = Row.new(text:, path: nil, line: nil, hunk_keys: NO_KEYS)
 
         # Where an open lands. A file entry always carries hunks in practice --
         # `group_by` yields no empty group -- but a private method is still a

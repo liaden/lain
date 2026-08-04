@@ -75,18 +75,19 @@ module Lain
         # @param scope [Symbol] one of `Review::SCOPES`, as Symbols
         #   (`:commits`/`:cumulative`); anything else raises via
         #   {SCOPE_RENDERER}'s `fetch`.
-        # @return [nil]
+        # @return [Integer] {#write}'s byte count -- never a String, which is
+        #   what this port reserves for "the surface could not deliver this"
         def present(changeset, scope:)
           renderer = SCOPE_RENDERER.fetch(scope)
           write("#{send(renderer, changeset)}\n")
         end
 
-        # @return [nil]
+        # @return [Integer] see {#present}
         def annotate(anchor, text, kind:)
           write("annotation [#{kind}] at #{describe(anchor)}: #{text}\n")
         end
 
-        # @return [nil]
+        # @return [Integer] see {#present}
         def mark(hunk_key, state)
           write("marked #{hunk_key} #{state}\n")
         end
@@ -96,7 +97,7 @@ module Lain
         # (the port's own doc, and CLAUDE.md's Null Object rule), so this is
         # the honest text-mode reading of "open" -- name where a reply now
         # lands, rather than replay a history this object never kept.
-        # @return [nil]
+        # @return [Integer] see {#present}
         def thread(anchor)
           write("-- thread at #{describe(anchor)} --\n")
         end
@@ -110,13 +111,18 @@ module Lain
         # @return [nil]
         def verdict = nil
 
-        # @return [nil]
+        # @return [Integer] see {#present}
         def refuse(message)
           write("refused: #{message}\n")
         end
 
         private
 
+        # Answers what `Sink#write` answers, which is the byte count `IO#write`
+        # would -- NOT nil, as the five commands above claimed until T19 measured
+        # it. Harmless and now stated: the port reserves String for a refusal
+        # (see `spec/support/shared_examples/review_surface.rb`, law #5), and a
+        # count is not one.
         def write(bytes) = @sink.write(bytes)
 
         def file_table(changeset)

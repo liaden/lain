@@ -30,7 +30,7 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
 
   # The attached editor, recording what it was asked to open. The duck's whole
   # contract is its return: nil means the document landed, a String is the
-  # notice saying why it did not ({RpcThread::RenderInlet}'s shape).
+  # notice saying why it did not ({Lain::Frontend::Neovim::RenderInlet}'s shape).
   let(:editor) do
     Class.new do
       attr_reader :opened

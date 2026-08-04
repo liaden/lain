@@ -82,7 +82,7 @@ module Lain
         # they are one fact from the human's side ({Compose::DETACHED}'s reason).
         #
         # Only {Detached} answers this TODAY. A live editor's refusal comes back
-        # from {RpcThread::RenderInlet#refusable} (rpc_thread.rb:200-203), which
+        # from {RenderInlet#refusable} (rpc_thread.rb:200-203), which
         # hands every refused open the same {Compose::DETACHED} sentence --
         # "composing needs an attached editor", which is the wrong sentence for a
         # question. The card that adds `open_question` to that inlet owns making

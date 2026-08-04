@@ -201,7 +201,7 @@ module Lain
       # `["review_done", [generation, epic_slug, annotations]]`.
       #
       # @return [String, nil] nil when the open landed, else the notice saying
-      #   no editor took it (see {RpcThread::RenderInlet})
+      #   no editor took it (see {RenderInlet})
       def open_review(path, generation, epic_slug:) = @rpc.open_review(path, generation, epic_slug)
 
       # The changeset review this editor WRITES to (T11): the object whose
