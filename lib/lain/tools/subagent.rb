@@ -2,55 +2,7 @@
 
 module Lain
   module Tools
-    # A one-shot subagent, as an ordinary tool: possessing it is the authorization
-    # to spawn a child Agent whose only trace in the parent's Timeline is its
-    # final result, returned as an ordinary `tool_result` (gate 2).
-    #
-    # A subagent is a tool whose result is a compressed context. The child runs a
-    # full, independent loop over the SHARED Store but a SEPARATE Timeline, so the
-    # parent's prompt never inherits the child's turns and vice versa. Two events
-    # record the causal lineage the render chain deliberately omits (event-schema
-    # OM-2): a **:spawn** event names the parent head H it was spawned from, and a
-    # **:message** event carries the child's result back, naming both the :spawn
-    # and the child's final turn F among its causal parents. Neither is in either
-    # render chain, so `meet`, the first-parent walk, and gate 2 are untouched.
-    #
-    # == Injection (the pinned seam)
-    #
-    # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
-    # time, as one {Seam} value -- provider, a child-Context factory, the live
-    # parent handle, a journal, the {Supervisor} a model-dispatched actor
-    # launches under, the lineage observer, the session posture's gate policy
-    # and permitted capabilities, and the run's ask-the-human seam (a child is
-    # enrolled on it and holds an asker of its OWN, never the parent's -- see
-    # {ChildBuilder#build}) -- plus this tool's OWN axes: the
-    # union toolset it attenuates from, the spawn {Tool::SpawnPolicy}, a Budget,
-    # and a spawn-depth ceiling. The dispatch duck stays the Session (the
-    # `context:` a tool receives), which this tool does not read: everything it
-    # needs to spawn was injected, so the ToolRunner and the Session interface
-    # are untouched. `Seam#parent` is a live handle to the parent Timeline (a
-    # Timeline or a `-> Timeline` thunk, since the toolset is built before the
-    # Agent) -- the one collaborator the render chain cannot supply, because H is
-    # the parent's head at the instant of the call. The shared Store rides ON
-    # that handle (`parent.store`): H, F, and both events live in one
-    # content-addressed forest, so deriving it from the parent is one source of
-    # truth rather than a separately-injected reference that could silently
-    # desync. The spawn wiring itself -- what a child IS -- lives in
-    # {ChildBuilder}; this class decides WHEN one may spawn (depth, mode,
-    # supervisor presence).
-    #
-    # == The depth ceiling
-    #
-    # Recursion (a child holding a subagent tool) has no natural floor, so
-    # `max_depth` is a hard ceiling: at 0 the tool refuses to spawn (an is_error
-    # result), emitting no event and touching no Store. The ceiling is
-    # TRANSITIVE by construction: when a child's union is built, every Subagent
-    # reachable in it is REPLACED by a copy whose ceiling is
-    # `min(its own, this one - 1)` (see {ChildBuilder}) -- decrementing so the
-    # chain terminates, `min` so a descendant's own tighter ceiling is never
-    # RAISED by the copy (that would be capability escalation). No Budget
-    # change: the ceiling is a property of the tool, not of the loop.
-    class Subagent < Tool
+    class Subagent < Tool # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
       # The model-facing input: just the task. The prefix strategy, attenuation
       # posture, and `only`-set are the ARM (config), fixed at construction --
       # "what can this subagent do" stays one readable line, not a per-call
@@ -362,11 +314,60 @@ module Lain
       def supervisor = @seam.supervisor
     end
 
-    # Reopened rather than nested mid-body -- the shutdown.rb idiom: the spawn
-    # wiring and the value it is wired FROM are each their own responsibility
-    # (the extraction the Metrics trip named), and the split keeps each class
-    # body within Metrics/ClassLength instead of loosening it.
+    # A one-shot subagent, as an ordinary tool: possessing it is the authorization
+    # to spawn a child Agent whose only trace in the parent's Timeline is its
+    # final result, returned as an ordinary `tool_result` (gate 2).
+    #
+    # A subagent is a tool whose result is a compressed context. The child runs a
+    # full, independent loop over the SHARED Store but a SEPARATE Timeline, so the
+    # parent's prompt never inherits the child's turns and vice versa. Two events
+    # record the causal lineage the render chain deliberately omits (event-schema
+    # OM-2): a **:spawn** event names the parent head H it was spawned from, and a
+    # **:message** event carries the child's result back, naming both the :spawn
+    # and the child's final turn F among its causal parents. Neither is in either
+    # render chain, so `meet`, the first-parent walk, and gate 2 are untouched.
+    #
+    # == Injection (the pinned seam)
+    #
+    # The tool takes its collaborators by CONSTRUCTOR injection at toolset-build
+    # time, as one {Seam} value -- provider, a child-Context factory, the live
+    # parent handle, a journal, the {Supervisor} a model-dispatched actor
+    # launches under, the lineage observer, the session posture's gate policy
+    # and permitted capabilities, and the run's ask-the-human seam (a child is
+    # enrolled on it and holds an asker of its OWN, never the parent's -- see
+    # {ChildBuilder#build}) -- plus this tool's OWN axes: the
+    # union toolset it attenuates from, the spawn {Tool::SpawnPolicy}, a Budget,
+    # and a spawn-depth ceiling. The dispatch duck stays the Session (the
+    # `context:` a tool receives), which this tool does not read: everything it
+    # needs to spawn was injected, so the ToolRunner and the Session interface
+    # are untouched. `Seam#parent` is a live handle to the parent Timeline (a
+    # Timeline or a `-> Timeline` thunk, since the toolset is built before the
+    # Agent) -- the one collaborator the render chain cannot supply, because H is
+    # the parent's head at the instant of the call. The shared Store rides ON
+    # that handle (`parent.store`): H, F, and both events live in one
+    # content-addressed forest, so deriving it from the parent is one source of
+    # truth rather than a separately-injected reference that could silently
+    # desync. The spawn wiring itself -- what a child IS -- lives in
+    # {ChildBuilder}; this class decides WHEN one may spawn (depth, mode,
+    # supervisor presence).
+    #
+    # == The depth ceiling
+    #
+    # Recursion (a child holding a subagent tool) has no natural floor, so
+    # `max_depth` is a hard ceiling: at 0 the tool refuses to spawn (an is_error
+    # result), emitting no event and touching no Store. The ceiling is
+    # TRANSITIVE by construction: when a child's union is built, every Subagent
+    # reachable in it is REPLACED by a copy whose ceiling is
+    # `min(its own, this one - 1)` (see {ChildBuilder}) -- decrementing so the
+    # chain terminates, `min` so a descendant's own tighter ceiling is never
+    # RAISED by the copy (that would be capability escalation). No Budget
+    # change: the ceiling is a property of the tool, not of the loop.
     class Subagent < Tool
+      # Reopened rather than nested mid-body -- the shutdown.rb idiom: the spawn
+      # wiring and the value it is wired FROM are each their own responsibility
+      # (the extraction the Metrics trip named), and the split keeps each class
+      # body within Metrics/ClassLength instead of loosening it.
+
       # The {Seam} observer default, as ONE frozen object. Its two neighbours are
       # already singletons (`Channel::Null.instance`, `Supervisor::Null`), so
       # defaulting this one to a fresh `ChainWriter::Null.new` made

@@ -1,11 +1,12 @@
 # frozen_string_literal: true
 
 module Lain
-  # Reopens the {Skill} value class (`Skill = Data.define`) to nest the
-  # role-selecting spawn seam under it -- a `module Skill` would collide with the
-  # Data class and raise, so this uses `class Skill`, the same reopen
-  # {Skill::Invocation} uses.
   class Skill
+    # Reopens the {Skill} value class (`Skill = Data.define`) to nest the
+    # role-selecting spawn seam under it -- a `module Skill` would collide with the
+    # Data class and raise, so this uses `class Skill`, the same reopen
+    # {Skill::Invocation} uses.
+
     # The call-time role-selecting spawn seam: `(role_name, context_mode,
     # prompt) -> subagent result`. Where {Tools::Subagent} fixes its policy at
     # construction (the model cannot choose a role), this lets the CALLER pick a

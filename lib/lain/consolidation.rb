@@ -148,11 +148,12 @@ module Lain
     def role = @role ||= Role::Catalog.fetch(ROLE)
   end
 
-  # Reopened rather than nested in a `Data.define ... do` block: a constant or
-  # nested class declared inside that block scopes to the enclosing module, not
-  # the Data class (the {Request::SYSTEM_PREFIX} trap). Consolidation is a plain
-  # class, so this nests cleanly as {Consolidation::Lineage}.
   class Consolidation
+    # Reopened rather than nested in a `Data.define ... do` block: a constant or
+    # nested class declared inside that block scopes to the enclosing module, not
+    # the Data class (the {Request::SYSTEM_PREFIX} trap). Consolidation is a plain
+    # class, so this nests cleanly as {Consolidation::Lineage}.
+
     # A completed subagent lineage: its chain root (the evidence digest) and the
     # turn records that belong to it, in journal order.
     Lineage = Data.define(:root, :turns) do

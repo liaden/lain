@@ -71,10 +71,11 @@ module Lain
       # needs to find the rule.
       Fault = Data.define(:rule, :tool, :error, :message)
 
-      # Reopened rather than written in the `Data.define` block -- a nested
-      # constant declared inside that block is scoped to the enclosing module,
-      # not to the Data class.
       class Fault
+        # Reopened rather than written in the `Data.define` block -- a nested
+        # constant declared inside that block is scoped to the enclosing module,
+        # not to the Data class.
+
         # @param rule [String] the deciding rule's name, CAPTURED at wiring
         #   time. Asking the rule for it here would be asking a rule that has
         #   just proved it can raise, from inside the rescue clause -- which is
@@ -105,9 +106,10 @@ module Lain
       # denial that was not one.
       Poisoned = Data.define(:decision, :fault)
 
-      # Reopened rather than written in the `Data.define` block, per
-      # {Request::SYSTEM_PREFIX}.
       class Poisoned
+        # Reopened rather than written in the `Data.define` block, per
+        # {Request::SYSTEM_PREFIX}.
+
         # Answers the same three questions a {Rule::Decision} does, so a caller
         # branching on the verdict does not have to unwrap first. `allow?` is
         # unconditionally false: an allow is exactly what poisoning suppresses,

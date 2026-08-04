@@ -88,9 +88,10 @@ module Lain
       # a JSON scalar by declaration), so it goes straight into a config table.
       Keepsake = Data.define(:tool, :input)
 
-      # Reopened rather than written in the `Data.define` block, per
-      # {Request::SYSTEM_PREFIX}.
       class Keepsake
+        # Reopened rather than written in the `Data.define` block, per
+        # {Request::SYSTEM_PREFIX}.
+
         # There is NO public constructor. `new` and `Data::[]` are private and
         # `#with` refuses, so the only way to hold a Keepsake is to have been
         # handed one by a {Classification} that computed `risky` first -- which
@@ -121,10 +122,14 @@ module Lain
       # interned Strings -- so it can be journalled and shared as-is.
       Classification = Data.define(:risky, :reasons, :keepsake)
 
-      # Reopened rather than written in the `Data.define` block: a constant or
-      # nested class declared inside that block is lexically scoped to the
-      # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
       class Classification
+        # Reopened rather than written in the `Data.define` block: a constant or
+        # nested class declared inside that block is lexically scoped to the
+        # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
+
+        # What a human is told when a call may be approved for this one use but
+        # never written down -- and what to do instead, since "no" without a
+        # remedy reads as a bug.
         REFUSAL = "approvable for this call, but never remembered from the prompt -- " \
                   "to persist it, edit the config by hand"
         KEEPABLE = "not risky: this answer may be remembered"

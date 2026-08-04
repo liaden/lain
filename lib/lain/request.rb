@@ -64,14 +64,15 @@ module Lain
     end
   end
 
-  # Reopened rather than folded into the `Data.define` block above: a `class`
-  # keyword or bare constant written INSIDE that block is scoped to its
-  # lexical position -- this file, i.e. `Lain` -- not to the Data-defined
-  # class, however natural `Request::AmbiguousMarkerPosition` looks from the
-  # call site. Reopening puts `AmbiguousMarkerPosition` and `SYSTEM_PREFIX`
-  # where they read, and where every method below can find them by ordinary
-  # lexical lookup.
   class Request
+    # Reopened rather than folded into the `Data.define` block above: a `class`
+    # keyword or bare constant written INSIDE that block is scoped to its
+    # lexical position -- this file, i.e. `Lain` -- not to the Data-defined
+    # class, however natural `Request::AmbiguousMarkerPosition` looks from the
+    # call site. Reopening puts `AmbiguousMarkerPosition` and `SYSTEM_PREFIX`
+    # where they read, and where every method below can find them by ordinary
+    # lexical lookup.
+
     include Inspectable
 
     # MORE THAN ONE cache marker inside a single message. A message names one

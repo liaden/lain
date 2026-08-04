@@ -2,9 +2,6 @@
 
 module Lain
   class Context
-    # Reopens the combinators' shared carrier namespace (see prune.rb) to
-    # hold PurgeFailedInputs's construction contract beside the class it
-    # guards.
     module Guards
       # `turns` is a window WIDTH, consumed as `messages.first(boundary)` /
       # `messages.last(turns)`. A negative value would silently flip that

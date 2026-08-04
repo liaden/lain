@@ -92,16 +92,20 @@ module Lain
       SHAPE_REFUSED = "remembered in #{WHERE}: [[approval.deny]] refuses this %s call".freeze
       SHAPE_ALLOWED = "remembered in #{WHERE}: [[approval.allow]] permits this %s call".freeze
 
+      Entry = Data.define(:tool, :input)
+
       # One remembered call shape, normalized so that what a {Risk::Keepsake}
       # WROTE and what a live {Rule::Call} looks like are comparable by value.
       # One normalizer, reached from three doors, because two would drift and
       # the drift's shape is an answer that was written down and then never
       # matches anything.
-      Entry = Data.define(:tool, :input)
-
-      # Reopened rather than written in the `Data.define` block, per
-      # {Request::SYSTEM_PREFIX}.
       class Entry
+        # Reopened rather than written in the `Data.define` block, per
+        # {Request::SYSTEM_PREFIX}.
+
+        # The three doors onto the one normalizer: a live call, a written
+        # keepsake, and a config row. Each hands over the same two fields, so an
+        # answer written by one is comparable by value to a call seen by another.
         def self.for_call(call) = new(tool: call.tool_name, input: call.input.attributes)
 
         def self.for_keepsake(keepsake) = new(tool: keepsake.tool, input: keepsake.input)
@@ -246,7 +250,8 @@ module Lain
         # need a keepsake is a door: nothing carrying an input can reach here at
         # all.
         #
-        # @param name [String, Symbol] the tool's name
+        # @param name [String, Symbol] the tool to refuse WHOLE -- every call to
+        #   it, whatever the input
         # @return [String] the name written
         # @raise [NotAToolName] when handed anything else, or nothing
         def refuse_tool(name)

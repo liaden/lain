@@ -1,22 +1,23 @@
 # frozen_string_literal: true
 
 module Lain
-  # Named HOLES in Lain's base prompt that a user fills with markdown partials --
-  # the mental model is a Rails view partial, not a scripting language. A slot fill
-  # is "inject this markdown doc here": durable, rarely-changed, freeform adjustment
-  # of the system prompt that gets the agent into the user's perspective quickly.
-  #
-  # Because fills change rarely they can safely live in the cached prefix, which is
-  # why {LockedBinding} enforces purity: the render is a pure function of (fills,
-  # templates), so identical inputs yield identical bytes -- the same constraint
-  # `Context#render` lives under, and the reason a fill is content-addressed
-  # (see {#digests}) rather than re-read per turn. Mind Anthropic's 4096-token
-  # minimum-cacheable-prefix floor, though: the shipped default is ~70 tokens, so
-  # the prefix silently will not cache until an override (plus tools) grows past
-  # the floor -- eligible-for-the-cache is not the same as cached.
   module Prompt
     # Loads `.lain/slots/*.md` overrides once at session start, then renders the
     # shipped base templates with those holes filled -- purely, in memory.
+    #
+    # Named HOLES in Lain's base prompt that a user fills with markdown partials --
+    # the mental model is a Rails view partial, not a scripting language. A slot fill
+    # is "inject this markdown doc here": durable, rarely-changed, freeform adjustment
+    # of the system prompt that gets the agent into the user's perspective quickly.
+    #
+    # Because fills change rarely they can safely live in the cached prefix, which is
+    # why {LockedBinding} enforces purity: the render is a pure function of (fills,
+    # templates), so identical inputs yield identical bytes -- the same constraint
+    # `Context#render` lives under, and the reason a fill is content-addressed
+    # (see {#digests}) rather than re-read per turn. Mind Anthropic's 4096-token
+    # minimum-cacheable-prefix floor, though: the shipped default is ~70 tokens, so
+    # the prefix silently will not cache until an override (plus tools) grows past
+    # the floor -- eligible-for-the-cache is not the same as cached.
     class Slots
       # Where a project's overrides live, on the `.lain/` convention (like `.git/`).
       SLOTS_DIR = File.join(".lain", "slots")

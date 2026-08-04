@@ -286,9 +286,10 @@ module Lain
       def live(collaborator) = collaborator.respond_to?(:call) ? collaborator.call : collaborator
     end
 
-    # Reopened so the two collaborators below are measured on their own rather
-    # than inflating the class they serve ({Tool::SchemaValidator}'s idiom).
     class RequestReview
+      # Reopened so the two collaborators below are measured on their own rather
+      # than inflating the class they serve ({Tool::SchemaValidator}'s idiom).
+
       # Every way this tool can decline, as the sentences the MODEL reads.
       #
       # Its own object because "hold a document and report what came back" and

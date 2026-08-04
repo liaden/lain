@@ -72,15 +72,19 @@ module Lain
       # abstention is the absence of a Decision, so only two live here.
       VERDICTS = %i[allow deny].freeze
 
+      Decision = Data.define(:verdict, :rule, :tool, :gated, :reason)
+
       # What a rule decided, and everything a journal needs to say who decided
       # it. Deeply frozen: strings are interned, `gated` is coerced to a strict
       # Boolean, so `Ractor.shareable?` holds and the record is safe to share.
-      Decision = Data.define(:verdict, :rule, :tool, :gated, :reason)
-
-      # Reopened rather than written in the `Data.define` block: a constant or
-      # nested class declared inside that block is lexically scoped to the
-      # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
       class Decision
+        # Reopened rather than written in the `Data.define` block: a constant or
+        # nested class declared inside that block is lexically scoped to the
+        # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
+
+        # Refuses an unknown verdict at CONSTRUCTION rather than at the point a
+        # reader branches on it: a record that reaches the journal naming a
+        # verdict nothing handles is a defect no later `else` can undo.
         def initialize(verdict:, rule:, tool:, gated:, reason:)
           unless VERDICTS.include?(verdict)
             raise UnknownVerdict, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
@@ -93,13 +97,14 @@ module Lain
         def deny? = verdict == :deny
       end
 
-      # The subject of every rule: one intended tool call, with its input
-      # already validated by the tool's own declaration.
       Call = Data.define(:tool, :input)
 
-      # Reopened for {Decision}'s reason: a nested class declared inside the
-      # `Data.define` block would belong to the enclosing module instead.
+      # The subject of every rule: one intended tool call, with its input
+      # already validated by the tool's own declaration.
       class Call
+        # Reopened for {Decision}'s reason: a nested class declared inside the
+        # `Data.define` block would belong to the enclosing module instead.
+
         # A tool whose input is a raw JSON-schema Hash rather than a
         # {Tool::Input}. There is nothing for a rule to read fields off, so no
         # deterministic decision is possible and the call must escalate.

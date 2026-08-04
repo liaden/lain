@@ -71,13 +71,14 @@ module Lain
     end
   end
 
-  # Reopened rather than declared inside the `Data.define(...) do ... end`
-  # block above: a `module`/`class` keyword written INSIDE that block is
-  # lexically scoped to this file's enclosing module (`Lain`), not to the
-  # Data-defined class -- the same trap {Request::SYSTEM_PREFIX} documents.
-  # Nested inside the SAME top-level `module Lain` (not a second one) so the
-  # file still declares exactly one top-level module.
   class Improvement
+    # Reopened rather than declared inside the `Data.define(...) do ... end`
+    # block above: a `module`/`class` keyword written INSIDE that block is
+    # lexically scoped to this file's enclosing module (`Lain`), not to the
+    # Data-defined class -- the same trap {Request::SYSTEM_PREFIX} documents.
+    # Nested inside the SAME top-level `module Lain` (not a second one) so the
+    # file still declares exactly one top-level module.
+
     # The closed kind vocabulary the interview settled on: a knob lain's
     # USER could turn, a bug, a feature lain lacks, or a doc gap.
     KINDS = %w[knob bug missing-feature doc].freeze

@@ -387,10 +387,11 @@ module Lain
       end
     end
 
-    # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
-    # for the same reason: each collaborator is its own responsibility, and the
-    # split keeps each body inside Metrics/ClassLength instead of loosening it.
     class HumanReplies
+      # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
+      # for the same reason: each collaborator is its own responsibility, and the
+      # split keeps each body inside Metrics/ClassLength instead of loosening it.
+
       # The reviews the editor is holding open, and the ONE rule that keying
       # them needs. Its own object because "which review does this `done`
       # gesture mean" is not the business of a class about human replies: it

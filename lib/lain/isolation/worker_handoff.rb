@@ -84,6 +84,8 @@ module Lain
       STRANDED = "the parent checkout is STILL MID-MERGE and could not be unwound -- " \
                  "run `git merge --abort` there before any further handback"
 
+      Report = Data.define(:kind, :ref, :paths, :detail)
+
       # What a worker's completion did, and -- the part its caller folds into the
       # worker's own result -- what a human has to do next.
       #
@@ -94,12 +96,10 @@ module Lain
       # was abandoned and `ref` still holds the work), `:declined`, or `:failed`.
       # `paths` is always an Array and `detail` always a String, so no caller
       # writes a nil guard; `ref` is nil only when nothing was ever anchored.
-      Report = Data.define(:kind, :ref, :paths, :detail)
-
-      # Reopened rather than declared in a `Data.define ... do` block: a constant
-      # there is lexically scoped to the enclosing module, not the Data class
-      # (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
       class Report
+        # Reopened rather than declared in a `Data.define ... do` block: a constant
+        # there is lexically scoped to the enclosing module, not the Data class
+        # (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
         KINDS = %i[nothing_to_do merged resolved conflicted declined failed].freeze
 
         # Nothing happened, and there is nothing to say about it.
@@ -147,6 +147,8 @@ module Lain
         def detailed(sentence) = detail.empty? ? sentence : "#{sentence} -- #{detail}"
       end
 
+      Reply = Data.define(:text, :refused)
+
       # The resolver's own answer, normalized. The spawn seam hands back a
       # {Tool::Result} ({Skill::RoleSpawn} -> {Tools::Subagent#run}), and a spawn
       # that was REFUSED and never ran -- the depth ceiling's `depth_exceeded`, a
@@ -156,12 +158,10 @@ module Lain
       # {Report} because the role template PROMISES the child somewhere to say
       # what it had to drop. Squeezed and truncated: a Report summary is one line
       # folded into a worker's result, not a transcript.
-      Reply = Data.define(:text, :refused)
-
-      # Reopened for the same reason {Report} is: a constant declared inside a
-      # `Data.define ... do` block scopes to the enclosing module, not the Data
-      # class.
       class Reply
+        # Reopened for the same reason {Report} is: a constant declared inside a
+        # `Data.define ... do` block scopes to the enclosing module, not the Data
+        # class.
         LIMIT = 400
         ELLIPSIS = "..."
 
@@ -424,10 +424,10 @@ module Lain
       def absolute(path) = File.join(@repo_root, path)
     end
 
-    # Reopened to hold the Null identity beside the class (the effect/handler
-    # idiom): no handoff wired means release and nothing else, so every arm that
-    # does not inject one behaves exactly as it did before this existed.
     class WorkerHandoff
+      # Reopened to hold the Null identity beside the class (the effect/handler
+      # idiom): no handoff wired means release and nothing else, so every arm that
+      # does not inject one behaves exactly as it did before this existed.
       Null = Class.new do
         def reclaim(lease, **)
           lease&.release

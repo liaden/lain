@@ -229,10 +229,11 @@ module Lain
       end
     end
 
-    # Reopened rather than declared inside the `Data.define ... do` block: a
-    # constant there is lexically scoped to the enclosing MODULE, not the Data
-    # class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
     class IssueTransition
+      # Reopened rather than declared inside the `Data.define ... do` block: a
+      # constant there is lexically scoped to the enclosing MODULE, not the Data
+      # class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
+
       # The discriminator {Journalable} derives from this class's own name,
       # pinned as a constant so readers name it once and a rename breaks loudly
       # at the constant instead of quietly re-labelling records nobody can join

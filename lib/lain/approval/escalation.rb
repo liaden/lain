@@ -91,10 +91,11 @@ module Lain
       # so `Ractor.shareable?` holds and the record is safe to share.
       Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority)
 
-      # Reopened rather than written in the `Data.define` block: a constant
-      # declared there is lexically scoped to the enclosing module, not to the
-      # Data class (the {Request::SYSTEM_PREFIX} trap).
       class Ruling
+        # Reopened rather than written in the `Data.define` block: a constant
+        # declared there is lexically scoped to the enclosing module, not to the
+        # Data class (the {Request::SYSTEM_PREFIX} trap).
+
         # Three-valued, and abstention is a MEMBER here rather than the absence
         # of a Ruling -- which is the one place this file departs from {Rule},
         # deliberately. A rule abstains by answering nothing because it is a

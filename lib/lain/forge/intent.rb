@@ -155,10 +155,11 @@ module Lain
       end
     end
 
-    # Reopened rather than declared inside the `Data.define ... do` block: a
-    # constant there is lexically scoped to the enclosing MODULE, not the Data
-    # class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
     class Intent
+      # Reopened rather than declared inside the `Data.define ... do` block: a
+      # constant there is lexically scoped to the enclosing MODULE, not the Data
+      # class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
+
       # The discriminator, pinned as a constant so readers name it once and a
       # rename breaks loudly at the constant instead of quietly re-labelling
       # records nobody can join anymore ({Epic::IssueTransition::JOURNAL_TYPE}'s
@@ -173,18 +174,6 @@ module Lain
       def journal_type = JOURNAL_TYPE
     end
 
-    # What happened when an {Intent} was attempted, journaled after the fact.
-    #
-    # `observed` is the tier's honesty flag: true means the effect was found
-    # ALREADY in place and confirmed rather than performed. Re-promoting a sha
-    # that is already pushed is an `ok` outcome with `observed` true and no
-    # force flag anywhere -- the `Handback#preserve` / `Salvage#already_committed?`
-    # doctrine that idempotency is asked of the world, never remembered locally.
-    #
-    # `detail` is the structured payload a reader needs and the digest does not
-    # carry: a PR number, a refusal reason, the sha a diverged remote actually
-    # holds. It defaults to `{}` rather than nil, so nothing downstream guards
-    # on its absence.
     Outcome = Data.define(:intent_id, :ok, :observed, :detail) do
       include Telemetry::Journalable
 
@@ -214,8 +203,21 @@ module Lain
       def observed? = observed
     end
 
-    # Reopened for its constant, for the reason {Intent} is.
+    # What happened when an {Intent} was attempted, journaled after the fact.
+    #
+    # `observed` is the tier's honesty flag: true means the effect was found
+    # ALREADY in place and confirmed rather than performed. Re-promoting a sha
+    # that is already pushed is an `ok` outcome with `observed` true and no
+    # force flag anywhere -- the `Handback#preserve` / `Salvage#already_committed?`
+    # doctrine that idempotency is asked of the world, never remembered locally.
+    #
+    # `detail` is the structured payload a reader needs and the digest does not
+    # carry: a PR number, a refusal reason, the sha a diverged remote actually
+    # holds. It defaults to `{}` rather than nil, so nothing downstream guards
+    # on its absence.
     class Outcome
+      # Reopened for its constant, for the reason {Intent} is.
+
       # See {Intent::JOURNAL_TYPE}.
       JOURNAL_TYPE = "forge_outcome"
 

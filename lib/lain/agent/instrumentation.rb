@@ -54,10 +54,10 @@ module Lain
       end
     end
 
-    # Reopened rather than continued inside the `Data.define` block: constants
-    # and nested classes declared in that block are lexically scoped to the
-    # enclosing module, not to the Data class (see Request::SYSTEM_PREFIX).
     class Instrumentation
+      # Reopened rather than continued inside the `Data.define` block: constants
+      # and nested classes declared in that block are lexically scoped to the
+      # enclosing module, not to the Data class (see Request::SYSTEM_PREFIX).
       BOTH_STYLES = "instrumentation: was passed together with %<legacy>s, which is what it CARRIES -- two " \
                     "answers to one wiring question. Pass the value or the individual keywords, not both."
       private_constant :BOTH_STYLES

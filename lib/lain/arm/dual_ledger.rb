@@ -129,16 +129,16 @@ module Lain
       end
     end
 
-    # The outer loop's run state, folded step by step. A RESULT CARRIER, not a
-    # value object (it holds a live Timeline, so it is deliberately not
-    # `Ractor.shareable?` -- the same posture {Arm::Run} takes): each transition
-    # returns a fresh Loop so {DualLedger#drive}'s `until` can reassign its
-    # handle without mutating shared state.
-    #
-    # `stalls` counts CONSECUTIVE no-progress steps; a step whose ledger
-    # signature advanced resets it to zero, and it tops out at `stall_limit`,
-    # which is when {#stalled?} flips and the arm replans.
     class DualLedger
+      # The outer loop's run state, folded step by step. A RESULT CARRIER, not a
+      # value object (it holds a live Timeline, so it is deliberately not
+      # `Ractor.shareable?` -- the same posture {Arm::Run} takes): each transition
+      # returns a fresh Loop so {DualLedger#drive}'s `until` can reassign its
+      # handle without mutating shared state.
+      #
+      # `stalls` counts CONSECUTIVE no-progress steps; a step whose ledger
+      # signature advanced resets it to zero, and it tops out at `stall_limit`,
+      # which is when {#stalled?} flips and the arm replans.
       Loop = Data.define(:ledger, :timeline, :steps, :stalls, :stall_limit, :settled) do
         def initialize(ledger:, stall_limit:, timeline: nil, steps: 0, stalls: 0, settled: false)
           super

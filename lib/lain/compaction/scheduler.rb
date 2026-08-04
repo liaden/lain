@@ -21,17 +21,18 @@ module Lain
     # output into rendering is WHICH pipeline this turn uses -- Compact swapped
     # in via T21's injected-pipeline seam, or the base strategy untouched.
     class Scheduler
+      Decision = Data.define(:action, :tier)
+
       # The policy's outcome for one turn, extracted as its own value so the
       # scheduler's branches NAME a decision rather than nest three conditionals
       # in one method (CLAUDE.md: a tripped Metrics/* cop here would be pointing
       # at this missing collaborator, not licensing a raised limit).
-      Decision = Data.define(:action, :tier)
-
-      # Reopened rather than bodied inside `Data.define(...) do ... end`: a
-      # constant declared in that block binds to the enclosing module, not the
-      # Data class (a known trap -- see Request::SYSTEM_PREFIX), so DEFER and its
-      # siblings must live here to be `Decision::DEFER`.
       class Decision
+        # Reopened rather than bodied inside `Data.define(...) do ... end`: a
+        # constant declared in that block binds to the enclosing module, not the
+        # Data class (a known trap -- see Request::SYSTEM_PREFIX), so DEFER and its
+        # siblings must live here to be `Decision::DEFER`.
+
         # @return [Boolean] whether this turn's render pipeline gains a Compact
         #   stage. A deferring decision renders exactly as the base strategy
         #   would -- the pass-through a non-compacting turn depends on.

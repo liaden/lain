@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 module Lain
-  # CE-5's transient scheduling signal and its failure record -- the provider
-  # round-trip's transient signals, not the durable stream they ride beside.
   module Telemetry
+    # CE-5's transient scheduling signal and its failure record -- the provider
+    # round-trip's transient signals, not the durable stream they ride beside.
+
     module Guards
       # A stream-started record must name the request whose response began
       # streaming -- there is no committed turn yet to name instead.

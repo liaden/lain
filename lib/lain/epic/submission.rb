@@ -2,11 +2,12 @@
 
 module Lain
   module Epic
-    # Reopened from {Records}' own `module Guards` (see that file's header): one
-    # validate-then-freeze carrier per record shape, checked BEFORE the
-    # auto-frozen Data value exists, so {Submission} never touches ActiveModel
-    # and stays `Ractor.shareable?`.
     module Guards
+      # Reopened from {Records}' own `module Guards` (see that file's header): one
+      # validate-then-freeze carrier per record shape, checked BEFORE the
+      # auto-frozen Data value exists, so {Submission} never touches ActiveModel
+      # and stays `Ractor.shareable?`.
+
       # `stage` IS restated here, unlike {Guards::StageTransition}'s deliberate
       # omission: a Submission is built directly by its own class methods below
       # rather than passed a caller-supplied stage, so there is no {Stage} value

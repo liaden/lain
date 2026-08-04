@@ -311,10 +311,11 @@ module Lain
     end
   end
 
-  # Reopened rather than nested mid-body -- the shutdown.rb idiom: each of
-  # these is its own responsibility, and the split keeps every class body
-  # within Metrics/ClassLength instead of loosening it.
   class Supervisor
+    # Reopened rather than nested mid-body -- the shutdown.rb idiom: each of
+    # these is its own responsibility, and the split keeps every class body
+    # within Metrics/ClassLength instead of loosening it.
+
     # One registry row: the role the adoption named, the live actor it holds,
     # the isolation {Isolation::Lease} that actor runs under, and the worker_id
     # that lease was taken under. State is DERIVED from the actor's own

@@ -68,11 +68,11 @@ module Lain
     # ("hoem") is a typo of "home", not of "epics_home".
     Epics = Data.define(:home, :gates)
 
-    # Reopened (not a body inside the `Data.define do ... end` block) because
-    # constants and nested classes defined THERE are lexically scoped to
-    # `Lain::Config`, not to `Epics` itself -- a documented trap, see
-    # `Request::SYSTEM_PREFIX` for the precedent.
     class Epics
+      # Reopened (not a body inside the `Data.define do ... end` block) because
+      # constants and nested classes defined THERE are lexically scoped to
+      # `Lain::Config`, not to `Epics` itself -- a documented trap, see
+      # `Request::SYSTEM_PREFIX` for the precedent.
       HOME_VALUES = %w[xdg repo].freeze
       KEYS = %w[home gates].freeze
 
@@ -137,9 +137,10 @@ module Lain
       # nobody configured still gets a policy, and no caller writes a nil guard.
       Gates = Data.define(:table)
 
-      # Reopened for {Epics}'s reason: constants and nested classes inside a
-      # `Data.define do ... end` block are scoped to the enclosing module.
       class Gates
+        # Reopened for {Epics}'s reason: constants and nested classes inside a
+        # `Data.define do ... end` block are scoped to the enclosing module.
+
         # The three refusals share a shape -- a path that may be absent (a value
         # built directly rather than loaded) and a message naming the sub-table
         # -- so the prefix is spelled once here instead of three times.
@@ -305,6 +306,8 @@ module Lain
       end
     end
 
+    Answers = Data.define(:allow, :deny, :deny_tools)
+
     # The `[approval]` table: the answers a human chose to remember, so a call
     # shape they have already ruled on is never put to them twice.
     # {Approval::Remembered} interprets them; this class only decides whether
@@ -328,12 +331,10 @@ module Lain
     #
     #   [[approval.deny_tool]]
     #   tool = "bash"
-    Answers = Data.define(:allow, :deny, :deny_tools)
-
-    # Reopened rather than written in the `Data.define` block, per
-    # {Request::SYSTEM_PREFIX}: nested constants declared there belong to the
-    # enclosing module instead.
     class Answers
+      # Reopened rather than written in the `Data.define` block, per
+      # {Request::SYSTEM_PREFIX}: nested constants declared there belong to the
+      # enclosing module instead.
       TOOL = "tool"
       INPUT = "input"
       # Two strengths keyed by call SHAPE, one by tool. Emacs'

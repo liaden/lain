@@ -4,41 +4,7 @@ require "active_model"
 
 module Lain
   class Tool
-    # A declarative description of a tool's input, from which BOTH the JSON Schema
-    # the model sees and the local validation are derived. One declaration, so the
-    # wire contract and the runtime check cannot drift apart -- the same reasoning
-    # that makes {Lain::Canonical} serve turn hashing and cache stability at once.
-    #
-    # ActiveModel also gives type coercion for free: a `:integer` attribute
-    # arrives as an Integer whether the model sent `30` or `"30"`.
-    #
-    # == Where the security boundary actually is
-    #
-    # These validations check *shape*, not *safety*. They exist to reject
-    # malformed calls early, with a legible message the model can learn from.
-    #
-    # They are NOT a security control, and must never be relied on as one. A
-    # validation over a shell command string is pattern-matching against an
-    # adversarially flexible grammar: `$(...)`, backticks, `${IFS}`, `eval`,
-    # `base64 -d | sh`, and glob expansion all defeat any allowlist regex you can
-    # write. A `format:` validator that "only permits safe commands" is a comforting
-    # lie.
-    #
-    # The real boundary lives in three other places:
-    #
-    #   1. Tool tier. A structured tool (`delete_file(path:)` calling `File.delete`)
-    #      has no string to interpolate. Prefer it to shelling out. A pre-canned
-    #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
-    #      no shell at all -- only a String command goes through `sh -c`.
-    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens.
-    #   3. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
-    #      out-of-process Rust exec boundary (M5/M6). A forked child is a process
-    #      boundary, not a security boundary: it inherits our uid, filesystem, and
-    #      network.
-    #
-    # So: validate that `timeout` is a positive integer under ten minutes. Do not
-    # pretend to validate that `command` is safe.
-    class Input
+    class Input # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
       include ActiveModel::Model
       include ActiveModel::Attributes
 
@@ -237,11 +203,46 @@ module Lain
       end
     end
 
-    # The machinery `field` is built from, in a REOPENED Input so the
-    # behavioural core above stays measurably small -- the same reason
-    # {Tool::Result} lives in a reopened {Tool}. None of it is DSL a tool author
-    # writes, so all of it is private.
+    # A declarative description of a tool's input, from which BOTH the JSON Schema
+    # the model sees and the local validation are derived. One declaration, so the
+    # wire contract and the runtime check cannot drift apart -- the same reasoning
+    # that makes {Lain::Canonical} serve turn hashing and cache stability at once.
+    #
+    # ActiveModel also gives type coercion for free: a `:integer` attribute
+    # arrives as an Integer whether the model sent `30` or `"30"`.
+    #
+    # == Where the security boundary actually is
+    #
+    # These validations check *shape*, not *safety*. They exist to reject
+    # malformed calls early, with a legible message the model can learn from.
+    #
+    # They are NOT a security control, and must never be relied on as one. A
+    # validation over a shell command string is pattern-matching against an
+    # adversarially flexible grammar: `$(...)`, backticks, `${IFS}`, `eval`,
+    # `base64 -d | sh`, and glob expansion all defeat any allowlist regex you can
+    # write. A `format:` validator that "only permits safe commands" is a comforting
+    # lie.
+    #
+    # The real boundary lives in three other places:
+    #
+    #   1. Tool tier. A structured tool (`delete_file(path:)` calling `File.delete`)
+    #      has no string to interpolate. Prefer it to shelling out. A pre-canned
+    #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
+    #      no shell at all -- only a String command goes through `sh -c`.
+    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens.
+    #   3. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
+    #      out-of-process Rust exec boundary (M5/M6). A forked child is a process
+    #      boundary, not a security boundary: it inherits our uid, filesystem, and
+    #      network.
+    #
+    # So: validate that `timeout` is a positive integer under ten minutes. Do not
+    # pretend to validate that `command` is safe.
     class Input
+      # The machinery `field` is built from, in a REOPENED Input so the
+      # behavioural core above stays measurably small -- the same reason
+      # {Tool::Result} lives in a reopened {Tool}. None of it is DSL a tool author
+      # writes, so all of it is private.
+
       # One element of an array field. Both shapes answer the same three
       # messages -- `cast` for a single raw value, `checked` for one vetted as
       # well as coerced, and `to_json_schema` for the `items` fragment -- so

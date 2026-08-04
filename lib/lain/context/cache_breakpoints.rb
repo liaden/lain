@@ -2,8 +2,6 @@
 
 module Lain
   class Context
-    # Reopens the combinators' shared carrier namespace (see prune.rb) to hold
-    # CacheBreakpoints's construction contract beside the class it guards.
     module Guards
       # `every` must stay strictly inside the lookback window, and `cap` must be
       # a positive marker budget. Validated on a throwaway carrier before the

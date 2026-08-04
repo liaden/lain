@@ -1,14 +1,15 @@
 # frozen_string_literal: true
 
 module Lain
-  # The three live-switch flips (/yolo's policy, /model's model, /mode's mode).
-  # Each is a DUMB CARRIER: the switch that emits it ({Approval::PolicySwitch}/
-  # {Context::ModelSwitch}/{Mode::Switch}) owns the from/to naming and keeps its
-  # own live `@current`; the record only serializes the flip. The discriminator
-  # strings "policy_switch"/"model_switch"/"mode_switch" derive from the class
-  # basename ({Journalable#journal_type}), and journal readers and replay match
-  # on them, so the class names must not drift.
   module Telemetry
+    # The three live-switch flips (/yolo's policy, /model's model, /mode's mode).
+    # Each is a DUMB CARRIER: the switch that emits it ({Approval::PolicySwitch}/
+    # {Context::ModelSwitch}/{Mode::Switch}) owns the from/to naming and keeps its
+    # own live `@current`; the record only serializes the flip. The discriminator
+    # strings "policy_switch"/"model_switch"/"mode_switch" derive from the class
+    # basename ({Journalable#journal_type}), and journal readers and replay match
+    # on them, so the class names must not drift.
+
     # A /yolo gate flip, attributed to the surface that made it -- "who turned
     # the gate off, and when" is evidence on a study bench, not incident
     # detail. `from`/`to` are the snake_case policy names {Approval::PolicySwitch}

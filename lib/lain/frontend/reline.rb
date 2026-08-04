@@ -206,10 +206,11 @@ module Lain
       end
     end
 
-    # Reopened rather than nested in the class body above -- the tty.rb idiom:
-    # each collaborator is its own responsibility, and the split keeps each
-    # body inside Metrics/ClassLength instead of loosening it.
     class LineEditor
+      # Reopened rather than nested in the class body above -- the tty.rb idiom:
+      # each collaborator is its own responsibility, and the split keeps each
+      # body inside Metrics/ClassLength instead of loosening it.
+
       # The process-global key-action registry.
       #
       # Global because everything beneath it already is: Reline is a singleton

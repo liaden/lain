@@ -121,11 +121,12 @@ module Lain
         end
       end
 
-      # The family, reopened after the base class body rather than nested inside
-      # it -- the {Effect::Handler} arrangement, and for its reason: a subclass
-      # needs its superclass to exist, and defining them after `private` would
-      # put class bodies in a section that reads as if it governed them.
       class Policy
+        # The family, reopened after the base class body rather than nested inside
+        # it -- the {Effect::Handler} arrangement, and for its reason: a subclass
+        # needs its superclass to exist, and defining them after `private` would
+        # put class bodies in a section that reads as if it governed them.
+
         # An asker whose answer is already known: it resolves the promise before
         # handing it back, so {Gate#call}'s await returns at once and no fiber
         # ever parks. A fresh {Lain::Promise} per ask, because resolution is

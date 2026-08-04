@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 module Lain
-  # The session-record FORMAT's lifecycle events (T13): how a session ended,
-  # how one run inside it ended, and the non-turn Events promoted into it.
   module Telemetry
+    # The session-record FORMAT's lifecycle events (T13): how a session ended,
+    # how one run inside it ended, and the non-turn Events promoted into it.
+
     # A session's final anchor, written by {SessionRecord::Scribe} on a graceful
     # close. `head` is the Timeline head digest at close (nil for a session that
     # committed nothing); `reason` names WHY the session ended -- an enum, closed
@@ -19,11 +20,12 @@ module Lain
       end
     end
 
-    # REASONS is reopened onto the class rather than declared inside the
-    # `Data.define ... do` block: a constant there is lexically scoped to the
-    # enclosing MODULE (Telemetry), not the Data class (the pinned Ruby trap the
-    # Request::SYSTEM_PREFIX comment records).
     class SessionClosed
+      # REASONS is reopened onto the class rather than declared inside the
+      # `Data.define ... do` block: a constant there is lexically scoped to the
+      # enclosing MODULE (Telemetry), not the Data class (the pinned Ruby trap the
+      # Request::SYSTEM_PREFIX comment records).
+
       # `:salvaged` (T18) is additive: no reader branches on a
       # {SessionClosed} reason's VALUE, only on its presence (that is what
       # tells {Bench::Session::Anchor} a session closed at all) and, here, on

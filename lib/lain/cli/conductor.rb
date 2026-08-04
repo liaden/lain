@@ -268,11 +268,12 @@ module Lain
       end
     end
 
-    # Reopened rather than nested in Conductor's own class body -- the shutdown.rb
-    # idiom: the ticker is its own responsibility (driving the TTY countdown from
-    # the coordinator's state), and the split keeps each body within
-    # Metrics/ClassLength instead of loosening it.
     class Conductor
+      # Reopened rather than nested in Conductor's own class body -- the shutdown.rb
+      # idiom: the ticker is its own responsibility (driving the TTY countdown from
+      # the coordinator's state), and the split keeps each body within
+      # Metrics/ClassLength instead of loosening it.
+
       # The countdown ticker: renders the TTY's grace-window UI from the
       # coordinator's state on a fixed cadence. Poll-driven, not transition-driven
       # (see {Conductor#build_shutdown}), so ONE cadence serves both the render and

@@ -1,10 +1,26 @@
 # frozen_string_literal: true
 
 module Lain
-  # Invocation grammar for a `you>` line: `/skill`, `@role/skill`, and
-  # `@role[/skill]`. See {Skill::Invocation}. Reopens the {Skill} value class
-  # (`Skill = Data.define`) to nest the parser under it.
   class Skill
+    Invocation = Data.define(:skill, :role, :context, :args) do
+      # `role` and `context` default nil (the in-line shape); `args`
+      # defaults to "" (a skill invoked with no remainder). Values are
+      # normalized to frozen Strings/Symbols so an instance stays
+      # `Ractor.shareable?` regardless of how the caller built it.
+      def initialize(skill:, role: nil, context: nil, args: "")
+        super(
+          skill: skill.to_s.freeze,
+          role: role&.to_s&.freeze,
+          context: context&.to_sym,
+          args: args.to_s.freeze
+        )
+      end
+
+      def inline? = context.nil?
+      def inherit? = context == :inherit
+      def fresh? = context == :fresh
+    end
+
     # A parsed `you>` line naming a skill invocation, or the frozen-value
     # counterpart of "this line is ordinary text" ({.parse} returns `nil`
     # rather than an instance for that case).
@@ -34,33 +50,18 @@ module Lain
     #   empty skill, unbalanced bracket), so it fails loudly instead of
     #   silently discarding the user's intent. A bare `@joel ...` (no `/`)
     #   is ordinary text and returns `nil`.
-    Invocation = Data.define(:skill, :role, :context, :args) do
-      # `role` and `context` default nil (the in-line shape); `args`
-      # defaults to "" (a skill invoked with no remainder). Values are
-      # normalized to frozen Strings/Symbols so an instance stays
-      # `Ractor.shareable?` regardless of how the caller built it.
-      def initialize(skill:, role: nil, context: nil, args: "")
-        super(
-          skill: skill.to_s.freeze,
-          role: role&.to_s&.freeze,
-          context: context&.to_sym,
-          args: args.to_s.freeze
-        )
-      end
-
-      def inline? = context.nil?
-      def inherit? = context == :inherit
-      def fresh? = context == :fresh
-    end
-
-    # Reopened rather than folded into the `Data.define` block above: per
-    # CLAUDE.md's known trap, a `class`/constant written INSIDE that block is
-    # lexically scoped to this file's enclosing module (`Lain::Skill`), not
-    # to the Data-defined class -- `Malformed` would land as
-    # `Lain::Skill::Malformed` instead of `Lain::Skill::Invocation::Malformed`.
-    # Reopening puts it, and the grammar regexes, where they read (see
-    # `lib/lain/request.rb` for the same pattern with `SYSTEM_PREFIX`).
     class Invocation
+      # Reopened rather than folded into the `Data.define` block above: per
+      # CLAUDE.md's known trap, a `class`/constant written INSIDE that block is
+      # lexically scoped to this file's enclosing module (`Lain::Skill`), not
+      # to the Data-defined class -- `Malformed` would land as
+      # `Lain::Skill::Malformed` instead of `Lain::Skill::Invocation::Malformed`.
+      # Reopening puts it, and the grammar regexes, where they read (see
+      # `lib/lain/request.rb` for the same pattern with `SYSTEM_PREFIX`).
+
+      # Raised for a line that ATTEMPTS the grammar and breaks it -- distinct from
+      # a line that is simply not an invocation, which parses to nil. See the
+      # disambiguation note on {Invocation} for why the two must not merge.
       class Malformed < Error; end
 
       IDENTIFIER = /[\w-]+/

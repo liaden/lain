@@ -1,23 +1,6 @@
 # frozen_string_literal: true
 
 module Lain
-  # A subagent role: a named capability attenuation plus a role-specific prompt
-  # slot. A role is the three-way join OM-5 describes -- {Toolset#only}
-  # attenuation, a role slot (`.lain/slots/role/<name>.md`, PS-3), and a spawn
-  # {Tool::SpawnPolicy::AttenuationPosture} -- packaged as a value a spawn seam
-  # reads. Possessing a Role is a recipe, not a running child: it yields the
-  # policy the {Tools::Subagent} tool takes and the system prelude the child
-  # renders, and nothing about the Subagent surface changes to consume them.
-  #
-  # == The prelude ordering (pinned)
-  #
-  # A role's rendered prelude is the role-invariant preamble FIRST -- the base
-  # system prompt every sibling role shares -- then the role-specific slot. The
-  # order is load-bearing money, not taste: the shared bulk sits above the cache
-  # line so heterogeneous sibling spawns share one warm prefix (CE-4), and only
-  # the short role tail differs. Two spawns of one role in a session render
-  # byte-identical (slots are session-fixed); two different roles share every
-  # byte up to their role slot.
   Role = Data.define(:name, :only) do
     # `name` is the catalog key (`:test_engineer`); `only` normalizes to frozen
     # Symbols -- the tool names this role attenuates the spawn's union down to.
@@ -81,11 +64,29 @@ module Lain
     end
   end
 
-  # Reopened rather than defined in the `Data.define ... do` block above: a
-  # constant declared inside that block scopes to the enclosing module, not the
-  # Data class (the trap {Request::SYSTEM_PREFIX} documents), so `Persona` would
-  # land as `Lain::Persona`, not `Role::Persona`.
+  # A subagent role: a named capability attenuation plus a role-specific prompt
+  # slot. A role is the three-way join OM-5 describes -- {Toolset#only}
+  # attenuation, a role slot (`.lain/slots/role/<name>.md`, PS-3), and a spawn
+  # {Tool::SpawnPolicy::AttenuationPosture} -- packaged as a value a spawn seam
+  # reads. Possessing a Role is a recipe, not a running child: it yields the
+  # policy the {Tools::Subagent} tool takes and the system prelude the child
+  # renders, and nothing about the Subagent surface changes to consume them.
+  #
+  # == The prelude ordering (pinned)
+  #
+  # A role's rendered prelude is the role-invariant preamble FIRST -- the base
+  # system prompt every sibling role shares -- then the role-specific slot. The
+  # order is load-bearing money, not taste: the shared bulk sits above the cache
+  # line so heterogeneous sibling spawns share one warm prefix (CE-4), and only
+  # the short role tail differs. Two spawns of one role in a session render
+  # byte-identical (slots are session-fixed); two different roles share every
+  # byte up to their role slot.
   class Role
+    # Reopened rather than defined in the `Data.define ... do` block above: a
+    # constant declared inside that block scopes to the enclosing module, not the
+    # Data class (the trap {Request::SYSTEM_PREFIX} documents), so `Persona` would
+    # land as `Lain::Persona`, not `Role::Persona`.
+
     # A {Role} paired with the session {Prompt::Slots}, so a spawn seam can
     # reshape a child's factory Context into the role persona
     # ({Role#child_context}) without itself carrying either dependency. The seam
@@ -96,11 +97,11 @@ module Lain
       def child_context(context) = role.child_context(context, slots:)
     end
 
-    # Reopened (the effect/handler idiom) to hold the Null identity beside the
-    # value: no role wired means the child keeps the factory Context
-    # byte-for-byte, so every pre-RES spawn path renders identically. Frozen --
-    # deep immutability is the shareable-value discipline.
     class Persona
+      # Reopened (the effect/handler idiom) to hold the Null identity beside the
+      # value: no role wired means the child keeps the factory Context
+      # byte-for-byte, so every pre-RES spawn path renders identically. Frozen --
+      # deep immutability is the shareable-value discipline.
       Null = Class.new do
         def child_context(context) = context
       end.new.freeze

@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 module Lain
-  # T16's run-state records, all emitted by {Session::Journaled} -- the
-  # decorator that keeps {Session} itself journal-ignorant, so neither the
-  # Agent nor any tool ever constructs one directly.
   module Telemetry
+    # T16's run-state records, all emitted by {Session::Journaled} -- the
+    # decorator that keeps {Session} itself journal-ignorant, so neither the
+    # Agent nor any tool ever constructs one directly.
+
     module Guards
       # A read record must name the file read.
       class SessionRead < Guard

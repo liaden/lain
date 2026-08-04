@@ -29,9 +29,10 @@ module Lain
     # class, so `PrefixStrategy` would not be found (the trap `Request` documents).
     SpawnPolicy = Data.define(:prefix, :posture, :only)
 
-    # Reopened (not a `Data.define ... do` block) so its constants resolve
-    # against the Data class -- see the note on {SpawnPolicy} above.
     class SpawnPolicy
+      # Reopened (not a `Data.define ... do` block) so its constants resolve
+      # against the Data class -- see the note on {SpawnPolicy} above.
+
       # `prefix`/`posture` accept either a strategy instance or its short name
       # (`:fresh`, `:handler_union`) so a caller writes the arm, not a
       # constructor. `only` normalizes to a frozen Array of Strings -- the same

@@ -162,12 +162,13 @@ module Lain
       end
     end
 
-    # Reopened rather than grown inside the body above -- tty.rb's idiom: each
-    # collaborator is its own responsibility, and the split keeps each body
-    # inside Metrics/ClassLength instead of loosening it. This half (T13) is
-    # what fills the renderer seam: a prompt composed from the run's own state
-    # through {Lain::Ext::Prompt}, the format language the extension compiles.
     class PromptComposer
+      # Reopened rather than grown inside the body above -- tty.rb's idiom: each
+      # collaborator is its own responsibility, and the split keeps each body
+      # inside Metrics/ClassLength instead of loosening it. This half (T13) is
+      # what fills the renderer seam: a prompt composed from the run's own state
+      # through {Lain::Ext::Prompt}, the format language the extension compiles.
+
       # The prompt lain ships with, beside {Lain::Prompt}'s other prompt assets
       # under `lib/lain/prompt/`. `lain.gemspec` builds `spec.files` from `git
       # ls-files` with a reject list that spares `lib/`, so a committed TOML

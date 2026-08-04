@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 module Lain
-  # The durable per-turn/per-request telemetry stream: what left for the
-  # model, what it cost, and what a tool produced.
   module Telemetry
+    # The durable per-turn/per-request telemetry stream: what left for the
+    # model, what it cost, and what a tool produced.
+
     module Guards
       # A dropped-event count must be a positive Integer.
       class Dropped < Guard

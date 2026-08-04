@@ -5,6 +5,8 @@ require "tempfile"
 
 module Lain
   module Epic
+    Home = Data.define(:slug, :path)
+
     # Where one epic's human-facing markdown lives, and the only door to it.
     #
     # Two homes, chosen by `[epics] home` in `.lain/config.toml` and nothing
@@ -19,13 +21,12 @@ module Lain
     # status is the Journal fold, not a file here, so nothing in this directory
     # can disagree with the run that produced it. What lives here is what a human
     # reads and edits.
-    Home = Data.define(:slug, :path)
-
-    # Reopened rather than written as a `Data.define do ... end` block: a
-    # constant or nested class defined THERE is lexically scoped to `Lain::Epic`,
-    # so `MalformedName` and `Artifact` would be invisible to the very methods
-    # that raise and build them (the documented trap; see `Request::SYSTEM_PREFIX`).
     class Home
+      # Reopened rather than written as a `Data.define do ... end` block: a
+      # constant or nested class defined THERE is lexically scoped to `Lain::Epic`,
+      # so `MalformedName` and `Artifact` would be invisible to the very methods
+      # that raise and build them (the documented trap; see `Request::SYSTEM_PREFIX`).
+
       # A slug or an issue id being used as a filename. NOT {Epic::ID_RESERVED}:
       # that grammar reserves what the markdown needs (backticks delimit an id in
       # a heading, line breaks end one), and it is entirely satisfied by

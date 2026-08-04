@@ -37,6 +37,67 @@ YARD/MismatchName:
   EnforcedStylePrototypeName: before
   AutoCorrect: false
 
+# These classes are REOPENED -- `Foo = Data.define(...)` and then `class Foo` for the
+# constants and nested classes a `Data.define` block cannot hold (they would scope to the
+# enclosing module; the trap `Request::SYSTEM_PREFIX` documents). Each is documented at its
+# definition, which this cop cannot see because it judges one node at a time.
+#
+# A comment on the reopen is not an option: YARD attaches it to the same namespace and keeps
+# the LAST docstring, so any comment here -- prose, `:nodoc:`, even a `rubocop:disable`
+# directive -- becomes the published class documentation and DISCARDS the real one. That was
+# the live defect this list exists to have fixed, not a hypothetical.
+#
+# Listed by name rather than excluded by path so the cop keeps guarding everything else in
+# these files. Only names that appear ONCE in lib/ are listed: a reopened class whose bare
+# name recurs (Input, Report, Decision, Outcome, Entry, Call, Reply) would blind the cop
+# repo-wide, so those files carry their documentation on the reopen instead.
+#
+# Three of those -- Tool::Input, Tools::Subagent, Frontend::Completion -- are split for
+# Metrics/ClassLength rather than the Data.define trap, so BOTH halves are `class` keywords
+# the cop inspects and the bare one cannot be a `casgn` it skips. Each carries a SAME-LINE
+# `# rubocop:disable Style/Documentation` instead. That works only because the real doc sits
+# on the LATER half: YARD does read a trailing comment as a docstring, and last one wins, so
+# moving the documentation back above the first half would publish the directive text as the
+# class's documentation. If you move it, delete the directive in the same edit.
+Style/Documentation:
+  AllowedConstants:
+    - CacheProfile
+    - Classification
+    - Conductor
+    - Consolidation
+    - DualLedger
+    - Epics
+    - Fault
+    - Gates
+    - HumanReplies
+    - Improvement
+    - Instrumentation
+    - Intent
+    - IssueTransition
+    - Keepsake
+    - Layer
+    - LineEditor
+    - ModeState
+    - Occupancy
+    - Persona
+    - Poisoned
+    # Not a Data.define: `Approval::Gate::Policy` is a real class reopened for its
+    # subclass family, so BOTH occurrences are `class` keywords the cop judges
+    # independently and one of them must go bare. The only other `Policy` in lib/
+    # (Capability::Policy) is documented, so listing the name costs nothing today.
+    - Policy
+    - PromptComposer
+    - Request
+    - RequestReview
+    - Resolution
+    - Ruling
+    - SessionClosed
+    - Shutdown
+    - SpawnPolicy
+    - TTY
+    - Usage
+    - WorkerHandoff
+
 Style/StringLiterals:
   EnforcedStyle: double_quotes
 

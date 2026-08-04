@@ -57,12 +57,16 @@ module Lain
     # NameError at load. A follow-up ticket owns it.
     Resolution = Data.define(:toolset, :gate_policy, :snapshot_scope)
 
-    # Reopened rather than written inside a `Data.define ... do` block: constants
-    # declared there scope to the enclosing module, so `GATE_POLICIES` would
-    # land as `Lain::Mode::GATE_POLICIES` and `Unknown` as `Lain::Mode::Unknown`
-    # (the trap {Request::SYSTEM_PREFIX} documents). Keeping `.for` here too
-    # puts the factory in the same scope as the table it reads.
     class Resolution
+      # Reopened rather than written inside a `Data.define ... do` block: constants
+      # declared there scope to the enclosing module, so `GATE_POLICIES` would
+      # land as `Lain::Mode::GATE_POLICIES` and `Unknown` as `Lain::Mode::Unknown`
+      # (the trap {Request::SYSTEM_PREFIX} documents). Keeping `.for` here too
+      # puts the factory in the same scope as the table it reads.
+
+      # Raised when a posture names a gate policy or capability nothing declares.
+      # Loud rather than defaulted: a silently-dropped policy is an approval gate
+      # that quietly stops guarding.
       class Unknown < Error; end
 
       # Takes the whole {Mode} and reads only `posture` from it. Deliberate: a

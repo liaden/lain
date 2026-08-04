@@ -165,6 +165,8 @@ module Lain
           def fingerprint = Canonical.digest(@name).split(":").last[0, 12]
         end
 
+        Outcome = Data.define(:kind, :worker_key, :ref, :paths, :parent_state, :detail)
+
         # What a handback did, and -- the field its caller's next move depends on
         # -- what state that left the parent checkout in.
         #
@@ -193,12 +195,13 @@ module Lain
         # version at all, and an aborted merge would hand it a clean checkout
         # with nothing to resolve. {Handback#continue} and {Handback#abandon} are
         # how it ends; `#merge_in_progress?` is how a caller asks.
-        Outcome = Data.define(:kind, :worker_key, :ref, :paths, :parent_state, :detail)
-
-        # Reopened rather than declared in a `Data.define ... do` block: a
-        # constant there is lexically scoped to the enclosing module, not to the
-        # Data class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
         class Outcome
+          # Reopened rather than declared in a `Data.define ... do` block: a
+          # constant there is lexically scoped to the enclosing module, not to the
+          # Data class (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
+
+          # Every way a handback can end, closed so a caller's branch is total and a
+          # kind nobody handles fails at construction rather than in a reader.
           KINDS = %i[nothing_to_do merged conflicted declined failed].freeze
 
           def initialize(kind:, worker_key:, ref: nil, paths: [], parent_state: :untouched, detail: "")

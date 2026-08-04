@@ -62,13 +62,13 @@ module Lain
     end
   end
 
-  # The monoid identity as a frozen shared value. A constant, not a memoized
-  # class ivar (`@zero ||=`), so there is no first-call race to reason about --
-  # and defined by REOPENING the class, because a constant set inside the
-  # `Data.define` block above would scope to `Lain`, not `Usage` (CLAUDE.md).
   class Usage
     include Algebra::CommutativeMonoid
 
+    # The monoid identity as a frozen shared value. A constant, not a memoized
+    # class ivar (`@zero ||=`), so there is no first-call race to reason about --
+    # and defined by REOPENING the class, because a constant set inside the
+    # `Data.define` block above would scope to `Lain`, not `Usage` (CLAUDE.md).
     ZERO = new.freeze
 
     def self.zero = ZERO

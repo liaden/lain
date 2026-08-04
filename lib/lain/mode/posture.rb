@@ -2,6 +2,19 @@
 
 module Lain
   class Mode
+    Posture = Data.define(:name, :permits, :gate_policy, :snapshot_scope, :lighter) do
+      # The session's capability set as this posture allows it. Delegated rather
+      # than reached through, so a caller holds a posture and never a Permits.
+      #
+      # @param toolset [Lain::Toolset] the session's full set
+      # @return [Lain::Toolset] the same object under an unattenuating posture,
+      #   a new attenuated one under `plan`
+      # @raise [Lain::Toolset::UnknownTool] when this posture names a tool the
+      #   given set does not hold -- loud, at the honest place, exactly as
+      #   {Role#attenuate} fails
+      def attenuate(toolset) = permits.attenuate(toolset)
+    end
+
     # One rung of the posture ladder -- the single exclusive slot that governs
     # how a turn's output is interpreted. A posture DECLARES four things and
     # resolves none of them: the capability set it permits, the name of a gate
@@ -46,24 +59,12 @@ module Lain
     # a second `toolset.only` written at the resolution seam would be a copy of
     # a rule that has one home -- and the copy is the one that would go on
     # granting after this list changed.
-    Posture = Data.define(:name, :permits, :gate_policy, :snapshot_scope, :lighter) do
-      # The session's capability set as this posture allows it. Delegated rather
-      # than reached through, so a caller holds a posture and never a Permits.
-      #
-      # @param toolset [Lain::Toolset] the session's full set
-      # @return [Lain::Toolset] the same object under an unattenuating posture,
-      #   a new attenuated one under `plan`
-      # @raise [Lain::Toolset::UnknownTool] when this posture names a tool the
-      #   given set does not hold -- loud, at the honest place, exactly as
-      #   {Role#attenuate} fails
-      def attenuate(toolset) = permits.attenuate(toolset)
-    end
-
-    # Reopened rather than written inside the `Data.define ... do` block above:
-    # a constant declared in that block scopes to the enclosing module, not to
-    # the Data class (the trap {Request::SYSTEM_PREFIX} documents), so `Permits`
-    # would land as `Lain::Permits`.
     class Posture
+      # Reopened rather than written inside the `Data.define ... do` block above:
+      # a constant declared in that block scopes to the enclosing module, not to
+      # the Data class (the trap {Request::SYSTEM_PREFIX} documents), so `Permits`
+      # would land as `Lain::Permits`.
+      #
       # WHETHER a posture attenuates at all, as an object rather than as a list
       # that is sometimes nil. {All} is the Null Object three of the four rungs
       # hold, so nothing downstream ever writes `if posture.permits`.

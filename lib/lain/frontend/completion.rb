@@ -4,29 +4,7 @@ require "tty-cursor"
 
 module Lain
   module Frontend
-    # Fuzzy completion for the `/command` and `@path` token at the end of the
-    # prompt's buffer, drawn as lain's own menu and reached through
-    # {LineEditor}'s key-action seam.
-    #
-    # Reline's own completion cannot do this. `filter_normalize_candidates`
-    # applies `item.start_with?(target)` to everything a `completion_proc`
-    # returns (reline 0.6.3, line_editor.rb:802-814), so a fuzzy candidate --
-    # which by definition need not start with what was typed -- is silently
-    # dropped. Not overridable from outside; hence a menu of our own.
-    #
-    # SYNCHRONOUS AND NON-BLOCKING, and that is not a style preference. The
-    # handler runs ON Reline's input loop, where Reline's INT trap only sets a
-    # flag that the same loop reads, so anything that waits here wedges the
-    # editor with nothing left to interrupt it. There is therefore no
-    # interactive pick loop: one keypress draws the alternatives and completes
-    # to the best of them, in one pass, and returns.
-    #
-    # The menu is drawn BELOW the line the editor is on -- save cursor, step
-    # down, clear from there to the bottom, print, restore cursor -- so Reline
-    # never sees the write and lain never has to model where Reline's cursor
-    # is. {#clear} erases the same region once the prompt has been answered,
-    # which is what keeps a menu from outliving the prompt it belongs to.
-    class Completion
+    class Completion # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
       # The one key lain claims for completion. `C-g` is the only other control
       # key free in ALL THREE keymaps lain binds -- emacs, vi_command and
       # vi_insert -- and it is spoken for; see {LineEditor::Registry::KEYMAPS}
@@ -168,10 +146,33 @@ module Lain
       end
     end
 
-    # Reopened rather than nested above -- the tty.rb idiom: each collaborator
-    # is its own responsibility, and the split keeps each body inside
-    # Metrics/ClassLength instead of loosening it.
+    # Fuzzy completion for the `/command` and `@path` token at the end of the
+    # prompt's buffer, drawn as lain's own menu and reached through
+    # {LineEditor}'s key-action seam.
+    #
+    # Reline's own completion cannot do this. `filter_normalize_candidates`
+    # applies `item.start_with?(target)` to everything a `completion_proc`
+    # returns (reline 0.6.3, line_editor.rb:802-814), so a fuzzy candidate --
+    # which by definition need not start with what was typed -- is silently
+    # dropped. Not overridable from outside; hence a menu of our own.
+    #
+    # SYNCHRONOUS AND NON-BLOCKING, and that is not a style preference. The
+    # handler runs ON Reline's input loop, where Reline's INT trap only sets a
+    # flag that the same loop reads, so anything that waits here wedges the
+    # editor with nothing left to interrupt it. There is therefore no
+    # interactive pick loop: one keypress draws the alternatives and completes
+    # to the best of them, in one pass, and returns.
+    #
+    # The menu is drawn BELOW the line the editor is on -- save cursor, step
+    # down, clear from there to the bottom, print, restore cursor -- so Reline
+    # never sees the write and lain never has to model where Reline's cursor
+    # is. {#clear} erases the same region once the prompt has been answered,
+    # which is what keeps a menu from outliving the prompt it belongs to.
     class Completion
+      # Reopened rather than nested above -- the tty.rb idiom: each collaborator
+      # is its own responsibility, and the split keeps each body inside
+      # Metrics/ClassLength instead of loosening it.
+
       # What is being completed: the run of non-space characters the buffer
       # ends in. The seam hands over a buffer and never a cursor, so "where the
       # human is typing" is the end of what they have typed -- which is also

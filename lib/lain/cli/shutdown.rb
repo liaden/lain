@@ -215,10 +215,11 @@ module Lain
       def positive?(seconds) = seconds.is_a?(Numeric) && seconds.positive?
     end
 
-    # Reopened rather than nested in the policy's own class body: the ingress is
-    # its own responsibility, and the split keeps each body within
-    # Metrics/ClassLength instead of loosening it.
     class Shutdown
+      # Reopened rather than nested in the policy's own class body: the ingress is
+      # its own responsibility, and the split keeps each body within
+      # Metrics/ClassLength instead of loosening it.
+
       # The self-pipe: the signal-safe ingress the policy machine reads from.
       #
       # Ruby defers Signal.trap bodies to safe VM checkpoints -- they do NOT run

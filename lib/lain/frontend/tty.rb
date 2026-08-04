@@ -264,8 +264,10 @@ module Lain
       #
       # @param deadline [Numeric] absolute time (same clock as the injected
       #   `clock:`) the window closes
-      # @param options [Hash] `:coordinator` (`#signal`, required), `:bindings`
-      #   (single-char key -> {CLI::Shutdown} input symbol, defaults to c/w/r)
+      # @param options [Hash] the window's collaborators, passed through whole
+      # @option options [#signal] :coordinator required; where a pressed key lands
+      # @option options [Hash] :bindings single-char key -> {CLI::Shutdown} input
+      #   symbol; defaults to c/w/r
       def render_countdown(deadline:, options:)
         @countdown.render(deadline:, options:)
       end
@@ -387,10 +389,11 @@ module Lain
       end
     end
 
-    # Reopened rather than nested in TTY's own class body -- the shutdown.rb
-    # idiom: each collaborator is its own responsibility, and the split keeps
-    # each body within Metrics/ClassLength instead of loosening it.
     class TTY
+      # Reopened rather than nested in TTY's own class body -- the shutdown.rb
+      # idiom: each collaborator is its own responsibility, and the split keeps
+      # each body within Metrics/ClassLength instead of loosening it.
+
       private
 
       # The three collaborators {#read_line_with_history} drives, in the order
@@ -743,8 +746,10 @@ module Lain
         end
 
         # @param deadline [Numeric] absolute time, same clock as `clock:`
-        # @param options [Hash] `:coordinator` (`#signal`, required),
-        #   `:bindings` (single-char key -> input symbol, default c/w/r)
+        # @param options [Hash] the window's collaborators, passed through whole
+        # @option options [#signal] :coordinator required; where a pressed key lands
+        # @option options [Hash] :bindings single-char key -> input symbol;
+        #   defaults to {DEFAULT_BINDINGS}
         def render(deadline:, options:)
           bindings = options.fetch(:bindings, DEFAULT_BINDINGS)
           line = status_line(deadline, bindings)

@@ -41,11 +41,12 @@ module Lain
       def published = { "posture" => posture, "layers" => layers, "mode_lighter" => lighter }
     end
 
-    # Reopened rather than written inside the `Data.define ... do` block: a
-    # constant declared in that block scopes to the enclosing module, not to
-    # the Data class (the trap {Request::SYSTEM_PREFIX} documents), so `NONE`
-    # would land as `Lain::StatusFeed::NONE`.
     class ModeState
+      # Reopened rather than written inside the `Data.define ... do` block: a
+      # constant declared in that block scopes to the enclosing module, not to
+      # the Data class (the trap {Request::SYSTEM_PREFIX} documents), so `NONE`
+      # would land as `Lain::StatusFeed::NONE`.
+
       # `mode_lighter` is the first FREE-FORM string this feed publishes, and
       # {.lighter_of}'s degradation path can put a foreign journal's raw name
       # in it. Everything else on the HUD is a glyph, a count or a percentage,

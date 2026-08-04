@@ -84,10 +84,11 @@ module Lain
     # number, and cannot drift apart.
     Occupancy = Data.define(:used_tokens, :window_tokens)
 
-    # Reopened rather than filled in through `Data.define`'s block: constants
-    # declared inside that block are lexically scoped to the ENCLOSING module,
-    # and {None} has to hang off Occupancy itself (CLAUDE.md's trap list).
     class Occupancy
+      # Reopened rather than filled in through `Data.define`'s block: constants
+      # declared inside that block are lexically scoped to the ENCLOSING module,
+      # and {None} has to hang off Occupancy itself (CLAUDE.md's trap list).
+
       # The window, coerced and checked. Zero and negative windows never raise
       # on their own -- they read as Infinity and NaN, and a NaN ratio also
       # breaks `==` for a caller holding two readings -- so a bad denominator

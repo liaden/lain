@@ -36,10 +36,11 @@ module Lain
       def to_s = lighter.empty? ? name.to_s : "#{name} (#{lighter})"
     end
 
-    # Reopened rather than written inside the block above, for the same reason
-    # the comment there gives: nested classes and constants declared in a
-    # `Data.define` block do not land on the Data class.
     class Layer
+      # Reopened rather than written inside the block above, for the same reason
+      # the comment there gives: nested classes and constants declared in a
+      # `Data.define` block do not land on the Data class.
+
       # The lighter obligation, as validate-then-freeze. It lives on a throwaway
       # {Lain::Guard} carrier because a frozen value must never include
       # ActiveModel itself -- `valid?` leaves mutable ivars behind and

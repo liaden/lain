@@ -23,10 +23,11 @@ module Lain
   # `#cache_profile` with one of the instances below instead.
   CacheProfile = Data.define(:ttl, :min_prefix_tokens, :write_multiplier, :read_multiplier, :tiered_invalidation)
 
-  # Reopened, NOT a `Data.define ... do` block: a constant defined inside that
-  # block resolves against the enclosing module (`Lain`), not the Data class
-  # itself -- the trap `Request::SYSTEM_PREFIX` documents (CLAUDE.md).
   class CacheProfile
+    # Reopened, NOT a `Data.define ... do` block: a constant defined inside that
+    # block resolves against the enclosing module (`Lain`), not the Data class
+    # itself -- the trap `Request::SYSTEM_PREFIX` documents (CLAUDE.md).
+
     # Anthropic's minimum cacheable prefix (Opus 4.8/4.7, verified via the
     # claude-api skill): a prompt that ends under this many tokens silently
     # does not cache, with no error. The one home for the constant that

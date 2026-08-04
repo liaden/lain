@@ -45,6 +45,12 @@ module Lain
       # not the repair -- a session pinned that way stops compacting for as
       # long as the pin stands -- which is why the record carries the streak.
       class Derived
+        Outcome = Data.define(:replay, :hits, :misses) do
+          # The derivation refused this turn's chain; the caller renders
+          # uncompacted.
+          def refused? = replay.nil?
+        end
+
         # What this turn renders through, and what finding out cost.
         #
         # `hits`/`misses` are the POLICY's, not a snapshot's: a mis-keyed
@@ -52,16 +58,11 @@ module Lain
         # ({SummarySnapshot}'s discipline, `summary_snapshot.rb:23-30`), and
         # after this card the address that matters is the one the strategy
         # keys its answers under.
-        Outcome = Data.define(:replay, :hits, :misses) do
-          # The derivation refused this turn's chain; the caller renders
-          # uncompacted.
-          def refused? = replay.nil?
-        end
-
-        # Reopened rather than bodied inside the `Data.define(...) do ... end`
-        # block: a constant declared there binds to the enclosing module, not to
-        # the Data class (the trap {Request::SYSTEM_PREFIX} records).
         class Outcome
+          # Reopened rather than bodied inside the `Data.define(...) do ... end`
+          # block: a constant declared there binds to the enclosing module, not to
+          # the Data class (the trap {Request::SYSTEM_PREFIX} records).
+
           # A turn that deferred before any derivation was attempted. The rates
           # are honest zeros rather than the last derivation's, which is what
           # keeps a bench reading `summary_hits` from folding warm defers into

@@ -216,10 +216,11 @@ module Lain
     end
   end
 
-  # Reopened rather than nested mid-body -- supervisor.rb's own idiom: each of
-  # these is its own responsibility, and the split keeps every class body
-  # within Metrics/ClassLength instead of loosening it.
   class Supervisor
+    # Reopened rather than nested mid-body -- supervisor.rb's own idiom: each of
+    # these is its own responsibility, and the split keeps every class body
+    # within Metrics/ClassLength instead of loosening it.
+
     class Restart
       # The write side of the sidecar: an {Event::ChainWriter} observer
       # decorator on the SAME seam the session scribe occupies, so wiring is
