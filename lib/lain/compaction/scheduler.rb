@@ -162,6 +162,12 @@ module Lain
       # object), so a non-compacting turn renders byte-identically to a
       # scheduler-free run and journals nothing.
       #
+      # @param need [Need::Result] the fired need-signals (T16), forwarded
+      #   straight into {#evaluate} to decide whether THIS turn compacts
+      # @param cold [Boolean] the cache is confirmed cold (T17), forwarded
+      #   straight into {#evaluate}
+      # @param history_size [Integer] measured in {#initialize}'s hard_cap unit,
+      #   forwarded straight into {#evaluate}
       # @param base [#call, #requires] the strategy `#render` would use
       #   otherwise -- a Combinator, or a `->(workspace)` provider (T21's
       #   injected-pipeline shape)

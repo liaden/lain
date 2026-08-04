@@ -34,8 +34,8 @@ module Lain
     # needs nothing from the Provider, which is the base default.
     class Prune < Combinator
       # @param keep_last [Integer, nil] keep only the trailing N messages
-      # @param predicate [#call(Hash) -> bool, nil] keep messages it returns
-      #   true for, via a block
+      # @param predicate [#call, nil] keep messages it returns true for, via a
+      #   block; (Hash) -> Boolean
       # @param protected_patterns [ProtectedPatterns] spans that survive
       #   regardless of keep_last:/predicate -- defaults to {ProtectedPatterns::NONE},
       #   the no-op policy, so an unconfigured Prune behaves exactly as it

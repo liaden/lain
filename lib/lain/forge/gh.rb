@@ -253,6 +253,8 @@ module Lain
         invoke(argv) { |shell| parsed(argv, shell) }
       end
 
+      # @param ref [String, Integer] whatever `gh pr view` takes positionally --
+      #   a pull request number, branch name, or URL
       # @param fields [Array<String, Symbol>] gh `--json` field names
       # @return [Answer] `value` is the parsed document
       def pr_view(ref:, fields:)

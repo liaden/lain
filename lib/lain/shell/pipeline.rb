@@ -162,6 +162,11 @@ module Lain
       #   a nil value scrubbing a key -- the {WorkerEnv} contract, which `spawn`
       #   implements natively.
       # @param timeout [Numeric] seconds before the process groups are killed
+      # @param stdout_sink [#<<] where each stage's stdout bytes are pumped as
+      #   they arrive; default is {Sink::Null}, which drops them
+      # @param stderr_sink [#<<] where each stage's stderr bytes are pumped as
+      #   they arrive, and where a refusal's own message is written when the
+      #   term never runs at all; default is {Sink::Null}, which drops them
       # @return [Result] for every TERM, including every one that cannot run --
       #   which is the totality that matters, because a term is built from a
       #   {Tool::Input} the model wrote. NOT for every OBJECT: a term that is not

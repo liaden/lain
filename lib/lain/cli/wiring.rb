@@ -111,6 +111,10 @@ module Lain
         # first mentioned INSIDE the block parses as a method call and raises
         # there instead, which is the whole reason the nil is written out.
         #
+        # @param parent [Timeline, #call] the live parent-Timeline handle ({AskHuman}'s
+        #   own `parent:`) -- a Timeline or a thunk reading one, since the toolset is
+        #   built before the Agent; the shared Store and the asker's identity both
+        #   ride on it
         # @param agent [String, nil] what a human is told is asking, when this
         #   asker has a name worth reading (the main chat's, a child's role).
         #   Per-asker, never per-seam: one name for every arrival is the

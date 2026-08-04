@@ -10,6 +10,8 @@ module Lain
     module StreamStartedSignal
       private
 
+      # @param request [Request] supplies the digest that identifies which round trip just
+      #   started streaming, threaded to both the Channel push and the caller's observer
       # @param on_stream_started [#call, nil] CE-5: called with the request's
       #   digest the instant the response begins streaming, IN ADDITION TO the
       #   {Telemetry::StreamStarted} pushed onto `@channel`. A second,

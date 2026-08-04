@@ -196,7 +196,14 @@ module Lain
       # spec reads `record(backend: Backend.new({provider: "gemini"}), provider:)`
       # on one line, and both are correct.
       #
+      # @param taskfile [String] path to the task file: prompts one per line,
+      #   blank lines skipped
+      # @param out [String] directory the recorded sessions are written into, as
+      #   `out/<i>.ndjson`
       # @param backend [Lain::CLI::Backend] the resolved provider-and-Context seam
+      # @param runs [Integer] how many fresh sessions to record; refused (not
+      #   truncated) if fractional or below one, since this command spends
+      #   money per run and a sweep of zero must not read as instant success
       # @param system [String, nil] `--system`, rendered INSTEAD of the project's
       #   prompt slots and attributed as such
       # @param provider [Lain::Provider, nil] injected in specs; nil asks the

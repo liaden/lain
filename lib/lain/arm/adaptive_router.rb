@@ -42,6 +42,8 @@ module Lain
       #   matching {Oracle::Router.heuristic}'s own default tier.
       # @param instrument [Instrument] times the ask and prices the journal --
       #   the same measuring collaborator every arm is injected with
+      # @param handoff [#reclaim, #surrender] forwarded to {Arm}'s lease bracket;
+      #   the worker-completion point this router's spawn resolves through
       def initialize(router:, name: "adaptive-router", definition: Oracle::Router.definition,
                      instrument: Instrument.new, handoff: Isolation::WorkerHandoff::Null)
         super(name:, handoff:)

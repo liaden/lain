@@ -74,7 +74,7 @@ module Lain
     # One round trip.
     # @param request [Lain::Request]
     # @return [Lain::Response]
-    def complete(_request)
+    def complete(request)
       raise NotImplementedError, "#{self.class} must implement #complete"
     end
 

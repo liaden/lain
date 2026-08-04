@@ -146,6 +146,9 @@ module Lain
       end
 
       # @param used_tokens [Integer, nil] nil is absence, and answers {None}
+      # @param window_tokens [Integer] the model's context-window size in
+      #   tokens -- the reading's denominator, resolved by {ContextWindow}
+      #   before either arm is built.
       # @return [Occupancy, Occupancy::None]
       def self.of(used_tokens:, window_tokens:)
         used_tokens.nil? ? None.new(window_tokens:) : new(used_tokens:, window_tokens:)

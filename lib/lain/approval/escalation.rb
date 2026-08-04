@@ -192,6 +192,8 @@ module Lain
       # {Effect::Handler::Gate}'s policy seam.
       #
       # @param effect [Effect::ToolCall] the call to judge, already unwrapped
+      # @param context [Object, nil] whatever {Effect::Handler} threads through
+      #   unexamined; forwarded to every rung's own `#call` untouched
       # @return [Boolean] whether the call may be performed
       def call(effect, context) = settle(effect, context).allow?
 

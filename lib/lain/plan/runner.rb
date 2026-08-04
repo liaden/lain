@@ -81,7 +81,7 @@ module Lain
       #
       # @param timeline [Timeline] the mainline root; a {ForkPerStep} policy is
       #   constructed from this SAME Timeline so the two never drift
-      # @param pipeline the initial render strategy (Combinator or provider)
+      # @param pipeline [Context::Combinator, Provider] the initial render strategy
       # @param workspace [Workspace] sent, not stored, into each render
       # @return [Report]
       def run(timeline:, pipeline:, workspace: Workspace.empty)

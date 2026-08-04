@@ -120,6 +120,8 @@ module Lain
         # is posted from inside {QuestionView}'s lock, so a blocking push
         # against a full queue would hold that lock -- and the same lock is what
         # a write in the editor takes.
+        # @param name [String] the lain:// buffer name
+        # @param lines [Array<String>]
         # @param digest [String] the set's content digest, stamped onto the
         #   buffer so every write and abandon says WHICH set it answers
         def post_question(name, lines, digest)
@@ -170,13 +172,6 @@ module Lain
       # loop, and inbound dispatch; being the door every renderer knocks on is
       # a second one, and this is it.
       class RenderInlet
-        # The backlog is BUILT here rather than injected: {RpcThread} holding
-        # both the queue and the door to it was how the five copies got there
-        # in the first place. The loop reaches it through {#drain} and
-        # {#close}, which is all the loop ever needed from it.
-        #
-        # @param waker [#call] wakes the select loop; never blocks
-        # @param capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
         # The two surfaces with no view object of their own to keep their
         # sentence in. {Compose::DETACHED} and {QuestionView::DETACHED} live
         # with the objects that answer them; a review has no such half, so its
@@ -189,6 +184,13 @@ module Lain
         # answers are four facts.
         UNREPORTED = "the editor did not take this notice"
 
+        # The backlog is BUILT here rather than injected: {RpcThread} holding
+        # both the queue and the door to it was how the five copies got there
+        # in the first place. The loop reaches it through {#drain} and
+        # {#close}, which is all the loop ever needed from it.
+        #
+        # @param waker [#call] wakes the select loop; never blocks
+        # @param capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
         def initialize(waker:, capacity: RenderQueue::DEFAULT_CAPACITY)
           @queue = RenderQueue.new(capacity:)
           @waker = waker
@@ -365,18 +367,18 @@ module Lain
           end
 
           # @param lines [Array<String>] the edited lain://request lines (4-2.3)
-          def resend(_lines)
+          def resend(lines)
             raise NotImplementedError, "#{self.class} must implement #resend"
           end
 
           # @param lines [Array<String>] the edited lain://compose lines (T15)
           # @param generation [Integer] which compose the editor is answering
-          def compose_written(_lines, _generation)
+          def compose_written(lines, generation)
             raise NotImplementedError, "#{self.class} must implement #compose_written"
           end
 
           # @param generation [Integer] which compose was unloaded unwritten
-          def compose_abandoned(_generation)
+          def compose_abandoned(generation)
             raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
           end
 
@@ -390,12 +392,12 @@ module Lain
           # @param lines [Array<String>] the buffer as the human left it
           # @param digest [String] the set this buffer was opened for
           # @return [String, nil] the failure naming the offending line, or nil
-          def question_written(_lines, _digest)
+          def question_written(lines, digest)
             raise NotImplementedError, "#{self.class} must implement #question_written"
           end
 
           # @param digest [String] the set whose buffer was unloaded unwritten
-          def question_abandoned(_digest)
+          def question_abandoned(digest)
             raise NotImplementedError, "#{self.class} must implement #question_abandoned"
           end
 

@@ -52,6 +52,9 @@ module Lain
       # @param client [Anthropic::BedrockMantleClient, nil] injected in specs;
       #   a real Mantle client otherwise (bearer token and region from
       #   `api_key:`/`aws_region:` or their env defaults).
+      # @param client_options [Hash] passed straight to
+      #   `Anthropic::BedrockMantleClient.new` when no `client:` is injected;
+      #   ignored entirely when one is
       def initialize(client: nil, **client_options)
         super()
         # Deferred for the reason given in {Provider::AnthropicReference#initialize}: the

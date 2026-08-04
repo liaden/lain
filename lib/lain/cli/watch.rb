@@ -31,6 +31,11 @@ module Lain
       #   surface); the exe hands the terminal in, specs hand a StringIO
       # @param path [String, nil] the session file to tail; nil follows this
       #   project's newest recorded session
+      # @param paths [Paths] resolves this project's session directory when
+      #   `path` is nil, so the newest recording can be found
+      # @param view [#lines] turns one admitted record into the plain-text lines
+      #   written to `sink` ({View}'s shape, over NDJSON records rather than
+      #   Channel events)
       # @param sleeper [#call] the poll wait, injectable so a spec tails
       #   deterministically instead of sleeping
       def initialize(selector:, sink:, path: nil, paths: Paths.new, view: View.new,

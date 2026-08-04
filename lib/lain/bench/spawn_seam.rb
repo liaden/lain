@@ -93,6 +93,15 @@ module Lain
       #
       # @param journal [#<<] where this run's {Telemetry::TurnUsage} lands, which
       #   is what prices exactly the turns this arm produced
+      # @param workspace [Lain::Workspace] sent into the spawned Agent's Request,
+      #   not stored; empty unless the task needs files
+      # @param timeline [Lain::Timeline, nil] the agent's root, when the caller
+      #   holds one directly ({Arm::DualLedger}'s per-step spawn)
+      # @param base_timeline [Lain::Timeline, nil] the agent's root, when the
+      #   caller only has a fresh root over another's store
+      #   ({Arm::OrchestratorWorker}'s per-worker spawn); falls back to `timeline`
+      # @param worker_env [Lain::WorkerEnv, nil] a lease's environment, threaded
+      #   into the spawned {Lain::Session}; nil lands on the process environment
       # @return [Lain::Agent] a fresh agent
       def call(journal:, workspace: Workspace.empty, timeline: nil, base_timeline: nil, worker_env: nil, **)
         Agent.new(provider: @provider, toolset: @toolset, context: @context,

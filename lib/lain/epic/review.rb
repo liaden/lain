@@ -329,12 +329,18 @@ module Lain
       # not reach.
       #
       # @param entries [Enumerable<Hash, String>] journal lines or records
+      # @param journal [#<<] where {ReviewOpened} and {ReviewClosed} land
+      # @param epic_slug [String] the epic whose artifacts this baton is for
       def self.from_journal(entries, journal:, epic_slug:)
         new(journal:, epic_slug:, replay: Replay.new(entries, epic_slug:))
       end
 
       # @param journal [#<<] where {ReviewOpened} and {ReviewClosed} land
       # @param epic_slug [String] the epic whose artifacts this baton is for
+      # @param replay [Replay] the open/settled sets and high-water generation
+      #   already folded from journal records; {.from_journal} builds one from
+      #   raw entries, and the default replays nothing so a bare `new` starts
+      #   empty.
       def initialize(journal:, epic_slug:, replay: Replay.new([], epic_slug:))
         @journal = journal
         @epic_slug = -epic_slug.to_s

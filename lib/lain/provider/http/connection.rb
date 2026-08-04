@@ -61,6 +61,12 @@ module Lain
           end
         end
 
+        # @param provider [HTTP::Provider] the owning provider; supplies `#headers` for
+        #   {#provider_headers}, `#configured?`/`#configuration_requirements` for the startup
+        #   check, and `#slug`/`#name` for instrumentation and the config-error message
+        # @param config [Provider::HTTP::Configuration] read by {#ensure_configured!} against the
+        #   provider's `configuration_requirements`, and forwarded unmodified into
+        #   {MiddlewareStack}
         # @param sink [Lain::Sink] where log lines go; default sends them nowhere
         # @param instrumenter [#call] `#call(name, payload) { }`; default is a no-op
         # @param log_level [Symbol] :debug also logs request/response bodies

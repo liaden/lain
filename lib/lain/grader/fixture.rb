@@ -33,7 +33,7 @@ module Lain
         freeze
       end
 
-      # @param subject the thing under test (a DryReplay, a run, anything)
+      # @param subject [Object] the thing under test (a DryReplay, a run, anything)
       # @return [Grade] score = fraction met; passes iff every criterion held
       def grade(subject)
         outcomes = @criteria.map { |criterion| [criterion, evaluate(criterion, subject)] }

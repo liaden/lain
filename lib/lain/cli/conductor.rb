@@ -121,6 +121,9 @@ module Lain
       # anything, so neither records.
       #
       # @param tty [#prompt]
+      # @param text [String] the prompt string rendered before the read; passed straight
+      #   through to {#read_breakable} unchanged -- this method owns the read's signal
+      #   handling, not the prompt's content
       # @return [String, nil] the line, or nil at EOF or on a signal-close
       def read_prompt(tty, text)
         line = read_breakable(tty, text)
@@ -275,6 +278,10 @@ module Lain
       # (see {Conductor#build_shutdown}), so ONE cadence serves both the render and
       # the erase.
       class CountdownTicker
+        # @param tty [#render_countdown, #stop_countdown] the terminal surface the grace-window
+        #   countdown renders to and erases from ({Frontend::TTY})
+        # @param tick [Numeric] the poll cadence, in seconds -- how often {#run} sleeps
+        #   between renders (or erasures) of the status line
         # @param suppressed [#call] -> Boolean, the conductor-owned flag that is
         #   true while an ask_human reply owns stdin ({Conductor#read_reply}); a
         #   suppressed tick renders nothing and reads no key, so Reline alone owns

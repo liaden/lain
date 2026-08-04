@@ -26,6 +26,8 @@ module Lain
       # the synthesis rather than silently dropped.
       Result = Data.define(:head_digest, :text, :error, :usage_records) do
         # @param head_digest [String] the worker's final turn, a valid causal parent
+        # @param text [String] the worker's answer text, folded into the
+        #   synthesized turn via {#combined}
         # @param usage_records [Array<Hash>] the worker's journal turn_usage records
         def self.ok(head_digest:, text:, usage_records: [])
           new(head_digest:, text: text.to_s, error: nil, usage_records:)

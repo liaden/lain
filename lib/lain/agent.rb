@@ -88,10 +88,60 @@ module Lain
     # The marker never escapes this constructor, and the NAMED default it stands
     # for is resolved once, inside {Collaborators}.
     #
+    # @param toolset [Lain::Toolset] the run's capability set, rendered into
+    #   every Request and shared with `tool_runner:` -- {Collaborators} refuses
+    #   construction if the two disagree.
+    # @param context [Lain::Context] the base rendering strategy, `(Timeline,
+    #   Toolset, Workspace) -> Request`. Asked for per turn through
+    #   `instrumentation.pipeline_source` rather than read off this ivar
+    #   directly, so a strategy that must re-decide every turn (compaction) has
+    #   somewhere to stand.
     # @param instrumentation [Instrumentation] where this run's records, phases
     #   and observers go. Defaults to the all-Null value: a run that reports
     #   nowhere, which is what an Agent built with no reporting keywords always
     #   was.
+    # @param model_caller [ModelCaller] the run's ModelCaller, handed over
+    #   WHOLE rather than built from `provider:`/`model_middleware:`. Defaults
+    #   to {Collaborators::OMITTED}; {Collaborators} resolves what an omitted
+    #   value means.
+    # @param provider [Provider] the raw provider a ModelCaller gets built over
+    #   when `model_caller:` is not written -- the INGREDIENT half of that same
+    #   collaborator, paired with `model_middleware:` on `instrumentation:`.
+    #   Defaults to {Collaborators::OMITTED}.
+    # @param tool_runner [ToolRunner] the run's ToolRunner, handed over WHOLE
+    #   rather than built from `handler:`/`tool_middleware:`/`tool_observer:`.
+    #   Defaults to {Collaborators::OMITTED}.
+    # @param handler [Effect::Handler] the tool-effect interpreter a ToolRunner
+    #   gets built over when `tool_runner:` is not written -- the INGREDIENT
+    #   half of that same collaborator. Defaults to {Collaborators::OMITTED}.
+    # @param accounting [Agent::Accounting] the run's token roll-up, handed
+    #   over WHOLE rather than built from `journal:`. Defaults to
+    #   {Collaborators::OMITTED}.
+    # @param timeline [Timeline, nil] the run's causal history. `nil` (the
+    #   default) builds an empty Timeline over a fresh {Store} -- the common
+    #   case; a caller resuming a session hands one in.
+    # @param workspace [Workspace] the sent-not-stored files/tools context
+    #   rendered into every Request. Frozen, and never appended to the
+    #   Timeline -- see the architecture note above {Workspace}'s own class.
+    # @param session [Session] the run's mutable scratch state (files read,
+    #   the todo list) -- deliberately off the Timeline, so forking or
+    #   rewinding it can never resurrect or lose one.
+    # @param mailbox [Context::Mailbox] pending actor messages folded into the
+    #   rendered tail (OM-3). Defaults to the Null combinator, which folds
+    #   nothing.
+    # @param budget [Budget] the ceilings that bound this autonomous loop; a
+    #   budget stop is the harness deciding to halt, not a model outcome.
+    # @param request_override [RequestOverride] the one-shot slot a frontend
+    #   resend queues an edited Request into (T18); the next dispatch sends it
+    #   byte-identically and the slot empties itself.
+    # @param snapshot_writer [Workspace::Snapshot] captures which files a
+    #   turn's tools wrote, as a causal-only Store event; a read-only turn
+    #   lands nothing.
+    # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
+    #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
+    #   accepted directly so every call site that predates `instrumentation:`
+    #   (T22) keeps its meaning; {Instrumentation.resolve} builds the value
+    #   from them, and writing both `instrumentation:` and one of these raises.
     def initialize(toolset:, context:, instrumentation: Collaborators::OMITTED,
                    model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
                    tool_runner: Collaborators::OMITTED, handler: Collaborators::OMITTED,

@@ -53,10 +53,16 @@ module Lain
 
       # @param transport [#sync_post, #stream] injected in specs; a real
       #   {Transport} over the vendored connection otherwise.
+      # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
+      #   {#build_config} from `api_key:`/`region:`/`api_base:`, leaving HTTP::Configuration's
+      #   vendored 300s/3-retry envelope in place (Mantle has no documented client default to
+      #   mirror).
       # @param channel [Lain::Channel] where retry events are journaled
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_key [String, nil] the bearer token; falls back to
       #   `AWS_BEARER_TOKEN_BEDROCK`
+      # @param api_base [String, nil] overrides `bedrock_api_base`; ignored when `config:` is
+      #   given directly
       # @param region [String, nil] the Mantle region; falls back to `AWS_REGION`
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      api_key: nil, api_base: nil, region: nil)

@@ -99,6 +99,7 @@ module Lain
         # beside `History#load`, which mutates process-global `Reline::HISTORY`
         # for the same reason at the same moment), never when it is built.
         #
+        # @param completion [Completion] the built instance to make {.current} and bind the key to
         # @param notify [#call] renders a warning line ({TTY#render_warning})
         def install(completion, notify: LineEditor::SILENT)
           @current = completion

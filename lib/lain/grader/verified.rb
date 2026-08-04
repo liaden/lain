@@ -56,7 +56,7 @@ module Lain
         @journal = journal
       end
 
-      # @param subject passed straight through to the inner grader
+      # @param subject [Object] passed straight through to the inner grader
       # @return [Enumerable<Finding>] only the findings that survived refutation
       def grade(subject)
         @inner.grade(subject).filter_map { |finding| verify(finding) }

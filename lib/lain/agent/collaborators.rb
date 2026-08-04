@@ -72,6 +72,21 @@ module Lain
       #   the journal an {Accounting} rolls up into. Defaults to the all-Null
       #   value, so a caller resolving collaborators alone gets what this class
       #   hard-coded before T22.
+      # @param model_caller [ModelCaller] the run's ModelCaller, handed over
+      #   whole. Left at {OMITTED} when the caller instead supplies
+      #   `provider:`/`model_middleware:` for this class to build one from.
+      # @param tool_runner [ToolRunner] the run's ToolRunner, handed over whole.
+      #   Left at {OMITTED} when the caller instead supplies
+      #   `handler:`/`tool_middleware:`/`tool_observer:` for this class to build
+      #   one from.
+      # @param accounting [Accounting] the run's Accounting, handed over whole.
+      #   Left at {OMITTED} when the caller instead supplies `journal:` for this
+      #   class to build one from.
+      # @param ingredients [Hash{Symbol => Object}] the legacy build-from
+      #   keywords -- `provider:`, `handler:`, `tool_middleware:`,
+      #   `tool_observer:`, `journal:` -- this class resolves into whichever
+      #   collaborator they belong to ({INGREDIENTS}), and where an unknown
+      #   keyword is refused ({#refuse_unknown}).
       def initialize(toolset:, instrumentation: Instrumentation.new, model_caller: OMITTED,
                      tool_runner: OMITTED, accounting: OMITTED, **ingredients)
         @toolset = toolset

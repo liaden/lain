@@ -155,7 +155,7 @@ module Lain
 
         # @param messages [Array<Hash>] one range's worth of messages
         # @return [Array<Hash>] the content blocks that replace them
-        def blocks(_messages)
+        def blocks(messages)
           raise NotImplementedError, "strategy #{name} must implement #blocks(messages) -> Array<Hash>"
         end
 

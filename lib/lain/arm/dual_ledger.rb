@@ -23,6 +23,7 @@ module Lain
       # or it never returns; this is that bound.
       DEFAULT_MAX_STEPS = 6
 
+      # @param name [String] this arm's label, in reports and Compare::Run names
       # @param stall_limit [Integer] K -- no-progress steps that trigger a replan
       # @param max_steps [Integer] the outer loop's hard ceiling
       # @param progress [#call] `call(ledger:, response:, timeline:) -> LedgerState`,
@@ -31,6 +32,11 @@ module Lain
       #   stall rewrites the plan; defaults to {DEFAULT_REPLANNER}
       # @param instrument [Instrument] times the whole drive and prices the run's
       #   journal -- the same measuring collaborator every arm is injected with
+      # @param journal_factory [#call] builds the per-run journal `Instrument#price`
+      #   will drain; inject one that tees pushes into a caller-held sink to
+      #   observe `ledger_transition` records before that drain empties them
+      # @param handoff [#reclaim, #surrender] forwarded to {Arm}'s lease bracket;
+      #   the worker-completion point this arm's lease resolves through
       def initialize(name: "dual-ledger", stall_limit: DEFAULT_STALL_LIMIT, max_steps: DEFAULT_MAX_STEPS,
                      progress: DEFAULT_PROGRESS, replanner: DEFAULT_REPLANNER, instrument: Instrument.new,
                      journal_factory: -> { Channel.new }, handoff: Isolation::WorkerHandoff::Null)

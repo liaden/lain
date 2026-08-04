@@ -79,6 +79,12 @@ module Lain
         #   time. Asking the rule for it here would be asking a rule that has
         #   just proved it can raise, from inside the rescue clause -- which is
         #   how the second raise escapes.
+        # @param call [Rule::Call] the call the raising rule was deciding, so
+        #   the fault can name the tool by `#tool_name` for a reader who has
+        #   only the journal
+        # @param error [StandardError] what the rule raised; only its class
+        #   and message survive into {Fault}, since the exception itself is
+        #   neither shareable nor JSON-safe
         def self.for(rule:, call:, error:)
           # An anonymous exception class answers a nil name, and a blank error
           # field is a record nobody can act on.

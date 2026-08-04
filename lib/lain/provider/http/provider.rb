@@ -51,6 +51,9 @@ module Lain
 
         attr_reader :config, :connection
 
+        # @param config [Provider::HTTP::Configuration] the vendor-specific settings (api key/base,
+        #   retry knobs, `log_stream_debug`); read here for the stream-debug flag and
+        #   `configured?`, then forwarded unmodified to a constructed {Connection}
         # @param connection [Connection, nil] injected whole in specs
         # @param sink [Lain::Sink] where streaming debug lines go, and forwarded
         #   to a constructed Connection; ignored for logging when `connection:`

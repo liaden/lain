@@ -49,10 +49,17 @@ module Lain
 
       # @param transport [#sync_post, #stream] injected in specs; a real
       #   {Transport} over the vendored connection otherwise.
+      # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
+      #   {#build_config}, which sets the 600s/2-retry envelope matching the old SDK client and
+      #   wires `retry_block` to `@retries`.
       # @param channel [Lain::Channel] where retry and stream_started (CE-5) events land
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param spool [#open_frame] where the raw response bytes are teed; the Null
       #   spool by default, so no WAL file exists unless a session opts in
+      # @param api_key [String, nil] falls back to `ANTHROPIC_API_KEY`; ignored when `config:`
+      #   is given directly
+      # @param api_base [String, nil] overrides `anthropic_api_base`; ignored when `config:` is
+      #   given directly
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      spool: Spool::Null.new, api_key: nil, api_base: nil)
         super()

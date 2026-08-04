@@ -56,6 +56,10 @@ module Lain
       # @param model [String] the embed model; defaults to the pinned one.
       # @param transport [#embed_post] injected in specs; a real {Transport} over
       #   the vendored connection otherwise.
+      # @param config [Configuration, nil] resolved options, `ollama_api_base`
+      #   included; built from `api_base:` when omitted, same as
+      #   {Provider::Ollama}'s own posture.
+      # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
       #   http://localhost:11434); no api key -- Ollama is local.
       def initialize(model: DEFAULT_MODEL, transport: nil, config: nil, sink: Sink::Null.new, api_base: nil)

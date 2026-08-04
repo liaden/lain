@@ -73,6 +73,12 @@ module Lain
       #   raw {Gh}. A second one could be wired to a different repo than the
       #   bracket, which is the mis-wiring {Promotion} documents at length.
       # @param scribe [#issue_moved] {Epic::Scribe}
+      # @param base [String] the branch the pull request lands against; {BASE}
+      #   unless the epic is targeting something other than the trunk
+      # @param title [String, nil] the pull request title; nil falls back to
+      #   the issue id itself
+      # @param body [String, nil] the pull request body; nil falls back to
+      #   "Land #{issue_id}"
       def initialize(epic_slug:, issue_id:, artifact:, sha:, gate:, promotion:, journaled:, scribe:,
                      base: BASE, title: nil, body: nil)
         @artifact = artifact

@@ -80,7 +80,11 @@ module Lain
       # own, or assemble their own table, instead of rendering a section per
       # metric.
       #
+      # @param arm [Object] the arm key this row labels, the same identity
+      #   {#sections}' block receives
       # @param dist [Distribution] that arm's samples, already folded
+      # @param fmt [#call] formats one stat value into its cell; the caller's job,
+      #   never this object's, so a BigDecimal cost reaches it as a BigDecimal
       # @return [Array<String>] `HEADERS.size` cells
       def row(arm, dist, fmt:)
         [@label.call(arm), dist.n.to_s, *stats(dist).map(&fmt)]

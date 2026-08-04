@@ -86,6 +86,12 @@ module Lain
       # context {Services::Compose#discover} invokes, and the lifecycle the
       # backend drives (`up`/`ps`/`down`).
       class Stack
+        # @param project [String] the `-p` name that scopes every compose
+        #   invocation to this worker's own stack
+        # @param compose_file [String] the `-f` path every compose invocation
+        #   on this Stack targets
+        # @param shell_out_factory [#call] builds the shell-out object each
+        #   `docker compose` invocation runs through
         # @param env [#[]] the environment SNAPSHOTTED at acquire for the daemon
         #   vars (defaults to the live process ENV); every call on this Stack
         #   then addresses the acquire-time daemon, so a mid-lease change can't

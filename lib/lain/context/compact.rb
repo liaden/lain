@@ -31,7 +31,7 @@ module Lain
       # @param threshold [Integer] byte-length proxy above which the head
       #   gets summarized
       # @param keep_last [Integer] trailing messages that stay verbatim
-      # @param summarizer [#call(Array<Hash>) -> String] pure, deterministic
+      # @param summarizer [#call] pure and deterministic; (Array<Hash>) -> String
       # @param protected_patterns [ProtectedPatterns] spans that survive the
       #   summarization pass verbatim, riding ahead of the summary message --
       #   defaults to {ProtectedPatterns::NONE}, the no-op policy, so an

@@ -85,6 +85,8 @@ module Lain
       # @param client [Anthropic::Client, nil] injected in specs; a real client
       #   reading ANTHROPIC_API_KEY from the environment otherwise.
       # @param channel [Lain::Channel] where CE-5's stream_started event lands
+      # @param client_options [Hash] passed straight to `Anthropic::Client.new`
+      #   when no `client:` is injected; ignored entirely when one is
       def initialize(client: nil, channel: Channel::Null.instance, **client_options)
         super()
         # The SDK is required HERE rather than at file scope because this class

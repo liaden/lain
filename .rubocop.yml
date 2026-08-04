@@ -14,6 +14,7 @@ plugins:
   - rubocop-rake
   - rubocop-rspec
   - rubocop-thread_safety
+  - rubocop-yard
 
 AllCops:
   TargetRubyVersion: 3.2
@@ -25,6 +26,16 @@ AllCops:
   # already fences the same directory off with its `spike: true` tag filter.
   Exclude:
     - "spike/**/*"
+
+# Our docstrings read `@param name [Type] description`, so the name comes BEFORE the
+# type. AutoCorrect is off deliberately: the cop's fix for an undocumented argument
+# writes `@param name [Object]` with no description, which inflates `yard stats`
+# coverage with a tag that says nothing. The offense is worth reporting -- a method
+# documenting six of nine parameters reads as if the list were complete -- but the
+# repair is a sentence a human writes, so `rubocop -a` must not paper over it.
+YARD/MismatchName:
+  EnforcedStylePrototypeName: before
+  AutoCorrect: false
 
 Style/StringLiterals:
   EnforcedStyle: double_quotes

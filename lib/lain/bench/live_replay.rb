@@ -37,8 +37,14 @@ module Lain
       end
 
       # @param provider [Lain::Provider] real under :live, a Mock offline
+      # @param toolset [Lain::Toolset] the capabilities the fresh Agent replays
+      #   with -- the same toolset the recorded run used
+      # @param context [Lain::Context] the frozen render context every replayed
+      #   ask renders through, so the fresh run shares the recorded prefix
       # @param journal [#<<] where fresh usage records are written; a Null
       #   channel by default, so no caller guards `if journal`
+      # @param workspace [Lain::Workspace] sent into the fresh Agent's Request,
+      #   not stored; empty unless the recorded run needed files
       # @param price_book [Lain::PriceBook] prices the fresh total usage
       def initialize(provider:, toolset:, context:, journal: Channel::Null.instance,
                      workspace: Workspace.empty, price_book: PriceBook.default)

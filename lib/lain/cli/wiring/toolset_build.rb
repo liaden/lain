@@ -193,9 +193,42 @@ module Lain
         # specs drive, where a child's question would reach no queue and no
         # desktop. The exe always passes the run's own.
         #
+        # @param backend [Backend] the run's provider/model choice ({CLI::Backend}) --
+        #   read here for `backend.context` (the child seam's context factory) and
+        #   `backend.spawn_policy` (the researcher role-spawn's `only`-set)
+        # @param provider [Provider] the run's ONE spooled provider ({Wiring} builds
+        #   the only other one) -- injected rather than resolved here, so both
+        #   construction sites agree on which spool round trips tee into
+        # @param chronicle [Chronicle] read once for `chronicle.observer`, folded
+        #   into the one spawn {Lain::Tools::Subagent::Seam} both child seams
+        #   travel over
+        # @param options [Hash] the parsed CLI options; `:auto_approve` gates whether
+        #   {#auto_surface} is built at all (nil without the flag, so the Repl wires
+        #   nothing extra by default)
+        # @param supervisor [Supervisor] the OM-6 supervisor a spawned actor adopts
+        #   its isolation lease from and runs under ({Tools::Subagent#supervisor});
+        #   read once, alongside `parent:` and `journal:`, into the one spawn seam
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
+        # @param journal [#<<] where a spawned child's lifecycle events land
+        #   ({Tools::Subagent#journal_lifecycle}); read once, with `parent:` and
+        #   `supervisor:`, into the one spawn seam
+        # @param library [Skill::Library] the run's ONE skill library -- required, not
+        #   defaulted, so nothing here can silently disagree with /help's read of
+        #   the same tree
+        # @param epic [EpicMount, EpicMount::NoEpic] the finished epic capability --
+        #   which epic a chat is in is not this object's question, so a chat outside
+        #   one hands over {EpicMount::NoEpic} and nothing below ever asks
+        # @param switchboard [#call] a thunk over the run's live {Switchboard} -- the
+        #   board does not exist yet at construction (the construction cycle the
+        #   comment above explains); defaults to a thunk over {NoSwitchboard} for
+        #   the direct-construction seams the specs drive
+        # @param askers [Wiring::Askers] the run's ONE {Wiring::Askers} -- who may ask
+        #   the human, where an arrival goes, and the directory an answer routes back
+        #   through; rides the spawn seam so a child can enrol its own asker
+        #   ({Wiring::Askers#enrol}). Defaults to {Wiring::Askers.unwired} for the
+        #   direct-construction seams the specs drive.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        switchboard: -> { NoSwitchboard }, askers: Askers.unwired)
           @library = library

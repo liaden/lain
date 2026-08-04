@@ -79,6 +79,10 @@ module Lain
 
       # @param transport [#sync_post] injected in specs; a real {Transport} over
       #   the vendored connection otherwise.
+      # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
+      #   {#build_config}, which sets only `ollama_api_base` -- no api key option, since Ollama
+      #   is local.
+      # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
       #   http://localhost:11434); no api key -- Ollama is local.
       def initialize(transport: nil, config: nil, sink: Sink::Null.new, api_base: nil)

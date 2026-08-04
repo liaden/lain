@@ -21,7 +21,7 @@ module Lain
 
     # @param texts [Array<String>]
     # @return [Array<Array<Float>>] one vector per input text, all equal length
-    def embed(_texts)
+    def embed(texts)
       raise NotImplementedError, "#{self.class} must implement #embed"
     end
 

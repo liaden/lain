@@ -145,6 +145,8 @@ module Lain
           NAME = Gate::DEFAULT_POLICY
 
           # @param asker [#ask] the `ask_human`-shaped duck a human answers through
+          # @param queue [#drained?] forwarded to {Policy#initialize} -- the
+          #   sign-off queue this gate's stage boundary is checked against
           def initialize(asker:, queue:)
             super(queue:)
             @asker = asker
@@ -185,10 +187,9 @@ module Lain
           NAME = SignoffQueue::DEFERRED_POLICY
           SURFACE = StandingAnswer.new(Answer.deny(NAME)).freeze
 
-          # @param queue [SignoffQueue] where the refused gate parks -- and the
-          #   same queue the inherited stage-boundary check reads, because a
-          #   deferral parks into the very partition a later stage must find
-          #   drained
+          # Parks the refused gate in `@queue` -- the same queue the inherited
+          # stage-boundary check reads, because a deferral parks into the very
+          # partition a later stage must find drained.
           def decide(artifact, gate:, stage:, epic_slug:)
             approved = super
             @queue.park(artifact_digest: artifact.digest, epic_slug:, stage:,

@@ -22,6 +22,8 @@ module Lain
     # either directly from measured metrics or, more usually, from a recorded
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
     Run = Data.define(:name, :usage, :cost, :score, :degraded, :posture) do
+      # @param name [String] this run's label in the comparison table (the arm
+      #   it came from)
       # @param timeline [Lain::Timeline] the recorded run
       # @param ledger [Lain::Ledger] usage + cost, deduped by content-address.
       #   Required, no default: usage lives in the Journal, so only the caller

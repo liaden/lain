@@ -208,6 +208,7 @@ module Lain
       #
       # @param state [#to_h] the run's readings; a {RunState} in a live chat
       # @param path [String] the config to compile
+      # @param screen [#call] columns available, called at most ONCE
       # @param notify [#call] the caller's startup-notice seam
       # @return [#call] `call(text:, theme:) -> String`
       def self.renderer(state:, path: config_path, screen: SCREEN, notify: SILENT)

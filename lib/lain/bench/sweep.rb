@@ -150,6 +150,10 @@ module Lain
       private_constant :HopSearch
 
       # @param k [Integer] the retrieval depth recall is scored at (recall@k).
+      # @param corpus_path [String] path to the retrieval fixture (queries, gold
+      #   ids, classes); defaults to the committed corpus.
+      # @param embeddings_path [String] path to the committed embeddings JSON,
+      #   content-digest checked against the corpus at load.
       # @param model [String] the embedding model the fixture must match.
       # rubocop:disable Naming/MethodParameterName -- `k` is the pinned recall@k
       # name, matching Grader::Recall and Context::Recall's own k:.

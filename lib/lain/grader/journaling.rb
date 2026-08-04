@@ -47,7 +47,7 @@ module Lain
         @subject_digest = subject_digest
       end
 
-      # @param subject passed straight through to the inner grader
+      # @param subject [Object] passed straight through to the inner grader
       # @return [Grade] the inner grader's verdict, unchanged
       def grade(subject)
         grade = @inner.grade(subject)

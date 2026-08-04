@@ -123,6 +123,16 @@ module Lain
             issue_id: record["issue_id"], params: record["params"])
       end
 
+      # @param action [String] one of {ACTIONS} -- the closed set of argv verbs
+      #   an executor knows how to run
+      # @param epic_slug [String] the epic this intent's effect belongs to --
+      #   excluded from the address, so two epics sharing an action and params
+      #   share an id (see "THE OBLIGATION" above)
+      # @param issue_id [String] the issue this intent's effect is for --
+      #   excluded from the address for the same reason as `epic_slug`
+      # @param params [Hash] the action's own arguments; together with `action`
+      #   this is the WHOLE address, so they must identify the effect uniquely
+      #   REPO-WIDE
       # @param intent_id [String, nil] nil derives the address from `action` and
       #   `params`, which is what every fresh intent wants; {.from_record}
       #   passes the recorded one

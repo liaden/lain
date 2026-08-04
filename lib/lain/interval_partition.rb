@@ -52,6 +52,11 @@ module Lain
 
     # @param span [Range] the indices the ranges must fall inside
     # @param ranges [Array<Range>] the proposal, as proposed
+    # @param owner [String] the strategy or hook to name in a refusal --
+    #   deliberately no part of identity (see "What a partition IS" above).
+    # @param provenance [String] the constructor or hook a refusal names as
+    #   what was asked, e.g. {OF} here or {Compaction::Strategy::Base}'s `HOOK`
+    #   when a strategy calls through its own `#ranges`.
     def self.of(span, ranges, owner:, provenance: OF)
       new(owner:, span:, ranges:, provenance:)
     end
@@ -60,7 +65,15 @@ module Lain
     # run of indices the cut did not take. Everything a cut point separates stays
     # separated, and the cut points themselves fall in no range at all.
     #
+    # @param span [Range] the whole span being partitioned; the cut points in
+    #   `excluding` divide it into the runs left over.
     # @param excluding [#include?] the indices to cut at
+    # @param owner [String] the strategy or hook to name in a refusal --
+    #   deliberately no part of identity (see "What a partition IS" above).
+    # @param provenance [String] the constructor or hook a refusal names as
+    #   what was asked; defaults to {COVERING}, which is what a refusal names
+    #   even when the caller reached it through a wrapper like
+    #   {Compaction::Source::Derived}.
     def self.covering(span, excluding:, owner:, provenance: COVERING)
       of(span, runs(span, excluding, owner, provenance), owner:, provenance:)
     end

@@ -90,6 +90,12 @@ module Lain
       # proved every digest {ForkPoint} can resolve.
       #
       # @param selector [String] `<session>@<digest-prefix>`
+      # @param model [String, nil] the model the current flags resolved to, compared
+      #   against the forked file's recorded header for the mismatch notice (same
+      #   check as {#call})
+      # @param provider [String, nil] the provider name ({CLI::Backend}'s naming,
+      #   e.g. "anthropic") the current `--provider` flag resolved to, compared
+      #   against the forked file's recorded header for the mismatch notice (RES2)
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
       def fork(selector:, model: nil, provider: nil)

@@ -72,9 +72,15 @@ module Lain
       # (mixlib-shellout hardcodes `sleep 3` in reap_errant_child, with no
       # option) without giving up the real process-group kill.
       #
+      # @param shell_out_factory [#call] builds the `Mixlib::ShellOut`-shaped
+      #   object {#build_shell_out} runs the command through; substituting it
+      #   is what lets a spec pin a shorter TERM->KILL grace without giving up
+      #   the real process-group kill.
       # @param verdict [#call] `String -> Shell::Verdict::Decision`, the choice
       #   of arm. Injected rather than constructed so a spec can pin either arm
       #   for one command and compare their bytes.
+      # @param pipeline [#call] runs the term arm's argv-array pipeline
+      #   ({Shell::Pipeline}); the string arm never touches it
       def initialize(shell_out_factory: Mixlib::ShellOut.public_method(:new),
                      verdict: Shell::Verdict.new, pipeline: Shell::Pipeline.new)
         super()

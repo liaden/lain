@@ -103,9 +103,13 @@ module Lain
       # raise, but there is no reason for them to sit outside the net when
       # keeping them in it costs nothing.
       #
-      # @param bindings [#call, nil] a thunk reading the live {HumanReplies} --
-      #   it does not exist yet when the toolset is built, so the tool reads this
-      #   at CALL time ({Tools::RequestReview#live})
+      # @param chronicle [Epic::Chronicle] the epic's record, mounted read-write
+      # @param options [Hash] the parsed CLI options; `:epic` names the slug
+      # @param notice [#call, nil] told why a mount was abandoned; silent by default
+      # @param injected [Hash] collaborators the caller substitutes, passed to {.mount}
+      # @option injected [#call, nil] :bindings a thunk reading the live
+      #   {HumanReplies} -- it does not exist yet when the toolset is built, so
+      #   the tool reads this at CALL time ({Tools::RequestReview#live})
       # @return [EpicMount, NoEpic]
       def self.for(chronicle:, options:, notice: nil, **injected)
         mount(chronicle:, options:, **injected)
@@ -150,8 +154,21 @@ module Lain
       # a torn session file must cost the chat its review tool at startup, not
       # raise later out of the toolset build.
       #
+      # @param slug [String] the epic this chat is mounted into, already resolved by
+      #   {Epic#resolve_slug} -- names the one {Epic::Review} this instance builds
       # @param journal [#<<] where the epic records land -- the chat's own
       #   session journal, which is what {CLI::Epic::Journals} reads back
+      # @param root [String] the project root ({Dir.pwd} by default) the epic's home
+      #   directory is resolved under ({Lain::Epic::Home.resolve})
+      # @param paths [Paths] the XDG/project path authority, threaded straight through
+      #   to {Lain::Epic::Home.resolve}
+      # @param config [Config] `.lain/config.toml`, loaded -- carries the `[epics]`
+      #   table {Epic#resolve_slug} and {Lain::Epic::Home.resolve} both read
+      # @param bindings [#call, nil] a thunk reading the live {HumanReplies} -- it does
+      #   not exist yet when the toolset is built, so the tool reads this at CALL
+      #   time ({Tools::RequestReview#live})
+      # @param notify [#question, nil] the desktop notifier {Tools::RequestReview}
+      #   raises a pending review's question through; defaults to {Notify::Null}
       def initialize(slug:, journal:, root:, paths:, config:, bindings: nil, notify: nil)
         @slug = slug
         @journal = journal

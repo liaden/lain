@@ -16,6 +16,12 @@ group :development do
   gem "rubocop-performance", "~> 1.25"
   gem "rubocop-rake", "~> 0.7"
   gem "rubocop-rspec", "~> 3.7"
+  # Keeps the doc comments honest against the code they document. `MismatchName` is
+  # the one that earns it: a `@param` naming a parameter that has since been renamed
+  # is a doc that reads as authoritative and is wrong, and nothing else we run sees it
+  # -- plain RuboCop does not parse docstrings, and `yard stats` counts coverage, not
+  # agreement.
+  gem "rubocop-yard", "~> 1.3"
   # The one extension that pulls its weight beyond style: we run Ractors, an async
   # out-of-process core, and parallel_tests. `ClassInstanceVariable` and
   # `MutableClassInstanceVariable` catch the shared-mutable-state bugs that

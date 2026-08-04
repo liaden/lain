@@ -78,6 +78,8 @@ module Lain
 
         # @param left [Base] either operand; the order is immaterial, which is
         #   the commutativity law this class declares on {Base}
+        # @param right [Base] the other operand -- its proposed ranges must stay
+        #   disjoint from `left`'s, or {#propose_ranges} raises {Overlap}
         def initialize(left, right)
           super()
           @left = left

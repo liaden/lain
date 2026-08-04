@@ -121,6 +121,9 @@ module Lain
       # with no prepared compaction renders exactly as it would with no
       # Prepared in the loop at all.
       #
+      # @param head_digest [String] the timeline's current head digest --
+      #   checked against whatever {#idle} last held, to decide REPLAY vs
+      #   UNTOUCHED
       # @param base [#call, #requires] the strategy `#render` would use
       #   otherwise (a Combinator, or T21's `->(workspace)` provider shape)
       # @return the base itself, or a provider replaying the held

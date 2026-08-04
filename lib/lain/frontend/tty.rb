@@ -237,6 +237,11 @@ module Lain
       # document that was printed and the set that gets the answer, so they
       # cannot come apart.
       #
+      # @param items [Enumerable<#question>] the pending set to list, each
+      #   answering to `#question`, `#from` and `#asked_at`
+      # @param reader [#call] reads one line; injectable so a countdown ticker's
+      #   ownership of stdin isn't raced (see exe/lain's approval_surface
+      #   comment) -- defaults to the plain prompt read
       # @param answering [#question] the item this drain answers -- the oldest
       #   listed by default, which is what `/inbox` at `you>` means, and the
       #   parked item when a reply prompt drains mid-ask
@@ -556,6 +561,9 @@ module Lain
         # bounds its summary, but what a terminal does with the bytes is ours.
         BREAKS = /[\r\n\v\f\u{0085}\u{2028}\u{2029}]/
 
+        # @param output [#puts, #flush] where the arrival note and drain listing are written
+        # @param pastel [Pastel] presentation stays out of this class, as with
+        #   every other TTY collaborator -- callers hand in the palette
         # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
         def initialize(output:, pastel:, clock:)
           @output = output
