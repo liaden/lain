@@ -7,12 +7,15 @@ module Lain
   end
 end
 
-# Vocabulary FIRST, and `records` LAST: every guard in `records` cites a closed
-# set and a refusal message while its class body runs, and `Anchor::SIDES`
+# Vocabulary FIRST, and the AGGREGATE last: every guard in `records` cites a
+# closed set and a refusal message while its class body runs, and `Anchor::SIDES`
 # derives from `Review::SIDES` at class-body time too. `vocabulary` and `wire`
-# are mutually independent; only records-last actually binds.
+# are mutually independent; records-before-session and marks-before-verdict are
+# what actually bind -- `verdict/policy` reads `Marks::REVIEWED` in its class
+# body, and `session` names every record type in `Replay::TYPES` in its.
 require_relative "review/vocabulary"
 require_relative "review/wire"
+require_relative "review/keying"
 require_relative "review/anchor"
 require_relative "review/hunk"
 require_relative "review/marks"
@@ -23,3 +26,5 @@ require_relative "review/changeset"
 require_relative "review/bounds"
 require_relative "review/surface"
 require_relative "review/records"
+require_relative "review/verdict"
+require_relative "review/session"

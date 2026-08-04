@@ -179,6 +179,53 @@ RSpec.describe Lain::Review::Hunk do
 
       expect(digest_of(forged.content_key)).not_to eq(digest_of(target.span_key))
     end
+
+    # THE GOLDEN VECTORS. Added by T13, as a deliberate cross-card fix: the gap
+    # is identical to the one T13 closed in `Review::Keying`, and this side of
+    # it matters more.
+    #
+    # Everything above this line is a property, and every property above is
+    # satisfied by infinitely many layouts -- the length frame, its trailing
+    # separator, the order of the path frame against the span frame, the newline
+    # after the scheme. None of those can move without changing every key, and a
+    # hunk key is the DURABLE IDENTITY EVERY MARK IS STORED UNDER, so a layout
+    # that moves while its version does not silently unmarks every hunk in every
+    # journal with a green suite behind it.
+    #
+    # Not brittle, and not a tautology. `hunk-content-v1` and `hunk-span-v1` are
+    # VERSIONS: a deliberate change bumps them, and these three lines are edited
+    # in that same commit. An accidental change is the only other thing that
+    # reddens them, and nothing else here would. Regenerate only after deciding
+    # the scheme has moved.
+    #
+    # The fixture is spelled out rather than taken from `hunk` above, so that
+    # editing that helper -- which every other example is written to tolerate --
+    # cannot quietly invalidate a recorded address.
+    describe "the layout, pinned" do
+      def pinned
+        described_class.new(path: "lib/a.rb", old_start: 1, old_count: 2, new_start: 1, new_count: 2,
+                            heading: "def x", lines: [" one", "-two", "+TWO"])
+      end
+
+      it "addresses hunk-content-v1 the way it has always addressed it" do
+        expect(pinned.content_key)
+          .to eq("hunk-content-v1:f89587017d5b036f1ce1b87c09a1a3a62b30c7df0eec9ba336b577a94944b075")
+      end
+
+      it "addresses hunk-span-v1 the way it has always addressed it" do
+        expect(pinned.span_key)
+          .to eq("hunk-span-v1:a428115be3585fc3b8644756e2fe8a7a0bcb566bb825b2254cfcd5e43ba3995b")
+      end
+
+      # The tie-breaker of last resort shares `hunk-span-v1` with the key above
+      # and differs from it only in its frame, so it needs a vector of its own:
+      # a change that collapsed the two frames together would leave the previous
+      # example perfectly green.
+      it "addresses the full-span tie-breaker the way it has always addressed it" do
+        expect(pinned.full_span_key)
+          .to eq("hunk-span-v1:289ef8c32a3bb0a1b73bff630a059f31cc443eb53ef4c6fa67e47a0d4333f524")
+      end
+    end
   end
 
   describe ".keys is batch-scoped" do
