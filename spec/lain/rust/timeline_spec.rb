@@ -201,6 +201,87 @@ RSpec.describe Lain::Ext::Timeline do
     end
   end
 
+  # The dominator meet held to the SAME four laws, through the SAME shared group
+  # and the SAME population builder the Ruby dominator meet runs under
+  # (spec/lain/timeline_spec.rb, "the laws (dominance order injected)"). That
+  # file is the port's oracle, so the group is included unchanged and only the
+  # knobs move -- and both knobs that move are shapes of this surface rather
+  # than of the laws: there is no `dominators:` collaborator to thread, because
+  # every call across the boundary is one-shot, and the order predicate is asked
+  # of the timelines rather than of their digests.
+  #
+  # The population is the UNION graph and not the render forest above. That is
+  # the whole difference between the two runs: `#meet`'s laws hold over a forest
+  # where the causal edge is invisible, and reading these laws over the same
+  # forest would prove the render meet a second time.
+  describe "#dominator_meet, the laws (dominance order injected)" do
+    # ONE definition of the knobs, read by the guards below AND splatted into
+    # the include -- a Hash rather than three locals named at the include site,
+    # because a guard has to hold the very knob the group receives. Named
+    # separately there, the include is free to hand the group a weaker operator
+    # while the guards go on passing about the ones they hold, and the guards
+    # are then guarding a copy. Measured, which is why it is a Hash: weakening
+    # `meet:` at the include alone went red in 9 seeds of 20 with both guards
+    # green, and weakening it here goes red in 20 of 20.
+    knobs = { population: -> { population },
+              meet: ->(a, b) { a.dominator_meet(b) },
+              ancestor_of: ->(m, a) { m.dominates?(a) } }
+    meet = knobs[:meet]
+    below = knobs[:ancestor_of]
+    lower_bound = ->(m, a, b) { below.call(m, a) && below.call(m, b) }
+
+    let(:population) { MeetSemilatticePopulations.union_graph(timeline) }
+
+    let(:folded) { population.select { |member| member.head.causal_parents.any? } }
+
+    # The group cannot see what it quantifies over, and a population that came
+    # out a pure render forest would satisfy all four laws while saying nothing
+    # about the operator under test -- the render meet already satisfies them.
+    # Both shapes that separate dominance from render ancestry are named here: a
+    # fold whose causal parents are not merely a restatement of its render
+    # parent, and a fresh render root anchored causally (the subagent spawn),
+    # which a render walk does not reach at all.
+    it "is read over a union graph rather than a render forest" do
+      cross_chain, anchored_roots = folded.partition { |member| member.head.parent }
+      expect(cross_chain.count { |member| member.head.causal_parents != [member.head.parent] }).to be_positive
+      expect(anchored_roots).not_to be_empty
+    end
+
+    # The order knob, asserted as the mutation rather than as prose: over this
+    # population the two predicates genuinely disagree about the meets the
+    # fourth law examines, so weakening `below` to `#ancestor_of?` turns that
+    # law RED instead of leaving it green and vacuous. What the weak predicate
+    # misses is exactly the meets that sit above an operand across a causal
+    # edge -- reachability asks whether SOME path arrives, dominance whether
+    # every one does, and a render walk cannot see the causal path at all.
+    it "would fail its fourth law under render ancestry, which is why the order is dominance" do
+      unseen = population.permutation(2).count do |a, b|
+        lower = meet.call(a, b)
+        below.call(lower, a) && !lower.ancestor_of?(a)
+      end
+      expect(unseen).to be_positive
+    end
+
+    # The meet knob, the same way -- and it needs saying separately, because the
+    # render meet passes all four laws under this population often enough that
+    # the group's ten random draws catch the substitution only about half the
+    # time (measured). Exhaustive over the ordered pairs, so the distinction is
+    # certain rather than sampled: the render meet is not a lower bound of the
+    # union order for some pair here, and the operator the group is given is.
+    #
+    # That there IS such a pair is MEASURED, not proved -- no build of 3300 came
+    # out with none, but the tail reaches a single unordered pair, so read the
+    # margin as evidence about this builder rather than as a structural
+    # guarantee. A builder change that narrowed it further would show up here.
+    it "hands the group the union-graph meet, which this population separates from the render meet" do
+      escaping = population.permutation(2).reject { |a, b| lower_bound.call(a.meet(b), a, b) }
+      expect(escaping).not_to be_empty
+      expect(escaping.count { |a, b| lower_bound.call(meet.call(a, b), a, b) }).to eq(escaping.size)
+    end
+
+    include_examples "a meet semilattice under ancestry", **knobs
+  end
+
   describe "#ancestor_of?" do
     let(:base) { say(timeline, "a") }
     let(:child) { say(base, "b", role: :assistant) }
