@@ -67,5 +67,7 @@ module Lain
 end
 
 # This file is the source/ subtree's index. LocalBranch reads UnknownRef, Commit
-# and FileStat from the module above, so it loads AFTER the module body.
+# and FileStat from the module above, so it loads AFTER the module body, and
+# GithubPr reads LocalBranch's constants, so it loads after LocalBranch.
 require_relative "source/local_branch"
+require_relative "source/github_pr"
