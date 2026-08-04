@@ -193,7 +193,7 @@ RSpec.describe Lain::Ext::Fuzzy do
     subject(:fuzzy) { described_class.new(paths) }
 
     it "is shareable" do
-      expect(Ractor.shareable?(fuzzy)).to be(true)
+      expect(fuzzy).to be_deeply_frozen
     end
 
     it "still raises when a method is called off the main Ractor" do

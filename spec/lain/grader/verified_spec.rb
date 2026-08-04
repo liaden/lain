@@ -142,7 +142,7 @@ RSpec.describe Lain::Grader::Verified do
                                       .grade("subject").first
 
       expect(finding.finding).to be_frozen
-      expect(Ractor.shareable?(finding)).to be(true)
+      expect(finding).to be_deeply_frozen
     end
   end
 end

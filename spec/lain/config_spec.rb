@@ -585,10 +585,6 @@ RSpec.describe Lain::Config do
       expect(described_class.empty).to be_deeply_frozen
     end
 
-    it "is Ractor-shareable" do
-      expect(Ractor.shareable?(described_class.empty)).to be(true)
-    end
-
     # Panel probe: .empty allocated a fresh instance on every call; a real
     # Null Object is one singleton, not a factory.
     it "is the same object every time, not a fresh allocation" do
@@ -744,7 +740,7 @@ RSpec.describe Lain::Config do
       config = described_class.new(epics: Lain::Config::Epics.new(home: :xdg),
                                    approval: { "deny_tool" => [{ "tool" => "bash" }] })
 
-      expect(Ractor.shareable?(config)).to be(true)
+      expect(config).to be_deeply_frozen
     end
   end
 

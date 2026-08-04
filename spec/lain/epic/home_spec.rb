@@ -80,7 +80,6 @@ RSpec.describe Lain::Epic::Home do
         home = described_class.resolve(config: config_for(:repo), paths: paths_for(tmp), root: tmp, slug: "alpha")
 
         expect(home).to be_deeply_frozen
-        expect(Ractor.shareable?(home)).to be(true)
       end
     end
   end
@@ -391,7 +390,7 @@ RSpec.describe Lain::Epic::Home do
 
         expect(artifact.path).to be_frozen
         expect { artifact.path << "-MUTATED" }.to raise_error(FrozenError)
-        expect(Ractor.shareable?(artifact)).to be(true)
+        expect(artifact).to be_deeply_frozen
       end
     end
 

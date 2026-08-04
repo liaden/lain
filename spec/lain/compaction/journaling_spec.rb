@@ -252,7 +252,6 @@ RSpec.describe "Compaction journaling" do
 
     it "is a frozen, Ractor-shareable value object" do
       expect(compaction).to be_deeply_frozen
-      expect(compaction).to be_ractor_shareable
     end
 
     it "journals as a compaction record that round-trips through JSON" do
@@ -301,7 +300,6 @@ RSpec.describe "Compaction journaling" do
 
       expect(priced.model).to eq("claude-opus-4-8")
       expect(priced).to be_deeply_frozen
-      expect(priced).to be_ractor_shareable
       expect(JSON.parse(JSON.generate(priced.to_journal))).to include("model" => "claude-opus-4-8")
     end
 
@@ -345,7 +343,6 @@ RSpec.describe "Compaction journaling" do
 
       it "stays a frozen, Ractor-shareable value object" do
         expect(refused).to be_deeply_frozen
-        expect(refused).to be_ractor_shareable
       end
 
       # Panel probe 2F, promoted. nil is the ONLY refusal; `false` is not a

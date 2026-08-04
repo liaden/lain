@@ -206,7 +206,7 @@ RSpec.describe Lain::Epic::Submission do
     it "is deeply frozen, so a submission can cross a Ractor boundary" do
       submission = described_class.research(text: "hello", slug: "demo")
 
-      expect(Ractor.shareable?(submission)).to be(true)
+      expect(submission).to be_deeply_frozen
     end
 
     it "refuses a blank slug, naming the field" do
@@ -314,7 +314,7 @@ RSpec.describe Lain::Epic::Submission do
     it "stays Ractor-shareable for the String digest every constructor actually produces" do
       submission = described_class.implementation(slug: "demo", issue_id: "T7", digest: "blake3:impl")
 
-      expect(Ractor.shareable?(submission)).to be(true)
+      expect(submission).to be_deeply_frozen
     end
   end
 

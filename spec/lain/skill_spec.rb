@@ -37,8 +37,7 @@ RSpec.describe Lain::Skill do
 
   describe "config, not behavior (the explicit boundary)" do
     it "is deeply frozen and Ractor.shareable" do
-      expect(skill).to be_frozen
-      expect(skill).to be_ractor_shareable
+      expect(skill).to be_deeply_frozen
     end
 
     it "exposes no method that renders, spawns, or calls an agent" do

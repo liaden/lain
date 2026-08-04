@@ -248,7 +248,6 @@ RSpec.describe Lain::Compaction::Derivation do
 
       it "is deeply frozen and Ractor-shareable, like every other value here" do
         expect(walk_of(9)).to be_deeply_frozen
-        expect(walk_of(9)).to be_ractor_shareable
       end
 
       it "snapshots by copy, so a caller's array cannot be frozen under it" do

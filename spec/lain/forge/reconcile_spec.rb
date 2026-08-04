@@ -405,6 +405,6 @@ RSpec.describe Lain::Forge::Reconcile do
   it "answers a report that is a deeply frozen, shareable value" do
     intent = promote
 
-    expect(Ractor.shareable?(reconcile([intent, settled_by(intent), pr_create]).report)).to be(true)
+    expect(reconcile([intent, settled_by(intent), pr_create]).report).to be_deeply_frozen
   end
 end

@@ -196,7 +196,7 @@ RSpec.describe Lain::Forge::Reconcile, "settling intents against outcomes" do
     expect(report.settled).to be_frozen
     expect(report.unsettled).to be_frozen
     expect(report.orphans).to be_frozen
-    expect(Ractor.shareable?(report)).to be(true)
+    expect(report).to be_deeply_frozen
   end
 
   it "entries given as a one-shot lazy enumerator reconcile empty the second time" do

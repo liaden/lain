@@ -149,8 +149,7 @@ RSpec.describe Lain::Skill::Catalog do
                    }) do |catalog|
         skill = catalog.fetch("create-plan")
 
-        expect(skill).to be_frozen
-        expect(skill).to be_ractor_shareable
+        expect(skill).to be_deeply_frozen
         %i[call render spawn perform invoke].each { |m| expect(skill).not_to respond_to(m) }
       end
     end

@@ -21,8 +21,7 @@ RSpec.describe Lain::Context::StaticModel do
     end
 
     it "is frozen and Ractor-shareable -- no mutable coordination state, unlike ModelSwitch" do
-      expect(model).to be_frozen
-      expect(Ractor.shareable?(model)).to be(true)
+      expect(model).to be_deeply_frozen
     end
   end
 

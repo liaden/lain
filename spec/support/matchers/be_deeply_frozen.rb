@@ -1,11 +1,8 @@
 # frozen_string_literal: true
 
-# Shared by be_deeply_frozen and be_ractor_shareable: when Ractor.shareable?
-# says no, find the node that MAKES it no and name its path -- the actionable
-# diagnosis is `@blocks[1]["text"] (String, unfrozen)`, never a shrug at the
-# top-level object. (be_ractor_shareable.rb references this constant only at
-# match time, inside failure_message blocks, so the support glob's load order
-# does not bind the two files.)
+# When Ractor.shareable? says no, find the node that MAKES it no and name its
+# path -- the actionable diagnosis is `@blocks[1]["text"] (String, unfrozen)`,
+# never a shrug at the top-level object.
 module ShareabilityMatcherSupport
   module_function
 
@@ -59,12 +56,13 @@ module ShareabilityMatcherSupport
   end
 end
 
-# The value-object check CLAUDE.md asks for, as one assertion instead of the
-# two-line pair (`expect(x).to be_frozen` then
-# `expect(Ractor.shareable?(x)).to be(true)`) repeated at every value-object
-# spec. `frozen?` alone would pass for a shallow freeze that leaves a mutable
-# ivar reachable; `Ractor.shareable?` is the mechanical check that NOTHING
-# reachable is mutable, so both must hold.
+# The value-object check CLAUDE.md asks for, and the ONLY spelling of it -- a companion
+# `Ractor.shareable?` assertion beside this one is the same claim written twice.
+# `frozen?` alone would pass a shallow freeze holding a mutable ivar.
+#
+# Shareable implies frozen for every VALUE object, but not for a Class or Module. A spec
+# whose subject is a constant asserts `Ractor.shareable?` directly instead; see
+# spec/lain/agent/pipeline_source_spec.rb, the only such site.
 RSpec::Matchers.define :be_deeply_frozen do
   match do |actual|
     @top_level_frozen = actual.frozen?

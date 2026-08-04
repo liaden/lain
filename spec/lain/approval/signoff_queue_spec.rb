@@ -320,7 +320,7 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
 
     it "is Ractor-shareable (two interned Strings)" do
-      expect(Ractor.shareable?(described_class.new(epic_slug: +"alpha", stage: +"research"))).to be(true)
+      expect(described_class.new(epic_slug: +"alpha", stage: +"research")).to be_deeply_frozen
     end
   end
 
@@ -335,14 +335,14 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
 
     it "is Ractor-shareable with prose and evidence attached" do
-      expect(Ractor.shareable?(item(question: +"Approve?", evidence_digest: +"blake3:spike"))).to be(true)
+      expect(item(question: +"Approve?", evidence_digest: +"blake3:spike")).to be_deeply_frozen
     end
 
     # Deep immutability cannot be conditional on what a caller happened to pass:
     # an arbitrary object with one mutable ivar would make the whole value
     # non-shareable, so every member is settled into frozen bytes here.
     it "stays shareable when handed a question that is not a String" do
-      expect(Ractor.shareable?(item(question: Object.new))).to be(true)
+      expect(item(question: Object.new)).to be_deeply_frozen
     end
 
     it "keeps every stored member frozen" do

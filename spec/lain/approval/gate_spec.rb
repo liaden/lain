@@ -223,7 +223,7 @@ RSpec.describe Lain::Approval::Gate do
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(Ractor.shareable?(record(artifact_digest: +"blake3:abc", answered_by: +"human"))).to be(true)
+      expect(record(artifact_digest: +"blake3:abc", answered_by: +"human")).to be_deeply_frozen
     end
 
     it "journals under the gate_decision discriminator" do
@@ -245,7 +245,7 @@ RSpec.describe Lain::Approval::Gate do
     it "keeps a supplied reason frozen, so the record stays shareable" do
       decision = record(reason: +"researcher spawn failed -- parked without evidence")
 
-      expect(Ractor.shareable?(decision)).to be(true)
+      expect(decision).to be_deeply_frozen
       expect(decision.reason).to be_frozen
     end
 
@@ -276,7 +276,7 @@ RSpec.describe Lain::Approval::Gate do
 
   describe Lain::Approval::Gate::Answer do
     it "is Ractor-shareable (a boolean and an interned surface String)" do
-      expect(Ractor.shareable?(described_class.approve(+"human"))).to be(true)
+      expect(described_class.approve(+"human")).to be_deeply_frozen
     end
 
     it "reads its verdict through #approved?" do

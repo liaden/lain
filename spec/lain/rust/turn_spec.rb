@@ -41,7 +41,7 @@ RSpec.describe Lain::Ext::Turn do
     # immutable Rust state stays Ractor-shareable once frozen.
     it "is Ractor-shareable" do
       turn = described_class.new(role: :user, content: text("hi"), meta: { "a" => 1 })
-      expect(turn).to be_ractor_shareable
+      expect(turn).to be_deeply_frozen
     end
 
     it "has no unfrozen instance variables" do

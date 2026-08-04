@@ -13,33 +13,33 @@
 require "stringio"
 require "json"
 
-# `aggregate_failures` is off for the whole file, and it has to be. These examples assert
-# on matcher FAILURE messages, so they deliberately fail an expectation inside
-# `expect { ... }.to raise_error`. Inside an aggregation context RSpec captures that inner
-# ExpectationNotMetError instead of raising it, so `raise_error` sees nothing and the
-# captured failure is reported besides -- two failures for a matcher that works.
+# Aggregation off: these assert on matcher FAILURE messages, and an aggregation context
+# captures the inner ExpectationNotMetError instead of letting `raise_error` see it.
 RSpec.describe "custom matchers (spec/support/matchers/)", aggregate_failures: false do
-  describe "be_ractor_shareable" do
-    it "passes for a deeply frozen value object" do
+  describe "be_deeply_frozen" do
+    it "passes for a value object that is frozen with no reachable mutable state" do
       turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
-      expect(turn).to be_ractor_shareable
+      expect(turn).to be_deeply_frozen
     end
 
-    it "fails, naming the object, for one with reachable mutable state" do
-      mutable = Struct.new(:box).new(+"unfrozen string").freeze
+    it "fails, distinguishing not-frozen from shallow-frozen-but-not-shareable" do
+      not_frozen = Struct.new(:x).new(1)
+      expect { expect(not_frozen).to be_deeply_frozen }
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /to be frozen, but #frozen\? is false/)
 
-      expect { expect(mutable).to be_ractor_shareable }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /Ractor\.shareable\?.*was not/m)
+      shallow = Struct.new(:box).new(+"mutable").freeze
+      expect { expect(shallow).to be_deeply_frozen }
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /Ractor\.shareable\? is false/)
     end
 
     it "negated failure message names the object too" do
       turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
 
-      expect { expect(turn).not_to be_ractor_shareable }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /not to be Ractor\.shareable\?, but it was/)
+      expect { expect(turn).not_to be_deeply_frozen }
+        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /not to be deeply frozen/)
     end
 
-    it "names the offending leaf's path when a nested node is the only unfrozen one" do
+    it "names the offending leaf's path, not just the top-level verdict" do
       carrier = Class.new do
         attr_reader :blocks
 
@@ -50,20 +50,20 @@ RSpec.describe "custom matchers (spec/support/matchers/)", aggregate_failures: f
       end
       nested = carrier.new([{ "text" => "frozen" }.freeze, { "text" => +"mutable" }.freeze].freeze)
 
-      expect { expect(nested).to be_ractor_shareable }
+      expect { expect(nested).to be_deeply_frozen }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /@blocks\[1\]\["text"\] \(String, unfrozen\)/)
     end
 
-    # T2 re-review rider: the depth-first walk is cut by an identity-keyed
-    # `seen` set, not by depth alone. A frozen structure that references
-    # ITSELF (a cycle, not just deep nesting) must still terminate and name
-    # the real offender rather than looping forever chasing the self-edge.
+    # The depth-first walk is cut by an identity-keyed `seen` set, not by depth
+    # alone. A frozen structure that references ITSELF (a cycle, not just deep
+    # nesting) must still terminate and name the real offender rather than
+    # looping forever chasing the self-edge.
     it "terminates on a frozen self-referential structure instead of looping forever" do
       carrier = Struct.new(:self_ref, :payload).new(nil, +"mutable")
       carrier.self_ref = carrier
       carrier.freeze
 
-      expect { expect(carrier).to be_ractor_shareable }
+      expect { expect(carrier).to be_deeply_frozen }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /payload \(String, unfrozen\)/)
     end
   end
@@ -107,38 +107,6 @@ RSpec.describe "custom matchers (spec/support/matchers/)", aggregate_failures: f
     it "fails, naming expected vs actual stop_reason, when it does not" do
       expect { expect(response(:end_turn)).to stop_with(:tool_use) }
         .to raise_error(RSpec::Expectations::ExpectationNotMetError, /expected stop_reason :tool_use, got :end_turn/)
-    end
-  end
-
-  describe "be_deeply_frozen" do
-    it "passes for a value object that is frozen with no reachable mutable state" do
-      turn = Lain::Event.turn(role: "user", content: [{ "type" => "text", "text" => "hi" }])
-      expect(turn).to be_deeply_frozen
-    end
-
-    it "fails, distinguishing not-frozen from shallow-frozen-but-not-shareable" do
-      not_frozen = Struct.new(:x).new(1)
-      expect { expect(not_frozen).to be_deeply_frozen }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /to be frozen, but #frozen\? is false/)
-
-      shallow = Struct.new(:box).new(+"mutable").freeze
-      expect { expect(shallow).to be_deeply_frozen }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /Ractor\.shareable\? is false/)
-    end
-
-    it "names the offending leaf's path, not just the top-level verdict" do
-      carrier = Class.new do
-        attr_reader :blocks
-
-        def initialize(blocks)
-          @blocks = blocks
-          freeze
-        end
-      end
-      nested = carrier.new([{ "text" => "frozen" }.freeze, { "text" => +"mutable" }.freeze].freeze)
-
-      expect { expect(nested).to be_deeply_frozen }
-        .to raise_error(RSpec::Expectations::ExpectationNotMetError, /@blocks\[1\]\["text"\] \(String, unfrozen\)/)
     end
   end
 

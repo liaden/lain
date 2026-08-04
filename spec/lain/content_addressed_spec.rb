@@ -55,6 +55,6 @@ RSpec.describe Lain::ContentAddressed do
   end
 
   it "adds no state, so a frozen includer stays Ractor-shareable" do
-    expect(toy.new("blake3:abc")).to be_ractor_shareable
+    expect(toy.new("blake3:abc")).to be_deeply_frozen
   end
 end

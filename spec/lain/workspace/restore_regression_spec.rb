@@ -3,9 +3,8 @@
 require "tmpdir"
 require "fileutils"
 
-# Conditions that restore_spec.rb does not pin: byte-for-byte binary round trips,
-# repeated restores over one instance, dirty detection against a non-in-force blob,
-# what `force:` does and does not waive, and turn-addressing parity with Projection.
+# What restore_spec.rb does not pin: binary round trips, repeated restores over one
+# instance, dirt against a non-in-force blob, force: semantics, turn-addressing parity.
 RSpec.describe Lain::Workspace::Restore do
   def block(text) = [{ "type" => "text", "text" => text }]
 

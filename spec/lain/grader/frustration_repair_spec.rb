@@ -216,7 +216,7 @@ RSpec.describe Lain::Grader::FrustrationRepair do
     it "is Ractor.shareable? even when built from unfrozen, JSON-sourced entries" do
       signal = described_class.new.signals(fixture_entries("rephrase_loop")).first
 
-      expect(Ractor.shareable?(signal)).to be(true)
+      expect(signal).to be_deeply_frozen
     end
   end
 end

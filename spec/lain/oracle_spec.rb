@@ -60,7 +60,7 @@ RSpec.describe Lain::Oracle::Definition do
   # A Definition is a deeply frozen value object -- the mechanical statement that
   # it carries no reachable mutable state, so it can cross a Ractor boundary.
   it "is Ractor.shareable?" do
-    expect(Ractor.shareable?(definition)).to be(true)
+    expect(definition).to be_deeply_frozen
   end
 
   # ---- Scenario: the definition is content-addressed and deterministic -------

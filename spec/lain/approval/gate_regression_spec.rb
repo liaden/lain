@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-# Gate behavior that gate_spec.rb does not pin: journal failure, monotonicity of the
-# clock, the artifact duck, timeout and latency accounting, wire shape, two gates over
-# one asker, immutability, and life outside a reactor. Grown from adversarial review
-# probes; each example names the seam it attacks.
+# What gate_spec.rb does not pin: journal failure, clock monotonicity, the artifact duck,
+# timeout and latency accounting, wire shape, two gates over one asker, immutability,
+# life outside a reactor.
 require "stringio"
 
 RSpec.describe Lain::Approval::Gate do
@@ -202,7 +201,7 @@ RSpec.describe Lain::Approval::Gate do
       rec = Lain::Approval::GateDecision.new(artifact_digest: +"d", epic_slug: +"e", stage: +"s", approved: false,
                                              answered_by: +"timeout", policy: +"interactive", latency: 1.0,
                                              evidence_digest: +"ev")
-      expect(Ractor.shareable?(rec)).to be(true)
+      expect(rec).to be_deeply_frozen
       expect(rec.evidence_digest).to be_frozen
     end
 

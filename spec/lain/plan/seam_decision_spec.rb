@@ -178,6 +178,6 @@ RSpec.describe Lain::Plan::SeamDecision do
     record = decision.call(chunk: build_chunk(size: "M", before: 5_000, after: 1_000),
                            profile:, prices:)
 
-    expect(Ractor.shareable?(record)).to be(true)
+    expect(record).to be_deeply_frozen
   end
 end

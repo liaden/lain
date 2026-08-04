@@ -276,7 +276,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "is a deeply frozen value, so it is safe to journal and share" do
-      expect(Ractor.shareable?(described_class::Ruling.allow(rung: "rules", because: "ok"))).to be(true)
+      expect(described_class::Ruling.allow(rung: "rules", because: "ok")).to be_deeply_frozen
     end
   end
 

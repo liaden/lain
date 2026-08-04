@@ -261,8 +261,7 @@ RSpec.describe Lain::IntervalPartition do
     it "is a deeply frozen, shareable value like any other partition" do
       met = over([0..3], owner: "a").meet(over([2..7], owner: "b"))
 
-      expect(met).to be_frozen
-      expect(Ractor.shareable?(met)).to be(true)
+      expect(met).to be_deeply_frozen
     end
   end
 
@@ -270,8 +269,7 @@ RSpec.describe Lain::IntervalPartition do
     it "is a deeply frozen, shareable value" do
       value = partition([0..1, 2..3])
 
-      expect(value).to be_frozen
-      expect(Ractor.shareable?(value)).to be(true)
+      expect(value).to be_deeply_frozen
     end
 
     # The error is the value's, and the compaction namespace keeps a name for

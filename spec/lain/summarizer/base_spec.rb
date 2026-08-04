@@ -40,7 +40,7 @@ RSpec.describe Lain::Summarizer::Base do
     end
 
     it "is deeply frozen, so `Ractor.shareable?` holds" do
-      expect(Ractor.shareable?(described_class.new(tool_name: :bash, text: +"mutable"))).to be(true)
+      expect(described_class.new(tool_name: :bash, text: +"mutable")).to be_deeply_frozen
     end
   end
 end

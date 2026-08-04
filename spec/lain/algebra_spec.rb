@@ -658,7 +658,6 @@ RSpec.describe Lain::Algebra do
       end.new
 
       expect(value).to be_deeply_frozen
-      expect(value).to be_ractor_shareable
     end
 
     # For five of the six, the module is a vocabulary and nothing more: a
@@ -925,7 +924,7 @@ RSpec.describe Lain::Algebra do
       value = klass.new
 
       expect(value.pure?(:call, registry: scratch)).to be(true)
-      expect(value).to be_ractor_shareable
+      expect(value).to be_deeply_frozen
     end
 
     # The base Context::Combinator does not freeze and its subclasses do, so

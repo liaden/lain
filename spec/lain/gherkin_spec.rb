@@ -236,10 +236,10 @@ RSpec.describe Lain::Gherkin::Criteria do
     it "is Ractor.shareable? for the Criteria and every scenario and clause" do
       criteria = described_class.parse(markdown)
 
-      expect(criteria).to be_ractor_shareable
+      expect(criteria).to be_deeply_frozen
       criteria.scenarios.each do |scenario|
-        expect(scenario).to be_ractor_shareable
-        expect(scenario.clauses).to all(be_ractor_shareable)
+        expect(scenario).to be_deeply_frozen
+        expect(scenario.clauses).to all(be_deeply_frozen)
       end
     end
   end

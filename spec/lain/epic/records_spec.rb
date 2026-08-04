@@ -46,7 +46,7 @@ RSpec.describe Lain::Epic::IssueTransition do
   end
 
   it "is a deeply frozen, shareable value" do
-    expect(Ractor.shareable?(transition)).to be(true)
+    expect(transition).to be_deeply_frozen
   end
 end
 
@@ -110,7 +110,6 @@ RSpec.describe Lain::Epic::Annotation do
 
   it "is a deeply frozen, shareable value" do
     expect(annotation).to be_deeply_frozen
-    expect(Ractor.shareable?(annotation)).to be(true)
   end
 end
 
@@ -144,7 +143,7 @@ RSpec.describe Lain::Epic::StageTransition do
   end
 
   it "is a deeply frozen, shareable value" do
-    expect(Ractor.shareable?(stage_event)).to be(true)
+    expect(stage_event).to be_deeply_frozen
   end
 end
 
@@ -213,6 +212,6 @@ RSpec.describe Lain::Epic::GraphRevision do
   end
 
   it "is a deeply frozen, shareable value" do
-    expect(Ractor.shareable?(revision)).to be(true)
+    expect(revision).to be_deeply_frozen
   end
 end

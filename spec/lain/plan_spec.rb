@@ -158,11 +158,11 @@ RSpec.describe Lain::Plan::Document do
 
   describe "immutability -- the sent-not-stored carrier never mutates" do
     it "is Ractor.shareable? (deeply frozen, no reachable mutable state)" do
-      expect(document.insert_seam(after: "s1").advance("s1", status: "active")).to be_ractor_shareable
+      expect(document.insert_seam(after: "s1").advance("s1", status: "active")).to be_deeply_frozen
     end
 
     it "has Ractor.shareable? steps" do
-      expect(document.steps).to all(be_ractor_shareable)
+      expect(document.steps).to all(be_deeply_frozen)
     end
 
     it "is value-equal to another document built from the same inputs" do

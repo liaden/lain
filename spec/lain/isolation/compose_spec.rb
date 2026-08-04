@@ -140,8 +140,7 @@ RSpec.describe Lain::Isolation::Compose do
     end
 
     it "is a deeply frozen value object" do
-      expect(service).to be_frozen
-      expect(Ractor.shareable?(service)).to be(true)
+      expect(service).to be_deeply_frozen
     end
 
     it "builds a scheme://host:port URL from a discovered published port" do

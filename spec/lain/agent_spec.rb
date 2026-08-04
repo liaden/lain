@@ -680,7 +680,7 @@ RSpec.describe Lain::Agent do
       # second carries the pruned shape only that Context produces.
       expect(source.contexts.size).to eq(2)
       expect(provider.requests.last.messages.size).to eq(2)
-      expect(source.contexts).to all(be_ractor_shareable)
+      expect(source.contexts).to all(be_deeply_frozen)
     end
 
     # The override preempts the render entirely (see RequestOverride), so a

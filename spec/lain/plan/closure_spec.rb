@@ -97,7 +97,7 @@ RSpec.describe Lain::Plan::Closure do
     it "is Ractor-shareable (no reachable mutable state)" do
       closure = described_class.build(step:, timeline:, chunk_range: (0..2), grade:, snapshot:)
 
-      expect(Ractor.shareable?(closure)).to be(true)
+      expect(closure).to be_deeply_frozen
     end
 
     # A chunk_range must land fully within the timeline's turns. Left un-guarded,
@@ -179,7 +179,7 @@ RSpec.describe Lain::Plan::Closure do
       record = described_class.new(closure_digest: +"blake3:c", step_id: +"P2", plan_digest: +"blake3:p",
                                    size: +"M", chunk_turn_digests: [+"blake3:t1", +"blake3:t2"])
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
       expect(record.to_journal.fetch("type")).to eq("closure_record")
       expect(record.to_journal.fetch("size")).to eq("M")
     end

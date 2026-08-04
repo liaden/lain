@@ -296,7 +296,6 @@ RSpec.describe Lain::Request do
       event = journaled(marked_request)
 
       expect(event).to be_deeply_frozen
-      expect(event).to be_ractor_shareable
     end
   end
 end

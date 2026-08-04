@@ -323,14 +323,14 @@ RSpec.describe Lain::Approval::Risk do
     end
 
     it "holds nothing mutable, so it is safe to share" do
-      expect(Ractor.shareable?(risk)).to be(true)
+      expect(risk).to be_deeply_frozen
     end
   end
 
   describe "a classification" do
     it "is a deeply frozen value, so it is safe to journal and share" do
-      expect(Ractor.shareable?(risk.classify(call_for(read_file, { "path" => "../up" })))).to be(true)
-      expect(Ractor.shareable?(risk.classify(call_for(read_file, { "path" => "lib/lain.rb" })))).to be(true)
+      expect(risk.classify(call_for(read_file, { "path" => "../up" }))).to be_deeply_frozen
+      expect(risk.classify(call_for(read_file, { "path" => "lib/lain.rb" }))).to be_deeply_frozen
     end
 
     # `risky` is the field that carries meaning, so it fails LOUDLY rather than
@@ -414,7 +414,7 @@ RSpec.describe Lain::Approval::Risk do
     it "is deeply frozen, so what a persister writes cannot be mutated under it" do
       keepsake = risk.classify(call_for(read_file, { "path" => "lib/lain.rb" })).keepsake
 
-      expect(Ractor.shareable?(keepsake)).to be(true)
+      expect(keepsake).to be_deeply_frozen
       expect { keepsake.input["path"] << "x" }.to raise_error(FrozenError)
     end
   end

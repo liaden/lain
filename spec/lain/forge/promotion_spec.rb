@@ -389,7 +389,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     # object applies: `Ractor.shareable?` is the mechanical statement of that,
     # and it is false for an unfrozen object however immutable its contents.
     it "composes a ref that is a deeply frozen value" do
-      expect(Ractor.shareable?(described_class::Branch.new(epic_slug: "demo", issue_id: "a1"))).to be(true)
+      expect(described_class::Branch.new(epic_slug: "demo", issue_id: "a1")).to be_deeply_frozen
     end
 
     # The canary for the two rules drifting apart: the name grammar cannot spell

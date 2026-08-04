@@ -460,7 +460,7 @@ RSpec.describe Lain::Context::Conversation do
       paired = pairs(uses: [[1, "a"]], answers: [[3, "a"]])
 
       expect(paired.violations).to be(paired.violations)
-      expect(Ractor.shareable?(paired)).to be(true)
+      expect(paired).to be_deeply_frozen
       expect(paired.violations).to be_frozen
     end
   end
@@ -487,7 +487,7 @@ RSpec.describe Lain::Context::Conversation do
     end
 
     it "is Ractor.shareable?, so a derivation may carry its verdict across the boundary" do
-      expect(Ractor.shareable?(described_class.new(messages))).to be(true)
+      expect(described_class.new(messages)).to be_deeply_frozen
     end
 
     it "cannot have its verdict mutated by a caller" do
@@ -526,7 +526,7 @@ RSpec.describe Lain::Context::Conversation do
         by_rule.each do |rule, input|
           found = described_class.new(input).violations.find { |candidate| candidate.rule == rule }
 
-          expect(Ractor.shareable?(found)).to be(true), rule.to_s
+          expect(found).to be_deeply_frozen, rule.to_s
           expect(found.positions).to be_frozen, rule.to_s
           expect(found.message).to be_frozen, rule.to_s
         end

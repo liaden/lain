@@ -224,7 +224,7 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
 
     it "refutes purity on the same operation, and holds an oracle rather than answering pure?" do
       expect(strategy).not_to be_a(Lain::Algebra::Pure)
-      expect(Ractor.shareable?(strategy)).to be(false)
+      expect(strategy).not_to be_deeply_frozen
       expect(refutation(:pure)&.operation).to eq(:blocks)
     end
 

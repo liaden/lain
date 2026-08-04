@@ -144,7 +144,7 @@ RSpec.describe Lain::Response::ToolUse do
 
     it "is Ractor.shareable? over a deeply frozen block" do
       block = Lain::Response.new(content: [hash], stop_reason: :tool_use).tool_uses.first
-      expect(Ractor.shareable?(block)).to be(true)
+      expect(block).to be_deeply_frozen
     end
   end
 

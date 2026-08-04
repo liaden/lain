@@ -2,14 +2,9 @@
 
 require "async"
 
-# Prefix identity across siblings spawned over one shared template: the bytes through
-# the cache breakpoint, the cache_control census on the real wire, and the fresh-rooted
-# child timelines. Grown from adversarial review probes; no gap here is still open.
-# A probe for an OPEN gap belongs here as an inverted `pending` example, never as a
-# green assertion of the buggy behavior -- see spec/lain/supervisor_reactor_spec.rb.
-#
-# The subject is the Subagent tool rather than the strategy: every example drives a
-# real spawn through it, and two of them go all the way to the Anthropic encoder.
+# Prefix identity across siblings spawned over one shared template: bytes through the
+# cache breakpoint, the cache_control census on the real wire, fresh-rooted child
+# timelines. Subject is the tool, not the strategy -- every example drives a real spawn.
 RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template" do
   let(:store) { Lain::Store.new }
   let(:parent) do
@@ -240,9 +235,8 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   # ---- Isolation invariants under the template arm ---------------------------
   it "the strategy is frozen and its template immutable -- safe under the fiber fan-out" do
     strategy = sibling_template.new(template:)
-    expect(strategy).to be_frozen
     expect(strategy.child_context(child_context)).to be_frozen
-    expect(Ractor.shareable?(strategy)).to be(true)
+    expect(strategy).to be_deeply_frozen
   end
 
   it "sibling timelines stay fresh-rooted: meet with parent AND with each other is empty" do

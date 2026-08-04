@@ -17,7 +17,6 @@ RSpec.describe Lain::Question::Set do
   describe "construction" do
     it "is deeply frozen and Ractor-shareable" do
       expect(set).to be_deeply_frozen
-      expect(Ractor.shareable?(set)).to be(true)
     end
 
     it "keeps its questions in the order they were asked" do

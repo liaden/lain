@@ -545,8 +545,8 @@ RSpec.describe Lain::Compaction::Head do
     # CLAUDE.md requires this of value objects, and A6 hands a Head to code
     # that runs through Ractor.make_shareable.
     it "is Ractor.shareable? whichever way it was built" do
-      expect(Ractor.shareable?(described_class.new(messages:, keep_last: 1))).to be(true)
-      expect(Ractor.shareable?(described_class.from_timeline(timeline: timeline_of(4), keep_last: 1))).to be(true)
+      expect(described_class.new(messages:, keep_last: 1)).to be_deeply_frozen
+      expect(described_class.from_timeline(timeline: timeline_of(4), keep_last: 1)).to be_deeply_frozen
     end
   end
 end

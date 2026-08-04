@@ -51,7 +51,6 @@ RSpec.describe Lain::Epic::ReviewOpened do
 
   it "is a deeply frozen, shareable value" do
     expect(opened).to be_deeply_frozen
-    expect(Ractor.shareable?(opened)).to be(true)
   end
 end
 
@@ -91,7 +90,7 @@ RSpec.describe Lain::Epic::ReviewClosed do
 
   it "is a deeply frozen, shareable value even with a nested summary" do
     expect(closed(changes: { retitled: ["b2"], removed: ["c"] })).to be_deeply_frozen
-    expect(Ractor.shareable?(closed)).to be(true)
+    expect(closed).to be_deeply_frozen
   end
 end
 
@@ -763,7 +762,7 @@ RSpec.describe Lain::Epic::Review do
     end
 
     it "hands a prose delta across a Ractor like every other settlement" do
-      expect(prose_baseline.delta(unparseable)).to be_ractor_shareable
+      expect(prose_baseline.delta(unparseable)).to be_deeply_frozen
     end
 
     # Scenario: a prose review journals a nil graph digest

@@ -98,9 +98,8 @@ RSpec.describe "Lain::Plan seam policies" do
       continuation = Lain::Plan::Continuation.new(head_digest: "blake3:abc", pipeline: SeamPolicyFixtures::DEFAULT)
       empty_head = Lain::Plan::Continuation.new(head_digest: nil, pipeline: SeamPolicyFixtures::DEFAULT)
 
-      expect(continuation).to be_frozen
-      expect(Ractor.shareable?(continuation)).to be(true)
-      expect(Ractor.shareable?(empty_head)).to be(true)
+      expect(continuation).to be_deeply_frozen
+      expect(empty_head).to be_deeply_frozen
     end
 
     it "reconstitutes its mainline Timeline over a shared Store in O(1)" do
@@ -222,7 +221,7 @@ RSpec.describe "Lain::Plan seam policies" do
       record = described_class.new(supersession_digest: +"blake3:s", step_id: +"s1", superseded_digest: +"blake3:a",
                                    superseding_digest: +"blake3:b", plan_digest: +"blake3:p")
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
       expect(record.to_journal.fetch("type")).to eq("supersession_record")
     end
 

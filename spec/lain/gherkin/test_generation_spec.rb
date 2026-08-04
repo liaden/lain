@@ -103,8 +103,8 @@ RSpec.describe Lain::Gherkin::TestGeneration do
     provider = mock(text_response("wrote the spec"))
     record = generation(provider:).call(criteria, framework: "rspec")
 
-    expect(Ractor.shareable?(record.criteria_digest)).to be(true)
-    expect(Ractor.shareable?(record.rubric_scenarios)).to be(true)
+    expect(record.criteria_digest).to be_deeply_frozen
+    expect(record.rubric_scenarios).to be_deeply_frozen
   end
 
   it "raises NothingMechanical naming the digest, spawning nothing, when every scenario is rubric-flagged" do

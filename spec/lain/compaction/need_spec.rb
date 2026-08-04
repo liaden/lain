@@ -232,21 +232,19 @@ RSpec.describe Lain::Compaction::Need do
   describe "shareability" do
     it "is deeply frozen and Ractor-shareable" do
       expect(need).to be_deeply_frozen
-      expect(need).to be_ractor_shareable
     end
 
     it "produces a deeply frozen, Ractor-shareable Result" do
       result = check(head_bytes: bytes_of([message("user", "a" * 200)]), manual: true, plan_step_completed: true)
 
       expect(result).to be_deeply_frozen
-      expect(result).to be_ractor_shareable
     end
 
     it "keeps every detector collaborator deeply frozen and Ractor-shareable" do
       detectors = need.instance_variable_get(:@detectors)
 
       expect(detectors).not_to be_empty
-      expect(detectors).to all(be_deeply_frozen.and(be_ractor_shareable))
+      expect(detectors).to all(be_deeply_frozen.and(be_deeply_frozen))
     end
   end
 end

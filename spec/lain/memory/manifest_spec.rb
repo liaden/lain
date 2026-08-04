@@ -190,7 +190,7 @@ RSpec.describe Lain::Memory::Manifest do
 
     it "is Ractor-shareable when built by #search" do
       hits = manifest_over(item("a", "alpha")).search("alpha")
-      expect(hits).to all(be_ractor_shareable)
+      expect(hits).to all(be_deeply_frozen)
     end
 
     describe "equality (Regular)" do

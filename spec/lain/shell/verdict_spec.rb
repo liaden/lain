@@ -625,13 +625,13 @@ RSpec.describe Lain::Shell::Verdict do
   describe "the decision value" do
     ["ls -la", "echo $(id)", "if true; then", "", nil].each do |command|
       it "is deeply frozen after #{command.inspect}" do
-        expect(Ractor.shareable?(verdict.call(command))).to be(true)
+        expect(verdict.call(command)).to be_deeply_frozen
       end
     end
 
     it "is frozen after a denial" do
       excluding = described_class.new(capability_set: instance_double(described_class::AnyProgram, permits?: false))
-      expect(Ractor.shareable?(excluding.call("curl x"))).to be(true)
+      expect(excluding.call("curl x")).to be_deeply_frozen
     end
 
     it "is itself frozen, so one verdict is safe to share" do

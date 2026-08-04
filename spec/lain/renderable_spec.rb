@@ -106,7 +106,7 @@ RSpec.describe Lain::Renderable do
     end
 
     it "is Ractor.shareable? -- no reachable mutable state" do
-      expect(Ractor.shareable?(described_class.new.plain("a").with(:error, "b"))).to be(true)
+      expect(described_class.new.plain("a").with(:error, "b")).to be_deeply_frozen
     end
 
     it "is equal by its segments" do

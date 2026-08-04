@@ -35,7 +35,7 @@ RSpec.describe Lain::Epic::Graph do
     end
 
     it "is deeply frozen, so a graph can cross a Ractor boundary" do
-      expect(Ractor.shareable?(diamond)).to be(true)
+      expect(diamond).to be_deeply_frozen
     end
 
     it "refuses anything but an Array of issues, rather than failing three frames down" do

@@ -69,7 +69,7 @@ RSpec.describe Lain::Agent::Instrumentation do
     value = described_class.new(journal: RecordingChannel.new)
 
     expect(value).to be_frozen
-    expect(Ractor.shareable?(value)).to be(false)
+    expect(value).not_to be_deeply_frozen
   end
 
   # The refusal's TEXT is the subject in this group, so it is captured rather

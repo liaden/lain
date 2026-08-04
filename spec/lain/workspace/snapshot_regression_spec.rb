@@ -15,11 +15,8 @@ class OutOfBandWriteTool < Lain::Tool
   end
 end
 
-# Snapshot behavior that snapshot_spec.rb does not pin: skip-by-content through a
-# real Agent, blob dedup and domain separation, edge bytes, shareability of the
-# value object, and invisibility of the snapshot in the rendered Request. Grown
-# from adversarial review probes; the original findings stay in the comments as
-# the record of what was wrong, and the assertions track the fixed behavior.
+# What snapshot_spec.rb does not pin: skip-by-content through a real Agent, blob dedup
+# and domain separation, edge bytes, shareability, invisibility in the rendered Request.
 RSpec.describe Lain::Workspace::Snapshot do
   def committed_timeline(store = Lain::Store.new)
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
@@ -202,7 +199,7 @@ RSpec.describe Lain::Workspace::Snapshot do
     it "keeps Blob deeply frozen and Ractor-shareable" do
       blob = Lain::Workspace::Snapshot::Blob.new(bytes: "hello")
 
-      expect(Ractor.shareable?(blob)).to be(true)
+      expect(blob).to be_deeply_frozen
     end
   end
 

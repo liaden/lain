@@ -139,7 +139,7 @@ RSpec.describe Lain::Grader::Journaling do
                                    why: +"half passed", subject_digest: +"blake3:abc",
                                    criteria_digest: +"blake3:def")
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
     end
   end
 

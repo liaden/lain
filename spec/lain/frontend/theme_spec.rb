@@ -39,7 +39,7 @@ RSpec.describe Lain::Frontend::Theme do
     end
 
     it "is Ractor.shareable?, the mechanical statement that it holds no mutable state" do
-      expect(Ractor.shareable?(described_class::DEFAULT_TOKENS)).to be(true)
+      expect(described_class::DEFAULT_TOKENS).to be_deeply_frozen
     end
 
     it "never freezes a caller's own array, at any depth" do

@@ -130,7 +130,7 @@ RSpec.describe Lain::Mode::Switch do
     end
 
     it "interns every field, so the record stays shareable across a Ractor" do
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
     end
 
     it "coerces names to Strings, whatever the caller held them as" do

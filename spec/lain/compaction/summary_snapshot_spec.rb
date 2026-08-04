@@ -151,9 +151,9 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
 
       snapshot = described_class.take(messages: [message], eager:)
 
-      expect(Ractor.shareable?(snapshot)).to be(true)
+      expect(snapshot).to be_deeply_frozen
       compact = Lain::Context::Compact.new(threshold: 10, keep_last: 1, summarizer: snapshot)
-      expect(Ractor.shareable?(compact)).to be(true)
+      expect(compact).to be_deeply_frozen
     end
 
     # The failure this card prevents happens inside Scheduler::COMPOSE on the
@@ -216,7 +216,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
       message = tool_result_message(source)
       snapshot = described_class.new
 
-      expect(Ractor.shareable?(snapshot)).to be(true)
+      expect(snapshot).to be_deeply_frozen
       expect(snapshot.call([message])).to include(Lain::Canonical.digest(message))
     end
   end
@@ -464,7 +464,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     it "stays shareable with the counts on board" do
       eager = Lain::Oracle::Eager.new(oracle: heuristic_oracle(summary: "held"))
 
-      expect(Ractor.shareable?(described_class.take(messages: [tool_result_message(source)], eager:))).to be(true)
+      expect(described_class.take(messages: [tool_result_message(source)], eager:)).to be_deeply_frozen
     end
   end
 

@@ -23,7 +23,9 @@ RSpec.describe Lain::Agent::PipelineSource::Null do
   # The default must not be the thing that costs a Context its shareability:
   # `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing over
   # the pipeline, so anything on this path that holds mutable state poisons it.
+  #
+  # Not `be_deeply_frozen`: a Module is shareable without being `#frozen?`.
   it "is itself Ractor-shareable" do
-    expect(described_class).to be_ractor_shareable
+    expect(Ractor.shareable?(described_class)).to be(true)
   end
 end

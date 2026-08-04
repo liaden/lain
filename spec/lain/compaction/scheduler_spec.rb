@@ -243,7 +243,7 @@ RSpec.describe Lain::Compaction::Scheduler do
     it "stays shareable when the injected compact and base are, despite the live Journal" do
       pipeline = shared_pipeline
 
-      expect(Ractor.shareable?(pipeline)).to be(true)
+      expect(pipeline).to be_deeply_frozen
       expect { Ractor.make_shareable(pipeline) }.not_to raise_error
     end
 
@@ -252,13 +252,13 @@ RSpec.describe Lain::Compaction::Scheduler do
         need: need(:token_threshold), cold: false, history_size: 100, base:, ran_under: "claude-opus-4-8"
       )
 
-      expect(Ractor.shareable?(pipeline)).to be(true)
+      expect(pipeline).to be_deeply_frozen
     end
 
     it "survives being stored in a Context via the injected-pipeline seam" do
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, pipeline: shared_pipeline)
 
-      expect(Ractor.shareable?(context)).to be(true)
+      expect(context).to be_deeply_frozen
     end
 
     it "fails LOUDLY when a caller injects a non-shareable compact (contract enforced at compose)" do

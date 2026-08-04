@@ -195,7 +195,7 @@ RSpec.describe Lain::Gherkin::Approval do
       record = described_class.new(criteria_digest: +"blake3:abc", approved: true,
                                    answered_by: +"auto_approver", latency: 0.5)
 
-      expect(Ractor.shareable?(record)).to be(true)
+      expect(record).to be_deeply_frozen
     end
 
     it "journals under the gherkin_approval discriminator" do
@@ -219,7 +219,7 @@ RSpec.describe Lain::Gherkin::Approval do
 
   describe Lain::Gherkin::Approval::Answer do
     it "is Ractor-shareable (a boolean and an interned surface String)" do
-      expect(Ractor.shareable?(described_class.approve(+"human"))).to be(true)
+      expect(described_class.approve(+"human")).to be_deeply_frozen
     end
 
     it "reads its verdict through #approved?" do

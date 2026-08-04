@@ -139,7 +139,7 @@ RSpec.describe Lain::Context::PinnedMessages do
 
   describe "value-object discipline" do
     it "is Ractor.shareable?, so a Compact holding one can ride the pipeline" do
-      expect(Ractor.shareable?(described_class.new([messages[0]]))).to be(true)
+      expect(described_class.new([messages[0]])).to be_deeply_frozen
     end
 
     it "snapshots, so a later mutation of the caller's message cannot move it" do

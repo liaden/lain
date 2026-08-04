@@ -151,7 +151,7 @@ RSpec.describe Lain::Store do
       body = { "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }
       pay = Lain::Event::Payload.new(kind: :turn, body:)
       store.put(pay)
-      expect(Ractor.shareable?(store.fetch(pay.digest))).to be(true)
+      expect(store.fetch(pay.digest)).to be_deeply_frozen
     end
   end
 

@@ -112,7 +112,7 @@ RSpec.describe Lain::Forge::Intent do
   end
 
   it "is a deeply frozen, shareable value" do
-    expect(Ractor.shareable?(intent)).to be(true)
+    expect(intent).to be_deeply_frozen
   end
 end
 
@@ -165,6 +165,6 @@ RSpec.describe Lain::Forge::Outcome do
   end
 
   it "is a deeply frozen, shareable value" do
-    expect(Ractor.shareable?(outcome(detail: { "pr" => { "number" => 3 } }))).to be(true)
+    expect(outcome(detail: { "pr" => { "number" => 3 } })).to be_deeply_frozen
   end
 end

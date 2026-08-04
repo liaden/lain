@@ -121,7 +121,7 @@ RSpec.describe Lain::Compaction::Strategy do
     end
 
     it "names an anonymous strategy with a frozen, shareable name" do
-      expect(Ractor.shareable?(Class.new(described_class::Base).new.name)).to be(true)
+      expect(Class.new(described_class::Base).new.name).to be_deeply_frozen
     end
   end
 
@@ -194,8 +194,7 @@ RSpec.describe Lain::Compaction::Strategy do
     end
 
     it "is a deeply frozen, shareable value" do
-      expect(identity).to be_frozen
-      expect(Ractor.shareable?(identity)).to be(true)
+      expect(identity).to be_deeply_frozen
     end
   end
 
@@ -407,14 +406,14 @@ RSpec.describe Lain::Compaction::Strategy do
                     .inject(described_class::DROP, :+)
 
       expect(folded.content.size).to eq(4)
-      expect(Ractor.shareable?(folded)).to be(true)
+      expect(folded).to be_deeply_frozen
     end
 
     it "is a deeply frozen, shareable value that leaves its caller's blocks alone" do
       mutable = [{ "type" => "text", "text" => +"a summary" }]
       built = described_class::Replacement.new(content: mutable)
 
-      expect(Ractor.shareable?(built)).to be(true)
+      expect(built).to be_deeply_frozen
       expect(built.content.first["text"]).to be_frozen
       expect(mutable.first["text"]).not_to be_frozen
     end

@@ -53,7 +53,6 @@ RSpec.describe "Prompt slot journalling" do
       with_project("system" => "steady") do |root|
         record = Lain::Telemetry::SlotFills.from(Lain::Prompt::Slots.load(root:))
         expect(record).to be_deeply_frozen
-        expect(Ractor.shareable?(record)).to be(true)
       end
     end
   end

@@ -19,7 +19,7 @@ RSpec.describe Lain::Arm::LedgerState do
   describe "immutability -- the sent-not-stored carrier never mutates" do
     it "is Ractor.shareable? (deeply frozen, no reachable mutable state)" do
       expect(ledger.advanced(note: "read section 1", next_subtask: "read section 2"))
-        .to be_ractor_shareable
+        .to be_deeply_frozen
     end
 
     it "returns a NEW value from #advanced rather than mutating" do

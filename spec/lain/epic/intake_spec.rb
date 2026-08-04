@@ -632,7 +632,6 @@ RSpec.describe Lain::Epic::Intake do
 
     it "is a deeply frozen, shareable value" do
       expect(prose(+note)).to be_deeply_frozen
-      expect(Ractor.shareable?(prose(+note))).to be(true)
     end
   end
 
@@ -724,19 +723,19 @@ RSpec.describe Lain::Epic::Intake do
     end
 
     it "shares an empty account too" do
-      expect(Lain::Epic::Intake::Account.empty).to be_ractor_shareable
+      expect(Lain::Epic::Intake::Account.empty).to be_deeply_frozen
     end
 
     it "is deeply frozen, so a delta may cross a Ractor" do
-      expect(diff(source, markdown(*four, issue("e")))).to be_ractor_shareable
+      expect(diff(source, markdown(*four, issue("e")))).to be_deeply_frozen
     end
 
     it "is deeply frozen when malformed" do
-      expect(diff(source, "### nope\n")).to be_ractor_shareable
+      expect(diff(source, "### nope\n")).to be_deeply_frozen
     end
 
     it "is deeply frozen when the disk bytes were not text" do
-      expect(diff(source, "### [ ] `a` Caf\xE9\n")).to be_ractor_shareable
+      expect(diff(source, "### [ ] `a` Caf\xE9\n")).to be_deeply_frozen
     end
   end
 end

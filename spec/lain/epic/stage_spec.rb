@@ -37,7 +37,7 @@ RSpec.describe Lain::Epic::Stage do
     end
 
     it "is Ractor-shareable (an interned String and nothing else)" do
-      expect(Ractor.shareable?(stage(+"research"))).to be(true)
+      expect(stage(+"research")).to be_deeply_frozen
     end
 
     it "renders as its own name, so it can be passed anywhere a stage String is wanted" do

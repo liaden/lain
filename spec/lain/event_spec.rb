@@ -110,14 +110,9 @@ RSpec.describe Lain::Event do
             render_parent: "blake3:r", causal_parents: %w[blake3:c1 blake3:c2], correlation: "blake3:root")
     end
 
-    it "is deeply frozen" do
-      expect(ev).to be_deeply_frozen
-    end
-
-    # AC: Ractor.shareable?(event) is true -- the mechanical "no reachable mutable
-    # state". String interpolation and Symbol#to_s both hand back mutable Strings.
+    # String interpolation and Symbol#to_s both hand back mutable Strings.
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-      expect(ev).to be_ractor_shareable
+      expect(ev).to be_deeply_frozen
     end
   end
 
@@ -202,7 +197,7 @@ RSpec.describe Lain::Event do
       # string interpolation both hand back mutable Strings, which is how it
       # broke once.
       it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-        expect(turn(meta: { "a" => 1 })).to be_ractor_shareable
+        expect(turn(meta: { "a" => 1 })).to be_deeply_frozen
       end
 
       it "answers no body fields when detached (built from digests alone), loudly" do
@@ -263,7 +258,7 @@ RSpec.describe Lain::Event do
     end
 
     it "is deeply immutable, hence Ractor-shareable" do
-      expect(payload).to be_ractor_shareable
+      expect(payload).to be_deeply_frozen
     end
 
     it "the envelope references the payload by digest, and the payload is separately retrievable" do

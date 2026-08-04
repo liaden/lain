@@ -186,7 +186,7 @@ RSpec.describe Lain::Oracle::Recorded do
         oracle_digest: definition.digest, question: "Is aspirin relevant?",
         answer: { "label" => "yes" }, model: "test-model", usage: {}, wall_clock: 0.1
       )
-      expect(answer).to be_ractor_shareable
+      expect(answer).to be_deeply_frozen
     end
   end
 

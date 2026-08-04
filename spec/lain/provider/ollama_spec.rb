@@ -59,8 +59,7 @@ RSpec.describe Lain::Provider::Ollama do
 
       profile = provider.cache_profile
 
-      expect(profile).to be_frozen
-      expect(Ractor.shareable?(profile)).to be(true)
+      expect(profile).to be_deeply_frozen
     end
   end
 

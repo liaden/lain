@@ -549,7 +549,7 @@ RSpec.describe Lain::Compaction::Boundary do
     it "is Ractor.shareable?" do
       boundary = described_class.new(messages: alternating(10), keep_last: 3)
 
-      expect(Ractor.shareable?(boundary)).to be(true)
+      expect(boundary).to be_deeply_frozen
     end
 
     # FIX 4: a non-frozen, duck-typed pins collaborator must not break
@@ -565,7 +565,7 @@ RSpec.describe Lain::Compaction::Boundary do
 
       boundary = described_class.new(messages: alternating(10), keep_last: 3, pins: loose_pins)
 
-      expect(Ractor.shareable?(boundary)).to be(true)
+      expect(boundary).to be_deeply_frozen
     end
   end
 end

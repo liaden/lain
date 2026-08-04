@@ -92,8 +92,7 @@ RSpec.describe Lain::Compaction::Strategy::Elide do
     end
 
     it "is a deeply frozen, shareable value" do
-      expect(elide).to be_frozen
-      expect(Ractor.shareable?(elide)).to be(true)
+      expect(elide).to be_deeply_frozen
     end
   end
 

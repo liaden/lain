@@ -5,15 +5,11 @@ require "async/queue"
 require "json"
 require "tmpdir"
 
-# The Supervisor as an actor reactor: adoption, address collisions, the mid-turn
-# message window, the bounded drain, and stop. Grown from adversarial review probes,
-# so blocks marked FIXED keep the original finding as the record of what was wrong
-# and now pin the fixed behavior.
+# The Supervisor as an actor reactor: adoption, address collisions, the mid-turn message
+# window, the bounded drain, stop. FIXED blocks keep the original finding as the record.
 #
-# A probe for a gap that is still OPEN asserts what SHOULD hold and is marked `pending`.
-# Do not write one that asserts the buggy behavior and passes: it goes red the day
-# someone fixes the bug, which reads as a regression and gets "fixed" back. Pending
-# inverts that -- the fix turns the example green and RSpec fails on the stale marker.
+# A still-OPEN gap asserts what SHOULD hold and is `pending`, never the buggy behavior
+# green -- otherwise the fix reads as a regression.
 RSpec.describe Lain::Supervisor, "as an actor reactor" do
   let(:store) { Lain::Store.new }
   let(:log) { Lain::Tools::Subagent::Log.new }

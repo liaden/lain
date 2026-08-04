@@ -11,11 +11,7 @@ RSpec.describe Lain::Ext::ShareProbe do
     expect(probe.value).to eq(42)
   end
 
-  it "is frozen on construction" do
-    expect(probe).to be_deeply_frozen
-  end
-
   it "is Ractor-shareable, which is the whole point of the port" do
-    expect(probe).to be_ractor_shareable
+    expect(probe).to be_deeply_frozen
   end
 end

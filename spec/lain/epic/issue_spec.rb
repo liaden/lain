@@ -153,7 +153,6 @@ RSpec.describe Lain::Epic::Issue do
                                   blocks: ["b#{n}"], related: ["r#{n}"], discovered_from: "x#{n}")
 
       expect(value).to be_deeply_frozen
-      expect(value).to be_ractor_shareable
       expect(value.to_h.values.compact.flatten).to all(be_frozen)
     end
 

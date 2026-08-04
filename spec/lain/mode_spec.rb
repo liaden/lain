@@ -111,7 +111,7 @@ RSpec.describe Lain::Mode do
     it "is a frozen value, safe to share across a Ractor" do
       mode = described_class.new(posture: :plan, layers: %i[goal])
 
-      expect(Ractor.shareable?(mode)).to be(true)
+      expect(mode).to be_deeply_frozen
     end
   end
 

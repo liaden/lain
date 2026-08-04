@@ -101,7 +101,7 @@ RSpec.describe Lain::Telemetry do
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(event).to be_ractor_shareable
+      expect(event).to be_deeply_frozen
     end
 
     describe "#to_journal" do
@@ -164,10 +164,6 @@ RSpec.describe Lain::Telemetry do
       expect(event).to be_deeply_frozen
     end
 
-    it "is Ractor-shareable (no reachable mutable state)" do
-      expect(event).to be_ractor_shareable
-    end
-
     it "rejects a nil stop_reason loudly" do
       expect { described_class.new(digest: "blake3:abc123", model: nil, stop_reason: nil, usage: {}) }
         .to raise_error(ArgumentError, /stop_reason/)
@@ -182,7 +178,7 @@ RSpec.describe Lain::Telemetry do
       bare = described_class.new(digest: "blake3:abc123", model: nil,
                                  stop_reason: :end_turn, usage: {})
       expect(bare.model).to be_nil
-      expect(bare).to be_ractor_shareable
+      expect(bare).to be_deeply_frozen
     end
 
     it "journals as a turn_usage record that round-trips through JSON" do
@@ -236,10 +232,6 @@ RSpec.describe Lain::Telemetry do
       expect(event).to be_deeply_frozen
     end
 
-    it "is Ractor-shareable (no reachable mutable state)" do
-      expect(event).to be_ractor_shareable
-    end
-
     it "rejects a non-boolean stream loudly" do
       expect { described_class.new(digest: "d", payload: {}, stream: nil, extra: {}) }
         .to raise_error(ArgumentError, /stream/)
@@ -275,7 +267,7 @@ RSpec.describe Lain::Telemetry do
         chained = described_class.new(digest: request.digest, payload: request.cache_payload,
                                       stream: request.stream, extra: request.extra,
                                       prefix_digests: [[0, "blake3:m0"]])
-        expect(chained).to be_ractor_shareable
+        expect(chained).to be_deeply_frozen
       end
 
       it "journals as position/digest pairs that round-trip through JSON" do
@@ -419,7 +411,6 @@ RSpec.describe Lain::Telemetry do
 
     it "is deeply frozen and Ractor-shareable" do
       expect(event).to be_deeply_frozen
-      expect(event).to be_ractor_shareable
     end
   end
 
@@ -440,7 +431,7 @@ RSpec.describe Lain::Telemetry do
 
     it "is Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(turn_digest: +"blake3:turn", root: +"blake3:root")
-      expect(mutable).to be_ractor_shareable
+      expect(mutable).to be_deeply_frozen
     end
 
     it "rejects a nil turn_digest loudly" do
@@ -451,7 +442,7 @@ RSpec.describe Lain::Telemetry do
     it "tolerates a nil root, because an empty index has no root node to name" do
       bare = described_class.new(turn_digest: "blake3:turn", root: nil)
       expect(bare.root).to be_nil
-      expect(bare).to be_ractor_shareable
+      expect(bare).to be_deeply_frozen
     end
 
     it "journals as a memory_root record whose nil root round-trips as JSON null" do
@@ -484,7 +475,7 @@ RSpec.describe Lain::Telemetry do
     end
 
     it "is Ractor-shareable even when built from a mutable String" do
-      expect(described_class.new(digest: +"blake3:req")).to be_ractor_shareable
+      expect(described_class.new(digest: +"blake3:req")).to be_deeply_frozen
     end
 
     it "rejects a nil digest loudly -- there is no committed turn to name instead" do
@@ -520,7 +511,6 @@ RSpec.describe Lain::Telemetry do
       twin = described_class.new(hook: :stream_started, digest: +"blake3:req", message: +"boom")
       expect(event).to eq(twin)
       expect(event).to be_deeply_frozen
-      expect(event).to be_ractor_shareable
     end
 
     it "journals as an observer_failed record" do
@@ -549,7 +539,7 @@ RSpec.describe Lain::Telemetry do
     end
 
     it "is Ractor-shareable (no reachable mutable state)" do
-      expect(event).to be_ractor_shareable
+      expect(event).to be_deeply_frozen
     end
 
     it "journals as a capability_degraded record that round-trips through JSON" do
@@ -580,7 +570,7 @@ RSpec.describe Lain::Telemetry do
 
     it "is Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(tool_use_id: +"tu_1", pattern: +"aws access key id")
-      expect(mutable).to be_ractor_shareable
+      expect(mutable).to be_deeply_frozen
     end
 
     it "rejects a nil pattern loudly -- a refusal record must name what matched" do
@@ -648,7 +638,6 @@ RSpec.describe Lain::Telemetry do
       event = described_class.new(head: nil, reason: :interrupted)
       expect(event.head).to be_nil
       expect(event).to be_deeply_frozen
-      expect(event).to be_ractor_shareable
     end
   end
 
@@ -693,7 +682,6 @@ RSpec.describe Lain::Telemetry do
     it "is a frozen, Ractor-shareable value" do
       record = described_class.from_event(event)
       expect(record).to be_deeply_frozen
-      expect(record).to be_ractor_shareable
     end
   end
 
@@ -712,7 +700,6 @@ RSpec.describe Lain::Telemetry do
     it "is deeply frozen and Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(requester: +"agent", tool: +"bash", tool_use_id: +"tu_1")
       expect(mutable).to be_deeply_frozen
-      expect(mutable).to be_ractor_shareable
     end
 
     # The house idiom (Effect::ToolCall's own `-name.to_s`): two equal records
@@ -733,7 +720,7 @@ RSpec.describe Lain::Telemetry do
 
       record = described_class.from(pending)
       expect(record).to have_attributes(requester: "the-agent", tool: "bash", tool_use_id: "tu_1")
-      expect(record).to be_ractor_shareable
+      expect(record).to be_deeply_frozen
     end
 
     # Loud failure, the same validate-then-freeze contract every sibling record

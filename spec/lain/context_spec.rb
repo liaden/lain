@@ -350,7 +350,7 @@ RSpec.describe Lain::Context do
       end
 
       it "stays deeply frozen and Ractor-shareable" do
-        expect(injected).to be_ractor_shareable
+        expect(injected).to be_deeply_frozen
       end
     end
   end
@@ -396,7 +396,7 @@ RSpec.describe Lain::Context do
     end
 
     it "stays Ractor-shareable when the injected pipeline is" do
-      expect(built.with_pipeline(Lain::Context::Prune.new(keep_last: 1))).to be_ractor_shareable
+      expect(built.with_pipeline(Lain::Context::Prune.new(keep_last: 1))).to be_deeply_frozen
     end
 
     # AC5, and the trap it exists for: `model:` in a copy-with must be the

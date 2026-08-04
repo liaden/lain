@@ -30,7 +30,6 @@ RSpec.describe Lain::Question::AnswerSet do
   describe "construction" do
     it "is deeply frozen and Ractor-shareable" do
       expect(answered).to be_deeply_frozen
-      expect(Ractor.shareable?(answered)).to be(true)
     end
 
     it "holds one answer per question, in the order they were asked" do
@@ -78,7 +77,6 @@ RSpec.describe Lain::Question::AnswerSet do
 
     it "is deeply frozen and Ractor-shareable" do
       expect(spoken).to be_deeply_frozen
-      expect(Ractor.shareable?(spoken)).to be(true)
     end
 
     it "still holds one record per question, so nothing is dropped" do

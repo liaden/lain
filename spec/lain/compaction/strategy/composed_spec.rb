@@ -252,9 +252,9 @@ RSpec.describe Lain::Compaction::Strategy::Composed do
       composed = left | right
       ranges = composed.ranges(messages, span: 0..7)
 
-      expect(Ractor.shareable?(composed)).to be(true)
+      expect(composed).to be_deeply_frozen
       expect(ranges.map { |range| Ractor.shareable?(range) }).to eq([true, true, true])
-      expect(Ractor.shareable?(Lain::IntervalPartition.of(0..7, ranges, owner: composed.name))).to be(true)
+      expect(Lain::IntervalPartition.of(0..7, ranges, owner: composed.name)).to be_deeply_frozen
     end
   end
 

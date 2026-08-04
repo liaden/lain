@@ -110,11 +110,11 @@ RSpec.describe Lain::Compare do
 
   describe "value objects clear the Ractor.shareable? bar" do
     it "deeply freezes a Distribution" do
-      expect(described_class::Distribution.new([1, 2, 3])).to be_ractor_shareable
+      expect(described_class::Distribution.new([1, 2, 3])).to be_deeply_frozen
     end
 
     it "deeply freezes a Run" do
-      expect(runs.first).to be_ractor_shareable
+      expect(runs.first).to be_deeply_frozen
     end
   end
 
@@ -256,7 +256,7 @@ RSpec.describe Lain::Compare do
     end
 
     it "keeps a Run with a posture Ractor-shareable" do
-      expect(posture_run("a", :manual)).to be_ractor_shareable
+      expect(posture_run("a", :manual)).to be_deeply_frozen
     end
 
     describe "the report" do
@@ -354,8 +354,8 @@ RSpec.describe Lain::Compare do
     end
 
     it "is Ractor-shareable, recorded or not" do
-      expect(described_class.for(:plan)).to be_ractor_shareable
-      expect(described_class::UNRECORDED).to be_ractor_shareable
+      expect(described_class.for(:plan)).to be_deeply_frozen
+      expect(described_class::UNRECORDED).to be_deeply_frozen
     end
   end
 end

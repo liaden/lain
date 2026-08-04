@@ -47,17 +47,13 @@ RSpec.configure do |config|
     expectations.syntax = :expect
   end
 
-  # A stub for a method the real object does not have is a spec that passes against an
-  # object that cannot exist. Partial doubles are unverified by default, and closing that
-  # gap is the whole reason this block is here.
+  # Stubbing a method the real object lacks is a spec for an object that cannot exist.
   config.mock_with :rspec do |mocks|
     mocks.verify_partial_doubles = true
   end
 
-  # Without this, an example stops at its first violated expectation, so a multi-assertion
-  # failure costs one run per assertion to diagnose. Opt out per example with
-  # `aggregate_failures: false` where a later expectation would raise on state an earlier
-  # one was guarding.
+  # Opt out with `aggregate_failures: false` where a later expectation would raise on
+  # state an earlier one guards.
   config.define_derived_metadata do |meta|
     meta[:aggregate_failures] = true unless meta.key?(:aggregate_failures)
   end

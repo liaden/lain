@@ -625,13 +625,13 @@ RSpec.describe Lain::Compaction::Source do
 
   describe "every returned Context is shareable" do
     it "is shareable on the deferring path" do
-      expect(Ractor.shareable?(context_for(source, timeline))).to be(true)
+      expect(context_for(source, timeline)).to be_deeply_frozen
     end
 
     it "is shareable on the compacting path" do
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
-      expect(Ractor.shareable?(context_for(built, timeline))).to be(true)
+      expect(context_for(built, timeline)).to be_deeply_frozen
     end
 
     it "is shareable when the eager holds live summaries" do
@@ -639,7 +639,7 @@ RSpec.describe Lain::Compaction::Source do
       eager = SourceSpecEager.new(Lain::Canonical.digest(tool_body(2)) => "a held summary")
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100, eager:)
 
-      expect(Ractor.shareable?(context_for(built, line))).to be(true)
+      expect(context_for(built, line)).to be_deeply_frozen
     end
   end
 
@@ -984,7 +984,7 @@ RSpec.describe Lain::Compaction::Source do
       line = timeline
       pinning = session_pinning(digests_of(line)[1])
 
-      expect(Ractor.shareable?(context_for(forcing, line, session: pinning))).to be(true)
+      expect(context_for(forcing, line, session: pinning)).to be_deeply_frozen
     end
   end
 
@@ -1125,7 +1125,7 @@ RSpec.describe Lain::Compaction::Source do
       line = timeline
       built = forcing
 
-      expect(Ractor.shareable?(live)).to be(false)
+      expect(live).not_to be_deeply_frozen
       expect { render(context_for(built, line, base: live), line) }.not_to raise_error
       expect(decisions.map { |record| record["compacted"] }).to eq([true])
     end

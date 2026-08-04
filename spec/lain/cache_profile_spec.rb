@@ -131,7 +131,7 @@ RSpec.describe Lain::CacheProfile do
   end
 
   # House convention (CLAUDE.md's "Value objects are deeply frozen"), via the
-  # shared `be_ractor_shareable` matcher (31 other call sites) rather than a
+  # shared `be_deeply_frozen` matcher (31 other call sites) rather than a
   # raw `Ractor.shareable?` assertion: the mechanical statement of "no
   # reachable mutable state", pinned by spec everywhere else one exists
   # (Usage, Event, Skill, Oracle's definition, ...). CacheProfile's fields
@@ -140,13 +140,11 @@ RSpec.describe Lain::CacheProfile do
   # interpolation) that would quietly break it.
   describe "Ractor.shareable?" do
     it "holds for ANTHROPIC" do
-      expect(described_class::ANTHROPIC).to be_frozen
-      expect(described_class::ANTHROPIC).to be_ractor_shareable
+      expect(described_class::ANTHROPIC).to be_deeply_frozen
     end
 
     it "holds for NO_CACHING" do
-      expect(described_class::NO_CACHING).to be_frozen
-      expect(described_class::NO_CACHING).to be_ractor_shareable
+      expect(described_class::NO_CACHING).to be_deeply_frozen
     end
   end
 end

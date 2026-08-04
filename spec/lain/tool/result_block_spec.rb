@@ -227,8 +227,8 @@ RSpec.describe Lain::Tool::ResultBlock do
     it "is Ractor.shareable? only once the block has been normalized" do
       built = described_class.of(Lain::Tool::Result.ok(+"hi"), tool_use_id: "tu_1")
 
-      expect(Ractor.shareable?(built)).to be(false)
-      expect(Ractor.shareable?(described_class.wrap(Lain::Canonical.normalize(built.to_h)))).to be(true)
+      expect(built).not_to be_deeply_frozen
+      expect(described_class.wrap(Lain::Canonical.normalize(built.to_h))).to be_deeply_frozen
     end
   end
 

@@ -491,12 +491,12 @@ RSpec.describe Lain::Shell::Parse do
       "a non-String argument" => nil
     }.each do |label, command|
       it "is deeply frozen after #{label}" do
-        expect(Ractor.shareable?(parse.call(command))).to be(true)
+        expect(parse.call(command)).to be_deeply_frozen
       end
     end
 
     it "is deeply frozen after an over-cap refusal" do
-      expect(Ractor.shareable?(result_for("echo #{"a" * described_class::MAX_BYTES}"))).to be(true)
+      expect(result_for("echo #{"a" * described_class::MAX_BYTES}")).to be_deeply_frozen
     end
 
     it "freezes every breakage detail, including the shared over-cap constant" do

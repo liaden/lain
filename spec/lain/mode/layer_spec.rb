@@ -20,7 +20,7 @@ RSpec.describe Lain::Mode::Layer do
     end
 
     it "is a deeply frozen value" do
-      expect(Ractor.shareable?(described_class.for(:vi))).to be(true)
+      expect(described_class.for(:vi)).to be_deeply_frozen
     end
   end
 
@@ -165,7 +165,7 @@ RSpec.describe Lain::Mode::LayerSet do
     end
 
     it "is a deeply frozen value" do
-      expect(Ractor.shareable?(layer_set(:goal, :vi))).to be(true)
+      expect(layer_set(:goal, :vi)).to be_deeply_frozen
     end
   end
 

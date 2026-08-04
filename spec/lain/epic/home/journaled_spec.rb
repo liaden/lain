@@ -48,7 +48,6 @@ RSpec.describe Lain::Epic::DocWritten do
 
   it "is a deeply frozen, shareable value" do
     expect(written).to be_deeply_frozen
-    expect(Ractor.shareable?(written)).to be(true)
   end
 end
 

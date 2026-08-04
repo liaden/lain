@@ -76,17 +76,8 @@ RSpec.describe Lain::Memory::Item do
       expect(described_class.new(id: :dosage, description: "d", body: "b").id).to eq("dosage")
     end
 
-    it "freezes the item itself" do
-      expect(item).to be_deeply_frozen
-    end
-
-    it "freezes every instance variable" do
-      unfrozen = item.instance_variables.reject { |ivar| item.instance_variable_get(ivar).frozen? }
-      expect(unfrozen).to be_empty
-    end
-
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-      expect(item).to be_ractor_shareable
+      expect(item).to be_deeply_frozen
     end
   end
 

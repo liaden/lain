@@ -176,7 +176,7 @@ RSpec.describe Lain::Compaction::Prepared do
 
       pipeline = instance.pipeline(head_digest: "digest-a", base: PreparedShareableFixtures::BASE)
 
-      expect(Ractor.shareable?(pipeline)).to be(true)
+      expect(pipeline).to be_deeply_frozen
     end
 
     it "survives being stored in a Context via the injected-pipeline seam" do
@@ -186,7 +186,7 @@ RSpec.describe Lain::Compaction::Prepared do
 
       context = Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, pipeline:)
 
-      expect(Ractor.shareable?(context)).to be(true)
+      expect(context).to be_deeply_frozen
     end
 
     # T17 review fix 2. This Replay substitutes the held compaction and drops

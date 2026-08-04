@@ -71,8 +71,7 @@ RSpec.describe Lain::Skill::Invocation do
     it "is a frozen, Ractor-shareable value" do
       invocation = described_class.parse("@researcher[/create-plan] foo")
 
-      expect(invocation).to be_frozen
-      expect(invocation).to be_ractor_shareable
+      expect(invocation).to be_deeply_frozen
     end
 
     it "normalizes role and context defaults when built directly" do
@@ -81,7 +80,7 @@ RSpec.describe Lain::Skill::Invocation do
       expect(invocation.role).to be_nil
       expect(invocation.context).to be_nil
       expect(invocation.args).to eq("")
-      expect(invocation).to be_ractor_shareable
+      expect(invocation).to be_deeply_frozen
     end
   end
 end

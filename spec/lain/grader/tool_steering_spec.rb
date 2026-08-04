@@ -120,8 +120,8 @@ RSpec.describe Lain::Grader::ToolSteering do
 
       expect(flag).to be_deeply_frozen
       expect(index.flags).to be_deeply_frozen
-      expect(Ractor.shareable?(flag)).to be(true)
-      expect(Ractor.shareable?(index.flags)).to be(true)
+      expect(flag).to be_deeply_frozen
+      expect(index.flags).to be_deeply_frozen
     end
   end
 end

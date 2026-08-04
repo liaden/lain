@@ -571,7 +571,7 @@ RSpec.describe Lain::CLI::Wiring do
     # of Scheduler::COMPOSE, and no spec holding a plain Context can see it.
     it "compacts a Context carrying the live /model slot, which is not shareable" do
       agent = wire_agent
-      expect(Ractor.shareable?(agent.context)).to be(false)
+      expect(agent.context).not_to be_deeply_frozen
 
       expect { converse(agent) }.not_to raise_error
 

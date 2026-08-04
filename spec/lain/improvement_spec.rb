@@ -30,7 +30,7 @@ RSpec.describe Lain::Improvement do
     end
 
     it "is deeply immutable, hence Ractor-shareable without make_shareable" do
-      expect(improvement(evidence_digests: %w[deadbeef cafebabe])).to be_ractor_shareable
+      expect(improvement(evidence_digests: %w[deadbeef cafebabe])).to be_deeply_frozen
     end
 
     it "rejects a kind outside the closed vocabulary" do

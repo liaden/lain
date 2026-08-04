@@ -198,7 +198,7 @@ RSpec.describe Lain::Approval::RuleChain do
     it "is a deeply frozen value, so it is safe to journal and share" do
       decision = chain(RuleChainSpecSupport::Denier.new).decide(call)
 
-      expect(Ractor.shareable?(decision)).to be(true)
+      expect(decision).to be_deeply_frozen
     end
 
     it "refuses a verdict outside the closed set" do
@@ -306,7 +306,7 @@ RSpec.describe Lain::Approval::RuleChain do
       expect(fault.tool).to eq("read_file")
       expect(fault.error).to eq("RuleChainSpecSupport::Raiser::Boom")
       expect(fault.message).to eq("the rule itself is broken")
-      expect(Ractor.shareable?(fault)).to be(true)
+      expect(fault).to be_deeply_frozen
     end
 
     it "leaves no decision behind when it was the only rule" do

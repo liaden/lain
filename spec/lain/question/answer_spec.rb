@@ -16,7 +16,6 @@ RSpec.describe Lain::Question::Answer do
   describe "construction" do
     it "is deeply frozen and Ractor-shareable" do
       expect(answer).to be_deeply_frozen
-      expect(Ractor.shareable?(answer)).to be(true)
     end
 
     it "names the question it answers and the options it selected" do

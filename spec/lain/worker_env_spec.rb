@@ -42,7 +42,7 @@ RSpec.describe Lain::WorkerEnv do
     subject(:worker_env) { described_class.new(cwd: "/work", env: { "A" => "1" }) }
 
     it "is Ractor.shareable? -- no reachable mutable state" do
-      expect(worker_env).to be_ractor_shareable
+      expect(worker_env).to be_deeply_frozen
     end
 
     it "freezes its cwd string" do
@@ -67,7 +67,7 @@ RSpec.describe Lain::WorkerEnv do
     it "preserves a nil env value (the scrub marker) rather than dropping the key" do
       worker_env = described_class.new(cwd: "/work", env: { "SCRUB" => nil, "KEEP" => "v" })
       expect(worker_env.env).to eq("SCRUB" => nil, "KEEP" => "v")
-      expect(worker_env).to be_ractor_shareable
+      expect(worker_env).to be_deeply_frozen
     end
   end
 

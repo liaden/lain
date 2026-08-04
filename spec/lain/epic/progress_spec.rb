@@ -293,7 +293,7 @@ RSpec.describe Lain::Epic::Progress do
     it "is deeply frozen and shareable, parked items included" do
       progress = fold(journaled(transition(issue_id: "a"), gate), graph: chain)
 
-      expect(Ractor.shareable?(progress)).to be(true)
+      expect(progress).to be_deeply_frozen
     end
 
     # `Data` freezes the instance and `Array#freeze` is shallow, so deep

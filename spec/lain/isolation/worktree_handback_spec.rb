@@ -1103,7 +1103,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       outcome = described_class.new(kind: :conflicted, worker_key: "w", ref: "refs/lain/worker/w",
                                     paths: ["a.rb"], parent_state: :merging, detail: "conflict")
 
-      expect(Ractor.shareable?(outcome)).to be(true)
+      expect(outcome).to be_deeply_frozen
     end
 
     it "refuses a kind no caller can act on" do

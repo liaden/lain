@@ -549,7 +549,7 @@ RSpec.describe Lain::Tools::AskHuman do
     it "is a deeply frozen, plain-String-transparent value" do
       announcement = announced(set)
 
-      expect(Ractor.shareable?(announcement)).to be(true)
+      expect(announcement).to be_deeply_frozen
       expect(announcement).to eq(announcement.to_s)
       expect({ announcement.to_s => 1 }[announcement]).to eq(1)
     end
