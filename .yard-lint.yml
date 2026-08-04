@@ -1,0 +1,112 @@
+# Only the DEFECT-shaped validators. The point of this file is what is turned OFF.
+#
+# yard-lint's default configuration is dominated by COVERAGE policy -- `UndocumentedObjects`
+# (1,774 hits here) and `UndocumentedMethodArguments` (1,532) demand 100% documented, which is a
+# decision about the codebase and not a defect report. Turning them on would gate every commit on
+# an unmade decision. The partial-coverage case that IS a defect -- a method documenting six of
+# nine parameters, so the list reads as complete -- is already caught by rubocop-yard's
+# YARD/MismatchName, in a linter that already runs.
+#
+# TagGroupSeparator (324) is off for the same reason: blank lines between tag groups is a house
+# style nobody has chosen, not a fault.
+#
+# What is left is 114 offenses, and they are real. See the pre-commit hook: this runs `--staged`,
+# so it gates the files a commit touches rather than the whole tree, and the legacy 58 can be
+# cleared separately without blocking anyone in the meantime.
+
+AllValidators:
+  YardOptions:
+    - --private
+    - --protected
+  Exclude:
+    - '\.git'
+    - 'vendor/**/*'
+    - 'node_modules/**/*'
+    - 'spec/**/*'
+    - 'test/**/*'
+    - 'spike/**/*'
+  FailOnSeverity: warning
+
+# --- coverage policy: off, see the header ---
+Documentation/UndocumentedObjects:
+  Enabled: false
+Documentation/UndocumentedMethodArguments:
+  Enabled: false
+Documentation/UndocumentedBooleanMethods:
+  Enabled: false
+Documentation/UndocumentedOptions:
+  Enabled: false
+Documentation/MissingReturn:
+  Enabled: false
+Tags/TagGroupSeparator:
+  Enabled: false
+
+# --- defects ---
+
+# The validator that pays for this file. Two files each opening `module Lain` with a comment
+# above it attaches BOTH docstrings to the namespace, and YARD keeps exactly one -- silently, with
+# no warning and no marker in the output. 58 namespaces here are affected and all 58 have
+# DIFFERING docstrings, so all 58 are live content loss; `Lain::Telemetry` alone is documented in
+# six files. Nothing else we run can see this, because it is a property of the merged registry
+# rather than of any one file.
+Documentation/DuplicateNamespaceComment:
+  Enabled: true
+  Severity: error
+
+# A docstring separated from its method by an intervening constant documents the CONSTANT. Found
+# one by hand (RenderInlet#initialize's @param tags had drifted behind two string constants);
+# this is how the next one gets caught for free.
+Documentation/OrphanedDocComment:
+  Enabled: true
+  Severity: error
+
+Documentation/MarkdownSyntax:
+  Enabled: true
+Documentation/EmptyCommentLine:
+  Enabled: true
+Documentation/BlankLineBeforeDefinition:
+  Enabled: true
+
+Tags/InvalidTypes:
+  Enabled: true
+Tags/TypeSyntax:
+  Enabled: true
+Tags/MeaninglessTag:
+  Enabled: true
+Tags/Order:
+  Enabled: true
+Tags/CollectionType:
+  Enabled: true
+Tags/TagTypePosition:
+  Enabled: true
+Tags/OptionTags:
+  Enabled: true
+Tags/ExampleSyntax:
+  Enabled: true
+Tags/RedundantParamDescription:
+  Enabled: true
+Tags/InformalNotation:
+  Enabled: true
+Tags/NonAsciiType:
+  Enabled: true
+Tags/ForbiddenTags:
+  Enabled: true
+
+Warnings/SyntaxError:
+  Enabled: true
+  Severity: error
+Warnings/UnknownTag:
+  Enabled: true
+Warnings/UnknownDirective:
+  Enabled: true
+Warnings/InvalidTagFormat:
+  Enabled: true
+Warnings/InvalidDirectiveFormat:
+  Enabled: true
+Warnings/DuplicatedParameterName:
+  Enabled: true
+Warnings/UnknownParameterName:
+  Enabled: true
+
+Semantic/AbstractMethods:
+  Enabled: true

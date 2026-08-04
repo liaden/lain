@@ -76,6 +76,26 @@ repos:
         types_or: [ruby, rust]
         pass_filenames: false
 
+      # The doc defects RuboCop cannot reach, because they are properties of the
+      # registry YARD BUILDS rather than of any one file: two files documenting one
+      # namespace (YARD keeps a single docstring and discards the rest, silently),
+      # and a docstring separated from its method by an intervening constant or
+      # attr_reader, which lands the @param tags on that instead. The second kind
+      # was hiding Compaction::Source's entire eleven-tag constructor docstring on
+      # an attr_reader.
+      #
+      # `--staged` rather than whole-tree on purpose: 58 duplicate-namespace cases
+      # predate this hook, and gating every commit on clearing them first would
+      # block work that has nothing to do with them. Staged mode holds new work to
+      # the standard from today and lets the backlog be cleared on its own terms.
+      # `types: [ruby]` keeps it out of the way of commits touching no Ruby.
+      - id: yard-lint
+        name: yard-lint (staged ruby files)
+        entry: bundle exec yard-lint --staged
+        language: system
+        types: [ruby]
+        pass_filenames: false
+
       # Deterministic commit-message lint (no gem load, no network, no AI): the
       # mechanical parts of the git-commit-narrative standard. Runs at commit-msg
       # so it sees the final message; pass_filenames hands it COMMIT_EDITMSG.

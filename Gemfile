@@ -34,6 +34,12 @@ group :development do
   # worse than no diagram.
   gem "state_machines-mermaid", "~> 0.1"
   gem "yard", "~> 0.9" # our doc comments are already YARD-shaped (@param, @return)
+  # The defects RuboCop structurally cannot see, because they are properties of what YARD
+  # BUILDS rather than of the source: two files documenting one namespace (YARD keeps one
+  # docstring and discards the rest, silently), and a docstring separated from its method
+  # by an intervening constant. Configured down to defect-only in `.yard-lint.yml` -- its
+  # coverage validators are a policy nobody has decided, not faults.
+  gem "yard-lint", "~> 1.10"
 end
 
 group :test do

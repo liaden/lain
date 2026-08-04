@@ -18,9 +18,6 @@ module Lain
     class Model
       DEFAULT_MAX_TOKENS = 1024
 
-      # @param decoder [#call] `Response -> answer attributes Hash`; the default
-      #   parses the reply as JSON. A stronger structured-output decoder (T1)
-      #   swaps in behind the same message without this tier changing shape.
       # `model` is exposed so a journaling wrapper ({Oracle::Recorded::Journaling})
       # records WHICH model answered without being told twice; `usage` retains the
       # LAST call's token cost, which the same wrapper journals so an oracle
@@ -29,6 +26,17 @@ module Lain
       # {Telemetry::TurnUsage} already keeps.
       attr_reader :model
 
+      # @param definition [Oracle::Definition] renders the question from `inputs`
+      #   and validates the decoded reply back into answer attributes -- both ends
+      #   of the round trip, so this tier owns neither the prompt nor the schema
+      # @param provider [Provider] the one round trip #ask spends; synchronous, so
+      #   the Promise it returns is already resolved
+      # @param model [String] which model answers, and the identity a journaling
+      #   wrapper records off {#model}
+      # @param max_tokens [Integer] the reply ceiling on every Request built here
+      # @param decoder [#call] `Response -> answer attributes Hash`; the default
+      #   parses the reply as JSON. A stronger structured-output decoder (T1)
+      #   swaps in behind the same message without this tier changing shape.
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new)
         @definition = definition
         @provider = provider
