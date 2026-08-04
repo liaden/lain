@@ -1,6 +1,6 @@
 # Guardable config validation, petgraph graph primitives, and prop_check
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby + rust
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson) ·
@@ -55,8 +55,10 @@ false, and they are recorded here because the corrected versions are what the ca
 - Messages are computed from the **offending values** (`UnknownKeys.new(keys, path:)` where
   `keys` is a computed set difference), not from an attribute name. ActiveModel's error set
   carries `attribute` + `message` and cannot reconstruct these — this is what shapes C3/C4.
-- `spec/lain/config_spec.rb` is 776 lines / **82 examples**, dominated by exact-message
-  assertions. First `be_deeply_frozen` site is `:491` (not 490); the others are `:585`, `:692`,
+- `spec/lain/config_spec.rb` is 776 lines / **83 examples**, dominated by exact-message
+  assertions. (Corrected during execution: the grounding said 82. `#epics_home`'s
+  `%w[3 true].each` loop is a single `it` that yields two examples, so counting `it` blocks
+  undercounts by one. The split redistributes 19/26/20/18.) First `be_deeply_frozen` site is `:491` (not 490); the others are `:585`, `:692`,
   `:743`.
 - Load order: `lain/config` is manifest line 14, `lain/guard` 26, `lain/approval` 58,
   `lain/epic` 77. `Epic::STAGES` and `Approval::Gate::Policies` are read only inside method
@@ -130,6 +132,14 @@ when a namespace has several).
 - `rantly` appears in **one file, three call sites** — `spec/support/shared_examples/monoid.rb:55,
   63, 87` — and every one is `property_of { true }.check do`. The generator handed to the engine
   is the constant `true`; it is a `100.times` loop.
+  **Corrected during execution — this was the plan's one false premise.** "It generates nothing"
+  is wrong: the *engine* is handed a constant, but each block draws fresh random values itself,
+  100 runs. Proven by a mutation matrix, which falsifies a broken identity and a broken
+  commutativity on that path. What rantly never bought is **shrinking** — its failures print
+  `Failed on:` with no `Shrunken input` block, where a real generator reports a minimal
+  counterexample after 3–58 shrink steps. So the win is shrinking, not randomness, and it is
+  per-file work: `monoid.rb` is `include_examples`'d by **seven further spec files** the plan did
+  not account for, all still on the legacy path behind a coercion shim.
 - `prop_check` 1.0.2, **zero transitive dependencies**. Spiked on branch `spike/gems`
   (`9f3ddf6`, worktree `../lain-spike-gems`): suite green at 9457 examples / 18s.
 - Spike-measured gotchas: the global `aggregate_failures` (`spec/spec_helper.rb:58`) **defeats
@@ -175,7 +185,45 @@ when a namespace has several).
 
 ## Open decisions
 
-None gating. Every card below is runnable as specified.
+None gating at plan time. **One settled during execution, against the plan's own premise:**
+
+**`Guardable` cannot own Config's refusals. The conversion is dropped; the concern stays.**
+Established twice independently, then sharpened by the review panel, which **falsified the first
+stated reason and found the real one**. Recorded carefully, because the wrong version is the
+plausible one:
+
+- **NOT the blocker: "messages are computed from offending values."** The panel disproved this.
+  ActiveModel's `message:` Proc receives `data[:value]` and `object`, and the panel built
+  `"epics_home :bogus is not one of xdg, repo"` **byte-exact through `check!`**, path prefix
+  included. A guard can compute these messages.
+- **The actual blocker is the raise form.** `check!` ends in `raise refusal, <String>`, i.e.
+  `refusal.new(<String>)` — one class, one string argument. Every named class here is
+  `initialize(offending_value, path: nil)`. So even a *perfect* message string is swallowed into
+  the offending-value slot: `epics_home "epics_home :bogus is not one of xdg, repo" is not one of
+  xdg, repo`. And `Gates::UnknownPolicies` does not merely misreport — it dies
+  `NoMethodError: undefined method 'map' for an instance of String` **inside the exception
+  constructor**. `e.value` is corrupted alongside the message; `home: :bogus` and `home: 3` yield
+  identical text.
+
+No route around it exists short of rewriting those constructors. `Answers` is strictly harder
+again — `Refusal#initialize(path, detail)` plus four classes for four rules, where `check!`
+selects one class per guard.
+
+**So the card trigger as written ("messages computed from offending values → STOP") would fire
+wrongly** on a class whose refusal simply takes a message. The correct test is whether the
+refusal class can be constructed from a single string.
+
+So `Config` is NOT the second consumer that earns the generalisation. `Guardable` stays — it is
+the shared `check!` behind `Guard` and its five consumers — but its `guard do … end` block form
+has **no production caller** until the follow-up migrates those five onto it. That migration is
+what earns the DSL, and it is mechanical with byte-identical messages, which is exactly what
+Config could not offer.
+
+What the two config cards delivered instead, in scope: exact-message pins for all nine refusals
+(nothing pinned message *text* before, only fragments), the loaded-vs-hand-built refusal stated as
+a relation so the two cannot drift, the load-order invariant as an executable spec, a real defect
+(`Answers.new(allow: "read_file")` died as an unnamed `NoMethodError` where `.from` raised
+`NotAList`), and a live instance of the `f2fb5d8` documentation trap in `epics.rb`.
 
 ## Orchestrator contract (plan-specific only)
 
@@ -299,8 +347,9 @@ Scenario: the existing Guard subclasses are unchanged
 `spec/lain/config/epics_spec.rb` (new), `spec/lain/config/gates_spec.rb` (new),
 `spec/lain/config/answers_spec.rb` (new)
 
-The spec splits to mirror the lib split — **every one of the 82 examples moves verbatim**, none
-rewritten, added, or dropped. That is what lets C3 and C4 share a wave.
+The spec splits to mirror the lib split — **every one of the 83 examples moves verbatim** (see the
+corrected count in Grounding), none rewritten, added, or dropped. That is what lets C3 and C4
+share a wave.
 **Reuse:** the unit-index pattern in `lib/lain/context.rb` and `lib/lain/effect/handler.rb` — a
 `foo.rb` with a sibling `foo/` requires its children itself, where load order dictates.
 **Shared-file wiring:** none — `lib/lain.rb:14` already requires `lain/config`.
@@ -454,6 +503,12 @@ Scenario: remembered answers stay shareable
 **Depends on:** none
 **Files:** `ext/lain/src/lib.rs`, `ext/lain/src/graph.rs` (new, a documented stub),
 `ext/lain/Cargo.toml`, `Cargo.lock`, `spec/lain/rust/timeline_spec.rb`
+**Scope expanded during execution, orchestrator-authorised:** `ext/lain/CLAUDE.md` (the stale
+test-count line), and `lib/lain/store.rb` + `spec/lain/store_spec.rb`. The last two because the
+panel reported `causal_parents: [nil]` as silently accepted by Rust, and probing showed the
+opposite — Rust already refused it; the silent acceptance was **Ruby's** `Store#validate_parents!`,
+whose `find` + `return if dangling.nil?` could not distinguish "found a nil edge" from "found
+none". Neither file is on the shared list and no sibling card touches them.
 **Reuse:** `read_causal_parents` (`lib.rs:895`) is already called by `Turn::new` (`:969`);
 `EventData::turn` (`event.rs:209`) already takes the vector; `normalize_causal` (`event.rs:321`)
 already sorts and dedups. Ruby's signature to match is
@@ -837,9 +892,80 @@ After the last wave:
   `lain epic`, and the mount / submit / land paths — against a real `.lain/config.toml` and a
   deliberately malformed one, and confirm the refusal messages still read well. The suite pins
   the strings; only a human can say whether they still *help*.
-- **Follow-ups to record on landing:** migrate the five existing `Guard` subclasses onto
-  `Guardable` if C1 leaves them on the old entry point; `Epic::Graph::Blocking` as a second
-  consumer of the graph primitives (with an SCC-based cycle message); extraction to
-  `crates/lain-graph` if cross-repo reuse is wanted; an `Ext::Dominators` query object if the
-  memo needs exposing; the per-use-site meet axis once `dominator_meet` has a production caller;
-  and ROADMAP item 23's seam decision, which this chunk deliberately does not touch.
+## Outcome (landed 2026-08-04)
+
+All twelve cards landed across four waves, in twelve commits from `da9eab7` to `91f678c`.
+Suite **9539, 0 failures** — parallel and serial agree, so no worker died. `cargo test` 227,
+clippy/fmt/deny/doc clean, `rubocop` 1083 files clean, `pre-commit --all-files` green, and
+`Config`, `Epics`, `Gates`, `Answers` and `Guardable` each publish their own docstring rather
+than a reopen note.
+
+**One card did not do what it was specified to do.** The Config→`Guardable` conversion (C3/C4)
+was cancelled mid-chunk on evidence; see Open decisions. Both cards delivered hardening instead.
+
+### What the panels caught that the green suites did not
+
+Six instances of ONE failure mode — a test that cannot distinguish the operator under test from
+a plausible wrong one — each surfacing one level away from where the previous defence was aimed:
+
+1. Four meet laws over a fully-connected population pass trivially. *Anticipated by the plan;*
+   *handled by a population carrying a disconnected component, plus a guard test.*
+2. Weakening `dominates` to plain reachability left the fourth law **green** — the predicate the
+   laws are checked *through*. Now pinned by `dominance_is_stronger_than_reachability`.
+3. The `dominator_meet` parity fixture used a bottleneck shape where the union-graph meet and the
+   render-only meet answer the same node, so all 14 examples passed with the operator rewired to
+   `dag::meet`. Fixed with a separating `bypass` fixture.
+4. The gherkin digest property always mutated `scenarios[0].clauses[0].text`, so four genuine
+   digest defects — including one ignoring clause keywords and one hashing only the first
+   scenario — passed the whole file. The mutation site is now drawn from the generator.
+5. `canonical`'s key generator re-keyed wholesale, comparing an all-Symbol tree to an all-String
+   one. A per-key normalization defect was invisible: **0 of 300 draws**. Mixed spellings catch it
+   105 of 300.
+6. The law-group knobs were read by the guards as *near-copies* of what the include site passed,
+   so weakening the meet at the include alone was red only **9 of 20** — the coin flip one edit
+   away, guards still green. Fixed with one splatted `knobs` Hash.
+
+**The measurement worth remembering:** substituting the render-only meet passes the four laws
+about half the time, because `#meet` is *itself* a lawful semilattice — only the fourth law can
+tell them apart, and ten random draws hit a distinguishing pair in ~53% of runs. Randomness
+proves the laws; only exhaustiveness proves which operator ran.
+
+### Follow-ups
+
+- **`spec/lain/timeline_spec.rb:515` has the identical unguarded exposure** — the same render-meet
+  substitution is red in only **23 of 50 seeds**. Confirmed by probe, pre-existing, untouched here.
+  Ruby's own law run needs the same knob guards.
+- **Migrate the `Guard` subclasses onto the `guard do … end` form.** The plan said "five live
+  consumers"; it is **53 subclasses across 32 files**. The DSL has zero production callers until
+  this happens — the concern extraction serves all 53 today, the block form serves none.
+- **`Config::Refusal`**, one level above `epics.rb:74` / `gates.rb:33` / `answers.rb:56`, which
+  each rebuild the path prefix. Closes a latent defect: `Epics::NotATable.new("x", path: nil)`
+  emits a bare leading `": "`, unreachable today only because `.from` always supplies a path.
+- **A designed refusal for nil causal parents in Ruby's `Timeline`**, so it and Rust agree on the
+  exception class (`TypeError` vs `NoMethodError`; `TypeError` vs `MissingObject`). Its home is
+  `Event#normalize_causal`, not `Store` — Rust refuses one boundary earlier.
+- **`Ext::Timeline#dominates?` has no `Lain::Timeline` counterpart** (Ruby exposes it only on
+  `Dominators`); the two surfaces can drift silently.
+- **The law-group guards are O(n²)**, not the missing memo: 12 ms at n=30 against 1.07 s at
+  n=240, while per-pair meet cost is near-flat (13→19 µs). Do not scale the population without
+  revisiting them. An `Ext::Dominators` memo object would shave a constant, not the growth.
+- **Convert the seven legacy monoid consumers** to real generators, buying them shrinking. They
+  were never the `100.times`-over-a-constant the plan claimed — they draw fresh values; what they
+  lack is a minimal counterexample.
+- `missing_object(ruby, impl Display)` accepts an ad-hoc `String` with no Ruby oracle behind it; a
+  two-variant private enum would say what the doc only asks.
+- A refused commit leaves an orphan payload in Ruby (`carried_payload` put before the envelope)
+  but not in Ext. Pre-existing; this chunk is the first feature making commit refusal routine.
+- **The behaviour oracle has a blind spot** — it never constructs a non-Array member, which is why
+  it stayed byte-identical across a genuine bug fix. Add `Answers.new(allow: "read_file")` before
+  trusting it on that file again.
+- Three inherited `cargo deny` warnings, none from this chunk, `Cargo.lock` byte-identical to its
+  base: duplicate `hashbrown` (petgraph 0.15.5 vs indexmap 0.17.1), duplicate `shlex`, and
+  `license-not-encountered` for `NCSA` (`deny.toml:22`).
+- **977 comment lines across 329 files cite task-card ids** from earlier chunks ("T1's
+  `Epic::Issue`", "Panel review round 2"), plus 28 citing waves and panels. Too large to fold in
+  here, and sweeping it would have destroyed the config split's byte-identity proof.
+- Unchanged from the plan: `Epic::Graph::Blocking` as a second consumer of the graph primitives
+  (SCC-based cycle message); extraction to `crates/lain-graph` if cross-repo reuse is wanted; the
+  per-use-site meet axis once `dominator_meet` has a production caller; and ROADMAP item 23's seam
+  decision, which this chunk deliberately does not touch.
