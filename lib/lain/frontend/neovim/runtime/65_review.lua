@@ -37,9 +37,16 @@ function _G.__lain.review_refused(message)
   vim.api.nvim_echo({ { "lain: " .. tostring(message), "WarningMsg" } }, true, {})
 end
 
--- Buffer numbers are REUSED once nvim frees them, so annotation text left
--- behind here would eventually be read as some later buffer's. Cleared on
--- unload, where the extmarks die anyway.
+-- Annotation text for a buffer that is gone is text nothing can read again, and
+-- this table would otherwise grow for the life of the session -- octo's own
+-- registry defect. Cleared on unload, where the extmarks die anyway.
+--
+-- The reason recorded here first was that bufnrs get REUSED, which would make
+-- this a correctness bug rather than a leak. Measured against this nvim: they do
+-- not -- `nvim_create_buf` after a wipe answers a strictly higher number -- so
+-- the growth is the whole of it. 41_layout's `buf_for` rides the same fact from
+-- the other side: a remembered bufnr can go invalid, never come back as somebody
+-- else's.
 vim.api.nvim_create_autocmd("BufUnload", {
   group = vim.api.nvim_create_augroup("lain_review", { clear = true }),
   callback = function(ev) review_annotations[ev.buf] = nil end,
