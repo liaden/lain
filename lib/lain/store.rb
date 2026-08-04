@@ -81,11 +81,20 @@ module Lain
     # directly (never `#key?`): `Monitor` is reentrant, so a second `#synchronize`
     # here would not deadlock, but it would be a pointless second lock
     # acquisition inside one already held.
+    #
+    # Asks `#empty?` of the rejected edges rather than whether a `#find` result
+    # was nil, and that is the whole reason this reads as it does. A nil INSIDE
+    # `causal_parents` is an edge naming nothing, and the store holds nothing
+    # under nil -- but `find` answers nil for that edge exactly as it answers
+    # nil for "every edge is present", so the sentinel swallowed the malformed
+    # edge and minted the event. `parent_edges`' `filter_map` already drops the
+    # nil of a root's `#parent`, so no legitimate edge arrives here as nil.
     def validate_parents!(object)
-      dangling = parent_edges(object).find { |digest| !@objects.key?(digest) }
-      return if dangling.nil?
+      dangling = parent_edges(object).reject { |digest| @objects.key?(digest) }
+      return if dangling.empty?
 
-      raise MissingObject, "no object #{dangling.inspect} in store: putting #{object.digest.inspect} would dangle"
+      raise MissingObject,
+            "no object #{dangling.first.inspect} in store: putting #{object.digest.inspect} would dangle"
     end
   end
 end

@@ -119,6 +119,26 @@ RSpec.describe Lain::Store do
                         %(no object #{missing.inspect} in store: putting #{ev.digest.inspect} would dangle))
     end
 
+    # A nil in the causal set is not "no dangling edge found" -- it is an edge
+    # naming nothing, and the store holds nothing under nil. It used to be
+    # accepted, because the refusal asked whether the search RESULT was nil and
+    # a nil ELEMENT answers that question exactly as an exhausted search does.
+    # Silence there mints an event carrying a malformed edge that nobody
+    # discovers until a graph walk trips over it.
+    it "refuses a nil causal parent rather than reading it as no dangling edge at all" do
+      ev = event(causal_parents: [nil])
+      expect { store.put(ev) }
+        .to raise_error(Lain::Store::MissingObject,
+                        %(no object nil in store: putting #{ev.digest.inspect} would dangle))
+    end
+
+    it "refuses a nil causal parent even beside a render edge the store does hold" do
+      a = turn("a")
+      put_turn(a)
+      ev = event(render_parent: a.digest, causal_parents: [nil])
+      expect { store.put(ev) }.to raise_error(Lain::Store::MissingObject, /no object nil in store/)
+    end
+
     it "accepts an event whose render_parent and every causal parent are already present" do
       a = turn("a")
       b = turn("b")

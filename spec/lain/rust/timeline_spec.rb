@@ -45,6 +45,94 @@ RSpec.describe Lain::Ext::Timeline do
     end
   end
 
+  # The causal edge is what a render walk cannot see: the assistant turn that
+  # folded a set of messages names them here, and they are hashed into the
+  # envelope like any other content. Mirrors timeline_spec.rb's "#commit with
+  # causal_parents", against the same duck.
+  describe "#commit with causal_parents" do
+    let(:base) { say(timeline, "a") }
+    let(:sibling) { say(described_class.empty(store:), "elsewhere") }
+
+    it "threads every named causal parent onto the committed turn" do
+      folded = base.commit(role: :assistant, content: text("b"),
+                           causal_parents: [base.head_digest, sibling.head_digest])
+      expect(folded.head.causal_parents).to contain_exactly(base.head_digest, sibling.head_digest)
+    end
+
+    it "answers a repeated, unordered set once each and sorted" do
+      unsorted = [sibling.head_digest, base.head_digest, sibling.head_digest].sort.reverse
+      folded = base.commit(role: :assistant, content: text("b"), causal_parents: unsorted)
+      expect(folded.head.causal_parents).to eq(unsorted.uniq.sort)
+    end
+
+    it "records no causal parents when none are named" do
+      expect(say(timeline, "a").head.causal_parents).to eq([])
+    end
+
+    it "changes the turn digest, because causal_parents are hashed content" do
+      plain = base.commit(role: :assistant, content: text("b"))
+      causal = base.commit(role: :assistant, content: text("b"), causal_parents: [base.head_digest])
+      expect(causal.head_digest).not_to eq(plain.head_digest)
+    end
+
+    # An absent keyword is the empty set; an explicit nil is a caller who
+    # believes they are naming something. Reading the second as the first
+    # accepts input the Ruby timeline refuses outright, and this codebase's
+    # premise is that an unknown value fails loudly.
+    it "refuses an explicit nil rather than reading it as the empty set" do
+      expect { base.commit(role: :assistant, content: text("b"), causal_parents: nil) }
+        .to raise_error(TypeError, /causal_parents must be an Array of digest Strings/)
+    end
+
+    it "refuses a nil element inside the set" do
+      expect { base.commit(role: :assistant, content: text("b"), causal_parents: [nil]) }
+        .to raise_error(TypeError, /causal_parents must contain only digest Strings/)
+    end
+
+    it "addresses a causally-parented turn exactly as the Ruby timeline does" do
+      expect(causal_head_digest(described_class.empty(store: Lain::Ext::Store.new)))
+        .to eq(causal_head_digest(Lain::Timeline.empty))
+    end
+
+    it "refuses a causal parent the store has never seen" do
+      expect { base.commit(role: :assistant, content: text("b"), causal_parents: ["blake3:ghost"]) }
+        .to raise_error(Lain::Ext::Store::MissingObject)
+    end
+
+    it "renders that refusal byte-identical to the Ruby commit" do
+      expect(commit_refusal_message(described_class.empty(store: Lain::Ext::Store.new), Lain::Ext::Store))
+        .to eq(commit_refusal_message(Lain::Timeline.empty, Lain::Store))
+    end
+  end
+
+  # Commit a turn naming SEVERAL causal parents, duplicated and reverse-sorted,
+  # onto a two-turn timeline. Both implementations are driven through the
+  # identical public calls, so the head digest is a cross-implementation address
+  # comparison and nothing else.
+  #
+  # The shape of the input is what gives the comparison teeth. One parent that
+  # is also the render parent would agree across any two normalizations at all;
+  # two distinct parents, one of them repeated and the pair handed over in
+  # descending order, disagree the moment either side dedups differently or
+  # sorts under a different collation.
+  def causal_head_digest(empty)
+    first = empty.commit(role: :user, content: text("a"))
+    second = first.commit(role: :assistant, content: text("b"))
+    parents = [first.head_digest, second.head_digest, first.head_digest].sort.reverse
+    second.commit(role: :user, content: text("c"), causal_parents: parents).head_digest
+  end
+
+  # The MissingObject message a commit naming an unstored causal parent refuses
+  # with. The refused turn's digest appears in that message, so this compares
+  # the addressing and the wording at once.
+  def commit_refusal_message(empty, store_class)
+    empty.commit(role: :user, content: text("a"))
+         .commit(role: :assistant, content: text("b"), causal_parents: ["blake3:ghost"])
+    raise "expected #{store_class}::MissingObject to be raised"
+  rescue store_class::MissingObject => e
+    e.message
+  end
+
   describe "time travel" do
     let(:three) { say(say(say(timeline, "a"), "b", role: :assistant), "c") }
 

@@ -12,7 +12,7 @@ while holding the GVL is a known footgun, and an "in-process sandbox" is not a s
 ## Toolchain
 
 ```bash
-cargo test                                  # 190/190 today; must not regress
+cargo test                                  # 217/217 today (`-p lain`); must not regress
 cargo clippy --all-targets -- -D warnings   # warnings are errors
 cargo doc --no-deps                         # clean; broken intra-doc links are denied
 cargo fmt -- --check                        # pre-commit runs this, not `cargo fmt`

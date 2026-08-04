@@ -146,3 +146,24 @@ nucleo-matcher = { version = "0.3.1", features = ["unicode-segmentation"] }
 # `unicode-segmentation` feature pulls it), so this adds no transitive
 # dependency and no new licence.
 unicode-segmentation = "1"
+# Graph primitives for the union graph over an event's BOTH parent edges -- the
+# render edge and the causal set -- which a render-only walk (`dag.rs`) cannot
+# reach. It is here for `algo::dominators::simple_fast`, the same engineered
+# Cooper/Harvey/Kennedy "Simple, Fast Dominance" algorithm
+# `Lain::Timeline::Tree` hand-rolls in Ruby: a published algorithm a mature
+# crate already implements is exactly the case the prefer-crates rule names.
+# Pure in-memory data-structure work over an owned graph -- no I/O, no threads,
+# no environment, no terminal -- so it belongs in this in-process crate.
+# Pinned EXACT to satisfy `cargo deny`'s wildcard ban.
+#
+# `default` is kept rather than trimmed, unlike `bm25` and `tracing-subscriber`
+# above: `graphmap`, `stable_graph` and `matrix_graph` are flags over
+# petgraph's own modules and pull NO extra crates, so dropping them would buy
+# no dependency reduction and would only fence off `GraphMap`, the node-keyed
+# graph a digest-keyed builder wants. What it does pull is `fixedbitset` (new
+# to the tree) and `hashbrown` at `^0.15` -- a SECOND hashbrown major beside
+# the 0.17 the tree already resolves, which `cargo deny check bans` reports as
+# a `multiple-versions` warning. Reported, not silenced: that requirement is
+# upstream's, and `[bans] multiple-versions` is set to "warn" precisely so a
+# duplicate stays visible instead of being fatal or hidden.
+petgraph = "=0.8.1"

@@ -16,8 +16,10 @@
 //! not notice a deleted doc comment anywhere in this crate.
 //!
 //! The lint that actually bites today is scoped rather than global:
-//! `clippy::missing_docs_in_private_items` is denied on `dag` and `digest`, the
-//! modules carrying this crate's algebraic claims. Both are already at zero
+//! `clippy::missing_docs_in_private_items` is denied on `dag`, `digest` and
+//! `graph`, the modules carrying this crate's ancestry structures and the
+//! claims made about them -- `graph` carries the deny from the moment it is
+//! declared, so nothing can land in it undocumented. All three are at zero
 //! offenses, so the deny costs no doc-writing diff -- and deleting any doc
 //! comment in them is a hard error (verified: removing `meet`'s doc yields
 //! `error: missing documentation for a function`). Crate-wide the same lint
@@ -43,6 +45,8 @@ mod dag;
 mod digest;
 mod event;
 mod fuzzy;
+#[deny(clippy::missing_docs_in_private_items)]
+mod graph;
 mod prompt;
 mod read_text;
 mod treesitter;
@@ -222,9 +226,14 @@ impl std::error::Error for DanglingPut {}
 /// store carries an event's payload inline with its envelope, never as a
 /// separate object). Plain Rust over the locked map -- the caller holds the
 /// Store's lock across this check AND the insert, so a concurrent put cannot
-/// race in between. The internal commit path skips this deliberately: its
-/// parent is the committing Timeline's own validated head, so it is
-/// inductively safe (see `Timeline::commit` in the `ffi` module).
+/// race in between.
+///
+/// Every writer passes through here, `Timeline::commit` included. Its render
+/// edge is the committing Timeline's own already-validated head, so that arm
+/// is a formality -- but its causal parents are digests the CALLER supplies,
+/// naming any object at all, so the node as a whole is not inductively safe
+/// and this is the check that says so. Ruby reaches the same guard by
+/// committing through `Store#put` (`lib/lain/store.rb`).
 fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), DanglingPut> {
     let dangling = node
         .render_parent
@@ -252,11 +261,12 @@ fn validate_put(map: &dag::StoreMap, node: &event::EventData) -> Result<(), Dang
 /// the separate business of the shared "a content-addressed store" group
 /// (`spec/lain/rust/store_spec.rb`), and neither proof stands in for the other.
 ///
-/// Split out of [`ffi::Store::put`] so the law is provable with no `magnus` in
-/// the signature and no embedded Ruby VM -- the same reason `build_env_filter`
-/// and `validate_put` are shaped this way. `Store::put` is then only the lock
-/// and the error translation, and it holds that ONE lock across this whole
-/// call, so no concurrent put can race between the check and the insert.
+/// Split out of [`ffi::Store::insert`] so the law is provable with no `magnus`
+/// in the signature and no embedded Ruby VM -- the same reason
+/// `build_env_filter` and `validate_put` are shaped this way. `Store::insert`
+/// is then only the lock, held across this whole call so no concurrent write
+/// can race between the check and the insert; its two callers, `Store::put`
+/// and `Timeline::commit`, add only the error translation.
 fn put_into(
     map: &dag::StoreMap,
     node: &std::sync::Arc<event::EventData>,
@@ -326,7 +336,9 @@ fn rewind_to(
 
 #[cfg(not(test))]
 mod ffi {
-    use super::{NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, put_into};
+    use super::{
+        DanglingPut, NumClass, blake3_hex, build_env_filter, classify_num, dup_writer, put_into,
+    };
     use crate::canonical::{self, Canon};
     use crate::dag;
     use crate::digest::Digest;
@@ -722,9 +734,15 @@ mod ffi {
     // itself not `Ractor.shareable?`.
     // -----------------------------------------------------------------------
 
-    /// Map a pure-layer [`dag::DanglingDigest`] onto `Lain::Ext::Store::MissingObject`.
-    /// The struct's `Display` is byte-equal to Ruby `Store#fetch`, so a corrupt
-    /// chain raises the same class and the same message from every walk.
+    /// Map a pure-layer dangling-edge refusal onto
+    /// `Lain::Ext::Store::MissingObject`. Two structs reach here and each one's
+    /// `Display` IS the Ruby-visible message: [`dag::DanglingDigest`], byte-equal
+    /// to Ruby `Store#fetch`, so a corrupt chain raises the same class and the
+    /// same message from every walk; and [`super::DanglingPut`], byte-equal to
+    /// Ruby `Store#validate_parents!`, so a write refused for a dangling edge
+    /// reads the same whether it arrived through `Store#put` or `Timeline#commit`.
+    /// Taking `impl Display` rather than one concrete type is what keeps those
+    /// two messages built at one site instead of two.
     ///
     /// **Never call this -- or anything else that reaches Ruby -- while a
     /// `Store` guard is held.** It ends in `const_get`, which runs Ruby code:
@@ -736,7 +754,7 @@ mod ffi {
     /// (`Store::fetch`, `Timeline::head`) bind the `Option` to a `let` for
     /// exactly that reason, since a temporary guard in a `?`-terminated
     /// expression lives to the end of the whole statement.
-    fn missing_object(ruby: &Ruby, dangling: dag::DanglingDigest) -> Error {
+    fn missing_object(ruby: &Ruby, dangling: impl std::fmt::Display) -> Error {
         lookup_error(
             ruby,
             &["Lain", "Ext", "Store", "MissingObject"],
@@ -889,12 +907,24 @@ mod ffi {
         }
     }
 
-    /// A causal_parents argument: absent or nil is the empty set, otherwise an
-    /// Array whose every element is a digest String. Normalization (dedup,
-    /// pinned sort order) happens in the pure layer, not here.
+    /// A causal_parents argument: ABSENT is the empty set, otherwise an Array
+    /// whose every element is a digest String. Normalization (dedup, pinned
+    /// sort order) happens in the pure layer, not here.
+    ///
+    /// **An explicit `nil` is refused, unlike `read_meta` and
+    /// `read_optional_digest` above.** The difference is what a nil MEANS at
+    /// each site: a nil parent digest is a root and a nil meta is an empty
+    /// table, both of them values this domain has a name for -- while a nil
+    /// causal set is a caller who believes they are naming something. Reading
+    /// it as "no causal parents" is a silent coercion, and it accepted input
+    /// the Ruby Timeline refuses outright. Absent and nil are distinguished by
+    /// matching `None` separately rather than by an `is_nil` guard, so a nil
+    /// falls through to `RArray::from_value` and is refused as the non-Array it
+    /// is, in the same message any other non-Array gets.
     fn read_causal_parents(ruby: &Ruby, value: Option<Value>) -> Result<Vec<Digest>, Error> {
         match value {
-            Some(inner) if !inner.is_nil() => {
+            None => Ok(Vec::new()),
+            Some(inner) => {
                 let array = RArray::from_value(inner).ok_or_else(|| {
                     Error::new(
                         ruby.exception_type_error(),
@@ -914,7 +944,6 @@ mod ffi {
                     })
                     .collect()
             }
-            _ => Ok(Vec::new()),
         }
     }
 
@@ -1117,22 +1146,25 @@ mod ffi {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
 
-        /// Insert a node if its digest is absent, returning the digest. The
-        /// address names the content, so a second write is a no-op.
+        /// The referential-integrity boundary every writer goes through: the
+        /// lock, and [`super::put_into`], which carries the whole decision
+        /// (refuse a node naming a digest the store does not hold, else insert
+        /// if absent) along with its idempotence proof. ONE lock across check
+        /// AND insert, so a concurrent write cannot land in the window; the
+        /// guard drops before the caller turns the refusal into a Ruby
+        /// exception, which is the discipline `missing_object` documents.
         ///
-        /// Deliberately UNvalidated -- this is the internal commit path, not
-        /// the public boundary. `Timeline::commit` builds its node's parent
-        /// from the committing Timeline's own head, which was validated when
-        /// that Timeline was constructed, so the chain is inductively safe.
-        /// The Ruby-facing [`Store::put`] wraps this shape with the
-        /// referential-integrity check instead of sharing it.
-        fn insert_arc(&self, turn: Arc<EventData>) -> Digest {
-            let digest = turn.digest.clone();
+        /// `Timeline::commit` shares this rather than an unvalidated fast path.
+        /// It once had one, justified by its only edge being the committing
+        /// Timeline's own validated head -- but a causal parent is a digest the
+        /// CALLER names, so that induction stopped covering the node the moment
+        /// `commit` accepted the keyword.
+        fn insert(&self, node: &Arc<EventData>) -> Result<Digest, DanglingPut> {
             let mut map = self.locked();
-            if !map.contains_key(&digest) {
-                *map = map.insert(digest.clone(), turn);
-            }
-            digest
+            put_into(&map, node).map(|(updated, digest)| {
+                *map = updated;
+                digest
+            })
         }
 
         /// Whether the store holds `digest`. Takes a `&Digest` so the internal
@@ -1142,28 +1174,11 @@ mod ffi {
             self.locked().contains_key(digest)
         }
 
-        /// The public `put` boundary: the lock and the error translation over
-        /// [`super::put_into`], which carries the whole decision (refuse a node
-        /// whose parent digest the store does not hold, else insert if absent)
-        /// and carries the idempotence law's `cargo test` proof with it.
-        /// One lock held across check AND insert -- no TOCTOU window for a
-        /// concurrent put -- and DROPPED before the failure becomes a Ruby
-        /// exception (see the guard-discipline note on `missing_object`).
+        /// The Ruby-facing `put`: [`Store::insert`] plus the error translation.
         fn put(ruby: &Ruby, rb_self: &Store, turn: &Turn) -> Result<String, Error> {
-            let written = {
-                let mut map = rb_self.locked();
-                put_into(&map, &turn.inner).map(|(updated, digest)| {
-                    *map = updated;
-                    digest
-                })
-            };
-            let digest = written.map_err(|dangling| {
-                lookup_error(
-                    ruby,
-                    &["Lain", "Ext", "Store", "MissingObject"],
-                    dangling.to_string(),
-                )
-            })?;
+            let digest = rb_self
+                .insert(&turn.inner)
+                .map_err(|dangling| missing_object(ruby, dangling))?;
             // FFI-out boundary: the digest returns to Ruby as a String.
             Ok(digest.into())
         }
@@ -1303,16 +1318,23 @@ mod ffi {
             }
         }
 
+        /// The signature matches Ruby `Timeline#commit(role:, content:, meta:,
+        /// causal_parents:)`. `causal_parents` is the set of events this turn
+        /// folded -- absent means the empty set, and such a turn hashes
+        /// exactly as it did before the keyword existed, because an empty
+        /// array is what the envelope always serialized.
         fn commit(ruby: &Ruby, rb_self: Obj<Timeline>, kw: RHash) -> Result<Obj<Timeline>, Error> {
-            let args = get_kwargs::<_, (Value, Value), (Option<Value>,), ()>(
+            let args = get_kwargs::<_, (Value, Value), (Option<Value>, Option<Value>), ()>(
                 kw,
                 &["role", "content"],
-                &["meta"],
+                &["meta", "causal_parents"],
             )?;
             let (role_value, content_value) = args.required;
+            let (meta_value, causal_value) = args.optional;
             let role = read_role(ruby, role_value)?;
             let content = ruby_to_canon(ruby, content_value)?;
-            let meta = read_meta(ruby, args.optional.0)?;
+            let meta = read_meta(ruby, meta_value)?;
+            let causal_parents = read_causal_parents(ruby, causal_value)?;
             let store_value = rb_self.store_value(ruby);
             let store: &Store = store_ref(ruby, &rb_self)?;
             let correlation = Self::next_correlation(ruby, rb_self.head.as_ref(), store)?;
@@ -1322,9 +1344,17 @@ mod ffi {
                 rb_self.head.clone(),
                 meta,
                 correlation,
-                Vec::new(),
+                causal_parents,
             );
-            let digest = store.insert_arc(turn);
+            // Through the validating boundary, NOT past it. The render edge is
+            // this Timeline's own validated head and needs no check, which is
+            // what used to justify an unvalidated insert here -- but a causal
+            // parent is a caller-supplied digest naming any object at all, so
+            // that induction no longer covers the node. Ruby gets the same
+            // check for free by committing through `Store#put`.
+            let digest = store
+                .insert(&turn)
+                .map_err(|dangling| missing_object(ruby, dangling))?;
             Ok(Timeline::wrap(ruby, Some(digest), store_value))
         }
 
