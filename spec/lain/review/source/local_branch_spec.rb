@@ -334,6 +334,37 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # `core.quotePath=false` covers a NON-ASCII path and nothing else. A path
+  # carrying a quote, a backslash, a tab or a newline is C-quoted whatever that
+  # setting says, so the numstat reports `"we\"ird.rb"` -- a name that opens
+  # nothing and, worse, one the DIFF side spells differently for the same file.
+  # `Review::Changeset` joins those two answers to group files by commit, and the
+  # mismatch took the whole changeset down with an `Unattributed` refusal raised
+  # over a perfectly ordinary file.
+  describe "a path git C-quotes whatever core.quotePath says" do
+    before { commit("tricky paths", 'we"ird.rb' => "q\n", "ta\tb.rb" => "t\n") }
+
+    def numstat_paths = source.commits.flat_map { |commit| commit.numstat.map(&:path) }
+
+    it "reports the real name, not git's quoted rendering of it" do
+      expect(numstat_paths).to include('we"ird.rb', "ta\tb.rb")
+    end
+
+    it "reports a name the diff side spells the same way, which is what the join needs" do
+      expect(source.diff).to include('"a/we\\"ird.rb"')
+      expect(numstat_paths).to include('we"ird.rb')
+    end
+
+    # git quotes a rename's two sides INDEPENDENTLY and leaves the ` => ` between
+    # them bare, so a whole-field test sees an unquoted composite and decodes
+    # neither side.
+    it "decodes each side of a rename composite" do
+      run_git("mv", 'we"ird.rb', 'ren"amed.rb')
+      run_git("commit", "-q", "-m", "rename a quoted path")
+      expect(numstat_paths).to include('we"ird.rb => ren"amed.rb')
+    end
+  end
+
   describe "determinism against the developer's git config" do
     # diff.noprefix rewrites the header to `diff --git a.rb a.rb`, and the
     # parser's own `a/`+`b/` regex stops matching.

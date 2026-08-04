@@ -49,6 +49,27 @@ module Lain
     # (`spec/lain/review/vocabulary_spec.rb`).
     FILE_STATES = %w[reviewed partial unreviewed].freeze
 
+    # What a diff says HAPPENED to a file, in the four spellings a TWO-TREE git
+    # diff can produce. Here rather than inside `Changeset::ChangedFile` for
+    # {SIDES}' reason: one declaration, with the Symbol form derived from it
+    # (`ChangedFile::STATUSES`) instead of restated beside it.
+    #
+    # NOT a wire vocabulary, and that correction is worth keeping because the
+    # first version of this comment claimed it was. GitHub's files API spells
+    # deletion `removed`, and also emits `copied`, `changed` and `unchanged` --
+    # two of which a two-tree diff can never produce. The sets genuinely differ,
+    # so a GitHub-backed source has to MAP onto this one, and forcing the two
+    # equal would import spellings nothing here can answer while renaming one
+    # every local reader already knows.
+    #
+    # Closed anyway: what a reader may be told about a file is a decision, so a
+    # fifth spelling should be an edit here rather than a Symbol that quietly
+    # starts appearing.
+    #
+    # Distinct from the tri-state a MARK derives ({FILE_STATES}), which is not a
+    # property of the diff at all and is never a member of this set.
+    FILE_STATUSES = %w[added deleted modified renamed].freeze
+
     # What a note claims to be. `blocker` is the one a verdict policy can read;
     # the other two are for the human and the agent reading afterwards.
     ANNOTATION_KINDS = %w[note question blocker].freeze

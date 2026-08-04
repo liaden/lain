@@ -127,6 +127,43 @@ module Lain
         to_h.except(:id).hash
       end
 
+      # What this review surface means by "a line" of a document, decided in ONE
+      # place because two ends depend on the answer: a {Review::Changeset}
+      # PRODUCES `anchor_text` by stripping a diff body line's origin marker, and
+      # {#drifted?} CONSUMES it by indexing a document. Those two agreed only by
+      # both happening to chomp the same way -- and they did not.
+      #
+      # This was `document.lines(chomp: true)`, and the failure was total rather
+      # than partial. `String#chomp` strips `\r\n` as readily as `\n`, while a
+      # unified diff's body carries the line exactly as the file holds it,
+      # carriage return included. Every anchor into a CRLF file therefore
+      # compared `"x\r"` against `"x"` and reported drift on a line nobody had
+      # touched -- a review surface telling a human that every line of a file has
+      # moved.
+      #
+      # Splitting on `\n` alone is git's OWN rule for cutting a file into diff
+      # lines, so the producer and this check now agree by construction rather
+      # than by coincidence.
+      #
+      # Neither of Ruby's two splits IS that rule, which is why this is three
+      # lines rather than one. `split("\n")` discards EVERY trailing empty field,
+      # so a document ending in blank lines loses them and an anchor on one
+      # reports drift against a line it still has. `split("\n", -1)` keeps one
+      # too many: a trailing newline TERMINATES the last line, it does not begin
+      # another, and the phantom `""` it appends is exactly what an anchored
+      # blank line matches -- so an anchor on the last line of a file that has
+      # since LOST that line answered "not drifted" against a document with no
+      # such line, which is the one case {#drifted?} documents as impossible.
+      # Keep every field, then drop the terminator's: `"a\n"` is one line,
+      # `"a\n\n"` is two, `"\n"` is one blank one, and `""` is none.
+      #
+      # @param document [String]
+      # @return [Array<String>]
+      def self.lines(document)
+        fields = document.split("\n", -1)
+        document.end_with?("\n") ? fields[0..-2] : fields
+      end
+
       # Drift is `anchor_text` against the line the number now names -- the
       # same rule Lain::Epic::Review::Annotations applies to an editor
       # extmark: the anchor is stale exactly when the document has moved on
@@ -135,13 +172,17 @@ module Lain
       # A line past the document's end, or an empty document, both index to
       # `nil` (no such line), which can never equal `anchor_text` -- so both
       # answer `true`, the same as a line whose text merely changed. That
+      # holds for an anchored BLANK line too, and only because {.lines} counts
+      # lines git's way: a rule that appended a phantom empty field for the
+      # trailing newline would answer `false` here for a line the document no
+      # longer has, which is this paragraph's claim quietly becoming false. That
       # deliberately collapses "moved" and "gone" into one boolean: telling
       # them apart is the drift-model spike this card's own third escalation
       # trigger fences off as research open question 1 (`anchor_text` alone
       # vs. surrounding context). This card answers only "does this position
       # still say what it said"; both cases answer no.
       def drifted?(document)
-        document.lines(chomp: true)[line - 1] != anchor_text
+        self.class.lines(document)[line - 1] != anchor_text
       end
 
       # revision[0, 7] is unguarded, but revision is validated non-empty at

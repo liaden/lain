@@ -146,8 +146,18 @@ module Lain
 
         # git spells a binary file's counts as `-`, and that is preserved as nil
         # rather than coerced to 0 -- see {FileStat}.
+        #
+        # UNQUOTED before it is decoded, and {CONFIG_PINS}' `core.quotePath=false`
+        # is not enough on its own: that setting governs NON-ASCII paths, while a
+        # name carrying a quote, a backslash, a tab or a newline is C-quoted
+        # regardless. Left encoded, this side reports `"we\"ird.rb"` while the
+        # DIFF side (which does unquote) reports `we"ird.rb`, and any consumer
+        # that JOINS the two answers breaks on an ordinary file --
+        # {Review::Changeset} groups files by commit by doing exactly that, and
+        # refused a whole changeset over it. One decoder, at the edge both sides
+        # cross: {Wire.unquote}.
         def file_stat((added, deleted, path))
-          FileStat.new(path: text(path).freeze,
+          FileStat.new(path: text(Wire.unquote(path)).freeze,
                        added: count(added), deleted: count(deleted))
         end
 

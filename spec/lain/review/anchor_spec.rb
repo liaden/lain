@@ -72,6 +72,55 @@ RSpec.describe Lain::Review::Anchor do
     it "reports drift against an empty document" do
       expect(anchor.drifted?("")).to be(true)
     end
+
+    # The CRLF defect, and it was total rather than partial: a unified diff's
+    # body carries the line exactly as the file holds it -- carriage return
+    # included -- while `String#lines(chomp: true)` strips `\r\n` as readily as
+    # `\n`. Every anchor into a CRLF file therefore compared `"x\r"` against
+    # `"x"` and reported drift on a line nobody had touched. Splitting on `\n`
+    # alone is git's own rule for cutting a file into diff lines, so the two
+    # ends now agree by construction rather than by chomping alike.
+    it "reports no drift on a CRLF line whose text is unchanged" do
+      crlf = anchor(anchor_text: "  @store.write(input)\r")
+      expect(crlf.drifted?(padded_document("  @store.write(input)\r"))).to be(false)
+    end
+
+    it "still reports drift when a CRLF line's text changes" do
+      crlf = anchor(anchor_text: "  @store.write(input)\r")
+      expect(crlf.drifted?(padded_document("  @store.write(validated)\r"))).to be(true)
+    end
+
+    # Named, so a PRODUCER of `anchor_text` can call the same function rather
+    # than reimplement it and drift apart. `Review::Changeset` is that producer.
+    it "answers the line rule it judges by, so a producer can agree by construction" do
+      expect(described_class.lines("a\r\nb\n")).to eq(["a\r", "b"])
+    end
+
+    # A trailing newline TERMINATES the last line; it does not begin another.
+    # `split("\n", -1)` alone said otherwise, and the phantom field it appends is
+    # `""` -- which an anchored blank line matches exactly. So an anchor on the
+    # last line of a file that has since LOST that line answered "not drifted"
+    # against a document with no such line, reintroducing the one case the
+    # paragraph above says cannot happen. git counts `"a\n"` as ONE line, and so
+    # does this.
+    it "reports drift for an anchored blank line the document no longer has" do
+      expect(anchor(line: 2, anchor_text: "").drifted?("a\n")).to be(true)
+    end
+
+    # The other half of the rule, and why the fix is not simply dropping `-1`:
+    # Ruby's default split discards EVERY trailing empty field, so a blank line
+    # the document genuinely still holds would then report drift instead. Both
+    # directions are pinned by consequence, not by the shape of the Array.
+    it "reports no drift for a trailing blank line the document still has" do
+      expect(anchor(line: 2, anchor_text: "").drifted?("a\n\n")).to be(false)
+    end
+
+    it "counts a document's lines as git does, ending in a newline or not" do
+      expect(described_class.lines("a\nb")).to eq(%w[a b])
+      expect(described_class.lines("a\n\n\n")).to eq(["a", "", ""])
+      expect(described_class.lines("\n")).to eq([""])
+      expect(described_class.lines("")).to eq([])
+    end
   end
 
   it "refuses an unknown side loudly, naming it" do
