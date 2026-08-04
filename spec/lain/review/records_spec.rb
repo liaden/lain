@@ -286,9 +286,17 @@ RSpec.describe "the review records' journal discriminators" do
   # a shape the registry really has. Asking the method is also what makes the
   # sweep total: `allocate` needs no constructor, so a record whose guard refuses
   # every generic dummy is still answerable here.
+  # ANONYMOUS classes are excluded, and the exclusion is what makes this sweep
+  # deterministic. `journal_type` is `self.class.name.split("::")`, which raises
+  # `NoMethodError` on a `Class.new` -- and a spec that builds an anonymous
+  # Journalable includer leaves one reachable from ObjectSpace, so whether this
+  # example saw it depended on load order and GC. It failed on 3 of 4 seeds under
+  # `rspec spec/lain/review/` and passed under `rake pspec` only because the
+  # workers happened to split those files apart. Nothing is lost by skipping
+  # them: an anonymous class has no stable discriminator to collide WITH.
   def discriminators_in_the_registry
     ObjectSpace.each_object(Class).select do |klass|
-      klass.include?(Lain::Telemetry::Journalable)
+      klass.include?(Lain::Telemetry::Journalable) && !klass.name.nil?
     rescue StandardError
       false
     end
