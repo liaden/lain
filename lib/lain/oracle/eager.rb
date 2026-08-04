@@ -30,6 +30,10 @@ module Lain
       # the question's shape.
       DEFAULT_SLOT = :source
 
+      # The tier this fires into. Readable because callers share ONE Eager and have
+      # to be able to check they are looking at the same one.
+      attr_reader :oracle
+
       # @param oracle [#ask] a tier answering `#ask(inputs) -> Promise`
       # @param slot [Symbol] the template slot the source text fills
       def initialize(oracle:, slot: DEFAULT_SLOT)

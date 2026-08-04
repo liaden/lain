@@ -423,9 +423,9 @@ RSpec.describe Lain::CLI::Backend do
       backend = compacting_backend
 
       expect(backend.tool_observer).to be_a(Lain::Effect::Handler::Summarizing::Observer)
-      expect(backend.tool_observer.instance_variable_get(:@eager)).to be(backend.eager)
+      expect(backend.tool_observer.eager).to be(backend.eager)
       expect(backend.pipeline_source(cache_profile: profile, journal:)
-                    .instance_variable_get(:@eager)).to be(backend.eager)
+                    .eager).to be(backend.eager)
     end
 
     it "observes nothing under --no-compact -- no summary is ever read, so none is fired" do
@@ -767,7 +767,7 @@ RSpec.describe Lain::CLI::Backend do
     it "records a summary fired through an Eager built BEFORE the journal was bound" do
       backend = summarizer_for
       allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
-      oracle = backend.eager.instance_variable_get(:@oracle)
+      oracle = backend.eager.oracle
       backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
 
       Sync { oracle.ask(source: "a tool result").await }

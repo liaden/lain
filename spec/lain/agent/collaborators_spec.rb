@@ -36,7 +36,7 @@ RSpec.describe Lain::Agent::Collaborators do
     end
 
     it "builds a ToolRunner whose handler is Live over the same toolset" do
-      handler = resolve(provider:).tool_runner.instance_variable_get(:@handler)
+      handler = resolve(provider:).tool_runner.handler
 
       expect(handler).to be_a(Lain::Effect::Handler::Live)
       expect(handler.tool_named("echo")).to be(toolset.to_a.first)
@@ -71,21 +71,21 @@ RSpec.describe Lain::Agent::Collaborators do
       phase = Lain::Middleware::Stack.new([Lain::Middleware::Identity])
       resolved = resolve(provider:, instrumentation: instrumented(tool_middleware: phase))
 
-      expect(resolved.tool_runner.instance_variable_get(:@middleware)).to be(phase)
+      expect(resolved.tool_runner.middleware).to be(phase)
     end
 
     it "supplies the built ToolRunner's post-dispatch observer" do
       observer = Lain::Agent::ToolRunner::Observer::Null.new
       resolved = resolve(provider:, instrumentation: instrumented(tool_observer: observer))
 
-      expect(resolved.tool_runner.instance_variable_get(:@observer)).to be(observer)
+      expect(resolved.tool_runner.observer).to be(observer)
     end
 
     it "supplies the built ModelCaller's middleware phase" do
       phase = Lain::Middleware::Stack.new([Lain::Middleware::Identity])
       resolved = resolve(provider:, instrumentation: instrumented(model_middleware: phase))
 
-      expect(resolved.model_caller.instance_variable_get(:@middleware)).to be(phase)
+      expect(resolved.model_caller.middleware).to be(phase)
     end
 
     it "supplies the built Accounting's journal, so a turn's usage lands where the run reports" do
@@ -114,8 +114,8 @@ RSpec.describe Lain::Agent::Collaborators do
     it "defaults to the all-Null value, which reports nowhere" do
       resolved = resolve(provider:)
 
-      expect(resolved.tool_runner.instance_variable_get(:@middleware).to_a).to be_empty
-      expect(resolved.accounting.instance_variable_get(:@journal)).to be(Lain::Channel::Null.instance)
+      expect(resolved.tool_runner.middleware.to_a).to be_empty
+      expect(resolved.accounting.journal).to be(Lain::Channel::Null.instance)
     end
   end
 

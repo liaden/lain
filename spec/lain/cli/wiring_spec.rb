@@ -542,8 +542,8 @@ RSpec.describe Lain::CLI::Wiring do
 
       expect(source_of(agent)).to be_a(Lain::Compaction::Source)
       expect(agent.instance_variable_get(:@tool_runner).instance_variable_get(:@observer)).to be(backend.tool_observer)
-      expect(backend.tool_observer.instance_variable_get(:@eager)).to be(backend.eager)
-      expect(source_of(agent).instance_variable_get(:@eager)).to be(backend.eager)
+      expect(backend.tool_observer.eager).to be(backend.eager)
+      expect(source_of(agent).eager).to be(backend.eager)
     end
 
     # Without the tee `Cold` is never fed, the `:cold` decision path is dead on

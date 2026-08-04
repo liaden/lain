@@ -56,6 +56,10 @@ module Lain
       # ({Collaborators#refuse_foreign_toolset}).
       attr_reader :toolset
 
+      # Readable for the same reason `toolset` is: what a runner was wired to is not
+      # private business when the Agent did not build it.
+      attr_reader :handler, :middleware, :observer
+
       # `toolset:` exists for {#answered_questions}' harvest alone -- dispatch
       # itself still routes through `handler`, never a direct tool lookup.
       # `observer:` is the post-dispatch seam {#observe} describes.

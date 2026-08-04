@@ -12,6 +12,9 @@ module Lain
       # The run's cumulative {Usage}; the monoid sum of every observed response.
       attr_reader :usage
 
+      # Where TurnUsage lands. Readable so a caller can confirm what it was wired to.
+      attr_reader :journal
+
       # @param journal [#<<] where TurnUsage records land; the Null channel by
       #   default, so no caller guards `if journal`
       def initialize(journal: Channel::Null.instance)

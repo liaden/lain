@@ -145,6 +145,10 @@ module Lain
       #   fallback for a model no Anthropic-shaped table carries (`ollama`,
       #   `bedrock`), because an unsupported provider must still run; a blank
       #   model still raises there, which is a wiring bug rather than a provider.
+      # The run's shared summary store; readable so callers can check they hold the
+      # same one the tool observer fires into.
+      attr_reader :eager
+
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
                      clock: -> { Time.now }, context_window: ContextWindow.default)

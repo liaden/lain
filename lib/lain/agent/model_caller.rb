@@ -11,7 +11,9 @@ module Lain
     # `:request`/`:response` through `@middleware` here is the same in/out
     # shape {ToolRunner} uses for `:effect`/`:result`.
     class ModelCaller
-      attr_reader :provider
+      # Both readable for the same reason: an Agent handed collaborators it did not
+      # build has no other way to check what it was wired to.
+      attr_reader :provider, :middleware
 
       def initialize(provider:, middleware: Middleware::Stack.new)
         @provider = provider

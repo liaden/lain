@@ -44,6 +44,10 @@ module Lain
         # before the post-dispatch seam is ever offered the result. The
         # decorator remains for a chain that has no ToolRunner above it.
         class Observer
+          # The run shares ONE Eager between this and the pipeline source; readable so
+          # that sharing can be checked rather than assumed.
+          attr_reader :eager
+
           def initialize(eager:, threshold_bytes: DEFAULT_THRESHOLD_BYTES)
             @eager = eager
             @threshold_bytes = threshold_bytes
