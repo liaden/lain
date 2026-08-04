@@ -116,12 +116,6 @@ RSpec.describe Lain::Workspace do
       expect(workspace.to_s).to eq("reminders=2")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(workspace.inspect).to eq("#<Lain::Workspace reminders=2>")
-    end
-
-    it "does not alias to_s and inspect" do
-      expect(workspace.method(:to_s)).not_to eq(workspace.method(:inspect))
-    end
+    it_behaves_like "a class-tagged inspect"
   end
 end

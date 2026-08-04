@@ -56,13 +56,7 @@ RSpec.describe Lain::Provider do
       expect(provider.to_s).to eq("streaming, thinking")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(provider.inspect).to eq("#<Lain::Provider::Mock streaming, thinking>")
-    end
-
-    it "does not alias to_s and inspect" do
-      expect(provider.method(:to_s)).not_to eq(provider.method(:inspect))
-    end
+    it_behaves_like "a class-tagged inspect"
   end
 end
 

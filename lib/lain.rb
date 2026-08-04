@@ -17,6 +17,7 @@ require_relative "lain/canonical"
 require_relative "lain/content_addressed"
 require_relative "lain/prompt"
 require_relative "lain/freezable"
+require_relative "lain/inspectable"
 require_relative "lain/algebra"
 # After `algebra`, not before: IntervalPartition declares its meet semilattice
 # in its own class body, so the verb has to exist by the time this loads.

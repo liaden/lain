@@ -18,6 +18,7 @@ module Lain
     # Timeline's turns carry.
     class DegradedSet
       include Enumerable
+      include Inspectable
 
       # @return [Array<Symbol>] sorted, unique
       attr_reader :capabilities
@@ -53,8 +54,6 @@ module Lain
       # to_s is the human-facing capability list; inspect keeps the class-tagged,
       # debug-oriented form.
       def to_s = capabilities.join(", ")
-
-      def inspect = "#<#{self.class} #{capabilities.join(", ")}>"
     end
   end
 end

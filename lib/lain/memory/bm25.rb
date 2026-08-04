@@ -19,6 +19,8 @@ module Lain
     # tokenizes to nothing on both sides of the FFI boundary and returns [],
     # never an error -- the same tokenless-query behavior Manifest has.
     class Bm25
+      include Inspectable
+
       # A u32 token-hash collision inside the crate can score a document above
       # zero with an EMPTY surface intersection (no shared tokens to name).
       # Hit#why raises on blank, so that case gets this named fallback rather
@@ -64,10 +66,6 @@ module Lain
       # debug-oriented form -- the DegradedSet convention.
       def to_s
         "entries=#{@size}"
-      end
-
-      def inspect
-        "#<Lain::Memory::Bm25 #{self}>"
       end
 
       private

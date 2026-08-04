@@ -330,8 +330,8 @@ RSpec.describe Lain::Toolset do
       expect(full.to_s).to eq("bash, grep, read_file")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(full.inspect).to eq("#<Lain::Toolset bash, grep, read_file>")
+    it_behaves_like "a class-tagged inspect" do
+      subject { full }
     end
 
     it "does not alias to_s and inspect" do

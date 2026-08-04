@@ -58,8 +58,6 @@ RSpec.describe Lain::Capability::DegradedSet do
       expect(set.to_s).to eq("server_tools, thinking")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(set.inspect).to eq("#<#{described_class} server_tools, thinking>")
-    end
+    it_behaves_like "a class-tagged inspect"
   end
 end

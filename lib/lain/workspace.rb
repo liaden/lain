@@ -22,6 +22,7 @@ module Lain
   class Workspace
     # Freeze happens once, after initialize sets @reminders (see Lain::Freezable).
     prepend Freezable
+    include Inspectable
 
     BLOCK_TYPE = "text"
 
@@ -88,10 +89,6 @@ module Lain
     # debug-oriented form -- the DegradedSet convention.
     def to_s
       "reminders=#{reminders.size}"
-    end
-
-    def inspect
-      "#<Lain::Workspace #{self}>"
     end
   end
 end

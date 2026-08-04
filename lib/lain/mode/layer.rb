@@ -103,6 +103,7 @@ module Lain
     # frozen object.
     class LayerSet
       include Enumerable
+      include Inspectable
 
       # Canonicalized by SELECTING from the declaration order rather than by
       # sorting the input, so two sets holding the same layers are `==` however
@@ -165,8 +166,6 @@ module Lain
       # to_s is the human-facing list; inspect keeps the class-tagged, debug
       # form -- the DegradedSet convention.
       def to_s = names.join(", ")
-
-      def inspect = "#<Lain::Mode::LayerSet #{self}>"
 
       # The monoid's unit, built once: a fresh empty set per call would be a
       # fresh allocation for a value that can never differ.

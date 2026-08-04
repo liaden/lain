@@ -62,10 +62,6 @@ module Lain
     def to_s
       "#{model} msgs=#{messages.size} tools=#{tools.size} #{digest[0, 19]}..."
     end
-
-    def inspect
-      "#<Lain::Request #{self}>"
-    end
   end
 
   # Reopened rather than folded into the `Data.define` block above: a `class`
@@ -76,6 +72,8 @@ module Lain
   # where they read, and where every method below can find them by ordinary
   # lexical lookup.
   class Request
+    include Inspectable
+
     # MORE THAN ONE cache marker inside a single message. A message names one
     # position on the wire, so two marked blocks within it have no single
     # place to hang a chain entry, and this fails loudly rather than guess

@@ -21,6 +21,7 @@ module Lain
 
     include Enumerable
     include Algebra::Attenuation
+    include Inspectable
 
     # The schema and its digest are built HERE rather than memoized on demand:
     # the object freezes itself on the next line, so a lazy `@digest ||=` is a
@@ -166,10 +167,6 @@ module Lain
     # debug-oriented form -- the DegradedSet convention.
     def to_s
       names.join(", ")
-    end
-
-    def inspect
-      "#<Lain::Toolset #{self}>"
     end
 
     private

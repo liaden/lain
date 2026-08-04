@@ -81,13 +81,7 @@ RSpec.describe Lain::Request do
       expect(req.to_s).to eq("#{req.model} msgs=#{req.messages.size} tools=#{req.tools.size} #{req.digest[0, 19]}...")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(req.inspect).to eq("#<Lain::Request #{req}>")
-    end
-
-    it "does not alias to_s and inspect" do
-      expect(req.method(:to_s)).not_to eq(req.method(:inspect))
-    end
+    it_behaves_like "a class-tagged inspect"
   end
 
   describe "cache breakpoints are provider-neutral" do

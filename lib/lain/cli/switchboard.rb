@@ -222,6 +222,7 @@ module Lain
       # Compare `live.current`, or `live.digest`, and never the face.
       class LiveToolset
         include Enumerable
+        include Inspectable
 
         delegate :to_schema, :include?, :fetch, :[], :each, :names, :digest, :size, :empty?, :to_s, to: :current
 
@@ -233,8 +234,6 @@ module Lain
 
         # Read every time rather than memoized: being late is the entire job.
         def current = @source.call
-
-        def inspect = "#<#{self.class} #{self}>"
       end
 
       # The {Mode::Switch} the command surface writes, decorated so a flip does

@@ -139,12 +139,6 @@ RSpec.describe Lain::Memory::Bm25 do
       expect(bm25.to_s).to eq("entries=3")
     end
 
-    it "keeps inspect class-tagged for debugging" do
-      expect(bm25.inspect).to eq("#<Lain::Memory::Bm25 entries=3>")
-    end
-
-    it "does not alias to_s and inspect" do
-      expect(bm25.method(:to_s)).not_to eq(bm25.method(:inspect))
-    end
+    it_behaves_like "a class-tagged inspect"
   end
 end

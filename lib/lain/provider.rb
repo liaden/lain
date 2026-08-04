@@ -22,6 +22,7 @@ module Lain
   # nobody noticing.
   class Provider
     class Unsupported < Error; end
+    include Inspectable
 
     # Every capability any provider may declare. Naming them in one place is what
     # lets `Compare` refuse to compare two runs whose degraded sets differ.
@@ -81,10 +82,6 @@ module Lain
     # debug-oriented form -- the DegradedSet convention.
     def to_s
       capabilities.sort.join(", ")
-    end
-
-    def inspect
-      "#<#{self.class} #{self}>"
     end
   end
 end
