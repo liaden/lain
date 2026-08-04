@@ -137,6 +137,47 @@ T11 changes `RUNTIME_PROTOCOL` in it (wave 2). Nothing after wave 2 touches it, 
 discovered from the directory in sorted order, so every later card adds a lua file and edits no
 loader.
 
+**Execution note, 2026-08-04 — worktree fork base.** `isolation: "worktree"` cuts from
+`refs/remotes/origin/main` (`cc76ea4`), and local `main` is **176 unpushed commits** ahead of it, so
+all six wave-1 worktrees started 176 commits stale. Only T6 detected it, because its card cites
+measurable file facts (1359 lines, 9 `define(` sites, `RUNTIME_PROTOCOL = "8"`) that the stale tree
+contradicted; the five greenfield cards had nothing to trip over and would have shipped work built
+against a tree without `Guardable`. Pushing was rejected as outward-facing and the user's call, and
+rewriting the remote-tracking ref was rejected because it would make `git status` misreport what is
+pushed. Wave 1 was salvaged by fast-forwarding the three surviving worktrees and re-spawning the
+three that auto-removed, each with an authorized `git merge --ff-only main` as step 0. **Waves 2
+onward create their worktrees from local `main` directly and spawn without `isolation`,** which
+removes the failure mode rather than detecting it. Every brief from here carries a measurable
+precondition, not just a card.
+
+Two more worktree facts, learned in wave 1 and worth doing up front from wave 2:
+`lib/lain/lain.so` is **gitignored**, so a fresh worktree cannot `require "lain"` until
+`bundle exec rake compile` — seed it by `cp` from the primary tree instead, since only a card that
+changes Rust needs its own build. And a worktree cut before `683974b` lacks the committed plan doc,
+so its full-suite count reads exactly **one lower** than the primary tree's
+(`gherkin_spec.rb:428` globs `planning/specs/*.md` into one example per doc). Wave-1 hand-back
+counts must be read against a 9538 worktree baseline, not the primary tree's 9539.
+
+**STANDING RULE for every remaining card — closed sets live in `vocabulary.rb`, in the String
+form.** This trap formed **three separate times** in this chunk before wave 2 was done, so treat it
+as the default failure mode rather than a curiosity:
+
+1. **T1 vs T5 (`SIDES`)** — T1 declared `%i[old new]`, T5 `%w[old new]`. The sets were not equal, so
+   `Review::SIDES.include?(anchor.side)` answered **false for a perfectly valid anchor**. Both ends
+   coerced at their edges, so nothing broke the day it was written.
+2. **T9 (`STATE_MARKERS`)** — Symbol keys again, and this one *already* broke: `present` raised
+   `KeyError` when handed `"reviewed"`, the spelling every record stores. `:partial` was declared
+   nowhere at all. The hand-back claimed the design avoided the trap; it was the trap.
+3. **T26 (`Placement::SUPPORTED`)** — Symbols, declared in `placement.rb`. Flagged by its own
+   implementer for a ruling rather than discovered, which is the right instinct.
+
+The rule: **any closed set a value is judged against goes in `lib/lain/review/vocabulary.rb`, in
+Strings**, because the journal is the durable artifact and Strings are what NDJSON carries. A
+collaborator wanting Symbols **derives** them (`SIDES.map(&:to_sym)`) and a spec pins the two
+spellings equal. A set that is genuinely never journaled and never compared against a wire value may
+live with its owner — but say so explicitly in the hand-back and expect the panel to test the claim,
+because "this one is different" is what the first two also looked like.
+
 Deviations from the default process:
 
 - T6 is a **pure refactor with no behavior change**; its AC is that the existing
@@ -150,8 +191,17 @@ Deviations from the default process:
    the reason is that `lib/lain/config.rb` is owned by the concurrent chunk and two sessions must not
    both edit it.
    Defaults are constants in `Lain::Review`. A follow-up chunk moves them to `.lain/config.toml`.
-2. **The Lua panel seats are proposed, not confirmed.** Replace them in the Phase 5 review if the
-   names are wrong; the chunk does not depend on the choice.
+2. ~~**The Lua panel seats are proposed, not confirmed.**~~ **SETTLED 2026-08-04 by the T6 panel,
+   which replaced two of the three on evidence.** T6 was chunk assembly and a namespace contract
+   rather than plugin authoring, so **TJ DeVries had nothing to bite on and Folke Lemaitre less**
+   (nothing lazy-loads). The confirmed roster:
+   - **Justin M. Keyes — KEPT.** The `lib/` vs `plugin/` boundary is the live question here and he
+     produced two findings, including that selene only works on the *concatenated* chunk.
+   - **Mike Pall replaces TJ DeVries** — LuaJIT chunk semantics, upvalue and local caps. This is
+     exactly what the hand-back's headroom claim got wrong (60 names not 56, 199 not 200, and the
+     cap that actually binds is 60 upvalues per function).
+   - **Lewis Russell replaces Folke Lemaitre** — extmark and buffer-state discipline, which is what
+     T15 (diff mode) and T16 (annotate) are actually made of.
 3. **The `:nvim` specs stay in the default suite. Considered and declined, 2026-08-04.** Segregating
    them for a lighter inner loop was raised and measured against. `spec/support/tags.rb:82-87`
    records that they were once opt-in and it hid **97 examples from every pre-commit and CI run**;
@@ -189,6 +239,94 @@ prose.
 There is no `require` line to remove for a lua module: T6's loader globs the directory, so deleting
 the file is the whole edit.
 
+## Follow-up tickets this chunk owes
+
+Raised by panels, deliberately not taken here to keep scope honest. Each names who found it and why
+it was deferred.
+
+1. **`Lain::Git::Runner` — extract the scrubbed git invocation.** T3's panel found this is the
+   **fifth** copy of "run git in this repo with the context scrubbed" (`Worktree#git`, `Handback`,
+   `Promotion#run`, `ShadowGit#run`, `LocalBranch#git`). It also dissolves the load-order question
+   T3 raised (`Isolation::Worktree::GIT_CONTEXT_SCRUB` referenced from a method body because
+   `lain/review` loads before `lain/isolation`). **The extraction must parameterize the `-c` pins** —
+   `LocalBranch` needs `core.quotePath=false`, `--src-prefix`/`--dst-prefix`/`-U3` that the other
+   four do not.
+2. **`Lain::Wire` — one concept, currently two tiers.** T5's panel: `Review::Wire` owns the String
+   coercions while `Epic::WireInteger` owns the Integer one, so `records.rb` reaches sideways into
+   `Epic::` for no domain reason.
+3. **`spec/journalable_surface_spec.rb`: run the COLLISION example over all includers via
+   `allocate`.** T5's panel verified `klass.allocate.journal_type` answers for 66/66 with zero
+   collisions and needs no constructor, retiring the 26-record `unreached` blind spot for the one
+   property that genuinely needs global scope. **Fix its `.sort_by(&:name)` at the same time** — it
+   raises on an anonymous includer, the same latent hazard fixed locally at `28b6fd6`.
+4. **selene must lint the loader's OUTPUT, not per-file.** T6's panel measured per-file linting at
+   76 errors / 27 warnings, all false `undefined_variable`, because the modules are only meaningful
+   concatenated. The `files: \.lua$` hook sketched in `planning/lua-tooling-2026-08.md` would be pure
+   false alarm. No selene config exists in the tree yet either.
+5. **`Command`-shaped render entry points.** T11's panel (Linus): three entry points cost nine
+   hand-written parallel members when `Command` already is `(lua, args)`; the next surface makes it
+   twelve. Deferred so a refactor did not ride along with a BLOCKER fix.
+6. **Nothing reads `diff_origin` yet.** T10's panel: AC 4 ("the fallback is reported, not silent") is
+   true of the object but not yet of any human or journal. Needs a consumer.
+7. **`spec/lain/review/source/local_branch_spec.rb` is the suite's NEW WALL FLOOR** — T10's panel
+   measured it at **35.3s against `worktree_handback`'s 28.2s**. CLAUDE.md's Toolchain section
+   analyses the floor at length and names `worktree_handback` as it; **that analysis is now stale**.
+   Owes a split by concern, and a re-measurement of the numbers CLAUDE.md quotes.
+8. **`up_spec.rb:175` flake** — see below.
+
+## Pre-existing defects found while executing this chunk
+
+Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
+is in flight when they next appear.
+
+1. **`spec/lain/review/records_spec.rb` seed flake — FIXED at `28b6fd6`.** The discriminator sweep
+   used `klass.allocate.journal_type`, and `journal_type` is `self.class.name.split("::")`, so an
+   **anonymous** class raises `NoMethodError`. Spec scaffolding leaves anonymous `Journalable`
+   includers reachable from `ObjectSpace`, so it failed on **3 of 4 seeds** under
+   `rspec spec/lain/review/` and passed under `rake pspec` only because the workers happened to split
+   those files apart. Found by T8 while working on an unrelated card, and verified against the bare
+   base commit before being reported. **`spec/journalable_surface_spec.rb:14` carries the same latent
+   hazard** (`.sort_by(&:name)` on a possible `nil`), currently unreachable because that scan runs at
+   load time — folded into the follow-up ticket for that file.
+2. **`spec/lain/cli/up_spec.rb:175` flakes ~1 in 14** — the real-tmux cockpit seam. Isolated by T26,
+   which ruled its own module out **decisively rather than statistically**: appending a syntax error
+   to `41_layout.lua` fails `layout_spec` 19/21 while leaving `up_spec` at 46/0 five times over,
+   because `up_spec` asserts tmux `pane_start_command` strings and never injects the runtime chunk at
+   all. Pre-existing race; owed a ticket.
+
+Also seen twice, ambient rather than a defect: a `rake pspec` run aborting under load (once at
+`load average: 40`), with clean re-runs at the full count. That is the shape CLAUDE.md warns reads as
+"fewer examples, 0 failures" — check the count, then re-run before blaming a card.
+
+## Progress
+
+**Wave 1 — 5 of 6 landed on `main`, 2026-08-04.** Suite `9539 → 9672`, 0 failures.
+
+| Card | Commit | Verdict path |
+|---|---|---|
+| T5 records | `a2ed5fc` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T1 anchor | `43bcdc8` | REQUEST-CHANGES → fix round → APPROVE |
+| T2 hunk | `b06d061` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T4 surface | `1d33f26` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T6 runtime split | `62617c5` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T3 source | *in fix round* | REQUEST-CHANGES (merge-numstat blocker) |
+
+**What the panel caught that six green suites did not.** Five of six cards shipped a test that
+**could not fail**, and every one of them was green: T4's ordering law ran three orders in one
+example against one memoized subject, so the natural order satisfied the other two; T6's sort pin
+stubbed `Dir.children`, which the mutation it existed to catch no longer calls; T5 had three mutants
+that killed nothing; T2's mutation harness had been silently no-opping since a rename, reporting six
+no-ops as survivals; T3 dismissed a surviving mutant as inert when it was **unfixtured**, and the
+missing fixture was hiding a real defect. Two reviewers then found their own probes had gone stale
+the same way. The working guard is not "the mutant's target exists" — it is asserting the mutation
+**changed observable behaviour** before believing any result, and keeping each mutant **minimal**, so
+a kill is evidence about the thing you meant to test rather than about something else the mutant
+also broke.
+
+Two rulings went against implementers on evidence: T2's span (the "untestable" claim was testable in
+66,000 real `git diff` runs, and the full span broke the card's own position-independence AC), and
+T3's `--cc` mutant.
+
 ## Waves
 
 Cards are listed below in numeric order; T26 to T29 were added after the first draft and their waves
@@ -202,7 +340,7 @@ Wave 3: T12 (←T7), T13 (←T5,T7,T8), T14 (←T11,T26), T15 (←T11,T26), T29 
 Wave 4: T16 (←T15), T17 (←T15), T18 (←T15,T26), T19 (←T4,T14,T15)
 Wave 5: T20 (←T10,T13,T19), T21 (←T13,T19), T22 (←T17), T23 (←T10,T13),
         T24 (←T18), T28 (←T14,T15,T18)
-Wave 6: T25 (←T17,T18,T22,T23,T24)
+Wave 6: T25 (←T17,T18,T22,T23,T24), then T30 LAST (←everything with a spec)
 ```
 
 Critical path: **T6 → T26 → T15 → T18 → T24 → T25** (6 links). T6 → T26 → T15 → T18 → T28 is the
@@ -216,6 +354,22 @@ their own harness (`layout_spec.rb` T26, `diff_mode_spec.rb` T15, `annotate_spec
 and T28 (wave 5) touch. `runtime.lua` is edited by T6 (wave 1) and T28 (wave 5) only.
 
 ---
+
+## Standing obligations on every lua card (T14, T15, T16, T18)
+
+Added during execution from the T11 panel, 2026-08-04. T11 owns the Ruby half of the RPC surface
+and **cannot** discharge either of these; they belong to whichever card writes the lua.
+
+1. **"The human's text is untouched" is YOUR obligation, not T11's.** T11's AC says a malformed
+   `review_annotate` must fail the write and leave the human's text intact. Ruby only ever responds
+   `(id, nil, error)` — whether `:w` actually fails and `'modified'` survives is decided entirely in
+   lua: a `pcall` around `vim.rpcrequest`, and **no unconditional `nomodified`**. Without that, the
+   AC reads as met over a buffer that clears anyway, which is worse than not claiming it.
+2. **The wire shape is `[verb, [one, array, of, args]]` — never flat positionals.**
+   `65_review.lua` records that flat positionals silently dropped a payload once, and the T11 panel
+   found the Ruby guard raised `NoMethodError` *inside itself* on that shape (now fixed to refuse it
+   by name). The panel's judgement: this is "precisely the mistake those cards are most likely to
+   make". Send the array.
 
 ## Tasks
 
@@ -285,7 +439,10 @@ Scenario: an unknown side is refused loudly
 
 **Depends on:** none
 **Files:** `lib/lain/review/hunk.rb` (new), `spec/lain/review/hunk_spec.rb` (new)
-**Reuse:** `Lain::Digest` for the hash. tuicr's scheme (research §4.4), reimplemented, not copied.
+**Reuse:** ~~`Lain::Digest`~~ **`Lain::Ext.blake3_hex`** for the hash — corrected during execution:
+there is no `Lain::Digest`. `Canonical.digest` (`canonical.rb:60`) is the only other caller and it
+wraps the same primitive with a `blake3:` prefix, but this card must not route through `Canonical`
+for the reason stated below. tuicr's scheme (research §4.4), reimplemented, not copied.
 **Not** `Lain::Canonical`: a hunk body is already a byte string, and `Canonical` canonicalises
 JSON-native structures, so routing bytes through it buys nothing and risks normalising away a
 difference the key must keep.
@@ -598,6 +755,39 @@ Scenario: a changeset groups its hunks by commit
 ```
 → spec file: `spec/lain/review/changeset_spec.rb`
 
+**Added during execution (T8 panel, 2026-08-04): THIS CARD OWNS THE FILTERED/UNFILTERED
+DISTINCTION, and it must be structural.** T8's card says "reconciliation always runs against the
+unfiltered changeset", and T8 implemented everything its own surface allowed — no `scope:`
+parameter, no flag reinvented, batch keying, base pinned. The panel then showed that is **a naming
+convention, not an enforcement**: a filtered changeset is structurally indistinguishable from a
+total one (same class, no `#scope`, no `#filtered?`), and `reconcile(filtered)` silently pruned a
+3-mark set to 1 with no error. T8's escalation trigger — "any caller *can* hand the reconciler a
+filtered changeset" — is literally satisfied today, and no spec T8 can write would catch a caller
+that filters.
+
+So the type this card defines has to make the illegal state unrepresentable. Two shapes the panel
+named, either acceptable: filtering yields a **view** that has no `#hunks` at all, or `#hunks` stays
+total and a separate `#presented_hunks` carries the filtered set. Pick one and say why in the
+hand-back. This is the tuicr `preserve_hunks` bug being closed by data flow rather than by a flag,
+which is what T8's card was reaching for — it just could not reach it from where it stood.
+
+**Added during execution (2026-08-04): MERGE COMMITS ARE THIS CHUNK'S SYSTEMATIC GAP, and two
+wave-1 cards hit it independently.** Treat the second escalation trigger below as *expected to fire*,
+not as a remote possibility:
+
+- **T3's panel found `git log --numstat` emits no diff for a merge by default**, so a file changed
+  only in a merge lands in `#diff` and in no commit's numstat — and the shipped source contract
+  failed 1 of 19 on a merge-carrying branch. T3 now passes `--diff-merges=first-parent`, so
+  `#commits` accounts for merges. Confirm what that flag hands you before assuming a shape.
+- **T2 found a merge combined diff emits `@@@ -1,8 -1,8 +1,8 @@@` — TWO old sides**, which
+  `Hunk`'s single `(old_start, old_count)` cannot represent. T2 flagged it rather than widening
+  `Hunk` on spec, which was right: the decision belongs here, where the parser meets the diff.
+
+So this card must decide, explicitly and in the hand-back, what a merge commit means to a changeset:
+first-parent only, or a real combined-diff representation. **Do not silently skip merge hunks** — the
+card's own trigger says losing anchors without saying so is the failure mode. If the honest answer
+needs `Hunk` widened, that is the escalation, not a detail.
+
 **Escalation triggers:**
 - The old-side counter increments on additions. The spike had exactly this bug and only the old-side
   check caught it — if the old-side scenario fails, the counter is wrong, not the fixture.
@@ -645,6 +835,16 @@ Scenario: a filtered scope cannot prune marks for hunks it hides
 ```
 → spec file: `spec/lain/review/marks_spec.rb`
 
+**Added during execution (T2 panel, 2026-08-04): a mark set must be SCOPED TO ITS BASE REVISION.**
+The panel established with 66,000 real `git diff` runs that T2's span fallback is distinct within one
+diff, and then found a residual hazard that no hunk-key scheme can close: when a **base** edit slides
+duplicate #2 onto duplicate #1's former coordinates, *any* positional fallback hands the stale mark
+to the wrong hunk, because a base edit shifts the old and new sides by the same amount and the
+coordinates stay perfectly correlated. This is not a defect in T2's key — it is the limit of keying
+by position at all, so the fix lives here, in the thing that *holds* marks. A mark set carries the
+base revision it was recorded against, and marks recorded against a different base are not silently
+reused. Pin it with a spec over a real base-side edit that relocates a duplicate.
+
 **Escalation triggers:**
 - Any caller can hand the reconciler a filtered changeset. Then the data-flow fix has not been made
   and a flag is being reinvented — stop; the reconciler should not accept one.
@@ -686,6 +886,25 @@ Scenario: commit scope and cumulative scope render different row sets
   Then the first rendering groups rows under commit subjects and the second does not
 ```
 → spec file: `spec/lain/review/surface/text_spec.rb`
+
+**Added during execution (T4 panel, 2026-08-04): `Surface.check!` REJECTS DELEGATION-BASED
+ADAPTERS.** `Forwardable`/`def_delegators` and `SimpleDelegator` both generate `(*args, &block)`,
+which the shape check refuses. That forbids a tee or recording decorator wrapped around a real
+surface — precisely the bench-shaped thing this repo wants, since comparing two surfaces by
+recording one is a study-bench move. **The panel was explicit that loosening the check is the wrong
+answer**, because the shape check is what makes an incomplete surface fail before construction
+rather than at first use. If this card wants a decorator, give it explicit methods or give the port
+an intentional delegation seam — do not widen the shape rule. Also note the group's per-example
+freshness is inherited from the *including* spec: a `subject { SOME_CONSTANT }` or a `before(:all)`
+instance silently restores the vacuity the ordering law was rewritten to fix.
+
+**Added during execution (T4 panel, 2026-08-04): this card owes the group its FIRST BEHAVIOURAL
+LAW.** T4's `"a review surface"` group is a *signature* check plus one ordering law, and the panel
+demonstrated that a surface which drops every annotation, ignores `mark`'s `state` and returns a
+random verdict passes it green. That is acceptable for a group written with only a Null to check
+against, and it is not acceptable once a real adapter exists. T9 is the cheap place to fix it: a
+surface told to annotate must be able to say it was, observable through the injected `Sink`. Add one
+such law to the shared group, not to this card's own spec, so T19 inherits it.
 
 **Escalation triggers:**
 - The port needs a message this surface cannot implement without a no-op. That is a signal the port
@@ -911,6 +1130,15 @@ Scenario: the default policy refuses an approve over unreviewed hunks
 ```
 → spec file: `spec/lain/review/session_spec.rb`
 
+**Added during execution (T4 panel, 2026-08-04): this card decides whether a verdict needs a NULL
+VALUE.** `Surface::Null#verdict` returns `nil`, per T4's AC. The panel's objection is sound and is
+left for this card because this is where a verdict is first consumed: `Sink::Null#write` returns the
+byte count *precisely* so that no caller nil-checks it, and `#verdict`/`#thread` are queries rather
+than commands, so `nil` from them reintroduces the `if surface` guard the Null Object pattern exists
+to delete. If the session ends up nil-checking a verdict, that is the finding — change
+`Surface::Null` (one file) rather than spreading guards. There is a comment at `Null#verdict`
+pointing here.
+
 **Escalation triggers:**
 - The default policy blocks an unattended run under the `deferred` gate. Swapping the policy is the
   designed escape, but if the gate cannot reach the seam to swap it, stop.
@@ -967,6 +1195,38 @@ Scenario: opening a row names the file and its first hunk line
   Then the resolved target is that file's path and its first hunk's new-side line
 ```
 → spec file: `spec/lain/frontend/neovim/review_view_spec.rb`
+
+**Added during execution (T7 panel, 2026-08-04): WHAT THE COMMIT WALK MAY AND MAY NOT CLAIM.**
+`Changeset#by_commit` attributes at **file** granularity — "last commit in the range to touch this
+file" — not per-hunk provenance. Worse, and this is the part that matters here: **when a merge is in
+the range, the merge absorbs every file it re-reports and the authoring commits render empty.**
+Measured by the panel: 3 commits, 2 of 3 scopes `files: []`, with the side-branch commit that
+actually authored `side_only.rb` showing nothing.
+
+So this card may claim *"this commit is the last one in the range to touch these files, and here are
+their net hunks"*. It may **not** claim per-hunk provenance, and it may **not** present a commit's
+scope as what that commit did. Empty scopes for genuinely empty commits and for add-then-delete
+pairs are honest and disclosed; an empty scope for real work absorbed by a merge is not.
+
+Two ways out, pick one and say which: render **`numstat`** (the commit's own figure, which T3's
+source answers per commit and which a merge does not distort) as the sidebar's primary signal and
+treat `files` as "hunks reachable here", or fetch per-commit diffs. §3.7's numbers make the commit
+walk a requirement rather than a convenience — 81,810 cumulative lines against 2,727 for one
+commit — so a walk that silently blanks two commits in three defeats the card's own purpose.
+
+**Added during execution (T26 panel, 2026-08-04): THIS CARD IS THE FIRST CALLER OF T26'S LAYOUT, and
+until it is, that layout is dead code.** Two review-opening policies coexist on `main` right now: the
+shipped `_G.__lain.open_review` still does `belowright split` **in the session tab** — exactly what
+T26's card forbids — and it is the one Ruby actually calls, while T26's `review_layout` /
+`review_place` have no caller at all. Route the sidebar render through `review_place`, and say in the
+hand-back what now calls `open_review`, if anything. If retiring `open_review` turns out to belong to
+T19 rather than here, stop and say so rather than leaving two policies live.
+
+**The window-id rule T26's panel established, which this card must obey:** window ids never recycle
+and a stale one raises `Invalid window id` rather than silently hitting a different window, so
+failure is loud. **`review_place` re-ensures and returns a fresh id and is the safe seam;
+`review_layout()`'s return is a snapshot that goes stale on the next human action and must NOT be
+cached across renders.**
 
 **Escalation triggers:**
 - The line count aliases between two renderings of equal height, which is the exact defect protocol 8
@@ -1235,6 +1495,23 @@ Scenario: a gesture reaches the session unchanged
   Then the session records that key and no other
 ```
 → spec file: `spec/lain/review/surface/neovim_spec.rb`
+
+**Also inherited from the T4 panel: `Surface.check!` rejects `Forwardable`/`SimpleDelegator`
+adapters** (they generate `(*args, &block)`). See T9's card for the full note — the ruling is that
+the shape check stays strict and a decorator gets explicit methods instead.
+
+**Added during execution (T4 panel, 2026-08-04), two obligations:**
+
+1. **Settle the `#refuse` direction.** It is only half-coherent today: `review_refused(message)` is
+   inbound and matches the port, but `RenderInlet#refusable` makes a refusal *an answer the surface
+   returns*, and the port currently has nowhere for `REVIEW_DETACHED` to go — every message returns
+   nil under Null and the shared group pins no return value. This card is where a real detached
+   editor must actually refuse, so decide it here and encode the decision in the shared group.
+2. **Add one behavioural law to the shared group**, as T9 also does. The group is a signature check
+   plus one ordering law; a surface that drops annotations and ignores `mark`'s `state` passes it.
+   T19 is the adapter whose fixtures come from a running nvim, which is why T4's group was changed
+   to take **callables** rather than bare values — its `config.fetch` runs at definition time, so a
+   `let`-built fixture would be unreachable.
 
 **Escalation triggers:**
 - The adapter needs to cache changeset state to answer a port message. That is the session's job;
@@ -1665,6 +1942,80 @@ Scenario: nothing is ever silently truncated
 
 ---
 
+### T30 — Pay back the suite time this chunk spent          [wave 6, LAST] [risk: low]
+
+**Depends on:** every card that ships a spec (run it after T25)
+**Files:** `spec/lain/review/source/local_branch_spec.rb`,
+`spec/lain/review/source/github_pr_spec.rb`, `Gemfile`, `spec/spec_helper.rb` (or a
+`spec/support/` profiler hook), `CLAUDE.md`
+**Shared-file wiring:** `Gemfile` and `CLAUDE.md` are orchestrator-owned — hand back diffs.
+
+**This chunk made the suite slower and made CLAUDE.md wrong about it.** Measured 2026-08-04:
+
+| File | Now | CLAUDE.md says |
+|---|---|---|
+| `review/source/local_branch_spec.rb` | **18.69s** | not listed |
+| `isolation/worktree_handback_spec.rb` | 18.35s | 17.7s |
+| `review/source/github_pr_spec.rb` | **14.08s** | not listed |
+| `isolation/worker_handoff_spec.rb` | 13.63s | 12.9s |
+
+`parallel_tests` packs whole FILES, so the longest single file is a hard floor: ~18.7s + ~1.1s load
+≈ **19.8s**, which is exactly the observed wall. **Four files now sit above 13s where CLAUDE.md
+describes two**, and `local_branch_spec.rb` — this chunk's own — is the new floor and appears in that
+document nowhere.
+
+Three jobs, in order:
+
+1. **Profile with `test-prof`, do not guess.** Both new files drive real git in a tmpdir, which is
+   the subject and cannot be faked (`shell_out_factory` exists for *failure injection*, and CLAUDE.md
+   is explicit that a fake would test the fake). So the win is in fixture reuse, not in mocking:
+   T10 already took its file 40.7s → 5.4s with a process-wide fixture template and by **copying** a
+   seeded repo instead of `init`+`fetch`, with no assertion lost — apply that lesson to
+   `local_branch_spec.rb`. `TagProf`/`EventProf` will say where the git spawns are; `before(:all)` +
+   copy is the shape that worked.
+2. **Then look at allocations and GC**, not just wall time — `test-prof`'s memory profiling, or
+   `ObjectSpace.count_objects` around the hot paths. T7 measured 80,190 `SecureRandom.uuid` calls at
+   0.13s on one changeset, and its anchors are built per walk; a spec that walks repeatedly pays it
+   repeatedly.
+3. **Re-measure and correct CLAUDE.md**, whose performance section reasons carefully from numbers
+   that are now stale in two ways:
+   - The floor is no longer `worktree_handback_spec.rb`, and the ranking it publishes is wrong.
+   - **`spec_workers = physical - 1` is no longer optimal on this box.** Since zram swap was added,
+     measured best-of-3: **n=7 → 22s, n=8 → 21s, n=9 → 20.7s, n=10 → 19s (19/19/19, imbalance 1.21,
+     peak 1628MB), n=11 → 20s, n=12 → 23.3s (worst 29s, imbalance 1.47)**. n=10 is now the optimum
+     and it is *past* the physical core count, which that section argues can never help. The memory
+     ceiling that made 7 correct has moved; the reasoning must be rewritten around what actually
+     binds now, not patched with new digits.
+
+**Acceptance criteria:**
+
+```gherkin
+Scenario: the chunk's own specs are no longer the suite floor
+  Given test-prof output for both review source specs
+  When the fixture strategy is changed as profiling directs
+  Then neither file is the longest in tmp/parallel_runtime_rspec.log
+  And no assertion was removed to achieve it
+
+Scenario: nothing was traded away for speed
+  Given the optimised specs
+  Then the example count is unchanged
+  And every mutation the pre-optimisation suite killed is still killed
+
+Scenario: CLAUDE.md matches measurement
+  Then its named floor file, its ranking, and its worker-count guidance
+       each match a best-of-3 measurement taken on a quiet box
+```
+→ spec files: the two named above; the CLAUDE.md change is prose, verified by re-measurement.
+
+**Escalation triggers:**
+- A speed-up needs an assertion dropped, a seam faked, or `:seam` coverage moved out of the default
+  run. Stop — CLAUDE.md's testing section says the seam tier is 2.5% of examples for a third of the
+  serial time **on purpose**, and the inner loop already exists as `--tag '~seam'`.
+- Profiling says the cost is in git itself rather than in fixture setup. Then the honest answer is
+  splitting the file by concern so packing can spread it, not making it faster.
+
+---
+
 ### T25 — Verify every deletable capability is deletable          [wave 6] [risk: low]
 
 **Depends on:** T17, T18, T22, T23, T24
@@ -1728,7 +2079,14 @@ After the last wave:
    - Review a real branch with `lain review`, walk the commits, mark hunks, place notes of each kind,
      submit a verdict.
    - Review a real GitHub PR at work scale, confirm the 300-file fallback fires and says so, promote
-     2 or 3 critique findings, and post them.
+     2 or 3 critique findings, and post them. **Two things T10 could not observe and explicitly owes
+     this pass**: (a) the live 300-file refusal string — it is pinned from primary sources (API
+     `HTTP 406` + `{"code":"too_large"}`, gh relaying *"Sorry, the diff exceeded the maximum number
+     of files (300)"*) but never seen, though the design inverts the risk so that a wording change
+     costs a *label* and never a truncated diff; (b) whether `gh pr diff`'s **header shape** matches
+     `git diff`'s, which is an open assumption — the design does not depend on it (deleting one
+     method routes everything through the object database), but it has never been checked against
+     real gh output.
    - Drive one epic implementation gate end to end and confirm the agent unparks.
    - Ask the docent 3 questions during a review and judge whether the answers are worth the tokens.
    - Confirm `:Telescope diagnostics` browses review annotations.
