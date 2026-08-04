@@ -67,18 +67,18 @@
 //! not just a cheaper one.
 //!
 //! **What reaches the shipped artifact, precisely -- because the stub this file
-//! replaced was careful about it and the answer has only half changed.**
-//! [`dominator_meet`], [`dominates`] and [`causal_meets`] are ordinary items
-//! rather than `#[cfg(test)]`, so the RELEASE profile now compiles and
-//! typechecks this module against petgraph: a green `rake compile` is at last
-//! evidence that this code builds outside `--cfg test` and that the pinned
-//! dependency resolves there. It is still NOT evidence that any of it runs.
-//! Nothing calls these functions yet, so no `lain::graph` or petgraph symbol
-//! survives into `lib/lain/lain.so` -- verified with `nm`, which finds zero.
-//! The card that binds them onto `Ext::Timeline` is their first caller; the
-//! three per-function `dead_code` allows below are the marker to delete when it
-//! lands, and they sit on the entry points rather than on the module so that
-//! every helper here stays covered by the lint in the meantime.
+//! replaced was careful about it and the answer has moved twice.** All three
+//! entry points are ordinary items rather than `#[cfg(test)]`, so the RELEASE
+//! profile compiles and typechecks this module against petgraph, and a green
+//! `rake compile` is evidence the pinned dependency resolves outside
+//! `--cfg test`. What it is NOT evidence of is that any of it RUNS -- and that
+//! part is now split. `Ext::Timeline#dominator_meet` and `#dominates?` call
+//! [`dominator_meet`] and [`dominates`], so those two and everything they reach
+//! survive into `lib/lain/lain.so` (`nm` found zero symbols here before that
+//! binding landed and finds them after; it is the check that tells the two
+//! states apart). [`causal_meets`] still has no caller outside the tests, and
+//! its `dead_code` allow is the last of three -- see the comment on it for why
+//! it sits on that one function rather than on the module.
 
 use crate::dag::{DanglingDigest, StoreMap};
 use crate::digest::Digest;
@@ -97,18 +97,6 @@ use std::collections::{HashMap, HashSet};
 /// over a union-graph population that includes a disconnected pair; that the
 /// Ruby-facing binding obeys the same four is a separate claim owned by
 /// `spec/lain/rust/*`.
-// The FFI binding is a later card, so this has no caller outside the tests
-// yet. Placed on the three ENTRY POINTS only, never on the module: an allowed
-// item is still a live dead-code root, so every helper below stays covered and
-// one orphaned by a later edit is still reported. Delete these three attributes
-// in the commit that adds the first caller.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the card that exposes this to Ruby is its first caller"
-    )
-)]
 pub fn dominator_meet(
     map: &StoreMap,
     a_head: Option<&Digest>,
@@ -132,14 +120,6 @@ pub fn dominator_meet(
 /// STRONGER than `dag::ancestor_of`: reachability asks whether SOME path
 /// arrives, dominance whether EVERY one does, so a fan-in has render ancestors
 /// that dominate nothing.
-// See `dominator_meet` on why this attribute is here and when to delete it.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the card that exposes this to Ruby is its first caller"
-    )
-)]
 pub fn dominates(
     map: &StoreMap,
     dominator: Option<&Digest>,
@@ -174,12 +154,18 @@ pub fn dominates(
 /// closure; here there is no graph at all, but the two closures are taken WHOLE
 /// -- this is linear in both heads' full ancestry, every time, with no early
 /// stop. Ruby's `CausalAncestry#meets` has exactly the same shape.
-// See `dominator_meet` on why this attribute is here and when to delete it.
+// The LAST of the three entry points still waiting for a caller: the binding
+// that puts the causal meets on `Ext::Timeline` is a card of its own, and
+// `dominator_meet`/`dominates` no longer need this because the dominator-meet
+// binding calls them. Kept on this ONE function rather than on the module: an
+// allowed item is a live dead-code root, so `maximal` -- reachable only from
+// here -- stays live too, while anything orphaned outright is still reported.
+// Delete it in the commit that adds the first caller.
 #[cfg_attr(
     not(test),
     allow(
         dead_code,
-        reason = "the card that exposes this to Ruby is its first caller"
+        reason = "the card that exposes the causal meets to Ruby is their first caller"
     )
 )]
 pub fn causal_meets(

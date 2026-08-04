@@ -343,6 +343,7 @@ mod ffi {
     use crate::dag;
     use crate::digest::Digest;
     use crate::event::{EventData, Role};
+    use crate::graph;
     use magnus::{
         DataTypeFunctions, Error, ExceptionClass, Float, Integer, RArray, RClass, RHash, RModule,
         RString, Ruby, Symbol, TryConvert, TypedData, Value, function, gc, method,
@@ -1523,6 +1524,56 @@ mod ffi {
             Ok(Timeline::wrap(ruby, common, store_value))
         }
 
+        /// Ruby `Timeline#dominator_meet`: the deepest common dominator over
+        /// the UNION graph -- render and causal edges together -- which is the
+        /// latest event no in-flight branch can bypass. A DIFFERENT operator
+        /// from `meet` above over a different graph, not a widened one, which
+        /// is why it reaches `graph` rather than `dag`.
+        ///
+        /// A meet that climbs all the way to the virtual root answers the EMPTY
+        /// timeline: the root is a modelling artifact that never leaves
+        /// `graph`, exactly as Ruby's `checkout(nil)` hides it. Wrapping the
+        /// `Option` directly is what `meet` does and for the same reason -- the
+        /// digest came out of the store's own walk, so the head validation
+        /// `checkout` adds for a caller-supplied digest has nothing to catch.
+        ///
+        /// No `dominators:` keyword. Ruby's memo hangs off a mutable
+        /// collaborator the caller holds; this handle is frozen and every call
+        /// is one-shot, so exposing that query object is a decision of its own.
+        fn dominator_meet(
+            ruby: &Ruby,
+            rb_self: Obj<Timeline>,
+            other: &Timeline,
+        ) -> Result<Obj<Timeline>, Error> {
+            ensure_same_store(ruby, &rb_self, other)?;
+            let store_value = rb_self.store_value(ruby);
+            let store: &Store = store_ref(ruby, &rb_self)?;
+            // Locked read in its own statement, translated on the next line --
+            // see `ancestors` for why the guard must be gone first.
+            let walked =
+                graph::dominator_meet(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let common = walked.map_err(|e| missing_object(ruby, e))?;
+            Ok(Timeline::wrap(ruby, common, store_value))
+        }
+
+        /// Ruby `Dominators#dominates?`, asked of the receiver: does every path
+        /// from the virtual root to `other`'s head pass through this one's?
+        /// Shaped like `ancestor_of?` -- receiver below, argument above.
+        ///
+        /// It is exposed because it is the ORDER `dominator_meet` is a meet of,
+        /// and it is strictly STRONGER than `ancestor_of?`: reachability asks
+        /// whether SOME path arrives, dominance whether EVERY one does. The
+        /// semilattice law "a meet sits below both operands" is a claim about
+        /// this predicate, and checking it with the weaker one passes
+        /// vacuously.
+        fn dominates_p(ruby: &Ruby, rb_self: &Timeline, other: &Timeline) -> Result<bool, Error> {
+            ensure_same_store(ruby, rb_self, other)?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked =
+                graph::dominates(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            walked.map_err(|e| missing_object(ruby, e))
+        }
+
         fn diverge_at(
             ruby: &Ruby,
             rb_self: Obj<Timeline>,
@@ -1863,6 +1914,8 @@ mod ffi {
         timeline.define_method("meet", method!(Timeline::meet, 1))?;
         timeline.define_method("&", method!(Timeline::meet, 1))?;
         timeline.define_method("diverge_at", method!(Timeline::diverge_at, 1))?;
+        timeline.define_method("dominator_meet", method!(Timeline::dominator_meet, 1))?;
+        timeline.define_method("dominates?", method!(Timeline::dominates_p, 1))?;
         timeline.define_method("==", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
         timeline.define_method("eql?", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
         timeline.define_method("hash", method!(<Timeline as typed_data::Hash>::hash, 0))?;
