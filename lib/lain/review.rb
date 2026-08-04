@@ -7,8 +7,11 @@ module Lain
   end
 end
 
-# Vocabulary and wire FIRST: every guard in `records` cites a closed set and a
-# refusal message while its class body runs.
+# Vocabulary FIRST, and `records` LAST: every guard in `records` cites a closed
+# set and a refusal message while its class body runs, and `Anchor::SIDES`
+# derives from `Review::SIDES` at class-body time too. `vocabulary` and `wire`
+# are mutually independent; only records-last actually binds.
 require_relative "review/vocabulary"
 require_relative "review/wire"
+require_relative "review/anchor"
 require_relative "review/records"
