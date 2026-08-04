@@ -141,9 +141,19 @@ module Lain
       end
 
       def self.check_list!(key, list, path: nil)
-        raise NotAList.new(key, list, path:) unless list.is_a?(Array)
+        check_list_shape!(key, list, path:)
 
         list.each { |entry| check_entry!(key, entry, path:) }
+      end
+
+      # Public because {#initialize} runs it too, and extracted rather than
+      # written once per caller for the reason {#named}'s comment records one
+      # rule down: the parse and the constructor drifted apart precisely
+      # because each carried its OWN copy of a shape rule. One copy cannot lie
+      # to the other. `path:` is absent on the constructor's side because a
+      # value built by hand names no config file to open.
+      def self.check_list_shape!(key, list, path: nil)
+        raise NotAList.new(key, list, path:) unless list.is_a?(Array)
       end
 
       # Public because {#initialize} runs it too: a value built by hand carries
@@ -207,6 +217,8 @@ module Lain
       # theirs to keep mutating, and this value rides inside a
       # Ractor-shareable {Config}.
       def settled(key, entries)
+        self.class.check_list_shape!(key, entries)
+
         entries.map do |entry|
           self.class.check_entry!(key, entry)
           { TOOL => -entry[TOOL], INPUT => scalars(entry.fetch(INPUT, {})) }.freeze
@@ -218,6 +230,8 @@ module Lain
       # store `"42"`, a refusal for a tool that does not exist, silently
       # forgotten -- while `.from` refused it. One of them was lying.
       def named(names)
+        self.class.check_list_shape!(TOOL_WIDE, names)
+
         names.map do |name|
           self.class.check_entry!(TOOL_WIDE, { TOOL => name })
           -name.to_s

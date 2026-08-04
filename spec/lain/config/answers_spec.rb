@@ -34,22 +34,31 @@ RSpec.describe Lain::Config::Answers do
       .to raise_error(described_class::UnknownKeys, /alow/)
   end
 
+  # The three refusals below pin their message as a STRING, not a regex: this
+  # table's messages name the key, the offending entry and the computed set of
+  # offending fields, and a refactor is only behaviour-preserving if every one
+  # of those survives byte for byte. A `/allow/` match would pass against a
+  # message that had lost the shape it is telling the human to write.
   it "refuses an answer list that is not a list of tables" do
     expect { described_class.from({ "allow" => "read_file" }, path: "/irrelevant") }
-      .to raise_error(described_class::NotAList, /allow/)
+      .to raise_error(described_class::NotAList,
+                      "/irrelevant: [approval] allow is a list of tables ([[approval.allow]]), got String")
   end
 
   it "refuses an entry with no tool" do
     expect { described_class.from({ "allow" => [{ "input" => { "path" => "a.md" } }] }, path: "/irrelevant") }
-      .to raise_error(described_class::MalformedEntry, /tool/)
+      .to raise_error(described_class::MalformedEntry,
+                      '/irrelevant: [[approval.allow]] needs a tool name: {"input" => {"path" => "a.md"}}')
   end
 
-  it "refuses an entry whose input is not a table of scalars" do
+  it "refuses an entry whose input is not a table of scalars, naming the offending field" do
     expect do
       described_class.from({ "allow" => [{ "tool" => "read_file", "input" => { "path" => ["a"] } }] },
                            path: "/irrelevant")
     end
-      .to raise_error(described_class::MalformedEntry, /path/)
+      .to raise_error(described_class::MalformedEntry,
+                      '/irrelevant: [[approval.allow]] input "path" is not a scalar: ' \
+                      '{"tool" => "read_file", "input" => {"path" => ["a"]}}')
   end
 
   # `[[approval.allow]] tool = "bash"` reads as "allow every bash call" and
@@ -92,6 +101,38 @@ RSpec.describe Lain::Config::Answers do
     [42, nil, ["bash"], ""].each do |name|
       expect { described_class.new(deny_tools: [name]) }
         .to raise_error(described_class::MalformedEntry)
+    end
+  end
+
+  # The class and message of whatever a block refuses with, so the parse and
+  # the constructor can be compared as VALUES rather than each against its own
+  # literal -- a literal per side is two copies of one rule again.
+  def refusal
+    yield
+    nil
+  rescue StandardError => e
+    [e.class, e.message]
+  end
+
+  # The same lie the example above caught, one rule up: `.from` refused a
+  # strength that was not a list by name, while the constructor let it reach
+  # `map` -- dying as an unnamed NoMethodError for a String, and worse for a
+  # Hash or an Enumerator, which `map` accepts and which then refused as a
+  # malformed ENTRY quoting a destructured pair.
+  #
+  # Comparing the two sides pins them TO EACH OTHER: widening one to admit a
+  # shape the other still refuses fails here, which is how they drifted apart
+  # in the first place.
+  it "refuses a hand-built strength exactly as the parser refuses the same shape" do
+    { allow: "allow", deny: "deny", deny_tools: "deny_tool" }.each do |member, key|
+      ["read_file", { "tool" => "read_file" }, [].each, nil, 42].each do |shape|
+        parsed = refusal { described_class.from({ key => shape }, path: "/cfg.toml") }
+        built = refusal { described_class.new(**{ member => shape }) }
+
+        expect(parsed).to eq([described_class::NotAList, "/cfg.toml: [approval] #{key} is a list of tables " \
+                                                         "([[approval.#{key}]]), got #{shape.class}"])
+        expect(built).to eq([described_class::NotAList, parsed.last.delete_prefix("/cfg.toml: ")])
+      end
     end
   end
 
