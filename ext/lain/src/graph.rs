@@ -71,14 +71,15 @@
 //! entry points are ordinary items rather than `#[cfg(test)]`, so the RELEASE
 //! profile compiles and typechecks this module against petgraph, and a green
 //! `rake compile` is evidence the pinned dependency resolves outside
-//! `--cfg test`. What it is NOT evidence of is that any of it RUNS -- and that
-//! part is now split. `Ext::Timeline#dominator_meet` and `#dominates?` call
-//! [`dominator_meet`] and [`dominates`], so those two and everything they reach
-//! survive into `lib/lain/lain.so` (`nm` found zero symbols here before that
-//! binding landed and finds them after; it is the check that tells the two
-//! states apart). [`causal_meets`] still has no caller outside the tests, and
-//! its `dead_code` allow is the last of three -- see the comment on it for why
-//! it sits on that one function rather than on the module.
+//! `--cfg test`. What it is NOT evidence of is that any of it RUNS. All three
+//! entry points now have a Ruby-facing caller -- `Ext::Timeline#dominator_meet`,
+//! `#dominates?` and `#causal_meets` -- so every function here, `maximal`
+//! included, survives into `lib/lain/lain.so` (`nm` found zero symbols here
+//! before the first of those bindings landed and finds them after; it is the
+//! check that tells the two states apart). The three staged `dead_code` allows
+//! this module carried while it was waiting for callers are all gone, and the
+//! lint that would report a new orphan is `cargo clippy --all-targets -- -D
+//! warnings`, never `cargo test`.
 
 use crate::dag::{DanglingDigest, StoreMap};
 use crate::digest::Digest;
@@ -154,20 +155,6 @@ pub fn dominates(
 /// closure; here there is no graph at all, but the two closures are taken WHOLE
 /// -- this is linear in both heads' full ancestry, every time, with no early
 /// stop. Ruby's `CausalAncestry#meets` has exactly the same shape.
-// The LAST of the three entry points still waiting for a caller: the binding
-// that puts the causal meets on `Ext::Timeline` is a card of its own, and
-// `dominator_meet`/`dominates` no longer need this because the dominator-meet
-// binding calls them. Kept on this ONE function rather than on the module: an
-// allowed item is a live dead-code root, so `maximal` -- reachable only from
-// here -- stays live too, while anything orphaned outright is still reported.
-// Delete it in the commit that adds the first caller.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the card that exposes the causal meets to Ruby is their first caller"
-    )
-)]
 pub fn causal_meets(
     map: &StoreMap,
     a_head: Option<&Digest>,

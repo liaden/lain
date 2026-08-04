@@ -1574,6 +1574,43 @@ mod ffi {
             walked.map_err(|e| missing_object(ruby, e))
         }
 
+        /// Ruby `Timeline#causal_meets`: the common causal ancestors of the two
+        /// heads that are not ancestors of another common one -- git
+        /// merge-base's maximal lower bounds -- as a frozen Array of frozen
+        /// digest Strings in digest order.
+        ///
+        /// An Array and NOT a Timeline, unlike every other meet-ish method
+        /// here, because the answer's cardinality routinely exceeds one: a
+        /// criss-cross fan-in leaves incomparable bounds and no greatest among
+        /// them, which is why Ruby declares this operator
+        /// `not_a_meet_semilattice` and why nothing wraps the answer in a head.
+        ///
+        /// The boundary is crossed ONCE. `graph::causal_meets` names no
+        /// `magnus` type, so it structurally cannot speak to Ruby per digest;
+        /// it answers a finished `Vec<Digest>` and only then, with the store
+        /// guard already dropped, is one Array built from it -- which is also
+        /// what keeps `frozen_str`'s allocations (and any GC they invite) off
+        /// the locked path, as `ancestors` explains.
+        fn causal_meets(
+            ruby: &Ruby,
+            rb_self: &Timeline,
+            other: &Timeline,
+        ) -> Result<RArray, Error> {
+            ensure_same_store(ruby, rb_self, other)?;
+            let store: &Store = store_ref(ruby, rb_self)?;
+            let walked =
+                graph::causal_meets(&store.locked(), rb_self.head.as_ref(), other.head.as_ref());
+            let bounds = walked.map_err(|e| missing_object(ruby, e))?;
+            let array = ruby.ary_new_capa(bounds.len());
+            for digest in &bounds {
+                array.push(frozen_str(ruby, digest.as_str()))?;
+            }
+            // Frozen, so the answer is deeply immutable and `Ractor.shareable?`
+            // -- the contract `Turn#causal_parents` already answers by.
+            array.freeze();
+            Ok(array)
+        }
+
         fn diverge_at(
             ruby: &Ruby,
             rb_self: Obj<Timeline>,
@@ -1916,6 +1953,7 @@ mod ffi {
         timeline.define_method("diverge_at", method!(Timeline::diverge_at, 1))?;
         timeline.define_method("dominator_meet", method!(Timeline::dominator_meet, 1))?;
         timeline.define_method("dominates?", method!(Timeline::dominates_p, 1))?;
+        timeline.define_method("causal_meets", method!(Timeline::causal_meets, 1))?;
         timeline.define_method("==", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
         timeline.define_method("eql?", method!(<Timeline as typed_data::IsEql>::is_eql, 1))?;
         timeline.define_method("hash", method!(<Timeline as typed_data::Hash>::hash, 0))?;
