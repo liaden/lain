@@ -5,11 +5,14 @@ require "async/queue"
 require "json"
 require "tmpdir"
 
-# W3 REVIEW PROBES (adversarial; leave in worktree). Each block names the AC or
-# claim it tries to falsify and the persona that owns the finding. Probes that
-# DOCUMENT a gap assert current behavior and say FINDING in the comment -- the
-# probe stays green so the file is runnable evidence, and the review carries
-# the ranked finding.
+# W3 review probes, promoted to a permanent regression suite. Each block names the AC
+# or claim it was written to falsify; blocks marked FIXED keep the original finding as
+# the record of what was wrong and now pin the fixed behavior.
+#
+# A probe for a gap that is still OPEN asserts what SHOULD hold and is marked `pending`.
+# Do not write one that asserts the buggy behavior and passes: it goes red the day
+# someone fixes the bug, which reads as a regression and gets "fixed" back. Pending
+# inverts that -- the fix turns the example green and RSpec fails on the stale marker.
 RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   let(:store) { Lain::Store.new }
   let(:log) { Lain::Tools::Subagent::Log.new }
@@ -150,7 +153,7 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
   # events (ChainWriter has no nonce), so they SHARE one content digest ==
   # address. The Array keeps both (the Hash-drop fix). What remains collapsed
   # is everything ADDRESS-grain.
-  it "PROBE(b): identical spawns share an address -- both enumerate, object routing works, attribution collapses" do
+  it "PROBE(b): identical spawns share an address -- both enumerate and object routing works" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     Sync do |task|
@@ -169,23 +172,35 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
 
       supervisor.stop
     end
+  end
 
-    records = journal.drain
+  # The downstream symptom of that collision, stated as what SHOULD hold rather than
+  # as what does. Inverted and pending on purpose: a probe that asserts the buggy
+  # behavior goes RED on the day someone fixes it and reads as a regression. This one
+  # goes GREEN, and RSpec then fails on the stale marker -- which is the signal we want.
+  it "PROBE(b'): twinned actors are distinguishable at address grain" do
+    pending "Two spawns of one arm from the same head are byte-identical :spawn events " \
+            "(ChainWriter has no nonce), so they share a digest == address. Farewells are " \
+            "attributable only to that shared address, and StatusFeed folds the twins into " \
+            "one fleet entry, so the HUD undercounts. The fix belongs in ChainWriter."
+    journal = Lain::Channel.new
+    twin_a = twin_b = nil
+    Sync do |task|
+      supervisor = Lain::Supervisor.new.run(task)
+      tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
+      twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
+      twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
+      [twin_a, twin_b].each(&:settle)
+      supervisor.stop
+    end
 
-    # FINDING (Linus/Schneeman): ...but tells and farewells are addressed by
-    # the SHARED digest: twin-a's farewell is byte-attributable to twin-b,
-    # and both actors fold one mailbox. Address-grain identity is ambiguous
-    # by construction; only the in-process object handle disambiguates.
-    expect(farewells(records).first.from).to eq(twin_b.address)
+    expect(twin_a.address).not_to eq(twin_b.address)
 
-    # An unmodified StatusFeed shows ONE fleet entry for the TWO actors that
-    # were adopted -- keyed by digest, the redelivery guard and the collision
-    # are indistinguishable. The HUD undercounts a twinned fleet.
     Dir.mktmpdir("w3-probe-b") do |dir|
       path = File.join(dir, "state.json")
       feed = Lain::StatusFeed.new(path:)
-      records.each { |record| feed << record }
-      expect(JSON.parse(File.read(path))["fleet"]).to eq([twin_a.address])
+      journal.drain.each { |record| feed << record }
+      expect(JSON.parse(File.read(path))["fleet"].size).to eq(2)
     end
   end
 
@@ -441,7 +456,10 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
     # window closes, and the rest of the fleet's settle loop is abandoned. A
     # dedicated exception (`with_timeout(@within, Drain::Expired)`) would make
     # the pass-through exact.
-    it "PROBE(f4): an actor's own captured Async::TimeoutError is misread as the drain's bound" do
+    it "PROBE(f4): an actor's own captured Async::TimeoutError is not misread as the drain's bound" do
+      pending "Drain's pass-through keys on the exception CLASS, so it cannot tell its own " \
+              "with_timeout bound from an Async::TimeoutError the actor itself captured. " \
+              "`with_timeout(@within, Drain::Expired)` makes the pass-through exact."
       journal = Lain::Channel.new
       Sync do |task|
         supervisor = Lain::Supervisor.new(journal:).run(task)
@@ -457,11 +475,11 @@ RSpec.describe "W3 probes: Supervisor reactor (OM-6 core)" do
         drain = task.async { supervisor.drain(within: 60).each(&:settle) }
         release.enqueue(:timeout) # the actor's OWN failure is a TimeoutError
 
-        expect { drain.wait }.not_to raise_error # the coordinator still survives...
+        expect { drain.wait }.not_to raise_error # the coordinator survives either way...
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-        expect(elapsed).to be < 1 # ...but a 60s window "expired" immediately:
+        expect(elapsed).to be < 1 # ...and returns at once, because the actor DID settle
         timeouts = journal.drain.select { |r| r.to_journal["type"] == "drain_timed_out" }
-        expect(timeouts.size).to eq(1) # a false drain_timed_out, conflating actor failure with the bound
+        expect(timeouts).to be_empty # the 60s window never closed; nothing timed out
       ensure
         supervisor&.stop
       end

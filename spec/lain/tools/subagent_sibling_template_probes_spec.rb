@@ -2,11 +2,11 @@
 
 require "async"
 
-# C2 REVIEW PROBES (adversarial; leave in worktree). Each block names the AC or
-# claim it tries to falsify and the persona that owns the finding. Probes that
-# DOCUMENT a gap assert current behavior and say FINDING in the comment -- the
-# probe stays green so the file is runnable evidence, and the review carries
-# the ranked finding.
+# C2 review probes, promoted to a permanent regression suite. Each block names the AC
+# or claim it was written to falsify. No gap here is still open -- every probe pins
+# behavior that holds. A probe for an OPEN gap belongs here as an inverted `pending`
+# example, never as a green assertion of the buggy behavior; see
+# spec/lain/supervisor_w3_probes_spec.rb for why.
 RSpec.describe "C2 probes: sibling-template prefix strategy" do
   let(:store) { Lain::Store.new }
   let(:parent) do

@@ -3,11 +3,11 @@
 require "tmpdir"
 require "fileutils"
 
-# W2 review-panel probes over Lain::Workspace::Restore. Each example exercises
-# one panel condition or claim from the implementer's hand-back
-# (.handback-W2.md) that the acceptance-criteria spec (restore_spec.rb) does
-# not already pin. These are throwaway probes, not a permanent regression
-# suite -- left in the worktree per the review protocol, not committed.
+# W2 review-panel probes over Lain::Workspace::Restore, promoted to a permanent
+# regression suite. Each example exercises one panel condition or claim from the
+# implementer's hand-back (.handback-W2.md) that the acceptance-criteria spec
+# (restore_spec.rb) does not already pin -- which is exactly why they are worth
+# keeping rather than discarding with the worktree.
 RSpec.describe "W2 panel probes: Workspace::Restore" do
   def block(text) = [{ "type" => "text", "text" => text }]
 
