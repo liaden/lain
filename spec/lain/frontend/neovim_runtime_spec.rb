@@ -337,7 +337,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                             questions: Async::Queue.new)
       replies.bind_editor(frontend.command_inbox, views: frontend.buffers)
       surfaces = replies.surfaces(task)
-      task.sleep(0.02) until stop.closed?
+      pumped_until(task, reason: "the stop channel closing") { stop.closed? }
       surfaces.each(&:stop)
     end
   end

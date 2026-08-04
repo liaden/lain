@@ -70,7 +70,7 @@ RSpec.describe Lain::Channel::DropOldest do
       collected = []
       drainer = Thread.new { channel.drain { |event| collected << event } }
 
-      sleep(0.02) until collected.size == 2
+      wait_until(reason: "the drainer consuming both buffered events") { collected.size == 2 }
       expect(drainer.status).to eq("sleep")
 
       channel.push(:c)

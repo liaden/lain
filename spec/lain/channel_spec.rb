@@ -34,9 +34,9 @@ RSpec.describe Lain::Channel do
       collected = []
       drainer = Thread.new { channel.drain { |event| collected << event } }
 
-      # Give the drainer a chance to consume the two buffered events and then
-      # block on #pop, same as render_until_closed's manual while/pop loop did.
-      sleep(0.02) until collected.size == 2
+      # Let the drainer consume the two buffered events and then block on #pop,
+      # same as render_until_closed's manual while/pop loop did.
+      wait_until(reason: "the drainer consuming both buffered events") { collected.size == 2 }
       expect(drainer.status).to eq("sleep") # blocked waiting for more, or close
 
       channel.push(:c)

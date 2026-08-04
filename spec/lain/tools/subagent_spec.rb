@@ -681,15 +681,6 @@ RSpec.describe Lain::Tools::Subagent do
 
     def asks(question = "which db?") = tool_response(["c1", "ask_human", { "question" => question }])
 
-    # Pumps the reactor until the caller's condition holds. A condition that
-    # never comes true is a FAILING example, never a suite that hangs with
-    # nothing to read (the human_replies_spec idiom).
-    def pumped_until(task, timeout: 3)
-      deadline = Async::Clock.now + timeout
-      task.sleep(0.02) until yield || Async::Clock.now > deadline
-      raise "the condition never held within #{timeout}s" unless yield
-    end
-
     def arrival(task)
       pumped_until(task) { !askers.questions.empty? }
       askers.questions.dequeue

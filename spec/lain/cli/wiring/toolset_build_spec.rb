@@ -332,13 +332,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           subagent.call({ "prompt" => "go" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
         end
 
-        # The arrival, or a failing example: a queue that never fills is a
-        # defect, never a suite that hangs with nothing to read.
         def arrival(task, timeout: 3)
-          deadline = Async::Clock.now + timeout
-          task.sleep(0.02) until !askers.questions.empty? || Async::Clock.now > deadline
-          raise "no question reached the human's queue within #{timeout}s" if askers.questions.empty?
-
+          pumped_until(task, timeout:, reason: "a question reaching the human's queue") do
+            !askers.questions.empty?
+          end
           askers.questions.dequeue
         end
 

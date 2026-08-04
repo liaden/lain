@@ -155,22 +155,32 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # Pumps the reactor until the caller's condition holds, or gives up: a
-  # condition that never comes true is a FAILING example, never a suite that
-  # hangs with nothing to read. `sleep` parks the fiber under Async's
-  # scheduler, so the surfaces' own fibers get their turn.
-  def pumped_until(task, timeout: 3)
-    deadline = Async::Clock.now + timeout
-    task.sleep(0.02) until yield || Async::Clock.now > deadline
-  end
-
   # Runs the reply surfaces for real (they are Async tasks), pumps until the
-  # expectation the caller is waiting on holds, and always stops them.
+  # expectation the caller is waiting on holds, and always stops them. The ensure
+  # is what makes "always" true: an unmet condition raises, and unstopped surfaces
+  # keep the Sync block from ever returning.
   def with_surfaces(timeout: 3, &block)
     Sync do |task|
       surfaces = replies.surfaces(task)
-      pumped_until(task, timeout:, &block)
-      surfaces.each(&:stop)
+      begin
+        pumped_until(task, timeout:, &block)
+      ensure
+        surfaces.each(&:stop)
+      end
+    end
+  end
+
+  # For the negative: run the surfaces for a fixed window and assert what did NOT
+  # arrive. Running out the clock is the success here, so it cannot go through
+  # `with_surfaces`, whose timeout is a failure.
+  def surfaces_settle(duration: 0.3)
+    Sync do |task|
+      surfaces = replies.surfaces(task)
+      begin
+        settle_for(task, duration)
+      ensure
+        surfaces.each(&:stop)
+      end
     end
   end
 
@@ -922,7 +932,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         editor.push(["open", [2, stamp]])
         with_surfaces { nvim.opened.any? }
         submit_open_document(second.digest)
-        with_surfaces(timeout: 0.3) { false }
+        surfaces_settle
 
         expect(nvim.digests).to eq([second.digest])
         expect(first).not_to be_nil
@@ -938,7 +948,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         open_first
         submit_open_document(only.digest)
 
-        with_surfaces(timeout: 0.3) { false }
+        surfaces_settle
 
         expect(nvim.opened.size).to eq(1)
         expect(question_view).not_to be_open
@@ -955,7 +965,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         open_first
         list(other_asker, "deploy now?")
 
-        with_surfaces(timeout: 0.3) { false }
+        surfaces_settle
 
         expect(nvim.opened.size).to eq(1)
         expect(question_view.digest).to eq(first.digest)
@@ -968,7 +978,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         open_first
         question_view.abandoned(first.digest)
 
-        with_surfaces(timeout: 0.3) { false }
+        surfaces_settle
 
         expect(nvim.opened.size).to eq(1)
         expect(question_view).not_to be_open
