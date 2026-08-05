@@ -28,3 +28,11 @@ require_relative "review/surface"
 require_relative "review/records"
 require_relative "review/verdict"
 require_relative "review/session"
+
+# The ONE wiring line the diagnostics capability costs, and it is nested rather
+# than routed through a `projection.rb` index on purpose: an index whose only
+# member is deletable is a second file that has to be deleted along with it,
+# and this capability's whole premise is that removal is one file and one line.
+# `Epic` already requires `epic/review/annotations` the same way. Last, because
+# `Projection::Diagnostics` cites `ANNOTATION_KINDS` while its class body runs.
+require_relative "review/projection/diagnostics"
