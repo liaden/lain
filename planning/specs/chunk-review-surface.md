@@ -760,6 +760,35 @@ Two rough edges, neither a defect: the review's tabpage opens with two empty win
 sidebar (the diff panes ticket 32's `open` would fill), and a free-text answer must be indented two
 spaces under a heading that says *"write your answer below"*.
 
+### The manual pass on T32a + T32b, 2026-08-05 — the whole loop, in a real cockpit
+
+Against `lain up --nvim` + ollama `qwen3:4b`, reviewing a real branch. **Every step worked**, which
+is the first time in this chunk that sentence has been true of the editor review:
+
+| step | result |
+|---|---|
+| `/review spike/gems` | sidebar drawn, 8 files, own tabpage |
+| `<CR>` on a row | **diff pair opens** — `lain://review/OLD/Gemfile` + the working-tree file, both `diff=true`, both stamped (`side`, `revision`, `path`) with base and head |
+| `:LainNote question <text>` | placed; a bad kind refuses by naming `blocker, note, question` |
+| `:LainNoteDone` | settled onto the `review_notes` wire, accepted |
+| `x` on every row | 8 rows marked, each acked `hunk-content-v1:… is now reviewed` |
+| `:LainReviewVerdict approve` **before** marking | **refused**, naming the unreviewed files *and* `Verdict::Policy::Permissive` as the escape hatch |
+| `:LainReviewVerdict approve` **after** marking | accepted |
+
+The diff pair is **stable across renders** — watched over 24s of a live turn, both sides stayed
+placed and in diff mode.
+
+**The GitHub PR path, separately, against a real public PR** (`rack/rack#2490`, in a throwaway clone):
+bare number, full URL and `--scope commits` all resolve to the same changeset; `--scope commits`
+carries the commit subjects; an unknown PR and an unknown branch each refuse on **stderr with exit 1**
+and an empty stdout, naming the repository and GitHub's own message.
+
+**One transient, recorded rather than filed as its own defect.** On the first `<CR>` the new side was
+built and stamped but not *displayed* — the window held the sidebar instead. It happened in exactly
+the circumstance ticket 33 creates: a gesture queued at an idle prompt, flushed in a burst at the same
+moment renders were arriving. It did not reproduce during normal mid-turn operation, and ticket 33's
+fix removes the burst. Worth re-checking once that lands rather than chasing now.
+
 ### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
 
 The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
