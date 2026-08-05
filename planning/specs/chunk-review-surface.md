@@ -630,19 +630,66 @@ it was deferred.
     | `review_open` | `46_sidebar.lua` — `<CR>` / `:LainReviewOpen` |
     | `review_ask` | `51_thread.lua:613` |
     | `review_done` | `65_review.lua` — `:LainReviewDone` (the **epic** rail, not the changeset one) |
+    | `review_notes` | `48_annotate.lua:404` — `:LainNoteDone`, the settled batch |
     | **`review_mark`** | **none** |
-    | **`review_annotate`** | **none** |
     | **`review_verdict`** | **none** |
+    | `review_annotate` | none — but see below |
 
-    All three are fully wired Ruby-side and T31b's spec drives them over the real inbox, so this is not
-    a broken implementation — it is an implementation with no key, command or autocmd putting it on the
-    wire. `Surface::Neovim`'s doc records this for `review_verdict`; the other two are recorded nowhere.
+    **CORRECTED after the orchestrator re-ran the grep, 2026-08-05.** T31b's table omitted
+    `review_notes`, and that changes the shape of the fix. `review_annotate` and `review_notes` land on
+    the *same* `review_annotated` hand-off — deliberately, `rpc_thread.rb:727-736` says so — and
+    `review_notes` **does** have a caller. So annotation is not missing from the editor; only the
+    per-note verb is, and `:LainNoteDone` covers the same ground. `:LainNote` needs no rewiring.
 
-    The bite: the two verbs the editor *can* send are `open` and `ask`, and both are the ones T31b
-    scoped out as unwired on the Ruby side. So after T31b, a human in the cockpit has a **read-only**
-    changeset viewer — they can walk the sidebar and nothing else. Fixing it is lua work (a sidebar
-    mark keymap, `:LainNote`'s send leg pointed at `review_annotate` rather than the epic's
-    `review_done`, a verdict command) plus the protocol bump each implies. **Worth a card.**
+    The genuine gaps are **two**, not three: `review_mark` (no keymap) and `review_verdict` (no
+    command). Both are independent of everything else — marking a row and giving a verdict happen in
+    the sidebar, which already exists and already draws.
+
+    **But the thing that actually makes `/review` read-only is Ruby, not lua.** `<CR>` → `review_open`
+    → `ReviewView#open` → `@changesets.open(path, line)`, and `@changesets` is `Unwired`. That
+    collaborator is the keystone: it is what posts `open_changeset(path, old_lines, line, revisions)`,
+    which is what `47_diff.lua:268` stamps `lain_review_side`/`revision`/`path` from, which is what
+    `:LainNote` requires to place a note at all. So the chain
+    **open → diff buffers → annotate → settle** is blocked at its first link, by a missing Ruby object.
+
+    `Review::Surface::Neovim`'s own doc (`:149-158`) already names it and says why it cannot be that
+    class: `changesets.open` is driven by a gesture arriving arbitrarily later than the `present` that
+    drew the row, so it needs a changeset *held* to answer a later message — the one state that surface
+    is defined by not keeping. Split into **T32a** (that object) and **T32b** (the two lua gaps and the
+    protocol bump) below.
+
+#### T32a — The diff opener: what `<CR>` on a sidebar row has to reach          [risk: medium]
+
+**Depends on:** T31a, T31b. **Unblocks:** annotation, and therefore the whole review gesture chain.
+
+A new object answering `ReviewView`'s `changesets:` duck — `open(path, line)` → nil on success, a
+sentence on refusal. It holds the `Review::Changeset` the round was opened on, reads that file's old
+side and both revisions off it, and posts `RpcThread#open_changeset(path, old_lines, line, revisions)`.
+Wired where `/review` builds the view (`Command::Review#handover`) and wherever the epic path builds
+one, so both rails reach the same object.
+
+- **No protocol change.** `_G.__lain.open_changeset` and `47_diff.lua`'s `pair()` already exist and are
+  already spec'd; this card supplies the caller they never had.
+- **Escalation:** if answering `open` needs the RPC thread to block, stop — established twice.
+  If the object needs the *session* rather than the changeset, the lifetime is in the wrong place.
+- The refusal wording `ReviewView::Unwired` currently returns is the acceptance test's counter-example:
+  after this card that sentence must be unreachable from a wired review and still reachable from an
+  unwired one.
+
+#### T32b — `review_mark` and `review_verdict`: the two verbs no key can send          [risk: low]
+
+**Independent of T32a** — the sidebar already draws, so both gestures have a target today.
+
+- **`review_mark`**: sidebar keymaps sending `["review_mark", [line, state, generation]]`. The state
+  **rides the wire** and is never toggled lua-side — `human_replies.rb:554-558` is explicit about why:
+  a toggle computed from a rendering that has since moved flips the wrong hunk, silently, because both
+  values are legal. So two explicit keys, not one toggle.
+- **`review_verdict`**: a command sending `["review_verdict", [verdict]]` on the ANSWERED rail
+  (`rpc_thread.rb:735`), so its refusal is what the gesture fails with. The vocabulary is
+  `Review::VERDICTS`; `Surface::Neovim::ASK_VERDICT` already names it to the human.
+- **The protocol bump**, once, for both: `Frontend::Neovim::PROTOCOL` (`"9"`), `RUNTIME_PROTOCOL` in
+  `runtime.lua`, and every stamp in `plugin/nvim/doc/lain.txt` — a spec pins each stamp to the
+  constant, so a missed one is a red example rather than a silent drift.
 
 ### The manual pass on T31b, 2026-08-05 — what a live cockpit confirmed
 
