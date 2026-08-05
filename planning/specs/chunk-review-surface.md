@@ -255,16 +255,34 @@ prose.
 
 | Capability | Delete | Forces also deleting | Left behind |
 |---|---|---|---|
-| Diagnostics (T17) | `runtime/diagnostics.lua`, `Projection::Diagnostics` | **Prefill (T22)** | Annotations still place and drift; no gutter signs, no `]d`, no quickfix, no telescope |
-| Thread pane (T18) | `runtime/thread.lua`, `ThreadView` | **Docent (T24)** | Annotations still work; no in-editor conversation |
-| Docent (T24) | `lib/lain/review/docent.rb`, `role/diff-docent.md`, one `Wiring` line | none | Thread pane still renders; asking a question refuses with a named message |
-| `/critique` prefill (T22) | `lib/lain/review/prefill.rb`, one `Session` keyword default | none | Human annotations unaffected; no pre-placed findings |
-| GitHub submit (T23) | `lib/lain/review/submit.rb`, `Gh#submit_review`, its `Recorded` verb | none | `lain review <pr>` still reads and reviews; nothing posts back |
+| Diagnostics (T17) | `runtime/49_diagnostics.lua`, `Projection::Diagnostics`, its `review.rb` require | **Prefill (T22)** | Annotations still place and drift; no gutter signs, no `]d`, no quickfix, no telescope |
+| Thread pane (T18) | `runtime/51_thread.lua`, `ThreadView`, its `neovim.rb` require | **Docent (T24)** | Annotations still work; no in-editor conversation |
+| Docent (T24) | `lib/lain/review/docent.rb`, `role/diff-docent.md`, its `review.rb` require, one `Wiring` line | none | Thread pane still renders; asking a question refuses with a named message |
+| `/critique` prefill (T22) | `lib/lain/review/prefill.rb`, its `review.rb` require, one `Session` keyword default | none | Human annotations unaffected; no pre-placed findings |
+| GitHub submit (T23) | seven sites — see below | none | `lain review <pr>` still reads and reviews; nothing posts back |
 | GitHub source (T10) | `lib/lain/review/source/github_pr.rb`, one registry line | **Submit (T23)** | Local-branch review unaffected |
 | Epic gate (T21) | Revert `RequestReview` to refuse `implementation` | none | Standalone review unaffected |
 
-There is no `require` line to remove for a lua module: T6's loader globs the directory, so deleting
-the file is the whole edit.
+**Corrected 2026-08-05 against the tree and the landed hand-backs.** Four rows had drifted: the two
+lua modules are numbered (`49_diagnostics.lua`, `51_thread.lua`, not `diagnostics.lua`/`thread.lua`),
+and four capabilities own a Ruby `require` line the table did not list — `review.rb:41` (diagnostics),
+`:47` (prefill), `:52` (submit), and `neovim.rb`'s `neovim/thread_view`. **T25 must re-derive this
+table from the tree rather than trust it**; that the table was wrong twice is the argument for the
+card, not a reason to skip the check.
+
+There is no `require` line to remove for a **lua** module: T6's loader globs the directory, so
+deleting the file is the whole edit. Every **Ruby** unit has one, and a dangling `require_relative`
+is a LoadError rather than a missing feature — which is why the lines are named above.
+
+**GitHub submit (T23) is seven sites, not three**, verified by a delete-and-run that returned the
+exact base baseline: `review/submit.rb` + its spec + the `review.rb` require; `Gh#submit_review`,
+`Gh::Recorded#submit_review`, `Recorded::Unrecorded.submit_review`, `Journaled#submit_review`;
+`Forge::REVIEW_SUBMIT` and its `ACTIONS` entry with `intent_spec`'s pin; `Reconcile::Observer`'s
+`when REVIEW_SUBMIT` arm and `#unrepeatable`; the `GhParity` fixtures, verbs and two shared examples;
+`gh_spec`/`recorded_spec`'s wire examples; and `forge/gh/endpoint.rb`. Two things stay behind
+deliberately: `ObservationsOnly`, which closes the same recording fall-through for `pr_create` and
+`pr_merge`, and — if the stdin seam is kept — the example guarding the other four verbs against
+acquiring one.
 
 ## Follow-up tickets this chunk owes
 
