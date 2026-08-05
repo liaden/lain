@@ -319,3 +319,76 @@ RSpec.describe "exe/lain outside its own repository", :seam do
     end
   end
 end
+
+# T-env: the `direnv` case -- a project pins its endpoint in `.envrc` and stops
+# retyping it. Driven through `LainCLI`'s REAL option parsing rather than by
+# calling EnvDefaults directly, because the thing that can break is the wiring
+# between the two: a `default:` evaluated at class-body load, which is a place
+# where "I read the env" and "Thor used what I read" are separate claims.
+RSpec.describe LainCLI, "endpoint flags from the environment" do
+  # The Thor class body has already run, so its defaults are frozen at whatever
+  # the env held when `load` happened. Re-declaring onto a throwaway Thor
+  # subclass is what lets an example choose the environment first -- and it
+  # exercises the same `ModelFlags.declare` the exe calls.
+  def options_under(env, argv)
+    seen = []
+    with_env(env) do
+      probe_class(seen).start(["probe", *argv])
+    end
+    seen.first
+  end
+
+  # A throwaway Thor whose only command records what Thor parsed. `seen` is
+  # closed over rather than assigned to a global, which the cop forbids and
+  # which would leak between examples anyway.
+  def probe_class(seen)
+    Class.new(Thor) do
+      def self.exit_on_failure? = true
+      LainCLI::ModelFlags.declare(self)
+      desc "probe", "capture parsed options"
+      define_method(:probe) { seen << options }
+    end
+  end
+
+  it "takes the provider and model from LAIN_PROVIDER and LAIN_MODEL" do
+    options = options_under({ "LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3:4b" }, [])
+
+    expect(options["provider"]).to eq("ollama")
+    expect(options["model"]).to eq("qwen3:4b")
+  end
+
+  # PRECEDENCE, and the reason the reader sits in the `default:` slot: Thor
+  # consults a default only when the flag is absent, so this holds without
+  # anything comparing parsed options against defaults afterward -- the version
+  # that cannot tell `--provider ollama` from silence.
+  it "lets an explicit flag beat the environment" do
+    options = options_under({ "LAIN_PROVIDER" => "ollama" }, ["--provider", "bedrock"])
+
+    expect(options["provider"]).to eq("bedrock")
+  end
+
+  it "falls back to the built-in default when the environment says nothing" do
+    options = options_under({ "LAIN_PROVIDER" => nil, "LAIN_MAX_TOKENS" => nil }, [])
+
+    expect(options["provider"]).to eq("anthropic")
+    expect(options["max_tokens"]).to eq(4_096)
+  end
+
+  it "reads the numeric band as numbers, not strings" do
+    options = options_under({ "LAIN_MAX_TOKENS" => "8192", "LAIN_TEMPERATURE" => "0.7" }, [])
+
+    expect(options["max_tokens"]).to eq(8_192)
+    expect(options["temperature"]).to eq(0.7)
+  end
+
+  # The rule this whole seam is drawn on: the environment may say HOW the model
+  # answers, never what lain is ALLOWED to do or whether it keeps a record. A
+  # stray export must not disable the approval gate for every session started in
+  # that directory, and must not silently stop the Journal.
+  it "refuses to take approval or journalling from the environment" do
+    source = File.read(File.expand_path("../../exe/lain", __dir__))
+
+    expect(source).not_to include("LAIN_YOLO")
+    expect(source).not_to include("LAIN_JOURNAL")
+  end
+end
