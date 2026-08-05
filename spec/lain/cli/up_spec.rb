@@ -433,24 +433,40 @@ RSpec.describe Lain::CLI::Up do
 
         cockpit_up(calls, nvim: "", paths:).call
 
-        # `silent! LainStart`, NOT `if exists(':LainStart') | LainStart | endif`,
-        # which this example used to pin and which nvim 0.12 rejects outright:
-        # `-c` takes ONE Ex command, so every bar-chained form dies on E488 at
-        # the first `|`. The cockpit came up on nvim's "Press ENTER" prompt, so
-        # it never served its socket and `chat --nvim` waited forever. This
-        # example asserted the broken string for as long as it existed -- see
-        # `Up::Cockpit#nvim_pane_command`.
+        # The `-c` is a ternary, not `if … | … | endif` (nvim 0.12's `-c` takes
+        # ONE Ex command and dies on E488 at the first `|`) and not `silent!`
+        # (which swallows a real failure inside :LainStart -- how a layout that
+        # never opened went unnoticed). Both were measured; see
+        # `Up::Cockpit::LAIN_START`.
         expect(new_session_call(calls).last)
           .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
-                                  "-c", "silent! LainStart"]))
+                                  "-c", Lain::CLI::Up::Cockpit::LAIN_START]))
         expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
       end
     end
 
     # T2: the gem's own plugin/nvim ships the layout sugar this AC is about --
     # putting it on the pane's runtimepath is what makes :LainStart exist with
-    # zero user config, and `silent!` (asserted above) is what keeps a bare
-    # `nvim --listen` unharmed either way.
+    # zero user config, and the `exists()` ternary (asserted above) is what
+    # keeps a bare `nvim --listen` unharmed either way.
+    # `--nvim` takes an OPTIONAL value, so written last before `--` Thor hands
+    # it the first chat flag: `lain up --nvim -- --provider ollama` -- the form
+    # the usage line teaches -- listened on a socket called `--provider`, and
+    # the shared socket the cockpit exists to establish silently was not there.
+    # Every other example here passes an explicit socket, which is exactly why
+    # none of them saw it.
+    it "refuses a --nvim socket that is really the swallowed first chat flag" do
+      calls = []
+
+      expect { cockpit_up(calls, nvim: "--provider").call }
+        .to raise_error(Lain::CLI::Up::Cockpit::SwallowedFlag, /--nvim=SOCKET/)
+      # The read-only probes (has-session, nvim --version) have already run by
+      # then and are harmless; what must not exist is a cockpit built around a
+      # socket named after a flag.
+      expect(new_session_call(calls)).to be_nil
+      expect(split_call(calls)).to be_nil
+    end
+
     it "puts the gem's plugin/nvim directory on the runtimepath, guarded ahead of --listen" do
       calls = []
 
