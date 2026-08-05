@@ -598,6 +598,76 @@ it was deferred.
     `lain://inbox` shows `(no questions pending)` once answered, and `lain://request` syntax-highlights
     the live JSON payload.
 
+31. **A second frontend attaching to a live nvim socket kills the first one's reply path, silently.**
+    Found by the manual pass, 2026-08-05, first by accident (a read-only probe against the cockpit's
+    own socket) and then confirmed deliberately. Attach a second `Frontend::Neovim` to a socket a chat
+    is already using, let it exit, and three things are true of the chat that is still running:
+
+    - **`:LainReply` is dead.** The runtime captures the RPC channel id as a lua *upvalue* inside
+      `submit_reply`, so the second attach's re-injection repoints it at the newcomer's channel. When
+      that channel closes, every reply raises `Invalid channel: N`. `_G.__lain.channel` is `nil` — the
+      id is not on the table, so nothing can re-read or heal it.
+    - **The inbox blanks.** The second attach renders its own empty state over the live question, so a
+      human looking at `lain://inbox` sees `(no questions pending)` while the agent is parked waiting
+      for an answer to one.
+    - **The only evidence is a traceback in `:messages`.** Nothing reaches the chat pane, no
+      notification fires, and the inbox row that would have shown the question is the thing that was
+      erased.
+
+    The agent is not wedged — answering in the **chat pane** still works, and does resolve the turn.
+    So the failure is confined to the editor, which is exactly where it is invisible.
+
+    This is *why* T31b is a repl command rather than `lain review --nvim=<socket>`: a human's only
+    socket is the cockpit's, so the standalone form would have done this to their live chat every
+    time. Recorded here because T31c still wants a standalone attach, and this is the hazard that
+    card has to answer — an attach to an occupied socket should refuse by name, not overwrite.
+
+32. **Three of the five changeset-review verbs have no lua caller at all.** T31b's finding, verified by
+    grepping every `.lua` in the tree, 2026-08-05:
+
+    | verb | lua caller |
+    |---|---|
+    | `review_open` | `46_sidebar.lua` — `<CR>` / `:LainReviewOpen` |
+    | `review_ask` | `51_thread.lua:613` |
+    | `review_done` | `65_review.lua` — `:LainReviewDone` (the **epic** rail, not the changeset one) |
+    | **`review_mark`** | **none** |
+    | **`review_annotate`** | **none** |
+    | **`review_verdict`** | **none** |
+
+    All three are fully wired Ruby-side and T31b's spec drives them over the real inbox, so this is not
+    a broken implementation — it is an implementation with no key, command or autocmd putting it on the
+    wire. `Surface::Neovim`'s doc records this for `review_verdict`; the other two are recorded nowhere.
+
+    The bite: the two verbs the editor *can* send are `open` and `ask`, and both are the ones T31b
+    scoped out as unwired on the Ruby side. So after T31b, a human in the cockpit has a **read-only**
+    changeset viewer — they can walk the sidebar and nothing else. Fixing it is lua work (a sidebar
+    mark keymap, `:LainNote`'s send leg pointed at `review_annotate` rather than the epic's
+    `review_done`, a verdict command) plus the protocol bump each implies. **Worth a card.**
+
+### The manual pass on T31b, 2026-08-05 — what a live cockpit confirmed
+
+Run against a real `lain up --nvim` + ollama `qwen3:4b`, screenshots included, after tickets 27 and 30
+landed:
+
+- **`/review spike/gems` works.** The chat answers with the headline and range; `lain://review` draws
+  all 8 files as unmarked rows; the statusline reads `lain://review [-]`. The review opens its **own
+  tabpage** (T26), leaving the plugin's four-window layout tab intact.
+- **The acked gesture rail is live and prompt.** `<CR>` on a sidebar row reaches Ruby and the refusal
+  comes back into nvim as a `WarningMsg` within ~2s at an *idle* prompt — no turn required. The
+  sentence is T31b's documented one: *"no diff surface is wired to this review, so nothing opens from
+  it"*, which is ticket 32's gap answering exactly as designed rather than a new fault. (An earlier
+  reading of this as "silent" was wrong — the first gesture landed in a non-sidebar window.)
+- **The question round trip works both ways.** The inbox `<CR>` opens `lain://question`; `:w` on it
+  with a two-space-indented answer reaches the agent (*"The human answered: pong from the compose
+  buffer"*). `:LainReply <text>` from anywhere does the same. A malformed write is **refused, not
+  reinterpreted**, naming the line and the grammar — including the `expandtab, shiftwidth=2` hint.
+- **The layout fix holds under real use.** `lain_plugin_start`'s augroup is torn down after the one
+  successful layout, so the review's own tab is not a second layout firing.
+
+Two rough edges, neither a defect: the review's tabpage opens with two empty windows beside the
+sidebar (the diff panes ticket 32's `open` would fill), and a free-text answer must be indented two
+spaces under a heading that says *"write your answer below"*.
+
 ### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
 
 The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
