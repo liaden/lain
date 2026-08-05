@@ -318,9 +318,50 @@ RSpec.describe Lain::CLI::Up do
   # source no interactive chruby) + exec of the LAUNCHING binary, read at
   # call time ($PROGRAM_NAME is not the lain binary under rspec).
   describe ".pane_command" do
-    it "composes the PATH re-export, the launching binary, and the escaped argv" do
+    it "composes the env re-exports, the launching binary, and the escaped argv" do
       expect(described_class.pane_command("chat", "--fork", "a b"))
-        .to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat --fork a\\ b")
+        .to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; " \
+               "export GEM_HOME=#{Gem.paths.home}; " \
+               "export GEM_PATH=#{Gem.path.join(File::PATH_SEPARATOR)}; " \
+               "exec #{$PROGRAM_NAME} chat --fork a\\ b")
+    end
+
+    # The regression this pair exists for, and the reason PATH alone was not
+    # enough: a tmux SERVER outlives the shell that started it, so a pane can
+    # inherit an environment with no GEM_HOME however clean the window that
+    # typed `lain up` was. The re-exported PATH then finds the right ruby, and
+    # that ruby defaults Gem.dir to the ABI-keyed `~/.gem/ruby/4.0.0` rather
+    # than chruby's `4.0.6` -- an empty directory, so `bundler/setup` resolves
+    # nothing and the pane dies in Bundler::GemNotFound with every gem named.
+    # Observed on macOS 2026-08-05: `lain up` created the session and the chat
+    # pane was dead (exit 7) before the frontend drew a frame.
+    it "re-exports GEM_HOME and GEM_PATH, which a tmux server started before chruby does not carry" do
+      command = described_class.pane_command("chat")
+
+      expect(command).to include("export GEM_HOME=#{Gem.paths.home}; ")
+      expect(command).to include("export GEM_PATH=#{Gem.path.join(File::PATH_SEPARATOR)}; ")
+    end
+
+    # Same argument as the RbConfig.ruby stub below: the example above cannot
+    # tell a live read from a literal that happens to match this box today. A
+    # `bundle config path` vendor directory is the case that makes it matter --
+    # the pane must land in the bundle its PARENT resolved, not in whatever the
+    # spawned ruby would pick for itself.
+    it "follows Gem.paths.home when it changes -- proving the gem home is read live" do
+      allow(Gem).to receive(:paths)
+        .and_return(instance_double(Gem::PathSupport, home: "/opt/vendor/bundle", path: ["/opt/vendor/bundle"]))
+
+      expect(described_class.pane_command("chat")).to include("export GEM_HOME=/opt/vendor/bundle; ")
+    end
+
+    # The pane's own `$SHELL -c` reads these, so a directory with a space in it
+    # would split into two words and export a truncated GEM_HOME -- silently,
+    # into the same Bundler::GemNotFound the whole fix is about.
+    it "escapes a gem home containing a space, since tmux hands the line to a shell" do
+      allow(Gem).to receive(:paths)
+        .and_return(instance_double(Gem::PathSupport, home: "/opt/my bundle", path: ["/opt/my bundle"]))
+
+      expect(described_class.pane_command("chat")).to include('export GEM_HOME=/opt/my\ bundle; ')
     end
 
     # Not a general /ruby-\d+\.\d+\.\d+/ refusal -- RbConfig.ruby's bindir on
@@ -368,16 +409,18 @@ RSpec.describe Lain::CLI::Up do
     it "shell-escapes every chat arg onto the default chat command" do
       command = capture_new_session_command(chat_args: ["--model", "claude-fable-5", "--no-journal"])
 
-      expect(command).to eq(
-        "export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat " \
-        "--model claude-fable-5 --no-journal"
-      )
+      # The env preamble is {.pane_command}'s own subject (it has its own
+      # examples above, which pin every export); what THIS pair is about is the
+      # argv tail, so the prefix is delegated rather than duplicated -- the same
+      # way btw_spec and fork_spec compare against the recipe.
+      expect(command).to eq("#{described_class.gem_exports}exec #{$PROGRAM_NAME} chat " \
+                            "--model claude-fable-5 --no-journal")
     end
 
     it "leaves the chat command untouched when no chat args are given" do
       command = capture_new_session_command(chat_args: [])
 
-      expect(command).to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; exec #{$PROGRAM_NAME} chat")
+      expect(command).to eq("#{described_class.gem_exports}exec #{$PROGRAM_NAME} chat")
     end
 
     it "keeps a hostile chat arg inert -- it reaches chat as one literal argument, never shell syntax" do

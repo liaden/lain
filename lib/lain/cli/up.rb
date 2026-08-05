@@ -82,8 +82,36 @@ module Lain
       # computed value, not a literal.
       # Callers: `lain up`'s chat window, its cockpit panes, and /fork's window.
       def self.pane_command(*argv)
-        "export PATH=#{Shellwords.escape(File.dirname(RbConfig.ruby))}:$PATH; " \
-          "exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+        "#{gem_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+      end
+
+      # PATH alone is HALF a chruby, and the missing half is what made `lain
+      # up` die instantly on macOS (2026-08-05, exit 7 in the chat pane):
+      # `Bundler::GemNotFound` listing every gem in the Gemfile as missing.
+      #
+      # A pane inherits the tmux SERVER's environment, and the server outlives
+      # the shell that started it -- so a server first started before chruby
+      # ran (or from any shell that never sourced it) hands every later pane an
+      # environment with no GEM_HOME, no matter how clean the iTerm window that
+      # typed `lain up` was. Re-exporting PATH then finds the right `ruby`
+      # binary, and that ruby computes its OWN default `Gem.dir` --
+      # `~/.gem/ruby/4.0.0`, keyed on the ABI version, not the `4.0.6` chruby
+      # points at. That directory exists and is empty, so `bundler/setup`
+      # resolves nothing and the pane is dead before the frontend draws.
+      #
+      # Read live from the launching process for the same reason the bindir is
+      # (see above): these are whatever actually resolved the gems that got us
+      # here, including a `bundle config path` vendor directory, so a pane lands
+      # in the same bundle its parent did. Both come off the ONE `Gem.paths`
+      # rather than pairing it with `Gem.path` -- that is its own delegate
+      # (`rubygems.rb`: `Gem.path` is `Gem.paths.path`), and reading the pair
+      # from one object is what keeps home and path from ever disagreeing.
+      def self.gem_exports
+        paths = Gem.paths
+        ["PATH=#{Shellwords.escape(File.dirname(RbConfig.ruby))}:$PATH",
+         "GEM_HOME=#{Shellwords.escape(paths.home)}",
+         "GEM_PATH=#{Shellwords.escape(paths.path.join(File::PATH_SEPARATOR))}"]
+          .map { |assignment| "export #{assignment}; " }.join
       end
 
       # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil
