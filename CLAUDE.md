@@ -341,6 +341,14 @@ Structures that plausibly qualify, and what they buy:
 - **YARD reads `@word` at the start of a comment line as a tag**, so a prose reference to a
   keyword argument wraps into `Warnings/UnknownTag` and fails the commit. Write it inline
   (`the `compose:` note on {Neovim#initialize}`), not as the first token of a wrapped line.
+- **`rm .git` before running anything in a COPY of a linked worktree.** A linked worktree's `.git`
+  is not a directory, it is a one-line pointer file (`gitdir: /path/to/lain/.git/worktrees/<name>`).
+  So `cp -a` of a worktree gives you a copy whose git admin data is still the **original's**, and the
+  isolation and forge specs — which drive real `git` against the repo they find — then operate on the
+  linked worktree's admin directory rather than the copy's. Observed 2026-08-04: one full-suite run
+  from such a copy **deleted the entire copy**. Nothing warns you; the pointer file looks inert.
+  Copying a worktree for mutation, bisect or spike work is otherwise reasonable, so the rule is just:
+  delete the pointer first, or copy from a real clone.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
   parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
   A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default

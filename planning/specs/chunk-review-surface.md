@@ -218,7 +218,25 @@ Deviations from the default process:
    55 examples in 3.36s, and against `tmp/parallel_runtime_rspec.log` they are 3.6s of 104.9s, well
    under the 14.7s `worktree_handback_spec.rb` floor that sets the wall. The lighter loop already
    exists as `--tag '~seam'` and `LAIN_NVIM=0`. New cards must not add a third mechanism.
-4. **A separate `lain-nvim` gem is deferred, not rejected.** The coupling is the wrong way round for
+4. **ANSWERED 2026-08-04 by the T19 panel: `Review::Surface` survived as a real port**, with one
+   nvim-shaped law and a named way to remove it. The plan said to judge the gem question on whether
+   the port survives T9 and T19; it did. The evidence the panel gave, in its order:
+   - **T19 changed the adapter to fit the check, never the check.** `MESSAGES` and `check!` are
+     byte-identical to what T4 shipped — verified by diff, not asserted.
+   - **No nvim-shaped argument entered any of the six messages** — no buffer, no window, no
+     generation. The nvim-only concerns (`marked`, `marked_at`, the stamps) were deliberately kept
+     **off** the port as extra methods on the adapter.
+   - **Three adapters with genuinely different mechanics pass the same laws** — Null, Text, and one
+     driving a real editor over RPC.
+   - **The one pull is Law #5**: "a String means refused" is `RenderInlet`'s own convention promoted
+     to a port law, which Null and Text satisfy only *accidentally* (nil, a byte count) and can
+     never exercise the refusing half of. Mild and reversible. Its visible cost is the `#verdict`
+     exemption, and **re-expressing the return as a `Review::Answer` value type deletes both** —
+     filed as a follow-up.
+
+   So the port is not a shape fitted around nvim. Judge the gem extraction on this basis.
+
+4b. **A separate `lain-nvim` gem is deferred, not rejected.** The coupling is the wrong way round for
    extraction today: the `frontend/neovim` tree references only 8 lain constants outbound, but **13
    files outside `frontend/` reach into it** (`epic/review.rb`, `cli/repl.rb`, `cli/wiring.rb`,
    `cli/human_replies.rb`, `tools/ask_human.rb` among them), so the split would be circular and
@@ -289,6 +307,54 @@ it was deferred.
    collision, and leaving both was ruled correct. But `:h lain-review` lands on the document review
    with no "not to be confused with", and the pair is a reading hazard. Rename one and cross-reference;
    `review_open` was named by T11, so this spans cards.
+11. **Adopt `Delta::Git` in the two sources.** T12's panel: `Delta::Git` is the missing object,
+    correctly extracted — and `Source::LocalBranch` and `Source::GithubPr` were left holding their
+    private `#git` copies. Folds into ticket 1 (`Lain::Git::Runner`), and is the same extraction
+    seen from the other side.
+17. **The shared extmark namespace defeats "visibly a suggestion", and `open_review` clears it
+    wholesale.** T22 split the *diagnostic* namespaces (verified against a live foreign LSP) but
+    shares the *anchors* namespace, since splitting it would change T17's lua. Its panel measured
+    the cost: nvim 0.12.4 defaults to `virtual_text = false, signs = true`, so a BLOCKER finding,
+    the human's own `blocker` note and pyright's error all draw the **identical sign** — and the
+    human's note carries `virt_text` while a finding carries none, making **the suggestion less
+    visible than the thing it must be distinct from**. Worse, `65_review.lua:26`'s `open_review`
+    does `nvim_buf_clear_namespace` on the whole shared namespace: place two findings, re-open,
+    refresh, and every finding anchor is gone with both diagnostics vanishing silently while Ruby's
+    `Prefill` still believes it holds them. Latent — nothing wires findings into a buffer yet. Fix
+    belongs on T17's lua, and is small: `vim.diagnostic.config({...}, ns)` is per-namespace.
+18. **The sidecar cannot express a range once T23 lands.** T22 chose one line plus prose extent —
+    the right call for a surface whose rendering carriers are single `lnum`s — but justified it as
+    "every carrier downstream holds exactly one position", which **T23 falsifies in the same wave**
+    by shipping `start_line`/`start_side`. The decision stands; the reason is now dated. Revisit
+    when a range genuinely crosses the pipeline.
+16. **SEQUENCING CONSTRAINT — two silent wedges must close before anything injects a changeset
+    source.** T21's panel found both, and both are unreachable today only because `EpicMount` leaves
+    `changesets:` nil: (a) a **cancelled park is an unrecoverable, restart-durable claim** —
+    `open_generations` keeps the address with no `review_closed`, every later `implementation` call
+    refuses `AlreadyOpen`, and `Review.from_journal` rebuilds it across a restart, with no file, no
+    `:LainReviewDone` and no CLI to abandon it; (b) **`NoBindings.bind_changeset_review` returns nil
+    where its twin `NoChangesets` refuses loudly**, so a source injected against an unbound rail
+    parks forever saying nothing. **T20 is the card that injects a source.** Neither may ship live
+    until both close.
+14. **Guard `Session#present`, not just the CLI.** T20 wired `Review::Bounds` and its panel confirmed
+    it is the only caller in `lib/` and fires before anything is journaled. But the hole is not "a
+    review opened elsewhere" — it is **inside the command**: the guard runs once on the flag's
+    scope, and **`Session#present(scope:)` is re-callable**, so an injected `Surface::Neovim` whose
+    sidebar toggles scope reaches it **unguarded on a session the CLI itself opened**. Inert only
+    because nothing binds that leg yet. The universal home is `Session#present`.
+15. **`Review::Projection` collides with `Event::Projection`.** T17 flagged it and I kept the name:
+    it is fixed outside T17's files by the card path, the deletion-map row T25 reads mechanically,
+    and T22's card, so renaming is four lines plus three coordinated edits mid-chunk. Distinct
+    namespaces, so Ruby resolves it — a readability cost, not a defect.
+13. **T14's walk repeats a split commit's numstat N times.** T29's panel: when `Bounds` splits an
+    oversized commit for critique, the resulting chunks share one `sha` **and one full,
+    unpartitioned `numstat`**. T14 is landed and renders exactly that figure per commit row, so a
+    split commit's `+added -deleted` would appear N times, each claiming the whole. Not urgent —
+    nothing wires `Bounds` yet (ticket 10's sibling) — but it must not surprise whoever does.
+12. **`Source::LocalBranch:87,117` runs git with the exit status unchecked.** Found while reviewing
+    T12, which had the identical shape at `Delta#names` — where the panel showed it rendered
+    "git could not answer" as "nothing to re-read". T12 fixed its own; the house pattern remains in
+    a landed file, and the same class of silent-empty-answer is available there.
 10. **The row object's `#numstat` name collision, resolved by ruling rather than by code.**
     `Changeset::CommitScope#numstat` is an `Array<Source::FileStat>`; T14 assumed an aggregate
     answering `#added`/`#deleted`. Ruled: the commit entry answers **`#added`/`#deleted` as scalars**
@@ -375,6 +441,31 @@ their own harness (`layout_spec.rb` T26, `diff_mode_spec.rb` T15, `annotate_spec
 and T28 (wave 5) touch. `runtime.lua` is edited by T6 (wave 1) and T28 (wave 5) only.
 
 ---
+
+## THE EXTMARK CONTRACT — binding on T16, T17 and T18
+
+Established by T15's panel, 2026-08-04, by placing a mark on **every row** and re-opening across nine
+buffer shapes (identical, pure prepend, pure append, mid-file change, no-shared-prefix,
+no-shared-suffix, mid-file deletion, duplicate lines where the prefix and suffix scans overlap, and
+shrink-to-one-shared-line).
+
+**Marks inside a rewritten span MOVE rather than invalidate.** `get_extmark_by_id` still answers a
+position; it never reports invalid. (The extreme case — every mark landing one row past the last
+line — belongs to a *full* rewrite, which T15's refill no longer performs; the span is now bounded
+by the shared prefix and suffix. The movement property holds regardless of how narrow the span is,
+which is why content comparison is the rule rather than an abundance of caution.)
+
+**So drift is detected by comparing CONTENT, never by asking whether a mark survived.** A card that
+tests mark validity will read "still there" for a mark that now names a different line — which is the
+silent-wrong-answer shape this chunk keeps finding, in the one place a human would trust it most.
+
+This is inherent to `set_lines` and is now confined to the changed span: marks *outside* it hold
+their rows in all nine shapes, on both sides. Two further facts wave 4 depends on:
+
+- **Two identical re-opens bump no `changedtick` at all** — T15's refill writes nothing when the
+  content matches, so `on_lines` does not fire. T16's drift detection can rely on that silence.
+- The old side is a `nofile` scratch buffer and the new side is the real file, but **both now behave
+  the same way under refill**; the asymmetry that made only the old side lose marks is closed.
 
 ## Standing obligations on every lua card (T14, T15, T16, T18)
 
@@ -791,6 +882,14 @@ named, either acceptable: filtering yields a **view** that has no `#hunks` at al
 total and a separate `#presented_hunks` carries the filtered set. Pick one and say why in the
 hand-back. This is the tuicr `preserve_hunks` bug being closed by data flow rather than by a flag,
 which is what T8's card was reaching for — it just could not reach it from where it stood.
+
+**THE RE-REVIEW DELTA CANNOT SEE MERGE-ONLY WORK.** Added for every consumer — T13, T20 and T21 read
+this plan, not `delta.rb`'s comments. `git range-diff` **omits merges entirely**, verified twice: a
+merge carrying a hand-resolved file reports only the side branch's commit, and that file appears in
+**no entry** while `ls-tree` shows it in the branch. It is not a flag away — `range-diff` rejects
+`--diff-merges` outright, so the omission is structural. A delta reporting "nothing changed" over a
+range whose only change was a merge resolution is therefore correct-by-its-own-lights and wrong for
+a human. Anything gating on the delta must say so.
 
 **Added during execution (2026-08-04): MERGE COMMITS ARE THIS CHUNK'S SYSTEMATIC GAP, and two
 wave-1 cards hit it independently.** Treat the second escalation trigger below as *expected to fire*,
@@ -1574,6 +1673,14 @@ Scenario: the scope flag selects the initial presentation
   Then the presented scope is commits
 ```
 → spec file: `spec/lain/cli/review_spec.rb`
+
+**Added during execution (T29 panel, 2026-08-04): `Review::Bounds` HAS ZERO CALLERS and this card
+is the natural place to wire it.** T29 shipped the guard, its evidence and its refusals, but nothing
+invokes it — so an 800-file changeset still presents cumulatively today. A guard nobody calls is the
+same shape as a disclosure nobody reads, which this chunk has now produced twice. Wire the cumulative
+check where a scope is chosen, and say in the hand-back what calls it and what a human sees when it
+fires. If the right caller turns out to be T19 or T13 rather than here, say so rather than leaving it
+inert.
 
 **Escalation triggers:**
 - A bare number is ambiguous because a branch is literally named `4821` — stop and confirm the
