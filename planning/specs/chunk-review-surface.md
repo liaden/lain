@@ -496,6 +496,28 @@ T18 applied (10720 without it). The last two:
 | T23 GitHub submit | `c003be8` | APPROVE-WITH-FIXES → fix round → APPROVE |
 | T18 thread pane | `a176599` | **REJECT** (4 seats) → fix round → landed at 10791 |
 | T28 protocol 9 | `0c8e01d` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10800 |
+| T24 hunk docent | `b3fbada` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10849 |
+
+### Ruling — the docent's journal records stay in `docent.rb`
+
+T24's fix round asked for a ruling before moving its four journal records into
+`lib/lain/review/records.rb`, which is where `Review`'s records otherwise live. **Ruled: they stay.**
+
+`records.rb` is shared and **not deletable**. Moving a deletable capability's records there would put
+capability-owned content in a file that survives the capability — which is exactly the dangling
+reference this chunk keeps finding, and it would add a sixth file to a deletion map whose whole
+premise is a small, listable footprint.
+
+The card's own `Surface::Message` decision is the discrimination to keep, and it cuts the other way
+for a reason worth stating: **a BOUNDARY object belongs at the boundary and outlives both sides; a
+CAPABILITY's records belong with the capability and die with it.** `Surface::Message` is deliberately
+*not* in the deletion map, and the deletion arithmetic proves the design — removing the docent leaves
+**10763**, which is the pre-T24 baseline of 10760 plus exactly the three `message_spec` examples that
+correctly survive.
+
+The cost is honest and was reported plainly: `docent.rb` is now 1056 lines (from 723), about 60%
+comment, carrying five concerns. That is a real trade, not a free one, and the reasoning now lives in
+the class doc rather than in a hand-back nobody will read again.
 
 ### The reboot, 2026-08-05, and what it cost
 
