@@ -90,7 +90,35 @@ require_relative "lain/tools"
 require_relative "lain/consolidation"
 
 # The compiled Rust extension. Defines Lain.hello and Lain::Ext.init_tracing.
-require "lain/lain"
+#
+# The rescue exists because the artifact is GITIGNORED (`*.so`, and it is 47MB),
+# so a fresh clone, a fresh `git worktree`, and a fresh checkout on another
+# machine have never had it -- and Ruby's own LoadError for it says only
+# `cannot load such file -- lain/lain`, which names an internal path a human has
+# no reason to recognise and no hint of what to do. Reported from a first-run on
+# macOS, 2026-08-05, against `./exe/lain` and `bundle exec exe/lain --help`
+# alike; CLAUDE.md already records the same trap biting fresh worktrees, where it
+# surfaces as every spec failing at load.
+#
+# Re-raised as LoadError, not a Lain::Error: nothing of lain is loaded yet, so
+# Lain::Error does not exist to be raised, and a caller rescuing LoadError around
+# an optional require must keep working.
+begin
+  require "lain/lain"
+rescue LoadError => e
+  raise LoadError, <<~SENTENCE.strip
+    #{e.message}
+
+    lain's compiled Rust extension is not built. It is gitignored, so a fresh
+    clone or worktree never has it -- build it once with:
+
+        bundle install && bundle exec rake compile
+
+    (needs a Rust toolchain: https://rustup.rs). If that succeeded and this
+    persists, the built artifact is for a different Ruby or platform than the
+    one running now -- `bundle exec rake clean compile` rebuilds it.
+  SENTENCE
+end
 
 # An agent harness built as a study bench: context strategies, tool designs, and
 # orchestration tactics are swappable, observable, and comparable.
