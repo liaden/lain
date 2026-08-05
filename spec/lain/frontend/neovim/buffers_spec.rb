@@ -315,21 +315,31 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    # SEQUENTIAL since T35, and it has to be: two lains attached to one editor
+    # at once is refused by name now, so the only re-attach there is is the one
+    # a human performs -- quit lain, start another in the same nvim. What it
+    # pins is unchanged, because nothing is torn down when a lain exits: the
+    # second arrives to buffers, commands and maps its predecessor left
+    # standing, and the runtime's `define` deleting before it creates (with
+    # every augroup `{ clear = true }`) is what keeps one of each.
+    #
+    # It was written as one attach NESTED inside another, which is the shape
+    # ticket 31 measured as silent data destruction. The spec certified the
+    # defect as a feature for as long as it stood.
     it "re-attach is idempotent: no duplicate commands, and motions/syntax still work" do
-      first = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+                     .run { wait_until { bufnr("lain://timeline") != -1 } }
       second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
       expect do
-        first.run do
-          second.run do
-            wait_until { bufnr("lain://timeline") != -1 }
-            commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
-            expect(commands.count("LainReply")).to eq(1)
+        second.run do
+          wait_until { bufnr("lain://timeline") != -1 }
+          commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
+          expect(commands.count("LainReply")).to eq(1)
 
-            set_view("lain://timeline", ["user: a", "assistant: b"])
-            expect(feed("lain://timeline", "]]", cursor: [1, 0])).to eq([2, 0])
-            expect(syntax_name_at("lain://timeline", 1, 1)).to eq("lainRole")
-          end
+          set_view("lain://timeline", ["user: a", "assistant: b"])
+          expect(feed("lain://timeline", "]]", cursor: [1, 0])).to eq([2, 0])
+          expect(syntax_name_at("lain://timeline", 1, 1)).to eq("lainRole")
         end
       end.not_to raise_error
     end

@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 10) . |lain-contract|
+  6. The attach contract (protocol 11) . |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -127,11 +127,30 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 10)                           *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 11)                           *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
 it is the surface your own config hooks.
+
+                                                              *lain-ownership*
+                                                              *__lain.channel*
+ONE LAIN PER EDITOR. Attaching takes the editor over -- buffers, keymaps,
+autocmds and the command channel all get pointed at the attaching process --
+so a second `lain ... --nvim` aimed at an editor a running lain already owns
+is REFUSED, naming the socket, before any of this runtime loads. Nothing in
+the editor changes: the lain already in there keeps its :LainReply, its review
+writes and its rendered buffers. Quit that lain, or start a second nvim with
+its own listening socket and point --nvim at that one.
+
+The owner is `__lain.channel`, the id of the RPC channel the runtime is
+serving: >vim
+    :echo luaeval('__lain.channel')
+<
+A lain that CRASHED leaves that marker behind and blocks nothing. Nvim closes
+a channel when its process goes, and the check asks whether the recorded
+channel is still LIVE rather than whether a marker is present -- so attaching
+again into the same editor just works, and nothing needs clearing by hand.
 
 ------------------------------------------------------------------------------
 6.1 USER EVENTS                                                  *lain-events*
@@ -393,7 +412,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 10)                           *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 11)                           *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -427,7 +446,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 10)                     *lain-question*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 11)                     *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -498,7 +517,7 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 REVIEWING A DOCUMENT (PROTOCOL 10)                           *lain-review*
+6.7 REVIEWING A DOCUMENT (PROTOCOL 11)                           *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -525,7 +544,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.8 READING A CHANGESET (PROTOCOL 10)                       *lain-review-diff*
+6.8 READING A CHANGESET (PROTOCOL 11)                       *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it

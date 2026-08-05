@@ -318,9 +318,12 @@ RSpec.describe Lain::CLI::Repl do
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     let(:commands) { Struct.new(:nothing) { def dispatch(_text) = nil }.new(nil) }
     let(:mark) { ["review_mark", [3, "reviewed", 7]] }
-    # Doubled rather than defaulted: {Lain::Supervisor::Null} answers neither
-    # `run` nor `stop`, so {Repl#run}'s own default cannot survive its first two
-    # lines -- see the handback.
+    # Doubled so these examples are about the GESTURE RAIL alone -- the fleet's
+    # reactor is a second lifetime {Repl::ConversationScope} opens beside it.
+    # The double once stood in for a real gap: {Lain::Supervisor::Null} answered
+    # neither `run` nor `stop`, so {Repl}'s own default could not survive the
+    # conversation's first line. It answers both since T35, and the last example
+    # in this group drives that default instead of this double.
     let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
 
     def tty_for(dir)
@@ -436,6 +439,27 @@ RSpec.describe Lain::CLI::Repl do
         rail.push(["review_mark", [9, "unreviewed", 7]])
         sleep(0.2)
         expect(review.gestures.size).to eq(1)
+      end
+    end
+
+    # T35, and the only example in the file that omits `supervisor:`. A default
+    # nothing ever exercises is a default nobody knows is broken: this one was,
+    # for as long as {Lain::Supervisor::Null} answered five of the duck's seven
+    # messages, and it stayed invisible because {CLI::Wiring} passes a real
+    # supervisor on every production path and every spec passed a double.
+    #
+    # Driven through the REAL {Repl#run}, not by sending `run` to the module: a
+    # conversation opens the lifetime and closes it, and the failure this pins
+    # was the very first line of the opening.
+    it "converses on its own default supervisor when a caller wires none" do
+      Dir.mktmpdir do |dir|
+        replies = Lain::CLI::HumanReplies.new(tty: tty_for(dir), conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        repl = described_class.new(agent:, tty: tty_for(dir), replies: AttachedReplies.new(replies),
+                                   commands:, chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
+        allow(conductor).to receive(:read_prompt).and_return("quit")
+
+        expect { Timeout.timeout(10) { repl.run(nvim: nil, store: nil, session: nil) } }.not_to raise_error
       end
     end
   end

@@ -94,7 +94,18 @@ module Lain
       #   Lain::Review::VERDICTS rather than restating the vocabulary in lua. No
       #   new render entry point -- a refused mark comes back on
       #   __lain.review_refused, which 9 already shipped.
-      PROTOCOL = "10"
+      # "11": one lain per editor. The injected chunk now RETURNS -- nil once it
+      #   has loaded, and a refusal table BEFORE it loads anything at all when a
+      #   live RPC channel already owns this editor, which {RpcThread#attach}
+      #   raises as {SocketOwned}. The owner is named by the runtime's
+      #   __lain.channel, this table's first non-function member: the channel id
+      #   was a chunk local nothing could read, so a re-injection silently
+      #   repointed every :Lain* command at a channel that then died, and no
+      #   gesture, inspection or repair could see why. LIVENESS, never presence
+      #   -- a marker left behind by a lain that has gone away must not cost the
+      #   human their editor, so the recorded channel is asked of nvim rather
+      #   than trusted, and nothing has to be cleaned up on the way out.
+      PROTOCOL = "11"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model

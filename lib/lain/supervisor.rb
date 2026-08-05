@@ -392,14 +392,40 @@ module Lain
       def self.surrender(_lease, **) = Isolation::WorkerHandoff::Report.nothing
     end
 
-    # The wired-nothing default ({Tools::Subagent}, {CLI::Conductor}): answers
-    # the whole duck -- not running, nothing registered, adoption refused --
-    # so no caller writes `if supervisor`. A module, like
+    # The wired-nothing default ({Tools::Subagent}, {CLI::Conductor},
+    # {CLI::Repl}): answers the whole duck -- not running, nothing registered,
+    # adoption refused -- so no caller writes `if supervisor`. A module, like
     # {Tools::Subagent::Log::Null}: there is no per-instance state.
+    #
+    # "The whole duck" IS THE CONTRACT, and it was untrue for two of the six
+    # messages until T35. {CLI::Repl} defaults `supervisor:` to this module and
+    # {Repl::ConversationScope} opens with `@supervisor.run(task)`, so every
+    # Repl built without an explicit supervisor died on NoMethodError at the
+    # first line of the conversation -- inert only because {CLI::Wiring} always
+    # passes a real one, and one wiring away from being a session lost at the
+    # prompt. A Null that answers most of a duck is worse than no default: the
+    # gap is invisible at the call site, which is the whole thing a Null Object
+    # is for.
     module Null
       extend Enumerable
 
       def self.running? = false
+
+      # The two the lifetime sends ({Repl::ConversationScope}), answering the
+      # real Supervisor's `self` so a caller may chain either one.
+      #
+      # `run` takes the orchestrating task and IGNORES it, which is the honest
+      # no-op: the real reactor spawns a parked child of that task to be the
+      # parent every adopted launch runs under, and with nothing wired there is
+      # nothing to park and nothing that will ever adopt -- {#adopt} refuses
+      # loudly for exactly that reason. It does NOT refuse a second `run` the
+      # way the real one does: AlreadyRunning guards a reactor that can only be
+      # had once, and there is no reactor here to lose.
+      def self.run(_task = nil) = self
+
+      # Nothing to farewell and no reactor to close. Idempotent, like the real
+      # one's early return when it never ran.
+      def self.stop = self
 
       def self.each
         return enum_for(:each) unless block_given?

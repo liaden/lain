@@ -362,12 +362,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 10 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 11 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "10" }
-        expect(described_class::PROTOCOL).to eq("10")
+        wait_until { inspector.get_var("lain_rpc_version") == "11" }
+        expect(described_class::PROTOCOL).to eq("11")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end
@@ -433,18 +433,29 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # bare noun ("the set_thread_soon render entry point") is prose, and no scanner
     # can tell prose from a claim. The example after this one is what pushes new
     # entries into the spellings that can be checked.
+    #
+    # Since protocol 11 the table has a member that is NOT a function -- the
+    # ownership marker `__lain.channel` -- so the check is in two parts rather
+    # than one. EXISTENCE is what the sweep is for and it binds on every name;
+    # the stricter "and it is callable" binds on exactly the names the runtime
+    # publishes with `function _G.__lain.`, read off the source so the exemption
+    # is one datum and cannot grow by hand into "anything that is there".
     it "names, in its history, only entry points and commands the runtime really has" do
       history = protocol_history.values.join
-      functions = history.scan(/__lain\.(\w+)/).flatten.uniq
+      members = history.scan(/__lain\.(\w+)/).flatten.uniq
       commands = history.scan(/\bLain[A-Z]\w+\b/).uniq - runtime_events
-      expect(functions).not_to be_empty
+      expect(members).not_to be_empty
       expect(commands).not_to be_empty
 
       frontend = described_class.new(channel:, socket_path: @socket)
       frontend.run do
         wait_until { inspector.get_var("lain_rpc_version") == described_class::PROTOCOL }
-        absent = functions.reject { |name| inspector.exec_lua("return type(_G.__lain[...])", [name]) == "function" }
-        expect(absent).to be_empty, "history names __lain entry points the runtime has not got: #{absent.inspect}"
+        kinds = members.to_h { |name| [name, inspector.exec_lua("return type(_G.__lain[...])", [name])] }
+        absent = kinds.select { |_, kind| kind == "nil" }.keys
+        expect(absent).to be_empty, "history names __lain members the runtime has not got: #{absent.inspect}"
+        published = runtime_source.scan(/function _G\.__lain\.(\w+)/).flatten.uniq
+        miscast = kinds.select { |name, kind| published.include?(name) && kind != "function" }.keys
+        expect(miscast).to be_empty, "history names entry points the runtime has not got as functions: #{miscast}"
         # 2 is an exact full match; 3 is "matches several", which a name that is a
         # PREFIX of two others answers without being a command itself. It is EXISTENCE,
         # not health -- a command whose body raises answers 2 as happily as one that
@@ -515,6 +526,132 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       %w[LainReviewMark LainReviewVerdict].each { |command| expect(entry).to include(":#{command}") }
       %w[review_mark review_verdict].each { |verb| expect(entry).to include(verb) }
       expect(entry).to include(*Lain::Review::MARK_STATES).and include("Lain::Review::VERDICTS")
+    end
+
+    # T35's bump, in the shape the two above use. What it has to record is a
+    # DISTINCTION and not a feature: an entry saying only "a second attach is
+    # refused" is satisfied by the implementation that refuses on presence, and
+    # that one costs a human their editor for as long as one lain has ever
+    # crashed in it. So the entry names the marker, and names liveness.
+    it "records in its history what protocol 11 actually bought" do
+      entry = protocol_history["11"]
+      expect(entry).not_to be_nil, "no \"11\" entry: a history that SKIPS a version is worse than none"
+      expect(entry).to include("__lain.channel").and include("SocketOwned")
+      expect(entry).to match(/LIVENESS, never presence/i)
+    end
+  end
+
+  # The RPC channel the runtime records as this editor's owner, or nil when no
+  # lain has ever attached. Read through a THIRD connection (the inspector), so
+  # the reading never disturbs the two frontends the examples below are about.
+  def owner_channel
+    inspector.exec_lua("return type(_G.__lain) == 'table' and _G.__lain.channel or nil", [])
+  end
+
+  # A second frontend on the SAME socket, with its own Channel: `Neovim#run`'s
+  # teardown closes the Channel it was built over, so sharing the `channel` let
+  # would have the refused attach's teardown close the surviving lain's drain --
+  # a second collision, inside the example testing the first.
+  def second_frontend = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+
+  # ONE LAIN PER EDITOR (T35). The runtime is injected into a process-wide
+  # `_G.__lain`, and every :Lain* command closes over `chan`, the chunk-local at
+  # the head of runtime.lua -- so a second attach re-injects the whole chunk and
+  # repoints every verb at the newcomer's channel. Measured twice before this
+  # guard existed: the first lain's :LainReply raised `Invalid channel: N`
+  # forever once the second exited, the newcomer's empty prime replaced the
+  # first's rendered views, and the only evidence anywhere was a traceback in
+  # :messages that reached nobody.
+  #
+  # Every example here drives TWO real frontends against one real editor,
+  # because the defect lives strictly between two attaches and nothing smaller
+  # can see it.
+  describe "one lain per editor" do
+    it "refuses a second attach by name, and the first lain's replies keep arriving" do
+      first = described_class.new(channel:, socket_path: @socket)
+
+      first.run do |handle|
+        wait_until { owner_channel }
+
+        expect { second_frontend.run { nil } }
+          .to raise_error(Lain::Frontend::Neovim::SocketOwned, /#{Regexp.escape(@socket)}/)
+
+        inspector.command("LainReply still mine")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["still mine"]])
+      end
+    end
+
+    # The refusal has to be TOTAL, and this is the half a "refuse, then carry
+    # on injecting anyway" implementation passes the example above with: the
+    # marker still names the first lain, so nothing repointed, and the chunk
+    # never reached the module that would have.
+    it "leaves the owner's marker and its rendered views exactly as they were" do
+      first = described_class.new(channel:, socket_path: @socket)
+
+      first.run do
+        owner = wait_until { owner_channel }
+        channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: "t0", stream: :stdout, bytes: "the first lain"))
+        wait_until { buffer_lines("lain://journal").any? { |line| line.include?("the first lain") } }
+
+        expect { second_frontend.run { nil } }.to raise_error(Lain::Frontend::Neovim::SocketOwned)
+
+        expect(owner_channel).to eq(owner)
+        expect(buffer_lines("lain://journal")).to include(a_string_including("the first lain"))
+      end
+    end
+
+    # An implementation that detects PRESENCE rather than LIVENESS refuses this
+    # one too, and that is worse than the defect: a lain that crashed leaves its
+    # `_G.__lain` behind, and the human's editor would then be unusable until
+    # they restarted nvim. The marker is a channel id precisely so the editor
+    # can be ASKED whether that lain is still there.
+    it "attaches over a marker left by a lain that has gone away" do
+      inspector.exec_lua("_G.__lain = { channel = 9999 }; return true", [])
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run do |handle|
+        inspector.command("LainReply reclaimed")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["reclaimed"]])
+      end
+    end
+
+    # The same rule for a runtime injected BEFORE the marker existed (any
+    # protocol below 11): a table with no channel on it names no owner, so it
+    # cannot answer for one, and refusing on it would strand every editor a
+    # older gem had ever touched.
+    it "attaches over a runtime that predates the ownership marker" do
+      inspector.exec_lua("_G.__lain = { render = function() end }; return true", [])
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run { wait_until { owner_channel } }
+    end
+
+    # The real re-attach, end to end and with no marker planted by hand: the
+    # human quits lain and starts another one in the same editor. The first
+    # lain's channel dies with its socket, so the second is not a second at all.
+    it "attaches again once the lain that owned the editor has exited" do
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { wait_until { owner_channel } }
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run do |handle|
+        inspector.command("LainReply after the first quit")
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["after the first quit"]])
+      end
+    end
+
+    # A guard that fires once is a guard that fails the second time somebody
+    # does the thing -- and the second time is the likelier one, since a human
+    # who has just been refused tends to try again.
+    it "refuses every further attach, not merely the first one after the owner" do
+      first = described_class.new(channel:, socket_path: @socket)
+
+      first.run do
+        wait_until { owner_channel }
+
+        2.times do
+          expect { second_frontend.run { nil } }.to raise_error(Lain::Frontend::Neovim::SocketOwned)
+        end
+      end
     end
   end
 

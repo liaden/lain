@@ -7,6 +7,31 @@ require "socket"
 module Lain
   module Frontend
     class Neovim
+      # A second lain attaching to an editor a live one already owns, refused by
+      # the injected runtime before one module of it loads (runtime.lua's head
+      # states the whole check, and why it asks about LIVENESS rather than
+      # presence).
+      #
+      # A {Lain::Error} so exe/lain presents it as a notice rather than a
+      # backtrace: it is the one attach failure a human causes deliberately, by
+      # pointing a second `--nvim` at the editor their chat is already in, and
+      # what they need back is a sentence naming a socket and an alternative.
+      #
+      # It carries the OWNER's channel id, which is the one fact separating
+      # "another lain is in there" from every other reason an attach fails -- and
+      # is what a human can check in the editor itself against
+      # `:echo luaeval('__lain.channel')`.
+      class SocketOwned < Lain::Error
+        # @param socket_path [String] the socket the attach was refused at
+        # @param channel [Integer] the live RPC channel already serving it
+        def initialize(socket_path, channel)
+          super("the nvim listening at #{socket_path} is already attached to a running lain (RPC channel " \
+                "#{channel}), and a second attach would take that session's :LainReply, its review writes and " \
+                "its rendered buffers away from it with nothing said on either side. Quit that lain first, or " \
+                "start a second nvim with its own --listen socket and point --nvim at that one.")
+        end
+      end
+
       # The outbound half of {RpcThread}'s work, split into its own object: the
       # backlog of not-yet-sent render commands and ITS backpressure (the
       # T6-inherited fix). {RpcThread} owns attach, the select loop, and
@@ -1002,11 +1027,24 @@ module Lain
         # is the public seam {::Neovim.attach} itself uses -- one blocking
         # `nvim_get_api_info` request that self-flushes -- minus the optional
         # client-info notify we do not need.
+        #
+        # THE INJECTION ANSWERS, and a non-nil answer is a refusal: the runtime
+        # declines to load into an editor a live lain already owns (see
+        # {SocketOwned}, and runtime.lua's head for the check). It is the chunk's
+        # return value rather than a probe of our own because the decision has to
+        # be taken INSIDE the injection -- anything asked beforehand is a
+        # check-then-act with a whole round trip in the gap, and the thing it
+        # would race is a second lain doing the same.
+        #
+        # The raise lands on this thread inside {#life}, so it rides
+        # {#record_death}'s pre-announcement path and re-raises on the caller's
+        # thread out of {#start} -- the same way a missing socket already does.
         def attach
           @socket = Socket.unix(@socket_path)
           @connection = ::Neovim::Connection.new(@socket, @socket)
           @client = ::Neovim::Client.from_event_loop(::Neovim::EventLoop.new(@connection))
-          @client.exec_lua(RUNTIME.source, [@version, @protocol, @client.channel_id])
+          refusal = @client.exec_lua(RUNTIME.source, [@version, @protocol, @client.channel_id])
+          raise SocketOwned.new(@socket_path, refusal["channel"]) unless refusal.nil?
         end
 
         def serve

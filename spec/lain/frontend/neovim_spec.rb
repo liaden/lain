@@ -313,18 +313,23 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # A re-attach is SEQUENTIAL since T35 -- quit lain, start another one in the
+  # same nvim -- because two lains attached at once is refused by name (see
+  # neovim_runtime_spec's "one lain per editor"). This group was written as one
+  # attach NESTED inside another, the shape ticket 31 measured as silent data
+  # destruction, so it certified the defect as a feature for as long as it
+  # stood. What it pins is unchanged: a lain exiting tears nothing down, so the
+  # second injection lands on top of a whole live runtime.
   describe "re-attach is idempotent" do
     it "defines namespaced :Lain* commands once and records the gem version" do
-      first = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
+      described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil }
       second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
       expect do
-        first.run do
-          second.run do
-            commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
-            expect(commands).to include("LainResend", "LainSend", "LainContext", "LainVersion")
-            expect(inspector.get_var("lain_rpc_version")).to eq(described_class::PROTOCOL)
-          end
+        second.run do
+          commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
+          expect(commands).to include("LainResend", "LainSend", "LainContext", "LainVersion")
+          expect(inspector.get_var("lain_rpc_version")).to eq(described_class::PROTOCOL)
         end
       end.not_to raise_error
     end

@@ -1247,5 +1247,32 @@ RSpec.describe Lain::Supervisor do
       expect { described_class.adopt(role: "researcher") { nil } }
         .to raise_error(Lain::Supervisor::NotRunning)
     end
+
+    # THE LIFETIME PAIR, missing until T35 -- which made "the whole duck" above
+    # untrue of the two messages every conversation sends FIRST
+    # ({Repl::ConversationScope}), so a {CLI::Repl} taking this module as its
+    # default died on NoMethodError at the top of `#run`.
+    #
+    # `run` is asserted with a REAL Async::Task rather than nil, because a
+    # signature that only accepted nil would pass here and fail at the one call
+    # site there is.
+    it "answers the lifetime pair a conversation opens with, and stays chainable" do
+      Sync do |task|
+        expect(described_class.run(task)).to be(described_class)
+        expect(described_class.stop).to be(described_class)
+        expect(described_class.running?).to be(false)
+      end
+    end
+
+    # The real Supervisor refuses a second `#run` (AlreadyRunning); this one
+    # deliberately does not. That guard protects a reactor task that can be had
+    # exactly once, and there is no reactor here to lose -- a Null that raised
+    # would turn "nothing is wired" into a crash on the second conversation.
+    it "takes a second run, where the real one refuses" do
+      Sync do |task|
+        described_class.run(task)
+        expect { described_class.run(task) }.not_to raise_error
+      end
+    end
   end
 end

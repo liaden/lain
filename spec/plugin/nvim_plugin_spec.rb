@@ -335,6 +335,19 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
+    # T35. A refused attach is the one contract change a human meets as a
+    # REFUSAL rather than as a capability, so the doc owes them the whole of it:
+    # what happened, that the editor is untouched, what to do instead, and --
+    # the part a "just say it refuses" paragraph drops -- that a lain which
+    # crashed does NOT wedge their editor. That last sentence is the difference
+    # between the guard as built and the guard that detects presence, which is
+    # exactly the confusion a human hits at the worst moment.
+    it "documents one lain per editor, its marker, and the crashed case" do
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      expect(doc).to include("*lain-ownership*").and include("*__lain.channel*")
+      expect(doc).to match(/refused/i).and match(/crashed/i).and match(/live/i)
+    end
+
     # The command list is READ OFF the runtime rather than written down here,
     # because a written-down list is what drifted: :LainPin shipped undocumented
     # and stayed that way through two doc passes. The runtime's `define` is the
