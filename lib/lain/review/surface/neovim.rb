@@ -14,7 +14,7 @@ module Lain
       # editor half be rebuilt, swapped for a second frontend, or dropped
       # mid-review with nothing lost: the session (T13) is the aggregate, and
       # every message here is a translation with no memory. Its instance
-      # variables are exactly its three collaborators, and a spec asserts that
+      # variables are exactly its four collaborators, and a spec asserts that
       # by name rather than by inspection of what happens to be in them.
       #
       # == Which rail each message rides, and why two of them share one
@@ -27,14 +27,26 @@ module Lain
       # is deliberate on the view's side and is what keeps a gesture from
       # resolving rendering N's row against rendering N+1's stamp.
       #
-      # `annotate` and `thread` -> `set_thread`, both of them, because the
-      # thread pane is keyed by ANCHOR ID and a note at an anchor is a message
-      # in that anchor's conversation. `thread` sends the header alone (this
-      # object keeps no history to replay -- {Surface::Text#thread} makes the
-      # same honest reading of "open"); `annotate` sends the header and the
-      # note beneath it. The extmark rail a note would ALSO ride is T16's and
-      # does not exist yet, so a note is visible in the pane and nowhere else
-      # until it does.
+      # `annotate` and `thread` -> `set_thread`, both of them, THROUGH
+      # {Frontend::Neovim::ThreadView}, because the thread pane is keyed by
+      # ANCHOR ID and a note at an anchor is a message in that anchor's
+      # conversation. `thread` sends no message at all (this object keeps no
+      # history to replay -- {Surface::Text#thread} makes the same honest
+      # reading of "open"), so the view renders its own invitation to ask;
+      # `annotate` sends the note as one message. The extmark rail a note would
+      # ALSO ride is T16's and does not exist yet, so a note is visible in the
+      # pane and nowhere else until it does.
+      #
+      # THE VIEW IS THE ONE OWNER OF THAT PAYLOAD, and this object may not
+      # build one itself. It used to: both messages posted `@rpc.set_thread(
+      # anchor.id, lines)` -- a bare String where the editor half refuses
+      # anything but a table `{id, path, side, line}`, because the pane is
+      # cursor-driven and an id names no position. The refusal travelled over a
+      # NOTIFY, so it reached nobody, and `Review::Session#annotate` -- the
+      # whole production route to this rail -- produced no pane at all while
+      # this object answered "it landed". Two owners of one wire shape is what
+      # allowed the two to drift; there is now one, and this object's share is
+      # deciding what ENTRIES a note becomes.
       #
       # `mark` and `refuse` and `verdict` -> `review_refused`, the review's ONE
       # notice rail (`runtime/65_review.lua` echoes it into the message area).
@@ -145,11 +157,6 @@ module Lain
       # {Frontend::Neovim::ReviewView::Unwired} keeps the gesture honest until
       # the object that holds the diff answers it.
       class Neovim
-        # The header both thread posts carry: the position, in the spelling
-        # {Surface::Text#thread} already uses, so a reader moving between the
-        # two surfaces reads the same line.
-        THREAD_HEADER = "-- thread at %s --"
-
         # A mark, in words, because the sidebar row that would show it as a
         # glyph cannot be redrawn without the changeset (see the class doc).
         # The state goes LAST and unadorned so `reviewed` and `unreviewed` are
@@ -191,10 +198,17 @@ module Lain
         #   sidebar rows and stamps each rendering
         # @param session [#mark] where a gesture coming BACK from the editor is
         #   recorded -- the review model, never this object
-        def initialize(rpc:, view: Frontend::Neovim::ReviewView.new, session: Unbound)
+        # @param thread_view [#show] renders one anchor's conversation onto the
+        #   `set_thread` rail ({Frontend::Neovim::ThreadView}) -- the ONE owner
+        #   of that payload, see the class doc. Defaulted from `rpc` rather
+        #   than required, because every caller that has the rail has all this
+        #   view needs to be built.
+        def initialize(rpc:, view: Frontend::Neovim::ReviewView.new, session: Unbound,
+                       thread_view: Frontend::Neovim::ThreadView.new(rpc:))
           @rpc = rpc
           @view = view
           @session = session
+          @thread_view = thread_view
         end
 
         # @param changeset [#files, #by_commit] see {Review::Surface}'s class
@@ -209,21 +223,29 @@ module Lain
           @rpc.set_review(rendered.lines, rendered.generation)
         end
 
-        # @param anchor [#id, #path, #line] one reviewable position
+        # A note is ONE message in the anchor's conversation, and its `kind` is
+        # what it has instead of a speaker: `Review::ANNOTATION_KINDS` is what
+        # tells a blocker from a passing remark, which is the one member a
+        # verdict policy reads, so it heads the message rather than decorating
+        # the text. That also puts it on the `]]`/`[[` boundary the editor half
+        # jumps between, which a bracketed prefix inside a line would not be.
+        #
+        # @param anchor [#id, #path, #side, #line] one reviewable position
         #   ({Review::Anchor}); `id` is what keys the pane, because a line only
-        #   names a position in the rendering that drew it
+        #   names a position in the rendering that drew it, and the rest is the
+        #   position the cursor-driven pane watches
         # @param text [String] the note itself
         # @param kind [Symbol, String] one of `Review::ANNOTATION_KINDS`
         # @return [String, nil]
         def annotate(anchor, text, kind:)
-          @rpc.set_thread(anchor.id, [header(anchor), "[#{kind}] #{text}"])
+          @thread_view.show(anchor, [Frontend::Neovim::ThreadView::Entry.new(speaker: kind, text:)])
         end
 
         # @return [String, nil]
         def mark(hunk_key, state) = @rpc.review_refused(format(MARKED, hunk_key:, state:))
 
         # @return [String, nil]
-        def thread(anchor) = @rpc.set_thread(anchor.id, [header(anchor)])
+        def thread(anchor) = @thread_view.show(anchor)
 
         # Asks, and answers nothing -- see the class doc for why this one
         # message cannot carry a refusal back.
@@ -299,8 +321,6 @@ module Lain
         end
 
         private
-
-        def header(anchor) = format(THREAD_HEADER, "#{anchor.path}:#{anchor.line}")
 
         def unrecorded(refusal, landed, total)
           report = landed.zero? ? refusal : format(PARTLY_MARKED, refusal:, landed:, total:)

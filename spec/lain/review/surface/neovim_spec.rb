@@ -90,6 +90,21 @@ class RecordingReviewSession
   end
 end
 
+# The thread rail's ONE owner, recorded rather than posted: what this surface
+# owes {Frontend::Neovim::ThreadView} is an anchor and the ENTRIES a note
+# becomes, and a recorder is how "it went through the view" is told apart from
+# "it happened to reach the same rail".
+class RecordingThreadView
+  attr_reader :shown
+
+  def initialize = (@shown = [])
+
+  def show(anchor, entries = [])
+    @shown << [anchor, entries]
+    nil
+  end
+end
+
 RSpec.describe Lain::Review::Surface::Neovim do
   # A FRESH surface, a FRESH inlet and a FRESH view per example -- RSpec's
   # per-example memoization, which is the freshness the shared example group's
@@ -249,13 +264,37 @@ RSpec.describe Lain::Review::Surface::Neovim do
   end
 
   describe "#annotate" do
-    it "posts the note into the thread pane keyed by the anchor's own id" do
+    # THE ANCHOR RIDES AS A TABLE, and this is the example whose absence let the
+    # capability ship broken: the editor half refuses anything but
+    # `{id, path, side, line}` -- the pane is cursor-driven and an id names no
+    # position -- and the refusal travels over a notify, so a bare id posted
+    # here reached nobody and answered nil. Compared as a whole payload rather
+    # than by `include`, so a fifth key or a dropped one both fail.
+    it "posts the note as a message in the anchor's conversation, keyed by the whole anchor" do
       anchor = real_anchor
 
       surface.annotate(anchor, "this reads twice", kind: :blocker)
 
-      expect(inlet.posted).to eq([[:set_thread, anchor.id,
-                                   ["-- thread at lib/lain/agent.rb:14 --", "[blocker] this reads twice"]]])
+      expect(inlet.posted).to eq([[:set_thread,
+                                   { "id" => anchor.id, "path" => "lib/lain/agent.rb", "side" => "new",
+                                     "line" => 14 },
+                                   ["-- thread at lib/lain/agent.rb:14 --", "", "## blocker",
+                                    "this reads twice"]]])
+    end
+
+    # The one owner of the payload, named: a surface that grew its own
+    # `set_thread` call back would pass every example above and this one alone
+    # would fail, because the view it was handed would never be reached.
+    it "renders through the ThreadView it was handed, never around it" do
+      recording = RecordingThreadView.new
+      surface = described_class.new(rpc: inlet, view:, session:, thread_view: recording)
+
+      surface.annotate(real_anchor, "this reads twice", kind: :blocker)
+      surface.thread(real_anchor(path: "lib/b.rb", line: 3))
+
+      expect(inlet.posted).to be_empty
+      expect(recording.shown.map { |at, entries| [at.path, entries.map(&:speaker)] })
+        .to eq([["lib/lain/agent.rb", [:blocker]], ["lib/b.rb", []]])
     end
   end
 
@@ -276,12 +315,18 @@ RSpec.describe Lain::Review::Surface::Neovim do
   end
 
   describe "#thread" do
-    it "posts the pane's header keyed by the anchor's id" do
+    # No history to replay, so the view renders its own invitation to ask --
+    # which is what "open" honestly means for a surface that holds no review
+    # state. The position still rides, as the header and as the anchor table.
+    it "posts the position and an invitation, keyed by the whole anchor" do
       anchor = real_anchor(path: "lib/b.rb", line: 3)
 
       surface.thread(anchor)
 
-      expect(inlet.posted).to eq([[:set_thread, anchor.id, ["-- thread at lib/b.rb:3 --"]]])
+      expect(inlet.posted).to eq([[:set_thread,
+                                   { "id" => anchor.id, "path" => "lib/b.rb", "side" => "new", "line" => 3 },
+                                   ["-- thread at lib/b.rb:3 --",
+                                    Lain::Frontend::Neovim::ThreadView::EMPTY]]])
     end
   end
 
@@ -357,9 +402,10 @@ RSpec.describe Lain::Review::Surface::Neovim do
     # its job. The view is still real and still holds its bounded rendering
     # history -- that is a line -> file index a gesture resolves through, not
     # review state: no annotation, no mark and no verdict is reachable from it.
-    subject(:surface) { described_class.new(rpc: detached_inlet, view:, session:) }
+    subject(:surface) { described_class.new(rpc: detached_inlet, view:, session:, thread_view:) }
 
     let(:detached_inlet) { Lain::Frontend::Neovim::RenderInlet.new(waker: -> {}).tap(&:close) }
+    let(:thread_view) { Lain::Frontend::Neovim::ThreadView.new(rpc: detached_inlet) }
 
     it "holds no annotation and no mark after presenting and recording both" do
       surface.present(two_commit_changeset, scope: :cumulative)
@@ -375,12 +421,13 @@ RSpec.describe Lain::Review::Surface::Neovim do
     # started remembering something whose `inspect` happened not to spell any of
     # the words above: every variable it has is IDENTICALLY an object handed to
     # its constructor, so nothing it did produced state of its own.
-    it "holds only the three collaborators it was handed, never a scope or a changeset" do
+    it "holds only the four collaborators it was handed, never a scope or a changeset" do
       surface.present(two_commit_changeset, scope: :commits)
       surface.mark("hunk-content-v1:deadbeef", :reviewed)
 
       held = surface.instance_variables.to_h { |name| [name, surface.instance_variable_get(name)] }
-      expect(held).to eq({ "@rpc": detached_inlet, "@view": view, "@session": session })
+      expect(held).to eq({ "@rpc": detached_inlet, "@view": view, "@session": session,
+                           "@thread_view": thread_view })
     end
   end
 
@@ -498,10 +545,15 @@ RSpec.describe Lain::Review::Surface::Neovim do
   end
 
   # The rails whose lua half has LANDED, driven end to end: a real RenderInlet,
-  # a real queue, a real `nvim_exec_lua` into a real editor. `set_thread` is
-  # deliberately absent -- T18 writes its far side, and a post to an entry point
-  # that does not exist yet is a notify nvim discards, which would prove
-  # nothing. A fresh editor per example, `diff_mode_spec.rb`'s discipline.
+  # a real queue, a real `nvim_exec_lua` into a real editor. A fresh editor per
+  # example, `diff_mode_spec.rb`'s discipline.
+  #
+  # `set_thread` WAS excluded here, on the grounds that T18 had not written its
+  # far side yet -- and by the time it had, the exclusion was the only reason
+  # nothing noticed that this surface was posting a shape the editor refuses.
+  # Delivery is a NOTIFY: nvim discards the refusal, the queue answers nil, and
+  # a broken rail is indistinguishable from a working one everywhere except
+  # here. That is what makes this seam the one that matters on this rail.
   describe "against a real editor", :nvim, :seam do
     subject(:surface) { described_class.new(rpc: real_inlet, view:, session:) }
 
@@ -509,7 +561,9 @@ RSpec.describe Lain::Review::Surface::Neovim do
 
     around do |example|
       socket = File.join(Dir.tmpdir, "lain-review-surface-#{Process.pid}-#{rand(1_000_000)}.sock")
-      pid = spawn("nvim", "--headless", "--clean", "--listen", socket,
+      # `-n` (no swap file), the repository's rule for a headless nvim in a
+      # spec: a suite that leaves swap files behind eventually fails with E326.
+      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
                   chdir: NeovimSurfaceFixture::PROJECT, out: File::NULL, err: File::NULL)
       Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
       @editor = Neovim.attach_unix(socket)
@@ -574,6 +628,47 @@ RSpec.describe Lain::Review::Surface::Neovim do
 
       expect(@editor.exec_lua('return vim.api.nvim_exec2("messages", { output = true }).output', []))
         .to include("this changeset is too large to review here")
+    end
+
+    # Every thread buffer the editor holds, as `[name, anchor id]`.
+    def thread_buffers
+      @editor.exec_lua(<<~LUA, [])
+        local found = {}
+        for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.b[buf].lain_thread_anchor ~= nil then
+            table.insert(found, { vim.api.nvim_buf_get_name(buf), vim.b[buf].lain_thread_anchor,
+                                  vim.api.nvim_buf_get_lines(buf, 0, -1, false) })
+          end
+        end
+        return found
+      LUA
+    end
+
+    def messages = @editor.exec_lua('return vim.api.nvim_exec2("messages", { output = true }).output', [])
+
+    # THE PRODUCTION ROUTE, end to end. `Review::Session#annotate` sends exactly
+    # this, and as merged it produced no pane at all: the payload was a bare id,
+    # the editor refused it by name, and the refusal went into a notify nobody
+    # reads. Asserting the BUFFER rather than the absence of an error is the
+    # point -- the broken version raised nothing either.
+    it "lands an annotation in a thread buffer the editor actually holds" do
+      anchor = real_anchor
+      surface.annotate(anchor, "this reads twice", kind: :blocker)
+      deliver
+
+      expect(thread_buffers)
+        .to eq([["lain://thread/#{anchor.id}", anchor.id,
+                 ["-- thread at lib/lain/agent.rb:14 --", "", "## blocker", "this reads twice"]]])
+      expect(messages).not_to include("set_thread needs")
+    end
+
+    it "lands an opened thread in the same buffer, keyed by the same anchor" do
+      anchor = real_anchor(path: "lib/b.rb", line: 3)
+      surface.thread(anchor)
+      deliver
+
+      expect(thread_buffers.map(&:last))
+        .to eq([["-- thread at lib/b.rb:3 --", Lain::Frontend::Neovim::ThreadView::EMPTY]])
     end
   end
 end

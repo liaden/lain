@@ -224,7 +224,8 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
-Inside a changeset diff (|lain-review-diff|): `:LainNote` and `:LainNoteDone`.
+Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteDone` and
+`:LainThread`.
 
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
 set your cursor is on in `lain://question` (|lain-question|) for you to tick
@@ -288,6 +289,47 @@ authored it shows `(no hunks reachable here)` with its numstat still beside it.
 It is an ordinary global command reading the CURRENT window's cursor, so it
 refuses outside `lain://review` rather than acting on whatever happens to sit
 on that line somewhere else.
+
+                                                              *:LainThread*
+                                                              *lain://thread*
+
+While you read a changed file (|lain-review|), the pane you are NOT reading
+follows your cursor: land on a line lain holds a conversation for and that
+conversation replaces the diff in the opposite pane; move off it and the diff
+comes back, still a live diff, with the folds you had open still open. Your own
+side is never touched, and the motion itself opens and closes no window -- the
+pane's buffer changes, the pane does not.
+
+The pane is YOURS to close. Close it, or close the whole review tabpage, and no
+amount of moving the cursor brings either back. What does bring them back is
+lain sending that conversation again -- a render arriving with nowhere to land
+would otherwise simply be lost -- and it comes back as a live diff, folds and
+all, not as two panes that merely look like a review.
+
+`:LainThread` puts you IN that pane, on the thread under your cursor. Type your
+question at the END of the buffer, below everything lain wrote, and `:w` sends
+it. A `:w` with nothing typed under the conversation is refused, and so is one
+that could not reach lain -- the buffer stays modified with your words in it,
+exactly as a failed write to a real file does.
+
+Each thread is its own buffer, named `lain://thread/{id}`, so a half-typed
+question belongs to the thread you typed it in and survives the cursor moving
+away. They are unlisted: a review carries one per note, and your own files
+should still be what `:ls` and `:bnext` are about. `]]` and `[[` jump between
+the messages. Get rid of one however you like -- `:bwipeout`, `:bdelete`,
+`:bunload`, or a `:mksession` you never restore -- and it simply stops showing;
+the next time lain sends that thread it comes back, reusing whatever nvim kept
+of the buffer. A half-typed question does not survive that, and nothing else is
+lost.
+
+The old side of the diff is a listed buffer, so `:ls` reaches it too. Wipe THAT
+and the pane has no diff to go back to: it falls back to an empty scratch
+buffer rather than going on showing a conversation your cursor has left.
+Re-open the file to get the pair back.
+
+It is an ordinary global command reading the CURRENT window's cursor, so it
+says so rather than acting when there is no review diff under you, and says so
+when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
 6.5 COMPOSING A MESSAGE (PROTOCOL 8)                            *lain-compose*
