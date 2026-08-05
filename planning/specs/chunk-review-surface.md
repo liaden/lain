@@ -414,6 +414,53 @@ Two rulings went against implementers on evidence: T2's span (the "untestable" c
 66,000 real `git diff` runs, and the full span broke the card's own position-independence AC), and
 T3's `--cc` mutant.
 
+**Waves 2–5, landed 2026-08-04/05.** `main` is `c003be8`, suite **10760 examples, 0 failures** with
+T18 applied (10720 without it). The last two:
+
+| Card | Commit | Verdict path |
+|---|---|---|
+| T16 annotations as extmarks | `ba379be` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T23 GitHub submit | `c003be8` | APPROVE-WITH-FIXES → fix round → APPROVE |
+
+### The reboot, 2026-08-05, and what it cost
+
+The box rebooted mid-chunk. Git took a **zero-byte object** (`aaa5ac1`) and HEAD would not resolve;
+repaired by removing the empty object and writing the last good commit to `.git/refs/heads/main`,
+after which `git fsck` was clean. Separately, **six files were truncated to zero bytes — exactly the
+six carrying uncommitted modifications**, this plan document and `CLAUDE.md` among them.
+
+All six were recovered in full from `~/.cache/pre-commit/patch1785920562-2971609`, a stash pre-commit
+had written at 05:02, one minute before the reboot. **That is the recovery path worth remembering**:
+pre-commit stashes unstaged changes on every commit attempt, so `~/.cache/pre-commit/patch*` holds
+the working tree as of the last commit that ran the hook, whether it succeeded or not. Restore is
+`git checkout HEAD -- <files>` first (the patch's pre-image is HEAD, not the truncated file), then
+`git apply` the stash.
+
+The lesson the chunk already half-knew: in `orchestrator-commits` mode the primary tree accumulates
+verified-but-uncommitted work, and that is precisely what a crash destroys. Commit each card as it
+verifies rather than batching.
+
+### Four operational traps found while landing T16 and T23
+
+1. **`git stash pop` without `--index` silently un-stages everything it restores.** Used mid-landing
+   to compare a linter against HEAD, it left only the three newly-*added* files staged and quietly
+   dropped eleven *modified* ones — including `lib/lain/review.rb`. The commit then failed with
+   `NameError: uninitialized constant Lain::Review::Submit`, which reads as a code defect and is
+   not one. Check `git diff --cached --name-only | wc -l` against the expected count before
+   committing.
+2. **yard-lint's `Tags/OptionTags` fires on the parameter NAME alone** — `options`, `opts` or
+   `kwargs` — regardless of whether a docstring exists. The hook lints only *staged* files, so
+   `gh/recorded.rb` carried five of these unseen until T23 staged it. `Unrecorded`'s splat is now
+   `**given`: those methods take whatever the caller passed and echo it in the refusal, so they are
+   not an options hash whose keys anyone could list, and the name was the thing that was wrong.
+3. **A fresh `git worktree` has no `lib/lain/lain.so`** (gitignored), so every spec fails at load
+   with `cannot load such file -- lain/lain` until `rake compile`. Copying an existing worktree with
+   `cp -a` carries both the `.so` and a warm `tmp/cache`, and is much faster — but see CLAUDE.md's
+   `rm .git` trap before running anything in such a copy.
+4. **A failed run leaves a runtime log that `parallel_tests` then refuses**
+   (`RuntimeLogTooSmallError`, "does not contain sufficient data to sort N test files"). Delete
+   `tmp/parallel_runtime_rspec.log` and re-run.
+
 ## Waves
 
 Cards are listed below in numeric order; T26 to T29 were added after the first draft and their waves
