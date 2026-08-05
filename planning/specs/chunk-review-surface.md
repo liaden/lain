@@ -811,6 +811,20 @@ fix the same test was 8+ seconds of silence. `<CR>` at the same idle prompt open
 both sides stamped and in diff mode. The transient recorded under the T32a/T32b pass did **not**
 recur, which is the evidence for its diagnosis as a queued-burst race.
 
+**The whole loop at an idle prompt, with ZERO model turns** — the tomorrow-critical path, and the one
+that was impossible before T33. Fresh cockpit, `/review spike/gems`, then in the editor alone:
+`<CR>` opened the diff pair → `:LainNote blocker …` → `:LainNoteDone` → `x` on every row →
+`:LainReviewVerdict approve`, every step `ok=true`. The chat pane read `you>` / `idle 0s` throughout.
+
+The journal is the proof it was durable rather than merely acknowledged:
+
+```
+1 changeset_opened   1 annotation_placed   15 hunk_marked   1 review_verdict   1 session
+```
+
+**And it is also the proof of ticket 34**: that verdict and that annotation are the end of the line.
+Nothing carries them to the pull request.
+
 **The bounds move, live, against a real 835-file range** (`--base HEAD~250`):
 
 | path | result |
