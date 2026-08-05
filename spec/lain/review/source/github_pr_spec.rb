@@ -26,9 +26,18 @@ module GithubPrFixture
   # an ambient GIT_*-polluted env exactly as it is.
   SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
 
+  # The template's directory and the four constants an example used to re-derive
+  # from its own copy: three oids and the diff oracle. They are properties of the
+  # CHANGESET, and every copy is the same changeset, so asking git for them once
+  # per example was 4 subprocesses buying an answer that could not differ.
+  #
+  # `diff` stays a real `git diff` rather than a recorded string -- the same
+  # command, spelled with the subject's own pins, just run at build time.
+  Shape = Data.define(:dir, :head_oid, :base_oid, :merge_base, :diff)
+
   class << self
     # @param rich [Boolean] include the binary, unicode and merge shapes
-    # @return [String] a directory to copy, never to mutate
+    # @return [Shape] a directory to copy, never to mutate, and its constants
     def at(rich:) = templates[rich] ||= build(rich)
 
     private
@@ -44,8 +53,22 @@ module GithubPrFixture
       diverge(dir)
       enrich(dir) if rich
       publish(dir)
-      dir
+      describe_changeset(dir)
     end
+
+    # The oracle for every diff assertion, read from the repository that has all
+    # the objects and spelled with the subject's OWN pins -- so an example cannot
+    # fail merely because the developer set `diff.noprefix`.
+    def describe_changeset(dir)
+      head_oid = rev(dir, "feature")
+      base_oid = rev(dir, "base")
+      merge_base = git(dir, "merge-base", base_oid, head_oid).stdout.strip
+      diff = git(dir, *Lain::Review::Source::LocalBranch::CONFIG_PINS, "diff",
+                 *Lain::Review::Source::LocalBranch::DIFF_HYGIENE, merge_base, head_oid).stdout.b
+      Shape.new(dir:, head_oid:, base_oid:, merge_base:, diff:)
+    end
+
+    def rev(dir, ref) = git(dir, "rev-parse", ref).stdout.strip
 
     # base and feature both advance after the fork, so the merge base is neither
     # tip. `shared.rb` is touched TWICE and `added.rb` is a pure addition,
@@ -81,9 +104,7 @@ module GithubPrFixture
     # GitHub serves a pull request's head at this ref, and it is what the source
     # fetches -- an ordinary ref, so `update-ref` writes exactly what GitHub
     # would.
-    def publish(dir)
-      git(dir, "update-ref", "refs/pull/#{NUMBER}/head", git(dir, "rev-parse", "feature").stdout.strip)
-    end
+    def publish(dir) = git(dir, "update-ref", "refs/pull/#{NUMBER}/head", rev(dir, "feature"))
 
     def commit(dir, message, files)
       files.each { |path, body| File.write(File.join(dir, path), body) }
@@ -137,8 +158,10 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     shell.stdout
   end
 
+  def template = GithubPrFixture.at(rich:)
+
   def copy_of_the_template(name)
-    File.join(@root, name).tap { |dir| FileUtils.cp_r(GithubPrFixture.at(rich:), dir) }
+    File.join(@root, name).tap { |dir| FileUtils.cp_r(template.dir, dir) }
   end
 
   # What GitHub is serving.
@@ -159,19 +182,16 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     run_git(@repo, "fetch", "-q", "--no-tags", "origin", "refs/heads/base:refs/heads/base")
   end
 
-  def head_oid = @head_oid ||= run_git(origin, "rev-parse", "feature").strip
+  # Read off the template rather than out of a copy. A copy IS the template's
+  # repository, so these four are the same answer whichever one is asked -- and
+  # the template already asked, once.
+  def head_oid = template.head_oid
 
-  def base_oid = @base_oid ||= run_git(origin, "rev-parse", "base").strip
+  def base_oid = template.base_oid
 
-  def merge_base = @merge_base ||= run_git(origin, "merge-base", base_oid, head_oid).strip
+  def merge_base = template.merge_base
 
-  # The oracle for every diff assertion, read from the repository that has all
-  # the objects. Spelled with the subject's OWN pins, so an example cannot fail
-  # merely because the developer set `diff.noprefix`.
-  def expected_diff
-    run_git(origin, *Lain::Review::Source::LocalBranch::CONFIG_PINS, "diff",
-            *Lain::Review::Source::LocalBranch::DIFF_HYGIENE, merge_base, head_oid).b
-  end
+  def expected_diff = template.diff
 
   # gh's stdout for `pr view --json`, in GitHub's own field names.
   def view_document = { "baseRefName" => "base", "baseRefOid" => base_oid, "headRefOid" => head_oid }

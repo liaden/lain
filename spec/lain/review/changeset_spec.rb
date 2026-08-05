@@ -3,6 +3,85 @@
 require "fileutils"
 require "mixlib/shellout"
 
+# The three-commit repository the seam half reviews, built ONCE per process and
+# copied after that -- {SeedRepo}'s reasoning at the scale of the whole fixture.
+#
+# `shared.rb` is touched by two of the three commits. `counters.rb` is the
+# falsifiable one: its single hunk carries an insertion ABOVE a deletion, so an
+# old counter that advanced on the insertion reports `line 7` as `line 8` and
+# `git show <base>:counters.rb` disagrees. `long.rb` is changed in two places far
+# enough apart that -U3 cannot merge them, so it is the file that makes "every
+# hunk of every file" mean more than "the only hunk". `crlf.txt` is committed
+# onto `base` BEFORE feature forks, so it is present at the merge base and its
+# change is a modification with anchors on both sides.
+module ChangesetRepo
+  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
+
+  # Hermeticity, not decoration: a developer with `core.autocrlf=input` in
+  # ~/.gitconfig would have git normalize the fixture on the way in and the CRLF
+  # examples would pass by not testing anything. Written into the template's
+  # repo-local config, so every copy inherits them -- one mechanism, in the place
+  # that covers every consumer.
+  PINS = { "core.autocrlf" => "false", "core.eol" => "lf" }.freeze
+
+  Shape = Data.define(:dir, :first, :second, :third)
+
+  class << self
+    # @return [Shape] a directory to copy, never to mutate, and its three oids
+    def template = @template ||= build # rubocop:disable ThreadSafety/ClassInstanceVariable
+
+    def long_file(changed: false)
+      edits = changed ? [5, 35] : []
+      (1..40).map { |n| edits.include?(n) ? "CHANGED #{n}\n" : "line #{n}\n" }.join
+    end
+
+    private
+
+    def seed
+      { "shared.rb" => "a\nb\nc\n",
+        "counters.rb" => (1..8).map { |n| "l#{n}\n" }.join,
+        "long.rb" => long_file,
+        "from.rb" => "keep\nold\n",
+        "gone.rb" => "one\ntwo\n" }
+    end
+
+    def build
+      dir = Dir.mktmpdir("lain-changeset-template")
+      at_exit { FileUtils.remove_entry(dir, true) }
+      FileUtils.cp_r("#{SeedRepo.at(seed)}/.", dir)
+      PINS.each { |key, value| git(dir, "config", key, value) }
+      Shape.new(dir:, **commits(dir))
+    end
+
+    def commits(dir)
+      git(dir, "checkout", "-q", "-b", "base")
+      commit(dir, "a CRLF file at the base", "crlf.txt" => "x\r\ny\r\nz\r\n")
+      git(dir, "checkout", "-q", "-b", "feature")
+      first = commit(dir, "first", "shared.rb" => "a\nCHANGED\nc\n",
+                                   "counters.rb" => "l1\nl2\nNEW\nl3\nl4\nl5\nl6\nl8\n")
+      second = commit(dir, "second", "shared.rb" => "a\nCHANGED\nc\nappended\n", "added.rb" => "brand new\n",
+                                     "long.rb" => long_file(changed: true), "crlf.txt" => "x\r\nCHANGED\r\nz\r\n")
+      git(dir, "mv", "from.rb", "to.rb")
+      git(dir, "rm", "-q", "gone.rb")
+      { first:, second:, third: commit(dir, "third", "to.rb" => "keep\nnew\n") }
+    end
+
+    # BINARY writes, so a fixture means the bytes it says.
+    def commit(dir, message, files)
+      files.each { |path, body| File.binwrite(File.join(dir, path), body) }
+      git(dir, "add", "-A")
+      git(dir, "commit", "-q", "-m", message)
+      git(dir, "rev-parse", "HEAD").stdout.strip
+    end
+
+    def git(dir, *)
+      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB)
+      shell.run_command.error!
+      shell
+    end
+  end
+end
+
 # Two halves, and the split is deliberate.
 #
 # The UNIT half drives a hand-written diff through an `instance_double` of the
@@ -544,31 +623,27 @@ RSpec.describe Lain::Review::Changeset do
     let(:source) { Lain::Review::Source::LocalBranch.new(base: "base", repo_root: @repo) }
 
     around do |example|
-      Dir.mktmpdir("lain-changeset-repo") do |repo|
-        @repo = File.realpath(repo)
-        FileUtils.cp_r("#{SeedRepo.at(seed)}/.", @repo)
+      Dir.mktmpdir("lain-changeset-repo") do |root|
+        @root = File.realpath(root)
         example.run
       end
     end
 
-    # `counters.rb` is the falsifiable one: its single hunk carries an insertion
-    # ABOVE a deletion, so an old counter that advanced on the insertion reports
-    # `line 7` as `line 8` and `git show <base>:counters.rb` disagrees.
-    # `long.rb` is changed in two places far enough apart that -U3 cannot merge
-    # them, so it is the file that makes "every hunk of every file" mean more
-    # than "the only hunk".
-    def seed
-      { "shared.rb" => "a\nb\nc\n",
-        "counters.rb" => (1..8).map { |n| "l#{n}\n" }.join,
-        "long.rb" => long_file,
-        "from.rb" => "keep\nold\n",
-        "gone.rb" => "one\ntwo\n" }
+    # A copy, not a rebuild. The three commits below are a constant, and building
+    # them per example cost 18 git spawns each across 26 examples -- 468 of this
+    # group's 559, for a repository that is byte-identical every time. A copy IS
+    # the repository rather than a reconstruction of one (see {SeedRepo}), so the
+    # shas are the same in every copy and the memo can hand them over.
+    before do
+      template = ChangesetRepo.template
+      @repo = File.join(@root, "repo")
+      FileUtils.cp_r(template.dir, @repo)
+      @first = template.first
+      @second = template.second
+      @third = template.third
     end
 
-    def long_file(changed: false)
-      edits = changed ? [5, 35] : []
-      (1..40).map { |n| edits.include?(n) ? "CHANGED #{n}\n" : "line #{n}\n" }.join
-    end
+    def long_file(changed: false) = ChangesetRepo.long_file(changed:)
 
     def run_git(*args)
       shell = Mixlib::ShellOut.new("git", "-C", @repo, *args,
@@ -587,36 +662,26 @@ RSpec.describe Lain::Review::Changeset do
       run_git("rev-parse", "HEAD").strip
     end
 
-    # Three commits, and `shared.rb` is touched by two of them.
-    #
-    # `crlf.txt` is committed onto `base` BEFORE feature forks, so it is present
-    # at the merge base and its change is a modification with anchors on both
-    # sides. The two `core` pins are hermeticity, not decoration: a developer
-    # with `core.autocrlf=input` in ~/.gitconfig would have git normalize the
-    # fixture on the way in and the CRLF examples would pass by not testing
-    # anything.
-    before do
-      run_git("config", "core.autocrlf", "false")
-      run_git("config", "core.eol", "lf")
-      run_git("checkout", "-q", "-b", "base")
-      commit("a CRLF file at the base", "crlf.txt" => "x\r\ny\r\nz\r\n")
-      run_git("checkout", "-q", "-b", "feature")
-      @first = commit("first", "shared.rb" => "a\nCHANGED\nc\n",
-                               "counters.rb" => "l1\nl2\nNEW\nl3\nl4\nl5\nl6\nl8\n")
-      @second = commit("second", "shared.rb" => "a\nCHANGED\nc\nappended\n", "added.rb" => "brand new\n",
-                                 "long.rb" => long_file(changed: true), "crlf.txt" => "x\r\nCHANGED\r\nz\r\n")
-      run_git("mv", "from.rb", "to.rb")
-      run_git("rm", "-q", "gone.rb")
-      @third = commit("third", "to.rb" => "keep\nnew\n")
-    end
-
     # `Anchor.lines`, never `readlines(chomp: true)`. The chomp form strips a
     # trailing `\r` as well as the `\n`, so it disagreed with the diff about what
     # a CRLF line IS -- and an AC helper that disagrees with the subject proves
     # the subject wrong for the helper's reason.
     def disk_document(path) = File.read(File.join(@repo, path))
 
-    def base_document(path) = run_git("show", "#{source.base_ref}:#{path}").dup.force_encoding(Encoding::UTF_8)
+    # One `git show` per PATH, not one per ANCHOR. The examples below call this
+    # inside a `reject` over `each_anchor`, so a file with n anchors spawned n
+    # subprocesses for a document that cannot differ between them: `base_ref` is
+    # resolved once when `source` is built, and nothing here writes to the base
+    # revision. Measured over this file, 637 of its 756 git spawns were this call.
+    #
+    # Still a fresh String per call, so a caller owns its copy exactly as it did
+    # when every call ran its own subprocess.
+    def base_document(path)
+      base_documents[path] ||= run_git("show", "#{source.base_ref}:#{path}").force_encoding(Encoding::UTF_8)
+      base_documents[path].dup
+    end
+
+    def base_documents = @base_documents ||= {}
 
     def disk_lines(path) = Lain::Review::Anchor.lines(disk_document(path))
 

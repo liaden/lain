@@ -5,23 +5,25 @@ require "rspec/core/rake_task"
 
 RSpec::Core::RakeTask.new(:spec)
 
-# The parallel spec run: one worker per PHYSICAL core, files knapsack-packed
-# by recorded runtime. The suite is parallel-safe by construction (tmpdirs,
-# per-pid sockets, injected env), and the untagged posture guards live in a
-# real spec file (spec/network_posture_spec.rb), so no worker re-runs what
-# another already owns.
+# The parallel spec run: files knapsack-packed by recorded runtime. The suite is
+# parallel-safe by construction (tmpdirs, per-pid sockets, injected env), and the
+# untagged posture guards live in a real spec file (spec/network_posture_spec.rb),
+# so no worker re-runs what another already owns.
 #
-# Both knobs are measured, not guessed (2026-07-17, 8-core/16-thread):
-#   * Worker count: boot and specs are CPU-bound, and SMT siblings share
-#     execution units, so 16 workers ran SLOWER than 8 (3.4s vs 2.7s wall)
-#     at more than twice the CPU (32s vs 14s).
-#   * Grouping: parallel_tests' default groups by file SIZE, and this suite's
-#     slowest files are small ones that are slow for reasons size cannot see
-#     (a real subprocess kill, a sweep build). RuntimeLogger re-records per-file
-#     runtimes into the gitignored tmp log on every run; the next run packs by
-#     them. A fresh clone has no log yet and --group-by runtime raises ENOENT
-#     rather than falling back, so the fallback lives here.
-desc "Run the spec suite across physical CPU cores"
+# GROUPING is measured and still holds: parallel_tests' default groups by file
+# SIZE, and this suite's slowest files are small ones that are slow for reasons
+# size cannot see (a real subprocess kill, a sweep build). RuntimeLogger
+# re-records per-file runtimes into the gitignored tmp log on every run; the next
+# run packs by them. A fresh clone has no log yet and `--group-by runtime` raises
+# ENOENT rather than falling back, so the fallback lives here.
+#
+# The WORKER-COUNT reasoning that used to sit here is RETIRED rather than deleted,
+# because a deleted number invites someone to re-derive it. It said boot and specs
+# were CPU-bound and that 16 workers beat 8 on CPU but not on wall (3.4s vs 2.7s).
+# That was genuinely measured -- on a 5518-example suite running in ~3s. This suite
+# is 10865 examples at 21-35s and is subprocess-bound, so the measurement no longer
+# transfers. What replaced it is beside `spec_workers` below.
+desc "Run the spec suite in parallel"
 task :pspec do
   runtime_log = "tmp/parallel_runtime_rspec.log"
   group_by = File.exist?(runtime_log) ? "--group-by runtime " : ""
@@ -29,14 +31,27 @@ task :pspec do
      "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
 end
 
-# One fewer worker than we have physical cores, because the constraint here is
-# MEMORY, not CPU. Each worker loads the whole suite (ActiveSupport, the
-# compiled extension, the fixture corpora), and a developer box also carries an
-# editor's language servers and whatever else. When the OOM killer takes a
-# worker, parallel_tests does not fail loudly -- the run reports only the
-# examples that survived (4523 of 5518 on the run that prompted this) and exits
-# non-zero, which reads as a broken commit rather than a starved machine.
-# `LAIN_SPEC_WORKERS` overrides it when you know what your box can hold.
+# A deliberately CONSERVATIVE default, and not the fastest count -- which is the
+# one thing the previous version of this comment got right for the wrong reason.
+#
+# It used to say the constraint is MEMORY rather than CPU. Measured 2026-08-05 on
+# an 8-physical/15.9G box, neither is: at `physical - 1` the machine is 52.6%
+# idle, because a worker blocked in `git` holds no core, and memory never came
+# near binding -- zero swap growth at every count, memory pressure 0.35%, 6.9G
+# still available. What actually stops the count paying is kernel spawn cost;
+# past ~11 workers the marginal one buys system time rather than throughput. The
+# measured optimum there was 12-14 workers, with `physical - 1` the WORST count
+# tried (median 31.8s against 24.4s). CLAUDE.md carries the readings.
+#
+# The default stays below that anyway, because those are ONE box's numbers and
+# generalising from one box is the error this reasoning is being corrected for.
+# The two risks are not symmetric either: guessing low costs wall time a developer
+# can see and fix with `LAIN_SPEC_WORKERS`, while guessing high risks an OOM kill,
+# and parallel_tests does not fail loudly when that happens -- the run reports only
+# the examples that SURVIVED (4523 of 5518 on the run that prompted the original
+# note) and exits non-zero, which reads as a broken commit rather than a starved
+# machine. So: a floor for hardware nobody has measured, not a recommendation.
+# On a box you know, set `LAIN_SPEC_WORKERS` above it.
 def spec_workers
   override = Integer(ENV.fetch("LAIN_SPEC_WORKERS", ""), exception: false)
   return override if override&.positive?

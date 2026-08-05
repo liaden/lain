@@ -3,26 +3,163 @@
 require "fileutils"
 require "mixlib/shellout"
 
-# Operates on a THROWAWAY repo it creates itself, never the lain repo it runs in
-# -- the `spec/lain/isolation/` pattern, including {SeedRepo} for the initial
-# commit and the subject's own env scrub for the spec's own git calls.
+# The diverged repository every example starts from, built ONCE per process and
+# copied after that -- {SeedRepo}'s reasoning one level up, applied to the whole
+# fixture rather than to its initial commit.
 #
-# The fixture is the shape the merge-base scenario needs and nothing more: a base
-# branch and a feature branch that have BOTH moved since they forked. Under a
-# two-dot diff the base's independent commit shows up as a spurious deletion,
-# which is the mistake the spike found shifts every old-side anchor.
+# The shape is a constant, so rebuilding it per example bought nothing and cost
+# 14 git spawns each time. Profiled over the file, the spec's OWN git was 12.68s
+# of 14.64s across 1347 spawns, against 233 spawns and 1.91s inside the subject
+# -- the time was in re-doing setup, not in the git the subject is here to
+# drive, and copying is what removes it without touching an assertion.
 #
-# Branches are created by explicit name rather than relying on whatever
-# `init.defaultBranch` the box is configured with.
+# A copy IS the repository rather than a reconstruction of one (see SeedRepo),
+# so the oids are identical across copies. That is what lets the template hand
+# an example shas it then reads back out of its own copy.
+#
+# Two shapes, because only the port contract owes a rich changeset: `rich` adds
+# a binary file, a non-ASCII path, a latin-1 subject and a merge carrying its
+# own hand-resolved file.
+module DivergedRepo
+  # The same scrub the subject uses, so building the template is hermetic under
+  # an ambient GIT_*-polluted env (a pre-commit hook) exactly as it is. The
+  # CONFIG half of that hermeticity is inherited: the template starts as a copy
+  # of {SeedRepo}'s, whose `.git/config` already pins `commit.gpgsign=false` and
+  # `core.hooksPath=/dev/null`.
+  SCRUB = Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB
+
+  # The oids an example used to capture while building the repo itself.
+  Shape = Data.define(:dir, :fork_point, :first, :second, :base_only)
+
+  # Checked rather than assumed, because losing one of these is SILENT: the port
+  # contract SKIPS its binary-agreement example when the changeset carries no
+  # binary file, so a template that quietly stopped producing one would take that
+  # example's coverage with it and still be green. The risk is new -- while these
+  # were committed inside the example the fixture was self-evident, and moving
+  # them into a template puts them a step away from the group that needs them.
+  RICH_SHAPES = %w[blob.bin café.rb only_in_merge.rb side_only.rb].freeze
+
+  class << self
+    # @param rich [Boolean] include the binary, unicode, latin-1 and merge shapes
+    # @return [Shape] a directory to copy, never to mutate, and its oids
+    def at(rich:) = templates[rich] ||= build(rich)
+
+    # Long enough that a context window of 3 and one of 7 produce different hunk
+    # headers, and seeded at the MERGE BASE so the diff is a modification rather
+    # than a whole-file addition.
+    def long_file(changed: false)
+      (1..40).map { |n| n == 20 && changed ? "CHANGED\n" : "line #{n}\n" }.join
+    end
+
+    private
+
+    # Process-wide, and safe without a lock for the reason the whole suite is:
+    # `parallel_tests` forks PROCESSES and one example runs at a time in each.
+    def templates = @templates ||= {} # rubocop:disable ThreadSafety/ClassInstanceVariable
+
+    def build(rich)
+      dir = Dir.mktmpdir("lain-review-branch-template")
+      at_exit { FileUtils.remove_entry(dir, true) }
+      FileUtils.cp_r("#{SeedRepo.at("shared.rb" => "a\nb\nc\n", "long.rb" => long_file)}/.", dir)
+      oids = diverge(dir)
+      if rich
+        enrich(dir)
+        assert_rich!(dir)
+      end
+      Shape.new(dir:, **oids)
+    end
+
+    # Two spellings of `café.rb` have to be defeated for this check to mean what
+    # it says, and BOTH reported it missing while the file was sitting there:
+    # `-z`, because `ls-tree` C-quotes a non-ASCII name into `"caf\303\251.rb"`
+    # by default and NUL-terminated output is unquoted by construction; and the
+    # `force_encoding`, because mixlib tags stdout BINARY when the bytes are not
+    # valid UTF-8, and a BINARY "café.rb" is not `eql?` a UTF-8 one -- so the
+    # Array difference below silently found nothing to match.
+    def assert_rich!(dir)
+      out = git(dir, "ls-tree", "-r", "--name-only", "-z", "feature").stdout
+      missing = RICH_SHAPES - out.dup.force_encoding(Encoding::UTF_8).split("\0")
+      raise "the rich template is missing #{missing.join(", ")}" unless missing.empty?
+    end
+
+    # base and feature both advance after the fork, so the merge base is neither
+    # tip. Under a two-dot diff the base's independent commit shows up as a
+    # spurious deletion, which is the mistake the spike found shifts every
+    # old-side anchor.
+    #
+    # Branches are created by explicit name rather than relying on whatever
+    # `init.defaultBranch` the box is configured with.
+    def diverge(dir)
+      fork_point = head(dir)
+      git(dir, "checkout", "-q", "-b", "base")
+      git(dir, "checkout", "-q", "-b", "feature")
+      first = commit(dir, "feature one\n\nwith a body paragraph.", "shared.rb" => "a\nCHANGED\nc\n")
+      second = commit(dir, "feature two", "added.rb" => "new file\n")
+      git(dir, "checkout", "-q", "base")
+      base_only = commit(dir, "base advances independently", "base_only.rb" => "base\n")
+      git(dir, "checkout", "-q", "feature")
+      { fork_point:, first:, second:, base_only: }
+    end
+
+    # Each of these is a shape that made some assertion in the port contract
+    # vacuous while it was absent: a binary file has no line counts, a merge
+    # carries a file neither parent has, and a non-ASCII path and an undeclared
+    # latin-1 subject are where the encoding defects show.
+    def enrich(dir)
+      File.binwrite(File.join(dir, "blob.bin"), "\x00\x01\x02\xff".b)
+      commit(dir, "add a binary", {})
+      commit(dir, "a unicode path", "café.rb" => "unicode\n")
+      git(dir, "commit", "-q", "--allow-empty", "-m", "caf\xE9 subject".b)
+      git(dir, "checkout", "-q", "-b", "side", "base")
+      commit(dir, "side one", "side_only.rb" => "side\n")
+      git(dir, "checkout", "-q", "feature")
+      git(dir, "merge", "-q", "--no-ff", "--no-commit", "side")
+      commit(dir, "merge side into feature", "only_in_merge.rb" => "resolved by hand\n")
+    end
+
+    def commit(dir, message, files)
+      files.each { |path, body| File.write(File.join(dir, path), body) }
+      git(dir, "add", "-A")
+      git(dir, "commit", "-q", "-m", message)
+      head(dir)
+    end
+
+    def head(dir) = git(dir, "rev-parse", "HEAD").stdout.strip
+
+    def git(dir, *)
+      shell = Mixlib::ShellOut.new("git", "-C", dir, *, environment: SCRUB)
+      shell.run_command.error!
+      shell
+    end
+  end
+end
+
+# Operates on a THROWAWAY repo it copies for itself, never the lain repo it runs
+# in -- the `spec/lain/isolation/` pattern, including {DivergedRepo} for the
+# fixture and the subject's own env scrub for the spec's own git calls.
 RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   subject(:source) { described_class.new(base: "base", repo_root: @repo) }
 
+  # Only the port contract needs the rich changeset; every other example reads
+  # more sharply without it, and the position-sensitive groups below
+  # ("the binary file is `commits.last`") depend on not having it.
+  let(:rich) { false }
+
   around do |example|
-    Dir.mktmpdir("lain-review-repo") do |repo|
-      @repo = File.realpath(repo)
-      FileUtils.cp_r("#{SeedRepo.at("shared.rb" => "a\nb\nc\n", "long.rb" => long_file)}/.", @repo)
+    Dir.mktmpdir("lain-review-repo") do |root|
+      @root = File.realpath(root)
       example.run
     end
+  end
+
+  before do
+    template = DivergedRepo.at(rich:)
+    @repo = File.join(@root, "repo")
+    FileUtils.cp_r(template.dir, @repo)
+    @fork_point = template.fork_point
+    @first = template.first
+    @second = template.second
+    @base_only = template.base_only
   end
 
   # The spec's OWN git calls scrub the git-context env too, so building and
@@ -56,31 +193,11 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
 
   def head = run_git("rev-parse", "HEAD").strip
 
-  # Long enough that a context window of 3 and one of 7 produce different hunk
-  # headers, and seeded at the MERGE BASE so the diff is a modification rather
-  # than a whole-file addition.
-  def long_file(changed: false)
-    (1..40).map { |n| n == 20 && changed ? "CHANGED\n" : "line #{n}\n" }.join
-  end
-
-  # base and feature both advance after the fork; @fork_point is the merge base.
-  def diverge
-    @fork_point = head
-    run_git("checkout", "-q", "-b", "base")
-    run_git("checkout", "-q", "-b", "feature")
-    @first = commit("feature one\n\nwith a body paragraph.", "shared.rb" => "a\nCHANGED\nc\n")
-    @second = commit("feature two", "added.rb" => "new file\n")
-
-    run_git("checkout", "-q", "base")
-    @base_only = commit("base advances independently", "base_only.rb" => "base\n")
-    run_git("checkout", "-q", "feature")
-  end
-
-  # Extra feature commits, kept OUT of `diverge` so the targeted per-commit
-  # assertions stay exact. The port contract needs a changeset that actually
-  # contains each of these shapes, so its factory adds them all -- a mutation
-  # that survives because the fixture cannot reach it is a missing fixture, not
-  # an inert mutation.
+  # Extra feature commits, kept OUT of the plain template so the targeted
+  # per-commit assertions stay exact. The port contract needs a changeset that
+  # actually contains each of these shapes, so the rich template carries them
+  # all -- a mutation that survives because the fixture cannot reach it is a
+  # missing fixture, not an inert mutation.
   def add_binary
     File.binwrite(File.join(@repo, "blob.bin"), "\x00\x01\x02\xff".b)
     run_git("add", "-A")
@@ -153,8 +270,6 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     run_git("update-index", "--chmod=+x", "mode.sh")
     run_git("commit", "-q", "-m", "chmod only")
   end
-
-  before { diverge }
 
   describe "the merge base" do
     it "reports the merge base sha as base_ref, not the named base's tip" do
@@ -392,7 +507,7 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     # A 3-line file cannot show this: every context setting produces the same
     # hunk header. long.rb is seeded at the merge base for exactly this reason.
     it "keeps three lines of context when diff.context is set" do
-      commit("change its middle", "long.rb" => long_file(changed: true))
+      commit("change its middle", "long.rb" => DivergedRepo.long_file(changed: true))
       run_git("config", "diff.context", "7")
       expect(source.diff).to match(/^@@ -17,7 \+17,7 @@/)
     end
@@ -493,12 +608,13 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
 
   # The port contract's fixture is the RICH one: a merge carrying its own file, a
   # binary, and a non-ASCII path. Each of those is a shape that made some
-  # assertion in the group vacuous while it was absent.
-  it_behaves_like "a review changeset source", source: lambda {
-    add_binary
-    add_unicode
-    add_latin1_subject
-    add_merge
-    described_class.new(base: "base", repo_root: @repo)
-  }
+  # assertion in the group vacuous while it was absent, and they are baked into
+  # the template rather than committed per example -- the group runs 23 times,
+  # and building them was ~10 git spawns each.
+  describe "the port contract" do
+    let(:rich) { true }
+
+    it_behaves_like "a review changeset source",
+                    source: -> { described_class.new(base: "base", repo_root: @repo) }
+  end
 end
