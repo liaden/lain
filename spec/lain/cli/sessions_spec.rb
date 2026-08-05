@@ -153,5 +153,19 @@ RSpec.describe Lain::CLI::Sessions do
       expect(sessions.listing).to match(/20260102T000000-1\.ndjson.*unreadable/)
         .and match(/20260101T000000-1\.ndjson.*\bempty\b/)
     end
+
+    # The THIRD headerless case, and it arrived with `lain review`: a file whose
+    # records load perfectly and simply are not a chat's. It is neither empty nor
+    # corrupt, so both existing words are wrong about it -- and "unreadable" is
+    # wrong in the expensive direction, sending a reader hunting damage that is
+    # not there, which is the confusion the empty/unreadable split already exists
+    # to end. Named by what it holds instead.
+    it "names a headerless file whose records DO load, rather than calling it unreadable" do
+      File.write(File.join(paths.sessions_dir, "20260103T000000-1.ndjson"),
+                 %({"ts":"2026-01-03T00:00:00Z","type":"changeset_opened","source":"local_branch"}\n))
+
+      expect(sessions.listing).to match(/20260103T000000-1\.ndjson.*changeset_opened/)
+      expect(sessions.listing).not_to match(/20260103T000000-1\.ndjson.*unreadable/)
+    end
   end
 end

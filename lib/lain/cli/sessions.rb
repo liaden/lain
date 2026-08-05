@@ -67,12 +67,26 @@ module Lain
 
         private
 
-        # Both are headerless, but the cause and the fix differ: a zero-byte
-        # file is what {Journal.open} left when a chat died before its header,
-        # while an unreadable one holds bytes nothing can load. Calling the
-        # empty one "unreadable" sends a reader hunting corruption that is not
-        # there.
-        def unloadable = @empty ? "empty" : "unreadable"
+        # THREE headerless causes, and only the middle one is damage. A
+        # zero-byte file is what {Journal.open} left when a chat died before its
+        # header; an unreadable one holds bytes nothing can load; and a file
+        # whose records load PERFECTLY and simply are not a chat's is neither --
+        # `lain review` writes one of those per run, opening with
+        # `changeset_opened` and no session header at all.
+        #
+        # Naming that third case by its first record rather than calling it
+        # unreadable is the same correction the empty/unreadable split already
+        # made once: "unreadable" sends a reader hunting corruption that is not
+        # there, and after a crash that is exactly the hunt they cannot afford
+        # to waste. {Bench}'s variance driver already words it this way -- "no
+        # session header record to rebuild a context from" -- so this is the
+        # listing catching up with a distinction the tree had drawn elsewhere.
+        def unloadable
+          return "empty" if @empty
+          return "unreadable" if @records.empty?
+
+          "#{@records.first["type"]}, not a chat"
+        end
 
         def header = @records.find { |record| record["type"] == SessionRecord::HEADER_TYPE }
         def turns = @records.select { |record| record["type"] == SessionRecord::TURN_TYPE }
