@@ -47,6 +47,17 @@ module Lain
     # later round -- which is precisely what lets lain skip the cross-round
     # re-anchoring all three surveyed projects punt on. {Replay} says how a
     # round is bounded.
+    #
+    # == Every presentation is size-bounded, because this is where every one passes
+    #
+    # {Bounds} is injected and {#present} is its ONLY caller in the tree
+    # (`spec/lain/review/bounds_spec.rb` pins that count mechanically). It used
+    # to be called from {Lain::CLI::Review#present} instead, which bounded the
+    # one text command that remembered to ask and left every editor surface
+    # unguarded -- `/review` of an 800-file pull request drew all of it. The fix
+    # was not a second caller: the guard belongs at the one place a surface is
+    # reached, so "bounded" is a property of PRESENTING rather than of whichever
+    # command happened to be written with it in mind.
     class Session
       # {.from_journal} was given a journal that opened no review here. Refused
       # rather than answered with an empty session: the two are indistinguishable
@@ -128,12 +139,14 @@ module Lain
       # @param source [String] what produced the changeset
       # @param surface [#present, #annotate, #mark] where it is drawn
       # @param policy [Verdict::Policy] admissibility, injected
+      # @param bounds [Bounds] the sizes past which {#present} refuses
       # @return [Session]
-      def self.open(changeset:, journal:, source:, surface: Surface::Null.new, policy: Verdict::Policy.default)
+      def self.open(changeset:, journal:, source:, surface: Surface::Null.new,
+                    policy: Verdict::Policy.default, bounds: Bounds.new)
         opened = ChangesetOpened.new(source:, base_ref: changeset.base_ref,
                                      head_ref: changeset.head_ref, digest: digest(changeset))
         journal << opened
-        new(changeset:, journal:, surface:, policy:, opened:)
+        new(changeset:, journal:, surface:, policy:, opened:, bounds:)
       end
 
       # Resume the last round in `entries`, against the changeset as it stands
@@ -147,18 +160,21 @@ module Lain
       # @param journal [#<<] where records of the resumed round go on landing
       # @param surface [#present, #annotate, #mark] where it is drawn
       # @param policy [Verdict::Policy] admissibility, injected
+      # @param bounds [Bounds] the sizes past which {#present} refuses -- a
+      #   resume is where a diff has had time to GROW, so it is bounded on
+      #   exactly the same terms as a round this process opened
       # @return [Session]
       # @raise [NotOpened] if no round was ever opened in `entries`
       # @raise [Marks::BaseMismatch] if the round was opened against another base
       def self.from_journal(entries, changeset:, journal:, surface: Surface::Null.new,
-                            policy: Verdict::Policy.default)
+                            policy: Verdict::Policy.default, bounds: Bounds.new)
         replay = Replay.new(entries)
         if replay.opened.nil?
           raise NotOpened, "these journal entries record no changeset_opened, so there is no round to " \
                            "resume -- Session.open begins one"
         end
 
-        new(changeset:, journal:, surface:, policy:, opened: replay.opened, replay:)
+        new(changeset:, journal:, surface:, policy:, opened: replay.opened, bounds:, replay:)
       end
 
       # @return [Review::Changeset] the whole, unfiltered changeset -- the only
@@ -185,12 +201,13 @@ module Lain
       # @return [ReviewVerdict, Verdict::None]
       attr_reader :judgement
 
-      def initialize(changeset:, journal:, surface:, policy:, opened:, replay: Replay.new([]))
+      def initialize(changeset:, journal:, surface:, policy:, opened:, bounds:, replay: Replay.new([]))
         @changeset = changeset
         @journal = journal
         @surface = surface
         @policy = policy
         @opened = opened
+        @bounds = bounds
         @marks = replay.marks(opened.base_ref).reconcile(changeset)
         @annotations = replay.annotations.dup
         @judgement = replay.judgement
@@ -233,10 +250,28 @@ module Lain
       # @return [MarkedChangeset]
       def marked = MarkedChangeset.of(@changeset, @marks, keys_by_path:)
 
+      # The ceiling is checked on the RESOLVED scope, because `:commits` and
+      # `:cumulative` bound differently and the refusal for one recommends the
+      # other; and BEFORE the surface is told, because a refusal that has
+      # already drawn is not one -- for an editor it is worse than none, since
+      # the sidebar is up and the human believes they are looking at the whole
+      # changeset.
+      #
+      # It RAISES rather than answering the port's refusal String. A String from
+      # this method means "the surface did not take it" (`spec/support/
+      # shared_examples/review_surface.rb`, law #5), and a ceiling is not that:
+      # {Bounds} exists so that either the whole changeset is handled or nothing
+      # is, which is a value no caller may read past.
+      #
       # @param scope [Symbol, String] one of {SCOPES}
       # @return [Object] whatever the surface answers
       # @raise [UnknownScope]
-      def present(scope:) = @surface.present(marked, scope: self.class.scope!(scope))
+      # @raise [Bounds::TooLarge] for a view past a ceiling at that scope
+      def present(scope:)
+        at = self.class.scope!(scope)
+        @bounds.check_presentation!(@changeset, scope: at)
+        @surface.present(marked, scope: at)
+      end
 
       # Set one hunk's reviewed state.
       #

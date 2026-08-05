@@ -309,6 +309,72 @@ RSpec.describe Lain::CLI::Command::Review do
     end
   end
 
+  # T31c, AND THE REGRESSION THIS CARD EXISTS FOR. The size guard T29 shipped
+  # was called from {Lain::CLI::Review#present} and nowhere else -- the TEXT
+  # command -- so the editor path had no ceiling at all and `/review` of an
+  # 800-file pull request drew every row of it into the sidebar. The guard is on
+  # {Lain::Review::Session#present} now, which is what both commands reach the
+  # surface through.
+  #
+  # Nothing is doubled here: `sink` is the editor's own REAL
+  # {Lain::Review::Surface::Text}, so "the sidebar drew nothing" is read off the
+  # bytes an attached editor would have received rather than off a spy's
+  # bookkeeping.
+  describe "the size past which it refuses to draw in the editor" do
+    def bounded(**ceilings)
+      described_class.new(root: @repo, bounds: Lain::Review::Bounds.new(**ceilings),
+                          shell_out_factory: Mixlib::ShellOut.public_method(:new))
+    end
+
+    # A branch off `main` wide enough to meet {Lain::Review::Bounds}' own
+    # DEFAULT ceiling, so one example here needs no injection at all: the
+    # ceilings a human actually meets are the constructor's defaults, and a
+    # command bounded only when a caller hands it a Bounds would pass every
+    # other example in this block and still draw an 800-file pull request whole.
+    def wide_branch(count)
+      git(@repo, "checkout", "-q", "-b", "wide", "main")
+      count.times { |index| File.write(File.join(@repo, "wide_#{index}.rb"), "#{index}\n") }
+      commit(@repo, "a commit nobody can read whole")
+    end
+
+    it "refuses a changeset past the default ceiling with nothing injected at all" do
+      attached
+      wide_branch(Lain::Review::Bounds::DEFAULT_MAX_FILES + 1)
+
+      expect { command.call("wide", env) }
+        .to raise_error(Lain::Review::Bounds::TooLarge,
+                        a_string_including("ceiling of #{Lain::Review::Bounds::DEFAULT_MAX_FILES}"))
+      expect(sink.string).to be_empty
+    end
+
+    it "refuses a changeset past a ceiling, in Bounds' own words" do
+      attached
+
+      expect { bounded(max_files: 1).call("feature", env) }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /2 files.*ceiling of 1.*scope: commits/m)
+    end
+
+    it "draws nothing into the editor when it refuses, so no sidebar claims to hold the changeset" do
+      attached
+
+      expect { bounded(max_files: 1).call("feature", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+
+      expect(sink.string).to be_empty
+    end
+
+    # The remedy the refusal names, taken: two commits of one file each fit a
+    # ceiling of one where the cumulative view of both does not. Without this
+    # the advice could be wrong in exactly the way {Lain::Review::Bounds}'
+    # NO_PRESENTABLE_SCOPE exists to prevent.
+    it "still draws the commit walk its refusal recommends" do
+      attached
+
+      bounded(max_files: 1).call("feature --scope commits", env)
+
+      expect(sink.string).to include("the work under review")
+    end
+  end
+
   # THE SEAM THIS CARD EXISTS FOR. Every example drives the wire, never the
   # object: the command opens the review, the editor sends a gesture, the real
   # consumer fiber serves it, and the assertion is about what the session holds.

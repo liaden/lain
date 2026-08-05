@@ -346,6 +346,105 @@ RSpec.describe Lain::Review::Session do
     end
   end
 
+  # T31c. {Lain::Review::Bounds#check_presentation!} used to be called from
+  # {Lain::CLI::Review#present} and nowhere else -- so the ONE text command that
+  # remembered to ask was bounded and every editor surface was not: `/review` of
+  # an 800-file pull request drew all of it into the sidebar. The guard lives
+  # here now, which is the one place every surface is reached through, and there
+  # is exactly one caller of it in the tree (`bounds_spec.rb` pins that count
+  # mechanically, because prose cannot).
+  describe "the size past which it refuses to present" do
+    # The DEFAULT ceiling, reached by a changeset rather than by an injected
+    # Bounds: a session that bounded only what a caller handed it ceilings for
+    # would pass every other example in this block and still draw this one
+    # whole. 301 files against {Lain::Review::Bounds::DEFAULT_MAX_FILES}.
+    def oversized_changeset(count: Lain::Review::Bounds::DEFAULT_MAX_FILES + 1)
+      paths = Array.new(count) { |index| "file_#{index}.rb" }
+      changeset_over(diff_text: oversized_diff(paths), walk: [oversized_commit(paths)])
+    end
+
+    def oversized_diff(paths) = paths.map { |path| one_hunk_section(path) }.join
+
+    def one_hunk_section(path)
+      <<~DIFF
+        diff --git a/#{path} b/#{path}
+        index 1111111..2222222 100644
+        --- a/#{path}
+        +++ b/#{path}
+        @@ -1,2 +1,2 @@ def alpha
+         x
+        -y
+        +Y
+      DIFF
+    end
+
+    def oversized_commit(paths)
+      numstat = paths.map { |path| Lain::Review::Source::FileStat.new(path: -path, added: 1, deleted: 1) }
+      Lain::Review::Source::Commit.new(sha: -("e" * 40), subject: "the wide commit", body: "",
+                                       numstat: numstat.freeze)
+    end
+
+    def bounded(**ceilings) = open_session(bounds: Lain::Review::Bounds.new(**ceilings))
+
+    def bounded_onto(drawn, **ceilings) = open_session(surface: drawn, bounds: Lain::Review::Bounds.new(**ceilings))
+
+    it "refuses a changeset past the DEFAULT file ceiling, with no Bounds injected at all" do
+      session = open_session(over: oversized_changeset)
+
+      expect { session.present(scope: :cumulative) }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /301 files.*ceiling of 300/m)
+    end
+
+    it "names the measurement, the ceiling and the alternative, in Bounds' own words" do
+      expect { bounded(max_files: 1).present(scope: :cumulative) }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /2 files.*ceiling of 1.*scope: commits/m)
+    end
+
+    # A refusal that has already rendered is not a refusal, and for an editor
+    # surface it is worse than none: the sidebar is up, so the human believes
+    # they are looking at the whole changeset.
+    it "draws nothing at all when it refuses, so the guard runs before the surface is told" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+
+      expect { bounded_onto(spy, max_files: 1).present(scope: :cumulative) }
+        .to raise_error(Lain::Review::Bounds::TooLarge)
+      expect(spy).not_to have_received(:present)
+    end
+
+    # The scope reaching the guard is the RESOLVED one, and this pins both
+    # halves of that. A guard reading its argument raw dies on
+    # `SCOPE_CHECKS.fetch` with a KeyError for the String spelling a wire sends;
+    # a guard reading the wrong scope refuses the commit walk that the refusal
+    # above advertises as the way through, which would make the advice a lie.
+    it "bounds the scope it resolved, so the walk this refusal recommends actually presents" do
+      session = bounded(max_files: 1)
+
+      expect { session.present(scope: "cumulative") }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /cumulative view/)
+      expect { session.present(scope: "commits") }.not_to raise_error
+    end
+
+    it "presents whatever fits, so an ordinary changeset reaches the surface untouched" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      session = bounded_onto(spy, max_files: 2)
+
+      session.present(scope: :cumulative)
+
+      expect(spy).to have_received(:present).with(session.marked, scope: :cumulative)
+    end
+
+    # A resume is where a diff has had time to GROW -- the author went on
+    # working -- so a resumed round that skipped the ceiling would be the one
+    # most likely to meet it.
+    it "bounds a resumed round too, not only one this process opened" do
+      open_session
+      resumed = described_class.from_journal(entries, changeset:, journal:, surface:,
+                                                      bounds: Lain::Review::Bounds.new(max_files: 1))
+
+      expect { resumed.present(scope: :cumulative) }.to raise_error(Lain::Review::Bounds::TooLarge)
+    end
+  end
+
   describe "the marked changeset -- the join of a diff fact and a review fact" do
     it "answers a file entry's path and its whole-changeset tri-state" do
       session = open_session

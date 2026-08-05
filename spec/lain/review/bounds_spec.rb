@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "pathname"
+require "ripper"
+
 # Every fixture here is a REAL {Lain::Review::Changeset} over a hand-built diff
 # String, never a double of one. The subject is arithmetic on counts, so a
 # generated git repository would buy nothing and cost the suite a new wall-time
@@ -489,6 +492,75 @@ RSpec.describe Lain::Review::Bounds do
         expect { bounds.check_presentation!(changeset, scope: scope.to_sym) }.not_to raise_error
       end
       expect(bounds.each_critique_chunk(changeset).sum { |chunk| chunk.files.size }).to eq(4)
+    end
+  end
+
+  # T31c's actual deliverable is a COUNT, and a count is the one thing prose
+  # cannot hold: this guard used to be called from {Lain::CLI::Review#present}
+  # and was moved onto {Lain::Review::Session#present} so that every surface is
+  # bounded by one caller rather than by whichever command remembered to ask. A
+  # second caller added later would restore the two-places-enforce-one-ceiling
+  # shape and nothing anywhere would go red.
+  #
+  # Pinned mechanically, `spec/output_discipline_spec.rb`'s way: Ripper over the
+  # syntax tree, never a grep, because the files that discuss this guard discuss
+  # it at length in comments -- {Lain::CLI::Review}'s class doc still names it,
+  # and must, since that is where the follow-up this card discharged was written.
+  describe "how many places in lib/ enforce a presentation ceiling" do
+    guard = "check_presentation!"
+
+    def lib_root = Pathname(__dir__).join("..", "..", "..", "lib").expand_path
+
+    # Every `@ident` node spelling the guard, MINUS the one a `def` names --
+    # what is left is a call. `node.drop(2)` on a `:def` skips both the keyword
+    # and the method name, so {Bounds}' own definition is not counted as a use
+    # of itself.
+    define_method(:guard_lines) do |node, found|
+      return unless node.is_a?(Array)
+
+      found << node[2].first if node[0] == :@ident && node[1] == guard
+      (node[0] == :def ? node.drop(2) : node).each { |child| guard_lines(child, found) }
+    end
+
+    def call_sites_in(source)
+      sexp = Ripper.sexp(source)
+      raise "could not parse the source under test" if sexp.nil?
+
+      [].tap { |found| guard_lines(sexp, found) }
+    end
+
+    # Ripper over all 465 files costs more than this question is worth, so the
+    # raw text is the SIEVE and the syntax tree is the ANSWER: a file that never
+    # spells the word cannot call it, and every file that does is then parsed.
+    define_method(:call_sites) do
+      lib_root.glob("**/*.rb").filter_map do |file|
+        source = file.read
+        sites = source.include?(guard) ? call_sites_in(source) : []
+        [file.relative_path_from(lib_root).to_s, sites] unless sites.empty?
+      end.to_h
+    end
+
+    it "is called from exactly one place, so one ceiling has one enforcer" do
+      expect(call_sites.keys).to eq(["lain/review/session.rb"])
+    end
+
+    it "is called ONCE there, not once per scope or once per surface" do
+      expect(call_sites.fetch("lain/review/session.rb").size).to eq(1)
+    end
+
+    # Guards the guard, `output_discipline_spec.rb`'s way: the scanner reads the
+    # syntax tree, so the word in a comment, in a String literal and in the
+    # `def` that declares it are all invisible to it -- and all three of those
+    # are present in `lib/` as it stands.
+    it "counts neither a comment, a string literal, nor the definition itself (self-test)" do
+      source = <<~RUBY
+        # {Review::Bounds#check_presentation!} is called somewhere else now
+        WORDS = "check_presentation! is not called by this literal"
+        def check_presentation!(view, scope:) = nil
+        def elsewhere(view, scope:) = bounds.check_presentation!(view, scope:)
+      RUBY
+
+      expect(call_sites_in(source).size).to eq(1)
     end
   end
 end

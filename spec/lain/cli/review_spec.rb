@@ -311,9 +311,16 @@ RSpec.describe Lain::CLI::Review, :seam do
     end
   end
 
-  # The guard T29 shipped and nothing called. Its ceilings are constructor
-  # arguments precisely so a refusal can be driven without building the 800-file
-  # changeset it was written against.
+  # The guard T29 shipped. Its ceilings are constructor arguments precisely so a
+  # refusal can be driven without building the 800-file changeset it was written
+  # against.
+  #
+  # T31c MOVED THE CALL onto {Lain::Review::Session#present}, and this block is
+  # what says the move was behaviour-preserving where it mattered: the same
+  # error class, the same three wordings, the same nonzero exit through
+  # `Boundary#render`. The `bounds:` this command injects still reaches the
+  # ceiling -- through the round it opens rather than through a check of its
+  # own -- which is why every example below is unchanged.
   describe "the size past which it refuses to present" do
     def bounded(**ceilings) = command(bounds: Lain::Review::Bounds.new(**ceilings))
 
@@ -332,10 +339,41 @@ RSpec.describe Lain::CLI::Review, :seam do
         .to raise_error(Lain::Review::Bounds::TooLarge, /commit [0-9a-f]{40}.*narrowest scope/m)
     end
 
-    it "refuses BEFORE the round is opened, so a view nobody can read leaves no record of one" do
+    # THE PROPERTY THAT MATTERS, and the one that survived the move intact:
+    # nothing is drawn. The surface is the injected one rather than the buffer
+    # this command owns, because "the bytes never reached a surface" is what an
+    # editor cares about and an empty buffer cannot tell that from a surface
+    # that drew somewhere else.
+    # In the port's own shape, because `Surface.check!` refuses anything else --
+    # an `instance_spy` included.
+    def recording_surface(log)
+      Class.new do
+        define_method(:present) { |_changeset, scope:| log << scope }
+        def annotate(_anchor, _text, kind:) = kind
+        def mark(_hunk_key, _state) = nil
+        def thread(_anchor) = nil
+        def verdict = nil
+        def refuse(message) = message
+      end.new
+    end
+
+    it "tells no surface at all when the view is past a ceiling" do
+      drawn = []
+      refusing = command(bounds: Lain::Review::Bounds.new(max_files: 1), surface: recording_surface(drawn))
+
+      expect { refusing.present("feature") }.to raise_error(Lain::Review::Bounds::TooLarge)
+      expect(drawn).to be_empty
+    end
+
+    # WHAT THE MOVE COST, asserted rather than left to be discovered. The guard
+    # used to run before `Session.open` journaled anything, so a refusal left no
+    # record; it now runs inside `Session#present`, one call later. The record is
+    # true -- a round WAS opened -- and buying the old property back would mean a
+    # second caller of `check_presentation!`, which is what T31c deleted.
+    it "opens the round before it refuses, which is the one thing the move changed" do
       expect { bounded(max_files: 1).present("feature") }.to raise_error(Lain::Review::Bounds::TooLarge)
 
-      expect(opened_records).to be_empty
+      expect(sources_journaled).to eq(["local_branch"])
     end
   end
 
@@ -374,6 +412,16 @@ RSpec.describe Lain::CLI::Review, :seam do
 
   # {Source::GithubPr}'s own requirement -- a fallback must be REPORTED rather
   # than silent -- discharged at the first surface with a human in front of it.
+  #
+  # THIS GROUP IS ALSO AN ORDERING PIN, discovered by T31c breaking it. A source
+  # answers `diff_origin` differently depending on which message reached it
+  # first: `base_ref` fetches, and a fetched {Source::GithubPr} then serves the
+  # diff from the object database and reports `already_local` for a combined
+  # diff GitHub refused outright. The fallback note was only ever printed
+  # because the size guard read `files` before the round was opened, and moving
+  # that guard onto {Lain::Review::Session#present} silently deleted the note
+  # until the command asked for the origin itself, in a stated order. Nothing
+  # else in the suite fails when that note disappears.
   describe "a combined diff GitHub would not serve" do
     # A repository that has never seen the pull request, so the API is asked
     # first and its refusal is what forces the fetch. `init` and a remote, never

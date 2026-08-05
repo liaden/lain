@@ -80,10 +80,21 @@ module Lain
         # @param root [String] the repository every git call reads -- the
         #   project the chat was started in, threaded from {Command::Surface}
         #   exactly as {Meta}'s is
+        # @param bounds [Lain::Review::Bounds] the sizes past which the sidebar
+        #   refuses, handed to the round and enforced by
+        #   {Lain::Review::Session#present}. Injected for {Lain::CLI::Review}'s
+        #   reason and nothing more: the ceilings are a bench parameter, and a
+        #   command that built its own could not be driven past one.
         # @param shell_out_factory [#call] builds the subprocess runner, injected
         #   as {Lain::CLI::Review} and both sources do
-        def initialize(root: Dir.pwd, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+        # A default argument is evaluated in the METHOD body at call time, which
+        # is why naming `Lain::Review::Bounds` here is safe where a constant in
+        # the class body would be a load-time NameError -- {Lain::CLI::Review}'s
+        # own constructor spells it the same way for the same reason.
+        def initialize(root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+                       shell_out_factory: Mixlib::ShellOut.public_method(:new))
           @root = root
+          @bounds = bounds
           @shell_out_factory = shell_out_factory
           freeze
         end
@@ -97,8 +108,8 @@ module Lain
         #   both rails) and its {Chronicle} (the journal this round lands in)
         # @return [String] the headline and where to read the review
         # @raise [Lain::Error] no editor, an unknown flag, an unresolvable ref,
-        #   an ambiguous target, an undeclared scope -- each already worded by
-        #   whoever owns the refusal
+        #   an ambiguous target, an undeclared scope, a changeset past a
+        #   ceiling -- each already worded by whoever owns the refusal
         def call(args, env)
           parsed = parse(args.to_s.split)
           return USAGE if parsed.target.nil?
@@ -164,7 +175,8 @@ module Lain
 
         def round(resolved, surface, env)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: resolved.source),
-                                     journal: env.chronicle.record_journal, source: resolved.name, surface:)
+                                     journal: env.chronicle.record_journal, source: resolved.name, surface:,
+                                     bounds: @bounds)
         end
 
         # The view comes off the SAME editor the surface did, and it has to: a
@@ -196,6 +208,14 @@ module Lain
         # An editor that refused still gets the headline: the round IS open and
         # the rails ARE bound, so the human needs to know both that and why they
         # cannot see it.
+        #
+        # A view past a {Lain::Review::Bounds} ceiling is the other outcome and
+        # is NOT a String: {Lain::Review::Session#present} raises, so it leaves
+        # this method rather than being reported through it, and the round it
+        # refused stays open with its rails bound. That is the honest state --
+        # the next `/review` rebinds them, and there is an example for it -- and
+        # narrowing it would mean checking the ceiling here too, which is the
+        # second caller T31c deleted.
         def drawn(resolved, session, scope)
           refusal = session.present(scope:)
           [format(OPENED, headline: headline(resolved, session, scope)),

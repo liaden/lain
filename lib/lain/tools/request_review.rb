@@ -568,6 +568,14 @@ module Lain
         # the claim be keyed on {Review::Session#digest} -- the address a
         # verdict will judge. The other order would need the claim to name
         # something else, and then one review would have two identities.
+        #
+        # {Review::Bounds::TooLarge} joined this list with T31c, which moved the
+        # size guard onto {Review::Session#present} -- the call `tell` makes
+        # below. An implementation stage over a changeset past a ceiling is a
+        # review that could not be opened, which is precisely what these
+        # rescues mean; without it a ceiling would leave a TOOL CALL raising,
+        # and the model would meet a stack rather than a sentence naming the
+        # ceiling and the walk to take instead.
         def hold(input)
           return Refusals.needs_base if Blankness.blank?(input.base)
 
@@ -577,7 +585,7 @@ module Lain
           judged(*opened(session_over(source), source))
         rescue Review::Source::UnknownRef, Review::Changeset::Unparseable,
                Review::Changeset::Unattributed, Epic::Review::AlreadyOpen,
-               Review::Surface::Incomplete, Unroutable => e
+               Review::Surface::Incomplete, Review::Bounds::TooLarge, Unroutable => e
           Refusals.unopened(e)
         end
 

@@ -34,21 +34,23 @@ module Lain
     # constants they would otherwise obviously be -- {Source::LocalBranch#git}'s
     # reason, one directory over.
     #
-    # == Where the size guard is called, and where it is NOT
+    # == Where the size guard is called, and what moving it cost
     #
-    # {Review::Bounds#check_presentation!} runs HERE, on the scope the flag
-    # picked, before a round is opened -- {Review::Session#submit}'s ordering
-    # and its reason: a refusal must leave no record of a review nobody can
-    # read. It is the only caller in the tree.
+    # Not here (T31c). `bounds:` is still this command's to inject, but the
+    # ceiling is enforced by {Review::Session#present} -- the one place every
+    # surface is reached through -- so a re-callable `present`, an editor
+    # sidebar toggling scope and `/review` inside a chat are all bounded by that
+    # single caller instead of by whichever command remembered to ask. This
+    # command's own doc wrote that follow-up while the guard was still here.
     #
-    # It covers ONE presentation, and the gap is inside this command rather than
-    # outside it: {Review::Session#present} is re-callable, so an injected
-    # {Review::Surface::Neovim} whose sidebar toggles scope reaches it again,
-    # unguarded, on a session opened right here. Inert today only because
-    # nothing binds that leg (see below). The guard therefore belongs on
-    # `Session#present` -- not merely on "the second caller" -- and that is what
-    # the follow-up says. Stated at its sharpest because a guard with one caller
-    # looks finished from the outside.
+    # The move cost one property, named rather than left to be discovered: the
+    # ceiling now runs AFTER `Session.open` has journaled the round, so a
+    # refused review leaves a `changeset_opened` on record where it used to
+    # leave nothing. What a human is protected from is unchanged -- the surface
+    # is never told, so nothing is drawn, and the refusal reaches stderr in the
+    # same words with the same nonzero exit. The alternative was to keep a check
+    # here as well, and two places enforcing one ceiling is exactly what this
+    # was.
     #
     # == The editor surface, and why this command does not build one
     #
@@ -122,9 +124,6 @@ module Lain
         scope = Lain::Review::Session.scope!(scope || default_scope)
         resolved = @targets.resolve(target.to_s, base:)
         changeset = Lain::Review::Changeset.new(source: resolved.source)
-        # The only call to T29's guard in the tree -- see the class doc for what
-        # that does and does not cover.
-        @bounds.check_presentation!(changeset, scope:)
         opened(resolved, changeset, scope)
       end
 
@@ -138,24 +137,40 @@ module Lain
 
       def opened(resolved, changeset, scope)
         buffer = StringIO.new
-        surface = @surface || Lain::Review::Surface::Text.new(sink: buffer)
-        # BEFORE the journal is opened: a surface that cannot answer the port
-        # would otherwise leave a round on record that nothing ever drew.
-        Lain::Review::Surface.check!(surface)
+        surface = checked_surface(buffer)
+        # BEFORE the round, and this order is what makes the note true rather
+        # than lucky: {Source::GithubPr#diff_origin} forces the DIFF, and only a
+        # source asked for its diff FIRST can report a fallback -- `Session.open`
+        # reads `base_ref`, which for a pull request fetches, and a fetched
+        # source then serves the diff from the object database and reports
+        # `already_local` for a combined diff GitHub actually refused. That
+        # ordering used to come free from the size guard reading `files` here;
+        # T31c moved the guard, so it is stated rather than inherited.
+        report = fell_back(resolved.source)
         journal = Journal.open(paths: @paths)
         begin
-          session = Lain::Review::Session.open(changeset:, journal:, source: resolved.name, surface:)
-          drawn(resolved, session, scope, buffer)
+          session = Lain::Review::Session.open(changeset:, journal:, source: resolved.name, surface:, bounds: @bounds)
+          drawn(resolved, session, scope, buffer, report)
         ensure
           journal.close
         end
       end
 
-      def drawn(resolved, session, scope, buffer)
+      # The default surface renders into a buffer this object owns, so the two
+      # are built together. Checked BEFORE the journal is opened: a surface that
+      # cannot answer the port would otherwise leave a round on record that
+      # nothing ever drew.
+      def checked_surface(buffer)
+        (@surface || Lain::Review::Surface::Text.new(sink: buffer)).tap do |surface|
+          Lain::Review::Surface.check!(surface)
+        end
+      end
+
+      def drawn(resolved, session, scope, buffer, report)
         answer = session.present(scope:)
         [format(HEADLINE, label: resolved.label, scope:,
                           base: session.changeset.base_ref, head: session.changeset.head_ref),
-         fell_back(resolved.source),
+         report,
          body(buffer, answer)].compact.join("\n")
       end
 

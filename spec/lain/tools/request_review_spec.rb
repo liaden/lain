@@ -1127,6 +1127,76 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
+  # T31c. {Lain::Review::Session#present} bounds every presentation now, and
+  # this tool is the third caller of it -- so an implementation stage over a
+  # changeset past a ceiling has to come back as this tool's own refusal. Left
+  # unrescued, a ceiling would raise out of a TOOL CALL and the model would meet
+  # a stack instead of a sentence naming the ceiling and the walk to take.
+  #
+  # 301 files against {Lain::Review::Bounds::DEFAULT_MAX_FILES}: nothing is
+  # injected, because an epic meets the DEFAULT ceilings and a bound reachable
+  # only through an injected Bounds is not the one it runs into.
+  describe "an implementation review over a changeset past a ceiling" do
+    let(:changesets) { RecordingChangesets.new(source: oversized_source) }
+
+    before { home.write_epic(three_issue_graph) }
+
+    def oversized_paths(count: Lain::Review::Bounds::DEFAULT_MAX_FILES + 1)
+      Array.new(count) { |index| "wide_#{index}.rb" }
+    end
+
+    def oversized_diff(paths) = paths.map { |path| one_hunk_section(path) }.join
+
+    def one_hunk_section(path)
+      <<~DIFF
+        diff --git a/#{path} b/#{path}
+        index 1111111..2222222 100644
+        --- a/#{path}
+        +++ b/#{path}
+        @@ -1,2 +1,2 @@ def alpha
+         x
+        -y
+        +Y
+      DIFF
+    end
+
+    def oversized_commits(paths)
+      numstat = paths.map { |path| Lain::Review::Source::FileStat.new(path: -path, added: 1, deleted: 1) }
+      [Lain::Review::Source::Commit.new(sha: -("e" * 40), subject: "the wide implementation", body: "",
+                                        numstat: numstat.freeze)]
+    end
+
+    def oversized_source
+      paths = oversized_paths
+      instance_double(Lain::Review::Source::LocalBranch, diff: oversized_diff(paths).b,
+                                                         commits: oversized_commits(paths).freeze,
+                                                         base_ref: -("b" * 40), head_ref: -("h" * 40))
+    end
+
+    it "refuses in Bounds' own words rather than raising out of the tool call" do
+      result = changeset_tool.call(implementation_input, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("301 files", "ceiling of 300")
+    end
+
+    # The baton has to come back, or the epic is wedged on a review that was
+    # never drawn: every later implementation call would be refused AlreadyOpen
+    # for the life of the epic, which is what `tell`'s own `ensure` exists
+    # against.
+    it "leaves no claim behind, so the next implementation call is not refused as AlreadyOpen" do
+      changeset_tool.call(implementation_input, invocation)
+
+      expect(review.open_generations).to be_empty
+    end
+
+    it "draws nothing on the surface it would have presented to" do
+      changeset_tool.call(implementation_input, invocation)
+
+      expect(surface.presented).to be_empty
+    end
+  end
+
   # ---- Scenario: a changeset park the turn cancels ---------------------------
 
   # The document half leaves the baton HELD when its wait is cancelled, and its
