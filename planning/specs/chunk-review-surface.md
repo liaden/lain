@@ -379,6 +379,17 @@ it was deferred.
     and nothing shadows `numstat`. Worth a look later at whether `CommitScope#numstat` should be
     named `file_stats`, since "numstat" reads as an aggregate to everyone who meets it.
 
+19. **`spec/lain/cli/up_spec.rb:175` is a parallel-suite flake, identified 2026-08-05.** T28's panel
+    reproduced the "1 failure in 10763" that its implementer had flagged but could not name, and
+    tracked it down: tmux's `pane_current_path` is the pane process's **live** cwd, so under a loaded
+    parallel run the second pane's short-lived process has already exited (or has not yet chdir'd) and
+    tmux falls back to the *client's* cwd — the worktree root. Seen 1 of 5 full runs at load average
+    10.3, and **0 of 30 in isolation** even with a concurrent six-worker suite, so it is a
+    parallel-suite race rather than a per-example one. The file is byte-identical to the base tree and
+    touches nothing T28 changed. It needs a real fix, not a retry: this is precisely the
+    "fewer examples, 0 failures"-adjacent shape the suite's own guidance warns about, and a flake that
+    presents as exactly one failure is the most expensive kind to leave lying around.
+
 ## Pre-existing defects found while executing this chunk
 
 Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
@@ -2143,9 +2154,13 @@ a stanza.**
    the sidebar's `<CR>`, wired as `:LainReviewOpen` by T14. A `:LainDiffOpen` would be a command
    with no gesture behind it. The doc owes a `*lain-review-diff*` paragraph covering the new buffer
    names and stamps instead, which T15 hands back.
-**Shared-file wiring:** `plugin/nvim/doc/lain.txt` — a `6.8 REVIEWING A CHANGESET (PROTOCOL 9)`
-stanza, the doc entries for every `:Lain*` command this chunk added, and updating every existing
-`(PROTOCOL 8)` heading to 9. Hand back as one diff.
+**Shared-file wiring:** `plugin/nvim/doc/lain.txt` — a `6.8 READING A CHANGESET (PROTOCOL 9)`
+stanza *(title amended 2026-08-05: this card was written before T15 shipped the section, which named
+it READING. Keeping T15's title is right — `6.7 REVIEWING A DOCUMENT` sits directly above it with a
+near-identical tag, and two adjacent headings both opening "REVIEWING" are hard to tell apart in
+`:help`. T28's implementer made this call and its panel agreed.)*, the doc entries for every
+`:Lain*` command this chunk added, and updating every existing `(PROTOCOL 8)` heading to 9. Hand
+back as one diff.
 
 The protocol is a handshake compared for **equality**, so it advertises a contract. T11 added the
 Ruby halves in wave 2 and T14, T15 and T18 added the lua halves in waves 3 and 4. Only now is the
