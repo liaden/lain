@@ -458,6 +458,70 @@ The lesson the chunk already half-knew: in `orchestrator-commits` mode the prima
 verified-but-uncommitted work, and that is precisely what a crash destroys. Commit each card as it
 verifies rather than batching.
 
+### T18's panel, re-run 2026-08-05 — REJECT, and what four seats converged on
+
+T18's original review ran on 2026-08-04 and its findings were destroyed with the orchestrator's
+context by the reboot. Rather than land a high-risk lua card on a review that could not be
+reproduced, the panel was **re-run from scratch** against a candidate rebuilt on current `main`
+(`lain-t18c`, verified 10760 examples / 0 failures). Four seats: TJ DeVries (plugin idiom), Justin M.
+Keyes (nvim API contracts), Folke Lemaitre (buffer/window lifecycle), Sandi Metz (object design and
+anti-vacuity). Verdicts are in `.review-T18c/`.
+
+**Three APPROVE-WITH-FIXES and one REJECT; the reject stands.** Two findings would each have failed
+the card alone:
+
+1. **The capability does not work on its only production path.** `Surface::Neovim` posts
+   `set_thread(anchor.id, …)` — a bare String — where the lua refuses a non-table, and delivery is
+   `nvim_exec_lua` **notify**, so the refusal reaches nobody. Ruby is answered `nil`, meaning "it
+   landed", and nothing landed. **As merged, an annotation never produces a thread pane.** T19 had
+   already landed, so this was live rather than prospective. It went unseen because
+   `surface/neovim_spec.rb:501-504` excludes `set_thread` from its real-editor seam on a rationale
+   that was true when written and stale by the time it mattered — the exclusion names the one test
+   that would have caught it.
+2. **A mutation-matrix row reported as *killed* is alive.** The `]]` example measures nvim 0.12.4's
+   own markdown ftplugin, which binds `]]` to a next-heading motion landing exactly where the example
+   asserts. The implementer had found this and believed plain `normal` closed it; it does not —
+   `normal` uses a user mapping *when one exists* and falls through to the built-in when none does.
+   So a mutant that unbinds `]]` entirely survives at 40/0.
+
+**What the convergence says.** The panel's strongest signal is not any one seat's depth but where
+seats that were looking at different things arrived at the same defect:
+
+| Defect | Seats, independently |
+|---|---|
+| The wipe AC is vacuous — a wiped buffer leaves `nvim_list_bufs()` by definition, so no implementation can fail it | **four** |
+| Anchors and extmarks litter the human's real file buffer, surviving `unstamp` | three |
+| `:bdelete` (not `:bwipeout`) leaves a valid husk → `E95` forever, plus one orphan buffer per render | two |
+| A cursor move rebuilds a whole review tabpage after the human dismissed the review | two |
+| The repair path restores a diff buffer that is no longer in diff mode | two |
+
+The `:bwipeout`/`:bdelete` pair is the sharpest of these: the card's own doc stanza *recommends*
+`:bwipeout`, and the neighbouring letter is unrecoverable. Every other lain buffer survives it,
+because every other one goes through `20_buffers.named_buf` and is found by name; the thread buffer
+is the only one keyed on a buffer variable, and buffer variables do not survive unload.
+
+**Two claims the panel confirmed rather than broke**, both worth keeping:
+
+- **Doing nothing about diff mode is right — on the path the card owns.** `'diff'`, `'foldmethod'`,
+  `'scrollbind'` and `'wrap'` really are window-local per buffer, and nvim restores them itself; the
+  reader's own side is never disturbed, and the human's own `:diffoff` **survives**, which octo's
+  `diffoff!` would have destroyed. The claim was over-*scoped*, not wrong: window-local-per-buffer
+  memory dies with the window, so it does not hold on the repair path. The fix is a `diffthis` gated
+  on `not vim.wo[win].diff`, which leaves the intact path untouched — verified 41/0.
+- **The registry really is gone.** Twenty rounds of five threads sent, walked, wiped and re-sent, and
+  thirty changeset re-opens: autocmds constant at 2, keymaps constant, buffer count constant, lua
+  heap flat. No module table, no per-thread closure, no per-buffer autocmd. What remains is
+  buffer-local and inert. The design argument was right; only the evidence cited for it was not.
+
+**And one methodological finding worth more than any of the fixes.** A seat's first attempt to
+measure the `CursorMoved` cost per motion used `vim.cmd("normal! j")` in a lua loop, which fires
+`CursorMoved` **zero times for 1000 motions** (20/20 when each motion is its own RPC). The seat caught
+it and discarded the number. The published justification for the global autocmd is measured backwards
+in the same way: the bail-out body costs ~0.16 µs, while dispatch to a global lua callback costs
+~2.8 µs — of which ~0.8 µs *is* the pattern match the comment claims to be avoiding. Not a
+performance problem, and no seat called it one. It is **a false `why` in a codebase whose comment
+standard is that the why must be true.**
+
 ### Four operational traps found while landing T16 and T23
 
 1. **`git stash pop` without `--index` silently un-stages everything it restores.** Used mid-landing
