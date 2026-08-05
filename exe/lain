@@ -132,6 +132,34 @@ class LainCLI < Thor
     end
   end
 
+  # The review subcommand, on the same thin-wiring rule as epic: Lain::CLI::Review
+  # resolves the source, opens the round, and returns a String; this class parses
+  # argv and says it.
+  #
+  # `open` exists because Thor owns the first word: `lain review help` is Thor's
+  # help screen and `lain review tree` is the tree command, so a branch actually
+  # NAMED `help` needs a way through. {Lain::CLI::Review} treats a target as a ref
+  # and nothing else -- the reservation is the exe's problem, so the exe carries
+  # the escape. `default_command` is what keeps `lain review feature/foo` working
+  # for every target that does not collide.
+  class Review < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    default_command :open
+
+    method_option :scope, type: :string, enum: %w[commits cumulative],
+                          desc: "Which scope to open on -- per-commit, or everything at once"
+    method_option :base, type: :string, desc: "Override the base ref the changeset is cut against"
+    desc "open TARGET", "Resolve a pull request or branch, open a round, and present it"
+    def open(target)
+      render do
+        Lain::CLI::Review.new.present(target, scope: options[:scope]&.to_sym, base: options[:base])
+      end
+    end
+  end
+
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -298,6 +326,11 @@ class LainCLI < Thor
 
   desc "epic SUBCOMMAND ...ARGS", "The epic tier: artifact home, issue graph, and sign-off queue"
   subcommand "epic", Epic
+
+  desc "review [open] TARGET", "Review a pull request or a branch: `lain review 4821`, " \
+                               "`lain review feature/foo`. Say `open` when the target " \
+                               "collides with a command name -- `lain review open help`"
+  subcommand "review", Review
 
   desc "bench SUBCOMMAND ...ARGS",
        "Bench drivers over recorded sessions, and the live arm comparison " \
