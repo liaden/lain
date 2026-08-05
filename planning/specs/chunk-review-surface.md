@@ -804,6 +804,24 @@ spaces under a heading that says *"write your answer below"*.
     post, or both. Note the constraint `Gh#submit_review`'s own doc records: **no retry, ever**, since
     an accepted POST creates a review each time.
 
+### The manual pass on T33 and the bounds move, 2026-08-05
+
+**T33, live, fresh session, no turn ever run:** `x` on a sidebar row acked in **72 ms**; before the
+fix the same test was 8+ seconds of silence. `<CR>` at the same idle prompt opens the full diff pair,
+both sides stamped and in diff mode. The transient recorded under the T32a/T32b pass did **not**
+recur, which is the evidence for its diagnosis as a queued-burst race.
+
+**The bounds move, live, against a real 835-file range** (`--base HEAD~250`):
+
+| path | result |
+|---|---|
+| `lain review open` (text) | exit 1, stderr, **empty stdout** — *"the cumulative view is 835 files, over the ceiling of 300 -- present it per commit (scope: commits) instead"* |
+| `/review` (editor) | same sentence in the chat, and **`lain://review` does not exist as a buffer at all** — the "no surface is told" property, observed rather than asserted |
+| the remedy it names, both paths | works: 1335 lines of text, and a 1175-row sidebar with per-commit grouping and `+79 -35` diffstats |
+
+A refusal that names the ceiling, names a remedy, and whose remedy actually runs is worth recording as
+the standard the other refusals in this chunk should meet.
+
 ### The manual pass on T32a + T32b, 2026-08-05 — the whole loop, in a real cockpit
 
 Against `lain up --nvim` + ollama `qwen3:4b`, reviewing a real branch. **Every step worked**, which
