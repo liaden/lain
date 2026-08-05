@@ -82,7 +82,19 @@ module Lain
       #   b:lain_review_path instead -- stamped on both sides of the live pair
       #   and WITHDRAWN when you move off a file, so a gesture reads a variable
       #   rather than parsing a buffer name back apart.
-      PROTOCOL = "9"
+      # "10": the two changeset-review gestures that had been wired Ruby-side
+      #   since 9 with no key or command able to send them. :LainReviewMark
+      #   {state} sends "review_mark" -- the cursor's line, the state, and
+      #   b:lain_view_generation -- bound in lain://review as `x` (reviewed) and
+      #   `u` (unreviewed), ONE KEY PER STATE because the state rides the wire
+      #   and a toggle computed from a rendering that has since moved flips the
+      #   wrong hunk in silence. :LainReviewVerdict {verdict} sends
+      #   "review_verdict", the first ANSWERED verb outside a review buffer: its
+      #   return leg is what the command fails with, and it names
+      #   Lain::Review::VERDICTS rather than restating the vocabulary in lua. No
+      #   new render entry point -- a refused mark comes back on
+      #   __lain.review_refused, which 9 already shipped.
+      PROTOCOL = "10"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model

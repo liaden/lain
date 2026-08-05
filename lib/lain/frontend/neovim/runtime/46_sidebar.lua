@@ -17,7 +17,42 @@
 -- and the binding cap is 60 upvalues per function prototype, so every top-level
 -- local is a name each later module pays for. The public entry point goes on
 -- `_G.__lain`, where the runtime's public surface lives.
-local review_sidebar = { NAME = "lain://review" }
+local review_sidebar = {
+  NAME = "lain://review",
+
+  -- state -> the key that sends it. THE SECOND SPELLING of a closed set
+  -- `review/vocabulary.rb` owns (`Lain::Review::MARK_STATES`), and it is forced:
+  -- lua cannot read a Ruby constant, and a key per state needs both members by
+  -- name anyway. `review_view_spec.rb` pins these keys against that declaration,
+  -- the same defence `48_annotate`'s MARKERS applies to `ANNOTATION_KINDS` -- so
+  -- a third state added on one side and not the other fails there rather than
+  -- being refused, silently, at the far end of a wire.
+  --
+  -- A KEY PER STATE, NEVER ONE TOGGLE KEY, and that is this table's whole
+  -- reason for existing rather than a preference. The state RIDES THE WIRE: a
+  -- toggle would have to be computed here from the rendering on screen, and
+  -- `cli/human_replies.rb` says what that costs -- a rendering that has since
+  -- moved flips the wrong hunk, in SILENCE, because both values are legal. What
+  -- the human pressed is what they meant, and it is what gets sent.
+  --
+  -- `x` is lain's tick gesture already (`60_question.lua` binds it to ticking
+  -- the option under the cursor) and the sidebar draws a mark as `[x]`, so the
+  -- two agree by sight. `u` is its counterpart and costs nothing here: the
+  -- sidebar is `nofile` and nomodifiable, so vim's own `u` has nothing to undo
+  -- in it.
+  MARK_KEYS = { reviewed = "x", unreviewed = "u" },
+}
+
+-- Sorted, so a refusal message and a completion list are the same list in the
+-- same order every time rather than whatever `pairs` felt like.
+function review_sidebar.states()
+  local names = {}
+  for state in pairs(review_sidebar.MARK_KEYS) do
+    names[#names + 1] = state
+  end
+  table.sort(names)
+  return names
+end
 
 -- `named_buf` is the shared constructor (nofile, hidden, nomodifiable at rest,
 -- idempotent by name) and it attaches a filetype from READONLY_FILETYPES -- a
@@ -87,16 +122,94 @@ define("LainReviewOpen", function()
   vim.rpcrequest(chan, "lain_command", "review_open", { line, vim.b[buf].lain_view_generation })
 end)
 
+-- The cursor-on-a-row MARK gesture, `:LainReviewOpen`'s shape in every respect
+-- that matters: the same buffer guard for the same reason (a global command
+-- reading the CURRENT window's cursor), the LINE and the buffer's STAMP riding
+-- together, and ONE array after the verb.
+--
+-- The STATE is required and is never inferred, which is the whole card. See
+-- MARK_KEYS above for why a toggle cannot be computed here; the two keymaps
+-- below each name their state as a literal, so the value on the wire is
+-- decided by which key the human pressed and by nothing else.
+--
+-- ONE parameterised command rather than two, `:LainNote {kind}`'s shape: the
+-- vocabulary is a closed set with a completion list, and two commands would be
+-- two places to add the third state to. It is still a command PER KEYMAP in the
+-- sense that matters -- everything either key does is invocable by name, with
+-- the state typed out.
+--
+-- ACKED, so nothing here reads a return value: a refusal comes back on the
+-- rail `__lain.review_refused` renders, exactly as a refused open does.
+define("LainReviewMark", function(opts)
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.api.nvim_buf_get_name(buf) ~= review_sidebar.NAME then
+    vim.notify("lain: :LainReviewMark marks the row under the cursor in " .. review_sidebar.NAME,
+      vim.log.levels.WARN)
+    return
+  end
+  local state = opts.fargs[1]
+  if review_sidebar.MARK_KEYS[state] == nil then
+    error("lain: :LainReviewMark's argument is the state -- one of " ..
+      table.concat(review_sidebar.states(), ", ") .. " -- got " .. tostring(state), 0)
+  end
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  vim.rpcrequest(chan, "lain_command", "review_mark", { line, state, vim.b[buf].lain_view_generation })
+end, {
+  nargs = 1,
+  complete = function(lead)
+    return vim.tbl_filter(function(state) return vim.startswith(state, lead) end, review_sidebar.states())
+  end,
+})
+
+-- The review's conclusion. NO BUFFER GUARD, and the difference from the two
+-- commands above is not an oversight: they read the current window's CURSOR, so
+-- typed in the wrong buffer they would act on a row the human never looked at.
+-- This carries only the word they typed, so there is no wrong place to type it
+-- -- and a human who has just finished reading the last diff should not have to
+-- hop back to the sidebar to say so.
+--
+-- It lives in the sidebar's module rather than in `65_review.lua` because that
+-- file is the EPIC document rail (`:LainReviewDone` hands one document back);
+-- this concludes the CHANGESET review whose navigator this module is. The two
+-- share a word and nothing else.
+--
+-- THE VOCABULARY IS NOT RESTATED HERE, where MARK_KEYS above had to restate
+-- one. Nothing in this command needs a member by name, so whatever the human
+-- typed goes over as-is and `Lain::Review::VERDICTS` -- the one declaration --
+-- is what judges it. The refusal that comes back therefore always names the
+-- CURRENT vocabulary, and no completion list can drift from it. An empty
+-- argument takes the same path for the same reason: `""` is a verdict lain does
+-- not have, and lain says so, naming the ones it does.
+--
+-- ANSWERED, unlike every other gesture in this module: the request's return leg
+-- IS lain's verdict on the write, and a refusal arrives as the request's ERROR.
+-- `pcall` is what turns that into the human's answer rather than a traceback --
+-- `48_annotate`'s `:LainNoteDone` records the shape.
+define("LainReviewVerdict", function(opts)
+  local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
+  if not taken then
+    error(tostring(refusal), 0)
+  end
+end, { nargs = "*" })
+
 -- Bound from a BufEnter autocmd (in a cleared augroup, so re-attach redefines
 -- rather than stacks) because the buffer is created lazily by the first render,
 -- not here. <Cmd> rather than ":", the inbox map's reason: it runs the command
 -- without leaving normal mode, so the cursor the command is about does not move
 -- out from under it.
+--
+-- The mark keys are bound from the SAME autocmd in the SAME augroup, so the one
+-- clear that repairs `<CR>` on re-attach repairs all three, and a buffer that
+-- has `<CR>` has never got fewer keys than it should.
 vim.api.nvim_create_autocmd("BufEnter", {
   group = vim.api.nvim_create_augroup("lain_sidebar", { clear = true }),
   pattern = review_sidebar.NAME,
   callback = function(ev)
     vim.keymap.set("n", "<CR>", "<Cmd>LainReviewOpen<CR>",
       { buffer = ev.buf, desc = "lain: open the file under the cursor" })
+    for state, key in pairs(review_sidebar.MARK_KEYS) do
+      vim.keymap.set("n", key, "<Cmd>LainReviewMark " .. state .. "<CR>",
+        { buffer = ev.buf, desc = "lain: mark the row under the cursor " .. state })
+    end
   end,
 })

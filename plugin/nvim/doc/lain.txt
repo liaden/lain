@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 9) .. |lain-contract|
+  6. The attach contract (protocol 10) . |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -127,7 +127,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 9)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 10)                           *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -231,7 +231,8 @@ your own `:highlight link` overrides any of them without a fight:
 
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
-`:LainVersion`, `:LainReviewOpen`, and -- only meaningful inside a review
+`:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
+`:LainReviewVerdict {verdict}`, and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteDone` and
 `:LainThread`.
@@ -299,6 +300,43 @@ It is an ordinary global command reading the CURRENT window's cursor, so it
 refuses outside `lain://review` rather than acting on whatever happens to sit
 on that line somewhere else.
 
+                                                            *:LainReviewMark*
+
+Marking a row is TWO KEYS, not one toggle, and the sidebar says which state it
+is sending rather than working it out from what is drawn:
+
+    x                       `:LainReviewMark reviewed` -- mark every hunk the
+                            row under your cursor names as reviewed.
+
+    u                       `:LainReviewMark unreviewed` -- the same row, the
+                            other way.
+
+Both carry your cursor's line, the state, and `b:lain_view_generation`, and
+both refuse from a rendering lain no longer holds exactly as `:LainReviewOpen`
+does. Pressing `x` twice sends `reviewed` twice; it does not undo. That is the
+point: a toggle would have to be computed from the rows on your screen, and a
+rendering that has moved since -- a scope toggle, a mark that redrew a row --
+would flip the wrong hunk, silently, because both states are legal there.
+
+`:LainReviewMark` is an ordinary global command reading the CURRENT window's
+cursor, so it refuses outside `lain://review` for `:LainReviewOpen`'s reason.
+Its argument is required and completes with <Tab>.
+
+                                                         *:LainReviewVerdict*
+
+    :LainReviewVerdict {verdict}
+                            Conclude the changeset review. Unlike the two
+                            above this reads no cursor and no buffer, so there
+                            is no wrong window to type it in -- give the
+                            verdict from the last diff you were reading if you
+                            like.
+
+                            The vocabulary belongs to lain, which is why it is
+                            not listed here: a verdict lain does not have is
+                            refused by name, and the refusal names the ones it
+                            does. The command fails with that sentence, so a
+                            typo costs you a retype and nothing else.
+
                                                               *:LainThread*
                                                               *lain://thread*
 
@@ -341,7 +379,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 9)                            *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 10)                           *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -375,7 +413,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 9)                      *lain-question*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 10)                     *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -446,7 +484,7 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 REVIEWING A DOCUMENT (PROTOCOL 9)                            *lain-review*
+6.7 REVIEWING A DOCUMENT (PROTOCOL 10)                           *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -473,7 +511,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.8 READING A CHANGESET (PROTOCOL 9)                        *lain-review-diff*
+6.8 READING A CHANGESET (PROTOCOL 10)                       *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it

@@ -659,6 +659,89 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
     end
   end
 
+  # T32b: the MARK gesture, which had been wired all the way to
+  # {Review::Handover#mark} since T13 with no key able to send it.
+  describe "the mark keys" do
+    # Read off the LIVE editor rather than off the runtime's source, because
+    # what a human presses is what nvim has bound, not what a file says. Each
+    # binding's rhs carries the state as a literal, so this pins three things at
+    # once: every state has a key, no key sends a state Ruby cannot take, and
+    # the sidebar's set is exactly `Review::MARK_STATES`.
+    #
+    # The set EQUALITY is the assertion, not `include`. A third state added to
+    # `review/vocabulary.rb` and not here would pass an `include`, ship a
+    # sidebar that cannot express it, and be refused -- silently -- at the far
+    # end of the wire; a key sending a fourth spelling would pass it too, and be
+    # refused at `Review::Marks.normalize`. This is `48_annotate`'s MARKERS
+    # defence, one module over.
+    let(:mark_maps) do
+      <<~LUA
+        local restore = vim.api.nvim_get_current_buf()
+        vim.api.nvim_set_current_buf(vim.fn.bufnr(...))
+        local states = {}
+        for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, "n")) do
+          local state = tostring(map.rhs):match("LainReviewMark%s+(%a+)")
+          if state then states[#states + 1] = { key = map.lhs, state = state } end
+        end
+        vim.api.nvim_set_current_buf(restore)
+        return states
+      LUA
+    end
+
+    def bound_states
+      set_review(%w[one two], 1)
+      lua(mark_maps, [review_buffer])
+    end
+
+    it "binds one key per member of Review::MARK_STATES, and no others" do
+      expect(bound_states.map { |bound| bound["state"] }).to match_array(Lain::Review::MARK_STATES)
+    end
+
+    # ONE KEY PER STATE is the card, so the count is the assertion that says so:
+    # a single toggle key would satisfy every payload example below on its first
+    # press and still be the defect `human_replies.rb` names.
+    it "gives each state its own key rather than one key that toggles" do
+      keys = bound_states.map { |bound| bound["key"] }
+
+      expect(keys.uniq.size).to eq(Lain::Review::MARK_STATES.size)
+    end
+
+    it "refuses a state Ruby has no spelling for rather than putting it on the wire" do
+      set_review(%w[one two], 7)
+      outcome = lua(<<~LUA, [review_buffer])
+        local restore = vim.api.nvim_get_current_buf()
+        local seen = false
+        vim.api.nvim_set_current_buf(vim.fn.bufnr(...))
+        local original = vim.rpcrequest
+        vim.rpcrequest = function() seen = true end
+        local ok, err = pcall(vim.cmd, "LainReviewMark revewed")
+        vim.rpcrequest = original
+        vim.api.nvim_set_current_buf(restore)
+        return { sent = seen, ok = ok, err = tostring(err) }
+      LUA
+
+      expect(outcome).to include("sent" => false, "ok" => false)
+      expect(outcome["err"]).to include(*Lain::Review::MARK_STATES)
+    end
+
+    it "refuses :LainReviewMark outside lain://review rather than marking a row nobody looked at" do
+      set_review(%w[one two], 7)
+      sent = lua(<<~LUA)
+        local restore = vim.api.nvim_get_current_buf()
+        local seen = false
+        vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, true))
+        local original = vim.rpcrequest
+        vim.rpcrequest = function() seen = true end
+        pcall(vim.cmd, "LainReviewMark reviewed")
+        vim.rpcrequest = original
+        vim.api.nvim_set_current_buf(restore)
+        return seen
+      LUA
+
+      expect(sent).to be(false)
+    end
+  end
+
   describe "the first render of a session" do
     it "opens the review in its own tabpage and leaves the human where they were" do
       before_tab = lua("return vim.api.nvim_get_current_tabpage()")
@@ -674,6 +757,271 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       set_review(%w[one], 1)
 
       expect(lua("return vim.api.nvim_win_get_width(...)", [sidebar_window])).to eq(40)
+    end
+  end
+end
+
+# T32b's two gestures, crossing the WIRE into a real Ruby process. The block
+# above stubs `vim.rpcrequest` and can therefore only say what lua ATTEMPTED;
+# that is the shape of assertion this chunk has repeatedly shipped green over a
+# subject nobody was talking to. Here a real {Frontend::Neovim} serves the
+# socket, so every layer between the keystroke and the payload is the shipped
+# one -- the runtime as {RuntimeLoader} concatenates it, the {RpcThread}'s
+# select loop, its {Router}'s acked/answered split, and {ReviewWrite}'s judgement
+# of the arguments' SHAPE.
+#
+# The one thing that is not real is the object at the far end of the verdict
+# rail: {Review::Handover} needs a {Review::Session} over a {Review::Changeset},
+# which is a fixture this card has no business building. A recorder is bound
+# there instead, and the assertions are about what reached it, which is exactly
+# the wire this card supplies a caller for.
+#
+# Keys go through `nvim_feedkeys`, never `:normal!` and never `vim.cmd`: the
+# card is a KEYMAP, and both alternatives bypass mapping resolution entirely --
+# an example that ran the command directly would pass against a runtime that
+# binds no keys at all.
+RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :nvim, :seam do
+  around do |example|
+    socket = File.join(Dir.tmpdir, "lain-nvim-gestures-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
+    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
+    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+    @socket = socket
+    example.run
+  ensure
+    @inspector = nil
+    begin
+      Process.kill("TERM", pid)
+      Process.wait(pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
+    end
+    FileUtils.rm_f(socket)
+  end
+
+  let(:channel) { Lain::Channel.new }
+
+  # A recorder, not a double: `wrote_verdict` must ANSWER (nil is "taken", a
+  # String is the refusal the human's command fails with), and what these
+  # examples need to know is what it was handed.
+  let(:review) do
+    Class.new do
+      def initialize = @verdicts = []
+
+      attr_reader :verdicts
+
+      def wrote_annotation(_note) = nil
+
+      def wrote_verdict(verdict)
+        @verdicts << verdict
+        nil
+      end
+    end.new
+  end
+
+  # The SECOND connection, which is how every :nvim spec here observes an editor
+  # the frontend owns: `_G.__lain` is process-wide lua state, so a render posted
+  # from here lands in the same runtime the frontend injected, and the `chan`
+  # upvalue the gestures send on still names the FRONTEND's channel.
+  def inspector = @inspector ||= Neovim.attach_unix(@socket)
+
+  def sidebar = Lain::Frontend::Neovim::ReviewView::NAME
+
+  def wait_until(timeout: 8)
+    deadline = Time.now + timeout
+    result = yield
+    until result
+      raise "timed out waiting for the editor" if Time.now > deadline
+
+      sleep 0.02
+      result = yield
+    end
+    result
+  end
+
+  def set_review(lines, generation)
+    inspector.exec_lua("local lines, gen = ...; _G.__lain.set_review(lines, gen)", [lines, generation])
+  end
+
+  # Seats the cursor in the sidebar and feeds `keys` through nvim's own mapping
+  # resolution. `"x"` executes them before this returns, so the blocking
+  # rpcrequest the map fires has already been answered by the frontend's RPC
+  # thread by the time the example looks at the inbox.
+  def press(keys, row:)
+    inspector.exec_lua(<<~LUA, [sidebar, keys, row])
+      local name, keys, row = ...
+      vim.cmd("buffer " .. name)
+      vim.api.nvim_win_set_cursor(0, { row, 0 })
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+      return true
+    LUA
+  end
+
+  # `pcall`, because the whole point of the ANSWERED rail is that a refusal
+  # arrives as the command's ERROR -- and `Neovim::Client#command` would turn
+  # that into a raise in the spec process rather than a value to assert on.
+  def run(command)
+    inspector.exec_lua(<<~LUA, [command])
+      local ok, err = pcall(vim.cmd, ...)
+      return { ok = ok, err = tostring(err) }
+    LUA
+  end
+
+  def next_command(frontend)
+    wait_until do
+      frontend.command_inbox.pop(true)
+    rescue ThreadError
+      nil
+    end
+  end
+
+  describe "review_mark" do
+    # The payload, end to end: `["review_mark", [line, state, generation]]` is
+    # what `HumanReplies::Gestures#mark_hunk` destructures and what
+    # `human_replies_spec` pushes by hand -- so this is the one example that
+    # says the editor produces the shape every spec on the other side assumes.
+    it "sends the row, the state the key names, and the rendering's stamp" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        set_review(%w[one two], 7)
+        press("x", row: 2)
+
+        expect(next_command(frontend)).to eq(["review_mark", [2, "reviewed", 7]])
+      end
+    end
+
+    it "sends the OTHER state from the other key, on the same row" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        set_review(%w[one two], 7)
+        press("u", row: 2)
+
+        expect(next_command(frontend)).to eq(["review_mark", [2, "unreviewed", 7]])
+      end
+    end
+
+    # THE COUNTER-EXAMPLE THE CARD IS ABOUT. A lua-side toggle passes both
+    # examples above on a first press and diverges only on the second, which is
+    # precisely the failure `human_replies.rb:554-558` describes: a state derived
+    # from a rendering rather than from the human's finger, silently flipping the
+    # wrong way because both values are legal. Twice on one row, twice the same
+    # word.
+    it "sends the same state twice for two presses of one key rather than toggling" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        set_review(%w[one two], 7)
+        press("x", row: 2)
+        press("x", row: 2)
+
+        expect([next_command(frontend), next_command(frontend)])
+          .to eq([["review_mark", [2, "reviewed", 7]], ["review_mark", [2, "reviewed", 7]]])
+      end
+    end
+
+    # T11's stamp, on the mark rail: two renderings of EQUAL HEIGHT, which is
+    # the case a line count cannot tell apart and the reason protocol 8 replaced
+    # one with the other. A payload carrying the count, the first generation, or
+    # nothing at all all read alike against a single render.
+    it "carries the stamp of the rendering on screen, not the one before it" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        set_review(%w[one two], 6)
+        set_review(%w[alpha beta], 7)
+        press("x", row: 1)
+
+        expect(next_command(frontend)).to eq(["review_mark", [1, "reviewed", 7]])
+      end
+    end
+
+    # BUFFER-LOCAL, and `60_question.lua`'s comment says what a global one costs:
+    # `x` is how a human deletes a character, in every file they have open. A map
+    # that escaped the sidebar would break that everywhere AND send a gesture
+    # about a row nobody is looking at, and nothing in the payload examples above
+    # can see either.
+    it "keeps the keys buffer-local, so x in the human's own file still deletes a character" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        set_review(%w[one two], 7)
+        typed = inspector.exec_lua(<<~LUA, [])
+          local buf = vim.api.nvim_create_buf(true, false)
+          vim.api.nvim_set_current_buf(buf)
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "abc" })
+          vim.api.nvim_win_set_cursor(0, { 1, 0 })
+          vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("x", true, false, true), "x", false)
+          return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        LUA
+
+        expect(typed).to eq(["bc"])
+        expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
+      end
+    end
+  end
+
+  describe "review_verdict" do
+    # ONE ARRAY HOLDING THE PAYLOAD. `ReviewWrite.verdict` refuses anything else
+    # BY NAME (`65_review.lua:75-79` records what flat positionals cost), so a
+    # verdict that reaches the recorder at all is a verdict that arrived in the
+    # shape every verb on this rail uses -- and a flat-positional lua half fails
+    # here with that refusal rather than passing quietly.
+    it "hands the verdict to the bound review" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        frontend.bind_changeset_review(review)
+
+        expect(run("LainReviewVerdict approve")).to include("ok" => true)
+        expect(review.verdicts).to eq(["approve"])
+      end
+    end
+
+    # The vocabulary is `Review::VERDICTS` and lua does not restate it, so this
+    # is the example that says so from both sides: nothing reaches the review,
+    # and the sentence the human gets is the one the ONE declaration produced.
+    it "refuses a word the vocabulary does not hold, and tells the human which words it does" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        frontend.bind_changeset_review(review)
+        outcome = run("LainReviewVerdict looks-fine")
+
+        expect(outcome["ok"]).to be(false)
+        expect(outcome["err"]).to include(*Lain::Review::VERDICTS).and include("looks-fine")
+        expect(review.verdicts).to be_empty
+      end
+    end
+
+    # A bare invocation takes the SAME path as a typo, deliberately: lua holds
+    # no vocabulary to check against, so the empty verdict is refused by the
+    # object that owns the words and the human is told what they are.
+    it "refuses an empty verdict by naming the vocabulary rather than sending nothing" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        frontend.bind_changeset_review(review)
+        outcome = run("LainReviewVerdict")
+
+        expect(outcome["ok"]).to be(false)
+        expect(outcome["err"]).to include(*Lain::Review::VERDICTS)
+        expect(review.verdicts).to be_empty
+      end
+    end
+
+    # ANSWERED, and the editor with no review open is the ordinary state of
+    # every session: the command fails with {NoReviewWrites}'s own sentence
+    # rather than acking a verdict nothing recorded.
+    it "fails with the unopened-review sentence when no review is bound" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        outcome = run("LainReviewVerdict approve")
+
+        expect(outcome["ok"]).to be(false)
+        expect(outcome["err"]).to include("no review is open in this editor")
+      end
     end
   end
 end

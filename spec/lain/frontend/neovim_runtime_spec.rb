@@ -361,12 +361,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 9 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 10 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "9" }
-        expect(described_class::PROTOCOL).to eq("9")
+        wait_until { inspector.get_var("lain_rpc_version") == "10" }
+        expect(described_class::PROTOCOL).to eq("10")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end
@@ -494,6 +494,26 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # than a number: b:lain_view stopped naming a view, and the review pair's stamps
       # are what a gesture reads instead of parsing a buffer name apart.
       expect(entry).to include("b:lain_view").and include("b:lain_review_side")
+    end
+
+    # The example above's shape, for the bump T32b owed. Written down for its
+    # reason -- "what protocol 10 added" is a fact about HISTORY, which the
+    # running runtime does not know -- and kept honest by the same two sweeps: a
+    # command named here that the runtime does not define fails the doc sweep in
+    # `spec/plugin/nvim_plugin_spec.rb`, and an entry has to exist at all because
+    # `neovim_spec.rb` pins one per version up to the constant.
+    #
+    # The STATES are read off `Review::MARK_STATES` rather than typed out. An
+    # entry naming `x` and `u` without saying which state each key sends would
+    # document the keys and lose the card: there are two keys precisely because
+    # the state rides the wire, so an entry a TOGGLE would also satisfy has not
+    # recorded the change.
+    it "records in its history what protocol 10 actually bought" do
+      entry = protocol_history["10"]
+      expect(entry).not_to be_nil, "no \"10\" entry: a history that SKIPS a version is worse than none"
+      %w[LainReviewMark LainReviewVerdict].each { |command| expect(entry).to include(":#{command}") }
+      %w[review_mark review_verdict].each { |verb| expect(entry).to include(verb) }
+      expect(entry).to include(*Lain::Review::MARK_STATES).and include("Lain::Review::VERDICTS")
     end
   end
 
