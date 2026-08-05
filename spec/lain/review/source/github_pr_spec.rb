@@ -398,6 +398,16 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
       expect(build.commits.map(&:subject)).to eq(["feature one", "feature two", "feature three"])
     end
 
+    # The sixth message belongs to the object database alone -- a combined diff
+    # carries hunks, never a whole file -- so it is the other message that has to
+    # fetch. Served from the API leg it could only ever answer nil, which reads
+    # as "the base held nothing" and draws a review of a changeset that adds
+    # every file in it.
+    it "fetches to answer for one file, since a combined diff carries no whole file" do
+      expect(build.file_at(head_oid, "shared.rb")).to eq("a\nCHANGED\nc\nd\n")
+      expect(fetch_call).to include("refs/pull/#{number}/head", "origin")
+    end
+
     # The ORDINARY reviewer path is "list the commits, then show me the diff",
     # and the walk is what fetches. Asking GitHub afterwards would be asking for
     # something this repository now holds -- and it made the same pull request

@@ -220,19 +220,30 @@ module Lain
         end
 
         # The diff pair nobody wired ({InboxView::Unwired}'s honesty, one object
-        # over): it answers the one message this view sends it, so no path below
+        # over): it answers the two messages this view sends it, so no path below
         # asks whether a surface exists -- and it refuses, because a navigator
         # with nowhere to open a file must say so rather than report an open
         # that never happened.
+        #
+        # Its sentence is the ACCEPTANCE TEST for T32a and is read as one by
+        # `spec/lain/frontend/neovim_spec.rb`: after that card it must be
+        # unreachable from a review drawn in a real editor -- {Neovim#review_view}
+        # supplies a {ChangesetDiff} -- and still be what a view built with no
+        # diff surface at all answers.
         module Unwired
           module_function
 
           def open(_path, _line) = "no diff surface is wired to this review, so nothing opens from it"
+
+          # Nothing to hold a changeset for, and this is a no-op rather than a
+          # refusal: naming the round is not a gesture a human made, so there is
+          # nobody to tell.
+          def reviewing(_changeset) = nil
         end
 
-        # @param changesets [#open] where a resolved row is opened as the diff
-        #   pair -- T19's surface, which takes `(path, line)` and answers the
-        #   notice saying why it did not open, or nil
+        # @param changesets [#open, #reviewing] where a resolved row is opened as
+        #   the diff pair -- {ChangesetDiff}, which takes `(path, line)` and
+        #   answers the notice saying why it did not open, or nil
         def initialize(changesets: Unwired)
           @changesets = changesets
           @held = [].freeze
@@ -255,6 +266,28 @@ module Lain
             Rendered.new(lines: rows.map(&:text), generation: @generation)
           end
         end
+
+        # Which changeset the rows this view draws BELONG to, forwarded to the
+        # diff surface a `<CR>` opens through.
+        #
+        # It is not held here, and that is the point of forwarding rather than
+        # keeping: this view's state is the rendering HISTORY, and a changeset
+        # kept beside it would be a second answer to "what is under review" free
+        # to disagree with the rows. The diff surface holds exactly one thing and
+        # this is it.
+        #
+        # Sent by whoever opened the round -- {CLI::Command::Review#handover} and
+        # {Tools::RequestReview::Implementation#handover}, the two rails that
+        # build a {Review::Handover} -- because the editor's view pair is built
+        # when the frontend attaches and a review is opened long afterwards.
+        # Under {#render}'s own lock for {#render}'s reason: a gesture resolving
+        # a row while the round is being replaced must see one round or the
+        # other, never a rendering of one against the changeset of the next.
+        #
+        # @param changeset [Review::Changeset] the round the sidebar now shows
+        # @return [void] whatever the diff surface answered, which is nothing on
+        #   both implementations of that duck
+        def reviewing(changeset) = @slot.synchronize { @changesets.reviewing(changeset) }
 
         # The `<CR>` gesture from lain://review (`runtime/46_sidebar.lua`): open
         # the file the cursor sits on, at its first reachable hunk. The LINE

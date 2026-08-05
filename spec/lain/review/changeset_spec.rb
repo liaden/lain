@@ -486,6 +486,132 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
+  # What an editor has to ask before it can DRAW a changeset: which file is this
+  # row, and what did the base hold for it. Neither is answerable from the diff
+  # alone -- it carries the hunks and three lines around them -- so both go
+  # through the source, and getting either wrong draws a diff of the wrong bytes
+  # rather than failing.
+  describe "one file's old side" do
+    subject(:changeset) { described_class.new(source:) }
+
+    let(:blobs) { {} }
+    let(:paths) { ["one.rb"] }
+    let(:diff) { one_file_diff }
+    let(:source) do
+      instance_double(Lain::Review::Source::LocalBranch,
+                      diff: diff.b, commits: [commit_record(sha: "c1", paths:)].freeze,
+                      base_ref: "b" * 40, head_ref: "h" * 40).tap do |double|
+        allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
+      end
+    end
+
+    it "answers the file its identifying path names" do
+      expect(changeset.file("one.rb").status).to eq(:modified)
+    end
+
+    # A gesture can name a row drawn from a changeset that has since been
+    # replaced, so this is an ordinary answer rather than an error -- and it must
+    # not be the NEAREST file, which is what a loose scan would give.
+    it "answers nothing for a path it does not carry" do
+      expect(changeset.file("two.rb")).to be_nil
+      expect(changeset.file("")).to be_nil
+    end
+
+    it "reads the old side at the BASE, one entry per line" do
+      blobs[["b" * 40, "one.rb"]] = "alpha\nbeta\ngamma\n".b
+
+      expect(changeset.old_side(changeset.file("one.rb"))).to eq(%w[alpha beta gamma])
+    end
+
+    # The head is the plausible wrong revision, and it is the one already on
+    # screen: reading it would diff the new side against itself, so the pane
+    # comes up empty and the review looks finished.
+    it "does not read the head, which would diff the new side against itself" do
+      changeset.old_side(changeset.file("one.rb"))
+
+      expect(source).to have_received(:file_at).with("b" * 40, "one.rb")
+      expect(source).not_to have_received(:file_at).with("h" * 40, anything)
+    end
+
+    context "with a renamed file" do
+      let(:paths) { ["from.rb => to.rb"] }
+      let(:diff) do
+        <<~DIFF
+          diff --git a/from.rb b/to.rb
+          similarity index 80%
+          rename from from.rb
+          rename to to.rb
+          --- a/from.rb
+          +++ b/to.rb
+          @@ -1,2 +1,2 @@
+           keep
+          -old
+          +new
+        DIFF
+      end
+
+      # `base:to.rb` resolves nothing -- the file did not exist under that name
+      # at the base -- so a rename read by its identifying path has an empty old
+      # side, which renders as "every line of this file is new".
+      it "reads it at the OLD path, which is the only name the base holds" do
+        blobs[["b" * 40, "from.rb"]] = "keep\nold\n".b
+
+        expect(changeset.old_side(changeset.file("to.rb"))).to eq(%w[keep old])
+      end
+    end
+
+    context "with a file the changeset adds" do
+      let(:paths) { ["new.rb"] }
+      let(:diff) do
+        <<~DIFF
+          diff --git a/new.rb b/new.rb
+          new file mode 100644
+          --- /dev/null
+          +++ b/new.rb
+          @@ -0,0 +1,2 @@
+          +alpha
+          +beta
+        DIFF
+      end
+
+      # An EMPTY old side, and asked of nobody: the base cannot hold a file that
+      # did not exist yet, so a source that answered would be answering about
+      # some other revision.
+      it "answers an empty old side without asking the source for one" do
+        expect(changeset.old_side(changeset.file("new.rb"))).to eq([])
+        expect(source).not_to have_received(:file_at)
+      end
+    end
+
+    # The one case that is neither: the diff says this file has an old side and
+    # the repository cannot produce it. Told apart from the empty old side above,
+    # because "nothing was there" and "this repository cannot answer for its own
+    # diff" need different things from whoever asked.
+    it "answers nothing when the base does not carry a file the diff says it should" do
+      expect(changeset.old_side(changeset.file("one.rb"))).to be_nil
+    end
+
+    # A trailing newline TERMINATES the last line; it does not begin an empty
+    # one. `split("\n", -1)` alone appends a phantom entry to every well-formed
+    # file, which an editor then shows as a changed line at the bottom of it.
+    it "reads a trailing newline as a terminator and an empty file as no lines" do
+      blobs[["b" * 40, "one.rb"]] = "alpha\n".b
+      expect(changeset.old_side(changeset.file("one.rb"))).to eq(["alpha"])
+
+      blobs[["b" * 40, "one.rb"]] = "".b
+      expect(described_class.new(source:).old_side(changeset.file("one.rb"))).to eq([])
+    end
+
+    # A blank line in the middle is content and survives; only the terminator
+    # goes. A per-line `chomp` would take the carriage return with it, and
+    # whether a CR is shown is the display's decision -- see {Changeset#old_side}.
+    it "keeps interior blank lines and a carriage return, which are both content" do
+      blobs[["b" * 40, "one.rb"]] = "alpha\r\n\nbeta\r\n".b
+
+      expect(changeset.old_side(changeset.file("one.rb"))).to eq(["alpha\r", "", "beta\r"])
+    end
+  end
+
   describe "grouping by commit" do
     subject(:changeset) { changeset_over(diff, commits:) }
 
@@ -739,6 +865,28 @@ RSpec.describe Lain::Review::Changeset do
     it "anchors the CRLF file's lines with the carriage return the file holds" do
       crlf = changeset.each_anchor.select { |anchor| anchor.path == "crlf.txt" }
       expect(crlf.map(&:anchor_text)).to eq(["x\r", "CHANGED\r", "z\r"])
+    end
+
+    # The old side WHOLE, against a real object database -- the four shapes an
+    # editor drawing this changeset meets, each of which a plausible wrong
+    # implementation gets wrong in its own way: the modified file (read the head
+    # and the pane is empty), the rename (read the new path and the file reads as
+    # wholly new), the addition (read anything and it is not the base), and the
+    # deletion (whose old side is the entire file).
+    it "reads each file's old side out of the base, at the name the base holds it under" do
+      old = changeset.files.to_h { |file| [file.path, changeset.old_side(file)] }
+
+      expect(old["shared.rb"]).to eq(%w[a b c])
+      expect(old["to.rb"]).to eq(%w[keep old])
+      expect(old["added.rb"]).to eq([])
+      expect(old["gone.rb"]).to eq(%w[one two])
+    end
+
+    # The carriage return survives the round trip through git, which is what
+    # makes it the DISPLAY's decision downstream rather than a byte this tier
+    # already threw away.
+    it "keeps the CRLF file's carriage returns in its old side" do
+      expect(changeset.old_side(changeset.file("crlf.txt"))).to eq(["x\r", "y\r", "z\r"])
     end
 
     # AC 4.

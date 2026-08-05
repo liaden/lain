@@ -57,9 +57,12 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
   # rather than a tautology.
   def recorder(answer: nil)
     calls = []
+    rounds = []
     Object.new.tap do |port|
       port.define_singleton_method(:calls) { calls }
+      port.define_singleton_method(:rounds) { rounds }
       port.define_singleton_method(:open) { |path, line| calls.push([path, line]) && answer }
+      port.define_singleton_method(:reviewing) { |changeset| rounds.push(changeset) && nil }
     end
   end
 
@@ -296,6 +299,60 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       outcome = detached.open(1, generation: rendered.generation)
 
       expect(outcome).to have_attributes(opened?: false, report: "no editor is attached")
+    end
+  end
+
+  # T32a's wiring, from this side. The diff surface holds the round and this
+  # view holds the renderings, so the changeset has to cross once per round --
+  # and it is FORWARDED rather than kept here, because a changeset beside the
+  # rendering history would be a second answer to "what is under review".
+  describe "which changeset the rows belong to" do
+    let(:round) { changeset(files: [file_entry(path: "lib/a.rb")]) }
+
+    it "hands the round to the diff surface a row is opened through" do
+      view.reviewing(round)
+
+      expect(opener.rounds).to eq([round])
+    end
+
+    it "keeps nothing of its own, so nothing here can disagree with the rows" do
+      view.reviewing(round)
+
+      expect(view.instance_variables).not_to include(:@changeset)
+    end
+
+    # A second review in one editor: the LAST round is the one a row opens
+    # against, or the human presses a row of the changeset they can see and
+    # lands in a file from the one before it.
+    it "replaces the round rather than accumulating them" do
+      second = changeset(files: [file_entry(path: "lib/b.rb")])
+
+      view.reviewing(round)
+      view.reviewing(second)
+
+      expect(opener.rounds.last).to equal(second)
+    end
+  end
+
+  # The OTHER direction of T32a's acceptance test, and the reason this group
+  # exists at all: {Lain::Frontend::Neovim#review_view} now supplies a
+  # {Lain::Frontend::Neovim::ChangesetDiff}, so this sentence must be
+  # unreachable from a review drawn in a real editor -- and it must still be
+  # what a view built with no diff surface answers, because a navigator with
+  # nowhere to open a file has to say so rather than report an open that never
+  # happened.
+  describe "a view built with no diff surface at all" do
+    subject(:view) { described_class.new }
+
+    it "refuses the open gesture in words" do
+      rendered = view.render(changeset(files: [file_entry(path: "lib/a.rb")]), scope: :cumulative)
+
+      expect(view.open(1, generation: rendered.generation))
+        .to have_attributes(opened?: false, report: a_string_including("no diff surface is wired"))
+    end
+
+    it "takes the round without complaint, because naming it is wiring and not a gesture" do
+      expect(view.reviewing(changeset)).to be_nil
     end
   end
 

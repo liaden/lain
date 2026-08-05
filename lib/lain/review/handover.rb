@@ -67,6 +67,12 @@ module Lain
         def self.marks(_line, **)
           Frontend::Neovim::ReviewView::Marked.new(hunk_keys: [].freeze, report: NO_EDITOR)
         end
+
+        # No view, so nothing to tell which changeset its rows belong to. A
+        # no-op rather than a refusal, {Frontend::Neovim::ReviewView::Unwired#reviewing}'s
+        # reading: naming the round is a wiring step and not a gesture, so there
+        # is no human owed a sentence when it reaches nobody.
+        def self.reviewing(_changeset) = nil
       end
 
       # No docent, so a question about a hunk reaches nobody. A docent is

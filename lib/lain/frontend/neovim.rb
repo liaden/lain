@@ -253,9 +253,21 @@ module Lain
       # @return [Lain::Review::Surface::Neovim]
       def review_surface = @review_surface ||= Lain::Review::Surface::Neovim.new(rpc: @rpc, view: review_view)
 
-      # @return [ReviewView] the sidebar's rendering history, and the
-      #   line -> row index a `review_open` or `review_mark` resolves against
-      def review_view = @review_view ||= ReviewView.new
+      # The sidebar's rendering history, the line -> row index a `review_open` or
+      # `review_mark` resolves against, and -- through {ChangesetDiff} -- where a
+      # `<CR>` on a row actually lands.
+      #
+      # The diff surface is wired HERE and only here (T32a), which is what makes
+      # {ReviewView::Unwired}'s refusal unreachable from a review drawn in a real
+      # editor: it is built with the inlet this frontend already owns, so no
+      # caller has to assemble one, and a caller that did would get a second view
+      # whose stamps this one's gestures could never resolve (see
+      # {#review_surface} for the whole of that argument). What the caller
+      # supplies instead is the CHANGESET, through {ReviewView#reviewing}, once
+      # per round.
+      #
+      # @return [ReviewView]
+      def review_view = @review_view ||= ReviewView.new(changesets: ChangesetDiff.new(rpc: @rpc))
 
       # The changeset review this editor WRITES to (T11): the object whose
       # answer is what a `review_annotate` or `review_verdict` `:w` succeeds or
@@ -529,6 +541,7 @@ require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
 require_relative "neovim/question_view"
+require_relative "neovim/changeset_diff"
 require_relative "neovim/review_view"
 require_relative "neovim/thread_view"
 # LAST: it builds the three views above, so every one of them must exist by the

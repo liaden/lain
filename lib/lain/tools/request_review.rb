@@ -626,8 +626,17 @@ module Lain
         # to: a surface holds no review state and exposes no rendering, while a
         # gesture's row number is only resolvable by the view that STAMPED the
         # rendering it came from. The wiring passes one object to both.
+        #
+        # `reviewing` is the other half of that one wiring (T32a): the view's
+        # diff surface is built with the editor and holds no round, so a `<CR>`
+        # on a sidebar row opens nothing until the changeset reaches it from
+        # whoever opened one. Sent on the same line of reasoning as the bind
+        # below -- before anything is drawn, because a row the human can see is a
+        # row they can press.
         def handover(session, token, written)
-          Review::Handover.new(session:, view: @seams.view,
+          view = @seams.view
+          view.reviewing(session.changeset)
+          Review::Handover.new(session:, view:,
                                baton: Baton::Held.new(review: @review, token:, written:))
         end
 

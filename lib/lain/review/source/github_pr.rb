@@ -293,6 +293,18 @@ module Lain
         #   {LocalBranch#diff}'s reason
         def diff = @diff ||= locally_answerable? ? from_object_database(DiffOrigin.already_local) : from_api
 
+        # Delegated like {#base_ref} and {#commits}, and for the sharper half of
+        # their reason: one file at one revision is a question only the object
+        # database answers, so asking it is what forces the fetch. The API leg
+        # could not serve it in any case -- a combined diff carries hunks, never
+        # whole files.
+        #
+        # @param revision [String] a commit-ish
+        # @param path [String] repository-relative
+        # @return [String, nil] the file's bytes, or nil when that revision
+        #   carries no such path
+        def file_at(revision, path) = local.file_at(revision, path)
+
         # @return [DiffOrigin] where {#diff} came from. Asking forces the diff,
         #   because until it has been answered there is nothing to report.
         def diff_origin

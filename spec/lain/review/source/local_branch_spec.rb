@@ -317,6 +317,42 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # The port's sixth message, where the fixture's own bytes are known. The
+  # portable group can only say that a revision reads back SOMETHING; here the
+  # exact old side is a constant, which is what tells a source reading the right
+  # blob from one reading a plausible neighbour.
+  describe "#file_at" do
+    it "answers the base's bytes for a file the changeset modifies, not the head's" do
+      expect(source.file_at(source.base_ref, "shared.rb")).to eq("a\nb\nc\n")
+      expect(source.file_at(source.head_ref, "shared.rb")).to eq("a\nCHANGED\nc\n")
+    end
+
+    # The working tree is a THIRD thing, and it is the one a naive `File.read`
+    # would answer with. An untracked file is in it and in no revision at all, so
+    # a source reading the disk instead of the object database is caught here
+    # rather than the day somebody reviews a branch with uncommitted work.
+    it "reads the object database and not the working tree" do
+      File.write(File.join(@repo, "untracked.rb"), "never committed\n")
+
+      expect(source.file_at(source.head_ref, "untracked.rb")).to be_nil
+    end
+
+    # A file whose old side is EMPTY is not the same fact as a file with no old
+    # side, and the two must not collapse: the first opens as a diff against
+    # nothing, the second is a file the changeset adds.
+    it "tells an empty file apart from an absent one" do
+      commit("an empty file", "empty.rb" => "")
+      moved = described_class.new(base: "base", repo_root: @repo)
+
+      expect(moved.file_at(moved.head_ref, "empty.rb")).to eq("")
+      expect(moved.file_at(moved.base_ref, "empty.rb")).to be_nil
+    end
+
+    it "answers a path whose name is not valid UTF-8 without raising" do
+      expect(source.file_at(source.head_ref, "no/such\xFF/path.rb".b)).to be_nil
+    end
+  end
+
   describe "#commits" do
     it "returns them oldest-first" do
       expect(source.commits.map(&:sha)).to eq([@first, @second])

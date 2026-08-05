@@ -178,8 +178,17 @@ module Lain
         # nothing), and no wiring in this tree constructs a
         # {Review::Docent} -- so `ask` answers {Review::Handover::Unattended}'s
         # sentence rather than a silence.
+        #
+        # `reviewing` is what makes `<CR>` open anything (T32a): the view's diff
+        # surface is built with the editor and holds no round, so the changeset
+        # has to arrive from whoever opened one. Sent HERE, beside the bind, for
+        # the bind's own reason -- both are wiring that must be complete before
+        # the sidebar is drawn, because a human fast enough to press `<CR>`
+        # between the two would otherwise be told this review opens nothing.
         def handover(session, env)
-          Lain::Review::Handover.new(session:, view: env.replies.review_view)
+          view = env.replies.review_view
+          view.reviewing(session.changeset)
+          Lain::Review::Handover.new(session:, view:)
         end
 
         # A String answer is the surface's REFUSAL (`spec/support/shared_examples/

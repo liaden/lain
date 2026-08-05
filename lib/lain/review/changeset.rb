@@ -140,6 +140,45 @@ module Lain
       # @return [Array<Hunk>]
       def hunks = @hunks ||= files.flat_map(&:hunks).freeze
 
+      # One file, by the path that IDENTIFIES it -- {ChangedFile#path}, which is
+      # the new path wherever there is one. Indexed rather than scanned because
+      # the caller is a human's keystroke and §3.7 measured a real changeset at
+      # 810 files.
+      #
+      # @param path [String]
+      # @return [ChangedFile, nil] nil when this changeset carries no such file,
+      #   which is a real answer rather than an error: a gesture can name a row
+      #   drawn from a changeset that has since been replaced
+      def file(path) = by_path[path.to_s]
+
+      # The file as the BASE held it, line by line -- what an editor draws
+      # opposite the working copy, and the one question a diff cannot answer for
+      # itself (it carries the hunks and three lines around them, never the whole
+      # side).
+      #
+      # Read against the file's OLD path, which is the whole reason this is a
+      # method here rather than a `file_at` call at the caller: a renamed file's
+      # old side lives at `base_ref:old_path`, and naming the new path there
+      # resolves nothing while still looking like a well-formed request.
+      #
+      # Split on newlines and NOT chomped, because the carriage return is
+      # somebody else's decision: whoever displays this is diffing it against a
+      # working copy whose line endings the editor has already read, and a
+      # changeset that genuinely CONVERTED a file's endings must show that rather
+      # than have it quietly stripped here.
+      #
+      # @param file [ChangedFile] one of {#files}
+      # @return [Array<String>, nil] the lines; `[]` for a file this changeset
+      #   ADDS, which has an empty old side rather than no old side; nil when the
+      #   base does not carry the path at all, which is a repository that cannot
+      #   answer for its own diff
+      def old_side(file)
+        return [] if file.old_path.nil?
+
+        bytes = @source.file_at(base_ref, file.old_path)
+        lines(bytes) unless bytes.nil?
+      end
+
       # @return [Enumerator] over {#files}, which is what makes this Enumerable.
       #   Blockless, it parses nothing -- the same promise {#each_anchor} makes,
       #   and worth making twice: a caller holding an `Enumerable` cannot tell
@@ -208,6 +247,22 @@ module Lain
       end
 
       private
+
+      # A file two paths could somehow collide on keeps the FIRST, matching the
+      # diff's own order -- `to_h` would keep the last, and a changeset naming a
+      # path twice is a defect nobody should have their gesture resolved by.
+      def by_path = @by_path ||= files.reverse.to_h { |file| [file.path, file] }.freeze
+
+      # One buffer line per line the base held. A trailing newline TERMINATES the
+      # last line rather than starting an empty one, which is how an editor reads
+      # the same file -- `split("\n", -1)` alone would append a phantom line to
+      # every well-formed file and report the whole side as changed.
+      #
+      # `delete_suffix`, never `chomp("\n")`: chomp treats that argument as the
+      # RECORD separator and strips a trailing "\r\n" whole, so a CRLF file would
+      # lose the one carriage return this method promises not to touch -- and
+      # only that one, which is a last line that differs from every line above it.
+      def lines(bytes) = bytes.delete_suffix("\n").split("\n", -1).freeze
 
       # The Enumerator's size block, and the reason there is one: with no block
       # at all `#size` answers `nil`, which a reader takes for "empty". A size

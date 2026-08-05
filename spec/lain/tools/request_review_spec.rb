@@ -116,6 +116,26 @@ class RecordingBindings
   end
 end
 
+# The `view:` seam, recorded: {Lain::Frontend::Neovim::ReviewView}'s two wiring
+# and gesture messages, of which only the first is reachable from this tool.
+# Recorded rather than doubled so "which changeset crossed" is an observation --
+# the marked view of one and the changeset itself both answer `#files`, and only
+# one of them can answer for a file's old side.
+class RecordingReviewRows
+  attr_reader :rounds
+
+  def initialize = (@rounds = [])
+
+  def reviewing(changeset)
+    @rounds << changeset
+    nil
+  end
+
+  def open(_line, **) = raise("no gesture arrives in this group")
+
+  def marks(_line, **) = raise("no gesture arrives in this group")
+end
+
 # {Lain::Review::Surface}'s port, recorded. Built to satisfy `Surface.check!`
 # rather than to satisfy the tool -- the tool hands its surface straight to
 # `Session.open`, so a double answering less than the port would pass here and
@@ -743,6 +763,25 @@ RSpec.describe Lain::Tools::RequestReview do
 
       expect(surface.presented.map(&:last)).to eq([:cumulative])
       expect(surface.presented.first.first.files.map(&:path)).to eq(%w[a.rb b.rb])
+    end
+
+    # T32a: the epic rail's half of the diff wiring. The view resolves a row to a
+    # path, and the diff surface behind it needs the CHANGESET to read that
+    # file's old side off -- so a `<CR>` on a row of an epic's implementation
+    # review opens nothing at all unless this crosses.
+    #
+    # The UNMARKED changeset, which is the only one that can answer for an old
+    # side: `present` gets the marked VIEW of it (a joined value with no source
+    # behind it), and handing that one over instead would reach an object which
+    # answers no such question.
+    it "tells the view which changeset its rows belong to, so a row can be opened" do
+      drawn = RecordingReviewRows.new
+
+      settled_implementation(changeset_tool(view: drawn))
+
+      expect(drawn.rounds.size).to eq(1)
+      expect(drawn.rounds.first.files.map(&:path)).to eq(%w[a.rb b.rb])
+      expect(drawn.rounds.first.base_ref).to eq("b" * 40)
     end
 
     # The document half binds before it tells the editor for this reason and

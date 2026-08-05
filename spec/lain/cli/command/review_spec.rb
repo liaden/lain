@@ -46,18 +46,37 @@ class ReviewCommandRail
   def attached? = true
 end
 
+# The one message the diff pair sends the editor, recorded rather than sent.
+# Its own class for {ReviewCommandRail}'s reason: a class declared in another
+# spec file is one `parallel_tests` may hand to another worker entirely.
+class ReviewCommandInlet
+  attr_reader :posted
+
+  def initialize = (@posted = [])
+
+  def open_changeset(path, old_lines, line, revisions)
+    @posted << { path:, old_lines:, line:, revisions: }
+    nil
+  end
+end
+
 # The frontend, reduced to the three messages {Lain::CLI::HumanReplies} asks of
-# one. The surface is the REAL text surface and the view the REAL sidebar view,
-# for `wiring_spec.rb`'s reason: what is under test is whether the command
-# reaches THESE, and a double answering the port would be indistinguishable from
-# {Lain::Review::Surface::Null}.
+# one. The surface is the REAL text surface, the view the REAL sidebar view and
+# its diff surface the REAL {Lain::Frontend::Neovim::ChangesetDiff} (T32a), for
+# `wiring_spec.rb`'s reason: what is under test is whether the command reaches
+# THESE, and a double answering the port would be indistinguishable from
+# {Lain::Review::Surface::Null}. Only the INLET is recorded, because its far
+# side is an editor and this group has none.
 class ReviewCommandEditor
   def initialize(sink)
-    @view = Lain::Frontend::Neovim::ReviewView.new
+    @inlet = ReviewCommandInlet.new
+    @view = Lain::Frontend::Neovim::ReviewView.new(
+      changesets: Lain::Frontend::Neovim::ChangesetDiff.new(rpc: @inlet)
+    )
     @surface = Lain::Review::Surface::Text.new(sink:)
   end
 
-  attr_reader :bound
+  attr_reader :bound, :inlet
 
   def review_surface = @surface
   def review_view = @view
@@ -332,13 +351,40 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(rail.refusals.first).to include("no rendering stamp")
     end
 
-    # The two the card scoped out, asserted as REFUSALS rather than left
-    # untested: {Lain::Frontend::Neovim::ReviewView::Unwired} answers the diff
-    # pair nobody built and {Lain::Review::Handover::Unattended} the docent no
-    # wiring constructs, so both gestures reach a human with a sentence instead
-    # of vanishing. Pinned here so the day either is wired, this example is what
-    # fails and names the row.
-    it "refuses an open gesture in words, because no diff pair is wired to this review yet" do
+    # THE FIRST LINK OF THE WHOLE GESTURE CHAIN (T32a), and the one this rail
+    # was missing: `<CR>` -> `review_open` -> {Lain::Review::Handover#open} ->
+    # the view -> the diff surface -> the editor. It used to end at
+    # {Lain::Frontend::Neovim::ReviewView::Unwired}'s refusal, which meant no
+    # diff buffer was ever created -- and since `47_diff.lua`'s `pair()` is what
+    # stamps those buffers, `:LainNote` had nowhere to place a note either.
+    #
+    # The OLD SIDE is what the assertion is about, not that a post happened: the
+    # changeset here is a real one over a real repository, `README` genuinely
+    # read `seed` at the base and reads `seed` plus a line now, so an
+    # implementation posting the new side, the working tree, or nothing at all
+    # is a different value rather than the same green.
+    it "opens the row's file as a diff pair, old side and both revisions, with nothing refused" do
+      attached
+      command.call("feature", env)
+      rendering = sidebar
+
+      gestured(["review_open", [row_of(rendering, "README"), rendering.generation]]) do
+        editor.inlet.posted.any?
+      end
+
+      session = editor.bound.session
+      expect(editor.inlet.posted)
+        .to eq([{ path: "README", old_lines: ["seed"], line: 1,
+                  revisions: { "old" => session.changeset.base_ref, "new" => session.changeset.head_ref } }])
+      expect(rail.refusals).to be_empty
+    end
+
+    # The card's other half: a review whose diff surface nobody wired still says
+    # so rather than dropping the gesture. Same command, same rail, an editor
+    # built the way every one in this tree was before T32a.
+    it "refuses an open gesture in words when the editor has no diff surface at all" do
+      unwired = Lain::Frontend::Neovim::ReviewView.new
+      editor.define_singleton_method(:review_view) { unwired }
       attached
       command.call("feature", env)
       rendering = sidebar
@@ -346,6 +392,7 @@ RSpec.describe Lain::CLI::Command::Review do
       gestured(["review_open", [row_of(rendering, "README"), rendering.generation]]) { rail.refusals.any? }
 
       expect(rail.refusals.first).to include("no diff surface is wired")
+      expect(editor.inlet.posted).to be_empty
     end
 
     it "refuses an ask gesture in words, because no docent is wired to this review yet" do

@@ -91,6 +91,33 @@ module Lain
         #   measured, a `git show` per commit would be the dominant cost.
         def commits = @commits ||= parse_log(log_output).freeze
 
+        # One file, as one revision holds it -- the port's SIXTH message, and
+        # the only one that answers about a single path rather than about the
+        # whole changeset.
+        #
+        # It exists because a diff is not enough to DRAW one: an editor showing
+        # the old side against the new needs the whole old file, and a unified
+        # diff carries only the hunks and three lines around them. T32a's diff
+        # opener is the caller, and reading the blob HERE rather than there is
+        # what keeps every git invocation in this repository behind one method
+        # -- the argv form, the config pins and the env scrub included.
+        #
+        # A path the revision does not carry answers nil rather than raising:
+        # "this file did not exist yet" is an ordinary fact about an added file,
+        # and the caller distinguishing an empty old side from a missing one is
+        # what makes it a fact rather than an error.
+        #
+        # @param revision [String] a commit-ish; {#base_ref} and {#head_ref} are
+        #   the two this port resolves
+        # @param path [String] repository-relative, as the diff spells it
+        # @return [String, nil] the file's bytes, binary-encoded for {#diff}'s
+        #   reason -- a file carries whatever bytes it carries, and a latin-1
+        #   one must not raise on its way to a buffer
+        def file_at(revision, path)
+          shell = git("show", "--end-of-options", "#{revision}:#{path}")
+          shell.exitstatus.zero? ? shell.stdout.b.freeze : nil
+        end
+
         # The port's fifth message, answered by the source that never asks
         # anyone: the objects are in the local database and nothing fell back to
         # them, which is exactly what {DiffOrigin.already_local} says.

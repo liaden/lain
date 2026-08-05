@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-# The changeset-source port. A source answers four messages -- #diff, #commits,
-# #base_ref and #head_ref -- and every implementation must pass this group
-# unchanged. {Lain::Review::Source::LocalBranch} is the first; a GitHub PR source
+# The changeset-source port. A source answers six messages -- #diff, #commits,
+# #base_ref, #head_ref, #diff_origin and #file_at -- and every implementation
+# must pass this group unchanged. {Lain::Review::Source::LocalBranch} is the first; a GitHub PR source
 # is the second, and the point of writing the contract here rather than inside
 # either spec is that the second one is held to it without renegotiation.
 #
@@ -77,6 +77,16 @@ RSpec.shared_examples "a review changeset source" do |config|
   def declared_binary_paths(diff)
     diff.scan(%r{^Binary files (?:a/(.+?)|/dev/null) and (?:b/(.+?)|/dev/null) differ$})
         .flatten.compact.to_set { |path| decoded(path) }
+  end
+
+  # The paths this changeset ADDS, read out of the diff's own text: an added
+  # file's old side is `/dev/null`, which is the one thing in a unified diff that
+  # says "this path did not exist at the base" without asking the source
+  # anything. That makes it the portable way to hold #file_at against a revision
+  # it must NOT read from.
+  def added_paths(diff)
+    file_sections(diff).select { |section| section.include?("\n--- /dev/null\n") }
+                       .map { |section| decoded(section[%r{^diff --git a/.+? b/(.+?)$}, 1]) }
   end
 
   # A rename reaches a numstat path as `old => new` or `pre/{old => new}/post`.
@@ -193,6 +203,55 @@ RSpec.shared_examples "a review changeset source" do |config|
     # every caller downstream reads the diff more than once.
     it "answers the same bytes when asked twice" do
       expect(changeset_source.diff).to eq(changeset_source.diff)
+    end
+  end
+
+  # The sixth message: one file, as one revision holds it. A diff cannot be drawn
+  # from -- it carries the hunks and three lines around them, never the whole old
+  # side -- so every editor rendering a changeset asks this, and the port owes an
+  # answer rather than each renderer owing a repository.
+  describe "#file_at" do
+    it "answers nothing for a path no revision carries, rather than raising or inventing bytes" do
+      expect(changeset_source.file_at(changeset_source.base_ref, "no/such/path/in/any/revision.txt")).to be_nil
+    end
+
+    # Every path a diff names exists on at least one of its two sides -- that is
+    # what makes it a changed file rather than a header. A source that answered
+    # nil for everything, or that read some third revision, fails here.
+    it "reads every path the diff names on at least one of the two sides" do
+      sides = diff_paths(changeset_source.diff).to_h do |path|
+        [path, [changeset_source.file_at(changeset_source.base_ref, path),
+                changeset_source.file_at(changeset_source.head_ref, path)].compact]
+      end
+
+      expect(sides).not_to be_empty
+      expect(sides.reject { |_, found| found.empty? }).to eq(sides)
+    end
+
+    # THE example that says #file_at reads the revision it was GIVEN. A file the
+    # changeset adds exists at the head and does not exist at the base, so a
+    # source ignoring its revision argument -- reading the working tree, or the
+    # head always -- passes everything above and fails this.
+    it "answers an added file at the head and nothing for it at the base" do
+      added = added_paths(changeset_source.diff)
+      skip "the changeset under test adds no file" if added.empty?
+
+      aggregate_failures do
+        added.each do |path|
+          expect(changeset_source.file_at(changeset_source.head_ref, path)).to be_a(String)
+          expect(changeset_source.file_at(changeset_source.base_ref, path)).to be_nil
+        end
+      end
+    end
+
+    # #diff's rule, for #diff's reason: a file carries whatever bytes it carries,
+    # and a latin-1 one must not raise on its way to whatever draws it.
+    it "answers raw bytes" do
+      path = diff_paths(changeset_source.diff).first
+      bytes = changeset_source.file_at(changeset_source.head_ref, path) ||
+              changeset_source.file_at(changeset_source.base_ref, path)
+
+      expect(bytes.encoding).to eq(Encoding::ASCII_8BIT)
     end
   end
 

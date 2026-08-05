@@ -626,6 +626,41 @@ RSpec.describe Lain::Frontend::Neovim do
       expect(frontend.review_surface).to equal(frontend.review_surface)
       expect(frontend.review_view).to equal(frontend.review_view)
     end
+
+    # The round the gesture below resolves against: a REAL changeset, because
+    # what the diff surface reads off one -- the file, its old side, both
+    # revisions -- is exactly what a double would be free to invent.
+    def round
+      text = "diff --git a/lib/a.rb b/lib/a.rb\n--- a/lib/a.rb\n+++ b/lib/a.rb\n@@ -1 +1 @@\n-old\n+new\n"
+      stat = Lain::Review::Source::FileStat.new(path: "lib/a.rb", added: 1, deleted: 1)
+      commit = Lain::Review::Source::Commit.new(sha: "c1", subject: "s", body: "", numstat: [stat].freeze)
+      source = instance_double(Lain::Review::Source::LocalBranch,
+                               diff: text.b, commits: [commit].freeze,
+                               base_ref: "b" * 40, head_ref: "h" * 40)
+      allow(source).to receive(:file_at).and_return("old\n".b)
+      Lain::Review::Changeset.new(source:)
+    end
+
+    # T32a's acceptance test, from the one place that decides it. The pair is a
+    # TRIO now: the view is built with a {Lain::Frontend::Neovim::ChangesetDiff}
+    # over this editor's own inlet, so a `<CR>` on a row REACHES something.
+    # Before this, `changesets:` was {Lain::Frontend::Neovim::ReviewView::Unwired}
+    # in every real process, and that refusal was the whole of what a `<CR>` in
+    # the editor's review could do.
+    #
+    # Asserted through the gesture rather than by naming the collaborator's
+    # class: what has to be true is that a wired review cannot produce that
+    # sentence, and an implementation wiring the wrong object would name the
+    # right class and still refuse.
+    it "wires the diff surface a row opens through, so the unwired refusal is unreachable" do
+      frontend.review_view.reviewing(round)
+      frontend.review_surface.present(changeset, scope: :cumulative)
+
+      opened = frontend.review_view.open(1, generation: 1)
+
+      expect(opened).to have_attributes(opened?: true, path: "lib/a.rb")
+      expect(opened.report).not_to include("no diff surface is wired")
+    end
   end
 
   # T28 review fix: the protocol contract, pinned WITHOUT an editor -- which is the

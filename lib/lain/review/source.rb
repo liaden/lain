@@ -4,9 +4,9 @@ module Lain
   module Review
     # The changeset-source port: where a reviewable changeset comes from.
     #
-    # A source answers five messages -- {LocalBranch#diff}, {LocalBranch#commits},
-    # {LocalBranch#base_ref}, {LocalBranch#head_ref} and {LocalBranch#diff_origin}
-    # -- and the shared example
+    # A source answers six messages -- {LocalBranch#diff}, {LocalBranch#commits},
+    # {LocalBranch#base_ref}, {LocalBranch#head_ref}, {LocalBranch#diff_origin}
+    # and {LocalBranch#file_at} -- and the shared example
     # group `"a review changeset source"` (spec/support/shared_examples/review_source.rb)
     # is the contract, not this comment. A local branch and a GitHub pull request
     # are the two implementations, and everything downstream -- the parser, the
@@ -23,6 +23,16 @@ module Lain
     # from", and {LocalBranch} gives it. The conditional is gone, and with it a
     # live defect -- the guard was tested on one leg only, and an ordinary pull
     # request rendered a fallback note with an empty reason.
+    #
+    # == The sixth message, and why a diff is not enough
+    #
+    # {LocalBranch#file_at} is the one message about a single PATH rather than
+    # about the whole changeset, and it is here because a unified diff cannot be
+    # DRAWN from. An editor showing the old side beside the new needs the whole
+    # old file; a diff carries the hunks and three lines around them. Every
+    # consumer of that is a renderer, so the read belongs to the source that
+    # already knows where the bytes live rather than to a renderer that would
+    # have to be handed a repository to find out.
     #
     # == Refusals here are RAISED, unlike {Forge::Gh}'s
     #
