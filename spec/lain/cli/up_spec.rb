@@ -433,17 +433,24 @@ RSpec.describe Lain::CLI::Up do
 
         cockpit_up(calls, nvim: "", paths:).call
 
+        # `silent! LainStart`, NOT `if exists(':LainStart') | LainStart | endif`,
+        # which this example used to pin and which nvim 0.12 rejects outright:
+        # `-c` takes ONE Ex command, so every bar-chained form dies on E488 at
+        # the first `|`. The cockpit came up on nvim's "Press ENTER" prompt, so
+        # it never served its socket and `chat --nvim` waited forever. This
+        # example asserted the broken string for as long as it existed -- see
+        # `Up::Cockpit#nvim_pane_command`.
         expect(new_session_call(calls).last)
           .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
-                                  "-c", "if exists(':LainStart') | LainStart | endif"]))
+                                  "-c", "silent! LainStart"]))
         expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
       end
     end
 
     # T2: the gem's own plugin/nvim ships the layout sugar this AC is about --
     # putting it on the pane's runtimepath is what makes :LainStart exist with
-    # zero user config, and the exists() guard (asserted above) is what keeps
-    # a bare `nvim --listen` unharmed either way.
+    # zero user config, and `silent!` (asserted above) is what keeps a bare
+    # `nvim --listen` unharmed either way.
     it "puts the gem's plugin/nvim directory on the runtimepath, guarded ahead of --listen" do
       calls = []
 

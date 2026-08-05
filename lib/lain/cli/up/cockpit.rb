@@ -35,12 +35,21 @@ module Lain
         # injection (`--cmd`, evaluated before nvim sources rtp `plugin/`
         # files -- the same seam `spec/plugin/nvim_plugin_spec.rb`'s
         # `boot_nvim` uses to load the plugin headless) is what makes
-        # :LainStart exist with zero user config; the exists() guard is what
-        # keeps a bare `nvim --listen` unharmed either way, plugin present or
-        # not.
+        # :LainStart exist with zero user config; `silent!` is what keeps a
+        # bare `nvim --listen` unharmed either way, plugin present or not.
+        #
+        # `silent!` and NOT `if exists(':LainStart') | LainStart | endif`, which
+        # is the idiom this wanted and which nvim 0.12 rejects: `-c` takes ONE Ex
+        # command, so every bar-chained form dies on `E488: Trailing characters`
+        # at the first `|` -- measured 2026-08-05 across `if|endif`, `try|endtry`
+        # and even `execute "...|..."`, with and without the plugin on the rtp.
+        # The cost was total rather than cosmetic: nvim came up on the "Press
+        # ENTER or type command to continue" prompt, so it never served its
+        # socket, so `chat --nvim` sat in ep_poll forever and the cockpit was
+        # dead on arrival. `silent!` swallows E492 when the plugin is absent,
+        # which is the whole of what the guard was for.
         def nvim_pane_command
-          Shellwords.join(["nvim", *rtp_flag, "--listen", socket,
-                           "-c", "if exists(':LainStart') | LainStart | endif"])
+          Shellwords.join(["nvim", *rtp_flag, "--listen", socket, "-c", "silent! LainStart"])
         end
 
         def chat_flags = ["--nvim", socket]
