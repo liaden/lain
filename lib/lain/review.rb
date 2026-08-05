@@ -36,3 +36,9 @@ require_relative "review/session"
 # `Epic` already requires `epic/review/annotations` the same way. Last, because
 # `Projection::Diagnostics` cites `ANNOTATION_KINDS` while its class body runs.
 require_relative "review/projection/diagnostics"
+
+# The second and last line the diagnostics capability costs, and it is here for
+# the same reason its sibling above has no index: `Review::Prefill` is deletable,
+# and deleting `projection/diagnostics` forces deleting it too -- its rank map
+# derives from that one's while its class body runs, so it must load after.
+require_relative "review/prefill"

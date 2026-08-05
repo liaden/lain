@@ -2,6 +2,7 @@
 description: Review what the user has put forward — research, a plan, a PR/MR, staged code, or the changes after finishing a plan — as a persona panel, ranked findings, without touching the tree. Use when asked to critique or review, not to implement.
 slots:
   - focus
+  - sidecar
 ---
 # critique
 
@@ -35,3 +36,5 @@ one voice. Rank every finding **BLOCKER / SHOULD-FIX / NIT** and end with a verd
 names the exact file, line, and the invariant it breaks — a finding the author cannot act on
 is a NIT at best. Say what is *good* too: a critique that only lists faults miscalibrates the
 author on what to preserve.
+
+<%= render("sidecar") %>
