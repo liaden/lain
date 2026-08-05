@@ -531,6 +531,24 @@ it was deferred.
     user gets the editor for questions and the terminal for approvals, with no sign in the editor that
     anything is waiting.
 
+29. **Every `lain review` run leaves a session the session lister calls "unreadable".** Found by the
+    manual pass, 2026-08-05. `lain sessions` reports
+    `20260805T135507-31557.ndjson  ?  0 turns  unreadable  -` beside the real chat sessions. The file
+    is not corrupt — it is 291 bytes of **valid** JSON holding exactly one record, `changeset_opened`.
+    What it lacks is the `{"type":"session", …}` header every readable session opens with, so the
+    lister cannot classify it and falls through to "unreadable".
+
+    That is the same shape the exe already names for the bench tier — *"a header-less bench journal is
+    not a session"* — reappearing on the review rail, and the word is the problem: a journal of a
+    different **kind** is being reported as a journal that is **damaged**, which is exactly what a
+    human checks after a crash. Either `lain review` should not write into the sessions directory, or
+    the lister should recognise a review journal and label it as one.
+
+    **The right words already exist one command away.** `lain bench variance` meets the identical
+    condition and refuses precisely: *"no `session` header record to rebuild a context from"* — which
+    names the missing thing and implies no damage. `lain sessions` says "unreadable" for the same
+    file. Two commands, one condition, and only one of them tells the truth about it.
+
 ### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
 
 The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
