@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 8) .. |lain-contract|
+  6. The attach contract (protocol 9) .. |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -127,7 +127,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 8)                            *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 9)                            *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -196,6 +196,15 @@ gestures send back to lain. Dispatch on it: >lua
       end,
     })
 <
+Since protocol 9, `b:lain_view` no longer always names a VIEW. A changeset
+review's old side is built by the same constructor, so it carries
+`lain://review/OLD/{path}` -- a value that differs per FILE. Config that
+dispatches on `b:lain_view` should therefore test for the names above rather
+than assume the set is closed. Inside a review, read `b:lain_review_side`,
+`b:lain_review_revision` and `b:lain_review_path` (|lain-review-diff|) instead
+of taking a name apart: they say the same things, they are set on both sides of
+the pair, and they are withdrawn when you move off a file.
+
 `]]` / `[[` jump between records in the journal, timeline, and inbox.
 
 ------------------------------------------------------------------------------
@@ -332,7 +341,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 8)                            *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 9)                            *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -366,7 +375,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 8)                      *lain-question*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 9)                      *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -437,7 +446,7 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 REVIEWING A DOCUMENT (PROTOCOL 8)                            *lain-review*
+6.7 REVIEWING A DOCUMENT (PROTOCOL 9)                            *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -464,7 +473,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.8 READING A CHANGESET                                     *lain-review-diff*
+6.8 READING A CHANGESET (PROTOCOL 9)                        *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it

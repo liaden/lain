@@ -31,6 +31,13 @@ RSpec.describe "lain nvim plugin", :nvim do
     File.expand_path("../../plugin/nvim", __dir__)
   end
 
+  # "the help file names this command" -- word-boundaried, which is the whole of
+  # it: without the boundary a LONGER command's name certifies a shorter one, and
+  # `:LainNote` has been a prefix of `:LainNoteDone` since protocol 9. A method
+  # rather than an inline regex so the example that pins the boundary constrains
+  # the sweep itself rather than a second copy of the same expression.
+  def documents?(doc, name) = doc.match?(/:#{name}\b/)
+
   # --clean skips the human's config but still sources plugin/ files from any
   # rtp we add, which is exactly how an installed plugin loads.
   def boot_nvim(plugin: true, xdg: nil, extra_args: [])
@@ -266,11 +273,27 @@ RSpec.describe "lain nvim plugin", :nvim do
       # current-contract stamp, every one of them states the same contract, and
       # that contract is the constant. Prose recording when a feature landed is
       # deliberately not this shape and is left alone.
+      #
+      # And the limit, stated so nobody reads more into it than it says: this
+      # certifies UNIFORMITY and agreement with the constant, never PLACEMENT. A
+      # stamp added to a section that never carried one passes, correctly -- the
+      # stamp means "this section states the current contract", not "this feature
+      # landed at n" -- and a stamp DELETED from one of several passes too. The two
+      # structural ones are anchored by name below, which is where placement is
+      # pinnable without pinning how many sections the doc has.
       stamps = doc.scan(/\(protocol (\d+)\)/i).flatten
       expect(stamps).not_to be_empty
       expect(stamps.uniq).to eq([Lain::Frontend::Neovim::PROTOCOL]),
                              "(protocol n) stamps disagree: found #{stamps.uniq.inspect}, expected " \
                              "every one to be #{Lain::Frontend::Neovim::PROTOCOL.inspect}"
+
+      # The contract section's own heading and its TOC line: the two stamps that
+      # are structure rather than decoration, so a sweep that DROPS one of them --
+      # invisible to the uniformity check above, which sees only the survivors --
+      # fails here by name.
+      protocol = Lain::Frontend::Neovim::PROTOCOL
+      expect(doc).to match(/^6\. THE ATTACH CONTRACT \(PROTOCOL #{protocol}\)/)
+      expect(doc).to match(/^\s+6\. The attach contract \(protocol #{protocol}\)/)
 
       Dir.mktmpdir("lain-helptags") do |dir|
         FileUtils.cp(File.join(plugin_root, "doc", "lain.txt"), dir)
@@ -303,11 +326,73 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(commands).to include("LainPin", "LainOpen", "LainSend")
 
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
-      # Word-boundaried on purpose: a bare include? lets a LONGER command certify
-      # a shorter one, so `:LainReviewDone` in the doc would satisfy a runtime
-      # that had just added `:LainReview`. No name is a prefix of another today,
-      # which is exactly when it is cheap to close.
-      expect(commands.reject { |name| doc.match?(/:#{name}\b/) }).to be_empty
+      expect(commands.reject { |name| documents?(doc, name) }).to be_empty
+    end
+
+    # The predicate above, stated on two sentences instead of on the shipped help
+    # file, because nothing in the suite established that its word boundary is the
+    # guard rather than decoration -- the panel replaced it with a bare `include?`
+    # and every example stayed green. It is the same method the sweep calls, so this
+    # constrains the sweep and not a copy of it, and it needs no editor.
+    #
+    # A bare include? lets a LONGER command certify a shorter one, which stopped
+    # being hypothetical at protocol 9: `:LainNote` IS a prefix of `:LainNoteDone`,
+    # so the boundary is the only thing between an undocumented `:LainNote` and a
+    # green run. (nvim itself is not confused -- `exists(':LainNote')` answers 2, an
+    # exact full match, because an exact name beats an abbreviation.)
+    it "refuses to let a longer command's name certify a shorter one" do
+      expect(documents?("Inside a review: `:LainNoteDone`.", "LainNote")).to be(false)
+      expect(documents?("Inside a review: `:LainNote`, `:LainNoteDone`.", "LainNote")).to be(true)
+    end
+
+    # The same sweep from the other side, and only this direction catches the defect
+    # T28 was handed: the plan for this chunk assumed a `:LainDiffOpen`, and nothing
+    # ever defined one. A doc naming a command that does not exist passes `helptags`,
+    # passes the sweep above (which only walks runtime -> doc), and answers E492 to
+    # the first human who types it. `:LainStart` is the exception BY SOURCE, not by
+    # name: the plugin defines it, so it is read off plugin/nvim the same way the
+    # runtime's are read off the loader, and neither list is written down here.
+    #
+    # Scanned WITHOUT requiring the colon, because requiring it was a hole the panel
+    # walked through: `Use LainDiffOpen to open the pair.` named a command nothing
+    # defines and passed. The Lain-named things that are legitimately not commands
+    # are the two User autocmd patterns, subtracted by reading the runtime's own
+    # `pattern = "Lain..."` sites -- the same by-source rule :LainStart follows.
+    it "names no command that neither the runtime nor the plugin defines" do
+      runtime = Lain::Frontend::Neovim::RuntimeLoader.new.source
+      plugin = Dir[File.join(plugin_root, "**", "*.lua")].map { |path| File.read(path) }.join
+      defined_commands = runtime.scan(/define\("(\w+)"/).flatten |
+                         plugin.scan(/nvim_create_user_command\("(\w+)"/).flatten
+      expect(defined_commands).to include("LainStart")
+
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      events = runtime.scan(/pattern = "(Lain\w+)"/).flatten
+      documented = doc.scan(/\bLain[A-Z]\w+\b/).uniq - events
+      expect(documented).not_to be_empty
+      undefined = documented - defined_commands
+      expect(undefined).to be_empty, "doc/lain.txt names commands nothing defines: #{undefined.inspect}"
+    end
+
+    # T28's first documentation correction, and the half nothing read: deleting the
+    # whole `Since protocol 9, b:lain_view no longer always names a VIEW` paragraph
+    # left the suite green at 0 failures. The history entry's copy is doubly pinned;
+    # the help file's -- the one a human writing a config actually reads, which is
+    # the group that was being misled -- was pinned nowhere.
+    #
+    # Scoped to the SECTION that documents b:lain_view, because both strings appear
+    # again in |lain-review-diff| and a whole-file `include?` would pass with 6.2
+    # still saying the set is closed. The old side's prefix is read off the runtime
+    # that writes it, never written down here: it is one constant in one module, and
+    # a second spelling of it in a spec is the drift this file keeps closing.
+    it "warns, where it documents b:lain_view, that the name is no longer a closed set" do
+      runtime = Lain::Frontend::Neovim::RuntimeLoader.new.source
+      old_prefix = runtime[/OLD_PREFIX = "([^"]+)"/, 1]
+      expect(old_prefix).not_to be_nil
+
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+      buffers = doc.split(/^-{78}$/).find { |section| section.include?("*lain-buffers*") }
+      expect(buffers).not_to be_nil, "doc/lain.txt has no *lain-buffers* section"
+      expect(buffers).to include(old_prefix).and include("b:lain_review_side")
     end
 
     # `helptags` builds an index of the tags a file DEFINES and never looks at

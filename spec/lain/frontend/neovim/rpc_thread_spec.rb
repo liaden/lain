@@ -472,14 +472,6 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     end
   end
 
-  # This card adds the RUBY half of five verbs and three render entry points and
-  # deliberately leaves the handshake alone: the lua `_G.__lain.*` functions
-  # arrive three waves later, and a bumped token would advertise a contract with
-  # nothing behind it to exercise.
-  it "leaves the protocol where it found it, having shipped only half of each entry point" do
-    expect(Lain::Frontend::Neovim::PROTOCOL).to eq("8")
-  end
-
   describe "an annotate write's wire shape" do
     def annotation(overrides = {})
       { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,

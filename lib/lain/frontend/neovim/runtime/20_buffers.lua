@@ -33,9 +33,13 @@ local function bind_motions(buf, name)
   end
 end
 
--- b:lain_view names the view on every lain:// buffer -- the contract's one
--- per-buffer variable (protocol 3), what user config dispatches on given the
--- single shared "lain" filetype. Set on BOTH constructor paths (create and
+-- b:lain_view names every lain:// buffer -- the contract's one per-buffer
+-- variable (protocol 3), what user config dispatches on given the single
+-- shared "lain" filetype. It stopped naming a VIEW at protocol 9: the
+-- changeset diff's old side is built through this same constructor, so what it
+-- claims there is `lain://review/OLD/<path>`, a value that differs per FILE.
+-- Inside a review, b:lain_review_side and its pair (47_diff) are what a gesture
+-- reads instead. Set on BOTH constructor paths (create and
 -- found-by-name), so a buffer surviving from an older runtime's attach gains
 -- it on re-attach, not only at creation. On the create path the claim MUST
 -- precede the 'filetype' assignment: setting the option fires FileType

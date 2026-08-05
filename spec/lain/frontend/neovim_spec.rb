@@ -594,4 +594,33 @@ RSpec.describe Lain::Frontend::Neovim do
       expect(frontend.compose).to have_received(:abandoned).with(9)
     end
   end
+
+  # T28 review fix: the protocol contract, pinned WITHOUT an editor -- which is the
+  # point of the group, not an incidental economy. `LAIN_NVIM=0` is a supported mode
+  # (spec/support/tags.rb), and in it every other pin on this contract is filtered
+  # out: the panel reverted BOTH halves to "8", undoing the bump entirely, and the
+  # suite answered 10449 examples, 0 failures. Both properties below are pure reads
+  # of source already on disk, so neither needs the editor that was hiding them.
+  describe "the protocol contract" do
+    let(:runtime) { Lain::Frontend::Neovim::RuntimeLoader.new.source }
+
+    # The lockstep, said in the one place it can be said with no nvim running. It
+    # COMPLEMENTS the live attach checks rather than replacing them -- a runtime that
+    # fails to LOAD still has the right number in its text, and only an editor catches
+    # that. What this catches is the reverse: half a bump.
+    it "holds the same protocol in the gem and in the runtime it injects" do
+      expect(runtime[/RUNTIME_PROTOCOL = "(\d+)"/, 1]).to eq(described_class::PROTOCOL)
+    end
+
+    # "A history that SKIPS a version is worse than none" is the history block's own
+    # rule, and d125aba is the proof it is not hypothetical: a bump shipped with no
+    # line, and entry "5" is the backfill. Asserting the entry for TODAY's number
+    # states a fact about today; this states the RULE, so the next bump cannot go
+    # green without its line -- which is what the panel's mutant did, moving both
+    # constants to "10", sweeping the doc stamps, and skipping the entry, at 0
+    # failures.
+    it "keeps an entry for every protocol from 2 up to the constant" do
+      expect(protocol_history.keys.map(&:to_i)).to eq((2..described_class::PROTOCOL.to_i).to_a)
+    end
+  end
 end

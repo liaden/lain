@@ -64,7 +64,25 @@ module Lain
       #   from the line COUNT to that stamp. The count aliased between
       #   renderings of equal height, which opened the wrong document and
       #   reported it as a success; the stamp cannot.
-      PROTOCOL = "8"
+      # "9": the changeset review surface. Render entry points
+      #   __lain.set_review (the sidebar), __lain.open_changeset (the old/new
+      #   diff pair) and __lain.set_thread (a note's conversation in the pane
+      #   you are not reading); __lain.review_layout / __lain.review_place, the
+      #   tabpage slots those place through; __lain.review_notes_held; and the
+      #   __lain.set_review_diagnostics / __lain.refresh_review_diagnostics /
+      #   __lain.review_diagnostics_tracked projection. Commands
+      #   :LainReviewOpen, :LainNote, :LainNoteDone and :LainThread. The only
+      #   open gesture is :LainReviewOpen -- the diff-open command this chunk's
+      #   plan assumed was dropped rather than added, since no gesture stood
+      #   behind it, and a history may not name a command that does not exist.
+      #   Two things a config hooking protocol 3 must re-read. b:lain_view no
+      #   longer names a VIEW: the diff pair's old side reuses the named-buffer
+      #   constructor, so it carries lain://review/OLD/<path> and differs per
+      #   FILE. Dispatch on b:lain_review_side / b:lain_review_revision /
+      #   b:lain_review_path instead -- stamped on both sides of the live pair
+      #   and WITHDRAWN when you move off a file, so a gesture reads a variable
+      #   rather than parsing a buffer name back apart.
+      PROTOCOL = "9"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model

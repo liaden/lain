@@ -347,16 +347,153 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                             history_path: File.join(Dir.tmpdir, "lain-open-gesture-history"))
   end
 
+  # The chunk nvim is actually sent. Read through the loader, never off runtime.lua,
+  # which since T6 is only the chunk's HEAD and defines nothing.
+  def runtime_source
+    Lain::Frontend::Neovim::RuntimeLoader.new.source
+  end
+
+  # The Lain-named things that are NOT commands: the two User autocmd patterns a
+  # human's config hooks. Read off their definition sites so the sweeps' exemption
+  # is a property of the runtime rather than of a list somebody remembered to edit.
+  def runtime_events
+    runtime_source.scan(/pattern = "(Lain\w+)"/).flatten.uniq
+  end
+
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 8 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 9 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "8" }
-        expect(described_class::PROTOCOL).to eq("8")
+        wait_until { inspector.get_var("lain_rpc_version") == "9" }
+        expect(described_class::PROTOCOL).to eq("9")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end
+    end
+
+    # The example above cannot see runtime.lua's RUNTIME_PROTOCOL. `g:lain_rpc_version`
+    # is the token the GEM injected, so BOTH of its reads come from PROTOCOL, and a
+    # runtime.lua left behind at "8" satisfies them unchanged -- the absent-warning line
+    # is the only thing tying the two halves together, and an absence is worth nothing
+    # until the warning is known to fire at all. What is new here is the WARNING TEXT:
+    # the attach payload's `data.protocol` (pinned at the top of this file, and
+    # documented for a human's config to trust) already reads the lua half on the happy
+    # path, but nothing exercised the unhappy one. Attaching with a deliberately wrong
+    # token is what makes the mismatch branch run and state its own constant.
+    it "makes the runtime name its own RUNTIME_PROTOCOL when the gem's token is wrong" do
+      frontend = described_class.new(channel:, socket_path: @socket, protocol: "0")
+
+      frontend.run do
+        messages = wait_until do
+          out = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+          out if out.include?("mismatch")
+        end
+        expect(messages).to include(
+          "lain: runtime.lua protocol #{described_class::PROTOCOL} / gem protocol 0 mismatch"
+        )
+      end
+    end
+
+    # The other direction, and the one the pair above cannot state: "0" is BEHIND the
+    # runtime, so every mismatch the suite had seen was a runtime running ahead of its
+    # gem. A gem ahead of its runtime is the shape an upgrade actually takes -- a new
+    # gem attaching to an nvim still holding a cached older chunk -- and it has to warn
+    # just as loudly. The check is equality, not ordering, and this is that sentence.
+    it "warns just as loudly when the gem's token is AHEAD of the runtime's" do
+      frontend = described_class.new(channel:, socket_path: @socket, protocol: "99")
+
+      frontend.run do
+        messages = wait_until do
+          out = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+          out if out.include?("mismatch")
+        end
+        expect(messages).to include(
+          "lain: runtime.lua protocol #{described_class::PROTOCOL} / gem protocol 99 mismatch"
+        )
+      end
+    end
+
+    # The number advertises a contract, so the entry that dates it may not name a thing
+    # that does not exist -- an entry claiming a capability the runtime has not got is
+    # worse than no entry, which is the failure this bump was split out of T11 to avoid.
+    #
+    # Read off the LIVE runtime, never off the lua source: a `function _G.__lain.x` that
+    # a load-order mistake never installs greps identically to one that works. Two
+    # spellings are checkable and both are swept -- `__lain.name`, and a `Lain*` name
+    # with or WITHOUT its colon, because the panel appended "The LainDiffOpen command
+    # was dropped." to the entry below and a colon-only scan stayed green. The two
+    # Lain-named things that are legitimately not commands are the User autocmd
+    # patterns, and they are subtracted BY SOURCE -- read off the runtime's own
+    # `pattern = "Lain..."` sites -- so the exemption cannot grow by hand.
+    #
+    # The limit, stated so nobody reads more into a green run than it says: a claim
+    # only becomes visible here once it is SPELLED as an entry point or a command. A
+    # bare noun ("the set_thread_soon render entry point") is prose, and no scanner
+    # can tell prose from a claim. The example after this one is what pushes new
+    # entries into the spellings that can be checked.
+    it "names, in its history, only entry points and commands the runtime really has" do
+      history = protocol_history.values.join
+      functions = history.scan(/__lain\.(\w+)/).flatten.uniq
+      commands = history.scan(/\bLain[A-Z]\w+\b/).uniq - runtime_events
+      expect(functions).not_to be_empty
+      expect(commands).not_to be_empty
+
+      frontend = described_class.new(channel:, socket_path: @socket)
+      frontend.run do
+        wait_until { inspector.get_var("lain_rpc_version") == described_class::PROTOCOL }
+        absent = functions.reject { |name| inspector.exec_lua("return type(_G.__lain[...])", [name]) == "function" }
+        expect(absent).to be_empty, "history names __lain entry points the runtime has not got: #{absent.inspect}"
+        # 2 is an exact full match; 3 is "matches several", which a name that is a
+        # PREFIX of two others answers without being a command itself. It is EXISTENCE,
+        # not health -- a command whose body raises answers 2 as happily as one that
+        # works -- which is the right scope for a handshake and no more than that.
+        undefined = commands.reject { |name| inspector.exec_lua("return vim.fn.exists(':' .. ...)", [name]) == 2 }
+        expect(undefined).to be_empty, "history names commands the runtime has not got: #{undefined.inspect}"
+      end
+    end
+
+    # The convention the sweep above rests on, mechanised rather than described.
+    # Entries 2..8 wrote their entry points bare (`set_view`), which no scanner can
+    # tell from prose; from 9 on they carry the `__lain.` prefix, and that prefix is
+    # the whole reason the sweep can see anything. Stated as a comment it was a rule
+    # nothing enforced -- the same shape as the history block's own "a history that
+    # SKIPS a version is worse than none", which also went unasserted until the panel
+    # looked.
+    #
+    # Only multi-word names are checked, and deliberately: `render` and `tick` are
+    # published entry points AND ordinary English, so a scan for them bare would fire
+    # on prose. A snake_case name in a comment is never anything but the function.
+    it "spells every entry point it names with its __lain. prefix, from 9 on" do
+      published = runtime_source.scan(/function _G\.__lain\.(\w+)/).flatten.uniq.grep(/_/)
+      expect(published).not_to be_empty
+
+      bare = protocol_history.filter_map do |version, entry|
+        named = published.select { |name| entry.match?(/(?<!__lain\.)\b#{name}\b/) }
+        [version, named] if version.to_i >= 9 && named.any?
+      end
+      expect(bare).to be_empty,
+                      "history entries name entry points without the __lain. prefix the sweep reads: #{bare.inspect}"
+    end
+
+    # The four the review surface added. Written down rather than derived, because
+    # "what protocol 9 added" is a fact about HISTORY -- git knows it, the running
+    # runtime does not, and a spec that shells out to git to decide what to assert is
+    # worse than a list. The example above is what keeps the list honest: a name here
+    # that the runtime lacks fails there, by name.
+    it "records in its history what protocol 9 actually bought" do
+      entry = protocol_history["9"]
+      expect(entry).not_to be_nil, "no \"9\" entry: a history that SKIPS a version is worse than none"
+      %w[LainReviewOpen LainNote LainNoteDone LainThread].each do |command|
+        expect(entry).to include(":#{command}")
+      end
+      %w[set_review open_changeset set_thread].each do |point|
+        expect(entry).to include("__lain.#{point}")
+      end
+      # T15's two documentation corrections, which are the reason this card owed more
+      # than a number: b:lain_view stopped naming a view, and the review pair's stamps
+      # are what a gesture reads instead of parsing a buffer name apart.
+      expect(entry).to include("b:lain_view").and include("b:lain_review_side")
     end
   end
 
