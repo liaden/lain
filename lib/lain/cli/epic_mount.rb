@@ -121,10 +121,26 @@ module Lain
       # Resolution proper, with nothing rescued: every refusal here is {.for}'s
       # to answer, and this method exists so that the defaults raise where that
       # answer can hear them.
+      #
+      # @param chronicle [Epic::Chronicle] the epic's record, mounted read-write
+      # @param options [Hash] the parsed CLI options
+      # @param root [String] the project directory every default resolves against
+      # @param paths [Paths] where an epic's files live
+      # @param config [Config] read here rather than at {.for}, so a typo in
+      #   `[epics]` raises inside that method's rescue rather than past it
+      # @param bindings [#call, nil] a thunk reading the live {HumanReplies}
+      # @param notify [#call, nil] told when a stage settles
+      # @param changesets [#source, nil] builds the review source (see {#changesets})
+      # @param surface [#present, nil] where a changeset is drawn
+      # @param policy [Lain::Review::Verdict::Policy, nil] verdict admissibility
+      # @option options [String] :epic the slug to resolve, which
+      #   {Epic#resolve_slug} refuses by name when it is ambiguous or unknown
+      # @return [EpicMount]
       def self.mount(chronicle:, options:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
-                     bindings: nil, notify: nil)
+                     bindings: nil, notify: nil, changesets: nil, surface: nil, policy: nil)
         new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic]),
-            journal: chronicle.record_journal, root:, paths:, config:, bindings:, notify:)
+            journal: chronicle.record_journal, root:, paths:, config:, bindings:, notify:,
+            changesets:, surface:, policy:)
       end
 
       # Silent for the ordinary case, loud for every refusal a human could act
@@ -169,7 +185,15 @@ module Lain
       #   time ({Tools::RequestReview#live})
       # @param notify [#question, nil] the desktop notifier {Tools::RequestReview}
       #   raises a pending review's question through; defaults to {Notify::Null}
-      def initialize(slug:, journal:, root:, paths:, config:, bindings: nil, notify: nil)
+      # @param changesets [#source, nil] builds the {Lain::Review::Source} an
+      #   `implementation` review reads its diff from. nil, and see {#changesets}
+      #   for why that is a finding rather than an omission.
+      # @param surface [#present, nil] where a changeset is drawn; nil leaves the
+      #   tool's {Lain::Review::Surface::Null}
+      # @param policy [Lain::Review::Verdict::Policy, nil] whether a verdict may
+      #   stand; nil leaves {Lain::Review::Verdict::Policy.default}
+      def initialize(slug:, journal:, root:, paths:, config:, bindings: nil, notify: nil,
+                     changesets: nil, surface: nil, policy: nil)
         @slug = slug
         @journal = journal
         @root = root
@@ -177,6 +201,10 @@ module Lain
         @config = config
         @bindings = bindings
         @notify = notify || Lain::Notify::Null.new
+        # One ivar because they are one decision: the three seams the changeset
+        # half of the tool takes, which arrive together, forward together, and
+        # are all nil here for the reason {#request_review} states.
+        @review_seams = { changesets:, surface:, policy: }.freeze
         @notes = Lain::Tools::RequestReview::Notes.new(journal:)
         @review = rebuilt_review
       end
@@ -207,8 +235,23 @@ module Lain
       # notification names the path and the human opens it themselves. The
       # editor's `done` gesture still settles the review, because that rail IS
       # the command inbox and it IS bound ({Repl#run} -> {HumanReplies#bind_editor}).
+      # `changesets:` is nil for the SAME reason, one rail further on, and it is
+      # a finding rather than an omission too.
+      #
+      # A changeset review parks until a verdict arrives, and a verdict arrives
+      # on {Frontend::Neovim#bind_changeset_review}'s `wrote_verdict` rail --
+      # the frontend again, unreachable for the reason above. Unlike a document
+      # review, which a human settles with `:LainReviewDone` through the rail
+      # this class DOES reach ({HumanReplies#bind_review}), there is no second
+      # way to answer a changeset one. So defaulting a source here would ship a
+      # park nobody could end; left nil, the tool refuses `implementation` in
+      # one sentence naming this wiring
+      # ({Tools::RequestReview::Refusals::NO_CHANGESET}). The seam is threaded
+      # rather than absent so that a caller which CAN answer -- the review CLI
+      # -- turns the half on by INJECTING one, not by editing this file.
       def request_review
-        Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, notify: @notify)
+        Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, notify: @notify,
+                                       **@review_seams)
       end
 
       # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted

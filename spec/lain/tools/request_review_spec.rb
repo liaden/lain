@@ -102,6 +102,71 @@ class RecordingBindings
 
     nil
   end
+
+  # {Lain::CLI::HumanReplies#bind_changeset_review}'s duck (T21), recorded and
+  # kept APART from `bound`: the two rails carry different objects for
+  # different notions of review, and one recorder for both would let a
+  # changeset review pass an assertion written about a document one.
+  def bound_changeset = @bound_changeset ||= []
+
+  def bind_changeset_review(changeset_review)
+    @log << :bind_changeset
+    bound_changeset << changeset_review
+    nil
+  end
+end
+
+# {Lain::Review::Surface}'s port, recorded. Built to satisfy `Surface.check!`
+# rather than to satisfy the tool -- the tool hands its surface straight to
+# `Session.open`, so a double answering less than the port would pass here and
+# fail against any real adapter.
+class RecordingReviewSurface
+  def initialize(log: [])
+    @log = log
+    @presented = []
+    @annotated = []
+    @marked = []
+  end
+
+  attr_reader :presented, :annotated, :marked
+
+  def present(changeset, scope:)
+    @log << :present
+    @presented << [changeset, scope]
+    nil
+  end
+
+  def annotate(anchor, text, kind:)
+    @annotated << [anchor.id, text, kind]
+    nil
+  end
+
+  def mark(hunk_key, state)
+    @marked << [hunk_key, state]
+    nil
+  end
+
+  def thread(_anchor) = nil
+  def verdict = nil
+  def refuse(_message) = nil
+end
+
+# The changeset seam {Lain::CLI::EpicMount} wires a `Source::LocalBranch`
+# factory into. `source` and not `call`, deliberately: {Lain::Tools::RequestReview#live}
+# treats anything answering `call` as a THUNK and would invoke this with no
+# arguments.
+class RecordingChangesets
+  def initialize(source:)
+    @source = source
+    @asked = []
+  end
+
+  attr_reader :asked
+
+  def source(base:, head:)
+    @asked << [base, head]
+    @source
+  end
 end
 
 # T23: the agent's end of the review baton. The tool resolves a stage artifact
@@ -138,6 +203,8 @@ RSpec.describe Lain::Tools::RequestReview do
   # returned" is a claim about THIS pair: the write refuses while the baton is
   # held and succeeds once it is handed back.
   let(:home) { Lain::Epic::Home::Journaled.new(bare_home, journal:, reviews: review) }
+  let(:changesets) { RecordingChangesets.new(source: changeset_source) }
+  let(:surface) { RecordingReviewSurface.new }
 
   def paths_for(state_home)
     Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home, "HOME" => state_home })
@@ -205,6 +272,71 @@ RSpec.describe Lain::Tools::RequestReview do
       run.wait
     end
   end
+
+  # ---- The changeset half (T21) ----------------------------------------------
+
+  # session_spec's fixture, and deliberately the same one: two files, three
+  # hunks, so a report can name one file and not the other and so an
+  # unreviewed-approve refusal has something to name.
+  def changeset_diff
+    <<~DIFF
+      diff --git a/a.rb b/a.rb
+      index 1111111..2222222 100644
+      --- a/a.rb
+      +++ b/a.rb
+      @@ -1,3 +1,3 @@ def alpha
+       one
+      -two
+      +TWO
+      diff --git a/b.rb b/b.rb
+      index 3333333..4444444 100644
+      --- a/b.rb
+      +++ b/b.rb
+      @@ -1,2 +1,2 @@ def gamma
+       x
+      -y
+      +Y
+    DIFF
+  end
+
+  def changeset_commits
+    [Lain::Review::Source::Commit.new(
+      sha: -("c" * 40), subject: "the implementation", body: "",
+      numstat: [Lain::Review::Source::FileStat.new(path: -"a.rb", added: 1, deleted: 1),
+                Lain::Review::Source::FileStat.new(path: -"b.rb", added: 1, deleted: 1)].freeze
+    )]
+  end
+
+  # A double and not a repository: what the tool does WITH a changeset is the
+  # subject here, and git's own answers are `Source`'s own spec's.
+  def changeset_source
+    instance_double(Lain::Review::Source::LocalBranch, diff: changeset_diff.b,
+                                                       commits: changeset_commits.freeze,
+                                                       base_ref: -("b" * 40), head_ref: -("h" * 40))
+  end
+
+  # `Permissive` by default so the approve examples are about the VERDICT
+  # reaching the parked call; one example below swaps in the real default and
+  # asserts it refuses, which is what proves the seam is a seam.
+  def changeset_tool(**overrides)
+    tool(changesets:, surface:, policy: Lain::Review::Verdict::Policy::Permissive.new, **overrides)
+  end
+
+  def implementation_input = { "stage" => "implementation", "base" => "main" }
+
+  # What the tool bound to the changeset rail -- the object a human's verdict
+  # arrives on.
+  def changeset_review = bindings.bound_changeset.last
+
+  def settled_implementation(subject_tool = changeset_tool, timeout: 5)
+    parked(timeout:) do |task|
+      run = call_in(task, implementation_input, subject_tool)
+      changeset_review.wrote_verdict("approve")
+      run.wait
+    end
+  end
+
+  def journal_records = io.string.each_line.map { |line| JSON.parse(line) }
 
   # ---- Scenario: the round trip returns edits and notes ----------------------
 
@@ -555,30 +687,370 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- Scenario: implementation is refused by name ---------------------------
+  # ---- Scenario: the implementation stage is reviewable ----------------------
 
+  # T21. The refusal this describe block used to assert -- `implementation`
+  # cannot be reviewed because doing so "would mean reviewing a diff, a surface
+  # lain does not have" -- named a MISSING surface, and the surface now exists
+  # (a `Review::Session` over a `Review::Changeset`, drawn on a
+  # `Review::Surface`). So the stage opens a CHANGESET review rather than a
+  # document one, and the two examples below are the rewrite of the two that
+  # asserted the refusal: the first asserts a review opens where it asserted an
+  # error, and the second asserts the changeset rail IS reached where it
+  # asserted nothing was.
   describe "the implementation stage" do
-    it "refuses by name, saying which stages are reviewable and why this one is not" do
-      result = tool.call({ "stage" => "implementation" }, invocation)
+    before { home.write_epic(three_issue_graph) }
 
-      expect(result).to be_error
-      expect(result.content).to include("implementation")
-      expect(result.content).to include("research").and include("epic_plan").and include("issue_plan")
+    it "opens a changeset review and parks, rather than refusing by name" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+
+        expect(surface.presented.size).to eq(1)
+        expect(review.open_generations.values).to eq([1])
+        # `task.yield` and not a bare `finished?`: nothing has given the
+        # reactor a turn since the call was spawned, so the predicate is true
+        # of a fiber that is about to finish as much as of one that is parked.
+        # A mutation matrix found exactly that, one example below.
+        task.yield
+        expect(run).not_to be_finished
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
+
+    # The counterpart of the old "opens nothing and notifies nobody": every
+    # collaborator the changeset half reaches is recorded, so a branch that
+    # quietly took the DOCUMENT path (which reaches `editor`/`bind_review` and
+    # never the surface) would fail here rather than pass by resembling it.
+    it "binds the changeset rail and tells the human, and takes neither document rail" do
+      settled_implementation
+
+      expect(bindings.bound_changeset.size).to eq(1)
+      expect(notifier.sent.flatten.join(" ")).to include("waiting for a verdict")
+      expect(editor.opened).to be_empty
+      expect(bindings.bound).to be_empty
+    end
+
+    it "asks the changeset seam for the base the call named, against HEAD" do
+      settled_implementation
+
+      expect(changesets.asked).to eq([%w[main HEAD]])
+    end
+
+    it "presents the whole changeset, at the cumulative scope" do
+      settled_implementation
+
+      expect(surface.presented.map(&:last)).to eq([:cumulative])
+      expect(surface.presented.first.first.files.map(&:path)).to eq(%w[a.rb b.rb])
+    end
+
+    # The document half binds before it tells the editor for this reason and
+    # asserts it through a shared log; the changeset half opens the same window
+    # -- a human fast enough to answer the moment the diff appears would send a
+    # verdict nothing could route -- so it is asserted the same way. Neither
+    # recorder can see the other, which is what the shared log is for.
+    it "binds the verdict rail BEFORE anything is drawn" do
+      log = []
+      ordered = RecordingBindings.new(log:)
+      parked do |task|
+        run = call_in(task, implementation_input,
+                      changeset_tool(surface: RecordingReviewSurface.new(log:), bindings: ordered))
+
+        expect(log).to eq(%i[bind_changeset present])
+
+        ordered.bound_changeset.last.wrote_verdict("approve")
+        run.wait
+      end
+    end
+
+    # The baton is claimed on the CHANGESET's address, and both halves of that
+    # matter. It is scheme-prefixed, so it can never equal an absolute artifact
+    # path and the write guard `Home::Journaled` asks stays inert -- correct for
+    # a review holding no document. And it is content-addressed, so a second
+    # review of the same diff is the one thing the baton refuses.
+    it "claims the baton on the changeset's address, which is no file's path" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+        held = review.open_generations.keys
+
+        expect(held.first).to start_with("review-changeset-v1:")
+        expect(review.open?(epic_path)).to be(false)
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
+
+    it "refuses a second review of the same changeset instead of raising out of the tool" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+        second = changeset_tool.call(implementation_input, invocation)
+
+        expect(second).to be_error
+        expect(second.content).to include("already under review")
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
+  end
+
+  # ---- Scenario: a surface that does not answer the port --------------------
+
+  # `Review::Surface.check!` is run when the TOOL is built and not at the first
+  # `present`, because a `present` happens after a durable `review_opened` claim
+  # has been journaled: a surface answering the port badly would wedge the epic
+  # where it can instead refuse a wiring.
+  describe "a surface that does not answer the review port" do
+    it "refuses at construction, naming what is missing" do
+      half = Class.new { def present(changeset, scope:) = [changeset, scope] }.new
+
+      expect { tool(surface: half) }
+        .to raise_error(Lain::Review::Surface::Incomplete, /annotate/)
+    end
+
+    it "journals nothing and opens nothing, because it never gets that far" do
+      expect { tool(surface: Object.new) }.to raise_error(Lain::Review::Surface::Incomplete)
+
+      expect(io.string).to be_empty
+      expect(review.open_generations).to be_empty
+    end
+  end
+
+  # ---- Scenario: a verdict resolves the parked call --------------------------
+
+  describe "a parked implementation review the human approves" do
+    before { home.write_epic(three_issue_graph) }
+
+    it "returns a result naming the verdict" do
+      result = settled_implementation
+
+      expect(result).to be_ok
+      expect(result.content).to include("approve")
+    end
+
+    # The digest is what `Epic::Submission.implementation(digest:)` takes as
+    # GIVEN, so a report naming the verdict and not the address would leave the
+    # implementation gate with nothing to key on.
+    it "names the changeset address the implementation gate is keyed on" do
+      result = settled_implementation
+
+      expect(result.content).to include("review-changeset-v1:")
+    end
+
+    it "journals the verdict against the changeset it judged" do
+      settled_implementation
+      verdicts = journal_records.select { |record| record["type"] == "review_verdict" }
+
+      expect(verdicts.map { |record| record["verdict"] }).to eq(["approve"])
+      expect(verdicts.first["changeset_digest"]).to start_with("review-changeset-v1:")
+    end
+
+    it "gives the baton back, so the epic is no longer holding the changeset" do
+      settled_implementation
+
       expect(review.open_generations).to be_empty
     end
 
-    # Every document a stage could be folded onto is on disk here, so a table
-    # that quietly mapped `implementation` to one of them would open a review
-    # rather than fail to find a file.
-    it "opens nothing and notifies nobody, even with every document present" do
+    # The claim's WRITTEN SIDE is the diff -- the bytes lain drew for the human
+    # -- and the class doc says so, so something has to hold it to that.
+    # Nothing did: a mutant emptying those bytes left the suite green with
+    # `review_opened` and `review_closed` both recording the digest of nothing.
+    # Spelled out from the fixture rather than read off the record, so the
+    # assertion cannot pass tautologically.
+    it "records the diff as the bytes lain wrote, not an empty written side" do
+      settled_implementation
+      opened = journal_records.find { |record| record["type"] == "review_opened" }
+
+      expect(opened["written_digest"]).to eq(Lain::Epic::Intake.byte_digest(changeset_diff.b))
+      expect(opened["graph_digest"]).to be_nil
+    end
+
+    # Both sides, because a changeset review hands back a JUDGEMENT and not
+    # edited bytes -- the one statement that record makes about a diff.
+    it "closes with the same digest on the disk side, because nothing came back edited" do
+      settled_implementation
+      closed = journal_records.find { |record| record["type"] == "review_closed" }
+      diff_digest = Lain::Epic::Intake.byte_digest(changeset_diff.b)
+
+      expect(closed.values_at("written_digest", "disk_digest")).to eq([diff_digest, diff_digest])
+      expect(closed["error_kind"]).to be_nil
+    end
+
+    # First-answer-wins, `Approval::Queue::Pending#decide`'s rule: the loser
+    # gets a sentence back rather than an exception, and nothing is judged
+    # twice.
+    it "answers a second verdict with a refusal instead of judging twice" do
+      settled_implementation
+      second = changeset_review.wrote_verdict("approve")
+
+      expect(second).to be_a(String)
+      expect(journal_records.count { |record| record["type"] == "review_verdict" }).to eq(1)
+    end
+
+    # `Verdict::Policy` is INJECTED so a `deferred` run can swap it. The default
+    # refuses an approve over hunks nobody read, and this is what proves the
+    # seam is reachable THROUGH the tool rather than pinned inside the session.
+    it "reaches the injected verdict policy: the default refuses an unreviewed approve" do
+      parked do |task|
+        run = call_in(task, implementation_input,
+                      changeset_tool(policy: Lain::Review::Verdict::Policy.default))
+        refusal = changeset_review.wrote_verdict("approve")
+        task.yield
+
+        expect(refusal).to include("a.rb").and include("unreviewed")
+        # A refused verdict leaves the review OPEN, which is what lets the
+        # human mark the rest and answer again -- and it is the reason the
+        # verdict is submitted BEFORE the claim is settled. The other order
+        # settles a review that was never judged and wakes the call with an
+        # empty verdict, and a matrix mutant proved this example passed under
+        # it until the yield above was added.
+        expect(run).not_to be_finished
+        expect(review.open_generations.values).to eq([1])
+      end
+    end
+  end
+
+  # ---- Scenario: a second review proceeds alongside the first ----------------
+
+  describe "an implementation review and a research review at once" do
+    before do
       home.write_epic(three_issue_graph)
-      home.research.write("a research note\n")
+      home.research.write("the original research note\n")
+    end
 
-      tool.call({ "stage" => "implementation" }, invocation)
+    let(:research_path) { bare_home.research.path }
 
-      expect(editor.opened).to be_empty
-      expect(notifier.sent).to be_empty
-      expect(bindings.bound).to be_empty
+    it "draws generation 1 and 2 from one counter, and settling one leaves the other parked" do
+      parked do |task|
+        implementation = call_in(task, implementation_input, changeset_tool)
+        research = call_in(task, { "stage" => "research" }, changeset_tool)
+
+        expect(review.open_generations.values.sort).to eq([1, 2])
+        expect(review.generation_for(research_path)).to eq(2)
+
+        review.settle(2, disk: "an edited research note\n")
+        research.wait
+
+        expect(implementation).not_to be_finished
+        expect(review.open_generations.values).to eq([1])
+
+        changeset_review.wrote_verdict("approve")
+        implementation.wait
+      end
+    end
+  end
+
+  # ---- Scenario: the refusal is gone by name ---------------------------------
+
+  describe "Lain::Tools::RequestReview::Refusals" do
+    it "no longer defines NO_DOCUMENT" do
+      expect(Lain::Tools::RequestReview::Refusals.constants).not_to include(:NO_DOCUMENT)
+    end
+
+    it "no longer answers no_document" do
+      expect(Lain::Tools::RequestReview::Refusals).not_to respond_to(:no_document)
+    end
+  end
+
+  # ---- Scenario: an implementation call with nothing to review ---------------
+
+  describe "an implementation review with no changeset behind it" do
+    before { home.write_epic(three_issue_graph) }
+
+    it "refuses when no base was named, rather than diffing against a guess" do
+      result = changeset_tool.call({ "stage" => "implementation" }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("base")
+      expect(review.open_generations).to be_empty
+    end
+
+    it "refuses when nothing is wired to produce a changeset" do
+      result = tool.call(implementation_input, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("no changeset")
+      expect(review.open_generations).to be_empty
+    end
+
+    # `Blankness.blank?` and not `nil?`, defended rather than assumed: an empty
+    # base reaches `git diff "" HEAD`, which resolves nothing and would refuse
+    # three frames later in git's words instead of the tool's.
+    it "refuses a base that is present but blank" do
+      result = changeset_tool.call({ "stage" => "implementation", "base" => "   " }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("needs a base")
+      expect(changesets.asked).to be_empty
+    end
+
+    # The rail's null REFUSES where the document rail's absorbs, which is the
+    # whole of that finding: with a source wired and no rail bound, a verdict
+    # can never arrive, so an absorbing null parks the call forever with nothing
+    # said. It has to refuse before a claim can outlive the call.
+    it "refuses when no rail is bound for a verdict to arrive on, and leaves no claim" do
+      unbound = changeset_tool(bindings: Lain::Tools::RequestReview::NoBindings)
+      result = unbound.call(implementation_input, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("verdict rail is the only one")
+      expect(review.open_generations).to be_empty
+    end
+
+    it "journals the abandon, so a restart does not rebuild the refused claim" do
+      changeset_tool(bindings: Lain::Tools::RequestReview::NoBindings).call(implementation_input, invocation)
+      rebuilt = Lain::Epic::Review.from_journal(journal_records, journal:, epic_slug: "alpha")
+
+      expect(journal_records.map { |record| record["type"] }).to include("review_opened", "review_closed")
+      expect(rebuilt.open_generations).to be_empty
+    end
+  end
+
+  # ---- Scenario: a changeset park the turn cancels ---------------------------
+
+  # The document half leaves the baton HELD when its wait is cancelled, and its
+  # own example justifies that: a human genuinely holds a file and can still
+  # send `done`. The changeset half must do the OPPOSITE, because not one part
+  # of that justification transfers -- there is no file, no `:LainReviewDone`,
+  # and no CLI that abandons a claim whose path is a synthetic digest.
+  describe "an implementation review whose wait is cancelled" do
+    before { home.write_epic(three_issue_graph) }
+
+    it "gives the baton back, rather than wedging the changeset forever" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+        expect(review.open_generations.values).to eq([1])
+
+        run.stop
+        task.yield
+
+        expect(review.open_generations).to be_empty
+      end
+    end
+
+    # The claim is DURABLE, so an in-memory release would not be one: the whole
+    # hazard is `Review.from_journal` rebuilding it after a restart.
+    it "journals the release, so a restarted lain does not rebuild the claim" do
+      parked do |task|
+        call_in(task, implementation_input, changeset_tool).stop
+        task.yield
+      end
+      rebuilt = Lain::Epic::Review.from_journal(journal_records, journal:, epic_slug: "alpha")
+
+      expect(rebuilt.open_generations).to be_empty
+    end
+
+    # What releasing it buys: the same changeset is reviewable again, where
+    # before it refused AlreadyOpen for the life of the epic.
+    it "leaves the same changeset reviewable again" do
+      parked do |task|
+        call_in(task, implementation_input, changeset_tool).stop
+        task.yield
+      end
+
+      expect(settled_implementation).to be_ok
     end
   end
 

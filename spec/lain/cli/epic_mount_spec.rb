@@ -287,5 +287,33 @@ RSpec.describe Lain::CLI::EpicMount do
       expect { mount_for.tools.first.send(:instance_variable_get, :@notify).question(agent: "lain", text: "x") }
         .not_to raise_error
     end
+
+    # T21. `changesets:` is nil BY DEFAULT and deliberately -- a verdict has no
+    # rail to arrive on yet, so a default source would ship a park nobody could
+    # end -- and these two are one claim in two halves: the seam is THREADED, so
+    # a caller that can answer turns the half on by injecting one rather than by
+    # editing this class.
+    it "leaves the changeset seam unwired, so implementation refuses rather than parking" do
+      result = mount_for.tools.first.call({ "stage" => "implementation", "base" => "main" }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("no changeset")
+    end
+
+    it "forwards an injected changeset seam to the tool" do
+      changesets = Class.new do
+        def initialize = @asked = []
+
+        attr_reader :asked
+
+        def source(base:, head:)
+          @asked << [base, head]
+          nil
+        end
+      end.new
+      mount_for(changesets:).tools.first.call({ "stage" => "implementation", "base" => "main" }, invocation)
+
+      expect(changesets.asked).to eq([%w[main HEAD]])
+    end
   end
 end
