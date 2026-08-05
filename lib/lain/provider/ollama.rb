@@ -4,6 +4,7 @@ require "json"
 
 require_relative "ollama/encoding"
 require_relative "ollama/stream_assembler"
+require_relative "ollama/streamed_failure"
 require_relative "ollama/transport"
 
 module Lain

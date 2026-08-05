@@ -34,15 +34,21 @@ module Lain
         # to `on_chunk`; {StreamAssembler} owns the NDJSON line reassembly. Only
         # the vendored `on_data` byte-feeding is reused here, NOT the SSE engine
         # (`build_on_data_handler`), which folds every chunk through
-        # `EventStreamParser` -- meaningless for `application/x-ndjson`. The
-        # failed-response arm still routes through the vendored streaming error
-        # handling so a non-2xx stream raises the same typed error the
-        # non-streaming path would.
+        # `EventStreamParser` -- meaningless for `application/x-ndjson`.
+        #
+        # A non-2xx raises the SAME typed error, with the same status and the
+        # same sentence, the non-streaming path raises -- which takes one rescue,
+        # because the middleware that raises it sits INSIDE this call and by then
+        # the body it would quote has already streamed past into
+        # {StreamedFailure}. See that class for what the body loss costs a human.
         def stream(payload, headers = {}, &on_chunk)
+          failure = StreamedFailure.new(self)
           connection.post(COMPLETION_PATH, payload) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
-            install_on_data(req, &on_chunk)
+            install_on_data(req, failure, &on_chunk)
           end
+        rescue Provider::HTTP::Error => e
+          failure.reraise(e)
         end
 
         def api_base
@@ -53,18 +59,26 @@ module Lain
 
         # Reuses the version-correct `on_data` proc (Faraday 1 vs 2 arity differ)
         # from the vendored FaradayHandlers, feeding raw chunks straight to the
-        # NDJSON assembler. `handle_failed_response`/`faraday_1?` resolve through
-        # the mixed-in `Streaming` engine on the provider base. A deliberate
-        # asymmetry rides along: a failed STREAM's message comes from the vendored
-        # `handle_failed_response`/`parse_streaming_error` (generic wording), while
-        # a failed sync post's comes from ErrorMiddleware's body text -- inherited
-        # vendored behavior, same typed error class either way.
-        def install_on_data(req, &on_chunk)
-          buffer = +""
+        # NDJSON assembler. `faraday_1?` resolves through the mixed-in `Streaming`
+        # engine on the provider base.
+        #
+        # The failed arm deliberately does NOT call the vendored
+        # `handle_failed_response`, which raises from inside this callback off a
+        # status its `parse_streaming_error` GUESSES (500, or 529). The guess is
+        # for an in-stream SSE `event: error`, where the response really did
+        # return 200 -- but here the true status arrived in the headers before
+        # any body byte, and a guessed 500 is in the retry allowlist
+        # ({Connection::MiddlewareStack#retry_exceptions}), so a 404 was retried
+        # and then answered with the wrong status. That is RES1, which
+        # {Provider::Anthropic::Transport} fixes by overriding the guess; on a
+        # response already known to have FAILED there is nothing to raise from
+        # in here at all, so this arm only accumulates and the one raise happens
+        # in #stream, where the real status is what maps it.
+        def install_on_data(req, failure, &on_chunk)
           handler = Provider::HTTP::Streaming::FaradayHandlers.build(
             faraday_v1: faraday_1?,
             on_chunk: ->(chunk, _env) { yield(chunk) },
-            on_failed_response: ->(chunk, env) { handle_failed_response(chunk, buffer, env) }
+            on_failed_response: ->(chunk, _env) { failure.feed(chunk) }
           )
           assign_on_data(req, handler)
         end

@@ -231,4 +231,104 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       ) { |error| expect(error.status).to eq(500) }
     end
   end
+
+  # T38. What a human types wrong, and what they are told about it. Chat streams
+  # by default, so these are THE error messages for this arm -- and asserting the
+  # class alone (as the example above does) passed while every one of them read
+  # "An unknown error occurred".
+  #
+  # Faraday hands a streamed body to `on_data` and leaves `env.body` empty, so
+  # the error {Provider::HTTP::ErrorMiddleware} raises on the way out has nothing
+  # to quote. The bodies below are REAL ollama answers, taken off a live server
+  # on localhost:11434 (2026-08-05, ollama 0.32.1) -- the 500 is the one this
+  # file already canned.
+  describe "the message a failed stream reports", :webmock do
+    def stub_chat(status, error)
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status:, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("error" => error))
+    end
+
+    def failure(status, error, stream: true)
+      stub_chat(status, error)
+      described_class.new(config: zero_retry_config).complete(request(stream:))
+      raise "expected a failure"
+    rescue Lain::Provider::Ollama::APIStatusError => e
+      e
+    end
+
+    # `lain chat --provider ollama --model no-such-model-xyz`, verbatim.
+    it "names the model ollama could not find, on a 404" do
+      error = failure(404, "model 'no-such-model-xyz' not found")
+
+      expect(error.message).to eq("model 'no-such-model-xyz' not found")
+      expect(error.status).to eq(404)
+    end
+
+    # The second real shape: ollama answers 400 to a request with no model.
+    it "names a 400 refusal in ollama's own words" do
+      error = failure(400, "model is required")
+
+      expect(error.message).to eq("model is required")
+      expect(error.status).to eq(400)
+    end
+
+    # The retryable shape. The message has to survive the retry loop, which is
+    # where it was being destroyed: faraday-retry replays the attempt through
+    # the same `on_data` handler.
+    it "keeps the message across an exhausted retry loop, on a 500" do
+      error = failure(500, "model runner has unexpectedly stopped")
+
+      expect(error.message).to eq("model runner has unexpectedly stopped")
+      expect(error.status).to eq(500)
+    end
+
+    # The acceptance oracle, and the one that cannot be gamed: a human must not
+    # be able to tell which path the request took from what they are told.
+    it "reports exactly what the same failure reports on the non-streaming path" do
+      streamed = failure(404, "model 'no-such-model-xyz' not found")
+      WebMock.reset!
+      synchronous = failure(404, "model 'no-such-model-xyz' not found", stream: false)
+
+      expect([streamed.message, streamed.status]).to eq([synchronous.message, synchronous.status])
+    end
+
+    # A 404 is not retryable and the sync path never retries one; relabeling it
+    # 500 to carry a nicer message would be RES1 again (anthropic/transport.rb),
+    # and it costs four round trips to a server that already said no.
+    it "does not retry a 404, exactly as the non-streaming path does not" do
+      stub = stub_chat(404, "model 'no-such-model-xyz' not found")
+
+      expect { described_class.new(config: zero_retry_config).complete(request(stream: true)) }
+        .to raise_error(Lain::Provider::Ollama::APIStatusError)
+      expect(stub).to have_been_requested.times(1)
+    end
+
+    # ... while a 500 still exhausts the loop. The message must not be bought
+    # by turning the retry policy off.
+    it "still retries a 500 the full three times" do
+      stub = stub_chat(500, "model runner has unexpectedly stopped")
+
+      expect { described_class.new(config: zero_retry_config).complete(request(stream: true)) }
+        .to raise_error(Lain::Provider::Ollama::APIStatusError)
+      expect(stub).to have_been_requested.times(4)
+    end
+
+    # One Provider holds ONE Transport for its whole life, so a body kept
+    # anywhere longer than a request would make a later failure report an
+    # earlier one -- a lie that reads exactly like a correct answer.
+    it "never reports an earlier request's message on a later one" do
+      provider = described_class.new(config: zero_retry_config)
+      stub_chat(404, "model 'gone-away' not found")
+      expect { provider.complete(request(stream: true)) }.to raise_error(/gone-away/)
+
+      WebMock.reset!
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_return(status: 404, headers: { "Content-Type" => "application/json" }, body: "")
+
+      expect { provider.complete(request(stream: true)) }.to raise_error(
+        Lain::Provider::Ollama::APIStatusError
+      ) { |error| expect(error.message).not_to include("gone-away") }
+    end
+  end
 end

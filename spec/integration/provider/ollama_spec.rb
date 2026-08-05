@@ -133,4 +133,31 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
       expect(agent).to be_done
     end
   end
+
+  # ---- layer 4: what a REAL failure says ---------------------------------------
+
+  # T38. The offline coverage in ollama_streaming_spec.rb cans these bodies; this
+  # is the one that proves ollama still sends the sentence they were copied from,
+  # and that both paths hand it over unchanged. Costs one refused request, no
+  # inference. `lain chat --provider ollama --model no-such-model-xyz` is the
+  # gesture it stands for -- it answered "An unknown error occurred" before T38,
+  # for this and every other streaming failure alike.
+  describe "a model the server does not have" do
+    def refusal(stream:)
+      request = Lain::Request.new(model: "no-such-model-xyz", max_tokens: 32, stream:,
+                                  messages: [{ "role" => "user", "content" => "hi" }])
+      provider.complete(request)
+      raise "expected the server to refuse an unknown model"
+    rescue Lain::Provider::Ollama::APIStatusError => e
+      e
+    end
+
+    it "reports the server's own sentence, identically on both paths" do
+      streamed = refusal(stream: true)
+
+      expect(streamed.message).to include("no-such-model-xyz")
+      expect(streamed.status).to eq(404)
+      expect([streamed.message, streamed.status]).to eq([refusal(stream: false).message, 404])
+    end
+  end
 end
