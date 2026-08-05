@@ -21,6 +21,10 @@ module Lain
   # it runs the reconstructed argv and never the string the model wrote, so a
   # disagreement between this parser and a real shell degrades to a broken
   # command instead of an attacker-chosen one.
+  #
+  # {Shell::Out} is that running machinery with no pipeline and no judgement:
+  # one argv, spawned rather than forked, for the callers that were only ever
+  # using `Mixlib::ShellOut` as a way to get three values back.
   module Shell
   end
 end
@@ -28,3 +32,4 @@ end
 require_relative "shell/parse"
 require_relative "shell/verdict"
 require_relative "shell/pipeline"
+require_relative "shell/out"
