@@ -513,6 +513,24 @@ it was deferred.
     The socket is the thing this defect destroys, and the example nearest to it is the one that has
     been failing intermittently all day.
 
+28. **The Neovim approval view the architecture was reshaped for does not exist.** Found by the manual
+    pass, 2026-08-05, driving a five-command shell task in the cockpit: the agent parked on
+    `approve bash({"command" => "pwd"})? [y/N]` **in the chat pane only**, and the human watching the
+    editor saw a stalled agent with no visible reason.
+
+    `Frontend::ApprovalPolicy`'s own docstring says why that is notable: *"This class used to BE
+    Gate's policy … It became a surface when the queue took over that seam (I4) … this object is just
+    one watcher answering pendings — **which is what lets a second surface (a Neovim view) coexist,
+    first answer winning.**"* The seam was deliberately built for that consumer, the comment names it,
+    and **there is no `lain://approval` buffer, no `ApprovalView`, and nothing approval-shaped in
+    `lib/lain/frontend/neovim/` at all.** The wired set is exactly `tty`, `notifier` (dunst), and
+    `auto_surface` (opt-in via `--auto-approve`).
+
+    Same family as everything else this pass found: a seam built for a consumer that was never
+    written. Distinct from a question — `ask_human` does have a `lain://question` view — so a cockpit
+    user gets the editor for questions and the terminal for approvals, with no sign in the editor that
+    anything is waiting.
+
 ### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
 
 The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
