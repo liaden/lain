@@ -176,11 +176,14 @@ end
 
 -- A new tab, columns left to right (full-height vsplit), buffers within a
 -- column top to bottom.
+-- @return true when a layout was opened, false when there was nothing to place
+-- yet. The caller armed on LainRender uses that to decide whether to stay
+-- armed, which is why this reports rather than only warning.
 local function open_layout(buffer_names)
   local columns = existing_columns(buffer_names)
   if #columns == 0 then
     vim.notify("lain: no lain:// buffers to lay out yet", vim.log.levels.WARN)
-    return
+    return false
   end
   vim.cmd("tabnew")
   for i, column in ipairs(columns) do
@@ -194,11 +197,12 @@ local function open_layout(buffer_names)
       vim.api.nvim_win_set_buf(0, buf)
     end
   end
+  return true
 end
 
--- :LainStart. Attached already: lay out now. Not yet: arm a one-shot
--- LainAttach hook so the layout opens the moment `lain chat --nvim` lands
--- (re-running :LainStart before that just re-arms the same hook -- the
+-- :LainStart. Attached already: lay out now. Not yet: arm a hook on the first
+-- RENDER so the layout opens once `lain chat --nvim` has actually primed a
+-- view (re-running :LainStart before that just re-arms the same hook -- the
 -- cleared augroup keeps it single).
 function M.start()
   local buffers = attached_buffers()
@@ -206,12 +210,34 @@ function M.start()
     open_layout(buffers)
     return
   end
+  local group = vim.api.nvim_create_augroup("lain_plugin_start", { clear = true })
+  local pending = false
+  -- LainRender, NOT LainAttach, and this is the whole of the fix for a layout
+  -- that never opened. The attach payload names buffers that do not exist yet
+  -- -- the runtime creates them lazily, per render -- so a hook armed on
+  -- LainAttach filters every column to empty and is spent before the first
+  -- view primes. LainRender is the event that MEANS a buffer now exists.
+  --
+  -- Not `once`, and scheduled: the first render is one buffer, and the layout
+  -- places only what exists, so firing on it would lay out a single column and
+  -- call the job done. `vim.schedule` defers to after the current batch of RPC
+  -- writes drains, and staying armed until a layout actually opens is what
+  -- covers a prime that arrives in more than one batch. `pending` keeps one
+  -- attempt in flight, so a burst of renders schedules one layout, not ten.
   vim.api.nvim_create_autocmd("User", {
-    pattern = "LainAttach",
-    once = true,
-    group = vim.api.nvim_create_augroup("lain_plugin_start", { clear = true }),
-    callback = function(ev)
-      open_layout(ev.data.buffers)
+    pattern = "LainRender",
+    group = group,
+    callback = function()
+      if pending then
+        return
+      end
+      pending = true
+      vim.schedule(function()
+        pending = false
+        if open_layout(attached_buffers() or {}) then
+          pcall(vim.api.nvim_del_augroup_by_id, group)
+        end
+      end)
     end,
   })
   vim.notify("lain: not attached yet -- layout opens when `lain chat --nvim` attaches", vim.log.levels.INFO)

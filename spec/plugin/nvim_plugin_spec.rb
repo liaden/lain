@@ -232,6 +232,38 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
+    # THE AUTOMATIC PATH, which the example above does not exercise: it waits
+    # for every buffer and only then types :LainStart. The cockpit types
+    # :LainStart at STARTUP, before any attach, so what has to work is the
+    # one-shot -- and it did not. It armed on LainAttach, which the runtime
+    # fires carrying buffer NAMES because "the buffers themselves are created
+    # lazily by the first render". At that instant nothing has primed, every
+    # column filters to empty, and the hook is spent warning "no lain:// buffers
+    # to lay out yet". Measured in a live cockpit: augroup consumed, tabs=1,
+    # wins=1, six buffers present and none displayed.
+    it "lays out automatically when :LainStart precedes the attach, as the cockpit types it" do
+      boot_nvim
+      setup!
+      inspector.command("LainStart") # armed BEFORE anything attaches
+
+      channel = Lain::Channel.new
+      frontend = Lain::Frontend::Neovim.new(channel:, socket_path: deterministic_socket)
+      frontend.run do
+        shown = wait_until do
+          names = lua(<<~LUA)
+            local out = {}
+            for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+              table.insert(out, vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)))
+            end
+            return out
+          LUA
+          names if names.any? { |name| name.start_with?("lain://") }
+        end
+
+        expect(shown).to match_array(layout_views)
+      end
+    end
+
     # The card's discipline clause, pinned mechanically the way
     # output_discipline_spec.rb pins stdout: the plugin may READ buffer names,
     # never create or write buffers, and never speak RPC -- that all belongs
