@@ -658,8 +658,22 @@ it was deferred.
     is defined by not keeping. Split into **T32a** (that object) and **T32b** (the two lua gaps and the
     protocol bump) below.
 
-33. **The editor gesture rail is consumed only DURING a model turn, so at `you>` every gesture is
-    silent.** Found by the manual pass on T32b, 2026-08-05, immediately after protocol 10 made `x` and
+33. ~~**The editor gesture rail is consumed only DURING a model turn, so at `you>` every gesture is
+    silent.**~~ **FIXED** — `48d617b`. `HumanReplies#surfaces` split: the ask keeps its TTY loop, and
+    the editor loop moved to a new `#session_surfaces`, opened on the repl's own `Sync` and closed in
+    that `Sync`'s `ensure` — so teardown fires on `quit`, `/quit`, a `Lain::Error` climbing out, and an
+    `Interrupt` at the prompt. `Repl::ConversationScope` owns the lifetime, because two `Metrics` cops
+    tripped at once when it was four inline lines; the supervisor moved onto it too, since the fleet
+    reactor and the editor rail are one lifetime. Red first, on the defect's own condition, six
+    examples; six mutations, all killed.
+
+    **Live re-measurement, fresh session, no turn ever run: `x` acked in 72 ms** (it was 8+ seconds of
+    silence). `<CR>` at the same idle prompt opens the full diff pair, both sides stamped and in diff
+    mode — and the transient recorded below did not recur, which is the evidence for its diagnosis.
+
+    The original report follows.
+
+    Found by the manual pass on T32b, 2026-08-05, immediately after protocol 10 made `x` and
     `u` sendable. This is the most consequential finding of the pass, because a code review is
     precisely a long stretch of reading and marking with **no model turns in it at all**.
 
