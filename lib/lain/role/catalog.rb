@@ -43,7 +43,17 @@ module Lain
         # belongs to {Isolation::Worktree::Handback}, this role only edits the
         # conflicted files, and without a tier-3 tool it never reaches the
         # approval gate that would hang the spawn waiting for a human.
-        Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep])
+        Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep]),
+        # {Review::Docent}'s answerer (T24): spawned per question on a review
+        # thread, to explain ONE hunk to the human standing on it. Read-only for
+        # the reviewers' reason -- explaining a change does not touch the tree --
+        # and without `bash` for `merge_resolver`'s: it answers while a human is
+        # mid-review and a tier-3 tool would park it at the approval gate.
+        #
+        # DELETABLE with the docent, and it does not travel alone: this entry,
+        # `prompt/templates/role/diff-docent.md` and `role_spec.rb`'s roll call
+        # are pinned to each other in both directions (see `review.rb`).
+        Role.new(name: :diff_docent, only: %i[read_file list_files glob grep])
       ].to_h { |role| [role.name, role] }.freeze
 
       class << self

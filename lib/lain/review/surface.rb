@@ -111,13 +111,13 @@ module Lain
       }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
 
       # @param candidate [#present, #annotate, #mark, #thread, #verdict, #refuse]
+      # @return [void]
       # @raise [Incomplete] naming what is wrong -- a message not answered at
       #   all, one answered only PRIVATELY (present, but not callable the way
       #   the port needs), or one answered PUBLICLY with the wrong shape.
       #   Kept apart rather than folded into one "does not answer" verdict:
       #   a defined-but-private or defined-but-wrong-arity method both used
       #   to read as "you forgot to write this" when the candidate had not.
-      # @return [void]
       def self.check!(candidate)
         absent, private_only, wrong_shape = sort_candidate(candidate)
         return if absent.empty? && private_only.empty? && wrong_shape.empty?
@@ -183,6 +183,9 @@ module Lain
   end
 end
 
+# The port's own value, ahead of every adapter: it belongs to none of them,
+# and it is what a rendered conversation is made of on both sides of the seam.
+require_relative "surface/message"
 require_relative "surface/null"
 require_relative "surface/text"
 # LAST, and it is the one entry here with a load-order reason: this adapter

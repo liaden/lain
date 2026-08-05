@@ -124,10 +124,16 @@ module Lain
         RESEARCHER = :researcher
 
         # The repl-phase role-spawn seam a `@role/skill` line folds through
-        # (nil until {#build}), and the opt-in third approval surface over it
-        # (nil without --auto-approve, so the Repl wires nothing extra by
-        # default).
-        attr_reader :role_spawn, :auto_surface
+        # (nil until {#build}), the opt-in third approval surface over it (nil
+        # without --auto-approve, so the Repl wires nothing extra by default),
+        # and T24's docent ANSWERER.
+        #
+        # The answerer and not a {Review::Docent}: a docent is keyed to a
+        # changeset and a thread pane, and neither exists at toolset-build time
+        # -- what a RUN holds is the capability to spawn the role, which is what
+        # this hands whichever card opens a review. DELETABLE with the docent;
+        # see `review.rb` for the rest of that map.
+        attr_reader :role_spawn, :auto_surface, :docent
 
         # `provider:` is INJECTED rather than resolved here: it is the run's
         # spooled provider, and {Wiring} builds the only other one. Two
@@ -189,7 +195,7 @@ module Lain
         # child's lifetime must `deregister`.
         #
         # Defaulted for `switchboard:`'s exact reason and with the same
-        # warning: {Wiring::Askers.unwired} is the direct-construction seam the
+        # caveat: {Wiring::Askers.unwired} is the direct-construction seam the
         # specs drive, where a child's question would reach no queue and no
         # desktop. The exe always passes the run's own.
         #
@@ -229,6 +235,9 @@ module Lain
         #   through; rides the spawn seam so a child can enrol its own asker
         #   ({Wiring::Askers#enrol}). Defaults to {Wiring::Askers.unwired} for the
         #   direct-construction seams the specs drive.
+        # @option options [Boolean] :auto_approve the ONE key this class reads --
+        #   everything else in the parsed options belongs to somebody further up.
+        #   Last, after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        switchboard: -> { NoSwitchboard }, askers: Askers.unwired)
           @library = library
@@ -252,6 +261,7 @@ module Lain
         def build(recorder, ask_human:)
           base = Lain::Toolset.new(BaseTools.build(recorder))
           @role_spawn = role_spawn_seam(base)
+          @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
           Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill] + epic.tools)
         end

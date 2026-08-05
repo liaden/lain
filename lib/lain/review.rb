@@ -50,3 +50,15 @@ require_relative "review/prefill"
 # this line plus `review/submit.rb` are all of it (the chunk's deletion map).
 # After the aggregate it reads; nothing else requires it and nothing reads it.
 require_relative "review/submit"
+
+# The docent (T24), and the fourth deletable unit in this tail. This line plus
+# `review/docent.rb` are all of it HERE, but not all of it: the docent is a
+# ROLE, so removal also takes the `:diff_docent` entry in `role/catalog.rb`, the
+# `diff-docent.md` role template, the name in `role_spec.rb`'s roll call, and
+# `CLI::Wiring::ToolsetBuild`'s one `#docent` line (the chunk's deletion map).
+# The catalog and the shipped templates are pinned equal in BOTH directions, so
+# deleting either alone is a red spec rather than a silent gap.
+#
+# After `changeset`, whose hunks and revisions it reads, and after `records`,
+# whose {Wire} refusals its own guards use while their class bodies run.
+require_relative "review/docent"

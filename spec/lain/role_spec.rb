@@ -184,7 +184,7 @@ RSpec.describe Lain::Role do
       expect(Lain::Role::Catalog.names).to contain_exactly(
         :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :researcher, :court_clerk,
         :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
-        :merge_resolver
+        :merge_resolver, :diff_docent
       )
     end
 

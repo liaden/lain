@@ -423,6 +423,28 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.auto_surface).to be_nil
     end
 
+    # The docent's ANSWERER and not a Docent: a docent is keyed to a changeset
+    # and a thread pane, neither of which exists at toolset-build time, so what
+    # a run holds is the capability to spawn the role. Its two neighbours here
+    # both had wiring examples and this line had none -- deleting it cost zero
+    # examples, which is how a later card removes it by accident.
+    it "has no docent answerer until the toolset has been built" do
+      expect(toolset_build.docent).to be_nil
+
+      toolset_build.build(recorder, ask_human:)
+
+      expect(toolset_build.docent).to be_a(Lain::Review::Docent::Answerer)
+    end
+
+    # The same invariant its neighbour above has: ONE seam, shared, so a docent
+    # spawns its role through the object a `@role/skill` line folds through.
+    it "wires the docent answerer over its own role_spawn seam, naming the shipped role" do
+      toolset_build.build(recorder, ask_human:)
+
+      expect(toolset_build.docent.role).to eq(Lain::Review::Docent::ROLE)
+      expect(toolset_build.docent.instance_variable_get(:@spawn)).to be(toolset_build.role_spawn)
+    end
+
     # T12's invariant, now assertable directly: the third approval surface
     # folds through the SAME seam a `@role/skill` line does.
     it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
