@@ -482,7 +482,13 @@ it was deferred.
     someone's attention precisely because it is the one slow file whose cost shape is different from
     all the others, and the obvious fix (reuse fixtures, batch git) does not apply.
 
-27. **`lain up --nvim -- <chat flags>` builds a broken cockpit, and it is the documented form.**
+27. ~~**`lain up --nvim -- <chat flags>` builds a broken cockpit, and it is the documented form.**~~
+    **FIXED** — `b5fb934`. `Cockpit::SwallowedFlag` refuses a socket beginning with `-` and names
+    both spellings that work. The same commit keeps the `-c` payload as
+    `execute exists(':LainStart') ? 'LainStart' : ''` rather than `silent! LainStart`, because
+    `silent!` is what hid ticket 30 below. Live-verified: `lain up --session qa9 --nvim -- --provider
+    ollama` now exits 1 with the sentence and creates no tmux session. The original report follows.
+
     Found by the manual pass, 2026-08-05, by typing the obvious thing:
     `lain up --nvim -- --provider ollama`. The editor comes up as
 
@@ -549,7 +555,17 @@ it was deferred.
     names the missing thing and implies no damage. `lain sessions` says "unreadable" for the same
     file. Two commands, one condition, and only one of them tells the truth about it.
 
-30. **The cockpit's editor never lays itself out, because the one-shot fires a moment too early.**
+30. ~~**The cockpit's editor never lays itself out, because the one-shot fires a moment too early.**~~
+    **FIXED** — `f576178`, exactly as the last paragraph proposes: the hook arms on `User LainRender`,
+    not `LainAttach`. Not `once`, either — the first render is a single view and a layout placing only
+    what exists then would open one column and stop — so it stays armed, `vim.schedule`s past the
+    current batch of RPC writes, collapses a burst into one attempt via a `pending` flag, and tears
+    the augroup down only once `open_layout` reports it placed something. The pre-existing example
+    typed `:LainStart` *after* waiting for every buffer, so it could not see this; the new one types
+    it first, as the cockpit does, and went red before green. Live-verified by screenshot: `tabs=2
+    wins=4` over `journal | timeline | inbox | request` with no manual `:LainStart`. The original
+    report follows.
+
     Found by the manual pass, 2026-08-05, by taking a screenshot instead of reading a buffer over RPC.
     `lain up --nvim` comes up on the user's own dashboard (`snacks_dashboard`, `[No Name]`),
     `tabs=1 wins=1`, with all six `lain://` buffers present and none of them displayed.
