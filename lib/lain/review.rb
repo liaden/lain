@@ -26,6 +26,9 @@ require_relative "review/changeset"
 require_relative "review/bounds"
 require_relative "review/surface"
 require_relative "review/records"
+# AFTER `records`: it builds an {AnnotationPlaced} out of an {Anchor}, so both
+# have to exist by the time anything calls it.
+require_relative "review/annotations"
 require_relative "review/verdict"
 require_relative "review/session"
 

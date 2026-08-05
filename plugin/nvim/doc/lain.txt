@@ -224,6 +224,7 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
+Inside a changeset diff (|lain-review-diff|): `:LainNote` and `:LainNoteDone`.
 
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
 set your cursor is on in `lain://question` (|lain-question|) for you to tick
@@ -452,6 +453,46 @@ The old side cannot be written -- `:w` fails with E382 -- because those bytes
 are history, and lain settles the review from the revision rather than from a
 file. The pair is reused as you move between files, and the old side's buffer
 is wiped as it is replaced, so a long review leaves no buffer per file behind.
+
+                                                                  *:LainNote*
+                                                              *:LainNoteDone*
+
+Notes go on either side of the pair, and both commands work only in a buffer
+lain has open for review -- the stamps above are the test, so a file you have
+moved on from refuses.
+
+    :LainNote {kind} {text}
+                            Leave a note on the line the cursor is on. {kind}
+                            is the first word and is required: `note`,
+                            `question` or `blocker`, completed with <Tab>.
+                            Everything after it is your own text, spacing and
+                            all. Inline you get a small right-aligned marker
+                            naming the kind, so it never sits on top of the
+                            code you are reading; the words themselves belong
+                            to the thread, not to the margin.
+
+                            The note remembers the side, the revision and the
+                            path AT THE MOMENT YOU LEAVE IT, so it still says
+                            what it meant after you move to the next file.
+
+    :LainNoteDone           Hand every note back, in the order you placed
+                            them -- across both sides and across every file
+                            you visited, not just the pair on screen. The
+                            markers are cleared as they are handed over, so a
+                            second `:LainNoteDone` sends nothing rather than
+                            filing your notes twice. If lain refuses the
+                            hand-off, your notes stay exactly where they are.
+
+                            Refuses while a buffer holding notes is 'modified'.
+                            An unsaved edit of your own would be measured as
+                            the changeset having drifted under your notes,
+                            which it did not -- so save first.
+
+A note that no longer matches the line it was left on is kept and MARKED, never
+dropped: your words are the part nobody can reconstruct. lain compares the text
+the line said when you left the note against what it says now, at the moment you
+hand it back -- so a note that merely slid down the file as lines were inserted
+above it is not drift, and a note whose line was rewritten under it is.
 
 ------------------------------------------------------------------------------
 6.9 FOLDS                                                         *lain-folds*

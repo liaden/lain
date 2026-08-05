@@ -332,18 +332,45 @@ module Lain
         end
       end
 
-      # The wire shape of the two review writes whose answer IS the editor's
+      # The wire shape of the review writes whose answer IS the editor's
       # verdict, read at the boundary and BEFORE any listener runs -- which is
       # what makes "a malformed annotation is not recorded" a fact about the
       # order things happen in rather than a hope about the listener.
       #
       # It is not a second copy of {Review::AnnotationPlaced}'s guard, and the
       # difference is the whole reason it exists. That record judges what the
-      # JOURNAL stores, and three of its members -- the anchor's id, the
-      # revision it was authored against, whether it drifted -- are Ruby's own
-      # measurements that no editor ever sends. This judges what the EDITOR
-      # authored, and it has to judge it HERE, because a refusal is only worth
-      # anything while the human's words are still in the buffer.
+      # JOURNAL stores; this judges what the EDITOR authored, and it has to
+      # judge it HERE, because a refusal is only worth anything while the
+      # human's words are still in the buffer.
+      #
+      # ⚠️ THIS COMMENT ONCE SAID that three of the record's members -- the
+      # anchor's id, the revision it was authored against, and whether it
+      # drifted -- were "Ruby's own measurements that no editor ever sends". Two
+      # thirds of that is now false, and the correction is the point rather than
+      # a tidy-up. Only the anchor's `id` is minted here.
+      #
+      # `revision` is the EDITOR's, off T15's `b:lain_review_revision` stamp, and
+      # it has to be: {Review::AnnotationPlaced} carries a revision precisely so
+      # that an annotation authored against one diff and submitted against
+      # another is DETECTABLE, and that only works if the diff the human was
+      # looking at is on the record rather than implied by whatever is on screen
+      # at submit time. Resolved here it would be the second thing, which is the
+      # live defect in tuicr that member exists to close.
+      #
+      # `drifted` is the EDITOR's for a harder reason: drift is the anchor text
+      # against the line the number NOW names, and that line lives in the buffer
+      # the human is looking at -- not in the diff a session holds, not on disk,
+      # nowhere Ruby can reach without keeping a copy free to disagree with what
+      # is on screen. For a 'fileformat=dos' file it certainly would disagree:
+      # nvim strips the carriage returns the buffer never shows while git's bytes
+      # carry them, so a Ruby-side comparison reports drift on every line of the
+      # file. The measurement is taken where the buffer is.
+      #
+      # Both were in {KEYS}' blind spot, and a blind spot here is SILENT: this
+      # boundary hands on exactly {KEYS} (see {normalized}), so a member the
+      # editor sent and this list did not name was dropped on the floor with no
+      # refusal and no warning. That is what a missing key costs, from the other
+      # direction.
       #
       # THE DROPPED KEY IS THE FAILURE THIS EXISTS FOR, and it is not
       # hypothetical: a nil value removes its key from a lua table entirely
@@ -361,18 +388,20 @@ module Lain
         # content: a blank line in a diff is a real anchorable position -- an
         # added empty line is a change a human may have an opinion about -- which
         # is the same distinction {Review::AnnotationPlaced} draws.
-        KEYS = %w[path side line anchor_text text kind].freeze
+        KEYS = %w[path side line anchor_text text kind revision drifted].freeze
 
         # The two members the editor authors as free text, against the closed
         # sets they must land in.
         CLOSED = { "side" => :SIDES, "kind" => :ANNOTATION_KINDS }.freeze
 
-        # The two nobody downstream can reconstruct: the file a note is on, and
-        # the words in it. Both blank-checked; `anchor_text` deliberately is not
-        # (see {KEYS}).
+        # The three nobody downstream can reconstruct: the file a note is on, the
+        # words in it, and the revision it was authored against. All
+        # blank-checked; `anchor_text` deliberately is not (see {KEYS}).
         NAMED = {
           "path" => "an annotation must name the file it is on",
-          "text" => "an annotation with nothing in it records no opinion"
+          "text" => "an annotation with nothing in it records no opinion",
+          "revision" => "an annotation that names no revision names no diff, so nothing can tell later " \
+                        "whether it was authored against the diff it was submitted against"
         }.freeze
 
         # THE ARGUMENTS THEMSELVES ARE A SHAPE, and checking it is not
@@ -403,6 +432,81 @@ module Lain
           note = args.first
           refused(note) || yield(normalized(note))
         end
+
+        # The batch `:LainNoteDone` settles (T16): one gesture carrying every note
+        # the human placed, across both sides and every file they visited, IN
+        # PLACEMENT ORDER -- which is the output, since nothing else records
+        # which note they wrote first.
+        #
+        # ATOMIC AT THIS BOUNDARY, AND ONLY AT THIS BOUNDARY. Be exact about the
+        # scope, because the natural summary ("the batch is atomic") is false one
+        # step further on.
+        #
+        # What holds: EVERY note is judged before ANY is delivered, so a payload
+        # this object refuses -- a bad kind, a dropped key, an impossible line,
+        # anywhere in the batch -- delivers nothing at all. That ordering is the
+        # whole difference between this and a loop over {annotation}, and it
+        # matters because half a review recorded with a refusal covering the rest
+        # is the one outcome a human cannot act on: they cannot tell which half
+        # to retype.
+        #
+        # What does NOT hold: a LISTENER that takes the first note and refuses
+        # the second leaves the first delivered. This method stops at that
+        # refusal and answers it, `48_annotate.lua` keeps every note (its
+        # `forget` sits past the `pcall`, deliberately), and the human's retry
+        # therefore delivers the first note a SECOND time. Nothing here can
+        # prevent that -- undoing a delivery is the consumer's to offer.
+        #
+        # It is unreachable today only because both bound reviews refuse
+        # UNIFORMLY ({Neovim::NoReviewWrites} answers every note the same
+        # sentence), so the first note refuses and nothing lands. That is a
+        # property of today's consumers, not of this code, so it is written down
+        # rather than assumed: a consumer bound here must either refuse uniformly
+        # or take the batch whole.
+        #
+        # Delivered note by note to the SAME hand-off {annotation} uses, rather
+        # than as a batch to a listener method of its own. A batch-shaped method
+        # would have to be added to {Listener}, {Listener::Null},
+        # {Neovim::FrontendListener} and {Neovim::NoReviewWrites} before anything
+        # could receive it -- four sites, all of them dead until someone
+        # implements the fifth. This reaches the bound review through wiring that
+        # already exists, and it is per-note downstream anyway. The batch is not
+        # lost by it: one write, one verdict, and the deliveries happen in the
+        # order the payload carried. That trade holds precisely as long as the
+        # paragraph above does.
+        #
+        # @param args [Array, nil] the verb's ONE array of arguments; the batch is
+        #   its sole member, an Array of notes
+        # @yieldparam note [Hash] each note, NORMALIZED, in placement order
+        # @return [String, nil] the first refusal, or nil once every note is taken
+        def self.notes(args)
+          return flat(args) unless args.is_a?(Array)
+
+          batch = args.first
+          return unbatched(batch) unless batch.is_a?(Array)
+
+          refused_batch(batch) || batch.lazy.map { |note| yield(normalized(note)) }.find(&:itself)
+        end
+
+        # The flat-payload refusal one level in, and it earns its own message.
+        # {flat} catches `rpcrequest(..., verb, payload)` where the ARGUMENTS are
+        # not an array; this catches `rpcrequest(..., verb, note)` where they are,
+        # but hold a bare note instead of the batch -- the shape a lua half gets
+        # by dropping one pair of braces, which reads as a single-note write and
+        # would otherwise be half-accepted.
+        def self.unbatched(batch)
+          "a settled review's payload must be the ARRAY of notes, even when there is one of them or none: " \
+            "one gesture carries every note the human placed, and the order it carries them in is the only " \
+            "record of which they wrote first. Got #{batch.inspect}"
+        end
+        private_class_method :unbatched
+
+        # Lazy so a malformed note stops the scan, and `first` so the human is
+        # told ONE thing to go fix rather than a list.
+        def self.refused_batch(batch)
+          batch.lazy.filter_map { |note| refused(note) }.first
+        end
+        private_class_method :refused_batch
 
         # @param args [Array, nil] the verb's one array of arguments, holding the
         #   verdict alone
@@ -435,7 +539,21 @@ module Lain
             "line" => note["line"],
             "anchor_text" => Lain::Review::Wire.text(note["anchor_text"]),
             "text" => Lain::Review::Wire.text(note["text"]),
-            "kind" => Lain::Review::Wire.token(note["kind"]) }
+            "kind" => Lain::Review::Wire.token(note["kind"]),
+            "revision" => Lain::Review::Wire.token(note["revision"]),
+            # NOT normalized, and there is nothing to normalize: it is a boolean,
+            # already refused by {unmeasured} unless it is exactly one.
+            #
+            # What `Wire.token` would do to it is ASYMMETRIC, and the asymmetry
+            # is the whole hazard. It is `value && -value.to_s.strip`, so `false`
+            # SHORT-CIRCUITS on the `&&` and comes back untouched, while `true`
+            # becomes the String `"true"` -- which {Review::AnnotationPlaced}'s
+            # `inclusion: [true, false]` refuses, and which no identity test
+            # matches. Tokenizing here would therefore leave the answer MOST
+            # notes give perfectly intact and corrupt only the DRIFTED ones:
+            # nothing would look wrong until a note actually drifted, which is
+            # the first moment anybody needs this field to be right.
+            "drifted" => note["drifted"] }
         end
         private_class_method :normalized
 
@@ -444,9 +562,33 @@ module Lain
           return "a review annotation must arrive as a table of #{KEYS.join(", ")}, got #{note.inspect}" unless
             note.is_a?(Hash)
 
-          dropped(note) || unknown(note) || impossible_line(note) || blank(note)
+          dropped(note) || unknown(note) || impossible_line(note) || unmeasured(note) || blank(note)
         end
         private_class_method :refused
+
+        # `drifted` is a MEASUREMENT, taken in the editor because that is the only
+        # place the line it compares against exists (see the class comment).
+        #
+        # REFUSED, NEVER COERCED, and the difference is the whole reason this is a
+        # method rather than a truthiness test at the call site.
+        # {Review::AnnotationPlaced} gives `drifted` no default precisely so a
+        # caller that never compared cannot journal "did not drift" -- a reading
+        # no later audit can tell from a real one. A truthiness test here would
+        # hand that default straight back: a dropped key is nil is false, which is
+        # the answer most notes give and so the one nobody would ever question.
+        #
+        # {dropped} already catches the key going missing; this catches it
+        # arriving as something that is not a measurement -- a `"false"` off a
+        # wire that stringified it, most of all, since that is TRUE to anything
+        # testing it loosely.
+        def self.unmeasured(note)
+          return nil if [true, false].include?(note["drifted"])
+
+          "this annotation's drifted must be true or false -- it is the editor's measurement of whether the " \
+            "line still says what the note was anchored to, and a note nobody measured must not be recorded " \
+            "as one that did not drift. Got #{note["drifted"].inspect}"
+        end
+        private_class_method :unmeasured
 
         def self.dropped(note)
           missing = KEYS.reject { |key| note.key?(key) }
@@ -563,20 +705,36 @@ module Lain
           }.freeze
         end
 
-        # The review pair reads its payload through {ReviewWrite}, which either
-        # answers the refusal or hands the note on -- so a malformed write never
-        # reaches the listener at all, and "the annotation is not recorded" is
-        # the shape of the code rather than a promise about it.
+        # A question's payload is LINES, which no boundary object judges -- the
+        # grammar does, later, and its refusal is the view's. Every review write
+        # goes through {ReviewWrite} instead, which is a real seam and not merely
+        # a way to keep this method short: see {review_writes}.
         def answered(listener)
-          {
-            "question" => ->(args) { listener.question_written(args[1] || [], args[2]) },
-            "review_annotate" => lambda { |args|
-              ReviewWrite.annotation(args[1]) { |note| listener.review_annotated(note) }
-            },
+          { "question" => ->(args) { listener.question_written(args[1] || [], args[2]) } }
+            .merge(review_writes(listener)).freeze
+        end
+
+        # The review writes, which share one thing the question verb does not:
+        # each reads its payload through {ReviewWrite} FIRST, so a malformed
+        # write never reaches the listener at all and "the annotation is not
+        # recorded" is the shape of the code rather than a promise about it.
+        #
+        # `review_notes` is T16's `:LainNoteDone` -- the whole settled batch,
+        # answered once. It is kept BESIDE `review_annotate` rather than
+        # replacing it (T22's prefill may want the per-note form), and the two
+        # land on the SAME hand-off, so a review binds one object and answers
+        # both rails.
+        def review_writes(listener)
+          # Named once because it IS one hand-off: a note reaching lain alone and
+          # a note reaching it inside a settled batch are the same note, and a
+          # review that answered them differently would be answering the gesture
+          # rather than the note.
+          annotated = ->(note) { listener.review_annotated(note) }
+          { "review_annotate" => ->(args) { ReviewWrite.annotation(args[1], &annotated) },
+            "review_notes" => ->(args) { ReviewWrite.notes(args[1], &annotated) },
             "review_verdict" => lambda { |args|
               ReviewWrite.verdict(args[1]) { |verdict| listener.review_verdict_given(verdict) }
-            }
-          }.freeze
+            } }
         end
       end
 

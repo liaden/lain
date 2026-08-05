@@ -420,7 +420,7 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
   def annotation(overrides = {})
     { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
       "anchor_text" => "  @store.write(input)", "text" => "why this way?",
-      "kind" => "question" }.merge(overrides)
+      "kind" => "question", "revision" => "d4e5f6", "drifted" => false }.merge(overrides)
   end
 
   # `NotImplementedError` IS NOT A `StandardError` -- it is a `ScriptError`, and
@@ -461,11 +461,11 @@ RSpec.describe Lain::Frontend::Neovim::Router do
 
   let(:listener) { Lain::Frontend::Neovim::RpcThread::Listener::Null.new }
 
-  # T11 made it three. The split is wire semantics, not routing convenience:
-  # these three are the gestures lain can REFUSE, so their route's return value
-  # has to be the response.
-  it "names the three writes whose route answers the editor" do
-    %w[question review_annotate review_verdict].each { |verb| expect(router).to be_answers(verb) }
+  # T11 made it three; T16's settled batch makes it four. The split is wire
+  # semantics, not routing convenience: these are the gestures lain can REFUSE,
+  # so their route's return value has to be the response.
+  it "names the writes whose route answers the editor" do
+    %w[question review_annotate review_verdict review_notes].each { |verb| expect(router).to be_answers(verb) }
     %w[reply resend compose compose_abandon question_abandon review_done
        review_open review_mark review_ask].each do |verb|
       expect(router).not_to be_answers(verb)
@@ -484,7 +484,7 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     def annotation(overrides = {})
       { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
         "anchor_text" => "  @store.write(input)", "text" => "why this way?",
-        "kind" => "question" }.merge(overrides)
+        "kind" => "question", "revision" => "d4e5f6", "drifted" => false }.merge(overrides)
     end
 
     def answer(note) = router.answer(["review_annotate", [note]])
@@ -533,17 +533,54 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     # to raise NoMethodError INSIDE the guard whose whole purpose is that the
     # wire can never raise -- and {RpcThread#answer} answers that and re-raises,
     # ending the session over a lua typo.
-    it "refuses flat positionals in both verbs rather than raising inside the guard" do
+    it "refuses flat positionals in every verb rather than raising inside the guard" do
       allow(listener).to receive(:review_annotated)
       allow(listener).to receive(:review_verdict_given)
 
-      %w[review_annotate review_verdict].each do |verb|
+      %w[review_annotate review_verdict review_notes].each do |verb|
         [annotation, "why this way?", 12, nil].each do |flat|
           expect(router.answer([verb, flat])).to include("ONE array"), "#{verb} with #{flat.inspect}"
         end
       end
       expect(listener).not_to have_received(:review_annotated)
       expect(listener).not_to have_received(:review_verdict_given)
+    end
+
+    # THE TWO MEMBERS THIS BOUNDARY USED TO DROP ON THE FLOOR (T16). It hands on
+    # exactly {KEYS} -- which is right, and is why a member the editor sends and
+    # the list does not name vanishes with no refusal and no warning. `revision`
+    # is the diff the human was LOOKING at, and it is the only thing that makes
+    # "authored against one diff, submitted against another" detectable at all;
+    # `drifted` is the editor's measurement, and only the editor holds the buffer
+    # it compares against. Both were sent and both were silently stripped.
+    it "carries the revision and the measurement through, rather than dropping them" do
+      taken = nil
+      allow(listener).to receive(:review_annotated) { |note| taken = note }
+
+      answer(annotation("revision" => " d4e5f6 ", "drifted" => true))
+
+      expect(taken).to include("revision" => "d4e5f6", "drifted" => true)
+    end
+
+    it "refuses a note that names no revision, so no note can name no diff" do
+      expect(answer(annotation("revision" => "   "))).to include("names no revision")
+    end
+
+    # `drifted` is REFUSED, never coerced. {Review::AnnotationPlaced} gives it no
+    # default precisely so a caller that never compared cannot journal "did not
+    # drift", and a truthiness test here would hand that default straight back: a
+    # dropped key is nil is false, which is the answer most notes give and so the
+    # one nobody would question. `"false"` is the sharp case -- a wire that
+    # stringified the boolean sends a value that is TRUE to anything loose.
+    it "refuses a measurement that is not a measurement, and never coerces one" do
+      allow(listener).to receive(:review_annotated)
+
+      expect(answer(annotation.except("drifted"))).to include("drifted")
+      ["false", "true", nil, 0, 1].each do |given|
+        expect(answer(annotation("drifted" => given))).to include("must be true or false"), given.inspect
+      end
+      expect(answer(annotation("drifted" => true))).to be_nil
+      expect(listener).to have_received(:review_annotated).once
     end
 
     # `line` is the one member with a DOMAIN rather than a vocabulary, and it
@@ -590,6 +627,79 @@ RSpec.describe Lain::Frontend::Neovim::Router do
       answer(annotation("severity" => "blocker-ish"))
 
       expect(taken.keys).to eq(Lain::Frontend::Neovim::ReviewWrite::KEYS)
+    end
+  end
+
+  # T16's `:LainNoteDone`: one settling gesture carrying every note the human
+  # placed, answered once.
+  describe "a settled review's wire shape" do
+    def note(overrides = {})
+      { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
+        "anchor_text" => "  @store.write(input)", "text" => "why this way?",
+        "kind" => "question", "revision" => "d4e5f6", "drifted" => false }.merge(overrides)
+    end
+
+    def answer(*notes) = router.answer(["review_notes", [notes]])
+
+    # ORDER IS THE OUTPUT: the journal's order is the only record of which note
+    # the human wrote first, so the deliveries happen in the order the payload
+    # carried and 40/12/25 is chosen so any positional sort reads differently.
+    it "hands every note on in placement order and answers once" do
+      taken = []
+      # The block must answer nil: a listener's return value IS the write's
+      # verdict, so a stub leaking its accumulator would read as a refusal.
+      allow(listener).to receive(:review_annotated) { |given| taken.push(given["line"]) && nil }
+
+      expect(answer(note("line" => 40), note("line" => 12), note("line" => 25))).to be_nil
+      expect(taken).to eq([40, 12, 25])
+    end
+
+    # A BATCH IS ONE GESTURE, so a refusal has to leave the whole gesture
+    # untaken. Half a review recorded, with a refusal covering the rest, is the
+    # one outcome a human cannot act on -- they cannot tell which half to
+    # retype. The malformed note is LAST here, which is the ordering a loop over
+    # the per-note guard would get wrong while passing every other example.
+    it "judges every note before delivering any, so a late refusal takes nothing" do
+      allow(listener).to receive(:review_annotated)
+
+      expect(answer(note, note, note("kind" => "nit"))).to include("kind must be one of")
+      expect(listener).not_to have_received(:review_annotated)
+    end
+
+    it "refuses a note the wire dropped its measurement from, however deep in the batch" do
+      allow(listener).to receive(:review_annotated)
+
+      expect(answer(note, note.except("drifted"))).to include("drifted")
+      expect(listener).not_to have_received(:review_annotated)
+    end
+
+    # An empty settle is a real gesture -- a human who read the diff and had
+    # nothing to say -- and is answered as taken rather than refused.
+    it "takes an empty batch rather than refusing it" do
+      expect(answer).to be_nil
+    end
+
+    # The shape a lua half gets by dropping ONE pair of braces: the arguments are
+    # an array, but they hold a bare note where the batch belongs. It reads as a
+    # single-note write, so it would be half-accepted rather than refused, and
+    # `{flat}` cannot see it -- the arguments really are an array.
+    it "refuses a bare note where the array of notes belongs" do
+      allow(listener).to receive(:review_annotated)
+
+      [note, "why this way?", 12, nil].each do |unbatched|
+        expect(router.answer(["review_notes", [unbatched]])).to include("must be the ARRAY of notes"),
+                                                                unbatched.inspect
+      end
+      expect(listener).not_to have_received(:review_annotated)
+    end
+
+    # The listener's own refusal is the write's verdict, and the FIRST one stops
+    # the batch: a human is told one thing to go fix, not a list.
+    it "answers the first refusal its listener gives" do
+      allow(listener).to receive(:review_annotated).and_return(nil, "no review is open", "nor this one")
+
+      expect(answer(note, note, note)).to eq("no review is open")
+      expect(listener).to have_received(:review_annotated).twice
     end
   end
 
@@ -666,7 +776,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
   def annotation(overrides = {})
     { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
       "anchor_text" => "  @store.write(input)", "text" => "why this way?",
-      "kind" => "question" }.merge(overrides)
+      "kind" => "question", "revision" => "d4e5f6", "drifted" => false }.merge(overrides)
   end
 
   it "carries a note from the editor to the bound review and answers that it was taken" do
