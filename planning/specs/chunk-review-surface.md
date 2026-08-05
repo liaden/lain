@@ -903,6 +903,22 @@ spaces under a heading that says *"write your answer below"*.
     post, or both. Note the constraint `Gh#submit_review`'s own doc records: **no retry, ever**, since
     an accepted POST creates a review each time.
 
+### The manual pass on the approval view (protocol 12), 2026-08-05
+
+The live cockpit pass T36 owed, run against real nvim + ollama:
+
+- Gating a real `bash` call renders `lain://approval` with the tool, its input, and the key hints
+  (`-- y approve, n deny  (:LainApprove / :LainDeny)`), **displayed in a window**, while the chat pane
+  shows its own `[y/N]` prompt as before.
+- **`y` in the editor approved it**: bash ran, `APPROVED_FROM_NVIM` came back, the turn continued.
+- **`n` denied it**: the buffer drained to `(no approvals pending)`, the command never executed, and
+  the model fell back to *asking* a question instead — which then rendered in `lain://inbox`, so the
+  two surfaces coexist as designed.
+
+Ticket 28 is closed. What still deserves a human's eyes, and only a human's: whether a dunst popup
+**and** a split opening for the same call reads as helpful or as noise, and whether the focus move is
+welcome mid-diff. Nothing pins that and nothing can.
+
 ### The manual pass on T34, 2026-08-05 — and the one thing deliberately NOT tested
 
 Live in a cockpit, both refusals correct and both naming a remedy:
