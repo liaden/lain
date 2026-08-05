@@ -2887,6 +2887,28 @@ exit on the record, not on the write.
 
 Still owed: 1 (final count against a serial run), the rest of 5, and all of 6.
 
+**Manual pass, 2026-08-05 — what it verified against a real machine.** Driven in kitty on Joel's
+display: `lain up --nvim=<socket> -- --provider ollama`, qwen3:4b resident at 100% GPU (5.2 GB,
+ctx 32768, ~71 tok/s), nvim 0.12.4 with the runtime attached (`exists(':LainSend')` = 2), a real turn
+round-tripped through `POST /api/chat`.
+
+| checked | result |
+|---|---|
+| `lain review` reachable | **was not** — never mounted; fixed at `48161e4` |
+| the cockpit starts | **did not** — E488 on every `--nvim`; fixed at `9f6043b` |
+| cumulative scope, real branch | 27 files rendered |
+| commits scope, real branch | the walk, per commit |
+| unresolvable ref | exit **1**, message on stderr, stdout empty, no backtrace |
+| **T29 bounds guard** | fires for real: *"the cumulative view is 35775 rendered lines, over the ceiling of 30000 — present it per commit"*, exit 1, nothing drawn |
+| the guard's remedy | **works** — the same range at `--scope commits` renders 50 commits in 246 lines |
+| **T10 PR path** | reaches GitHub live; a nonexistent PR refuses by name carrying the GraphQL reason |
+
+**Still owed and not doable here:** a real PR at work scale (this repository has no pull requests, so
+the 300-file fallback and `gh pr diff`'s header shape remain unobserved — exactly what T10's own
+hand-back said it could not check), and the editor review itself, which is blocked until T31a and
+T31b land. The manual pass could not reach a single one of waves 3–5's editor capabilities, and that
+is the finding, not a gap in the pass.
+
 After the last wave:
 
 1. `bundle exec rake pspec` green. **Check the example count against a serial run** before believing
