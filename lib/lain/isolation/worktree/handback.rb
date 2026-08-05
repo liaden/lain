@@ -332,9 +332,12 @@ module Lain
         #   the same repository {Worktree} branches its worktrees from
         # @param journal [#<<] where the {Telemetry::Handback} record lands
         # @param shell_out_factory [#call] builds the subprocess runner, injected
-        #   as a factory exactly as {Worktree} does, so a spec substitutes it
+        #   as a factory exactly as {Worktree} does, so a spec substitutes it --
+        #   and defaulting to {Shell::Out} for the reason {Worktree#initialize}
+        #   gives: mixlib forks, and this object spawns git a dozen times per
+        #   handback
         def initialize(repo_root: Dir.pwd, journal: Channel::Null.instance,
-                       shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                       shell_out_factory: Shell::Out.public_method(:new))
           @parent = Checkout.new(File.expand_path(repo_root), shell_out_factory:)
           @journal = journal
           @shell_out_factory = shell_out_factory

@@ -2,7 +2,6 @@
 
 require "monitor"
 require "fileutils"
-require "mixlib/shellout"
 
 module Lain
   module Isolation
@@ -50,8 +49,9 @@ module Lain
       # exports these) or any GIT_*-polluted env would otherwise have its shelled
       # `git` resolve the index/dir against the WRONG repository -- the hook's,
       # not the leased worktree's -- so every git call scrubs them. Mapping each
-      # to `nil` deletes it in the forked child (the {WorkerEnv} scrub semantics
-      # B1 pinned: mixlib passes a nil value through as `ENV[k] = nil`), leaving
+      # to `nil` deletes it in the child (the {WorkerEnv} scrub semantics B1
+      # pinned; `Mixlib::ShellOut` and `Process.spawn` agree on it, which is what
+      # lets {Shell::Out} and an injected mixlib both run these calls), leaving
       # `-C @repo_root` the sole authority on which repo git operates in.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
@@ -79,9 +79,15 @@ module Lain
       #   (relocatable, injected -- the {Workspace::Snapshot} root idiom)
       # @param paths [Paths] supplies the per-worker key via {Paths#project_hash}
       # @param shell_out_factory [#call] builds the subprocess runner, injected
-      #   as a factory exactly as {Tools::Bash} does, so a spec substitutes it
+      #   as a factory exactly as {Tools::Bash} does, so a spec substitutes it.
+      #   {Shell::Out} rather than `Mixlib::ShellOut` because mixlib FORKS, and a
+      #   fork copies the parent's page tables: every `git` here costs the parent
+      #   an amount linear in its own RSS, for a runner whose result is three
+      #   values. Same argv, same `environment:` semantics, same timeout -- the
+      #   `Mixlib::ShellOut` a caller injects still works, and several specs
+      #   inject one.
       def initialize(root:, repo_root: Dir.pwd, paths: Paths.new,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Shell::Out.public_method(:new))
         @repo_root = File.expand_path(repo_root)
         @root = File.expand_path(root)
         @paths = paths
