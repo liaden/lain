@@ -7,7 +7,29 @@
 # Warning state is the EXE's call; the library must never do it for its host.
 Warning[:experimental] = false
 
-require "bundler/setup"
+# ONLY from a source checkout, and the guard is the whole of what makes `lain`
+# usable outside its own repository. `bundler/setup` resolves the Gemfile it
+# finds by walking UP FROM THE CWD, so an unconditional require here means the
+# INSTALLED gem, run inside any project that has a Gemfile of its own, resolves
+# THAT project's bundle and dies in Bundler::GemNotFound before `lain` gets a
+# say. Measured 2026-08-05 against a real checkout of rack: `lain review open
+# 2490` could not start, and reviewing somebody else's repository is the whole
+# point of the review surface.
+#
+# `../Gemfile` relative to THIS FILE tells the two cases apart exactly: a
+# checkout has one beside `exe/`, and the packaged gem ships none (verified
+# against `pkg/lain-0.1.0.gem`). The CWD is not consulted, deliberately -- that
+# is the thing that was wrong.
+# Pinning BUNDLE_GEMFILE is the second half and is not optional: the guard
+# alone still leaves `bundler/setup` resolving whatever it walks up to, so a
+# SOURCE checkout invoked from elsewhere -- `ruby ~/dev/lain/exe/lain review
+# ...` inside the repository under review -- fails the same way the installed
+# gem did. `||=` so an explicit BUNDLE_GEMFILE still wins.
+lain_gemfile = File.expand_path("../Gemfile", __dir__)
+if File.exist?(lain_gemfile)
+  ENV["BUNDLE_GEMFILE"] ||= lain_gemfile
+  require "bundler/setup"
+end
 require "thor"
 
 require "lain"

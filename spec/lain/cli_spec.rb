@@ -3,7 +3,10 @@
 # exe/lain is a script, not a lib file: it ends in `LainCLI.start(ARGV)`,
 # guarded by `$PROGRAM_NAME == __FILE__` so this `load` defines the class
 # WITHOUT parsing rspec's ARGV or touching the network. We test at the Thor
-# class seam -- build_provider/build_context/build_agent -- never a subprocess.
+# class seam -- build_provider/build_context/build_agent -- rather than by
+# spawning one. The exception is the `:seam` block at the FOOT of this file:
+# the exe's bundler line is invisible to a `load` into an already-bundled
+# process, so nothing but a subprocess in a foreign directory can see it.
 load File.expand_path("../../exe/lain", __dir__)
 
 RSpec.describe LainCLI do
@@ -214,6 +217,105 @@ RSpec.describe LainCLI do
       expect { described_class.start(%w[up typo]) }
         .to output(/pass chat flags after `--`/).to_stderr
         .and raise_error(SystemExit)
+    end
+  end
+end
+
+# The one thing about `exe/lain` that only a SUBPROCESS can say, which is why
+# these are the only examples in this file that spawn one: everything above
+# `load`s the exe into THIS process, where bundler has long since been set up
+# by `bundle exec rspec` -- so no example up there can see the require line at
+# all, and none did while `lain` was unable to start in anybody else's
+# repository.
+#
+# Found by the manual pass, 2026-08-05, against a real checkout of rack:
+# `lain review open 2490` died in `Bundler::GemNotFound` looking for one of
+# RACK's development dependencies. `bundler/setup` resolves the Gemfile it
+# finds by walking UP FROM THE CWD, and reviewing somebody else's repository
+# means running there. It is the review surface's whole use case.
+#
+# `help` is the payload because it is the cheapest command that still proves
+# the whole boot ran: it needs Thor, `require "lain"` and the compiled
+# extension, touches no network and writes no state, and it returned in ~1s.
+RSpec.describe "exe/lain outside its own repository", :seam do
+  let(:exe) { File.expand_path("../../exe/lain", __dir__) }
+  let(:lib) { File.expand_path("../../lib", __dir__) }
+
+  # BUNDLE_* and RUBYOPT are how `bundle exec rspec` reaches its children, and
+  # inheriting them would hand the child THIS bundle and hide the defect
+  # entirely -- the child would pass no matter what the exe did.
+  # The env hash is IO.popen's OWN first argument, never the head of the command
+  # array: inside the array it is not read as an environment at all, RUBYOPT
+  # survives as `-rbundler/setup`, and the child then loads bundler from
+  # gem_prelude BEFORE reaching a line of this exe -- which fails identically
+  # whether the exe is fixed or not. That mistake made the first draft of these
+  # examples red against the fix, for a reason that had nothing to do with it.
+  # BUNDLER_SETUP is the one that is easy to miss and defeats the whole file:
+  # rubygems reads it from `<internal:gem_prelude>` (`rubygems.rb`'s last line,
+  # `require ENV["BUNDLER_SETUP"] if …`), so bundler is loaded BEFORE the first
+  # line of the exe and the child dies identically whether the exe is fixed or
+  # not. Clearing RUBYOPT alone is not enough, which cost a debugging round.
+  def runner_env
+    { "BUNDLE_GEMFILE" => nil, "RUBYOPT" => nil, "BUNDLE_BIN_PATH" => nil,
+      "BUNDLE_APP_CONFIG" => nil, "BUNDLER_SETUP" => nil }
+  end
+
+  def lain(*argv, chdir:, script: exe)
+    out = IO.popen(runner_env, [RbConfig.ruby, "-I#{lib}", script, *argv],
+                   chdir:, err: %i[child out], &:read)
+    [out, $CHILD_STATUS.exitstatus]
+  end
+
+  # A Gemfile naming a gem that cannot exist, so a resolution that reaches it
+  # fails LOUDLY and by name. A real project's Gemfile would work too and would
+  # make the failure depend on what happens to be installed.
+  def hostile_project
+    Dir.mktmpdir("lain-foreign-project") do |dir|
+      File.write(File.join(dir, "Gemfile"),
+                 %(source "https://rubygems.org"\ngem "a-gem-that-cannot-exist-#{SecureRandom.hex(6)}"\n))
+      yield dir
+    end
+  end
+
+  it "starts in a project whose Gemfile it cannot resolve, rather than dying in that project's bundle" do
+    hostile_project do |dir|
+      output, status = lain("help", chdir: dir)
+
+      expect(output).not_to include("Bundler::GemNotFound")
+      expect(status).to eq(0)
+    end
+  end
+
+  # The INSTALLED gem, simulated by the one difference that matters: the
+  # packaged gem ships no Gemfile beside `exe/` (verified against
+  # pkg/lain-0.1.0.gem), so the guard sees no sibling and skips bundler
+  # entirely. Copying the script is what reproduces that layout without
+  # requiring a build.
+  it "boots with no bundler at all when no Gemfile sits beside it, as the packaged gem does not" do
+    hostile_project do |dir|
+      Dir.mktmpdir("lain-fake-gem") do |gem_dir|
+        installed = File.join(gem_dir, "exe")
+        FileUtils.mkdir_p(installed)
+        FileUtils.cp(exe, File.join(installed, "lain"))
+
+        output, status = lain("help", chdir: dir, script: File.join(installed, "lain"))
+
+        expect(output).not_to include("Bundler")
+        expect(status).to eq(0)
+      end
+    end
+  end
+
+  # The half a guard alone does not fix, and the reason BUNDLE_GEMFILE is
+  # pinned rather than merely conditioned: a source checkout run from
+  # elsewhere -- `ruby ~/dev/lain/exe/lain` inside the repository under review
+  # -- still had `bundler/setup` walking up from the CWD to the wrong Gemfile.
+  it "resolves ITS OWN Gemfile from a source checkout, not the one it is standing in" do
+    hostile_project do |dir|
+      output, status = lain("help", chdir: dir)
+
+      expect(status).to eq(0)
+      expect(output).to include("lain review")
     end
   end
 end
