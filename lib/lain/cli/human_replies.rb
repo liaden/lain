@@ -50,7 +50,11 @@ module Lain
 
       # How long the editor consumer parks between empty polls. The rail is a
       # Thread::Queue popped non-blockingly (a blocking pop would freeze the
-      # reactor thread), so the tick is what keeps the fiber cheap.
+      # reactor thread), so the tick is what keeps the fiber cheap. It is paid
+      # for the whole conversation now, not for one ask ({#session_surfaces}),
+      # which is the price of answering a gesture the human makes at `you>` --
+      # a 10Hz `pop(true)` against a queue in this process, and the only
+      # alternative on offer parks the RPC thread.
       IDLE_TICK = 0.1
 
       # The editor that is not there ({Sink::Null}'s shape): nothing ever
@@ -245,13 +249,45 @@ module Lain
         answer
       end
 
-      # The concurrent reply surfaces for one ask: the TTY drain loop, and --
-      # only when an editor is attached -- the :LainReply consumer. The caller
-      # (Repl#respond) stops them in its ensure. Only the surfaces that EXIST:
-      # "no editor is attached" is a fact this class already answers with an
-      # object ({NoEditor}), so handing back a nil beside it would be the same
-      # fact said a second way, in the form every caller then has to check.
-      def surfaces(task) = [answer_loop(task), editor_reply_loop(task)].compact
+      # The concurrent reply surfaces for one ask: the TTY drain loop, whose
+      # fiber must live exactly as long as the ask and no longer -- the reply
+      # read parks inside it, and the terminal it reads from is the one the
+      # next `you>` prompt needs back. The caller ({Repl#respond}) stops them
+      # in its ensure.
+      #
+      # The editor's consumer is deliberately NOT here any more, and that
+      # split is the point: see {#session_surfaces}.
+      def surfaces(task) = [answer_loop(task)]
+
+      # The reply surfaces that live for the whole CONVERSATION, started on the
+      # repl's own Sync ({Repl#run}) instead of on an ask's -- today just the
+      # editor's command rail, and only when an editor is attached.
+      #
+      # An ask's lifetime is the WRONG one for that rail. This fiber is the
+      # sole consumer of every editor verb, and a human uses the editor
+      # precisely when no ask is in flight: a code review is a long stretch of
+      # reading and marking with no model turns in it at all, and the sidebar
+      # cannot redraw a mark as a glyph ({Review::Surface::Neovim}'s class doc
+      # says why), so the sentence that comes back on this rail is the only
+      # signal a gesture landed. Started per-ask, it was measured (2026-08-05)
+      # answering nothing for 8s at an idle `you>` and then flushing the whole
+      # backlog at once the moment a message was sent.
+      #
+      # The two loops share no queue -- this one polls the editor's rail, the
+      # ask's parks on `@questions` -- so the longer lifetime cannot make them
+      # race for an item. Where they do meet is {#deliver}, which is already
+      # the one answer path both use and already drops the loser's duplicate as
+      # `AlreadyResolved`.
+      #
+      # The caller stops these in ITS ensure, on every path, for exactly the
+      # reason {Repl#respond} stops the ask's: a parked fiber holds the Sync
+      # that owns it open forever.
+      #
+      # Only the surfaces that EXIST: "no editor is attached" is a fact this
+      # class already answers with an object ({NoEditor}), so handing back a
+      # nil beside it would be the same fact said a second way, in the form
+      # every caller then has to check.
+      def session_surfaces(task) = [editor_reply_loop(task)].compact
 
       private
 
@@ -357,6 +393,11 @@ module Lain
       # rail and this fiber resolves the pending ask from it. Spawned only for
       # an editor that exists -- {NoEditor} answers everything else, so nothing
       # downstream branches on whether one is attached.
+      #
+      # ONE of these per conversation, on the repl's own Sync ({#session_surfaces}),
+      # never one per ask: it is the sole consumer of every editor verb, so a
+      # second would race it for the same rail and each gesture would land on
+      # whichever popped first.
       def editor_reply_loop(task)
         task.async { loop { serve_editor_command } } if @editor.attached?
       end

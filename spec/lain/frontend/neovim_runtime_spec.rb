@@ -336,7 +336,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                             ask_human: Lain::Tools::AskHuman::Directory.new,
                                             questions: Async::Queue.new)
       replies.bind_editor(frontend.command_inbox, views: frontend.buffers)
-      surfaces = replies.surfaces(task)
+      # session_surfaces: the editor rail is the conversation's since T33.
+      surfaces = replies.session_surfaces(task)
       pumped_until(task, reason: "the stop channel closing") { stop.closed? }
       surfaces.each(&:stop)
     end
@@ -645,7 +646,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def settled_delta(frontend, review, token, timeout: 8)
     Sync do |task|
       replies = replies_for(frontend, review, token)
-      surfaces = replies.surfaces(task)
+      # session_surfaces: the editor rail is the conversation's since T33.
+      surfaces = replies.session_surfaces(task)
       deadline = Async::Clock.now + timeout
       task.sleep(0.02) until token.resolved? || Async::Clock.now > deadline
       surfaces.compact.each(&:stop)

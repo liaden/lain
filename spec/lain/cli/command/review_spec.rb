@@ -148,7 +148,12 @@ RSpec.describe Lain::CLI::Command::Review do
   def gestured(*commands, &settled)
     commands.each { |wire| rail.push(wire) }
     Sync do |task|
-      surfaces = replies.surfaces(task)
+      # The CONVERSATION's surfaces, not the ask's. T33 split the two, and the
+      # editor rail moved to the conversation-scoped one -- which is what a
+      # gesture arriving while the human sits at `you>` is served by. Spinning
+      # only these is therefore the stronger claim: it says a gesture needs no
+      # model turn in flight, which is the whole of the defect T33 closed.
+      surfaces = replies.session_surfaces(task)
       begin
         pumped_until(task, reason: "the gesture was served", &settled)
       ensure

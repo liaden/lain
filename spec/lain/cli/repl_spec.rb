@@ -1,9 +1,68 @@
 # frozen_string_literal: true
 
+require "async"
+require "delegate"
 require "json"
 require "pastel"
 require "stringio"
+require "timeout"
 require "tmpdir"
+
+# The editor's command rail as its consumer sees it
+# ({Lain::Frontend::Neovim::CommandInbox}'s duck), with the push the RPC thread
+# makes when a keymap fires. Its own class rather than an instance_double
+# because the whole question here is WHEN somebody pops it, which only a real
+# queue can answer.
+class ReplEditorRail
+  def initialize
+    @commands = Thread::Queue.new
+    @refusals = []
+  end
+
+  attr_reader :refusals
+
+  def push(command) = @commands.push(command)
+
+  # {Thread::Queue#pop}'s duck, non-blocking arm included: the consumer polls
+  # with `pop(true)`, which raises ThreadError on an empty queue.
+  def pop(...) = @commands.pop(...)
+  def review_refused(message) = @refusals << message
+  def attached? = true
+end
+
+# The changeset review the sidebar's gestures resolve against, recorded -- what
+# a human marking a hunk at `you>` is trying to reach.
+class ReplChangesetReview
+  Outcome = Struct.new(:report) do
+    def opened? = true
+    def marked? = true
+    def asked? = true
+  end
+
+  def initialize = @gestures = []
+
+  attr_reader :gestures
+
+  def open(line, generation: nil) = record([:open, line, generation])
+  def mark(line, state, generation: nil) = record([:mark, line, state, generation])
+  def ask(anchor_id, question) = record([:ask, anchor_id, question])
+
+  private
+
+  def record(gesture)
+    @gestures << gesture
+    Outcome.new("nothing to report")
+  end
+end
+
+# The real {Lain::CLI::HumanReplies} with an editor ALREADY attached. {Repl#run}
+# binds the frontend it builds, and an example with no nvim to build one from
+# would have its rail overwritten by that bind -- so the two binds are refused
+# here and everything else is the production object, running production fibers.
+class AttachedReplies < SimpleDelegator
+  def bind_editor(*, **) = nil
+  def bind_review_editor(_editor) = nil
+end
 
 RSpec.describe Lain::CLI::Repl do
   # The T1 AC round trip: a Provider::Mock, a Channel, and a Frontend::TTY over
@@ -234,6 +293,150 @@ RSpec.describe Lain::CLI::Repl do
       warm = Lain::Renderable.new.plain("cache ").with(:warm, "warm")
 
       expect(settled_output(warm, enabled: false)).not_to include("\e[")
+    end
+  end
+
+  # T33: the editor's gesture rail is consumed for the SESSION, not for one ask.
+  # A code review is a long stretch of reading and marking with no model turns
+  # in it at all, and the sidebar deliberately draws no glyph for a mark
+  # ({Lain::Review::Surface::Neovim}'s class doc says why it cannot) -- so the
+  # sentence that comes back on the rail is the ONLY signal a gesture landed.
+  # The sole consumer of every editor verb used to be started and stopped by
+  # #respond, which made its lifetime exactly one ask: measured live on
+  # 2026-08-05, `x` on a sidebar row at an idle `you>` produced nothing for 8
+  # seconds and the whole backlog then flushed at once the moment a message was
+  # sent.
+  #
+  # Every example here drives the REAL #run -- its Sync, its ensure -- with the
+  # real HumanReplies and its real fibers. The human sits idle inside
+  # `read_prompt`, which is exactly where the defect lives: no ask is in flight,
+  # so nothing #respond starts is running.
+  describe "the editor gesture rail's lifetime" do
+    let(:rail) { ReplEditorRail.new }
+    let(:review) { ReplChangesetReview.new }
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
+    let(:agent) { instance_double(Lain::Agent, timeline: nil) }
+    let(:commands) { Struct.new(:nothing) { def dispatch(_text) = nil }.new(nil) }
+    let(:mark) { ["review_mark", [3, "reviewed", 7]] }
+    # Doubled rather than defaulted: {Lain::Supervisor::Null} answers neither
+    # `run` nor `stop`, so {Repl#run}'s own default cannot survive its first two
+    # lines -- see the handback.
+    let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
+
+    def tty_for(dir)
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                              history_path: File.join(dir, "history"))
+    end
+
+    def repl_over(tty)
+      replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                            ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+      replies.bind_editor(rail)
+      replies.bind_changeset_review(review)
+      Lain::CLI::Repl.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                          chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
+    end
+
+    # `nvim: nil` takes {Repl#attach_editor}'s no-editor branch; `store:`/
+    # `session:` are that branch's unused arguments. Bounded, because an
+    # unstopped consumer would hold the session's Sync open forever and a hung
+    # suite says nothing.
+    def run_idling(dir, &at_prompt)
+      allow(conductor).to receive(:read_prompt, &at_prompt)
+      Timeout.timeout(10) { repl_over(tty_for(dir)).run(nvim: nil, store: nil, session: nil) }
+    end
+
+    # THE REGRESSION. Nothing but the prompt read is running: no ask, no
+    # #respond, no surface #respond starts. The gesture must still be answered.
+    it "answers a gesture that arrives while the human sits idle at you>, with no ask in flight" do
+      Dir.mktmpdir do |dir|
+        run_idling(dir) do
+          rail.push(mark)
+          wait_until(reason: "the idle gesture reached the changeset review") { review.gestures.any? }
+          "quit"
+        end
+
+        expect(review.gestures).to contain_exactly([:mark, 3, "reviewed", 7])
+      end
+    end
+
+    # The other half of the same fact: the answer goes back out on the rail the
+    # gesture came from, which is the human's only signal at `you>`.
+    it "reports an idle gesture the review could not answer back in the editor" do
+      Dir.mktmpdir do |dir|
+        run_idling(dir) do
+          rail.push(["open", [4, 2]]) # no views are bound, so this one cannot land
+          wait_until(reason: "the refusal reached the editor") { rail.refusals.any? }
+          "quit"
+        end
+
+        expect(rail.refusals).to contain_exactly(a_string_matching(/no editor is attached/))
+      end
+    end
+
+    # Teardown, asserted MECHANICALLY: a Sync cannot return while a child task
+    # is still running, so #run returning at all is the proof that the consumer
+    # was stopped. The bound on `run_idling` is what turns "never stopped" into
+    # a failing example rather than a hung suite.
+    it "stops that consumer when the conversation ends, so the session's Sync can return" do
+      Dir.mktmpdir do |dir|
+        run_idling(dir) do
+          rail.push(mark)
+          wait_until(reason: "the idle gesture reached the changeset review") { review.gestures.any? }
+          "quit"
+        end
+
+        rail.push(["review_mark", [9, "unreviewed", 7]])
+        sleep(0.2)
+        expect(review.gestures.size).to eq(1) # nothing is left parked on the rail
+      end
+    end
+
+    # Every #respond ensure stops what it started; the session scope owes the
+    # same on EVERY exit, and a raise climbing out of the conversation is the
+    # one an ensure is for.
+    it "stops it when a Lain::Error tears the conversation down" do
+      Dir.mktmpdir do |dir|
+        expect do
+          run_idling(dir) do
+            rail.push(mark)
+            wait_until(reason: "the idle gesture reached the changeset review") { review.gestures.any? }
+            raise Lain::Error, "torn at the prompt"
+          end
+        end.to raise_error(Lain::Error, "torn at the prompt")
+      end
+    end
+
+    # An interrupt at the prompt is not a StandardError, so it climbs past every
+    # rescue in the repl -- and the consumer must still be stopped, or the
+    # process ends holding a fiber the reactor is still waiting on.
+    it "stops it when an Interrupt lands at the prompt" do
+      Dir.mktmpdir do |dir|
+        expect do
+          run_idling(dir) do
+            rail.push(mark)
+            wait_until(reason: "the idle gesture reached the changeset review") { review.gestures.any? }
+            raise Interrupt
+          end
+        end.to raise_error(Interrupt)
+      end
+    end
+
+    # The /quit command's action, which leaves through {Repl#next_text} rather
+    # than through farewell?: a different exit, the same ensure.
+    it "stops it when a command ends the conversation with :quit" do
+      Dir.mktmpdir do |dir|
+        allow(commands).to receive(:dispatch).and_return(:quit)
+        run_idling(dir) do
+          rail.push(mark)
+          wait_until(reason: "the idle gesture reached the changeset review") { review.gestures.any? }
+          "/quit"
+        end
+
+        rail.push(["review_mark", [9, "unreviewed", 7]])
+        sleep(0.2)
+        expect(review.gestures.size).to eq(1)
+      end
     end
   end
 end

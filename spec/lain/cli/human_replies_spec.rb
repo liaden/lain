@@ -193,13 +193,21 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # Every reply surface a running chat has up, in the two lifetimes production
+  # gives them (T33): {Lain::CLI::Repl#run} holds the session ones for the
+  # conversation and {Lain::CLI::Repl#respond} holds the ask ones for one ask.
+  # An example meaning "an ask is in flight" wants both, which is what this is;
+  # one meaning "the human is idle at `you>`" wants the session ones ALONE, and
+  # says so at its own call site rather than through here.
+  def all_surfaces(task) = replies.session_surfaces(task) + replies.surfaces(task)
+
   # Runs the reply surfaces for real (they are Async tasks), pumps until the
   # expectation the caller is waiting on holds, and always stops them. The ensure
   # is what makes "always" true: an unmet condition raises, and unstopped surfaces
   # keep the Sync block from ever returning.
   def with_surfaces(timeout: 3, &block)
     Sync do |task|
-      surfaces = replies.surfaces(task)
+      surfaces = all_surfaces(task)
       begin
         pumped_until(task, timeout:, &block)
       ensure
@@ -213,7 +221,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # `with_surfaces`, whose timeout is a failure.
   def surfaces_settle(duration: 0.3)
     Sync do |task|
-      surfaces = replies.surfaces(task)
+      surfaces = all_surfaces(task)
       begin
         settle_for(task, duration)
       ensure
@@ -752,10 +760,25 @@ RSpec.describe Lain::CLI::HumanReplies do
       replies.bind_editor(nil)
 
       Sync do |task|
-        surfaces = replies.surfaces(task)
+        surfaces = replies.session_surfaces(task)
 
-        expect(surfaces.size).to eq(1) # only the surfaces that exist -- never a nil beside them
+        expect(surfaces).to be_empty # only the surfaces that exist -- never a nil beside them
         surfaces.each(&:stop)
+      end
+    end
+
+    # T33, stated where the two lifetimes are decided. An ask starts and stops
+    # the TTY drain and NOTHING else: the editor's consumer belongs to the
+    # conversation, because the gestures it serves arrive between asks.
+    it "keeps the editor consumer out of the surfaces an ask starts and stops" do
+      replies.bind_editor(editor)
+
+      Sync do |task|
+        ask = replies.surfaces(task)
+        session = replies.session_surfaces(task)
+
+        expect([ask.size, session.size]).to eq([1, 1])
+        (ask + session).each(&:stop)
       end
     end
 
@@ -800,6 +823,27 @@ RSpec.describe Lain::CLI::HumanReplies do
       with_surfaces { review.gestures.any? }
 
       expect(review.gestures).to eq([[:mark, 4, "reviewed", 3]])
+    end
+
+    # T33, and the example above is the vacuous version of it: `with_surfaces`
+    # has an ask's surfaces up, which is the state a code review is almost never
+    # in. Here the ask's are started and STOPPED first -- exactly what
+    # {Lain::CLI::Repl#respond}'s ensure does when a turn settles -- and the
+    # gesture arrives with nothing of that ask left running.
+    it "marks a hunk with no ask in flight, on the session's consumer alone" do
+      Sync do |task|
+        session = replies.session_surfaces(task)
+        replies.surfaces(task).each(&:stop)
+        begin
+          editor.push(["review_mark", [4, "reviewed", 3]])
+          pumped_until(task, reason: "the idle gesture reached the review") { review.gestures.any? }
+        ensure
+          session.each(&:stop)
+        end
+      end
+
+      expect(review.gestures).to eq([[:mark, 4, "reviewed", 3]])
+      expect(editor.refusals).to be_empty
     end
 
     # No stamp, and the difference is real: an anchor id is one Ruby minted and

@@ -644,7 +644,9 @@ RSpec.describe Lain::Review::Docent do
         subject.open(anchor)
         replies.bind_editor(editor)
         replies.bind_changeset_review(DocentGestureRail.new(subject))
-        surfaces = replies.surfaces(task)
+        # T33: the editor's consumer is the SESSION's surface, not an ask's --
+        # a docent question is asked while reading a diff, between turns.
+        surfaces = replies.session_surfaces(task)
         begin
           editor.push(["review_ask", ["a-42", "why this way?"]])
           editor.push(["review_ask", ["a-42", "and the second?"]])

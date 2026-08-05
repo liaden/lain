@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "repl/approval_surfaces"
+require_relative "repl/conversation_scope"
 
 module Lain
   module CLI
@@ -37,7 +38,6 @@ module Lain
         @middleware = middleware
         @chronicle = chronicle
         @conductor = conductor
-        @supervisor = supervisor
         @replies = replies
         @commands = commands
         @goal_driver = goal_driver
@@ -45,6 +45,10 @@ module Lain
         # TTY prompt, dunst, and the opt-in auto surface over one queue); Repl
         # asks it to `watch` and never touches the individual surfaces.
         @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, tty:, conductor:)
+        # And its counterpart one lifetime up (T33): what the CONVERSATION
+        # holds open -- the fleet's reactor and the editor's gesture consumer --
+        # which is why `supervisor:` is no longer an ivar here.
+        @conversation = ConversationScope.new(supervisor:, replies:)
       end
 
       # No next/break: the loop exit is text's own truthiness, reassigned each
@@ -71,6 +75,14 @@ module Lain
       # onto the reply surfaces before converse runs. `first_prompt` (T17) seeds
       # the child chat /btw opens with its --prompt question, threaded to
       # converse so the very first read is the side-question, not the terminal.
+      #
+      # T33: the editor's gesture rail is consumed HERE, for the conversation,
+      # and not by {#respond} for one ask. A human marking hunks in a review
+      # does it between turns, so a consumer whose lifetime is one ask answers
+      # nothing while they work -- and the rail is their only signal a gesture
+      # landed. {ConversationScope} is what owns that lifetime, opened on this
+      # Sync and closed by the ensure on every path out, including a raise and
+      # an interrupt at the prompt.
       def run(nvim:, store:, session:, first_prompt: nil)
         frontend = attach_editor(nvim, store:, session:)
         @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers)
@@ -82,10 +94,10 @@ module Lain
         @replies.bind_review_editor(frontend)
         @prompt = composed_prompt(frontend)
         Sync do |task|
-          @supervisor.run(task)
+          @conversation.open(task)
           @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
         ensure
-          @supervisor.stop
+          @conversation.close
         end
       end
 
