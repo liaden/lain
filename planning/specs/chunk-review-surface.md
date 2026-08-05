@@ -459,6 +459,170 @@ it was deferred.
     removal, and **the suite cannot tell you that**, because a notify-delivered post to a missing
     function is silent by construction. Same shape as T18's original BLOCKER A.
 
+25. **The two surfaces disagree about an absorbed commit, and the shared contract cannot see it.**
+    Found by the manual pass, 2026-08-05, driving `lain review open main --base c003be8 --scope
+    commits` against this repository. `Neovim::ReviewView::NO_HUNKS_HERE` renders
+    `(no hunks reachable here)` under a commit the range attributes no file to, and its comment says
+    why: *"Rendered rather than left blank so the walk accounts for every commit."*
+    `Surface::Text#commit_section` (`text.rb:139`) is
+    `([legible(commit.subject)] + commit.files.map { … }).join("\n")` — with no files it renders the
+    subject and nothing else. So in the real run **seven of fifteen commits looked like they changed
+    nothing**, with no explanation, on the surface a human gets when no editor is attached.
+
+    The shared example group `"a review surface"` never tests it: its only nearby example refuses a
+    changeset with no files *at all* (`review_surface.rb:341`). **This is the port's own vacuity** —
+    the group pins what both adapters happen to do rather than the property one of them reasoned
+    about and wrote down. Either the marker belongs in the shared contract, or the Neovim view's
+    comment is describing a house rule that only one house keeps.
+
+26. **`spec/lain/review/deletability_spec.rb` costs 6.82s with ZERO git subprocesses.** T30's
+    profiling, 2026-08-05: 6.79s of it is *user* CPU, so unlike every other slow file in this chunk
+    the lever is not fixture reuse or spawn count — it is the per-row hardlinking and the repeated
+    load. The file landed the same day as the measurement, so nobody has looked at it yet. Worth
+    someone's attention precisely because it is the one slow file whose cost shape is different from
+    all the others, and the obvious fix (reuse fixtures, batch git) does not apply.
+
+27. **`lain up --nvim -- <chat flags>` builds a broken cockpit, and it is the documented form.**
+    Found by the manual pass, 2026-08-05, by typing the obvious thing:
+    `lain up --nvim -- --provider ollama`. The editor comes up as
+
+    ```
+    nvim --embed --cmd set rtp+=… --listen --provider -c if exists(':LainStart') | LainStart | endif
+    ```
+
+    `--nvim` is declared `[--nvim=[SOCKET]]` — an **optional-value** flag — so when it is the last
+    flag before `--`, Thor hands it the first token after the separator. The socket becomes the
+    literal string `--provider`, nvim listens on that address, and the shared socket the whole
+    `--nvim` cockpit exists to establish is silently not there.
+
+    Isolated by four runs, identical but for flag order:
+
+    | invocation | `--listen` gets |
+    |---|---|
+    | `up --nvim --session qa1` | `/run/user/1000/lain/nvim-2347294bf5d0.sock` ✓ |
+    | `up --nvim --session qa2 -- --provider ollama` | the derived socket ✓ |
+    | `up --nvim=/tmp/qa3.sock --session qa3 -- --provider ollama` | `/tmp/qa3.sock` ✓ |
+    | **`up --session qa4 --nvim -- --provider ollama`** | **`--provider`** ✗ |
+
+    So **any** flag between `--nvim` and `--` hides it, which is why nothing caught it: `up_spec.rb`
+    drives the cockpit with an explicit socket. `lain up --nvim -- --provider ollama` is precisely
+    what a human types, and it is the one arrangement that breaks.
+
+    Worth noting where it sits: `up_spec.rb:175` — the ticket-19 flake — is the example asserting
+    *"`--nvim` cockpit splits the chat window into an nvim pane and a chat pane sharing one socket"*.
+    The socket is the thing this defect destroys, and the example nearest to it is the one that has
+    been failing intermittently all day.
+
+### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
+
+The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
+is too kind, and the critique panel caught it.** They are reachable from **nowhere**. Verified
+independently by the orchestrator, 2026-08-05:
+
+- `cli/epic_mount.rb:196` defaults `changesets: nil, surface: nil, policy: nil`, frozen into
+  `@review_seams` at `:207` and splatted into the tool at `:252`.
+- The **only** production call site is `cli/wiring.rb:370`:
+  `EpicMount.for(chronicle:, options:, notice:, notify: @notifier, bindings: -> { @replies })` —
+  it passes **neither** `changesets:` nor `surface:`.
+- So `changesets` resolves to `NoChangesets`, whose `source` returns `nil`
+  (`request_review.rb:195`), and `Implementation#hold` hits
+  `return Refusals.no_changeset if source.nil?` at `:505` on **every call in every production
+  wiring**. `surface:` resolves to `Review::Surface::Null` on the same path.
+
+Nothing but specs has ever passed those seams. **Waves 3–5 shipped an adapter that has never been
+connected to anything in any real process** — not gated, not hard to reach: never executed outside
+the suite. That is why the manual pass found the whole thing dark, and it reframes every "landed"
+verdict in this document: the specs were true, the wiring was absent, and no test in 10865 examples
+asserts that a production wiring supplies these seams.
+
+**The code names its own fix**, one line from the omission (`epic_mount.rb:229-237`): *"The seam is
+threaded rather than absent so that a caller which CAN answer — the review CLI — turns the half on by
+INJECTING one, not by editing this file."* And the late-binding machinery is already proven — the
+same constructor takes `bindings: -> { @replies }` as a thunk, resolved at call time, for exactly
+this reason. `surface:` and `changesets:` belong on that line.
+
+**This is a bug fix, not a card, and it lands before anything else.** Until it does, nobody has run
+this chunk's code end to end in a real process.
+
+### THE GAP THAT MATTERS MOST: YOU CANNOT REVIEW A BRANCH OR PR IN THE EDITOR
+
+**Raised by Joel during the manual pass, 2026-08-05, and it is correct: reviewing a PR or a branch
+in the editor — the actual job this chunk exists for — has no entry point.**
+
+There is exactly **one** construction of an editor-bound changeset review in the whole tree:
+`lib/lain/tools/request_review.rb:540`, `@bindings.bind_changeset_review(ChangesetReview.new(…))`.
+Its immediate context is `Epic::Intake::Prose` and `@review.open(…)` — an **epic review token**. And
+`Tools::RequestReview` is structurally an epic tool: its class doc is about `Epic::Home`'s three
+documents and `Epic::Review`'s ownership baton, and the changeset leg was added onto it by T21 as the
+gate on the epic's *implementation* stage.
+
+So the two halves never meet:
+
+| what you can do | what you get |
+|---|---|
+| `lain review <branch\|PR>` | a **Text** rendering. No editor, no annotations, no marks, no thread pane, no docent, no submit. |
+| annotate hunks, thread panes, docent, submit to GitHub | only inside an **epic's implementation stage** |
+
+Everything wave 3–5 built — the diff pair, extmark annotations, diagnostics, the thread pane, the
+docent, the GitHub submit — is reachable only by first having an epic. **A developer reviewing a
+colleague's PR cannot get to any of it**, which is the use case the chunk's own Intent describes.
+
+Confirmed empirically: in a live cockpit (`lain up --nvim=… -- --provider ollama`, qwen3:4b resident
+on the GPU) the agent answers *"I don't have access to the 'request_review' tool"*, and
+`lain epic status` reports no epics in this project. **The startup notice the exe promises — "leaves
+request_review out with a startup notice" — never appeared in the chat pane**, so the degrade was
+silent as well as total.
+
+**Why it is not a one-line fix, stated honestly.** `CLI::Review`'s class doc already reasons about
+this and stops one step short: it will not GUESS an editor from `$NVIM`, because the lua half guards
+every entry point on `_G.__lain` and only `lain up` injects it — *"drawing into a plain nvim would
+report a success that drew nothing"*. That reasoning is right, and it rules out guessing, not
+attaching. The shape that respects it:
+
+1. **`lain review --nvim=<socket>`**, exactly parallel to `lain up --nvim=<socket>` and
+   `chat --nvim <socket>`. An explicit socket is a caller "handing a surface in", which is the
+   command's own stated bar for attachment, and it removes the guessing objection entirely.
+2. **The gesture leg back**, which the same doc says is deliberately absent: an adapter answering
+   `open(line, generation:)`, `mark(line, state, generation:)` and `ask(anchor_id, question)` — a
+   separate object from `Surface::Neovim` because the port already owns `mark` in the other
+   direction. Today the only thing that binds one lives in the chat repl.
+
+That is a card, not a patch. But it is the card that makes the rest of this chunk usable by a human
+doing code review, and without it wave 3–5's work is reachable only through a tier most reviews will
+never enter.
+
+### THE MANUAL PASS FOUND THE CHUNK'S HEADLINE CAPABILITY UNREACHABLE
+
+**`lain review` was never registered in `exe/lain`.** Found in the first five minutes of the manual
+pass, 2026-08-05, by running `lain --help` and looking for it. `Could not find command "review"`.
+
+T20's card names the wiring explicitly — *"**Shared-file wiring:** `exe/lain` — a nested
+`class Review < Thor` block plus `subcommand "review", Review` beside the epic mount at `:300`. Hand
+back as a diff."* It is **orchestrator-owned**, it was never applied, and T20's worktree and
+hand-back were lost with the reboot, so whether the implementer handed it back cannot now be
+established. Either way the miss is the orchestrator's.
+
+**Nothing in 10865 examples could see it.** `spec/lain/cli/review_spec.rb` has 28 examples and every
+one constructs `Lain::CLI::Review` directly — zero touch the exe. `spec/lain/cli_spec.rb` asserts
+option defaults on `chat` and never asserts the command *set*. So the class was proved correct and
+proved nothing about being reachable.
+
+**This is T18's BLOCKER A one level out**, and worth naming as a pattern rather than an incident:
+a capability that works, is fully specced, and is wired to nothing. There it was `Surface::Neovim`
+posting into a lua entry point that refused it silently; here it is a Thor command that was never
+mounted. Both were invisible for the same reason — **the seam between the tested unit and the thing
+a human actually touches is the one place nobody wrote a test.**
+
+Fixed by the orchestrator: the nested `class Review < Thor` with `default_command :open`, since Thor
+owns the first word and a branch named `help` needs `lain review open help` — which
+`Lain::CLI::Review`'s own docstring already anticipated and told the exe to carry. Verified by hand:
+`lain review open main --base c003be8` renders 27 files at cumulative scope, `--scope commits`
+renders the walk, and an unresolvable target exits **1** with the message on stderr, stdout empty and
+no backtrace, exactly as `Boundary#render` promises.
+
+**A follow-up worth taking: assert the command set.** One example over `LainCLI.commands.keys` would
+have caught this and costs nothing.
+
 ## Pre-existing defects found while executing this chunk
 
 Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
@@ -2504,6 +2668,205 @@ Scenario: the deletion map covers every file a capability owns
 
 ---
 
+### T31 — Make the review surface reachable          [wave 7] [risk: high]
+
+**Written 2026-08-05, critiqued before implementation, and re-cut into three cards by that critique.**
+The first draft proposed `lain review --nvim=<socket>` as a long-running process. Two seats returned
+independently and killed it. Both were right, and the record of why is worth more than the draft was.
+
+**What the critique found that the draft had wrong:**
+
+1. **The gap is worse than the draft said.** Not "reachable only through an epic" — reachable
+   **nowhere**. `wiring.rb:370` mounts the epic with `notify:` and `bindings:` only, so
+   `changesets:`/`surface:` stay nil, `Implementation#hold` returns `Refusals.no_changeset` on every
+   production call, and the surface resolves to `Null`. **`Review::Surface::Neovim` has zero
+   construction sites in `lib/` or `exe/`.** Verified independently by the orchestrator.
+2. **A premise of the draft was simply false.** It claimed only `lain up` injects `_G.__lain`, quoting
+   `CLI::Review`'s own doc. **`RpcThread#attach` injects the runtime itself** —
+   `@client.exec_lua(RUNTIME.source, [@version, @protocol, @client.channel_id])` (`rpc_thread.rb:1009`).
+   The attaching process is what creates `_G.__lain`. The explicit-socket rule survives, **for the
+   opposite reason**: attaching does not fail quietly into a plain editor, it **takes the editor
+   over** — buffers, tabpage slots, keymaps, autocmds and the command channel. Never do that to an
+   editor nobody offered. `CLI::Review`'s doc carries the same false sentence and must be corrected.
+3. **The verdict rail is bound by nobody.** `Router` (`rpc_thread.rb:645-670`) splits the five review
+   verbs: `review_open`/`review_mark`/`review_ask` are **acked** to the command inbox and consumed by
+   `HumanReplies::Gestures`; `review_annotate`/`review_verdict` are **answered** through
+   `FrontendListener` to whatever `Frontend::Neovim#bind_changeset_review` holds — **and that method
+   has no caller in `lib/` or `exe/`.** Notes and verdicts reach `NoReviewWrites`. The draft's
+   scenarios 4 and 5 both rode that unbound rail and neither its Files nor its `Gestures` triple
+   mentioned `wrote_annotation` or `wrote_verdict`.
+4. **The object the draft wanted already exists.** `Tools::RequestReview::ChangesetReview`
+   (`request_review.rb:678`) already answers all five messages and declines four only because it holds
+   no view. It is in the wrong namespace and carries one collaborator it should not require — the epic
+   baton. A *third* thing named `Gestures`, in a tree where `HumanReplies::Gestures` is a verb router,
+   is the drift this codebase spends paragraphs preventing.
+5. **Every valid invocation of the draft's command was a double-attach.** The human's only socket is
+   the cockpit's, which a chat already owns. A second attach re-injects the runtime with its own
+   channel id and reassigns every `_G.__lain.*` function, silently stealing `:LainReply` and every
+   review verb from the parked chat; on exit it leaves a dead channel. The draft's ACs tested a bare
+   nvim and a lain-attached nvim, and never the only case that can occur in the field.
+6. **Four of six ACs passed while broken**, and two of the three messages the card existed to create
+   (`open`, `ask`) had no AC at all — while `ReviewView#open`'s only `changesets:` implementation is
+   `Unwired` (nothing in the tree answers `#open(path, line)`) and `Review::Docent` is never
+   constructed outside `Answerer`.
+
+---
+
+#### T31a — `Review::Handover`: the open review, as the rails see it          [risk: medium]
+
+**Depends on:** T13, T19. **Files:** `lib/lain/review/handover.rb` (new, moved out of
+`Tools::RequestReview::ChangesetReview`), its spec, `lib/lain/tools/request_review.rb`,
+`lib/lain/cli/wiring.rb`, `lib/lain/cli/epic_mount.rb`.
+
+Move `ChangesetReview` to `Review::Handover`, constructed with `session:`, `view:` and `baton:`. The
+epic tool passes its `Epic::Review::Token`; an epic-less caller passes a **null baton whose `settle`
+is genuinely a no-op** — honest here, unlike `home`/`review` in `EpicMount`, which have no honest
+null. Answer all five messages for real; `Unrendered` and `NO_ANCHOR` go away.
+
+Then **bind it to BOTH rails** — `@bindings.bind_changeset_review` *and*
+`Frontend::Neovim#bind_changeset_review` — and thread `surface:`/`changesets:` from `wiring.rb:370`
+as thunks on the seam `bindings: -> { @replies }` already proves. `epic_mount.rb:230-253` says in as
+many words that the seam is threaded rather than absent precisely so a caller can inject rather than
+edit that file.
+
+**This card makes the epic implementation gate work for the first time**, independently of any CLI
+change, and it is the prerequisite for both cards below.
+
+- **AC:** a production wiring supplies `changesets:` and `surface:` — assert it at the wiring, since
+  no test among 10865 examples does; `Implementation#hold` no longer refuses with `no_changeset`; a
+  `review_verdict` on the answered rail reaches the session and settles it; a `review_annotate`
+  journals an `AnnotationPlaced` whose `drifted` was **forwarded from the wire, not computed**.
+- **Escalation:** if the null baton needs behaviour, the baton belongs to the epic and this is the
+  wrong cut.
+
+#### T31b — `/review <target>`: the smallest thing that puts a human in front of a PR          [risk: medium]
+
+**Depends on:** T31a. **Files:** one file under `lib/lain/cli/command/`, one `Command::Env` reader,
+one `Wiring` line, one deletion-map row, plus its spec.
+
+A repl command inside the existing cockpit. The frontend is already attached, the process already
+stays up, `HumanReplies` already routes the acked gestures — so there is **no second attach, no second
+process and no lifetime question**. Resolve through `CLI::Review::Target` (already extracted, already
+tested, already handles PR/branch ambiguity and `--base`), build the `Changeset`, open the `Session`
+with `Surface::Neovim`, bind the T31a `Handover`.
+
+Human story: `lain up --nvim` then `/review 4821` — one context, on the rail their `ask_human` replies
+already ride, with the agent in the room.
+
+- **AC:** drive gestures **through the command inbox**, never by calling the object — that seam is
+  where this chunk's defects live. A **stale generation must refuse**, and the refusal must reach
+  `review_refused`; without that counter-example a stamp-checking implementation is
+  indistinguishable from one ignoring the stamp. Read `lain://review` back out of a **real editor**
+  under `LAIN_NVIM=1`.
+- **Escalation:** if `open` or `ask` cannot be made to work, scope them out **by name** — `ReviewView#open`'s
+  collaborator is `Unwired` and `Docent` is unconstructed, so both would otherwise ship as permanent
+  silent refusals.
+
+#### T31c — `lain review attach --nvim=SOCKET TARGET`: the standalone server          [risk: high]
+
+**Depends on:** T31a, T31b. Only if a review genuinely must happen outside a chat — **want evidence
+first.**
+
+Keep `CLI::Review#present` byte-identical: one-shot, Text, returns a String. Add a **separate object**
+owning attach/serve/teardown, mounted as a second Thor command beside `open`. Precedent: `CLI::Up`
+beside `CLI::Chat`. Scenario "without `--nvim` nothing changes" then stops being an assertion and
+becomes structural.
+
+Carries the work the draft did not cost: **rail ownership in the runtime** (refuse or take over by
+name when a live channel already owns it), the protocol bump that implies, a spec driving **two
+attaches at one socket**, and **moving `Bounds#check_presentation!` onto `Session#present`** — the
+follow-up `CLI::Review`'s own doc already wrote, and which this card is the one to trigger.
+
+- **Escalation:** if serving gestures needs the RPC thread to block, stop — established twice.
+  If the verdict rail and the process exit disagree about when the review is over, the lifetime is in
+  the wrong object.
+
+#### Kept verbatim from the draft, because both seats endorsed them
+
+- The gesture leg is a **separate object** from `Surface::Neovim` — the port owns `mark` outbound and
+  the name is taken (`surface/neovim.rb:135-145` asks for exactly this object).
+- **Serving gestures must never park the RPC thread.**
+- Explicit socket, never `$NVIM` — right rule, corrected reason (see 2 above).
+- Reuse `CLI::Review::Target` unchanged; that extraction is what makes the split cheap.
+
+#### The free follow-up, in whichever lands first
+
+One example over `LainCLI.commands.keys`. It caught nothing only because nobody wrote it — the same
+class of miss that hid `lain review` from the CLI for the whole chunk.
+
+#### MEASURED: two lain processes on one editor is silent data destruction
+
+The third seat did not reason about the collision — it built two `Frontend::Neovim` instances against
+one headless nvim and measured. This is why T31c is last and why "one lain per editor" is a rule
+rather than a preference.
+
+**Every inbound gesture is stolen, silently.** Re-injection rebinds `chan`, the chunk-level local at
+`runtime.lua:27` that every callback closes over, and every `:Lain*` command and augroup is redefined
+against the new one (every augroup is `{ clear = true }`). One `:LainSend` at each step:
+
+| | client A's inbox | client B's inbox |
+|---|---|---|
+| A alone | `[["send"]]` | — |
+| after B attaches | `[]` | `[["send"]]` |
+
+A is still running, still attached, still rendering, and receives nothing forever with no error on
+either side. That is `:LainReply`, `:LainResend`, `:LainPin`, `:LainOpen`, `:LainNote`, `:LainThread`
+and every review verb. **A human's chat replies stop reaching the chat the moment they open a review.**
+
+**The first client's rendered content is destroyed.** `Surfaces#prime` posts every view's at-rest
+state on attach, and `post_view` is a whole-buffer replace, so a review process attaching with a
+`DetachedStore` primes *empty* projections over the chat's live ones. Measured on `lain://journal`:
+`["[tu_0 stdout] client A rendered line 0", …1, …2]` → `[""]`. **This is why T31c cannot simply build
+a `Frontend::Neovim`** — it needs the RPC rail without the chat's projections, and
+`Neovim#initialize:185` constructs `Surfaces` unconditionally with no injection seam.
+
+**The human's whole review is discarded, and the discard reports success.** Every review lua module
+keeps state in a chunk-level local (`review_annotations`, `review_notes.by_buf`, `review_diff`,
+`review_thread`, …); re-injection makes them all empty while the **extmarks and `● note` virtual text
+persist on screen**. So `:LainReviewDone` harvests extmarks, finds every id missing from
+`review_annotations`, and skips them all; `:LainNoteDone` sends `review_notes.settled()` — now empty —
+which Ruby **accepts** (`refused_batch([])` is nil, so the batch reads as taken), after which
+`review_notes.forget()` runs. The human sees their annotations, submits, and everything is thrown
+away with a success report. **That is this chunk's signature failure, reachable by the exact action
+the draft proposed.**
+
+**Generation aliasing crosses processes.** `ReviewView` counts per instance from zero, so both mint
+generation 1, 2, 3…; the editor stamps `b:lain_view_generation` from whichever wrote last, and
+`resolve_marks` finds `held.generation == generation` in the *wrong* process's held renderings. Rows
+from a different changeset, marked, reported as landed — most likely on generation 1, the first
+rendering each side draws. This is exactly the aliasing protocol 8 replaced the line count to fix,
+reintroduced one level up by process multiplicity.
+
+**Nobody owns cleanup.** After the second client exits: `_G.__lain` still present, all six `lain://`
+buffers still present, and every gesture raises `Invalid channel: 5` at the keystroke. The editor
+advertises a lain runtime it no longer has. T31c must add a detach — clear the ownership marker, fire
+`User LainDetach`, leave the buffers (they are the human's record) — called from `RpcThread#stop`
+before the socket closes. That is also what makes the takeover check accurate rather than heuristic.
+
+#### AC1 as drafted cannot observe a draw at all
+
+`Surface::Neovim#present` returns `RenderInlet#refusable`'s answer, and the render goes out as a
+**notification** — deliberately, so a request cannot nest a read. **A nil answer means "queued",
+never "drawn."** So `expect(present).to be_nil` is precisely the vacuous green this chunk keeps
+finding. Assert it the way the tree already does: a **second, independent connection** as inspector
+(`review_view_spec.rb:563`, `neovim_runtime_spec.rb:47` are the pattern), reading
+`nvim_buf_get_lines(bufnr("lain://review"))` back, asserting the lines **contain a file from the
+changeset under review** — not that the buffer exists, which proves only that `prime` ran.
+
+Two ACs the draft needed and did not have: **a review attach must not disturb the session views**
+(the direct test for the journal-clobber above, which fails against today's `Frontend::Neovim` by
+construction), and **a review that ends leaves no editor claiming to be attached**.
+
+#### The answered verbs run ON the RPC thread, inside nvim's `:w`
+
+`review_annotate` and `review_verdict` are **answered**, not acked, so whatever
+`bind_changeset_review` holds must answer **synchronously, without I/O, without a lock another thread
+can hold, and without raising** — `Neovim::NoReviewWrites` is the shape. A one-shot CLI has no
+reactor, so the obvious implementation points `bind_changeset_review` straight at the `Session` — and
+`Session#submit` writes the journal. That is I/O on the RPC thread inside the editor's write, which
+is how the >20s frozen nvim already documented at `rpc_thread.rb:1070` happens. **If the verdict
+handler needs to wait for anything, it must not be the answering verb** — make the verdict acked and
+exit on the record, not on the write.
 ## Integration checks
 
 **Results so far, 2026-08-05, at `1177951` (T18 and T28 landed; T24 in its fix round).**
