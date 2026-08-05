@@ -658,6 +658,51 @@ it was deferred.
     is defined by not keeping. Split into **T32a** (that object) and **T32b** (the two lua gaps and the
     protocol bump) below.
 
+33. **The editor gesture rail is consumed only DURING a model turn, so at `you>` every gesture is
+    silent.** Found by the manual pass on T32b, 2026-08-05, immediately after protocol 10 made `x` and
+    `u` sendable. This is the most consequential finding of the pass, because a code review is
+    precisely a long stretch of reading and marking with **no model turns in it at all**.
+
+    Measured in a live cockpit, agent confirmed idle at `you>` for 20+ seconds:
+
+    | gesture | agent state | answer |
+    |---|---|---|
+    | `x` on a sidebar row | idle at `you>` | **nothing, 8s** |
+    | `x` on a sidebar row | mid-turn | `hunk-content-v1:… is now reviewed`, ~2s |
+    | anything queued while idle | next turn starts | **all of it flushes at once** |
+
+    The gestures are **queued, not lost** — the backlog drains the moment a turn begins, which is how
+    the first run of this pass produced six mark confirmations in a burst after an unrelated `say ok`.
+    But between turns there is no feedback of any kind: the sidebar deliberately does not redraw a
+    mark as a glyph (`Surface::Neovim`'s class doc: the row cannot be redrawn without the changeset),
+    so the words on the rail are the *only* signal a mark landed, and nothing is delivering them.
+
+    **The mechanism, in code, not inferred.** `cli/repl.rb:257` is the only caller of
+    `HumanReplies#surfaces(task)`, it sits inside `Repl#respond` — the model turn — and its `ensure`
+    stops every surface it started. `editor_reply_loop` is one of those two surfaces and is the sole
+    consumer of every editor verb. So the consumer's lifetime is exactly one `respond` call.
+    `#drain_at_prompt` is **not** the counterpart: it is `/inbox`'s question drain, reached only from
+    `Command::Inbox`, and it never touches the gesture rail.
+
+    `HumanReplies`' own doc already names half of this for QUESTIONS — *"#answer_loop's fiber only
+    lives DURING a respond() call … so a subagent's `announce` can enqueue a question while the human
+    sits idle at `you>` with nothing draining it"* — and `drain_at_prompt` is the answer it built for
+    that half. The gesture half has the identical lifetime and no such counterpart.
+
+    Note this is not new with T32b: `review_open`'s `<CR>` has always had it. It was invisible while
+    the only two sendable verbs were ones nothing was wired to answer.
+
+    **Fix shapes, in the order they seem worth considering** — this wants a card, and probably a design
+    ruling first:
+
+    - a gesture drain at the prompt, `drain_at_prompt`'s shape one rail over (cheapest; matches an
+      answer this codebase has already made once, but polls rather than reacts);
+    - the editor consumer's lifetime moved off `respond` onto the repl's own `Sync`, so it lives for
+      the session rather than for one ask (correct-looking, and the reason it is not obviously right is
+      that every existing `.stop` in that `ensure` is there deliberately);
+    - the ack answered on the RPC thread instead of the rail — **rejected on sight**, this is the
+      "serving gestures must never park the RPC thread" stop condition, established twice.
+
 #### T32a — The diff opener: what `<CR>` on a sidebar row has to reach          [risk: medium]
 
 **Depends on:** T31a, T31b. **Unblocks:** annotation, and therefore the whole review gesture chain.
