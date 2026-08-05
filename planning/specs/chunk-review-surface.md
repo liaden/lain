@@ -760,6 +760,36 @@ Two rough edges, neither a defect: the review's tabpage opens with two empty win
 sidebar (the diff panes ticket 32's `open` would fill), and a free-text answer must be indented two
 spaces under a heading that says *"write your answer below"*.
 
+34. **A finished review never leaves the machine: `Review::Submit` is constructed NOWHERE.** Found by
+    the manual pass, 2026-08-05, asking the obvious next question after the loop finally worked — *"so
+    how does this reach the pull request?"* It does not.
+
+    Verified by grep across the whole tree: `Review::Submit` appears in `lib/lain/review/submit.rb`
+    (itself), in `spec/lain/review/submit_spec.rb`, and in `deletability_spec`'s row. **`Submit.for`
+    and `Review::Submit.` have zero matches anywhere else, `lib/` and `spec/` alike.** No command, no
+    repl verb, no wiring builds one.
+
+    What DOES happen at the end of a review: `Handover#wrote_verdict` → `Session#submit` →
+    `@journal << judged`. The verdict and every annotation land in **lain's own Journal**, and that is
+    the end of the line. `Forge::Gh#submit_review` exists, is spec'd, and knows how to POST one batched
+    review with inline comments — it simply has no caller that builds a payload for it.
+
+    This is the chunk's signature failure at the outermost layer, and it is the same shape as the
+    correction above about waves 3–5 and as `lain review` being mounted in no exe: the capability is
+    written, documented, tested, and unreachable. T23 landed `Review::Submit` and nothing ever wired it.
+
+    **It is also the one that matters most for the actual use case.** Reviewing somebody else's pull
+    request and leaving the review on your own disk is not a code review. Everything the chunk built
+    upstream of this — the sidebar, the diff pair, the annotations, the marks, the verdict — currently
+    terminates in a private journal.
+
+    Wants a card, and it is a small one on the evidence: `Review::Submit.for` already takes the
+    executor, `Forge::Gh#submit_review` already takes `(number:, review:)`, and `Session` already holds
+    the annotations and the verdict. What is missing is the object that reads a finished session into
+    a payload and the surface that triggers it — a `lain review submit`, or a verdict that offers to
+    post, or both. Note the constraint `Gh#submit_review`'s own doc records: **no retry, ever**, since
+    an accepted POST creates a review each time.
+
 ### The manual pass on T32a + T32b, 2026-08-05 — the whole loop, in a real cockpit
 
 Against `lain up --nvim` + ollama `qwen3:4b`, reviewing a real branch. **Every step worked**, which
