@@ -549,6 +549,39 @@ it was deferred.
     names the missing thing and implies no damage. `lain sessions` says "unreadable" for the same
     file. Two commands, one condition, and only one of them tells the truth about it.
 
+30. **The cockpit's editor never lays itself out, because the one-shot fires a moment too early.**
+    Found by the manual pass, 2026-08-05, by taking a screenshot instead of reading a buffer over RPC.
+    `lain up --nvim` comes up on the user's own dashboard (`snacks_dashboard`, `[No Name]`),
+    `tabs=1 wins=1`, with all six `lain://` buffers present and none of them displayed.
+
+    The chain, each step verified in the live editor:
+
+    - `-c "silent! LainStart"` runs at startup, before any attach, so `M.start()` takes its
+      not-yet-attached branch and arms a **`once = true`** autocmd on `User LainAttach`.
+    - The runtime fires `LainAttach` last, with `data.buffers = BUFFERS` — **names**, because, in its
+      own words, *"the buffers themselves are created lazily by the first render, which each announces
+      itself via LainRender."*
+    - `open_layout` → `existing_columns` requires `vim.fn.bufnr(name) ~= -1`, deliberately: *"a view
+      that has not primed yet is skipped, never conjured."*
+    - At `LainAttach` **no view has primed**, so every column is empty, `open_layout` warns
+      *"no lain:// buffers to lay out yet"* and returns — **and the one-shot is spent.**
+
+    Evidence: the `lain_plugin_start` augroup holds **0** autocmds (consumed) while `tabs=1 wins=1`;
+    running `:LainStart` by hand afterwards immediately gives `tabs=2 wins=4` over
+    `journal | timeline | inbox | request`. So the layout code is correct and only its trigger is
+    wrong.
+
+    The plugin's own help states both halves of the contradiction without noticing:
+    *"Only buffers the runtime has actually created are placed"* and *"If lain has not attached yet,
+    the layout opens automatically the moment it does."* At the moment it attaches, none have been
+    created. **The trigger should be the first `LainRender`, not `LainAttach`** — that is the event the
+    runtime already fires for exactly this, and it is the one that means a buffer now exists.
+
+    Everything downstream of the layout is fine and was checked on screen: columns and splits land as
+    configured, `lain://timeline` renders the turn with its role markers and dimmed tool-result lines,
+    `lain://inbox` shows `(no questions pending)` once answered, and `lain://request` syntax-highlights
+    the live JSON payload.
+
 ### CORRECTION, AND IT IS WORSE: THE EDITOR REVIEW HAS **ZERO** REACHABLE CONSTRUCTIONS
 
 The section below says waves 3–5 are reachable "only through an epic's implementation stage". **That
