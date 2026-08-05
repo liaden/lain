@@ -804,6 +804,28 @@ spaces under a heading that says *"write your answer below"*.
     post, or both. Note the constraint `Gh#submit_review`'s own doc records: **no retry, ever**, since
     an accepted POST creates a review each time.
 
+### The manual pass on T34, 2026-08-05 — and the one thing deliberately NOT tested
+
+Live in a cockpit, both refusals correct and both naming a remedy:
+
+- **`/review-submit` with no review open** → *"…open one with `/review <pull-request>` first"*.
+- **`/review-submit` after a BRANCH round** → refuses by naming that the annotations and the verdict
+  are on the journal either way, and points at `/review <pull-request>` against the pull request
+  itself. The round is still *held* — refusing to hold it would have said "no review is open" about
+  one that plainly is.
+
+**The POST itself was not run against a live pull request, on purpose.** The only real PRs available
+belong to other people's repositories (`rack/rack#2490` is what the GitHub resolution path was proven
+against), and posting a review there is an outward-facing act on a stranger's project, not a test.
+`gh pr` resolution, `--base`, both target spellings and the refusals are all verified live; the POST
+payload is covered by the card's end-to-end example and twelve mutations, including old-side-as-`RIGHT`,
+dropped `commit_id`, dropped verdict event, and posting twice. **Joel owes this one a live pass** on a
+pull request he owns — it is the last unexercised link.
+
+Also open, recorded by the card rather than hidden: **nothing journals the POST.** `Forge::Journaled`
+wants `epic_slug:`/`issue_id:`, which a non-epic review has not got, and inventing them would put
+fiction in the experiment record. Wants its own card.
+
 ### The manual pass on T33 and the bounds move, 2026-08-05
 
 **T33, live, fresh session, no turn ever run:** `x` on a sidebar row acked in **72 ms**; before the
