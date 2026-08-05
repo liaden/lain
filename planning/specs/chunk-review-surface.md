@@ -442,6 +442,23 @@ it was deferred.
     example covering the same property — including the `:bdelete` variant asserting 0 across three
     column moves — was green in every run.
 
+21. **The protocol history should be data, not a comment** (T25). Two specs parse it with regexes over
+    prose, and because it is a comment, **every deletability sweep in the repo strips it** — which is
+    how both lua rows came to own a file nothing could see they owned. A
+    `PROTOCOL_HISTORY = { "9" => { entry_points: [...], commands: [...] } }` hash would let both specs
+    read a structure instead of prose, and would put each lua capability's entry-point list somewhere
+    a deletion can find it. This is the single change that would have prevented T25's sharpest finding.
+22. **Consolidate T18's deletability `describe` into `deletability_spec.rb`** (T25). It is now
+    redundant apart from the manual-stanza and `RuntimeLoader` examples, and a second map is a map
+    that can drift from the first.
+23. **Decide what `Review::Surface::Neovim#annotate` becomes without the pane, and write it into the
+    row** (T25). Today the answer exists only in T25's harness, and the row's "left behind" line is
+    false of the editor until it is written down.
+24. **`RpcThread#set_thread` belongs to the thread row** (T25). The thread cut currently leaves that
+    rail posting into a lua entry point that no longer exists — a green suite over an incomplete
+    removal, and **the suite cannot tell you that**, because a notify-delivered post to a missing
+    function is silent by construction. Same shape as T18's original BLOCKER A.
+
 ## Pre-existing defects found while executing this chunk
 
 Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
@@ -505,6 +522,7 @@ T18 applied (10720 without it). The last two:
 | T18 thread pane | `a176599` | **REJECT** (4 seats) → fix round → landed at 10791 |
 | T28 protocol 9 | `0c8e01d` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10800 |
 | T24 hunk docent | `b3fbada` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10849 |
+| T25 deletability | `8c974bf` | landed at 10865; found the map wrong a third time |
 
 ### Rulings — T25's two escalation triggers, and the one claim of its own that is wrong
 
