@@ -406,6 +406,15 @@ it was deferred.
     "fewer examples, 0 failures"-adjacent shape the suite's own guidance warns about, and a flake that
     presents as exactly one failure is the most expensive kind to leave lying around.
 
+    **It is a class, not a single spec.** T28's fix round hit a second instance in the same session —
+    `spec/lain/frontend/neovim/annotate_spec.rb:84`, `ECONNREFUSED` while attaching to a headless
+    nvim socket, count correct at 10769, file byte-identical to base, clean on two later runs. Same
+    shape: a **spawn race under load**, where a subprocess the spec depends on has not yet reached
+    the state the assertion assumes. So the ticket is not "fix `up_spec`" but "make the specs that
+    drive real `tmux`/`nvim` wait for the thing they are about to assert on, rather than for the
+    spawn to return". Both instances presented as exactly one failure at a correct example count,
+    which is the reason to fix the class rather than paper over the two.
+
 ## Pre-existing defects found while executing this chunk
 
 Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
