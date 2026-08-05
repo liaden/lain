@@ -557,6 +557,16 @@ class LainCLI < Thor
                                   "spawns an actor-mode subagent yet, so this is inert in chat today"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
+  # CONSENT for the desktop, and this flag is the whole of why a human still
+  # gets notified. {Lain::Notify.for} builds nothing real for a caller that did
+  # not ask -- dunstify on PATH is capability, never permission, and a spec, a
+  # probe and a subagent all share the human's PATH (2026-08-05: nine real
+  # notifications from agents' trees). ON by default because typing `lain chat`
+  # at a terminal IS the human asking; `--no-desktop` silences one run, and
+  # LAIN_DESKTOP=0 silences a whole shell for an agent driving the real CLI.
+  method_option :desktop, type: :boolean, default: true,
+                          desc: "Fire dunstify notifications for approvals and questions; --no-desktop " \
+                                "opts out (LAIN_DESKTOP=0/1 overrides either way)"
   CompactionFlags.declare(self)
   default_task :chat
 

@@ -74,15 +74,45 @@ module Lain
     # who gets to decide.
     SHELLOUT_GRACE_MS = 5_000
 
+    # What `LAIN_DESKTOP` forces, in either direction; any other value (unset
+    # included) leaves the caller's own answer standing. One spelling, reused:
+    # the `:desktop` seam in this class's spec already means "this shell may
+    # reach the real desktop" by `LAIN_DESKTOP=1`, and `=0` is how an agent
+    # driving a real `lain chat` silences a flag that defaults to on.
+    OVERRIDE = { "1" => true, "0" => false }.freeze
+
     class << self
-      # @return [Notify, Null] the real adapter when `command` resolves on
-      #   PATH, {Null} otherwise -- the Null Object seam ({Sink::Null}'s
-      #   idiom), so a caller never writes `if notifier`.
-      def for(command: "dunstify", **)
-        on_path?(command) ? new(command:, **) : Null.new
+      # CONSENT, then capability -- in that order, and the order is the fix.
+      # `dunstify` on PATH says the desktop CAN be reached; it never says this
+      # process MAY reach it. Presence was read as consent until 2026-08-05,
+      # when nine notifications reading "lain is waiting for a verdict" landed
+      # on a working human's screen from agents' trees -- because every spec,
+      # probe and subagent in this repository runs on the SAME machine, with the
+      # same PATH, as the human it would interrupt. So `desktop:` defaults to
+      # OFF and whoever owns the human's attention says so: `exe/lain`'s
+      # `--desktop` flag, on by default, is that caller for an interactive chat.
+      #
+      # It is the placement rule the Rust boundary already states -- a component
+      # that sniffs `isatty` owns the terminal, so colour arrives as a resolved
+      # argument instead. Reaching the desktop is the same shape, and
+      # {CLI::FleetWindows.for} is its sibling: an opt-in flag first, `$TMUX`
+      # second, never the environment alone.
+      #
+      # @param command [String] the dunstify binary, resolved through PATH
+      # @param desktop [Boolean] whether this caller owns the human's attention
+      # @return [Notify, Null] the real adapter only when BOTH hold, {Null}
+      #   otherwise -- the Null Object seam ({Sink::Null}'s idiom), so a caller
+      #   never writes `if notifier`.
+      def for(command: "dunstify", desktop: false, **)
+        consented?(desktop) && on_path?(command) ? new(command:, **) : Null.new
       end
 
       private
+
+      # The env var has the last word because it is the MACHINE's answer where
+      # the flag is one run's; a `fetch` defaulting to the caller's own answer is
+      # the whole of that three-valued rule.
+      def consented?(desktop) = OVERRIDE.fetch(ENV.fetch("LAIN_DESKTOP", nil), desktop)
 
       def on_path?(command)
         ENV.fetch("PATH", "").split(File::PATH_SEPARATOR).any? do |dir|

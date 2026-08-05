@@ -197,13 +197,55 @@ RSpec.describe Lain::Notify do
     end
   end
 
+  # CONSENT, then capability -- in that order, and the order is the whole
+  # point. `dunstify` on PATH says the desktop CAN be reached; it never says
+  # this process MAY reach it, and every spec, probe and subagent in this
+  # repository runs on the SAME machine, with the same PATH, as the human whose
+  # screen it would interrupt. On 2026-08-05 nine real notifications reached a
+  # working human that way, fired by agents through
+  # `CLI::Wiring#wire_agent`'s then-unconditional `.for`. So the real adapter is
+  # opt-in: a caller that owns the human's attention says so in as many words,
+  # and PATH is only the second question.
   describe ".for" do
-    it "builds the real adapter when the command resolves on PATH" do
-      expect(described_class.for(command: "ls")).to be_a(described_class)
+    # LAIN_DESKTOP is deleted around the caller-decides examples so they read
+    # the SUBJECT's default rather than whatever the human running the suite
+    # happens to export -- these are exactly the examples that env var overrides.
+    def unconsented(**) = with_env("LAIN_DESKTOP" => nil) { described_class.for(**) }
+
+    it "answers Null when nobody consented, even with the command right there on PATH" do
+      expect(unconsented(command: "ls")).to be_a(described_class::Null)
     end
 
-    it "answers Null when the command is absent from PATH" do
-      expect(described_class.for(command: "not-a-real-binary-anywhere-xyz")).to be_a(described_class::Null)
+    it "builds the real adapter for a caller that consents, when the command resolves on PATH" do
+      expect(unconsented(command: "ls", desktop: true)).to be_a(described_class)
+    end
+
+    it "answers Null when a consenting caller's command is absent from PATH" do
+      expect(unconsented(command: "no-such-binary-xyz", desktop: true)).to be_a(described_class::Null)
+    end
+
+    # The env var is the machine's last word in BOTH directions, and one
+    # spelling for both: `LAIN_DESKTOP=1` is what the `:desktop` seam at the
+    # foot of this file already uses to mean "this shell may reach the real
+    # desktop", and `LAIN_DESKTOP=0` is how an agent driving the real `lain
+    # chat` silences a CLI whose flag defaults to on.
+    it "lets LAIN_DESKTOP=1 turn a non-consenting caller's notifier real" do
+      with_env("LAIN_DESKTOP" => "1") do
+        expect(described_class.for(command: "ls")).to be_a(described_class)
+      end
+    end
+
+    it "lets LAIN_DESKTOP=0 silence a consenting caller" do
+      with_env("LAIN_DESKTOP" => "0") do
+        expect(described_class.for(command: "ls", desktop: true)).to be_a(described_class::Null)
+      end
+    end
+
+    it "leaves the caller's own answer standing for any other LAIN_DESKTOP value" do
+      with_env("LAIN_DESKTOP" => "true") do
+        expect(described_class.for(command: "ls")).to be_a(described_class::Null)
+        expect(described_class.for(command: "ls", desktop: true)).to be_a(described_class)
+      end
     end
   end
 

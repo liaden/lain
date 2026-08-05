@@ -1074,7 +1074,7 @@ Subsystems without a section above, each self-documented in its own index file:
 | Approval | `lib/lain/approval/` | the queue tier-3 calls park in, with 3 racing surfaces (TTY, dunst, `auto_approver`) |
 | Structural search | `lib/lain/structural/` | the Ruby side of `ext/lain`'s AST/tree-sitter search |
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
-| Desktop notify | `lib/lain/notify.rb` | the `dunstify` approval surface, and why its `-A` blocking behavior forced a backstop timeout |
+| Desktop notify | `lib/lain/notify.rb` | the `dunstify` approval surface, why its `-A` blocking behavior forced a backstop timeout, and why PATH is capability while `--desktop` is consent |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
 | Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Guards` namespace, and `Telemetry.fixed_point`; one file per record group holds 34 of the kinds that answer the duck, 21 of those with a `Telemetry::Guards` construction contract. **This subtree is not the whole vocabulary** — see below |
 

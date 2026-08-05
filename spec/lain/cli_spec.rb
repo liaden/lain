@@ -195,6 +195,25 @@ RSpec.describe LainCLI do
     end
   end
 
+  # A real notifier is opt-in ({Lain::Notify.for} refuses to build one for a
+  # caller that did not ask), and THIS flag is the opt-in a human's normal
+  # `lain chat` supplies. Read off Thor's own declaration rather than by
+  # spawning a chat: the default IS the whole of what keeps the human notified,
+  # and `spec/lain/cli/wiring_spec.rb` pins that a run carrying it gets the real
+  # adapter. The pair is what says the desktop gate silenced agents and specs
+  # without silencing the human.
+  describe "chat's --desktop flag" do
+    let(:desktop) { described_class.commands.fetch("chat").options.fetch(:desktop) }
+
+    it "defaults ON, so a human typing `lain chat` still gets desktop notifications" do
+      expect(desktop.default).to be(true)
+    end
+
+    it "is a boolean, so `--no-desktop` silences one run without an env var" do
+      expect(desktop.type).to eq(:boolean)
+    end
+  end
+
   # `up` trailing args ride Thor's real `.start` argv path (method_option
   # defaults and the post-`--` splat both exist only there), so these examples
   # drive `.start` itself with Up and Kernel.exec doubled out.

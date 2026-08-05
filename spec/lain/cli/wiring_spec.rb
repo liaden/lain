@@ -2,6 +2,7 @@
 
 require "json"
 require "stringio"
+require "tmpdir"
 
 # Stands in for the eager tier's local model (A8 wires an Ollama-backed
 # {Lain::Oracle::Model}), answering the REAL {Lain::Oracle::Summarize}
@@ -91,6 +92,49 @@ RSpec.describe Lain::CLI::Wiring do
   def wire_agent
     recorder, session = wiring.run_state(nil)
     wiring.wire_agent(channel:, recorder:, session:, backend:)
+  end
+
+  # The 2026-08-05 defect, at the site it fired from: this call built
+  # `Lain::Notify.for` unconditionally, so every spec, probe and experiment that
+  # reached #wire_agent got the REAL dunstify adapter -- nine notifications
+  # landed on a working human's desktop, `appname: lain`, from agents' trees.
+  # A fake `dunstify` goes on PATH for the duration so BOTH directions are
+  # decided by the subject rather than by whether this box has a notification
+  # daemon installed; it is only ever resolved, never executed, because nothing
+  # here asks the notifier to notify.
+  describe "the desktop notifier" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "dunstify"), "#!/bin/sh\nexit 1\n")
+        File.chmod(0o755, File.join(dir, "dunstify"))
+        with_env("PATH" => "#{dir}#{File::PATH_SEPARATOR}#{ENV.fetch("PATH")}", "LAIN_DESKTOP" => nil) do
+          example.run
+        end
+      end
+    end
+
+    def notifier_for(**desktop)
+      wiring = described_class.new(options: { grace: 5, **desktop }, chronicle:, status_feed:)
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+      wiring.notifier
+    end
+
+    it "stays Null for a caller that never asked for the desktop" do
+      expect(notifier_for).to be_a(Lain::Notify::Null)
+    end
+
+    it "stays Null when the flag is explicitly off, dunstify or not" do
+      expect(notifier_for(desktop: false)).to be_a(Lain::Notify::Null)
+    end
+
+    # The other half of the gate, and the one that says the human lost nothing:
+    # `lain chat` passes --desktop's default (true, pinned in
+    # spec/lain/cli_spec.rb), so a human at a terminal on a box with dunstify
+    # gets the real adapter exactly as before.
+    it "is the real adapter when the run consents and dunstify resolves" do
+      expect(notifier_for(desktop: true)).to be_a(Lain::Notify)
+    end
   end
 
   describe "#wire_agent" do

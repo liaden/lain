@@ -279,7 +279,13 @@ module Lain
       def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
         agent = nil
         parent = -> { agent.timeline }
-        @notifier = Lain::Notify.for
+        # `desktop:` is CONSENT and it is never inferred: `Notify.for` used to
+        # read dunstify-on-PATH as permission, so every spec and probe reaching
+        # this line notified the human running the machine (2026-08-05, nine of
+        # them). --desktop defaults ON in exe/lain, so an interactive chat is
+        # unchanged; a directly-constructed Wiring passes no such option and gets
+        # the Null. Pinned by spec/desktop_discipline_spec.rb.
+        @notifier = Lain::Notify.for(desktop: options[:desktop])
         # OM-6: the reactor above the Agent that un-refuses model-dispatched
         # actors. Journals a bounded drain's timeout to the live Channel; the exe
         # #run_chat below runs it under a chat-level reactor that outlives asks.

@@ -55,7 +55,7 @@ Everything below is optional, and lain runs without any of it.
 | **tmux** | A plain TTY chat in your terminal. | `lain up`, the status HUD, `/fork` into a sibling window, `/btw` popups, `--windows` subagent viewers. |
 | **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
-| **`dunstify`** | Approvals wait at the `you>` prompt. | Desktop notification approvals, racing the terminal surface. |
+| **`dunstify`** | Approvals wait at the `you>` prompt. | Desktop notification approvals, racing the terminal surface. Opt-in: on for `lain chat`, off everywhere else, because your specs and subagents share your `PATH` (`--no-desktop`, `LAIN_DESKTOP=0/1`). |
 | **AWS Bedrock creds** | Anthropic and Ollama. | `--provider bedrock`. Reads `AWS_BEARER_TOKEN_BEDROCK` and `AWS_REGION`. |
 | **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process exec daemon, for the bench's exec-comparison arm. |
 
