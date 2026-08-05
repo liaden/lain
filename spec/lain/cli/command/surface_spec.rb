@@ -124,6 +124,24 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
+  # THE FREE FOLLOW-UP THIS CHUNK KEPT PAYING FOR. `lain review` was written,
+  # specced with 28 examples and mounted in NO exe for the whole chunk, because
+  # nothing anywhere asserted the command SET -- only that individual commands
+  # behaved. A repl command is one require and one line in #builtins away from
+  # exactly the same fate: the file loads, its own spec is green, and no human
+  # can type it. Pinned as a LITERAL rather than derived, so a command wired to
+  # nothing is a red example and registering one is a deliberate edit here.
+  it "registers the whole shipped command set, so a command wired to nothing is a red example" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      expect(surface.commands.registry.map(&:name)).to contain_exactly(
+        "quit", "rewind", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
+        "ruby", "mode", "goal", "meta", "review", "help", "approve", "yolo", "model"
+      )
+    end
+  end
+
   it "serves commands and middleware from ONE memoized assembly -- identity, not shared-catalog coincidence" do
     with_project do |root|
       surface = build_surface(root)

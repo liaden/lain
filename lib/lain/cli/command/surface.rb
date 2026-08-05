@@ -108,7 +108,8 @@ module Lain
         # #registry owns.
         def builtins
           [Quit.new, Rewind.new, Pin.new, Unpin.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new,
-           Inbox.new, Ruby.new, Mode.new, Goal.new(driver: @goal_driver), Meta.new(root: @root)]
+           Inbox.new, Ruby.new, Mode.new, Goal.new(driver: @goal_driver), Meta.new(root: @root),
+           Review.new(root: @root)]
         end
       end
     end
