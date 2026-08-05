@@ -56,7 +56,7 @@ module DiffModeFixture
   # defect.
   RAW = { "docs/crlf.txt" => (1..40).map { |i| "line #{i}\r\n" }.join }.freeze
 
-  PROJECT = Dir.mktmpdir("lain-diff-spec")
+  PROJECT = SocketTmpdir.persistent("lain-diff-spec")
 
   FILES.each do |path, lines|
     FileUtils.mkdir_p(File.join(PROJECT, File.dirname(path)))
@@ -825,7 +825,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     it "lets an editor started elsewhere name the project itself" do
-      elsewhere = Dir.mktmpdir("lain-diff-elsewhere")
+      elsewhere = socket_tmpdir("lain-diff-elsewhere")
       FileUtils.mkdir_p(File.join(elsewhere, "docs"))
       File.write(File.join(elsewhere, "docs/guide.txt"), "from elsewhere\n")
       lua("vim.g.lain_review_root = ...", [elsewhere])

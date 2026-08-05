@@ -17,8 +17,8 @@ require "tmpdir"
 # neovim_runtime_spec.rb: a real editor driven over a control socket.
 RSpec.describe "lain nvim plugin", :nvim do
   around do |example|
-    @project = Dir.mktmpdir("lain-plugin-project")
-    @runtime_dir = Dir.mktmpdir("lain-plugin-runtime")
+    @project = socket_tmpdir("lain-plugin-project")
+    @runtime_dir = socket_tmpdir("lain-plugin-runtime")
     @control = File.join(@runtime_dir, "control.sock")
     example.run
   ensure
