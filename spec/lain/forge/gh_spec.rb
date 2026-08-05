@@ -65,6 +65,73 @@ RSpec.describe Lain::Forge::Gh do
                                         "--json", "number"])
     end
 
+    # `gh api` with the endpoint's owner and repo left as gh's own placeholders,
+    # so the repository still comes from the cwd exactly as it does for the four
+    # verbs above -- and the payload on STDIN, where no amount of quoting is
+    # involved. A review body is a human's prose; on an argv it would be one
+    # more string somebody eventually builds.
+    it "spells submit_review as a gh api POST against the cwd's repository" do
+      gh.submit_review(number: 7, review: { "body" => "b" })
+
+      expect(factory.argvs.last).to eq(["gh", "api", "--method", "POST",
+                                        "repos/{owner}/{repo}/pulls/7/reviews", "--input", "-"])
+    end
+
+    it "sends the payload as canonical JSON on stdin, with keys in sorted order" do
+      gh.submit_review(number: 7, review: { body: "b", commit_id: "abc", event: "COMMENT" })
+
+      expect(factory.options.last[:input]).to eq(%({"body":"b","commit_id":"abc","event":"COMMENT"}))
+    end
+
+    # The ONE caller value in this file that reaches a URL path rather than its
+    # own argv element. `Integer()` alone would stop the traversal below, but two
+    # of its coercions are silent reinterpretations of a pull request number, and
+    # a review posted to the wrong pull request cannot be taken back.
+    describe "the pull request number, which is interpolated into the API path" do
+      it "refuses a number carrying a path traversal, before any subprocess" do
+        expect { gh.submit_review(number: "7/../../secret", review: {}) }
+          .to raise_error(ArgumentError, /submit_review needs a pull request number/)
+        expect(factory.argvs).to be_empty
+      end
+
+      it "refuses a hex spelling rather than silently addressing pull request 16" do
+        expect { gh.submit_review(number: "0x10", review: {}) }.to raise_error(ArgumentError, /0x10/)
+      end
+
+      it "refuses a float rather than silently truncating it" do
+        expect { gh.submit_review(number: 7.9, review: {}) }.to raise_error(ArgumentError, /7\.9/)
+      end
+
+      # `^`/`$` match at a NEWLINE, so a `^\d+$` guard would accept this and hand
+      # it on to Integer(), which raises its own message about its own name. Only
+      # THIS class's wording proves the guard is what refused it.
+      it "refuses a number with a newline in it, which an unanchored match would pass" do
+        expect { gh.submit_review(number: "7\n../../secret", review: {}) }
+          .to raise_error(ArgumentError, /submit_review needs a pull request number/)
+      end
+
+      it "names the verb, where Kernel#Integer's own message names neither gh nor it" do
+        expect { gh.submit_review(number: "later", review: {}) }
+          .to raise_error(ArgumentError, /submit_review/)
+      end
+
+      it "takes a number the caller spelled as a String" do
+        gh.submit_review(number: "7", review: { "body" => "b" })
+
+        expect(factory.argvs.last).to include("repos/{owner}/{repo}/pulls/7/reviews")
+      end
+    end
+
+    # The four verbs that have nothing to send must not acquire a stdin pipe
+    # because a fifth one does: `input:` opens one, writes and closes it, and a
+    # subprocess whose stdin behaviour changed is not the subprocess these
+    # examples were written against.
+    it "opens no stdin pipe for a verb with no body to send" do
+      gh.pr_merge(number: 7)
+
+      expect(factory.options.last).not_to have_key(:input)
+    end
+
     it "runs every verb in the injected cwd, under a bound" do
       gh.pr_merge(number: 7)
 

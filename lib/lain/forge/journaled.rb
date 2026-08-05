@@ -29,8 +29,8 @@ module Lain
     # A decorator with wider verbs than the thing it wraps is not substitutable
     # for it, and substitutability is the whole reason this exists.
     class Journaled
-      # @param executor [#pr_create, #pr_merge, #pr_view, #merge_state] the real
-      #   executor every call forwards to -- {Gh} or {Gh::Recorded}
+      # @param executor [#pr_create, #pr_merge, #pr_view, #merge_state, #submit_review]
+      #   the real executor every call forwards to -- {Gh} or {Gh::Recorded}
       # @param journal [#<<] where {Intent} and {Outcome} records land
       # @param epic_slug [String] the epic this run's actions belong to
       # @param issue_id [String] the issue they are being done for
@@ -63,6 +63,21 @@ module Lain
 
       def pr_merge(number:, auto: false)
         attempt(action: PR_MERGE, params: { "number" => number }) { @executor.pr_merge(number:, auto:) }
+      end
+
+      # The address is the number AND the payload, and this spelling must match
+      # {Gh::Recorded#submit_review}'s exactly -- a recording keyed on one and
+      # looked up by the other replays nothing.
+      #
+      # The payload is IN the address rather than beside it, unlike pr_create's
+      # title and body. It has to be: an accepted review POST creates a review
+      # each time, so a reworded review is different work, and the whole of what
+      # was sent belongs on the journal anyway -- it is the only record of what
+      # a human actually said about the diff.
+      def submit_review(number:, review:)
+        attempt(action: REVIEW_SUBMIT, params: { "number" => number, "review" => review }) do
+          @executor.submit_review(number:, review:)
+        end
       end
 
       # Observations forward and journal NOTHING: asking whether a pull request

@@ -3,7 +3,7 @@
 module Lain
   module Forge
     class Gh
-      # Replays journaled {Outcome}s instead of shelling out. The same four verbs
+      # Replays journaled {Outcome}s instead of shelling out. The same five verbs
       # as {Gh}, so a landing holds one or the other and never asks which.
       #
       # This is {Effect::Handler::Recorded}'s doctrine at the forge tier: outcomes
@@ -28,21 +28,32 @@ module Lain
         class Declined < Error; end
 
         # The inner an unrecorded call falls through to when a caller supplied
-        # none: it refuses, loudly. A Null Object rather than a nil the four
-        # verbs would each have to test for -- and stating the duck as four
-        # methods is also what keeps the verb set closed here, since a fifth verb
+        # none: it refuses, loudly. A Null Object rather than a nil the five
+        # verbs would each have to test for -- and stating the duck as five
+        # methods is also what keeps the verb set closed here, since a sixth verb
         # would have to be written down in one more place.
+        #
+        # A verb present in {Recorded} and missing HERE is the trap this comment
+        # is describing from the other side: the call raises `NoMethodError` on
+        # a module the caller never named, which reads as a defect in lain
+        # rather than as the replay miss it is.
         module Unrecorded
           class << self
-            def pr_create(**kwargs) = refuse("pr_create", kwargs)
-            def pr_merge(**kwargs) = refuse("pr_merge", kwargs)
-            def pr_view(**kwargs) = refuse("pr_view", kwargs)
-            def merge_state(**kwargs) = refuse("merge_state", kwargs)
+            # `**given` rather than `**kwargs` deliberately: these are not options
+            # hashes whose keys anyone could list, they are whatever the caller
+            # passed, echoed back so the refusal names the call it refused. The
+            # name matters to more than the reader -- yard-lint's Tags/OptionTags
+            # reads `kwargs` as a promise that the keys are documentable.
+            def pr_create(**given) = refuse("pr_create", given)
+            def pr_merge(**given) = refuse("pr_merge", given)
+            def pr_view(**given) = refuse("pr_view", given)
+            def merge_state(**given) = refuse("merge_state", given)
+            def submit_review(**given) = refuse("submit_review", given)
 
             private
 
-            def refuse(verb, kwargs)
-              raise Declined, "no recorded outcome for #{verb}(#{kwargs.inspect}) and nothing behind the " \
+            def refuse(verb, given)
+              raise Declined, "no recorded outcome for #{verb}(#{given.inspect}) and nothing behind the " \
                               "recording to perform it -- a replay miss is not a success"
             end
           end
@@ -62,7 +73,7 @@ module Lain
         # would replay a landing with a step silently missing from it.
         #
         # @param entries [Enumerable<Hash, String>]
-        # @param inner [#pr_create, #pr_merge, #pr_view, #merge_state]
+        # @param inner [#pr_create, #pr_merge, #pr_view, #merge_state, #submit_review]
         # @return [Recorded]
         def self.from_journal(entries, inner: Unrecorded)
           outcomes = Journal.records(entries, type: Outcome::JOURNAL_TYPE)
@@ -74,8 +85,8 @@ module Lain
         end
 
         # @param outcomes [Hash{String=>Outcome}] intent_id => recorded outcome
-        # @param inner [#pr_create, #pr_merge, #pr_view, #merge_state] performs
-        #   the calls this holds no recording for
+        # @param inner [#pr_create, #pr_merge, #pr_view, #merge_state, #submit_review]
+        #   performs the calls this holds no recording for
         def initialize(outcomes:, inner: Unrecorded)
           @outcomes = normalize(outcomes)
           @inner = inner
@@ -92,6 +103,19 @@ module Lain
 
         def pr_merge(number:, auto: false)
           replay(PR_MERGE, "number" => number) { @inner.pr_merge(number:, auto:) }
+        end
+
+        # The address is the number AND the whole payload, which is the OPPOSITE
+        # of {#pr_create}'s rule above and deliberately so. A pull request is
+        # idempotent at the remote -- gh names the existing one, so a retry with
+        # a corrected title is the same attempt at the same pull request -- while
+        # an accepted review POST creates a second review. A reworded review IS
+        # different work, so it must address differently or a replay would
+        # silently answer the earlier review's outcome for it.
+        def submit_review(number:, review:)
+          replay(REVIEW_SUBMIT, "number" => number, "review" => review) do
+            @inner.submit_review(number:, review:)
+          end
         end
 
         def pr_view(ref:, fields:) = @inner.pr_view(ref:, fields:)

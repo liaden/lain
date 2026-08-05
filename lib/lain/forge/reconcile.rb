@@ -318,8 +318,23 @@ module Lain
           when PROMOTE then promoted?(intent)
           when PR_CREATE then opened?(intent)
           when PR_MERGE then merged?(intent)
+          when REVIEW_SUBMIT then raise Unobservable, unrepeatable(intent)
           else raise UnknownAction, "no way to observe a #{intent.action.inspect} intent"
           end
+        end
+
+        # {Unobservable} rather than {UnknownAction}, and the difference is the
+        # whole point: an unknown action means this fold has not been taught
+        # something, while this one means the question does not EXIST. A batched
+        # review POST creates a review each time GitHub accepts it, so nothing
+        # the world can be asked distinguishes a submit that landed from one
+        # that was lost -- and {#ask} turning this into an {Unaddressable} is
+        # what keeps the fold from answering NEEDS_RETRY, which would post the
+        # review a second time.
+        def unrepeatable(intent)
+          "a #{intent.action.inspect} intent cannot be observed: a batched review POST is not idempotent, " \
+            "so no question about the world tells a submit that landed from one that was lost -- whether to " \
+            "submit again is a decision a human takes"
         end
 
         # BOTH addresses are bound before the world is consulted. Inlining the

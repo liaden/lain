@@ -56,9 +56,29 @@ module GhParity
   OPEN_URL = "https://github.com/acme/widgets/pull/#{OPEN_NUMBER}".freeze
   ALREADY_OPEN = %(a pull request for branch "#{OPEN_HEAD}" into branch "#{BASE}" already exists: #{OPEN_URL}).freeze
 
+  # One review payload, in the shape §4.6 verified against both surveyed
+  # projects: `path`/`line`/`side`/`body` per comment, one top-level `commit_id`,
+  # and NO `position` anywhere.
+  HEAD_SHA = ("f" * 40).freeze
+  REVIEW = { "body" => "one thing", "commit_id" => HEAD_SHA, "event" => "COMMENT",
+             "comments" => [{ "body" => "kaboom", "line" => 42, "path" => "app.rb",
+                              "side" => "RIGHT" }] }.freeze
+  REVIEW_ID = 88_012
+  REVIEW_STATE = "COMMENTED"
+
+  # A pull request GitHub refuses the review for, and its own 422 wording. A
+  # DIFFERENT number rather than a different payload, because the number is what
+  # the endpoint carries and the payload is what the address is keyed on -- so a
+  # replay of the refusal cannot be confused with a replay of the success.
+  UNKNOWN_NUMBER = 9999
+  REVIEW_REFUSAL = <<~REFUSAL
+    gh: Unprocessable Entity (HTTP 422)
+    {"message":"Pull request review thread line must be part of the diff"}
+  REFUSAL
+
   # The closed verb set, named once so the tier-2 example below can iterate it
-  # rather than trusting three spec files to list the same four.
-  VERBS = %i[pr_create pr_merge pr_view merge_state].freeze
+  # rather than trusting three spec files to list the same five.
+  VERBS = %i[pr_create pr_merge pr_view merge_state submit_review].freeze
 
   # The one duck a gh executor exercises on a Mixlib::ShellOut: #run_command,
   # #exitstatus, #stdout, #stderr. Named distinctly from up_spec.rb's
@@ -87,12 +107,62 @@ module GhParity
     end
   end
 
+  # An inner that answers the two OBSERVATIONS for real and refuses every
+  # EFFECT by name.
+  #
+  # It exists for one failure the parity group could not otherwise see. A
+  # replaying executor whose verb reads `@inner.submit_review(...)` -- the
+  # pass-through shape `pr_view` and `merge_state` legitimately have -- answers
+  # exactly what the live executor answers, because the recording was MADE by
+  # running the live executor. Every assertion about ok, value and detail then
+  # passes over a call that went to the remote. Handing the replayer an inner
+  # that refuses effects turns that silence into a named failure, and it costs
+  # the two observations nothing, since no {Forge::Outcome} can key them.
+  class ObservationsOnly
+    class Reached < StandardError; end
+
+    def initialize(live)
+      @live = live
+    end
+
+    # The two verbs no Forge::Outcome can key, because they ask a question
+    # rather than cause one. Everything else in VERBS is an EFFECT and is
+    # derived by SUBTRACTION rather than listed: writing the effects out here
+    # would be one more restatement of the closed set, in the very file whose
+    # job is to hold that set once -- and a verb added to VERBS would then
+    # silently not be guarded, which is the failure this class exists to catch.
+    OBSERVATIONS = %i[pr_view merge_state].freeze
+
+    OBSERVATIONS.each do |verb|
+      define_method(verb) { |**kwargs| @live.public_send(verb, **kwargs) }
+    end
+
+    (VERBS - OBSERVATIONS).each do |verb|
+      define_method(verb) { |**kwargs| unreached(verb, kwargs) }
+    end
+
+    private
+
+    def unreached(verb, kwargs)
+      raise Reached, "#{verb}(#{kwargs.inspect}) fell through to the inner executor -- this address IS " \
+                     "recorded, so a replay reaching the remote means the verb is missing from Recorded"
+    end
+  end
+
   class << self
     # A factory answering the fixture scenario. `argv[0]` is the binary and
     # `argv[2]` the gh subcommand, because the executor prepends "gh".
     def factory = FakeGh.new { |argv| reply(argv) }
 
+    # @param live [Forge::Gh] what the observations are answered by
+    # @return [ObservationsOnly]
+    def observations_only(live) = ObservationsOnly.new(live)
+
+    # `gh api` is the one verb whose subcommand is at `argv[1]`, because it
+    # carries no noun -- every other verb here is `gh <noun> <verb>`.
     def reply(argv)
+      return review_reply(argv) if argv[1] == "api"
+
       case argv[2]
       when "create" then create_reply(argv)
       when "merge" then FakeGhShellOut.new(0, "", "")
@@ -100,6 +170,18 @@ module GhParity
       else FakeGhShellOut.new(1, "", "no fixture for #{argv.inspect}")
       end
     end
+
+    def review_reply(argv)
+      return refused_review if argv.any? { |field| field.include?("/pulls/#{UNKNOWN_NUMBER}/") }
+
+      submitted
+    end
+
+    def submitted
+      FakeGhShellOut.new(0, %({"id":#{REVIEW_ID},"state":"#{REVIEW_STATE}"}\n), "")
+    end
+
+    def refused_review = FakeGhShellOut.new(1, "", REVIEW_REFUSAL)
 
     def create_reply(argv)
       return refused_create if argv.include?(REFUSED_HEAD)
@@ -125,6 +207,8 @@ module GhParity
       journaled.pr_create(base: BASE, head: OPEN_HEAD, title: TITLE, body: BODY)
       journaled.pr_create(base: BASE, head: REFUSED_HEAD, title: TITLE, body: BODY)
       journaled.pr_merge(number: NUMBER)
+      journaled.submit_review(number: NUMBER, review: REVIEW)
+      journaled.submit_review(number: UNKNOWN_NUMBER, review: REVIEW)
       io.string.lines
     end
   end
@@ -179,6 +263,28 @@ RSpec.shared_examples "a gh executor" do
     expect(answer).not_to be_ok
     expect(answer.value).to be_nil
     expect(answer.detail["stderr"]).to include("No commits between")
+  end
+
+  # GitHub's line-and-side model, round-tripped: the verb takes the payload
+  # whole and answers the review GitHub created. Nothing here reads `position`,
+  # and nothing puts one on the wire -- see the Submit spec for that claim
+  # pinned at the field level.
+  it "answers submit_review with the review GitHub created" do
+    answer = executor.submit_review(number: GhParity::NUMBER, review: GhParity::REVIEW)
+
+    expect(answer).to be_ok
+    expect(answer.value).to include("id" => GhParity::REVIEW_ID, "state" => GhParity::REVIEW_STATE)
+  end
+
+  # A batched review POST is not idempotent, so a refusal must arrive as a
+  # value the caller can read and decide about -- never a retry, and never an
+  # exception a fold has no branch for.
+  it "answers a refused submit_review as a not-ok value carrying why, never raising" do
+    answer = executor.submit_review(number: GhParity::UNKNOWN_NUMBER, review: GhParity::REVIEW)
+
+    expect(answer).not_to be_ok
+    expect(answer.value).to be_nil
+    expect(answer.detail["stderr"]).to include("must be part of the diff")
   end
 
   it "answers deeply frozen, Ractor-shareable values" do

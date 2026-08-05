@@ -265,6 +265,41 @@ module Lain
         invoke(argv) { |shell| parsed(argv, shell) }
       end
 
+      # Post ONE batched pull request review: the body, the event, and every
+      # inline comment, in a single call.
+      #
+      # == Why this one is `gh api` and the others are not
+      #
+      # `gh pr review` has no way to carry inline comments, so the REST endpoint
+      # is the only surface that can express what {Review::Submit} builds. It is
+      # also the only verb that INTERPOLATES a caller's value rather than handing
+      # it over as its own argv element, which is why the path and its guard are
+      # an object of their own ({Endpoint}).
+      #
+      # == The payload goes on STDIN, and that is a tier-2 decision
+      #
+      # A review body is a human's prose and an agent's findings. On an argv it
+      # would be one more string somebody eventually builds; `--input -` puts it
+      # on a pipe, where quoting does not exist. {Canonical.dump} writes it,
+      # which buys determinism for free: the same review serializes to the same
+      # bytes, so the address {Recorded} keys on and the bytes GitHub receives
+      # cannot disagree.
+      #
+      # No retry, ever. A batched review POST creates a review each time it is
+      # accepted, so a refusal is a value for a caller to decide about -- neither
+      # surveyed project retries either (research §4.6).
+      #
+      # @param number [Integer, String] the pull request the review is on
+      # @param review [Hash] the whole payload: `commit_id`, `body`, `event` and
+      #   `comments`. Never a `position` -- see {Review::Submit}.
+      # @return [Answer] `value` is the review document GitHub answered
+      # @raise [ArgumentError] before any subprocess, for a number that is not
+      #   simply a number ({Endpoint::NUMBER_ONLY})
+      def submit_review(number:, review:)
+        argv = ["api", "--method", "POST", Endpoint.reviews(number), "--input", "-"]
+        invoke(argv, input: Canonical.dump(review.to_h)) { |shell| parsed(argv, shell) }
+      end
+
       # @return [Answer] `value` is GitHub's own state string, {UNKNOWN}
       #   included when the bound runs out -- the honest answer, since nothing
       #   here can tell a slow computation from a stuck one.
@@ -277,13 +312,19 @@ module Lain
       # The one place a subprocess happens. A zero exit yields to the verb's own
       # reading; anything else takes the refusal path, which a verb may override
       # when it can read more out of the failure than "it failed".
-      def invoke(argv, on_refusal: method(:refusal))
-        shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout)
+      def invoke(argv, input: nil, on_refusal: method(:refusal))
+        shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout, **stdin(input))
         shell.run_command
         shell.exitstatus.zero? ? yield(shell) : on_refusal.call(argv, shell)
       rescue Mixlib::ShellOut::CommandTimeout => e
         failure(argv, "timeout", e.message)
       end
+
+      # A verb with something to send says so, and the four that have nothing
+      # never acquire a stdin pipe: `input:` makes Mixlib open one, write and
+      # close it, and a subprocess whose stdin behaviour changed is not the
+      # subprocess the other verbs were verified against.
+      def stdin(input) = input.nil? ? {} : { input: }
 
       # gh answers the new pull request's URL on stdout, so the number is the
       # URL's last segment. Output with no number in it is a gh whose shape this
@@ -378,7 +419,9 @@ module Lain
   end
 end
 
-# This file is the gh/ subtree's index. Recorded nests inside the class above and
-# names its Answer, so it loads AFTER the class body -- {Isolation::Worktree}'s
-# Handback placement, same reason.
+# This file is the gh/ subtree's index. Both nest inside the class above and are
+# reached from METHOD bodies only, so they load AFTER the class body -- Recorded
+# also names its Answer, which is {Isolation::Worktree}'s Handback placement and
+# the same reason.
+require_relative "gh/endpoint"
 require_relative "gh/recorded"

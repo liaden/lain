@@ -252,6 +252,22 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(world.calls).to be_empty
     end
 
+    # A submitted review is the one ACTIONS member with no idempotent question
+    # behind it: a batched review POST creates a review every time it is
+    # accepted, so "is it already there" has no answer a resume may act on. It
+    # therefore lands in `unaddressable` -- named, never folded to needs_retry,
+    # because a retry here posts the review a second time. This is also the
+    # canary UnknownAction's own comment names: ACTIONS was widened, and the
+    # Observer was taught in the same edit.
+    it "names a submitted review, because a review POST is not idempotent" do
+      review = blind(action: "review_submit", params: { "number" => 7, "review" => { "body" => "b" } })
+      fold = reconcile([review], world: ForgeReconcileSpecSupport.world)
+
+      expect(fold.unaddressable.map(&:intent)).to eq([review])
+      expect(fold.unaddressable.first.reason).to include("not idempotent")
+      expect(fold.unsettled).to be_empty
+    end
+
     # P24: `fetch` succeeds on a nil, and two `.to_s` calls then read two
     # ABSENCES of knowledge as a confirmation that the push landed.
     it "refuses a blank address as hard as a missing one" do

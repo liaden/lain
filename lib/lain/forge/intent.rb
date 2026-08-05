@@ -14,7 +14,21 @@ module Lain
     PROMOTE = "promote"
     PR_CREATE = "pr_create"
     PR_MERGE = "pr_merge"
-    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE].freeze
+
+    # Posting one batched pull request review -- body, event and every inline
+    # comment in a single POST.
+    #
+    # It is the one member with no idempotent question behind it. A promote can
+    # be checked by asking what a ref stands at and a pull request by asking
+    # whether one is open, but an accepted review POST creates a review every
+    # time, so "is it already there" has no answer a resume may act on.
+    # {Reconcile::Observer} therefore reports it {Unobservable} rather than
+    # judging it, and that is the whole reason it needed to be written down here
+    # rather than left outside the set: an effect this tier performs and cannot
+    # observe must be NAMED as such, or a resume folds it to needs_retry and
+    # posts the review a second time.
+    REVIEW_SUBMIT = "review_submit"
+    ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT].freeze
 
     # Construction contracts for the tier's two journal records, in the house
     # validate-then-freeze convention: a throwaway {Lain::Guard} carrier checked

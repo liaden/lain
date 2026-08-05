@@ -45,3 +45,8 @@ require_relative "review/projection/diagnostics"
 # and deleting `projection/diagnostics` forces deleting it too -- its rank map
 # derives from that one's while its class body runs, so it must load after.
 require_relative "review/prefill"
+
+# The whole of the GitHub write path, and the third deletable unit in this tail:
+# this line plus `review/submit.rb` are all of it (the chunk's deletion map).
+# After the aggregate it reads; nothing else requires it and nothing reads it.
+require_relative "review/submit"
