@@ -84,7 +84,14 @@ class ReviewCommandEditor
 end
 
 RSpec.describe Lain::CLI::Command::Review do
-  let(:command) { described_class.new(root: @repo, shell_out_factory: Mixlib::ShellOut.public_method(:new)) }
+  let(:command) do
+    described_class.new(root: @repo, outbox:, shell_out_factory: Mixlib::ShellOut.public_method(:new))
+  end
+
+  # The REAL outbox `/review-submit` reads, never a spy: what has to be true is
+  # that the round THIS command opened is the round that would be posted, and a
+  # recording double could only say `hold` was called with something.
+  let(:outbox) { Lain::Review::Submit::Outbox.new }
   let(:sink) { StringIO.new }
   let(:record) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: record) }
@@ -279,6 +286,31 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(editor.bound.session.changeset.files.map { |file| file.path.to_s }).to include("README")
     end
 
+    # T34: the round has to be reachable from `/review-submit`, and the object
+    # that reaches it is the outbox. Asserted through the SESSION rather than
+    # through a `have_received(:hold)`, because what matters is that the round
+    # the outbox would post is the round this command drew.
+    it "holds the round it opened in the run's outbox, so a finished review can leave the machine" do
+      attached
+
+      command.call("feature", env)
+
+      expect(outbox).to be_open
+      expect(outbox.target).to eq("branch feature")
+    end
+
+    # The branch leg's whole point: a review with nowhere to post is still HELD.
+    # Refusing to hold it would tell the human "no changeset review is open"
+    # when one plainly is, which is the wrong sentence about the wrong thing.
+    it "holds a BRANCH round with no pull request, so the refusal names the branch and not an absent review" do
+      attached
+
+      command.call("feature", env)
+
+      expect { outbox.submit(executor: instance_double(Lain::Forge::Gh)) }
+        .to raise_error(Lain::Review::Submit::Outbox::Nowhere, /branch feature/)
+    end
+
     # The base is what decides WHICH changeset is drawn, so the assertion is
     # about what fell OUT of it: against `HEAD~1` the first commit's README is
     # not in the range, and a `--base` this command ignored would draw it.
@@ -321,8 +353,10 @@ RSpec.describe Lain::CLI::Command::Review do
   # bytes an attached editor would have received rather than off a spy's
   # bookkeeping.
   describe "the size past which it refuses to draw in the editor" do
+    # The same real outbox the rest of this file uses: a bounded refusal must
+    # leave it holding NOTHING, which is a claim a spy could not make honestly.
     def bounded(**ceilings)
-      described_class.new(root: @repo, bounds: Lain::Review::Bounds.new(**ceilings),
+      described_class.new(root: @repo, outbox:, bounds: Lain::Review::Bounds.new(**ceilings),
                           shell_out_factory: Mixlib::ShellOut.public_method(:new))
     end
 

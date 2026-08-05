@@ -58,6 +58,17 @@ module Lain
 
         attr_reader :env, :goal_driver
 
+        # The run's ONE open changeset review: `/review` puts the round it
+        # opened in, `/review-submit` takes it out and posts it. Memoized for
+        # {#commands}' reason and sharper -- two outboxes would mean a review
+        # that is open in one command and absent from the other, with every
+        # object present and nothing to see.
+        #
+        # Public because it is a run-scoped collaborator this class assembles,
+        # like {#env}: it is what lets a wiring spec assert that the registered
+        # `/review-submit` reads THIS one rather than an outbox of its own.
+        def outbox = @outbox ||= Lain::Review::Submit::Outbox.new
+
         # The T9 command surface the Repl consults ahead of SkillDispatch
         # (precedence is command-first by design): the registry curried over
         # the one Env, so the Repl dispatches with text alone. Memoized, like
@@ -109,8 +120,15 @@ module Lain
         def builtins
           [Quit.new, Rewind.new, Pin.new, Unpin.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new,
            Inbox.new, Ruby.new, Mode.new, Goal.new(driver: @goal_driver), Meta.new(root: @root),
-           Review.new(root: @root)]
+           *review_commands]
         end
+
+        # The two halves of one review: `/review` opens a round into {#outbox}
+        # and `/review-submit` takes it out and posts it. Their own line because
+        # they are the only pair here sharing a collaborator -- and because
+        # #builtins reached its ABC budget, which is the same pressure saying
+        # the same thing.
+        def review_commands = [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:)]
       end
     end
   end

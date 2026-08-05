@@ -337,6 +337,20 @@ Its argument is required and completes with <Tab>.
                             does. The command fails with that sentence, so a
                             typo costs you a retype and nothing else.
 
+                            A verdict CLOSES the round; it does not post it.
+                            Everything you left on the diff lives in lain's own
+                            journal until you say so, and the way you say so is
+                            `/review-submit [summary]` at the `you>` prompt of
+                            the chat that opened the review. That posts ONE
+                            batched pull-request review: every note as an
+                            inline comment, the verdict as the review's event,
+                            and whatever you typed after the verb as its body.
+                            It works once per round -- GitHub creates a new
+                            review for every POST it accepts, so a second run
+                            is refused rather than attempted -- and a review
+                            opened on a BRANCH is refused by name, since there
+                            is no pull request under it to post to.
+
                                                               *:LainThread*
                                                               *lain://thread*
 

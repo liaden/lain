@@ -77,6 +77,11 @@ module Lain
         OPENED = "%<headline>s\nwalk it in lain://review; <CR> opens a row, :LainNote annotates, " \
                  ":LainReviewDone hands it back"
 
+        # @param outbox [Review::Submit::Outbox] the run's ONE open review, so
+        #   the round this opens is reachable from `/review-submit` once the
+        #   human has finished with it. Required rather than defaulted: an
+        #   outbox nothing else holds is a review that can never be posted, and
+        #   nothing about the wiring would look wrong.
         # @param root [String] the repository every git call reads -- the
         #   project the chat was started in, threaded from {Command::Surface}
         #   exactly as {Meta}'s is
@@ -91,8 +96,9 @@ module Lain
         # is why naming `Lain::Review::Bounds` here is safe where a constant in
         # the class body would be a load-time NameError -- {Lain::CLI::Review}'s
         # own constructor spells it the same way for the same reason.
-        def initialize(root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+        def initialize(outbox:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
                        shell_out_factory: Mixlib::ShellOut.public_method(:new))
+          @outbox = outbox
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
@@ -155,7 +161,7 @@ module Lain
           raise Error, "#{unreadable.join(", ")} is not a flag /review can read -- #{USAGE}"
         end
 
-        # The whole card: resolve, build, open, BIND, draw.
+        # The whole card: resolve, build, open, BIND, HOLD, draw.
         #
         # The bind comes before the draw, {Tools::RequestReview::Implementation#tell}'s
         # rule: a human fast enough to answer between the two would otherwise
@@ -163,14 +169,30 @@ module Lain
         # round is journaled, {Lain::CLI::Review#opened}'s rule: a surface that
         # cannot answer the port must not leave a round on record that nothing
         # ever drew.
+        #
+        # The HOLD is beside the bind and for the bind's own reason, which is
+        # why {#wired} is one step and not two.
         def opened(parsed, env)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
-          env.replies.bind_changeset_review(handover(session, env))
+          wired(resolved, session, env)
           drawn(resolved, session, scope)
+        end
+
+        # Everything that must be complete before a human can touch the sidebar:
+        # the gesture rails, and the outbox a finished review leaves through.
+        #
+        # The number comes off the RESOLVED TARGET rather than out of the
+        # source, so a branch round is held with nowhere to post rather than not
+        # held at all -- {Review::Submit::Outbox::Nowhere} is what turns that
+        # into a refusal naming the branch, and a round that was never held
+        # would answer "no changeset review is open" about one that plainly is.
+        def wired(resolved, session, env)
+          env.replies.bind_changeset_review(handover(session, env))
+          @outbox.hold(session:, number: resolved.number, label: resolved.label)
         end
 
         def round(resolved, surface, env)

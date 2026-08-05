@@ -137,8 +137,38 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
-        "ruby", "mode", "goal", "meta", "review", "help", "approve", "yolo", "model"
+        "ruby", "mode", "goal", "meta", "review", "review-submit", "help", "approve", "yolo", "model"
       )
+    end
+  end
+
+  # T34, and the same failure one layer in. `/review` and `/review-submit` share
+  # ONE outbox: the first puts a round in and the second takes it out, so two
+  # outboxes would be a review that is open in one command and absent from the
+  # other -- every object present, nothing to see, and the human told there is
+  # no review open while they are looking at one.
+  #
+  # Driven through the REGISTRY rather than by comparing readers, so what is
+  # asserted is the wiring a typed line actually goes through. A branch round is
+  # what the example holds, because its refusal is reached before any executor
+  # is built and therefore spawns nothing.
+  it "shares ONE outbox between /review and /review-submit, so a held round is the one that posts" do
+    with_project do |root|
+      surface = build_surface(root)
+      surface.outbox.hold(session: :the_round, number: nil, label: "branch feature/widget")
+
+      expect { surface.commands.dispatch("/review-submit") { raise "fallthrough must not run" } }
+        .to raise_error(Lain::Error, %r{branch feature/widget})
+      expect(surface.outbox).to be(surface.outbox)
+    end
+  end
+
+  it "refuses /review-submit with nothing open, so the verb is reachable before any review exists" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      expect { surface.commands.dispatch("/review-submit") { raise "fallthrough must not run" } }
+        .to raise_error(Lain::Error, /no changeset review is open/)
     end
   end
 

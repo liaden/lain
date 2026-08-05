@@ -243,6 +243,37 @@ RSpec.describe Lain::CLI::Review, :seam do
     end
   end
 
+  # T34: WHERE a review of this target can be posted, decided by the two methods
+  # that already know which of the two they resolved. Recorded on the resolution
+  # rather than asked of the source afterwards, so nothing downstream type-tests
+  # a source to find out whether a review of it has anywhere to go.
+  describe "the pull request a resolved target can be posted to" do
+    let(:targets) { described_class::Target.new(repo_root: @repo, shell_out_factory: factory) }
+
+    it "carries the pull request's own number, which is what a review POST is addressed by" do
+      resolved = targets.resolve(number.to_s, base: nil)
+
+      expect(resolved.number).to eq(number)
+      expect(resolved.label).to eq("pull request #{number}")
+    end
+
+    it "reads the number out of a URL spelling too, since both name one pull request" do
+      resolved = targets.resolve("https://github.com/owner/repo/pull/#{number}", base: nil)
+
+      expect(resolved.number).to eq(number)
+    end
+
+    # The refusal {Lain::Review::Submit::Outbox::Nowhere} turns into words
+    # begins here: a branch review is a review with no pull request under it,
+    # and this is where that is recorded rather than guessed at later.
+    it "carries no number for a branch, because a branch review has nowhere to post" do
+      resolved = targets.resolve("feature", base: nil)
+
+      expect(resolved.number).to be_nil
+      expect(resolved.label).to eq("branch feature")
+    end
+  end
+
   describe "what it hands back" do
     it "answers a String and writes nothing to stdout" do
       rendered = nil

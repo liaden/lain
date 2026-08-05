@@ -207,8 +207,16 @@ module Lain
       # because the ambiguity refusal needs a git call that has nothing to do
       # with rendering.
       class Target
-        # One resolved target: the source, and what to call it on screen.
-        Resolved = Data.define(:source, :label) do
+        # One resolved target: the source, what to call it on screen, and the
+        # pull request a review of it can be posted back to.
+        #
+        # `number` is nil for a BRANCH, and that nil is decided here rather than
+        # asked of the source later: this object is built by the two methods
+        # that already know which of the two they resolved, so nothing
+        # downstream has to type-test a source to find out whether a review of
+        # it has anywhere to go. {Review::Submit::Outbox} is what turns the nil
+        # into a refusal naming {#label}.
+        Resolved = Data.define(:source, :label, :number) do
           # The name the round is JOURNALED under, derived from the source's own
           # class rather than written here as a literal -- a literal is what
           # goes on naming `local_branch` after the class it describes is
@@ -245,14 +253,14 @@ module Lain
         def pull_request(target)
           source = Lain::Review::Source::GithubPr.new(pull_request: target, repo_root: @repo_root,
                                                       shell_out_factory: @shell_out_factory)
-          Resolved.new(source:, label: "pull request #{source.number}")
+          Resolved.new(source:, label: "pull request #{source.number}", number: source.number)
         end
 
         def branch(target, base)
           source = Lain::Review::Source::LocalBranch.new(base: base || default_base, head: target,
                                                          repo_root: @repo_root,
                                                          shell_out_factory: @shell_out_factory)
-          Resolved.new(source:, label: "branch #{target}")
+          Resolved.new(source:, label: "branch #{target}", number: nil)
         end
 
         # The base a LANDING targets, because what a review reviews is what is

@@ -410,3 +410,7 @@ module Lain
     end
   end
 end
+
+# This file is the submit/ subtree's index. The outbox reads {Submit.for} from a
+# METHOD body only, so it may load after the class body it nests in.
+require_relative "submit/outbox"

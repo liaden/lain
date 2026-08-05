@@ -69,8 +69,7 @@ module DeletionMap
     Capability.new(
       key: "diagnostics",
       constants: %w[Diagnostics],
-      files: ["lib/lain/frontend/neovim/runtime/49_diagnostics.lua",
-              "lib/lain/review/projection/diagnostics.rb",
+      files: ["lib/lain/frontend/neovim/runtime/49_diagnostics.lua", "lib/lain/review/projection/diagnostics.rb",
               "spec/lain/review/projection/diagnostics_spec.rb"],
       consumers: [],
       edits: {
@@ -96,8 +95,7 @@ module DeletionMap
     Capability.new(
       key: "thread",
       constants: %w[ThreadView],
-      files: ["lib/lain/frontend/neovim/runtime/51_thread.lua",
-              "lib/lain/frontend/neovim/thread_view.rb",
+      files: ["lib/lain/frontend/neovim/runtime/51_thread.lua", "lib/lain/frontend/neovim/thread_view.rb",
               "spec/lain/frontend/neovim/thread_view_spec.rb"],
       # `#annotate` and `#thread` are the PORT's messages, so they survive the
       # pane and have to BECOME something -- deleting the pane is a rewrite here,
@@ -131,19 +129,25 @@ module DeletionMap
     Capability.new(
       key: "submit",
       constants: %w[Submit REVIEW_SUBMIT submit_review],
-      files: ["lib/lain/review/submit.rb", "spec/lain/review/submit_spec.rb",
-              # Exists only to build and guard the one REST path a review POST
-              # takes, so it goes with it.
+      # T34 added the REACH -- the outbox, the verb and their specs; and
+      # `endpoint.rb` builds only a review POST's own REST path, so it goes too.
+      files: ["lib/lain/review/submit.rb", "lib/lain/review/submit/outbox.rb",
+              "spec/lain/review/submit_spec.rb", "spec/lain/review/submit/outbox_spec.rb",
+              "lib/lain/cli/command/review_submit.rb", "spec/lain/cli/command/review_submit_spec.rb",
               "lib/lain/forge/gh/endpoint.rb"],
       consumers: ["lib/lain/forge/gh.rb", "lib/lain/forge/gh/recorded.rb", "lib/lain/forge/intent.rb",
-                  "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb",
-                  "spec/lain/forge/gh_spec.rb", "spec/lain/forge/gh/recorded_spec.rb",
-                  "spec/support/shared_examples/gh_parity.rb"],
+                  "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
+                  "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
+                  "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],
         "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],
-        # Both spell the verb as the wire STRING, so the constant sweep is blind
-        # to them and only a marker finds them.
+        "lib/lain/cli/command.rb" => ['require_relative "command/review_submit"'],
+        # Four sites the constant sweep is blind to: two spell the verb as the
+        # wire STRING, one is the command set pinned as a LITERAL (the wiring
+        # examples beside it go too), one is the keyword `/review` holds through.
+        "lib/lain/cli/command/review.rb" => ["outbox:", "@outbox.hold"],
+        "spec/lain/cli/command/surface_spec.rb" => ["review-submit"],
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']
       },
