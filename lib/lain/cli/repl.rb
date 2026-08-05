@@ -42,8 +42,9 @@ module Lain
         @commands = commands
         @goal_driver = goal_driver
         # The approval-watching surfaces are their own collaborator now (the
-        # TTY prompt, dunst, and the opt-in auto surface over one queue); Repl
-        # asks it to `watch` and never touches the individual surfaces.
+        # TTY prompt, dunst, the opt-in auto surface and -- once #run has
+        # attached one -- the editor's own list, over one queue); Repl asks it
+        # to `watch` and never touches the individual surfaces.
         @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, tty:, conductor:)
         # And its counterpart one lifetime up (T33): what the CONVERSATION
         # holds open -- the fleet's reactor and the editor's gesture consumer --
@@ -85,7 +86,7 @@ module Lain
       # an interrupt at the prompt.
       def run(nvim:, store:, session:, first_prompt: nil)
         frontend = attach_editor(nvim, store:, session:)
-        @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers)
+        @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers, approvals: frontend&.approval_view)
         # T31a: the frontend ITSELF, and not a piece of it. A changeset review
         # needs three things from an editor that no single collaborator answers
         # -- where the diff is drawn, the rendering a row gesture resolves
@@ -108,11 +109,22 @@ module Lain
       # request_resent projection it promotes. `compose_notify:` is what makes
       # the compose round trip's notices reachable -- its default is silent, so
       # without it an abandoned compose ends with no signal at all.
+      #
+      # T36: it also hands the editor's approval list to the surface set, which
+      # was built a whole lifetime ago in #initialize and cannot have been given
+      # one then. It is bound HERE and not in #run because this is the method
+      # that knows whether an editor exists at all -- and a nil view is the
+      # honest answer for a headless chat, which is what leaves the fourth watch
+      # fiber unspawned. Note which way round that is: the view is built BY the
+      # frontend, so "no editor" means there is nothing to construct rather than
+      # a capability left unwired.
       def attach_editor(nvim, store:, session:)
         bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
                                           journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
-        nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge,
-                                           compose_notify: @tty.method(:render_warning), **nvim)
+        frontend = nvim && Lain::Frontend::Neovim.new(store:, session:, resend_bridge: bridge,
+                                                      compose_notify: @tty.method(:render_warning), **nvim)
+        @surfaces.bind_editor(frontend&.approval_view)
+        frontend
       end
 
       # A prompt that reads and nothing more, for the paths that never build a
@@ -293,9 +305,9 @@ module Lain
         @chronicle.interrupted(head: @agent.timeline.head_digest)
       end
 
-      def farewell?(text)
-        %w[exit quit].include?(text.strip.downcase)
-      end
+      # Endless, like {#continue?} which is its only caller: one expression, and
+      # the multi-line form was the odd one out in this file.
+      def farewell?(text) = %w[exit quit].include?(text.strip.downcase)
     end
   end
 end

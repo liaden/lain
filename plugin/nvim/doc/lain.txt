@@ -11,16 +11,17 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 11) . |lain-contract|
+  6. The attach contract (protocol 12) . |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
      6.4 Runtime commands .............. |lain-runtime-commands|
      6.5 Composing a message ........... |lain-compose|
      6.6 Answering a question set ...... |lain-question|
-     6.7 Reviewing a document .......... |lain-review|
-     6.8 Reading a changeset ........... |lain-review-diff|
-     6.9 Folds ......................... |lain-folds|
+     6.7 Approving a tool call .......... |lain-approval|
+     6.8 Reviewing a document .......... |lain-review|
+     6.9 Reading a changeset ........... |lain-review-diff|
+     6.10 Folds ........................ |lain-folds|
   7. Without the plugin ................ |lain-zero-install|
 
 ==============================================================================
@@ -127,7 +128,7 @@ lain.status()           The decoded contents of `.lain/state.json` (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 11)                           *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 12)                           *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -200,7 +201,8 @@ it, then `:LainResend`). A seventh, `lain://compose`, appears only while you
 are composing -- see |lain-compose|.
 
 A `lain://question` buffer appears the same way while you are answering a
-question set -- see |lain-question|.
+question set -- see |lain-question| -- and a `lain://approval` buffer while a
+gated tool call is waiting on you, see |lain-approval|.
 
 The read-only record views share the single `lain` filetype; `b:lain_view`
 names the specific view on EVERY lain:// buffer, and is set before the
@@ -251,7 +253,8 @@ your own `:highlight link` overrides any of them without a fight:
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
-`:LainReviewVerdict {verdict}`, and -- only meaningful inside a review
+`:LainReviewVerdict {verdict}`, `:LainApprove`, `:LainDeny`, and -- only
+meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteDone` and
 `:LainThread`.
@@ -412,7 +415,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 11)                           *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 12)                           *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -446,7 +449,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 11)                     *lain-question*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 12)                     *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -517,7 +520,57 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 REVIEWING A DOCUMENT (PROTOCOL 11)                           *lain-review*
+6.7 APPROVING A TOOL CALL (PROTOCOL 12)                         *lain-approval*
+                                                             *lain://approval*
+                                                               *:LainApprove*
+                                                                  *:LainDeny*
+
+When lain gates a tool call, the agent PARKS on your answer and a fail-closed
+clock starts: an approval nobody answers is DENIED when its window closes.
+`lain://approval` is that queue, drawn here so a parked agent is visible in the
+editor rather than only at the chat prompt.
+
+It opens in a split, focused, the moment there is something to answer -- and
+only then, and only if no window is already showing it, so a second call
+arriving never re-steals your cursor. One row per parked call, leading with who
+is asking:
+
+    agent  bash({"command" => "pwd"})
+
+    -- y approve, n deny  (:LainApprove / :LainDeny)
+
+    y                       Approve the call your cursor is on
+                            (`:LainApprove`).
+
+    n                       Deny it (`:LainDeny`).
+
+Both are buffer-local to `lain://approval`, so vim's own `y` and `n` are
+untouched everywhere else, and both are ordinary global commands reading the
+CURRENT window's cursor -- so each refuses outside this buffer rather than
+answering whatever sits on that line somewhere else. On a line that is not a
+row (the hint, or the empty state) they do nothing at all.
+
+There is one key per verdict and no toggle, for |:LainReviewMark|'s reason: the
+verdict rides the wire, so what you pressed is what is sent, and a decision
+computed from a listing that has already moved cannot answer the call next to
+the one you meant. The gesture carries your cursor's line AND the rendering the
+buffer is holding (`b:lain_view_generation`), which is what makes that true; a
+gesture from a rendering lain no longer holds is refused and says so.
+`b:lain_approval_rows` is how many of the leading lines are rows.
+
+                                                          *lain-approval-race*
+THE EDITOR IS NOT THE ONLY ANSWERER, and this buffer never pretends it is. The
+terminal prompt, a desktop notification, and the clock all watch the same
+queue, and the FIRST answer is the one that stands. Answering a call one of
+them already took changes nothing and tells you who took it and how. Rows
+leave the list as they are answered, whoever answered them -- including the
+clock -- so a row you can see is a call still waiting.
+
+lain never writes this buffer's answer for you and never pre-selects one: an
+unanswered window denies, so there is no default to press <CR> on.
+
+------------------------------------------------------------------------------
+6.8 REVIEWING A DOCUMENT (PROTOCOL 12)                           *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -544,7 +597,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.8 READING A CHANGESET (PROTOCOL 11)                       *lain-review-diff*
+6.9 READING A CHANGESET (PROTOCOL 12)                       *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it
@@ -617,7 +670,7 @@ hand it back -- so a note that merely slid down the file as lines were inserted
 above it is not drift, and a note whose line was rewritten under it is.
 
 ------------------------------------------------------------------------------
-6.9 FOLDS                                                         *lain-folds*
+6.10 FOLDS                                                        *lain-folds*
 
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one

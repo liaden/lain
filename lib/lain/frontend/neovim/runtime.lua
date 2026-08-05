@@ -69,7 +69,7 @@ end
 -- gem release, which is why the handshake does not compare gem versions. A
 -- mismatch WARNS and keeps going: a stale editor half-works (commands still
 -- fire, renders still land) rather than crashing the human's session outright.
-local RUNTIME_PROTOCOL = "11"
+local RUNTIME_PROTOCOL = "12"
 if protocol ~= RUNTIME_PROTOCOL then
   vim.api.nvim_echo({
     { "lain: runtime.lua protocol " .. RUNTIME_PROTOCOL .. " / gem protocol " .. tostring(protocol) .. " mismatch", "WarningMsg" },

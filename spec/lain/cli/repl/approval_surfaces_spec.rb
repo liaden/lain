@@ -62,8 +62,11 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # -- on the TTY surface's own fiber, since the gated fiber is parked.
   let(:conductor) { instance_double(Lain::CLI::Conductor, read_reply: "y") }
 
-  def surfaces(approvals: queue, auto: nil)
+  let(:editor) { ApprovalSurfacesSpecSupport::SpySurface.new }
+
+  def surfaces(approvals: queue, auto: nil, attached: nil)
     described_class.new(approvals:, notifier:, auto_surface: auto, tty:, conductor:)
+                   .tap { |built| built.bind_editor(attached) }
   end
 
   def effect = ApprovalSurfacesSpecSupport::Effect.new("bash", { "command" => "ls" }, "tu_1")
@@ -75,9 +78,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # spies, the conductor, and the journal carry the rest of the evidence.
   # `with_timeout` bounds the whole thing so a fan-out that spawned no
   # answerer AND no clock fails in words rather than hanging the suite.
-  def fan_out(auto: nil)
+  def fan_out(auto: nil, attached: nil)
     Sync do |task|
-      watched = surfaces(auto:).watch(task)
+      watched = surfaces(auto:, attached:).watch(task)
       gated = task.async { queue.call(effect, nil) }
       { verdict: task.with_timeout(2) { gated.wait }, watched: }
     ensure
@@ -91,7 +94,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # this Sync instead of failing it.
   def watch_without_a_queue
     Sync do |task|
-      watched = surfaces(approvals: nil, auto: auto_surface).watch(task)
+      watched = surfaces(approvals: nil, auto: auto_surface, attached: editor).watch(task)
       watched
     ensure
       watched&.each { |surface| surface&.stop }
@@ -130,6 +133,38 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(3)
   end
 
+  # T36. These two examples and the one above are the closest anything came to
+  # pinning the editor surface's ABSENCE as correct, and they did not: the
+  # counts they assert are counts for the inputs they give, and an unattached
+  # editor really is two. What was missing was any example giving the other
+  # input at all -- which is the same shape as a capability with no reachable
+  # construction, one step further out.
+  describe "--nvim: the editor's own approval list is the fourth peer" do
+    it "spawns a fiber for it too, so a parked call is drawn where the human is looking" do
+      expect(fan_out(attached: editor)[:watched].size).to eq(3)
+    end
+
+    it "hands it the SAME queue the TTY surface watches, never a copy" do
+      fan_out(attached: editor)
+
+      expect(editor.queues).to contain_exactly(be(queue))
+    end
+
+    it "makes four with --auto-approve, and the human surface still answers through all of them" do
+      result = fan_out(auto: auto_surface, attached: editor)
+
+      expect(result[:watched].size).to eq(4)
+      expect(result[:verdict]).to be(true)
+    end
+
+    it "spawns nothing for an editor that is not attached, which is every headless chat" do
+      watched = fan_out[:watched]
+
+      expect(watched).to contain_exactly(an_instance_of(Async::Task), an_instance_of(Async::Task))
+      expect(editor.queues).to be_empty
+    end
+  end
+
   it "compacts the absent auto surface away rather than leaving a nil hole in the set" do
     watched = fan_out[:watched]
 
@@ -150,7 +185,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     it "hands no surface the queue it does not have" do
       watch_without_a_queue
 
-      expect([notifier.queues, auto_surface.queues]).to all(be_empty)
+      expect([notifier.queues, auto_surface.queues, editor.queues]).to all(be_empty)
     end
 
     it "builds no approval policy either: an unwatched session pays for no surface" do

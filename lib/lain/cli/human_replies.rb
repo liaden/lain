@@ -130,16 +130,20 @@ module Lain
         @tty = tty
         @ask_human = ask_human
         @questions = questions
-        @editor = NoEditor
-        @views = NoViews
+        # "Nothing is bound yet" stated as the bind it is, rather than as a
+        # second copy of which Null each surface holds -- the copy that would
+        # be the one to drift when a fourth arrived, which is exactly what
+        # T36's did.
+        bind_editor(nil)
         @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
-        # Readers, never the surfaces: all three are bound after this returns,
-        # and {Gestures} resolves each per call so a late bind is seen without
-        # anybody remembering to rebuild anything.
-        @gestures = Gestures.new(editor: -> { @editor }, views: -> { @views }, review: -> { @changeset_review })
+        # Readers, never the surfaces: every one of them is bound after this
+        # returns, and {Gestures} resolves each per call so a late bind is seen
+        # without anybody remembering to rebuild anything.
+        @gestures = Gestures.new(editor: -> { @editor }, views: -> { @views }, review: -> { @changeset_review },
+                                 approvals: -> { @approvals })
       end
 
       # The editor's command rail -- :LainReply, :LainReviewDone, :LainOpen,
@@ -154,9 +158,17 @@ module Lain
       # which set or turn it is. Bound beside the rail because the two are one
       # conversation -- the gesture arrives on the rail, resolves through the
       # views, and a refusal goes back out on the rail.
-      def bind_editor(editor, views: nil)
+      #
+      # `approvals` is the frontend's {Frontend::Neovim#approval_view} (T36),
+      # bound HERE and not at a second call site for {#bind_changeset_review}'s
+      # recorded reason: the rendering a keypress resolves through and the rail
+      # its refusal goes back out on are one conversation, and two binds are two
+      # chances for them to hold different objects -- which is a wrong-call
+      # approval rather than an error.
+      def bind_editor(editor, views: nil, approvals: nil)
         @editor = editor || NoEditor
         @views = views || NoViews
+        @approvals = approvals || NoApprovals
       end
 
       # The editor a changeset is DRAWN in, and the second rail a review's
@@ -514,17 +526,50 @@ module Lain
       # for the same reason: each collaborator is its own responsibility, and the
       # split keeps each body inside Metrics/ClassLength instead of loosening it.
 
-      # Every editor verb that names a POSITION and submits nothing (T11). Five
-      # of the eight, and they are one thing: each takes a LINE or an id off the
-      # wire, resolves it through the surface that rendered it, and answers only
-      # whether it landed -- so each ends at {#gestured}, which reports a
-      # refusal back in the editor the gesture came from.
+      # The approval list nobody wired (T36) -- {NoEditor}, {NoViews} and
+      # {NoReview}'s fourth sibling, and a fourth object for {NoReview}'s
+      # reason: it is a fourth fact. A run can have an editor, its views and a
+      # changeset review all bound and still have no approval list at all
+      # (`--yolo` wires no queue, and a headless chat no editor), so a human
+      # told "no editor is attached" there would be told something false about
+      # the thing in front of them.
+      #
+      # It sits in THIS body and not beside its three siblings for the reason
+      # stated directly above: the body above was over Metrics/ClassLength
+      # carrying it, and the split is this file's recorded remedy rather than
+      # loosening the limit.
+      module NoApprovals
+        # {NoReview::Nothing}'s shape, kept apart from it for its reason: the
+        # two say different things, and a human who has an approval list open
+        # and no review must not be told about the review.
+        module Nothing
+          def self.decided? = false
+          def self.report = "no approval list is open in this editor, so there is nothing to answer"
+        end
+
+        # `**` rather than the named keyword, for {NoViews.open}'s reason.
+        def self.decide(_line, _verdict, **) = Nothing
+      end
+
+      # Every editor verb that names a POSITION and answers only whether it
+      # landed (T11, T36). Six of the nine, and they are one thing: each takes a
+      # LINE or an id off the wire, resolves it through the surface that
+      # rendered it, and ends at {#gestured}, which reports a refusal back in
+      # the editor the gesture came from.
       #
       # Its own object because {HumanReplies} was over `Metrics/ClassLength`
       # carrying it, and the cop was naming a real seam rather than a size: the
       # class it left behind routes ANSWERS -- a reply, a written document, a
       # settled review -- each of which reaches the Store or a promise and can
-      # raise. These reach neither. They resolve a position or they do not.
+      # RAISE, which is what {HumanReplies#serve_editor_command} rescues.
+      #
+      # An approval verdict is the one member here that does reach a promise,
+      # and it belongs on this side anyway, because the cut is the RAISE and not
+      # the promise: {Approval::Queue::Pending#decide} is single-shot and
+      # answers a lost race with `false` rather than with
+      # {Promise::AlreadyResolved}, so a verdict that arrives second is a value
+      # this object reports -- exactly what {#gestured} is for -- and never an
+      # exception somebody else's rescue has to catch.
       #
       # It holds its three surfaces rather than reaching for them, which is why
       # {HumanReplies#rebind} rebuilds it: the surfaces are bound after
@@ -546,10 +591,13 @@ module Lain
         #   line -- {NoViews} when none were bound
         # @param review [#call] returns what resolves a review sidebar row and an
         #   anchor id -- {NoReview} when none was bound
-        def initialize(editor:, views:, review:)
+        # @param approvals [#call] returns what resolves a lain://approval row
+        #   into the parked call it drew -- {NoApprovals} when none was bound
+        def initialize(editor:, views:, review:, approvals: -> { NoApprovals })
           @editor = editor
           @views = views
           @review = review
+          @approvals = approvals
         end
 
         # {Frontend::Neovim::Router}'s shape, on the consumer's side of the same
@@ -560,11 +608,30 @@ module Lain
             "pin" => ->(args) { pin_turn(args) },
             "review_open" => ->(args) { open_hunk(args) },
             "review_mark" => ->(args) { mark_hunk(args) },
-            "review_ask" => ->(args) { ask_docent(args) }
+            "review_ask" => ->(args) { ask_docent(args) },
+            "approval" => ->(args) { answer_approval(args) }
           }
         end
 
         private
+
+        # The `y`/`n` gesture from lain://approval (T36): the wire's
+        # `["approval", [line, verdict, generation]]`, which is {#mark_hunk}'s
+        # shape for {#mark_hunk}'s two reasons. The LINE is all the editor can
+        # send, because a row renders no identity for a parked call -- and the
+        # VERDICT rides the wire rather than being toggled, because a decision
+        # computed from a rendering that has since moved answers the
+        # neighbouring call, silently, both values being legal.
+        #
+        # It runs HERE, on the reactor's editor-command consumer, and it can run
+        # nowhere else: deciding resolves a {Lain::Promise}, and a promise must
+        # be resolved on the reactor -- which is why the verb is acked to this
+        # rail rather than answered on the RPC thread the way a question's `:w`
+        # is.
+        def answer_approval(args)
+          line, verdict, generation = args
+          gestured(@approvals.call.decide(line, verdict, generation:), &:decided?)
+        end
 
         # The inbox's `<CR>`/`r` gesture (T16): the wire's `["open", [line,
         # generation]]`. The LINE is all the editor can send -- an inbox row

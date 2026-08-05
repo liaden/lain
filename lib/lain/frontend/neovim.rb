@@ -105,7 +105,22 @@ module Lain
       #   -- a marker left behind by a lain that has gone away must not cost the
       #   human their editor, so the recorded channel is asked of nvim rather
       #   than trusted, and nothing has to be cleaned up on the way out.
-      PROTOCOL = "11"
+      # "12": the approval surface -- the one {Frontend::ApprovalPolicy}'s own
+      #   class comment named and nothing ever wrote. Render entry point
+      #   __lain.set_approval draws lain://approval, stamping
+      #   b:lain_view_generation with the rendering and b:lain_approval_rows
+      #   with how many of its leading lines are answerable calls (so the keys
+      #   below are inert on the hint and the empty state without a lua-side
+      #   pattern match on rendered text). :LainApprove and :LainDeny answer the
+      #   call under the cursor, bound in that buffer as `y` and `n`; both send
+      #   the "approval" verb carrying the line, the verdict and the stamp. ONE
+      #   COMMAND PER VERDICT, protocol 10's rule for the same reason: the
+      #   verdict rides the wire, because a decision computed from a rendering
+      #   that has since moved answers the neighbouring call in silence.
+      #   ACKED, never answered -- a verdict resolves a promise, which must
+      #   happen on the reactor, so it rides the command inbox to the consumer
+      #   fiber rather than being served on the RPC thread.
+      PROTOCOL = "12"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model
@@ -221,6 +236,14 @@ module Lain
       # collaborator, never the session.
       # @return [QuestionView]
       attr_reader :question_view
+
+      # The editor's surface on the approval queue (T36), for the repl to hand
+      # a queue to watch and for the editor's gesture to answer through. A
+      # collaborator, never the session -- and built HERE, so it exists exactly
+      # when an editor does: a headless chat constructs no frontend, so there
+      # is nothing to bind and nothing spawns a watcher.
+      # @return [ApprovalView]
+      attr_reader :approval_view
 
       # Commands the editor invoked, enqueue-and-acked by the RpcThread, for an
       # agent-side consumer to drain -- and the way back for a gesture that had
@@ -413,10 +436,15 @@ module Lain
       # thread, inside the editor's write, under that view's lock, so it must be
       # an unbounded never-closed queue push -- something that cannot park and
       # cannot raise -- and never a promise resolution.
+      #
+      # {ApprovalView} is here for the same reason and takes nothing else: it
+      # has no submit rail, because its answer resolves a promise on the
+      # consumer's own fiber rather than travelling to one.
       def build_round_trips(compose_notify:, question_notify:)
         @command_inbox = CommandInbox.new(inbox: @rpc.command_inbox, rpc: @rpc)
         @compose = Compose.new(rpc: @rpc, notify: compose_notify)
         @question_view = QuestionView.new(rpc: @rpc, notify: question_notify, submit: @command_inbox.method(:answered))
+        @approval_view = ApprovalView.new(rpc: @rpc)
       end
 
       # The failures the background threads RECORDED rather than raised (a raise
@@ -552,6 +580,7 @@ require_relative "neovim/buffers"
 require_relative "neovim/journal_view"
 require_relative "neovim/request_buffer"
 require_relative "neovim/question_view"
+require_relative "neovim/approval_view"
 require_relative "neovim/changeset_diff"
 require_relative "neovim/review_view"
 require_relative "neovim/thread_view"

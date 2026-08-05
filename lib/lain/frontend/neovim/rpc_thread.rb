@@ -106,6 +106,17 @@ module Lain
         # while an id is a stamp Ruby minted and can hand back unchanged.
         SET_THREAD = "local anchor_id, lines = ...; if _G.__lain then _G.__lain.set_thread(anchor_id, lines) end"
 
+        # Whole-buffer replace for lain://approval (T36). No buffer NAME, for
+        # {SET_REVIEW}'s reason -- the list is a singleton, so the lua half
+        # names its own -- and a THIRD argument no other view sends: how many of
+        # the lines are answerable rows. The keys bound in that buffer have to
+        # be inert everywhere else in it (the hint line, the empty state), and a
+        # count Ruby mints is the only thing that says so without lua pattern
+        # matching text Ruby drew. The stamp is REQUIRED like {SET_REVIEW}'s: a
+        # row moves the instant any other call is answered.
+        SET_APPROVAL = "local lines, gen, rows = ...; " \
+                       "if _G.__lain then _G.__lain.set_approval(lines, gen, rows) end"
+
         # One queued command: `args` is exactly what the entry point named by
         # `lua` takes, already in order -- `[lines]` for the journal append,
         # `[name, lines]` for a view replace, `[name, lines, generation]` for
@@ -209,6 +220,15 @@ module Lain
 
         def post_thread(anchor_id, lines)
           @queue.push(Command.new(args: [anchor_id, lines], lua: SET_THREAD), true)
+        end
+
+        # Non-blocking for {#post_question}'s reason, one lifetime up: this is
+        # posted from the approval surface's own fiber on the reactor, and a
+        # blocking push against a full queue would park the fiber that is the
+        # editor's only view of a PARKED AGENT -- while the queue's fail-closed
+        # clock ran down underneath it.
+        def post_approval(lines, generation, rows)
+          @queue.push(Command.new(args: [lines, generation, rows], lua: SET_APPROVAL), true)
         end
 
         # Send everything currently queued, one nvim_exec_lua notify per
@@ -341,6 +361,13 @@ module Lain
         end
 
         def set_thread(anchor_id, lines) = refusable(THREAD_DETACHED) { @queue.post_thread(anchor_id, lines) }
+
+        # T36's, and its refusal is READ rather than reported: {ApprovalView}
+        # withholds the stamp of a rendering nothing took, so a keypress citing
+        # one is refused instead of resolving against rows nobody can see.
+        def set_approval(lines, generation, rows)
+          refusable(ApprovalView::DETACHED) { @queue.post_approval(lines, generation, rows) }
+        end
 
         private
 
@@ -970,7 +997,7 @@ module Lain
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
-                       :review_refused, :set_review, :open_changeset, :set_thread
+                       :review_refused, :set_review, :open_changeset, :set_thread, :set_approval
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.

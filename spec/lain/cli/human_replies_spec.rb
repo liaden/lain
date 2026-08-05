@@ -25,6 +25,28 @@ class RecordingEditorRail
   def attached? = true
 end
 
+# The nvim end of the approval round trip, recorded (T36): what
+# {Lain::Frontend::Neovim::ApprovalView} answers a `y`/`n` gesture with. Its
+# `decided?`/`report` pair is the whole duck the consumer reads, so this stands
+# in for both outcomes without a real queue -- which the view's own spec drives
+# for real.
+class RecordingApprovalList
+  Answer = Struct.new(:decided?, :report)
+
+  def initialize(landed: true, report: "that call was already answered")
+    @landed = landed
+    @report = report
+    @gestures = []
+  end
+
+  attr_reader :gestures
+
+  def decide(line, verdict, generation:)
+    @gestures << [line, verdict, generation]
+    Answer.new(@landed, @report)
+  end
+end
+
 # The nvim end of the question round trip, recorded: what
 # {Lain::Frontend::Neovim::QuestionView} posts a document through
 # (`open_question`), so an example can assert WHICH set's document reached the
@@ -875,6 +897,44 @@ RSpec.describe Lain::CLI::HumanReplies do
       with_surfaces { editor.refusals.any? }
 
       expect(editor.refusals).to contain_exactly(a_string_matching(/no changeset review is open/))
+    end
+
+    # T36. The verb rides THIS rail and not the answered one, and that is the
+    # whole of its wiring: deciding an approval resolves a promise, a promise
+    # must be resolved on the reactor, and this fiber is the reactor's. Served
+    # on the RPC thread the way a question's `:w` is, it would block that thread
+    # on the reactor -- the stop condition this project has hit twice.
+    it "answers the parked call a row names, in the direction the human pressed" do
+      approvals = RecordingApprovalList.new
+      replies.bind_editor(editor, approvals:)
+      editor.push(["approval", [2, "deny", 7]])
+
+      with_surfaces { approvals.gestures.any? }
+
+      expect(approvals.gestures).to eq([[2, "deny", 7]])
+      expect(editor.refusals).to be_empty
+    end
+
+    it "tells the editor, in the editor, when the call on that row was already answered" do
+      replies.bind_editor(editor, approvals: RecordingApprovalList.new(landed: false))
+      editor.push(["approval", [1, "approve", 7]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/already answered/))
+    end
+
+    # Null over a nil check, one surface further again: an editor with no
+    # approval list is an object that answers, and it answers about the LIST --
+    # being told "no editor is attached" while looking at one is the defect the
+    # separate sentences exist to avoid.
+    it "refuses the gesture when no approval list is bound" do
+      replies.bind_editor(editor)
+      editor.push(["approval", [1, "approve", 7]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/no approval list is open/))
     end
 
     # The killer this loop already had an answer for, now covering three more

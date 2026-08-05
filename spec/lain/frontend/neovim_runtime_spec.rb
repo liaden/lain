@@ -7,6 +7,14 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module ApprovalSeamSupport
+  # The gated call this editor is asked about. A Struct rather than a real
+  # {Lain::Effect} for {Lain::Approval::Queue::Pending}'s own reason: it reads a
+  # name, an input and a tool_use_id, and nothing else.
+  Effect = Struct.new(:name, :input, :tool_use_id)
+end
+
 # The runtime.lua contract, protocol 3 (T5): User autocmds, b:lain_view on
 # every lain:// buffer, the richer shared syntax, and lain://workspace's
 # lua-side home. Same headless-nvim harness as neovim_spec.rb: a real editor
@@ -283,6 +291,227 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # T36, and the reason THAT card exists: the whole approval seam was built for
+  # a Neovim surface -- {Lain::Frontend::ApprovalPolicy}'s own class comment
+  # names it -- and nothing had ever written one, so a gated call parked the
+  # agent with the question visible in the chat pane alone.
+  #
+  # It drives a REAL {Lain::Approval::Queue} with a REAL fiber parked in it,
+  # the REAL consumer ({Lain::CLI::HumanReplies}, bound as `Repl#run` binds
+  # it), and a REAL editor, because the verdict reaching the parked call is the
+  # only claim worth making: a view that renders rows and wires nothing renders
+  # identically.
+  describe "answering a parked approval in the editor, end to end" do
+    let(:journal_io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io: journal_io) }
+
+    it "approves the parked call when the human presses y on its row" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        settled = with_parked_approval(handle) do
+          wait_until { buffer_lines("lain://approval").join.include?("pwd") }
+          press("lain://approval", "y", cursor: [1, 0])
+        end
+
+        expect(settled).to be(true)
+        expect(decisions.last).to include("verdict" => "approve", "tool" => "bash",
+                                          "surface" => Lain::Frontend::Neovim::ApprovalView::SURFACE)
+      end
+    end
+
+    # The counterfactual for the example above: the same path, the other key,
+    # and a DIFFERENT verdict reaching the gated fiber. A view that answered
+    # `true` whatever was pressed passes the approve example alone.
+    it "denies it when the human runs :LainDeny, so the two verdicts are not one gesture" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        settled = with_parked_approval(handle) do
+          wait_until { buffer_lines("lain://approval").join.include?("pwd") }
+          inspector.command("buffer lain://approval")
+          inspector.command("LainDeny")
+        end
+
+        expect(settled).to be(false)
+        expect(decisions.last).to include("verdict" => "deny")
+      end
+    end
+
+    # `y` is a GLOBAL command's keymap only inside this buffer, and the command
+    # behind it reads the CURRENT window's cursor -- so typed elsewhere it must
+    # answer nothing rather than whatever the list holds on that line. The
+    # gated call is still parked when the block ends, which is what
+    # `:unsettled` means.
+    it "answers nothing from a buffer that is not the approval list" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        settled = with_parked_approval(handle, grace: 1.5) do
+          wait_until { buffer_lines("lain://approval").join.include?("pwd") }
+          press("lain://journal", "y", cursor: [1, 0])
+          inspector.command("buffer lain://journal")
+          inspector.command("LainApprove")
+        end
+
+        expect(settled).to eq(:unsettled)
+        # The abandon the harness's own teardown journals is not a decision this
+        # surface made, which is the claim: nothing lain://approval owns
+        # answered anything.
+        expect(decisions.map { |record| record["surface"] })
+          .not_to include(Lain::Frontend::Neovim::ApprovalView::SURFACE)
+      end
+    end
+
+    it "draws the list as a read-only lain view, stamped with the rendering and its row count" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do |handle|
+        with_parked_approval(handle, grace: 0.1) do
+          wait_until { buffer_lines("lain://approval").join.include?("pwd") }
+          state = approval_state
+          expect(state).to include("buftype" => "nofile", "modifiable" => false, "filetype" => "lain",
+                                   "lain_view" => "lain://approval", "rows" => 1)
+          expect(state["generation"]).to be_a(Integer)
+          # It took a window, which is the whole point: the defect was an
+          # editor that showed nothing while the agent sat parked.
+          expect(state["windows"]).to be >= 1
+        end
+      end
+    end
+  end
+
+  # THE REACHABILITY HALF, and the one this chunk keeps failing: every example
+  # above binds the approval view the way {Lain::CLI::Repl} binds it, which
+  # proves the round trip and NOT that anything in production performs that
+  # bind. T35 and T28 both found capabilities whose every collaborator had a
+  # green spec and which no code path ever constructed.
+  #
+  # So this one drives the REAL {Lain::CLI::Repl} -- it builds the frontend, it
+  # binds the view to both halves, and its own #respond spawns the watch fiber
+  # -- against a REAL editor, and gates a REAL call inside the ask. Nothing
+  # here reaches into the repl to wire anything.
+  describe "the repl's own wiring puts a parked approval in front of the human" do
+    let(:journal_io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io: journal_io) }
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
+    let(:agent) { instance_double(Lain::Agent, timeline: nil) }
+    # `dispatch` YIELDS: a registry that swallowed the line would skip the model
+    # turn, and with it the #respond that spawns every approval surface.
+    let(:commands) { Struct.new(:none) { def dispatch(_text) = yield }.new(nil) }
+
+    it "renders it in lain://approval and answers it with y, with nobody having wired the view by hand" do
+      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      settled = Thread::Queue.new
+      allow(agent).to receive(:ask) do
+        settled.push(queue.call(ApprovalSeamSupport::Effect.new("bash", { "command" => "pwd" }, "tu_1"), nil))
+        nil
+      end
+      allow(conductor).to receive(:supervise) { |_task, _head, &turn| Struct.new(:response).new(turn.call) }
+      allow(conductor).to receive(:read_prompt).and_return("go", "quit")
+      # The human is not at the terminal, which is the whole situation the card
+      # describes: the TTY surface asks and nobody answers, so the ONLY thing
+      # that can settle this call is the editor.
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(60) }
+      presser = Thread.new do
+        wait_until(timeout: 20) { buffer_lines("lain://approval").join.include?("pwd") }
+        press("lain://approval", "y", cursor: [1, 0])
+      end
+
+      Timeout.timeout(30) { repl_over(queue).run(**repl_session) }
+
+      expect(presser.join(5)).to be_truthy
+      expect(Timeout.timeout(10) { settled.pop }).to be(true)
+      expect(decisions.last).to include("surface" => Lain::Frontend::Neovim::ApprovalView::SURFACE,
+                                        "verdict" => "approve")
+    end
+
+    # The REAL HumanReplies, undelegated: repl_spec wraps it in a double that
+    # no-ops `bind_editor` precisely so its own examples keep the rail they set,
+    # and that is the wiring under test here.
+    def repl_over(approvals)
+      replies = Lain::CLI::HumanReplies.new(tty: null_tty, conductor:, questions: Async::Queue.new,
+                                            ask_human: Lain::Tools::AskHuman::Directory.new)
+      Lain::CLI::Repl.new(agent:, tty: null_tty, replies:, commands:, approvals:, conductor:,
+                          chronicle: Lain::CLI::Chronicle::Null.new)
+    end
+
+    def repl_session
+      { nvim: { channel:, socket_path: @socket }, store: Lain::Store.new,
+        session: Lain::Session::Null.instance }
+    end
+  end
+
+  def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+  def approval_state
+    inspector.exec_lua(<<~LUA, %w[buftype filetype modifiable])
+      local buf, out = vim.fn.bufnr("lain://approval"), {}
+      if buf == -1 then return nil end
+      for _, option in ipairs({ ... }) do out[option] = vim.bo[buf][option] end
+      out.lain_view = vim.b[buf].lain_view
+      out.generation = vim.b[buf].lain_view_generation
+      out.rows = vim.b[buf].lain_approval_rows
+      out.windows = #vim.fn.win_findbuf(buf)
+      return out
+    LUA
+  end
+
+  # The approval round trip's own consumer thread, and it is a THREAD for the
+  # reason `with_consumer` records at length: a gem call issued from inside an
+  # Async task takes the neovim gem's fiber-yielding branch and raises
+  # FiberError, which is swallowed and retried forever. The inspector stays on
+  # the main thread; everything reactor-shaped stays here.
+  #
+  # Bounded on BOTH ends and by a stop channel rather than by the queue's
+  # clock: a fail-closed denial would answer `false`, which is also what a
+  # working deny answers, so a hung run must be distinguishable from a decided
+  # one. `:unsettled` is that third answer.
+  def with_parked_approval(frontend, input: { "command" => "pwd" }, grace: 8)
+    settled = Thread::Queue.new
+    worker = Thread.new { serve_approval(frontend, ApprovalSeamSupport::Effect.new("bash", input, "tu_1"), settled, grace) }
+    yield
+    Timeout.timeout(20) { settled.pop }
+  ensure
+    raise "the approval consumer thread never stopped" unless worker&.join(20)
+  end
+
+  # `grace` is how long the gated fiber is given to settle before this answers
+  # `:unsettled`, and the two directions want different numbers: a real gesture
+  # crosses this in about fifty milliseconds, so 8s is slack against a loaded
+  # box, while an example asserting that NOTHING answers would otherwise pay
+  # that slack in full. The queue's own clock is set far beyond both, so a
+  # fail-closed denial can never stand in for a deny the human pressed.
+  def serve_approval(frontend, effect, settled, grace)
+    Sync do |task|
+      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      surfaces = approval_surfaces(task, frontend, queue)
+      gated = task.async { queue.call(effect, nil) }
+      settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)
+      (surfaces + [gated]).each(&:stop)
+    end
+  end
+
+  # Whether the condition held before the window ran out. Deliberately NOT
+  # `pumped_until`, which raises at its deadline: running out the clock is a
+  # legitimate outcome here and it is the one `:unsettled` reports.
+  def within(task, grace)
+    deadline = Async::Clock.now + grace
+    task.sleep(0.02) until yield || Async::Clock.now > deadline
+    yield
+  end
+
+  # Exactly what `Repl#run` binds and what `Repl#respond` spawns: the editor's
+  # gesture consumer over the frontend's rail and views, plus the approval
+  # view's own watch fiber over the same queue the gated call parks in.
+  def approval_surfaces(task, frontend, queue)
+    replies = Lain::CLI::HumanReplies.new(tty: null_tty, conductor: instance_double(Lain::CLI::Conductor),
+                                          ask_human: Lain::Tools::AskHuman::Directory.new,
+                                          questions: Async::Queue.new)
+    replies.bind_editor(frontend.command_inbox, views: frontend.buffers, approvals: frontend.approval_view)
+    replies.session_surfaces(task) + [task.async { frontend.approval_view.watch(queue) }]
+  end
+
   # Feeds keys through nvim's OWN mapping resolution (feedkeys, never
   # `:normal!`, which bypasses mappings) so the buffer-local map is what runs.
   def press(bufname, keys, cursor: [])
@@ -362,12 +591,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 11 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 12 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "11" }
-        expect(described_class::PROTOCOL).to eq("11")
+        wait_until { inspector.get_var("lain_rpc_version") == "12" }
+        expect(described_class::PROTOCOL).to eq("12")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end
@@ -538,6 +767,29 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(entry).not_to be_nil, "no \"11\" entry: a history that SKIPS a version is worse than none"
       expect(entry).to include("__lain.channel").and include("SocketOwned")
       expect(entry).to match(/LIVENESS, never presence/i)
+    end
+
+    # T36's bump, in the shape the three above use. What it has to record is
+    # again a DISTINCTION rather than a feature, and there are two.
+    #
+    # A key PER VERDICT: an entry saying only "the editor can answer approvals"
+    # is satisfied by a toggle key that computes the verdict from the rendering
+    # on screen, which answers the neighbouring call the moment the list has
+    # moved -- silently, both values being legal. So the entry names both
+    # commands and says the verdict rides the wire.
+    #
+    # ACKED and not ANSWERED: the two rails a gesture can take differ in which
+    # THREAD serves it, and this one has to ride the inbox because deciding
+    # resolves a promise. An entry that did not say so would leave the next card
+    # free to "simplify" it onto the answered rail, where it would block the RPC
+    # thread on the reactor -- a stop condition this project has hit twice.
+    it "records in its history what protocol 12 actually bought" do
+      entry = protocol_history["12"]
+      expect(entry).not_to be_nil, "no \"12\" entry: a history that SKIPS a version is worse than none"
+      expect(entry).to include("__lain.set_approval").and include("b:lain_approval_rows")
+      %w[LainApprove LainDeny].each { |command| expect(entry).to include(":#{command}") }
+      expect(entry).to match(/verdict rides the wire/i)
+      expect(entry).to match(/acked, never answered/i)
     end
   end
 
