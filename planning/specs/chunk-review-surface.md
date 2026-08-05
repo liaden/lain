@@ -415,6 +415,25 @@ it was deferred.
     spawn to return". Both instances presented as exactly one failure at a correct example count,
     which is the reason to fix the class rather than paper over the two.
 
+20. **A shipped T18 example flakes under heavy load and the mechanism is unknown.**
+    `thread_view_spec.rb` → *"does not re-place the diff on every further move once it is back"*
+    fails with `calls[:set_buf]` **1** instead of 0: the restore is counted inside the window the
+    shim watches, landing one move later than the example assumes. The diff does come back; the
+    count is what is wrong. Observed **3 times in ~130 runs, every one at load average ≥ 15** — zero
+    in ~110 runs at load ≤ 12, zero in 18 six-way-concurrent runs, and zero in 25 runs with the
+    example instrumented (the extra round trips move the timing).
+
+    Two hypotheses were tested and **refuted**, so nobody re-derives them: that `nvim_command`
+    returns before its `CursorMoved` autocmd has run (measured with a counting autocmd registered
+    after the module's — **0 late out of 800 motions** at load 6.7 and 8.6), and that it is
+    example-order dependent (the failing seed 15936 replayed green three times). It is **not**
+    ticket 19's tmux flake — different file, different shape.
+
+    Reported rather than hardened around, which was the right call: **hardening an example whose
+    mechanism you cannot name risks hiding a real defect rather than a real race.** Every other
+    example covering the same property — including the `:bdelete` variant asserting 0 across three
+    column moves — was green in every run.
+
 ## Pre-existing defects found while executing this chunk
 
 Neither was caused by a card here; both are recorded so they are not later pinned on whichever card
