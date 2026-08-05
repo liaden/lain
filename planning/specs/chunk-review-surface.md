@@ -494,6 +494,8 @@ T18 applied (10720 without it). The last two:
 |---|---|---|
 | T16 annotations as extmarks | `ba379be` | APPROVE-WITH-FIXES → fix round → APPROVE |
 | T23 GitHub submit | `c003be8` | APPROVE-WITH-FIXES → fix round → APPROVE |
+| T18 thread pane | `a176599` | **REJECT** (4 seats) → fix round → landed at 10791 |
+| T28 protocol 9 | `0c8e01d` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10800 |
 
 ### The reboot, 2026-08-05, and what it cost
 
@@ -2428,6 +2430,24 @@ Scenario: the deletion map covers every file a capability owns
 ---
 
 ## Integration checks
+
+**Results so far, 2026-08-05, at `1177951` (T18 and T28 landed; T24 in its fix round).**
+
+- **2 — lint.** `bundle exec rubocop` bare: **1147 files, no offenses.**
+- **3 — the nvim specs really ran, proved by a control rather than by a count.**
+  `LAIN_NVIM=1 rspec spec/lain/frontend/ spec/plugin/` → **1002 examples, 0 failures**;
+  `LAIN_NVIM=0` over the same paths → **696**. So **306 examples genuinely drove a real editor**.
+  The count alone would not have shown that — which is the whole point of the check, since a
+  silently-skipped tag reads as a clean run.
+- **4 — Rust untouched, confirmed.** `cargo test` **288 passed, 0 failed**;
+  `cargo clippy --all-targets -- -D warnings` clean.
+- **5 — deletion.** T18, T23, T24 and T28 each performed their own delete-and-run and each returned
+  its stated baseline exactly. T25 automates the sweep; this row is the end-to-end confirmation and
+  is still owed.
+- **Repository integrity** (added after the reboot): `git fsck --full --strict` exit 0, no zero-byte
+  objects, every ref resolves.
+
+Still owed: 1 (final count against a serial run), the rest of 5, and all of 6.
 
 After the last wave:
 
