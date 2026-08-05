@@ -198,6 +198,21 @@ module Lain
       # `run_clock:` is the RUN's clock, built by {ChatLaunch} beside the
       # StatusFeed that publishes its readings and passed straight through to
       # the Conductor, which is the one place a user prompt is answered (T7).
+      #
+      # Every argument is tagged because ONE of them had to be: `@option` is what
+      # yard-lint wants beside an options hash, and rubocop-yard then demands a
+      # `@param` for each remaining argument. `@option` last, after every
+      # `@param`, is the order yard-lint fixes.
+      #
+      # @param options [Hash] the parsed CLI options
+      # @param chronicle [Chronicle] the run's session file and its journal
+      # @param status_feed [StatusFeed] what the tmux HUD reads
+      # @param run_clock [RunClock] the RUN's clock, built by {ChatLaunch}
+      # @param tty_factory [#call] #run's TTY seam; a spec hands in a StringIO-backed one
+      # @param conductor_opener [#call] #run's Conductor seam
+      # @option options [String] :prompt the first question, seeded from --prompt
+      # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
+      # @option options [String] :isolation the backend a fleet leases workers from
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
@@ -368,9 +383,26 @@ module Lain
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
                                           epic: EpicMount.for(chronicle:, options:, notice:, notify: @notifier,
-                                                              bindings: -> { @replies }))
+                                                              bindings: replies, **ReviewSeams.for(replies)))
         @toolset_build.build(recorder, ask_human:)
       end
+
+      # The run's ONE live {HumanReplies}, late. Every seam that needs it takes
+      # this same thunk: it is built in #build_repl, strictly AFTER the toolset,
+      # so the review tool, the surface a changeset is drawn on and the view its
+      # gestures resolve through all read it at CALL time. It closes over an
+      # IVAR rather than a local, which is what makes it actually late -- see the
+      # T27 hand-back for the sibling thunk that captured a local and stayed nil.
+      #
+      # T31a: `**ReviewSeams.for` above is what turned the changeset half of
+      # `request_review` on. This mount passed `notify:` and `bindings:` only, so
+      # `changesets:` and `surface:` stayed nil, `Implementation#hold` answered
+      # `Refusals.no_changeset` on every call in every real process, and the
+      # surface resolved to the Null -- while {EpicMount}'s own comment said the
+      # seam was threaded rather than absent precisely so a caller which CAN
+      # answer would inject one. None ever did, and nothing among 10865 examples
+      # could see it.
+      def replies = -> { @replies }
 
       # Gate and Live share ONE Toolset (the single-map invariant the plan
       # calls out): a second Toolset reference here could let the approval gate

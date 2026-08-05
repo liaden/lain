@@ -595,6 +595,39 @@ RSpec.describe Lain::Frontend::Neovim do
     end
   end
 
+  # T31a: the review's OUTBOUND half, which this editor owns for the same reason
+  # it owns #buffers -- and which nothing could reach before, so no wiring ever
+  # drew a changeset in a real editor.
+  describe "the changeset review's surface and view" do
+    # `review_view_spec.rb`'s own fixture ducks: a marked changeset is T13's to
+    # build, and nothing here pretends to be one.
+    def hunk(path:)
+      Lain::Review::Hunk.new(path:, old_start: 501, old_count: 1, new_start: 1, new_count: 1, lines: [" x"])
+    end
+
+    def changeset
+      file = Struct.new(:path, :state, :hunks).new("lib/a.rb", "unreviewed", [hunk(path: "lib/a.rb")])
+      Struct.new(:files, :by_commit).new([file], [])
+    end
+
+    it "is one pair for the session, so a gesture resolves against what was drawn" do
+      frontend.review_surface.present(changeset, scope: :cumulative)
+
+      marked = frontend.review_view.marks(1, generation: 1)
+
+      expect(marked.marked?).to be(true)
+    end
+
+    # The pairing said as identity as well as behaviour: a caller building its
+    # own surface over this inlet would get a SECOND view, and every gesture
+    # stamped by this one would then resolve against a rendering that view never
+    # drew -- a wrong row, silently, rather than an error.
+    it "answers the same objects every time it is asked" do
+      expect(frontend.review_surface).to equal(frontend.review_surface)
+      expect(frontend.review_view).to equal(frontend.review_view)
+    end
+  end
+
   # T28 review fix: the protocol contract, pinned WITHOUT an editor -- which is the
   # point of the group, not an incidental economy. `LAIN_NVIM=0` is a supported mode
   # (spec/support/tags.rb), and in it every other pin on this contract is filtered

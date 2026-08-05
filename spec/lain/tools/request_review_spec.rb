@@ -816,6 +816,86 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(io.string).to be_empty
       expect(review.open_generations).to be_empty
     end
+
+    # T31a: a THUNKED surface cannot be checked at construction -- there is
+    # nothing behind it yet, and a Proc answers none of the six messages. So the
+    # check moves to the moment it resolves, which is still before anything
+    # durable: `hold` answers the refusal as a wiring refusal and the epic is
+    # untouched. What is lost is only WHEN a bad wiring is found.
+    it "refuses a thunk resolving to a surface that does not answer the port, opening nothing" do
+      half = Class.new { def present(changeset, scope:) = [changeset, scope] }.new
+      late = changeset_tool(surface: -> { half })
+
+      result = late.call(implementation_input, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("annotate").and include("no review was opened")
+      expect(review.open_generations).to be_empty
+    end
+  end
+
+  # ---- Scenario: the seams a frontend supplies arrive late -------------------
+
+  # T31a. The frontend that owns a review surface is built by {CLI::Repl#run},
+  # strictly after the toolset -- the same lateness `bindings:` has, and the
+  # reason both are read at CALL time. Before this card neither seam was passed
+  # by any production wiring at all.
+  describe "a surface and a view that arrive after the tool was built" do
+    before { home.write_epic(three_issue_graph) }
+
+    it "draws on the surface a thunk resolves to, not on the Null it was built with" do
+      late = RecordingReviewSurface.new
+      settled_implementation(changeset_tool(surface: -> { late }))
+
+      expect(late.presented.map(&:last)).to eq([:cumulative])
+    end
+
+    # The view is what turns a sidebar row back into hunk keys, and only the
+    # view that STAMPED a rendering can resolve a gesture from it -- so the tool
+    # has to hand the handover the wiring's view rather than one of its own.
+    it "hands the rail a handover whose gestures resolve through the injected view" do
+      view = Lain::Frontend::Neovim::ReviewView.new
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool(view: -> { view }))
+        rendering = view.render(changeset_review.session.marked, scope: :cumulative)
+        row = rendering.lines.index { |line| line.include?("a.rb") } + 1
+
+        expect(changeset_review.mark(row, "reviewed", generation: rendering.generation).marked?).to be(true)
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
+
+    # Without a view the gesture rail is honestly detached, and it says THAT --
+    # never that the row was wrong, and never by raising into the consumer fiber.
+    it "refuses a gesture in the detached view's words when no view was wired" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+
+        expect(changeset_review.open(1, generation: 1).report)
+          .to eq(Lain::Review::Handover::Detached::NO_EDITOR)
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
+
+    # The object itself, named: what both rails are handed is the review tier's,
+    # not a nested class of this tool's, and it holds the session it was opened
+    # over. `Tools::RequestReview::ChangesetReview` is gone.
+    it "binds the review tier's own Handover, over the session it opened" do
+      parked do |task|
+        run = call_in(task, implementation_input, changeset_tool)
+
+        expect(changeset_review).to be_a(Lain::Review::Handover)
+        expect(changeset_review.session.digest).to start_with("review-changeset-v1:")
+        expect(described_class.constants).not_to include(:ChangesetReview)
+
+        changeset_review.wrote_verdict("approve")
+        run.wait
+      end
+    end
   end
 
   # ---- Scenario: a verdict resolves the parked call --------------------------

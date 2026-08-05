@@ -1164,6 +1164,134 @@ RSpec.describe Lain::CLI::Wiring do
           expect(tool.send(:bindings)).to equal(wiring.command_env.replies)
         end
       end
+
+      # T31a, AND THE REASON THIS GROUP NEEDED MORE THAN IT HAD. This wiring
+      # mounted the epic with `notify:` and `bindings:` only, so `changesets:`
+      # and `surface:` stayed nil, `Implementation#hold` answered
+      # `Refusals.no_changeset` on every call in every real process, and the
+      # surface resolved to the Null. NOTHING AMONG 10865 EXAMPLES COULD SEE IT:
+      # every existing example of the changeset half passes those seams in by
+      # hand. These two drive the PRODUCTION mount instead -- real git, the real
+      # thunks -- and answer the review on the rail an editor answers it on.
+      describe "the changeset half of that tool, over the wiring the exe uses", :seam do
+        # The frontend, reduced to the three messages {HumanReplies} asks of one
+        # ({Frontend::Neovim} answers exactly these). The surface is the REAL
+        # text one and the view the REAL sidebar view: what is under test is
+        # whether the tool reaches THESE rather than its nulls, and a double
+        # answering the port would be indistinguishable from `Surface::Null`.
+        def review_editor(sink)
+          view = Lain::Frontend::Neovim::ReviewView.new
+          surface = Lain::Review::Surface::Text.new(sink:)
+          Object.new.tap do |editor|
+            editor.define_singleton_method(:review_surface) { surface }
+            editor.define_singleton_method(:review_view) { view }
+            editor.define_singleton_method(:bound) { @bound }
+            editor.define_singleton_method(:bind_changeset_review) { |review| @bound = review }
+          end
+        end
+
+        # A project that is BOTH an epic home and a git repository with
+        # something to review, because {Wiring#review_seams} reads its changeset
+        # source off `Dir.pwd`: the two have to be one directory.
+        # The epic's own files are written AFTER the commit, so they stay
+        # untracked and the changeset under review is the one file this example
+        # is about. Committed first, the epic document is in the diff too --
+        # which is not wrong, but it makes the review two files wide for no
+        # reason and every hunk of it has to be marked before a verdict is
+        # admissible.
+        def in_repo(slug: "alpha")
+          Dir.mktmpdir do |dir|
+            FileUtils.cp_r(File.join(SeedRepo.at("README" => "seed\n"), "."), dir)
+            commit(dir)
+            FileUtils.mkdir_p(File.join(dir, ".lain"))
+            File.write(File.join(dir, ".lain", "config.toml"), %([epics]\nhome = "repo"\n))
+            create_epic(dir, slug)
+            with_state_home(File.join(dir, "state")) { Dir.chdir(dir) { yield(dir) } }
+          end
+        end
+
+        # The second commit, so `HEAD~1..HEAD` is a real one-file changeset.
+        def commit(dir)
+          File.write(File.join(dir, "README"), "seed\nthe line under review\n")
+          [%w[add -A], ["commit", "-q", "-m", "the work under review"]].each do |argv|
+            Mixlib::ShellOut.new("git", "-C", dir, *argv,
+                                 environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB).run_command.error!
+          end
+        end
+
+        def invocation = Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)
+
+        # The hand-over whole, as a human doing it would: the tool parks, the
+        # editor's own rail is handed a review, the human answers it there.
+        # `pumped_until` and not a bare `task.yield`: the call shells out to git
+        # before it binds anything, so the moment the rail is handed a review is
+        # several reactor turns away and a fixed number of yields would be a
+        # guess. Bounded, so a review that never binds is a failing example
+        # naming the condition rather than a hang.
+        def reviewed(wiring, editor)
+          tool = wiring.command_env.agent.toolset.fetch("request_review")
+          result = nil
+          Sync do |task|
+            call = task.async { result = tool.call({ "stage" => "implementation", "base" => "HEAD~1" }, invocation) }
+            pumped_until(task, reason: "the editor's rail was handed a review") { editor.bound }
+            yield
+            call.wait
+          end
+          result
+        end
+
+        # The human's whole side of it, on the objects the wiring supplied: read
+        # the sidebar the editor's OWN view drew, mark the row, answer.
+        #
+        # The mark is not decoration. This wiring passes no `policy:`, so the
+        # tool takes {Verdict::Policy.default} -- `EveryHunk`, which refuses an
+        # approve over hunks nobody read -- and a verdict refused leaves the call
+        # parked. So `be_ok` below holds only if the mark reached the session
+        # THROUGH the view the wiring injected, which is what makes one
+        # assertion cover all three seams.
+        def marked_and_approved(editor)
+          handover = editor.bound
+          rendering = editor.review_view.render(handover.session.marked, scope: :cumulative)
+          row = rendering.lines.index { |line| line.include?("README") } + 1
+          handover.mark(row, "reviewed", generation: rendering.generation)
+          handover.wrote_verdict("approve")
+        end
+
+        it "supplies a changeset source, a view and a rail, so the stage opens and a verdict settles it" do
+          in_repo do |dir|
+            wiring = run_in(dir)
+            editor = review_editor(StringIO.new)
+            wiring.command_env.replies.bind_review_editor(editor)
+
+            result = reviewed(wiring, editor) { marked_and_approved(editor) }
+
+            expect(result).to be_ok
+            expect(result.content).to include("approve").and include("review-changeset-v1:")
+          end
+        end
+
+        it "supplies the editor's own surface and view, and not the nulls that stood in for them" do
+          in_repo do |dir|
+            wiring = run_in(dir)
+            sink = StringIO.new
+            editor = review_editor(sink)
+            wiring.command_env.replies.bind_review_editor(editor)
+            gesture = nil
+
+            reviewed(wiring, editor) do
+              # The VIEW, told apart from {Handover::Detached} by whose sentence
+              # comes back: a live view says nothing has been rendered into IT
+              # yet, and the null says there is no editor at all. Two facts, and
+              # a tool holding the null would answer the wrong one.
+              gesture = editor.bound.open(1, generation: nil)
+              marked_and_approved(editor)
+            end
+
+            expect(sink.string).to include("README")
+            expect(gesture.report).to include("lain://review")
+          end
+        end
+      end
     end
   end
 end

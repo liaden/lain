@@ -109,6 +109,39 @@ module Lain
 
         def fell_back? = fell_back
       end
+
+      # Where a chat's `implementation` review reads its diff from: this
+      # repository, at whatever base the model named, against the working tree's
+      # own head.
+      #
+      # The `changesets:` seam {Tools::RequestReview} takes, and the only
+      # implementation of it in the tree -- {Tools::RequestReview::NoChangesets}
+      # is its null, and until this existed that null was the only thing any
+      # production wiring passed, so every `implementation` call in every real
+      # process refused with `no_changeset`.
+      #
+      # A FACTORY and not a source, because `base` is the model's argument and
+      # arrives per call: {LocalBranch} resolves its refs in its constructor and
+      # refuses an unresolvable one there, so one built at wiring time would have
+      # to guess a base -- the guess that tool's `base` field exists to refuse.
+      #
+      # `source` and not `call`, deliberately: {Tools::RequestReview#live} treats
+      # anything answering `call` as a thunk to be read with no arguments, so a
+      # callable seam here would be invoked as one.
+      class Repository
+        # @param repo_root [String] the repository every git call reads
+        def initialize(repo_root: Dir.pwd)
+          @repo_root = repo_root
+        end
+
+        # @param base [String] the ref the changeset is reviewed against
+        # @param head [String] the ref under review
+        # @return [LocalBranch]
+        # @raise [UnknownRef] for a ref that does not resolve, or two that share
+        #   no history -- which {Tools::RequestReview::Implementation#hold}
+        #   answers as a refusal rather than letting out of the tool
+        def source(base:, head:) = LocalBranch.new(base:, head:, repo_root: @repo_root)
+      end
     end
   end
 end

@@ -848,4 +848,73 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
       .not_to eq(Lain::Frontend::Neovim::RpcThread::Listener::Null::UNREVIEWABLE)
     expect(Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).to include("no review is open")
   end
+
+  # T31a: the same rail, with the object a production wiring actually binds to
+  # it. Every example above proves the rail CARRIES a write; these prove what is
+  # at the end of it, because until this card the answer was
+  # {Lain::Frontend::Neovim::NoReviewWrites} in every process that ever ran --
+  # `bind_changeset_review` had no caller anywhere in `lib/` or `exe/`.
+  describe "with the real Review::Handover bound to it" do
+    def diff
+      <<~DIFF
+        diff --git a/a.rb b/a.rb
+        index 1111111..2222222 100644
+        --- a/a.rb
+        +++ b/a.rb
+        @@ -1,3 +1,3 @@ def alpha
+         one
+        -two
+        +TWO
+      DIFF
+    end
+
+    def changeset
+      commit = Lain::Review::Source::Commit.new(
+        sha: -("c" * 40), subject: -"the work", body: "",
+        numstat: [Lain::Review::Source::FileStat.new(path: -"a.rb", added: 1, deleted: 1)].freeze
+      )
+      Lain::Review::Changeset.new(source: instance_double(Lain::Review::Source::LocalBranch,
+                                                          diff: diff.b, commits: [commit].freeze,
+                                                          base_ref: -("b" * 40), head_ref: -("h" * 40)))
+    end
+
+    let(:io) { StringIO.new }
+    let(:review_session) do
+      Lain::Review::Session.open(changeset:, journal: Lain::Journal.new(io:), source: "local_branch",
+                                 surface: Lain::Review::Surface::Null.new,
+                                 policy: Lain::Review::Verdict::Policy::Permissive.new)
+    end
+
+    def records_of(type) = Lain::Journal.records(io.string.lines, type:).to_a
+
+    before { frontend.bind_changeset_review(Lain::Review::Handover.new(session: review_session)) }
+
+    it "settles the session with the verdict the editor wrote, and tells it the write took" do
+      dispatch("review_verdict", ["approve"])
+
+      expect(review_session.verdict).to eq("approve")
+      expect(session).to have_received(:respond).with(7, true, nil)
+    end
+
+    # The measurement crosses the wire and is journaled as it arrived. The
+    # anchor text here is exactly what the diff's new side reads at that line,
+    # so a handover measuring drift ITSELF would journal false; only a
+    # forwarding one journals what the editor sent.
+    it "journals a note with the editor's own drift measurement, not one computed here" do
+      dispatch("review_annotate", [annotation("path" => "a.rb", "line" => 3, "anchor_text" => "TWO",
+                                              "drifted" => true)])
+
+      expect(records_of("annotation_placed").map { |record| record["drifted"] }).to eq([true])
+      expect(session).to have_received(:respond).with(7, true, nil)
+    end
+
+    # The rail's rule, against the real object: a second verdict is refused in
+    # WORDS, so the human's `:w` fails and their editor session survives it.
+    it "fails a second verdict's write rather than raising on the RPC thread" do
+      dispatch("review_verdict", ["approve"])
+
+      expect { dispatch("review_verdict", ["approve"]) }.not_to raise_error
+      expect(session).to have_received(:respond).with(7, nil, a_string_matching(/already judged/))
+    end
+  end
 end

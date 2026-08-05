@@ -74,6 +74,12 @@ module Lain
       def run(nvim:, store:, session:, first_prompt: nil)
         frontend = attach_editor(nvim, store:, session:)
         @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers)
+        # T31a: the frontend ITSELF, and not a piece of it. A changeset review
+        # needs three things from an editor that no single collaborator answers
+        # -- where the diff is drawn, the rendering a row gesture resolves
+        # through, and the rail its writes are answered on -- and this is the
+        # only line in any process that puts them within a tool's reach.
+        @replies.bind_review_editor(frontend)
         @prompt = composed_prompt(frontend)
         Sync do |task|
           @supervisor.run(task)

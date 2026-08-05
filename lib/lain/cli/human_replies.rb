@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module CLI
     # The human-reply surfaces (I6), lifted out of Repl the way Wiring lifted
@@ -153,6 +155,26 @@ module Lain
         @views = views || NoViews
       end
 
+      # The editor a changeset is DRAWN in, and the second rail a review's
+      # writes are answered on (T31a). The whole frontend, and deliberately not
+      # a piece of it the way {#bind_editor} takes two: what this class needs
+      # from it is one object to bind to and two collaborators to hand on, and
+      # they are one fact -- a review drawn in one editor and answered in
+      # another is not a review.
+      #
+      # @param editor [Frontend::Neovim, nil] nil is the editor that is not
+      #   there, so a headless chat binds like any other -- see {#review_editor},
+      #   which is where that nil becomes {ReviewSeams::Unattached}
+      def bind_review_editor(editor) = @review_editor = editor
+
+      # Where a changeset is drawn for this human, and the rendering their
+      # gestures resolve through -- what {Wiring} threads into
+      # {Tools::RequestReview} as thunks, because the tool is built before this
+      # is bound. Both answer nil when no editor is attached, and the tool's own
+      # seams coalesce that ({#bind_editor}'s one-nil-check rule, one object
+      # over).
+      delegate :review_surface, :review_view, to: :review_editor
+
       # Hold a review open for the editor's `done` gesture to settle -- see
       # {Reviews#bind}, which is where the keying rule lives.
       def bind_review(review, token:) = @reviews.bind(review, token:)
@@ -164,7 +186,20 @@ module Lain
       # generation): the two ride the same rail and share nothing else, and
       # folding them together would mean one object answering `settle` and
       # `mark` for two unrelated notions of "review".
-      def bind_changeset_review(review) = @changeset_review = review || NoReview
+      #
+      # ONE BIND, BOTH RAILS (T31a). The acked gestures resolve here; the two
+      # WRITES -- an annotation and a verdict -- are answered by the editor on
+      # its own RPC thread, through {Frontend::Neovim#bind_changeset_review},
+      # and that method had no caller in the whole tree: notes and verdicts
+      # reached {Frontend::Neovim::NoReviewWrites} and were refused. Forwarded
+      # from here rather than bound a second time by the tool, because the tool
+      # cannot reach a frontend -- and because two binds are two chances for the
+      # rails to hold different reviews, which is a wrong-review write rather
+      # than an error.
+      def bind_changeset_review(review)
+        review_editor.bind_changeset_review(review)
+        @changeset_review = review || NoReview
+      end
 
       # A human question is waiting for an answer: an item mid-drain (@inbox) or
       # one a subagent enqueued while the human sat idle at `you>`, which no
@@ -219,6 +254,15 @@ module Lain
       def surfaces(task) = [answer_loop(task), editor_reply_loop(task)].compact
 
       private
+
+      # The editor a changeset is drawn in, with its null resolved HERE and
+      # nowhere else -- {Tools::RequestReview#bindings}' shape, and the reason
+      # {#bind_review_editor} may take a bare nil. Private because
+      # {#bind_review_editor} is the whole of this collaborator's public
+      # surface: a reader beside a binder is a second way to ask the same
+      # question. `delegate` reaches it (it calls with an implicit receiver),
+      # which is what makes the two seams above one line rather than three.
+      def review_editor = @review_editor || ReviewSeams::Unattached
 
       # Parks on dequeue (a real scheduler yield -- woken per arrival, never
       # polling) and serves them one at a time.

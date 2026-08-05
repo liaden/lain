@@ -211,10 +211,16 @@ module Lain
       # @param notify [#question] the desktop notifier
       # @param changesets [#source] builds the {Review::Source} an
       #   `implementation` review reads its diff from
-      # @param surface [#present, #annotate, #mark, #thread, #verdict, #refuse]
-      #   where a changeset is drawn; checked against the port at construction
-      #   ({Review::Surface.check!}) rather than left to fail inside the first
-      #   `present`, which happens after a durable claim has been journaled
+      # @param surface [#present, #annotate, #mark, #thread, #verdict, #refuse, #call]
+      #   where a changeset is drawn; checked against the port
+      #   ({Review::Surface.check!}) before anything durable is journaled, or a
+      #   THUNK reading one -- `bindings:`' late binding, for `bindings:`' reason
+      #   (the frontend that owns a surface is built after the toolset). See
+      #   {Implementation::Seams} for what a thunk costs that check.
+      # @param view [#open, #marks, #call] the rendering a review gesture's row
+      #   number is resolved through ({Frontend::Neovim::ReviewView}), or a thunk
+      #   reading one. It must be the SAME instance the surface draws with: a
+      #   rendering stamp is only resolvable by the view that issued it.
       # @param policy [Review::Verdict::Policy] whether a verdict may stand.
       #   Injected up to HERE and not merely into {Review::Session}, because the
       #   run that needs to swap it -- an unattended one under the `deferred`
@@ -223,7 +229,7 @@ module Lain
       #   through this tool.
       def initialize(home:, review:, notes: NoNotes, editor: NoEditor,
                      bindings: NoBindings, notify: Notify::Null.new,
-                     changesets: NoChangesets, surface: nil, policy: nil)
+                     changesets: NoChangesets, surface: nil, view: nil, policy: nil)
         super()
         @home = home
         @review = review
@@ -231,7 +237,7 @@ module Lain
         @editor = editor
         @bindings = bindings
         @notify = notify
-        @seams = Implementation::Seams.new(changesets:, surface:, policy:)
+        @seams = Implementation::Seams.new(changesets:, surface:, view:, policy:)
       end
 
       def name = "request_review"
@@ -402,7 +408,6 @@ module Lain
       def review = live(@review)
       def editor = live(@editor) || NoEditor
       def bindings = live(@bindings) || NoBindings
-      def changesets = live(@changesets) || NoChangesets
 
       def live(collaborator) = collaborator.respond_to?(:call) ? collaborator.call : collaborator
     end
@@ -417,6 +422,36 @@ module Lain
       # close it the same way, and a second copy would be free to close it
       # differently.
       module Baton
+        # The baton as {Review::Handover} sees it: one message, and the epic's
+        # whole share of a changeset review.
+        #
+        # It exists so that the handover -- which is the review tier's object,
+        # and is bound by callers that have no epic at all -- never names
+        # {Epic::Review}. A review opened outside one passes
+        # {Review::Handover::Unheld}, whose `settle` is genuinely nothing;
+        # everything an epic needs to be told is here.
+        #
+        # `disk:` is the DIFF on both sides, and that is a statement rather than
+        # a placeholder: a changeset review hands back a judgement and not
+        # edited bytes, so what is "on disk" is exactly what lain drew. See the
+        # class doc on {RequestReview}.
+        class Held
+          def initialize(review:, token:, written:)
+            @review = review
+            @token = token
+            @written = written
+          end
+
+          # Nothing is rescued here. {Epic::Review::NotOpen} -- the second
+          # answer to a review that has already closed -- is a refusal the human
+          # is owed in words, and the rail that called this is the one that
+          # turns it into one ({Review::Handover#wrote_verdict}); swallowing it
+          # here would report a verdict that settled nothing as one that stood.
+          #
+          # @return [Epic::Intake::Delta] whatever the epic made of the close
+          def settle = @review.settle(@token.generation, disk: @written.bytes)
+        end
+
         module_function
 
         # `$ERROR_INFO` because the failure is not an argument here: `ensure`
@@ -468,19 +503,54 @@ module Lain
         # policy, a source factory. Freezing them would be a lie about what they
         # are.
         #
-        # {Review::Surface.check!} runs HERE, when the tool is constructed,
-        # rather than at the first `present` -- which happens after a durable
-        # `review_opened` claim has been journaled, so a surface answering the
-        # port badly would wedge an epic where it can instead refuse a wiring.
+        # == When the port is checked, and why it is not always at construction
+        #
+        # {Review::Surface.check!} ran HERE, when the tool was constructed, and
+        # still does for a surface handed over as itself: that is before any
+        # `review_opened` claim exists, so a surface answering the port badly
+        # refuses a WIRING rather than wedging an epic.
+        #
+        # A THUNK cannot be checked then -- there is nothing behind it yet, and
+        # a Proc answers none of the six messages -- so a thunked surface is
+        # checked when it RESOLVES, on every {Implementation#hold}. That is
+        # still before anything durable: the read happens while `Session.open`'s
+        # arguments are evaluated, ahead of its own `changeset_opened` and well
+        # ahead of the epic's claim, and `hold` answers the refusal as a
+        # {Refusals.unopened}. What is lost is only the moment -- a bad wiring
+        # is found by the first `implementation` call instead of at startup.
+        #
+        # The nulls resolve HERE and nowhere else, which is why every reader
+        # below coalesces rather than any caller nil-checking.
         class Seams
-          attr_reader :changesets, :surface, :policy
+          attr_reader :policy
 
-          def initialize(changesets: nil, surface: nil, policy: nil)
-            @changesets = changesets || NoChangesets
-            @surface = surface || Review::Surface::Null.new
+          def initialize(changesets: nil, surface: nil, view: nil, policy: nil)
+            @changesets = changesets
+            @surface = surface
+            @view = view
             @policy = policy || Review::Verdict::Policy.default
-            Review::Surface.check!(@surface)
+            Review::Surface.check!(@surface) unless @surface.nil? || thunk?(@surface)
           end
+
+          def changesets = live(@changesets) || NoChangesets
+
+          # @return [#open, #marks] {Review::Handover::Detached} when no editor
+          #   is attached, which is the run that can receive no gesture at all
+          def view = live(@view) || Review::Handover::Detached
+
+          # @raise [Review::Surface::Incomplete] for a thunk resolving to a
+          #   surface that does not answer the port
+          def surface
+            resolved = live(@surface) || Review::Surface::Null.new
+            Review::Surface.check!(resolved)
+            resolved
+          end
+
+          private
+
+          def thunk?(seam) = seam.respond_to?(:call)
+
+          def live(seam) = thunk?(seam) ? seam.call : seam
         end
 
         def initialize(review:, notes:, bindings:, notify:, seams:)
@@ -506,7 +576,8 @@ module Lain
 
           judged(*opened(session_over(source), source))
         rescue Review::Source::UnknownRef, Review::Changeset::Unparseable,
-               Review::Changeset::Unattributed, Epic::Review::AlreadyOpen, Unroutable => e
+               Review::Changeset::Unattributed, Epic::Review::AlreadyOpen,
+               Review::Surface::Incomplete, Unroutable => e
           Refusals.unopened(e)
         end
 
@@ -537,7 +608,7 @@ module Lain
         # notification the same way: a human whose editor refused still learns
         # a review is waiting on them.
         def tell(token, session, written)
-          @bindings.bind_changeset_review(ChangesetReview.new(session:, review: @review, token:, written:))
+          @bindings.bind_changeset_review(handover(session, token, written))
           notice = session.present(scope: SCOPE)
           @notify.question(agent: AGENT, text: waiting(token, session, notice))
           told = true
@@ -546,9 +617,23 @@ module Lain
           Baton.give_back(@review, token) unless told
         end
 
+        # The open review as BOTH rails see it (T31a). One object, bound once
+        # here and fanned out to the editor's answered rail by whoever holds
+        # both ({CLI::HumanReplies#bind_changeset_review}) -- so a note and a
+        # verdict cannot reach two different reviews.
+        #
+        # The view comes off the seams rather than off the surface, and it has
+        # to: a surface holds no review state and exposes no rendering, while a
+        # gesture's row number is only resolvable by the view that STAMPED the
+        # rendering it came from. The wiring passes one object to both.
+        def handover(session, token, written)
+          Review::Handover.new(session:, view: @seams.view,
+                               baton: Baton::Held.new(review: @review, token:, written:))
+        end
+
         # It parks on the BATON's promise and reads the verdict off the session
         # afterwards, because the two are one event:
-        # {ChangesetReview#wrote_verdict} submits the verdict and settles the
+        # {Review::Handover#wrote_verdict} submits the verdict and settles the
         # claim in that order, so a woken fiber cannot observe a settled claim
         # with no judgement on it.
         # The `ensure` IS extended over `token.await` here, and that is the one
@@ -570,7 +655,7 @@ module Lain
         # inertness that makes the claim harmless to the write guard is what
         # makes that wedge silent instead of loud.
         #
-        # Idempotent on the ordinary path: {ChangesetReview#wrote_verdict}
+        # Idempotent on the ordinary path: {Review::Handover#wrote_verdict}
         # settles before it resolves, so `settled` is already true and the
         # give-back never runs -- and were it to, {Epic::Review::NotOpen} is
         # exactly what {Baton.give_back} swallows.
@@ -641,94 +726,6 @@ module Lain
         end
 
         def unopened(error) = Tool::Result.error("#{error.message} -- no review was opened")
-      end
-
-      # The open changeset review, as the rails a human answers on see it --
-      # what {CLI::HumanReplies#bind_changeset_review} and
-      # {Frontend::Neovim#bind_changeset_review} are handed.
-      #
-      # == One message does work and five decline, and that is the honest split
-      #
-      # {#wrote_verdict} is the whole of what this card can serve. The other
-      # five need a RENDERING to resolve against -- a sidebar row is a line
-      # number, and only the {Frontend::Neovim::ReviewView} that drew it can say
-      # which hunks that row named -- and this object has no view, because
-      # {CLI::EpicMount} cannot reach the frontend at all (its own comment on
-      # `editor:` says why). They decline IN WORDS rather than raising:
-      # `Gestures` asks `#marked?` and renders `#report`, and a raise on that
-      # rail reaches {Frontend::Neovim::RpcThread#answer}, which answers the
-      # editor and then re-raises -- ending a session over a gesture.
-      #
-      # == First-answer-wins, and it is one fact rather than two
-      #
-      # {Approval::Queue::Pending#decide}'s rule: the second answer changes
-      # nothing and says so. It is not implemented with a flag here, because
-      # {Review::Session} already refuses a second verdict over one round
-      # ({Review::Session::AlreadySettled}) and {Epic::Review#settle} already
-      # refuses a generation that is no longer open. A flag beside those would
-      # be a second opinion on the same question, free to disagree with them;
-      # what is needed is only that the refusal comes back as a SENTENCE, which
-      # is what the rescue does.
-      #
-      # The verdict is submitted BEFORE the claim is settled, so the fiber that
-      # settling wakes cannot observe a closed review with no judgement on it --
-      # and a policy that refuses ({Review::Verdict::Policy::Incomplete}) leaves
-      # the review open, which is what lets the human mark the rest and answer
-      # again.
-      class ChangesetReview
-        # What a gesture needing a rendering gets. {CLI::HumanReplies::NoReview::Nothing}'s
-        # shape, kept apart from it for that module's own reason: the two say
-        # different things, and a human whose review IS open must not be told
-        # there is none.
-        module Unrendered
-          REPORT = "this changeset review has no editor rendering bound to it, so there is no row to open " \
-                   "or mark and no anchor to ask about -- the verdict rail is the whole of what it answers"
-
-          def self.opened? = false
-          def self.marked? = false
-          def self.asked? = false
-          def self.report = REPORT
-        end
-
-        # The frontend's two write rails answer with a refusal SENTENCE or with
-        # nothing ({Frontend::Neovim::FrontendListener}'s convention), so an
-        # annotation that cannot be placed says so where the human's `:w`
-        # happens rather than anywhere else.
-        NO_ANCHOR = "this changeset review has no editor rendering bound to it, so a note carries no anchor " \
-                    "that could be resolved against the diff -- nothing was recorded"
-
-        def initialize(session:, review:, token:, written:)
-          @session = session
-          @review = review
-          @token = token
-          @written = written
-        end
-
-        # @return [Review::Session] the aggregate this rail records against
-        attr_reader :session
-
-        # @param verdict [String] a member of {Review::VERDICTS}
-        # @return [String, nil] a refusal in words, or nothing when it stood
-        def wrote_verdict(verdict)
-          @session.submit(verdict)
-          # The diff on BOTH sides: a changeset review hands back a judgement
-          # and not edited bytes, so what is "on disk" is exactly what lain
-          # drew. See the class doc on {RequestReview}.
-          @review.settle(@token.generation, disk: @written.bytes)
-          nil
-        rescue Review::Session::AlreadySettled, Review::Verdict::Policy::Incomplete,
-               Epic::Review::NotOpen, ArgumentError => e
-          e.message
-        end
-
-        def wrote_annotation(_note) = NO_ANCHOR
-
-        # `**` rather than the named keyword, {CLI::HumanReplies::NoViews.open}'s
-        # reason: a keyword is its own name, so there is no underscore spelling
-        # that both matches the caller and reads as unused.
-        def open(_line, **) = Unrendered
-        def mark(_line, _state, **) = Unrendered
-        def ask(_anchor_id, _question) = Unrendered
       end
 
       # What the model reads when a changeset review closes.

@@ -63,6 +63,77 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
+  # T31a: the ONE line in any process that puts an editor's review rig within a
+  # tool's reach. Everything downstream of it -- the changeset drawn in nvim, the
+  # sidebar gestures, the verdict a `:w` writes -- is unreachable without it, and
+  # nothing else in the suite runs `Repl#run` with an editor attached at all.
+  #
+  # A REAL headless editor, because the seam is exactly the attach: `nvim: nil`
+  # takes the other branch of `attach_editor` and would prove nothing about it.
+  describe "the editor a changeset review is drawn in", :nvim, :seam do
+    around do |example|
+      socket = File.join(Dir.tmpdir, "lain-repl-review-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
+      # `-n`, no swap file: the suite accumulates them otherwise and eventually
+      # fails with E326.
+      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
+      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+      @socket = socket
+      example.run
+    ensure
+      begin
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+      FileUtils.rm_f(socket)
+    end
+
+    def chat_with_editor(dir)
+      tty_factory = lambda do |channel:, **|
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new("quit\n"),
+                                history_path: File.join(dir, "history"))
+      end
+      wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+                                     status_feed: instance_double(Lain::StatusFeed))
+      wiring.run(backend:, resumed: nil,
+                 nvim: { channel: Lain::Channel::DropOldest.new, socket_path: @socket })
+      wiring.conductor.close(reason: :exit)
+      wiring
+    end
+
+    it "binds the attached frontend as the review editor, so the tool's seams resolve to it" do
+      Dir.mktmpdir do |dir|
+        replies = chat_with_editor(dir).command_env.replies
+
+        expect(replies.review_surface).to be_a(Lain::Review::Surface::Neovim)
+        expect(replies.review_view).to be_a(Lain::Frontend::Neovim::ReviewView)
+      end
+    end
+
+    # The other half of this card: what the Repl binds is the FRONTEND, and the
+    # frontend is where a `review_verdict` is answered. Asserted on the object
+    # the RPC thread will actually resolve per call ({Frontend::Neovim}'s
+    # private `changeset_review`, which is what its listener reads) -- before
+    # this, that slot held {Frontend::Neovim::NoReviewWrites} for the life of
+    # every session ever run, because nothing called the binder.
+    it "binds the frontend itself, so a review reaches the write rail nothing could reach before" do
+      Dir.mktmpdir do |dir|
+        replies = chat_with_editor(dir).command_env.replies
+        frontend = replies.instance_variable_get(:@review_editor)
+        review = Class.new do
+          def wrote_verdict(_verdict) = nil
+          def wrote_annotation(_note) = nil
+        end.new
+
+        replies.bind_changeset_review(review)
+
+        expect(frontend).to be_a(Lain::Frontend::Neovim)
+        expect(frontend.send(:changeset_review)).to equal(review)
+      end
+    end
+  end
+
   describe "command dispatch" do
     it "consults the registry before the skill middleware: /help runs lib-side, zero model turns" do
       Dir.mktmpdir do |dir|

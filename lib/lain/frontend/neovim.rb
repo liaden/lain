@@ -222,6 +222,29 @@ module Lain
       #   no editor took it (see {RenderInlet})
       def open_review(path, generation, epic_slug:) = @rpc.open_review(path, generation, epic_slug)
 
+      # Where a changeset is DRAWN in this editor, and the rendering its
+      # gestures resolve through: the review's outbound half as
+      # {Lain::Review::Surface}'s port plus one view, rather than as four rails
+      # a caller has to assemble.
+      #
+      # Owned here for {#buffers}' reason -- every view this editor renders into
+      # is the frontend's own -- and it is ONE pair for the life of the session,
+      # because a rendering STAMP is only resolvable by the view that issued it.
+      # A caller building its own {Lain::Review::Surface::Neovim} over this
+      # inlet would get a second view, whose stamps this one's gestures could
+      # never resolve; that is a silent wrong-row, not an error, so the pair is
+      # not a caller's to assemble.
+      #
+      # Memoized rather than built in {#initialize}, so a session that never
+      # opens a review pays for neither.
+      #
+      # @return [Lain::Review::Surface::Neovim]
+      def review_surface = @review_surface ||= Lain::Review::Surface::Neovim.new(rpc: @rpc, view: review_view)
+
+      # @return [ReviewView] the sidebar's rendering history, and the
+      #   line -> row index a `review_open` or `review_mark` resolves against
+      def review_view = @review_view ||= ReviewView.new
+
       # The changeset review this editor WRITES to (T11): the object whose
       # answer is what a `review_annotate` or `review_verdict` `:w` succeeds or
       # fails with. Bound after construction, and it has to be -- the session

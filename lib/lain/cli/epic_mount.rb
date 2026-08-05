@@ -130,17 +130,20 @@ module Lain
       #   `[epics]` raises inside that method's rescue rather than past it
       # @param bindings [#call, nil] a thunk reading the live {HumanReplies}
       # @param notify [#call, nil] told when a stage settles
-      # @param changesets [#source, nil] builds the review source (see {#changesets})
-      # @param surface [#present, nil] where a changeset is drawn
+      # @param changesets [#source, nil] builds the review source
+      # @param surface [#present, #call, nil] where a changeset is drawn, or a
+      #   thunk reading one
+      # @param view [#open, #marks, #call, nil] the rendering a review gesture's
+      #   row number resolves through, or a thunk reading one
       # @param policy [Lain::Review::Verdict::Policy, nil] verdict admissibility
       # @option options [String] :epic the slug to resolve, which
       #   {Epic#resolve_slug} refuses by name when it is ambiguous or unknown
       # @return [EpicMount]
       def self.mount(chronicle:, options:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
-                     bindings: nil, notify: nil, changesets: nil, surface: nil, policy: nil)
+                     bindings: nil, notify: nil, changesets: nil, surface: nil, view: nil, policy: nil)
         new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic]),
             journal: chronicle.record_journal, root:, paths:, config:, bindings:, notify:,
-            changesets:, surface:, policy:)
+            changesets:, surface:, view:, policy:)
       end
 
       # Silent for the ordinary case, loud for every refusal a human could act
@@ -186,14 +189,16 @@ module Lain
       # @param notify [#question, nil] the desktop notifier {Tools::RequestReview}
       #   raises a pending review's question through; defaults to {Notify::Null}
       # @param changesets [#source, nil] builds the {Lain::Review::Source} an
-      #   `implementation` review reads its diff from. nil, and see {#changesets}
-      #   for why that is a finding rather than an omission.
-      # @param surface [#present, nil] where a changeset is drawn; nil leaves the
-      #   tool's {Lain::Review::Surface::Null}
+      #   `implementation` review reads its diff from; nil leaves the tool's
+      #   {Lain::Tools::RequestReview::NoChangesets}, which refuses the stage
+      # @param surface [#present, #call, nil] where a changeset is drawn, or a
+      #   thunk reading one; nil leaves the tool's {Lain::Review::Surface::Null}
+      # @param view [#open, #marks, #call, nil] the rendering a review gesture's
+      #   row number resolves through, or a thunk reading one
       # @param policy [Lain::Review::Verdict::Policy, nil] whether a verdict may
       #   stand; nil leaves {Lain::Review::Verdict::Policy.default}
       def initialize(slug:, journal:, root:, paths:, config:, bindings: nil, notify: nil,
-                     changesets: nil, surface: nil, policy: nil)
+                     changesets: nil, surface: nil, view: nil, policy: nil)
         @slug = slug
         @journal = journal
         @root = root
@@ -201,10 +206,10 @@ module Lain
         @config = config
         @bindings = bindings
         @notify = notify || Lain::Notify::Null.new
-        # One ivar because they are one decision: the three seams the changeset
-        # half of the tool takes, which arrive together, forward together, and
-        # are all nil here for the reason {#request_review} states.
-        @review_seams = { changesets:, surface:, policy: }.freeze
+        # One ivar because they are one decision: the seams the changeset half
+        # of the tool takes, which arrive together and forward together. They
+        # are nil DEFAULTS rather than nil values now -- see {#request_review}.
+        @review_seams = { changesets:, surface:, view:, policy: }.freeze
         @notes = Lain::Tools::RequestReview::Notes.new(journal:)
         @review = rebuilt_review
       end
@@ -235,20 +240,25 @@ module Lain
       # notification names the path and the human opens it themselves. The
       # editor's `done` gesture still settles the review, because that rail IS
       # the command inbox and it IS bound ({Repl#run} -> {HumanReplies#bind_editor}).
-      # `changesets:` is nil for the SAME reason, one rail further on, and it is
-      # a finding rather than an omission too.
       #
-      # A changeset review parks until a verdict arrives, and a verdict arrives
-      # on {Frontend::Neovim#bind_changeset_review}'s `wrote_verdict` rail --
-      # the frontend again, unreachable for the reason above. Unlike a document
-      # review, which a human settles with `:LainReviewDone` through the rail
-      # this class DOES reach ({HumanReplies#bind_review}), there is no second
-      # way to answer a changeset one. So defaulting a source here would ship a
-      # park nobody could end; left nil, the tool refuses `implementation` in
-      # one sentence naming this wiring
-      # ({Tools::RequestReview::Refusals::NO_CHANGESET}). The seam is threaded
-      # rather than absent so that a caller which CAN answer -- the review CLI
-      # -- turns the half on by INJECTING one, not by editing this file.
+      # ⚠️ THE PARAGRAPH THAT WAS HERE SAID THE SAME OF `changesets:`, and it
+      # was right about the mechanism and wrong about the conclusion. A changeset
+      # review parks until a verdict arrives; a verdict arrives on
+      # {Frontend::Neovim#bind_changeset_review}'s rail; and that method had no
+      # caller in the tree, so notes and verdicts reached
+      # {Frontend::Neovim::NoReviewWrites} and were refused. Defaulting a source
+      # here really would have shipped a park nobody could end.
+      #
+      # What was wrong was reading that as a reason for the seam to stay empty.
+      # It said, correctly, that "a caller which CAN answer turns the half on by
+      # INJECTING one, not by editing this file" -- and then nothing ever
+      # injected, so every `implementation` call in every real process refused
+      # with {Tools::RequestReview::Refusals::NO_CHANGESET} and no test among
+      # 10865 examples could see it. T31a made the frontend reachable
+      # ({HumanReplies#bind_review_editor}) and {Wiring#review_seams} now
+      # injects all three. This class is unchanged in the way that matters: it
+      # still supplies none of them itself, and a caller that passes none still
+      # gets a tool that refuses the stage in one sentence naming the wiring.
       def request_review
         Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, notify: @notify,
                                        **@review_seams)

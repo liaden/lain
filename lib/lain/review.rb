@@ -31,6 +31,10 @@ require_relative "review/records"
 require_relative "review/annotations"
 require_relative "review/verdict"
 require_relative "review/session"
+# AFTER the aggregate it holds. Its two nulls name {Frontend::Neovim::ReviewView}
+# and {Review::Docent} -- both from METHOD bodies only, so neither binds load
+# order the way `annotations` above does.
+require_relative "review/handover"
 
 # The ONE wiring line the diagnostics capability costs, and it is nested rather
 # than routed through a `projection.rb` index on purpose: an index whose only

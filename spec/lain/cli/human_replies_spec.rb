@@ -915,6 +915,66 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # T31a: ONE BIND, BOTH RAILS. A changeset review is reached from two places --
+  # the acked gestures resolve on this consumer's fiber, and the two WRITES are
+  # answered by the editor on its own RPC thread, through
+  # {Frontend::Neovim#bind_changeset_review}. That method had no caller in the
+  # whole tree, so every note and every verdict a human wrote reached
+  # {Frontend::Neovim::NoReviewWrites} and came back "no review is open in this
+  # editor" while one demonstrably was.
+  describe "the second rail a changeset review is answered on" do
+    # The frontend, reduced to the three messages this class asks of one. A
+    # recorder rather than a double, because the property is WHICH object
+    # reached the far rail: two binds are two chances for the rails to hold
+    # different reviews, and that is a wrong-review write rather than an error.
+    def review_editor
+      Object.new.tap do |editor|
+        editor.define_singleton_method(:bound) { @bound }
+        editor.define_singleton_method(:bind_changeset_review) { |review| @bound = review }
+        editor.define_singleton_method(:review_surface) { :the_editors_surface }
+        editor.define_singleton_method(:review_view) { :the_editors_view }
+      end
+    end
+
+    it "hands the editor's write rail the SAME review the gesture rail holds" do
+      editor = review_editor
+      review = RecordingChangesetReview.new
+      replies.bind_review_editor(editor)
+
+      replies.bind_changeset_review(review)
+
+      expect(editor.bound).to equal(review)
+    end
+
+    # Closing a review is a bind like any other ({Frontend::Neovim}'s own rule),
+    # so an unbind has to reach both rails too: a write rail left holding a
+    # settled review would take a second verdict against it.
+    it "unbinds both rails together" do
+      editor = review_editor
+      replies.bind_review_editor(editor)
+      replies.bind_changeset_review(RecordingChangesetReview.new)
+
+      replies.bind_changeset_review(nil)
+
+      expect(editor.bound).to be_nil
+    end
+
+    it "binds harmlessly when no editor is attached, which is every headless chat" do
+      expect { replies.bind_changeset_review(RecordingChangesetReview.new) }.not_to raise_error
+    end
+
+    # What {Wiring} threads into the tool as thunks. nil rather than a null
+    # surface, deliberately: the object that coalesces those is the tool's own
+    # seams, which is the one place that decision is made.
+    it "reads the editor's surface and view off whatever editor is bound" do
+      expect([replies.review_surface, replies.review_view]).to eq([nil, nil])
+
+      replies.bind_review_editor(review_editor)
+
+      expect([replies.review_surface, replies.review_view]).to eq(%i[the_editors_surface the_editors_view])
+    end
+  end
+
   # T16: the inbox's OWN gestures, which is where this consumer had a hole
   # rather than a defect. T15 bound <CR> and `r` to :LainOpen and the editor
   # has been sending `["open", [line, generation]]` ever since -- and nothing
