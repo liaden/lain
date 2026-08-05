@@ -257,7 +257,7 @@ prose.
 |---|---|---|---|
 | Diagnostics (T17) | `runtime/49_diagnostics.lua`, `Projection::Diagnostics`, its `review.rb` require | **Prefill (T22)** | Annotations still place and drift; no gutter signs, no `]d`, no quickfix, no telescope |
 | Thread pane (T18) | `runtime/51_thread.lua`, `ThreadView`, its `neovim.rb` require | **Docent (T24)** | Annotations still work; no in-editor conversation |
-| Docent (T24) | `lib/lain/review/docent.rb`, `role/diff-docent.md`, its `review.rb` require, one `Wiring` line | none | Thread pane still renders; asking a question refuses with a named message |
+| Docent (T24) | seven sites — see below | none | Thread pane still renders; asking a question refuses with a named message |
 | `/critique` prefill (T22) | `lib/lain/review/prefill.rb`, its `review.rb` require, one `Session` keyword default | none | Human annotations unaffected; no pre-placed findings |
 | GitHub submit (T23) | seven sites — see below | none | `lain review <pr>` still reads and reviews; nothing posts back |
 | GitHub source (T10) | `lib/lain/review/source/github_pr.rb`, one registry line | **Submit (T23)** | Local-branch review unaffected |
@@ -273,6 +273,22 @@ card, not a reason to skip the check.
 There is no `require` line to remove for a **lua** module: T6's loader globs the directory, so
 deleting the file is the whole edit. Every **Ruby** unit has one, and a dangling `require_relative`
 is a LoadError rather than a missing feature — which is why the lines are named above.
+
+**Docent (T24) is seven sites too**, verified by a delete-and-run returning **10760 — byte-for-byte
+the pre-T24 baseline** — with a residue grep over `lib/ spec/ exe/` finding nothing:
+`review/docent.rb`, `prompt/templates/role/diff-docent.md` and `spec/lain/review/docent_spec.rb`;
+the `review.rb` require and its comment; the `:diff_docent` line in `lib/lain/role/catalog.rb`; the
+`, :diff_docent` roll-call entry in `spec/lain/role_spec.rb`; and in
+`cli/wiring/toolset_build.rb` both the `@docent = …` line and `, :docent` on the `attr_reader`.
+
+**The last two of those are a scope departure the card did not anticipate, and they are forced.**
+`spec/lain/role_spec.rb:141` asserts the catalog and the shipped role templates match **in both
+directions**, so a template with no catalog entry is a red spec, and adding the catalog entry then
+trips `role_spec.rb:184`'s `contain_exactly` roll call. There is no way to ship a role template
+without both. Accepted as the right answer rather than a workaround: the card's premise is that the
+answerer is a **role**, roles live in the catalog, and a catalogued role is reachable by `@role`
+spawn lines and by the bench — which is what makes it a swappable arm rather than a hardcoded
+collaborator.
 
 **GitHub submit (T23) is seven sites, not three**, verified by a delete-and-run that returned the
 exact base baseline: `review/submit.rb` + its spec + the `review.rb` require; `Gh#submit_review`,
