@@ -598,7 +598,30 @@ it was deferred.
     `lain://inbox` shows `(no questions pending)` once answered, and `lain://request` syntax-highlights
     the live JSON payload.
 
-31. **A second frontend attaching to a live nvim socket kills the first one's reply path, silently.**
+31. ~~**A second frontend attaching to a live nvim socket kills the first one's reply path, silently.**~~
+    **FIXED** — `0f67e62`, protocol 11. The refusal happens INSIDE the injection, before one module
+    loads, on **liveness** (`nvim_get_chan_info`) rather than presence — a marker left by a crashed
+    lain blocks nothing, or the human's editor is unusable until they restart nvim. Refuse rather than
+    take over, because a takeover cannot be made loud: the displaced lain's channel stays open so it
+    never learns, and re-injection empties the review chunk-locals while its extmarks stay on screen.
+    `_G.__lain.channel` is published now, which is what makes the binding inspectable at all.
+
+    **Live-verified end to end:** a second frontend against a live cockpit raised
+    *"the nvim listening at … is already attached to a running lain (RPC channel 3), and a second
+    attach would take that session's :LainReply, its review writes and its rendered buffers away from
+    it with nothing said on either side"* — and the first chat was then asked a question, answered it
+    from the editor with `:LainReply`, and a second reply correctly refused as already-answered.
+
+    **Two green specs were asserting this defect** (`neovim_spec`, `buffers_spec`'s "re-attach is
+    idempotent"): both nested one live attach inside another, pinning the silent data destruction as a
+    feature. They were the only suite breakage, are sequential now, and go red under the mutant that
+    ignores the refusal. That is the chunk's vacuous-test pattern one last time, and worth remembering:
+    a test can encode the bug.
+
+    **Remaining gap, unavoidable:** a live lain speaking protocol ≤10 leaves no marker, so an 11 will
+    still attach over it. Closes once both sides are 11.
+
+    The original report follows.
     Found by the manual pass, 2026-08-05, first by accident (a read-only probe against the cockpit's
     own socket) and then confirmed deliberately. Attach a second `Frontend::Neovim` to a socket a chat
     is already using, let it exit, and three things are true of the chat that is still running:
