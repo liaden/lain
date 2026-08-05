@@ -253,52 +253,60 @@ What removing each optional capability costs. **These are not independent**: two
 deleting a parent forces deleting its dependent. T25 reads this table, so the nesting is data, not
 prose.
 
-| Capability | Delete | Forces also deleting | Left behind |
-|---|---|---|---|
-| Diagnostics (T17) | `runtime/49_diagnostics.lua`, `Projection::Diagnostics`, its `review.rb` require | **Prefill (T22)** | Annotations still place and drift; no gutter signs, no `]d`, no quickfix, no telescope |
-| Thread pane (T18) | `runtime/51_thread.lua`, `ThreadView`, its `neovim.rb` require | **Docent (T24)** | Annotations still work; no in-editor conversation |
-| Docent (T24) | seven sites — see below | none | Thread pane still renders; asking a question refuses with a named message |
-| `/critique` prefill (T22) | `lib/lain/review/prefill.rb`, its `review.rb` require, one `Session` keyword default | none | Human annotations unaffected; no pre-placed findings |
-| GitHub submit (T23) | seven sites — see below | none | `lain review <pr>` still reads and reviews; nothing posts back |
-| GitHub source (T10) | `lib/lain/review/source/github_pr.rb`, one registry line | **Submit (T23)** | Local-branch review unaffected |
-| Epic gate (T21) | Revert `RequestReview` to refuse `implementation` | none | Standalone review unaffected |
+| Capability | Files deleted | Also edited | Forces | Delete-and-run |
+|---|---|---|---|---|
+| Diagnostics (T17) | `runtime/49_diagnostics.lua`, `lib/lain/review/projection/diagnostics.rb`, `spec/lain/review/projection/diagnostics_spec.rb` | `review.rb`'s require; **`frontend/neovim.rb`'s protocol history** | **Prefill (T22)** | **10731** |
+| `/critique` prefill (T22) | `lib/lain/review/prefill.rb`, `lib/lain/review/prefill/finding.rb`, `lib/lain/review/prefill/sidecar.rb`, `spec/lain/review/prefill_spec.rb` | `review.rb`'s require | none | **10774** |
+| Thread pane (T18) | `runtime/51_thread.lua`, `lib/lain/frontend/neovim/thread_view.rb`, `spec/lain/frontend/neovim/thread_view_spec.rb` | `frontend/neovim.rb`'s require **and its protocol history**; **`review/surface/neovim.rb`'s `#annotate` and `#thread`** and their spec; `neovim_runtime_spec.rb`'s protocol-9 pin; the manual stanza in `plugin/nvim/doc/lain.txt` | **Docent (T24)** | **10673** |
+| Docent (T24) | `lib/lain/review/docent.rb`, `lib/lain/prompt/templates/role/diff-docent.md`, `spec/lain/review/docent_spec.rb` | `review.rb`'s require; `role/catalog.rb`; `spec/lain/role_spec.rb`'s roll call; `cli/wiring/toolset_build.rb`; **`spec/lain/cli/wiring/toolset_build_spec.rb`'s two wiring examples** | none | **10803** |
+| GitHub submit (T23) | `lib/lain/review/submit.rb`, `spec/lain/review/submit_spec.rb`, `lib/lain/forge/gh/endpoint.rb` | `review.rb`'s require; `forge/gh.rb` (verb + endpoint require), `forge/gh/recorded.rb` ×2, `forge/journaled.rb`, `forge/intent.rb`, `forge/reconcile.rb`; `gh_parity.rb`, `gh_spec.rb`, `recorded_spec.rb`, **`intent_spec.rb`, `reconcile_spec.rb`** | none | **10800** |
+| GitHub source (T10) | `lib/lain/review/source/github_pr.rb`, `spec/lain/review/source/github_pr_spec.rb` | `review/source.rb`'s require; **`cli/review.rb`'s whole pull-request leg** and **eight examples in `spec/lain/cli/review_spec.rb`** | **Submit (T23)** | **10704** |
+| Epic gate (T21) | *(none — a revert)* | `RequestReview` refuses `implementation` again | none | not measured |
 
-**Corrected 2026-08-05 against the tree and the landed hand-backs.** Four rows had drifted: the two
-lua modules are numbered (`49_diagnostics.lua`, `51_thread.lua`, not `diagnostics.lua`/`thread.lua`),
-and four capabilities own a Ruby `require` line the table did not list — `review.rb:41` (diagnostics),
-`:47` (prefill), `:52` (submit), and `neovim.rb`'s `neovim/thread_view`. **T25 must re-derive this
-table from the tree rather than trust it**; that the table was wrong twice is the argument for the
-card, not a reason to skip the check.
+**Re-derived from the tree by T25 on 2026-08-05, and every row above was verified by actually
+deleting it and running the suite.** Baseline **10849 examples, 0 failures, 14 pendings** at
+`b3fbada`; the last column is what each cut returned, green, with the arithmetic in
+`.handback-T25.md`. The bolded entries are what the previous two versions of this table did not say,
+and the machine-readable copy now lives in `spec/lain/review/deletability_spec.rb` — that spec fails
+if a path here does not exist, if a file it deletes is not mentioned here, or if a file outside a row
+starts naming the capability in code.
 
 There is no `require` line to remove for a **lua** module: T6's loader globs the directory, so
 deleting the file is the whole edit. Every **Ruby** unit has one, and a dangling `require_relative`
 is a LoadError rather than a missing feature — which is why the lines are named above.
 
-**Docent (T24) is seven sites too**, verified by a delete-and-run returning **10760 — byte-for-byte
-the pre-T24 baseline** — with a residue grep over `lib/ spec/ exe/` finding nothing:
-`review/docent.rb`, `prompt/templates/role/diff-docent.md` and `spec/lain/review/docent_spec.rb`;
-the `review.rb` require and its comment; the `:diff_docent` line in `lib/lain/role/catalog.rb`; the
-`, :diff_docent` roll-call entry in `spec/lain/role_spec.rb`; and in
-`cli/wiring/toolset_build.rb` both the `@docent = …` line and `, :docent` on the `attr_reader`.
+**Three things a reference sweep cannot see, and all three were found by deleting.**
 
-**The last two of those are a scope departure the card did not anticipate, and they are forced.**
-`spec/lain/role_spec.rb:141` asserts the catalog and the shipped role templates match **in both
-directions**, so a template with no catalog entry is a red spec, and adding the catalog entry then
-trips `role_spec.rb:184`'s `contain_exactly` roll call. There is no way to ship a role template
-without both. Accepted as the right answer rather than a workaround: the card's premise is that the
-answerer is a **role**, roles live in the catalog, and a catalogued role is reachable by `@role`
-spawn lines and by the bench — which is what makes it a swappable arm rather than a hardcoded
-collaborator.
+1. **The protocol history in `lib/lain/frontend/neovim.rb` is a comment that two specs read.**
+   `spec/lain/frontend/neovim_runtime_spec.rb` asserts every `__lain.` entry point and every
+   `:Lain*` command the history names against the *live* runtime. Both lua capabilities publish
+   entry points the history lists, so deleting either lua module without editing that comment is a
+   red suite — and any scan that strips comments (T18's own row does, deliberately, so that prose
+   may cite a capability freely) is blind to it.
+2. **`Review::Surface::Neovim` renders `#annotate` *and* `#thread` through the thread pane.** Those
+   two are the PORT's messages, so they survive the pane and have to become something: deleting the
+   pane is a rewrite there, not a removal. The earlier row's "annotations still work" was true of
+   the model and not of the editor.
+3. **`spec/lain/cli/wiring/toolset_build_spec.rb` holds two docent examples** that T24 added
+   precisely so the wiring line could not be removed by accident, and the row that was supposed to
+   remove them did not name the file.
 
-**GitHub submit (T23) is seven sites, not three**, verified by a delete-and-run that returned the
-exact base baseline: `review/submit.rb` + its spec + the `review.rb` require; `Gh#submit_review`,
-`Gh::Recorded#submit_review`, `Recorded::Unrecorded.submit_review`, `Journaled#submit_review`;
-`Forge::REVIEW_SUBMIT` and its `ACTIONS` entry with `intent_spec`'s pin; `Reconcile::Observer`'s
-`when REVIEW_SUBMIT` arm and `#unrepeatable`; the `GhParity` fixtures, verbs and two shared examples;
-`gh_spec`/`recorded_spec`'s wire examples; and `forge/gh/endpoint.rb`. Two things stay behind
-deliberately: `ObservationsOnly`, which closes the same recording fall-through for `pr_create` and
-`pr_merge`, and — if the stdin seam is kept — the example guarding the other four verbs against
-acquiring one.
+**The docent's catalog and roll-call entries are forced, not optional.** `spec/lain/role_spec.rb`
+asserts the catalog and the shipped role templates match **in both directions**, so a template with
+no catalog entry is a red spec, and adding the catalog entry then trips the `contain_exactly` roll
+call. There is no way to ship a role template without both. Accepted as the right answer rather than
+a workaround: the card's premise is that the answerer is a **role**, roles live in the catalog, and a
+catalogued role is reachable by `@role` spawn lines and by the bench — which is what makes it a
+swappable arm rather than a hardcoded collaborator.
+
+**Two things stay behind when submit goes, deliberately:** `ObservationsOnly`, which closes the same
+recording fall-through for `pr_create` and `pr_merge`, and — if the stdin seam is kept — the example
+guarding the other four verbs against acquiring one.
+
+**The epic gate is the one row that is not a deletion** and is not covered by T25's examples: it owns
+no file, and "make `RequestReview` refuse `implementation` again" is a behaviour change across that
+tool's implementation leg and `EpicMount`'s wiring. The spec records the exemption by name so the row
+cannot quietly acquire files without somebody noticing.
 
 ## Follow-up tickets this chunk owes
 
@@ -498,7 +506,34 @@ T18 applied (10720 without it). The last two:
 | T28 protocol 9 | `0c8e01d` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10800 |
 | T24 hunk docent | `b3fbada` | APPROVE-WITH-FIXES ×2 → fix round → landed at 10849 |
 
-### Ruling — the docent's journal records stay in `docent.rb`
+### Rulings — T25's two escalation triggers, and the one claim of its own that is wrong
+
+**Trigger 2 fired: delete-and-run is ~4 minutes for six rows against a 44s wall. Ruled: ship the
+boot-based proof, and say what it does not prove.** The card's own trigger says *"a check nobody runs
+is a fig leaf; stop and find a cheaper honest proof rather than shipping one that gets excluded"* —
+which is exactly what T25 did, and the cheaper proof runs **by default** where the real one would have
+been tagged out within a week. What ships boots a hardlinked `lib/` with each row removed; it proves
+the tree still loads and that the `forces` nesting is real, and it does **not** prove the suite passes.
+That gap is named in the spec rather than papered over. The full delete-and-run stays a manual pass,
+and its per-row expected counts are in the table above so anyone can check one in isolation.
+
+**Trigger 1 was a judgement call and T25 was right not to stop on it. Ruled: not a re-cut.**
+`Review::Surface::Neovim` reaching into `ThreadView` is an **adapter** naming the editor half it
+adapts, which is an adapter's whole job — `Review::Surface`, the port, is the core thing here, and the
+port is untouched. T18's own row already lists the adapter as a consumer.
+
+But T25's defect #3 is the consequence, and it stands: `Surface::Neovim` renders **both** `#annotate`
+and `#thread` through the pane, so *"Left behind: annotations still work"* was true of the model and
+false of the editor — with the pane gone a note is visible nowhere. Those are the **port's** messages,
+so removing the pane is a *rewrite* there, not a removal, and T25 says plainly that its 10673 means "a
+green tree exists", not "this is the removal". That honesty is the finding.
+
+**One claim of T25's is wrong, and the correction matters because the spec asserts it.** Its defect #1
+says the map *table* still named `diagnostics.lua`/`thread.lua` unprefixed. It did not — the table was
+corrected at `ef76ae6`, before T25's tree was cut, and `git show` confirms it. The unprefixed names
+that remain are in the **card bodies** (T17's and T18's `**Files:**` lines), which is a real defect and
+worth fixing, but it is not the one reported. The lesson is the chunk's own: **a scan that finds a
+string tells you where the string is, not what it means.**
 
 T24's fix round asked for a ruling before moving its four journal records into
 `lib/lain/review/records.rb`, which is where `Review`'s records otherwise live. **Ruled: they stay.**
@@ -1704,7 +1739,7 @@ Scenario: the inline marker is right-aligned and does not overlay code
 ### T17 — Project annotations and findings into diagnostics  [wave 4] [risk: low] [deletable]
 
 **Depends on:** T15
-**Files:** `lib/lain/frontend/neovim/runtime/diagnostics.lua` (new),
+**Files:** `lib/lain/frontend/neovim/runtime/49_diagnostics.lua` (new),
 `lib/lain/review/projection/diagnostics.rb` (new),
 `spec/lain/review/projection/diagnostics_spec.rb` (new)
 **Reuse:** **promote `spike/review-probe/diagnostics_probe.lua`** — it measured the whole contract;
@@ -1739,7 +1774,7 @@ Scenario: severity filtering yields only blockers
   Then only annotations of kind blocker are returned
 
 Scenario: removing this capability leaves a green suite
-  Given runtime/diagnostics.lua and its projection are deleted
+  Given runtime/49_diagnostics.lua and its projection are deleted
   Then the full suite passes
 ```
 → spec file: `spec/lain/review/projection/diagnostics_spec.rb`
@@ -1754,7 +1789,7 @@ Scenario: removing this capability leaves a green suite
 ### T18 — Show a thread in a persistent pane          [wave 4] [risk: high] [deletable]
 
 **Depends on:** T15, T26
-**Files:** `lib/lain/frontend/neovim/runtime/thread.lua` (new),
+**Files:** `lib/lain/frontend/neovim/runtime/51_thread.lua` (new),
 `lib/lain/frontend/neovim/thread_view.rb` (new),
 `spec/lain/frontend/neovim/thread_view_spec.rb` (new)
 **Reuse:** octo's technique, ported not copied (MIT, attribute in a comment):
@@ -1799,7 +1834,7 @@ Scenario: thread buffers are released when wiped
   Then the registry holds no entries for them
 
 Scenario: removing this capability leaves a green suite
-  Given runtime/thread.lua and thread_view.rb are deleted and the surface returns Null
+  Given runtime/51_thread.lua and thread_view.rb are deleted and the surface returns Null
   Then the full suite passes
 ```
 → spec file: `spec/lain/frontend/neovim/thread_view_spec.rb`

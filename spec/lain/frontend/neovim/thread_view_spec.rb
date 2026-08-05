@@ -1323,7 +1323,12 @@ RSpec.describe "the thread pane's deletability" do
            "spec/lain/frontend/neovim/thread_view_spec.rb"]
     consumers = ["lib/lain/frontend/neovim.rb", "lib/lain/review/surface/neovim.rb",
                  "spec/lain/review/surface/neovim_spec.rb"]
-    sources = Dir[File.join(root, "{lib,spec,exe}/**/*.{rb,lua}")] + [File.join(root, "exe/lain")]
+    # T25's `deletability_spec.rb` is the MAP, so it names every deletable
+    # capability by construction and exempts itself from its own sweep for the
+    # same reason. It is not a consumer: the thread pane's deletion takes its
+    # ROW there, which is an edit, not the file.
+    sources = (Dir[File.join(root, "{lib,spec,exe}/**/*.{rb,lua}")] + [File.join(root, "exe/lain")])
+              .reject { |path| path.end_with?("spec/lain/review/deletability_spec.rb") }
 
     unlisted = "a file outside the thread pane's deletion row now names it in CODE. If that is a " \
                "legitimate new consumer, add it to `consumers` above AND to the chunk's deletion map, so " \
