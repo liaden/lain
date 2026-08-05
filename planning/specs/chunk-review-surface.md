@@ -797,6 +797,52 @@ Two rough edges, neither a defect: the review's tabpage opens with two empty win
 sidebar (the diff panes ticket 32's `open` would fill), and a free-text answer must be indented two
 spaces under a heading that says *"write your answer below"*.
 
+35. **Every STREAMING ollama failure reports "An unknown error occurred", and chat streams by default.**
+    Found by the QA pass, 2026-08-05, by typing a model name wrong:
+    `lain chat --provider ollama --model no-such-model-xyz` answers `error: An unknown error occurred`
+    while ollama itself said, in plain words, `model 'no-such-model-xyz' not found`.
+
+    **Isolated to the streaming path**, which is the one a human always takes:
+
+    ```
+    stream=false  APIStatusError: model 'no-such-model-xyz' not found      ← correct
+    stream=true   APIStatusError: An unknown error occurred                ← what a human gets
+    ```
+
+    **The mechanism, instrumented rather than reasoned about.** `ErrorMiddleware.parse_error` runs
+    **twice** on one failed streaming request:
+
+    ```
+    [probe] status=500  body={"error" => "model 'no-such-model-xyz' not found"}  → message extracted ✓
+    [probe] status=404  body=""                                                  → nil → the fallback
+    ```
+
+    The first is `handle_failed_response` → `handle_parsed_error`, which parses the error body
+    correctly and raises the right sentence — **from inside Faraday's `on_data` callback, where the
+    raise is swallowed**. Faraday then completes the request, and the OUTER middleware sees the real
+    404 with a body that streaming has already consumed to empty. `ErrorBody.parse` answers nil, and
+    `error_for` falls through `STATUS_ERRORS` (no 404 entry) and `STATUS_MESSAGES` (no 404 entry) to
+    the literal `"An unknown error occurred"`. The good error is raised first and lost; the useless
+    one wins.
+
+    `ollama/transport.rb:56-60` already documents the asymmetry — *"a failed STREAM's message comes
+    from the vendored `handle_failed_response`/`parse_streaming_error` (generic wording), while a
+    failed sync post's comes from ErrorMiddleware's body text -- inherited vendored behavior, same
+    typed error class either way."* So it was **known and accepted**; what was never weighed is that
+    the wording a human actually gets is not merely generic but content-free, for every streaming
+    failure: a wrong model, a stopped ollama, a context overflow all read the same.
+
+    **Not the same bug Anthropic already fixed, but the same family.** `anthropic/transport.rb:85-95`
+    records RES1 — `parse_streaming_error`'s severity GUESS beat the real status, relabeling a genuine
+    400 as a retryable 500. That was the status half and is fixed there. This is the message half, and
+    ollama has it.
+
+    Fix shape: the failed-response path already accumulates the error body into `install_on_data`'s
+    `buffer`. Keep that message where the outer raise can prefer it — rescue in
+    `Ollama::Transport#stream` and re-raise carrying the buffered sentence when the outer body is
+    empty. Wants a card and real tests: the raise-inside-a-callback behaviour is exactly the kind of
+    thing an example asserting only the error CLASS would pass over.
+
 34. **A finished review never leaves the machine: `Review::Submit` is constructed NOWHERE.** Found by
     the manual pass, 2026-08-05, asking the obvious next question after the loop finally worked — *"so
     how does this reach the pull request?"* It does not.
