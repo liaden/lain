@@ -522,6 +522,30 @@ in the same way: the bail-out body costs ~0.16 µs, while dispatch to a global l
 performance problem, and no seat called it one. It is **a false `why` in a codebase whose comment
 standard is that the why must be true.**
 
+### Ruling — T28's escalation trigger 2 fired, and the answer is NO RENAME
+
+`:LainNote` (T16) is a prefix of `:LainNoteDone` (T17). Both were added by this chunk, and it is the
+only such pair among the thirteen commands (checked exhaustively; `:LainReviewOpen` and
+`:LainReviewDone` are *not* a pair — neither is a prefix of the other). T28 stopped, as its card told
+it to, and handed the decision up with measurements rather than a preference.
+
+**Ruled: keep the names.** The trigger's own stated rationale is one specific hazard — "the doc sweep
+is word-boundaried precisely because a longer name would otherwise certify a shorter one" — and that
+hazard is now **pinned by a mutant rather than guarded by a precaution**. M7 strips all three
+`:LainNote` mentions from the doc while leaving `:LainNoteDone` in four places, and
+`nvim_plugin_spec.rb:300` goes red by name. The `\b` is doing real work. Renaming a shipped command
+would churn T16's and T17's specs, doc and wire verbs to buy nothing that is not already bought.
+
+Two facts worth keeping from the measurement:
+
+- **nvim is not ambiguous here.** `exists(':LainNote')` = **2**, an exact full match, and an exact
+  name beats an abbreviation — so `:LainNote` dispatches to `LainNote`.
+- **But `exists(':LainReview')` = 3**, "matches several". So a future command actually *named*
+  `:LainReview` would be genuinely ambiguous, where `:LainNote` is not. **That is the constraint to
+  carry forward**: the rule is not "no name may be a prefix of another", it is "no name may be a
+  prefix of *two or more* without being one of them". The comment claiming "no name is a prefix of
+  another today" had gone false and T28 corrected it.
+
 ### Four operational traps found while landing T16 and T23
 
 1. **`git stash pop` without `--index` silently un-stages everything it restores.** Used mid-landing
