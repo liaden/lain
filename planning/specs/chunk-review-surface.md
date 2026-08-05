@@ -797,6 +797,36 @@ Two rough edges, neither a defect: the review's tabpage opens with two empty win
 sidebar (the diff panes ticket 32's `open` would fill), and a free-text answer must be indented two
 spaces under a heading that says *"write your answer below"*.
 
+36. **An error raised during request RENDERING dumps an Async JSON backtrace onto the chat screen.**
+    Found by the QA pass, 2026-08-05, while verifying ticket 35's fix. `lain chat --model ""` prints a
+    ~2KB single-line JSON blob (`"message":"Task may have ended with unhandled exception"`, the class,
+    and a 27-frame backtrace) **before** the clean `error: no context window for model "" -- a nil or
+    blank --model is a wiring bug` that the repl renders correctly.
+
+    **Narrow, and characterised rather than guessed.** Three failures, one dump:
+
+    | failure | JSON dump? |
+    |---|---|
+    | model not found (provider, 404) | no |
+    | dead endpoint (connection refused) | no |
+    | blank model (`ContextWindow::UnknownModel`) | **yes** |
+
+    The difference is WHERE it is raised, not what it is — all three are `Lain::Error` and all three
+    are rendered cleanly in the end. The provider errors are caught inside the agent's step; this one
+    comes from `Agent#render_request` → `Compaction::Source#decide` → `ContextWindow#window_tokens`,
+    which crosses the `Async::Task` boundary first, and the async gem's logger reports any task ending
+    with an exception regardless of who handles it afterward.
+
+    **It is an output-discipline hole that `output_discipline_spec` cannot see**, which is the part
+    worth recording: that spec parses the AST of `lib/` and the writer here is a gem's logger. Same
+    family as ticket 33's desktop channel — the Journal is NDJSON and the frontend owns the screen, and
+    neither invariant is enforced against third-party writers. A `Console` / `Async.logger` sink
+    redirected into lain's own `Sink` at the frontend boundary is the likely shape.
+
+    Low urgency: reaching it needs an explicitly blank `--model`, which `EnvDefaults` already treats as
+    absence from the environment side. Recorded because the *class* of writer is general even though
+    this trigger is not.
+
 35. **Every STREAMING ollama failure reports "An unknown error occurred", and chat streams by default.**
     Found by the QA pass, 2026-08-05, by typing a model name wrong:
     `lain chat --provider ollama --model no-such-model-xyz` answers `error: An unknown error occurred`
