@@ -155,6 +155,29 @@ RSpec.shared_examples "a review changeset source" do |config|
     end
   end
 
+  # The fifth message, and the reason it is a PORT message rather than one
+  # source's extra: a consumer that must ask `respond_to?` before reading it is
+  # a consumer branching on which implementation it holds. Nothing here says
+  # WHERE the bytes came from -- that is each source's business -- only that the
+  # question always has an answer, and that a source which did not fall back is
+  # not carrying somebody else's words in its message.
+  describe "#diff_origin" do
+    it "answers the whole report, so no consumer has to ask whether it can" do
+      origin = changeset_source.diff_origin
+
+      expect(origin).to respond_to(:origin, :reason, :message, :fell_back?)
+      expect([origin.origin, origin.reason]).to all(be_a(String))
+      expect([origin.origin, origin.reason]).to all(satisfy { |field| !field.empty? })
+    end
+
+    it "carries no message when nothing fell back, because the message IS the refusal's words" do
+      origin = changeset_source.diff_origin
+      skip "this source fell back, which is the other leg" if origin.fell_back?
+
+      expect(origin.message).to eq("")
+    end
+  end
+
   describe "#diff" do
     it "answers raw bytes, so a latin-1 hunk cannot raise on the way to the parser" do
       expect(changeset_source.diff.encoding).to eq(Encoding::ASCII_8BIT)

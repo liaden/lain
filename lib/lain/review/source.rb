@@ -4,13 +4,25 @@ module Lain
   module Review
     # The changeset-source port: where a reviewable changeset comes from.
     #
-    # A source answers four messages -- {LocalBranch#diff}, {LocalBranch#commits},
-    # {LocalBranch#base_ref} and {LocalBranch#head_ref} -- and the shared example
+    # A source answers five messages -- {LocalBranch#diff}, {LocalBranch#commits},
+    # {LocalBranch#base_ref}, {LocalBranch#head_ref} and {LocalBranch#diff_origin}
+    # -- and the shared example
     # group `"a review changeset source"` (spec/support/shared_examples/review_source.rb)
     # is the contract, not this comment. A local branch and a GitHub pull request
     # are the two implementations, and everything downstream -- the parser, the
-    # anchors, the marks -- reads only these four messages, so neither knows which
+    # anchors, the marks -- reads only these five messages, so neither knows which
     # it has.
+    #
+    # == The fifth message, and why it is on the PORT
+    #
+    # {DiffOrigin} began as {GithubPr}'s alone, and its first consumer
+    # ({CLI::Review}) therefore asked `respond_to?(:diff_origin)` -- a type test
+    # in duck costume, and the one place a consumer branched on WHICH source it
+    # was handed. The answer is not a defter conditional: it is that a source
+    # which never asks an API still has an answer to "where did these bytes come
+    # from", and {LocalBranch} gives it. The conditional is gone, and with it a
+    # live defect -- the guard was tested on one leg only, and an ordinary pull
+    # request rendered a fallback note with an empty reason.
     #
     # == Refusals here are RAISED, unlike {Forge::Gh}'s
     #
@@ -62,6 +74,41 @@ module Lain
       # and §3.7 measured a cumulative view at 81,810 lines against one commit's
       # 2,727.
       Commit = Data.define(:sha, :subject, :body, :numstat)
+
+      # Where {LocalBranch#diff} came from, and why. The requirement is that a
+      # fallback be REPORTED rather than silent, and this is the report: a value
+      # a caller renders or journals, carrying gh's own words rather than a
+      # paraphrase of them.
+      #
+      # On the PORT rather than under {GithubPr}, where it was first written --
+      # see the module doc for what asking one source and not the other cost.
+      DiffOrigin = Data.define(:origin, :reason, :message, :fell_back) do
+        # The object database could answer, so no API was ever asked. Both
+        # sources reach it: {GithubPr} when the head was already fetched (or an
+        # earlier message fetched it), and {LocalBranch} always -- a branch
+        # review has no API in it at all, and "the objects are here and nobody
+        # was asked" is the same fact for both.
+        def self.already_local
+          new(origin: "object_database", reason: "already_local", message: "", fell_back: false)
+        end
+
+        def self.served = new(origin: "combined_diff_api", reason: "served", message: "", fell_back: false)
+
+        # @param reason [String] `too_large` when GitHub named its own
+        #   ceiling, `refused` or `timeout` otherwise
+        # @param message [String] what gh said. SCRUBBED, not verbatim: this
+        #   value is journalled, the Journal is NDJSON, and stderr is bytes --
+        #   one line `JSON.generate` refuses breaks the parse of the whole
+        #   experiment record. {UnknownRef.because} and {LocalBranch#text}
+        #   scrub for the same reason.
+        def self.fallback(reason:, message:)
+          new(origin: "object_database", reason:,
+              message: message.to_s.dup.force_encoding(Encoding::UTF_8).scrub.freeze,
+              fell_back: true)
+        end
+
+        def fell_back? = fell_back
+      end
     end
   end
 end

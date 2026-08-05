@@ -186,6 +186,22 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # The port's fifth message, at the source that can only ever answer it one
+  # way. The shared group cannot say this -- a pull request source legitimately
+  # DOES fall back, so the portable law skips that leg -- and this is where the
+  # Null's actual promise lives: `fell_back?` on a branch review is a constant,
+  # which is what lets a consumer stop asking `respond_to?` first.
+  describe "#diff_origin" do
+    it "never reports a fallback, because there is no API here to fall back from" do
+      expect(source.diff_origin).not_to be_fell_back
+      expect(source.diff_origin.message).to eq("")
+    end
+
+    it "names the object database, which is the only place its bytes came from" do
+      expect(source.diff_origin.origin).to eq("object_database")
+    end
+  end
+
   describe "#commits" do
     it "returns them oldest-first" do
       expect(source.commits.map(&:sha)).to eq([@first, @second])

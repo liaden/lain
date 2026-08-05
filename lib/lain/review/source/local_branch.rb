@@ -91,6 +91,18 @@ module Lain
         #   measured, a `git show` per commit would be the dominant cost.
         def commits = @commits ||= parse_log(log_output).freeze
 
+        # The port's fifth message, answered by the source that never asks
+        # anyone: the objects are in the local database and nothing fell back to
+        # them, which is exactly what {DiffOrigin.already_local} says.
+        #
+        # A Null Object, and its point is at the CONSUMER. Without it a renderer
+        # asks `respond_to?(:diff_origin)` and branches on WHICH source it holds
+        # -- a type test in duck costume -- and {Source}'s module doc records
+        # what that conditional actually cost.
+        #
+        # @return [DiffOrigin] always `fell_back? == false`
+        def diff_origin = DiffOrigin.already_local
+
         private
 
         # `--diff-merges=first-parent` is what stops a merge from silently losing

@@ -75,36 +75,6 @@ module Lain
           end
         end
 
-        # Where {#diff} came from, and why. The requirement is that a fallback
-        # be REPORTED rather than silent, and this is the report: a value a
-        # caller renders or journals, carrying gh's own words rather than a
-        # paraphrase of them.
-        DiffOrigin = Data.define(:origin, :reason, :message, :fell_back) do
-          # The object database could answer, so the API was never asked --
-          # either the head was there when this source was built, or an earlier
-          # message fetched it.
-          def self.already_local
-            new(origin: "object_database", reason: "already_fetched", message: "", fell_back: false)
-          end
-
-          def self.served = new(origin: "combined_diff_api", reason: "served", message: "", fell_back: false)
-
-          # @param reason [String] `too_large` when GitHub named its own
-          #   ceiling, `refused` or `timeout` otherwise
-          # @param message [String] what gh said. SCRUBBED, not verbatim: this
-          #   value is journalled, the Journal is NDJSON, and stderr is bytes --
-          #   one line `JSON.generate` refuses breaks the parse of the whole
-          #   experiment record. {UnknownRef.because} and {LocalBranch#text}
-          #   scrub for the same reason.
-          def self.fallback(reason:, message:)
-            new(origin: "object_database", reason:,
-                message: message.to_s.dup.force_encoding(Encoding::UTF_8).scrub.freeze,
-                fell_back: true)
-          end
-
-          def fell_back? = fell_back
-        end
-
         # gh, and the three things this source asks it: which pull request the
         # caller means, what GitHub says its refs are, and -- when it can save a
         # fetch -- the combined diff itself.
