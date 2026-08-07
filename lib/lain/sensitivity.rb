@@ -481,3 +481,6 @@ module Lain
     end
   end
 end
+
+# Policy reopens Sensitivity, so the class body must load first.
+require_relative "sensitivity/policy"

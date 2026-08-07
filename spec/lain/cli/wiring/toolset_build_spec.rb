@@ -47,8 +47,18 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # `toolset:` is the whole shipped registry, the base `switchboard_spec.rb`
   # itself resolves postures against -- `plan` names `ask_human`, so a narrower
   # base would raise {Toolset::UnknownTool} on the flip rather than attenuate.
+  #
+  # `sensitivity:` is a REAL policy gating a real path, for the same reason the
+  # switches are real: the T11 claim about that third axis is that whatever the
+  # board holds is what a child consults, and the Null default would make every
+  # identity assertion below pass against a build that forgot the axis entirely
+  # -- both sides would be the one shared Null.
+  let(:sensitivity) do
+    Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/proj"))
+  end
   let(:switchboard) do
     Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "test-model",
+                               sensitivity:,
                                toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }))
   end
 
@@ -187,6 +197,81 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       def child_gate
         toolset_build.build(recorder, ask_human:)
         toolset_build.role_spawn.seam.gate_policy
+      end
+
+      def child_sensitivity
+        toolset_build.build(recorder, ask_human:)
+        toolset_build.role_spawn.seam.sensitivity
+      end
+
+      def reads(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
+
+      # T11's third axis, and the privilege-inversion guard. Asserted by
+      # IDENTITY rather than by agreement on a sample: two independently built
+      # policies over the same rules answer the same way today and drift the
+      # moment a project config differs, so "the child gates what the parent
+      # gates" has to be "the child asks the parent's own object".
+      # Read through the GATES each side really runs behind, not off the board
+      # twice: the parent's comes out of {Switchboard#gate}, the child's travels
+      # its delegator's thunk. Two paths, one object.
+      it "hands a child the very sensitivity policy the parent's gate consults" do
+        parent_gate = switchboard.gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
+        parent_policy = parent_gate.instance_variable_get(:@sensitivity)
+
+        expect(parent_policy).to be(sensitivity)
+        expect(child_sensitivity.board.call).to be(switchboard)
+        expect(child_sensitivity.board.call.sensitivity).to be(parent_policy)
+      end
+
+      # And that the delegator really delegates: a child's gate asking
+      # `gates?` must reach that policy, not a Null it was quietly built with.
+      # The parent's own gate is driven beside it, over the same effect, so the
+      # claim is a comparison rather than two separate readings.
+      it "gates a child's read of .env exactly as the parent's own gate does" do
+        parent_gate = switchboard.gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
+
+        expect(child_sensitivity.gates?(reads(".env"))).to be(true)
+        expect(parent_gate.handles?(reads(".env"))).to be(true)
+
+        expect(child_sensitivity.gates?(reads("README.md"))).to be(false)
+        expect(parent_gate.handles?(reads("README.md"))).to be(false)
+      end
+
+      # The two properties the THUNK exists for, driven directly on the
+      # delegator over a board slot an example can move. Neither is visible
+      # through the seam above, because there the board is already in place.
+      context "when the board slot moves under the delegator" do
+        let(:board_slot) { [nil] }
+        let(:live) { described_class::LiveSensitivity.new(board: -> { board_slot.first }) }
+
+        def board(policy)
+          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "m",
+                                     sensitivity: policy,
+                                     toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
+        end
+
+        # {ToolsetBuild#spawn_seam} builds the seam BEFORE `Wiring#build_agent`
+        # memoizes the board, so the delegator has to read the ivar at CALL
+        # time. One that captured `board.call` at construction would answer nil
+        # here and take the session's whole path boundary with it.
+        it "answers the board that exists when it is ASKED, not when it was built" do
+          expect { live.gates?(reads(".env")) }.to raise_error(NoMethodError, /sensitivity/)
+
+          board_slot[0] = board(sensitivity)
+
+          expect(live.gates?(reads(".env"))).to be(true)
+        end
+
+        # The staleness the design prevents, said as a re-read: a delegator that
+        # memoized on first call would keep answering the first board after the
+        # session replaced it.
+        it "re-reads the board on every call, so a replaced policy takes effect" do
+          board_slot[0] = board(sensitivity)
+          expect(live.gates?(reads(".env"))).to be(true)
+
+          board_slot[0] = board(Lain::Sensitivity::Policy::Null.instance)
+          expect(live.gates?(reads(".env"))).to be(false)
+        end
       end
 
       # Asserted through behaviour rather than by identity: the seam holds a
@@ -376,6 +461,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       expect(seam.gate_policy.call(effect, nil)).to be(true)
       expect(seam.permits.include?(:bash)).to be(true)
+      expect(seam.sensitivity.gates?(Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "read_file",
+                                                                input: { "path" => ".env" }))).to be(false)
     end
 
     # The live thunk reads nil until {Wiring#build_agent} has run. That must
@@ -383,12 +470,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # ungate a real session if the assembly order ever changed, which is the
     # one failure this card exists to remove.
     #
-    # BOTH axes, because they fail differently and the gate is the sharper one:
-    # a `|| NoSwitchboard` on `permits` alone hands a child the capabilities the
-    # session no longer holds, but the same fallback on `gate_policy` resolves
-    # to {NoSwitchboard#policy_switch} -- which is `UNGATED`, an `ApproveAll` --
-    # and silently ungates every child in the run. Pinning only one axis leaves
-    # the worse regression free to land green.
+    # ALL THREE axes, because they fail differently and the gating pair are the
+    # sharper ones: a `|| NoSwitchboard` on `permits` alone hands a child the
+    # capabilities the session no longer holds, but the same fallback on
+    # `gate_policy` resolves to {NoSwitchboard#policy_switch} -- which is
+    # `UNGATED`, an `ApproveAll` -- and silently ungates every child in the run,
+    # while the same fallback on `sensitivity` resolves to a Null and ungates
+    # every sensitive PATH for children only. Pinning one axis leaves the worse
+    # regressions free to land green.
     it "refuses loudly, rather than ungating, if a spawn beats the board into existence" do
       build = build_with(options, switchboard: -> {})
       build.build(recorder, ask_human:)
@@ -396,6 +485,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       expect { seam.permits.include?(:bash) }.to raise_error(NoMethodError, /mode_switch/)
       expect { seam.gate_policy.call(nil, nil) }.to raise_error(NoMethodError, /policy_switch/)
+      expect { seam.sensitivity.gates?(nil) }.to raise_error(NoMethodError, /sensitivity/)
     end
 
     # The pair arrives as one keyword and it is required: a forgotten library

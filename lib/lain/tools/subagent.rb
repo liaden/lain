@@ -401,6 +401,17 @@ module Lain
       # a gate", not "deny".
       UNGATED = Effect::Handler::Gate::ApproveAll.new.freeze
 
+      # The path axis a seam was never taught about, and {UNGATED}'s opposite
+      # direction on purpose: absence here means "nobody told this seam which
+      # paths are sensitive", so nothing is, which is byte-for-byte what a child
+      # did before the path boundary existed. A shared instance for the same
+      # reason -- two Seams that wired nothing must still compare equal.
+      #
+      # `lain.rb` loads `lain/sensitivity` forty entries BEFORE `lain/tools`, so
+      # unlike `mode/resolution.rb`'s deferred lookups this one may resolve
+      # eagerly in the class body.
+      UNJUDGED = Sensitivity::Policy::Null.instance
+
       # The ask-the-human seam a spawn was never taught about -- {Seam}'s
       # `askers` default, answering the one message a spawn sends it.
       #
@@ -443,7 +454,8 @@ module Lain
       # axes the SESSION's posture governs (T11): the approval policy a tier-3
       # call must pass, and which capabilities a child may hold at all -- plus
       # the run's ask-the-human seam (T10), which is where a child gets an
-      # asker OF ITS OWN rather than inheriting the parent's.
+      # asker OF ITS OWN rather than inheriting the parent's, and the session's
+      # sensitivity policy, which is the PATH half of the same gate.
       #
       # They were six loose keywords on three signatures ({Subagent},
       # {ChildBuilder}, {Skill::RoleSpawn}) plus one Hash literal in
@@ -472,10 +484,13 @@ module Lain
       # `Channel::Null.instance`, which IS shareable. Neither is `askers`, whose
       # default is a module: T10 added a ninth member and moved that claim in
       # NEITHER direction, which is the thing a new member has to say out loud.
+      # The tenth, `sensitivity`, moves it in NEITHER direction either: its
+      # default is a frozen {Sensitivity::Policy::Null} instance, which IS
+      # shareable, and the live one holds a frozen classifier.
       # This bundles collaborators; it is not a value in the {Event}/{Canonical}
       # sense.
       Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
-                         :gate_policy, :permits, :askers) do
+                         :gate_policy, :permits, :askers, :sensitivity) do
         # Everything after `parent` defaults to its Null object, so a caller who
         # wires none of them gets byte-identically what the pre-seam constructors'
         # own defaults gave -- {UNGATED} and {Mode::Posture::Permits::All} are the
@@ -484,7 +499,8 @@ module Lain
         # loud failure, unwritten.
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
-                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers)
+                       gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
+                       sensitivity: UNJUDGED)
           super
         end
 
@@ -794,7 +810,15 @@ module Lain
         # it be refused anyway. Under `schema` there is no refusal layer to sit
         # behind -- a name outside the rendered set resolves to no tool, so the
         # gate declines it and {Effect::Handler::Live} reports the unknown tool.
-        def gated(inner) = Effect::Handler::Gate.new(policy: @seam.gate_policy, inner:)
+        # The seam carries BOTH gating axes, and the second one is not optional:
+        # a child gate built without the session's sensitivity policy would let
+        # a subagent read a path its parent must ask about -- a privilege
+        # inversion, since the child is the LESS supervised of the two. It is
+        # read per call through the same board thunk `gate_policy` travels, so
+        # the two can never resolve to different sessions.
+        def gated(inner)
+          Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:)
+        end
       end
     end
   end

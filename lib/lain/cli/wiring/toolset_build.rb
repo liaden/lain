@@ -61,18 +61,18 @@ module Lain
         # {Context::ModelSwitch} / {Approval::PolicySwitch} rule: a live change
         # is a slot the holder already has, never a setter on the holder.
         #
-        # The two are separate objects because they read separate switches and
+        # The three are separate objects because they read separate slots and
         # answer separate ducks -- one `include?(name)`, one
-        # `call(effect, context)`. Each is exactly the one message its consumer
-        # asks, which is what keeps them delegators rather than second
-        # implementations of a Permits and a policy.
+        # `call(effect, context)`, one `gates?(effect)`. Each is exactly the one
+        # message its consumer asks, which is what keeps them delegators rather
+        # than second implementations of a Permits, a policy and a classifier.
         #
-        # ⚠️ The two axes do NOT have the same liveness, and the difference is
-        # visible: `gate_policy` is consulted per CALL, so a flip reaches a
-        # running child's next tool call, while `permits` is consulted per
-        # SPAWN, so a child already running keeps the plain {Toolset} it was
-        # rendered. See {Tools::Subagent::ChildBuilder#permitted} for what that
-        # means for an in-flight `:actor` under `/mode plan`.
+        # ⚠️ The axes do NOT all have the same liveness, and the difference is
+        # visible: `gate_policy` and `sensitivity` are consulted per CALL, so a
+        # change reaches a running child's next tool call, while `permits` is
+        # consulted per SPAWN, so a child already running keeps the plain
+        # {Toolset} it was rendered. See {Tools::Subagent::ChildBuilder#permitted}
+        # for what that means for an in-flight `:actor` under `/mode plan`.
         PosturePermits = Data.define(:board) do
           def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
         end
@@ -84,6 +84,19 @@ module Lain
         # parent's.
         LivePolicy = Data.define(:board) do
           def call(effect, context) = board.call.policy_switch.call(effect, context)
+        end
+
+        # The PATH half of the same gate, over the same thunk. Not folded into
+        # {LivePolicy}: the gate asks its policy `call(effect, context)` and its
+        # sensitivity `gates?(effect)`, two different ducks at two different
+        # points -- one decides, one selects what gets decided.
+        #
+        # Reading it through the board rather than capturing the policy is what
+        # makes the privilege inversion unrepresentable: a child's gate and its
+        # parent's resolve the SAME board and therefore the same one policy, so
+        # they cannot be wired to disagree about which paths are sensitive.
+        LiveSensitivity = Data.define(:board) do
+          def gates?(effect) = board.call.sensitivity.gates?(effect)
         end
 
         # A frozen {Lain::Mode} answers `#posture` exactly as {Mode::Switch}
@@ -112,6 +125,7 @@ module Lain
         NoSwitchboard = Class.new do
           def policy_switch = Lain::Tools::Subagent::UNGATED
           def mode_switch = UNSWITCHED
+          def sensitivity = Lain::Sensitivity::Policy::Null.instance
 
           def inspect = "Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard"
           alias_method :to_s, :inspect
@@ -281,7 +295,8 @@ module Lain
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           journal:, supervisor:, observer:, askers:,
                                           gate_policy: LivePolicy.new(board: switchboard),
-                                          permits: PosturePermits.new(board: switchboard))
+                                          permits: PosturePermits.new(board: switchboard),
+                                          sensitivity: LiveSensitivity.new(board: switchboard))
         end
 
         # One seam serves every role: the role, policy, and persona are chosen

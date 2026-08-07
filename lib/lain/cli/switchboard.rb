@@ -47,7 +47,12 @@ module Lain
       # ("which rungs are in force, in what order") and no authority. That is the
       # same line {LiveToolset} draws below, and it is why it can sit beside the
       # switches without being one.
-      attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset
+      # `sensitivity` sits beside `ladder` for the same reason and on the same
+      # terms: it is a frozen {Sensitivity::Policy} with no writer, so exposing
+      # it hands out the reading ("which paths this session gates") and no
+      # authority. It is read here by the parent's gate and, through the board
+      # thunk, by every child's -- ONE policy, so the two cannot disagree.
+      attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset, :sensitivity
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
@@ -58,6 +63,16 @@ module Lain
       # attenuation is monotone, so every posture resolves from the set the
       # session was built with and never from what the previous posture left
       # behind (see {Mode::Resolution}'s note on `base:`).
+      #
+      # @param chronicle [#record_journal] the run's chronicle; its journal is
+      #   what the switches record onto
+      # @param options [Hash] the CLI's parsed surface flags
+      # @param model [String] the model in force until the first /model
+      # @param toolset [Lain::Toolset] the run's BASE capability set
+      # @option options [Boolean] :yolo start approving everything, with no
+      #   queue -- the only flag this entry reads off `options`, so a board
+      #   built here differs from `new` in exactly that one resolution
+      # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:)
         new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:)
       end
@@ -71,7 +86,12 @@ module Lain
       #   the model would be shown no tools at all and `/mode plan` would raise
       #   {Toolset::UnknownTool} on a name the run really does hold. A forgotten
       #   collaborator must be an ArgumentError here, not a mystery one turn on.
-      def initialize(journal:, yolo:, model:, toolset:)
+      # @param sensitivity [#gates?] which PATHS this session gates, whatever
+      #   the tool's own tier. {Sensitivity::Policy::Null} by default, so a
+      #   session that resolved no project root behaves byte-for-byte as it did
+      #   before this axis existed.
+      def initialize(journal:, yolo:, model:, toolset:, sensitivity: Sensitivity::Policy::Null.instance)
+        @sensitivity = sensitivity
         @approvals = yolo ? nil : Approval::Queue.new(journal:)
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
@@ -85,7 +105,7 @@ module Lain
       # The session's approval gate over `inner`: the Gate holds this board's
       # ONE policy switch, so /yolo flips and posture flips both reach it while
       # the Gate itself stays construction-fixed.
-      def gate(inner:) = Effect::Handler::Gate.new(policy: policy_switch, inner:)
+      def gate(inner:) = Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:)
 
       # This board's contribution to the {Command::Surface}: the three switches,
       # plus /approve's inline drain prompt over the SAME conductor-routed

@@ -52,9 +52,17 @@ module Lain
         #   decision; receives the inner ToolCall even when wrapped in an Approval
         # @param inner [Lain::Effect::Handler, nil] performs the effect once
         #   approved, and the single source of truth for what a tool name resolves to
-        def initialize(policy: DenyAll.new, inner: nil)
+        # @param sensitivity [#gates?] the second gating axis, `(effect) ->
+        #   Boolean`, over the PATH a call names rather than the tool's tier.
+        #   Resolved in the default expression rather than held in a constant
+        #   here: `lain.rb` loads `lain/effect` seven entries BEFORE
+        #   `lain/sensitivity`, so a constant in this class body is a hard
+        #   NameError at load -- the debt `mode/resolution.rb` records and
+        #   defers the same way.
+        def initialize(policy: DenyAll.new, inner: nil, sensitivity: Sensitivity::Policy::Null.instance)
           super(inner:)
           @policy = policy
+          @sensitivity = sensitivity
         end
 
         def handles?(effect) = effect.approval? || gated_tool_call?(effect)
@@ -85,8 +93,16 @@ module Lain
           # the executor will dispatch. A name inner does not hold (nil) is not
           # this handler's problem to report: it falls through to inner, which
           # raises the usual unknown-tool error the way any declined effect does.
+          # Two axes, OR'd: the TIER the tool declares about itself, and the
+          # PATH this particular call names ({Sensitivity::Policy}). Neither can
+          # ungate the other -- a policy that gates nothing leaves `bash` gated,
+          # and a tier-1 tool still reaches a human for `.env`.
+          #
+          # Still behind the nil check, so the unknown-tool contract above is
+          # unchanged: a name inner does not hold falls through to be reported
+          # rather than being gated on a path in an input nothing will read.
           tool = tool_named(effect.name)
-          !tool.nil? && tool.requires_approval?
+          !tool.nil? && (tool.requires_approval? || @sensitivity.gates?(effect))
         end
       end
     end

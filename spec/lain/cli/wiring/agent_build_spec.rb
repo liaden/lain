@@ -261,6 +261,36 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
       expect(resolved.policy_switch.current).not_to be_a(Lain::Effect::Handler::Gate::ApproveAll)
     end
 
+    # T11's third axis, over the SAME seam and the SAME thunk. It matters that
+    # both chains resolve one board rather than two: a `LiveSensitivity` built
+    # over a second thunk would answer a different session's policy, and every
+    # behavioural check would still agree while nothing was configured.
+    def child_sensitivity = wiring.role_spawn.seam.sensitivity
+
+    it "resolves a child's sensitivity through the run's own board, not the ungated default" do
+      wire
+
+      expect(child_sensitivity.board.call).to be_a(Lain::CLI::Switchboard)
+      expect(child_sensitivity.board.call).not_to be(Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard)
+    end
+
+    # The identity that makes the privilege inversion unrepresentable: ONE
+    # board, so one {Sensitivity::Policy}, so the paths a child's gate refuses
+    # are the paths its parent's gate refuses -- by construction rather than by
+    # two wirings agreeing. A second thunk here would satisfy every behavioural
+    # check in this suite and still point at a different session.
+    #
+    # `#sensitivity` is read off the resolved board rather than off Wiring,
+    # which keeps no public reader for it: the board IS the parent gate's
+    # source, so reading its slot is reading what the parent consults.
+    it "resolves that sensitivity from the same board its gate policy resolves" do
+      wire
+      board = child_sensitivity.board.call
+
+      expect(board).to be(child_gate_policy.board.call)
+      expect(child_sensitivity.board.call.sensitivity).to be(board.sensitivity)
+    end
+
     # The late half, which the two above cannot see: the thunk closes over an
     # IVAR, so it must answer the board that is there WHEN IT IS CALLED, not
     # one captured while the toolset was being built -- at which point the memo

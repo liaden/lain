@@ -23,11 +23,14 @@ RSpec.describe Lain::Tools::Subagent do
     Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:)
   end
 
+  # `**seam` forwards the loose seam members a spawn is adopted over -- the
+  # gating pair, in practice -- so an example can wire one without restating the
+  # six collaborators every other example shares.
   def build_subagent(provider:, policy: spawn_policy, parent: self.parent,
-                     journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union)
+                     journal: Lain::Channel::Null.instance, max_depth: 3, toolset: union, **seam)
     described_class.new(
       provider:, context_factory: -> { child_context }, toolset:, policy:,
-      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:
+      parent:, journal:, budget: Lain::Agent::Budget.new, max_depth:, **seam
     )
   end
 
@@ -610,6 +613,138 @@ RSpec.describe Lain::Tools::Subagent do
       second_results = tool_result_blocks(tool.last_child)
       expect(second_results.first["is_error"]).to be(true)
       expect(File.read(path)).to eq("goodbye world")
+    end
+  end
+
+  # ---- T11: the PATH boundary reaches a child, or it is a privilege inversion -
+  #
+  # A child's gate is built HERE ({ChildBuilder#gated}), from the seam. So a
+  # sensitivity policy that reached the parent's gate and not the seam would
+  # leave every subagent able to read what its parent must ask about -- and the
+  # child is the LESS supervised of the two, so that is an inversion rather than
+  # a wiring omission to fix later.
+  #
+  # Driven end to end through a real child loop and a real ReadFile, because
+  # what is being asserted is about the gate a child really runs behind. The
+  # discriminator is the two RESULTS: a refusal names the approval, a permitted
+  # read hands back the bytes.
+  describe "a sensitive path a child names for itself" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmpdir = dir
+        example.run
+      end
+    end
+
+    attr_reader :tmpdir
+
+    let(:secret) do
+      path = File.join(tmpdir, ".env")
+      File.write(path, "TOKEN=shhh")
+      path
+    end
+    let(:sensitivity) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: tmpdir))
+    end
+
+    def child_reads(path, **seam)
+      tool = build_subagent(provider: mock(tool_response(["r1", "read_file", { "path" => path }]),
+                                           text_response("done")),
+                            **seam)
+      tool.call({ "prompt" => "read it" }, invocation)
+      tool.last_child.to_a
+          .select { |turn| turn.role == "user" }
+          .flat_map(&:content)
+          .find { |block| block["type"] == "tool_result" }
+    end
+
+    it "sends the child's read of .env through the same approval policy its parent asks" do
+      result = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+
+      expect(result["is_error"]).to be(true)
+      expect(result["content"]).to include("approval denied")
+      expect(result["content"]).to include("read_file")
+    end
+
+    # The other half of the discriminator, and the mutation guard: with the
+    # policy absent the identical call is NOT gated and the bytes come back. An
+    # assertion that only pinned the refusal would pass against a gate that
+    # refused every read there is.
+    it "leaves the same read ungated when no sensitivity policy travelled the seam" do
+      result = child_reads(secret, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new)
+
+      expect(result["is_error"]).to be(false)
+      expect(result["content"]).to include("TOKEN=shhh")
+    end
+
+    it "leaves an ordinary path ungated, so the boundary is the path and not the tool" do
+      ordinary = File.join(tmpdir, "notes.md")
+      File.write(ordinary, "nothing secret")
+
+      result = child_reads(ordinary, gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+
+      expect(result["is_error"]).to be(false)
+      expect(result["content"]).to include("nothing secret")
+    end
+
+    # Two spawns deep, which is the level the direct-child examples above cannot
+    # see. The seam travels by {Subagent#descend} -> {ChildBuilder#config} ->
+    # `@seam.with(parent:)`, so a GRANDCHILD's gate is built from a COPY of the
+    # seam rather than from the object the session wired. A `with` that dropped
+    # the member, or a `descend` that rebuilt the seam from its required members
+    # only, would leave the DEEPEST agent -- the least supervised one in the run
+    # -- the only one able to read the file.
+    #
+    # The grandchild's tool_result is read off the request that FOLLOWS it,
+    # because `last_child` is the outer spawn's timeline and the grandchild's
+    # own is nested one further down.
+    def nesting_provider
+      mock(tool_response(["c1", "subagent", { "prompt" => "go deeper" }]),
+           tool_response(["g1", "read_file", { "path" => secret }]),
+           text_response("grandchild done"),
+           text_response("child done"))
+    end
+
+    def two_deep(provider, **seam)
+      reader = Lain::Toolset.new([Lain::Tools::ReadFile.new])
+      inner = build_subagent(provider:, max_depth: 9, toolset: reader, **seam)
+      build_subagent(provider:, max_depth: 2, toolset: Lain::Toolset.new(reader.to_a + [inner]),
+                     policy: spawn_policy(only: %i[read_file subagent]), **seam)
+    end
+
+    def grandchild_result(**seam)
+      provider = nesting_provider
+      two_deep(provider, **seam).call({ "prompt" => "start" }, invocation)
+
+      provider.requests[2].messages.flat_map { |message| message["content"] }
+                                   .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+    end
+
+    it "gates a GRANDCHILD's read of .env, two spawns deep" do
+      refusal = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::DenyAll.new, sensitivity:)
+
+      expect(refusal["is_error"]).to be(true)
+      expect(refusal["content"]).to include("approval denied")
+    end
+
+    # The control, without which a probe that gated every read there is would
+    # score as a pass at this depth too.
+    it "hands the grandchild the bytes when no policy travelled the seam" do
+      leaked = grandchild_result(gate_policy: Lain::Effect::Handler::Gate::DenyAll.new)
+
+      expect(leaked["is_error"]).to be(false)
+      expect(leaked["content"]).to include("TOKEN=shhh")
+    end
+
+    # The seam's own default, said as a value rather than as behaviour: a seam
+    # nobody taught about paths must carry the ONE shared Null, or two otherwise
+    # identical Seams stop comparing equal.
+    it "defaults to the one shared Null policy, so unwired seams still compare equal" do
+      seam = Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: -> {}, parent: :pa)
+
+      expect(seam.sensitivity).to be(Lain::Sensitivity::Policy::Null.instance)
+      expect(seam).to eq(Lain::Tools::Subagent::Seam.new(provider: :p, context_factory: seam.context_factory,
+                                                         parent: :pa))
     end
   end
 
