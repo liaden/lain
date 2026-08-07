@@ -7,10 +7,37 @@ module Lain
     # Agent nor any tool ever constructs one directly.
 
     module Guards
-      # A read record must name the file read.
+      # A read record must name the file read, and say whether the model saw
+      # the WHOLE file. `presence:` is wrong for `complete` -- it would reject
+      # `false`, which is exactly the partial read this field exists to express
+      # (the reason {SessionPin}'s `pinned` avoids it too).
       class SessionRead < Guard
         attribute :path
+        attribute :complete
         validates :path, presence: { message: "must name the file read, got nil" }
+        validate :complete_is_strictly_boolean
+
+        private
+
+        # An explicit identity test rather than `inclusion: { in: [true, false] }`,
+        # which is what this started as and which does NOT deliver the strictness
+        # it advertises: ActiveModel's InclusionValidator reads an ARRAY value as
+        # "every member must be included", and `[].all?` is vacuously true. So
+        # `complete: []` passed a guard whose entire job is to admit true or
+        # false, and journaled `"complete":[]`. Replay's own check rejects that,
+        # so the security direction held -- but a guard that lies about its own
+        # strictness is worth closing where the record is written.
+        #
+        # {Session::ReadSet#record} carries the same check, and the duplication
+        # is deliberate defence in depth: that one owns the in-memory read-set,
+        # this one owns the record on its way to disk, and a bare Session
+        # reaches the first without ever passing the second. Neither is the
+        # redundant copy.
+        def complete_is_strictly_boolean
+          return if [true, false].include?(complete)
+
+          errors.add(:complete, "must be true or false, got #{complete.inspect}")
+        end
       end
 
       # A pin record must name the turn it pins and say WHICH WAY the pin
@@ -25,22 +52,29 @@ module Lain
       end
     end
 
-    # One path, the first time {Session#read?} would flip false -> true for
-    # it this session. `path` is the SAME `File.expand_path`-normalized form
-    # {Session} keys its read-set on (not the model's raw spelling) --
-    # consistent with every other path already reachable from this journal
-    # (a `tool_result`'s quoted file contents), and it is what
-    # {SessionRecord::Replay} feeds straight back into a fresh Session's
-    # `record_read` with no re-normalization required. A RE-read never lands
-    # a second record: that dedupe is what keeps a big read/edit loop from
-    # journaling one line per iteration.
-    SessionRead = Data.define(:path) do
+    # One path, each time the read-set's state for it TRANSITIONS this session.
+    # `path` is the SAME `File.expand_path`-normalized form {Session} keys its
+    # read-set on (not the model's raw spelling) -- consistent with every other
+    # path already reachable from this journal (a `tool_result`'s quoted file
+    # contents), and it is what {SessionRecord::Replay} feeds straight back
+    # into a fresh Session's `record_read` with no re-normalization required.
+    # A RE-read at the same completeness never lands a second record: that
+    # dedupe is what keeps a big read/edit loop from journaling one line per
+    # iteration.
+    #
+    # `complete` says whether the model saw the whole file or a redacted
+    # rendering of it. It is what makes the stream replayable at all: without
+    # it a partial read rebuilds as a whole one, and a resumed run would permit
+    # the very clobber the read boundary refuses. A partial read later upgraded
+    # to a complete one is therefore TWO records, folding to complete -- the
+    # model saw two different things, and the record stream says so.
+    SessionRead = Data.define(:path, :complete) do
       include Journalable
 
-      def initialize(path:)
-        Guards::SessionRead.check!(path:)
+      def initialize(path:, complete:)
+        Guards::SessionRead.check!(path:, complete:)
 
-        super(path: path.dup.freeze)
+        super(path: path.dup.freeze, complete:)
       end
     end
 

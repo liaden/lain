@@ -4,11 +4,15 @@ module Lain
   module SessionRecord
     # Rebuilds a fresh {Session}'s run-state from a session record -- the
     # read side of {Session::Journaled} and {Tools::TodoWrite}: a
-    # {Telemetry::SessionRead} folds straight into {Session#record_read}, and
-    # a {Telemetry::TodoSnapshot} folds into {Session#write_todos} in
-    # RECORDED order, so its own replace-not-merge semantics do the rest --
-    # folding N snapshots and keeping only the last one's effect is exactly
-    # what one direct call already does, applied N times.
+    # {Telemetry::SessionRead} folds straight into {Session#record_read} --
+    # carrying its completeness, so a partial read cannot come back as a whole
+    # one (see `#completeness`); the read-set's own add-only monotonicity then
+    # folds a partial-then-complete pair to complete however the two records
+    # are ordered in the file. A {Telemetry::TodoSnapshot} folds into
+    # {Session#write_todos} in RECORDED order, so its own replace-not-merge
+    # semantics do the rest -- folding N snapshots and keeping only the last
+    # one's effect is exactly what one direct call already does, applied N
+    # times.
     #
     # The manifest needs no third record type (T16's card, AC2): a run's
     # `turn` / `memory_root` chain is already exactly what
@@ -55,7 +59,7 @@ module Lain
       #   reconstructs
       def session
         Session.new(memory:).tap do |fresh|
-          reads.each { |record| fresh.record_read(record.fetch("path")) }
+          reads.each { |record| fresh.record_read(record.fetch("path"), complete: completeness(record)) }
           pins.each { |record| apply_pin(fresh, record) }
           todo_records.each { |record| fresh.write_todos(items(record)) }
         end
@@ -76,6 +80,30 @@ module Lain
 
       def reads
         Journal.records(@records, type: SESSION_READ_TYPE)
+      end
+
+      # A MISSING `complete` key means the read was whole, and that is a
+      # historical fact rather than a permissive default: the only thing that
+      # can record a partial read is the secret-redacting read middleware,
+      # which postdates this field. So no writer ever existed that could emit a
+      # partial read without the key, and its absence is positive evidence of a
+      # whole read. Do not "fix" this into a raise -- it would break `--resume`
+      # for every journal written before the field, to guard a case that cannot
+      # occur.
+      #
+      # A key that IS present gets the same strictness {#apply_pin} applies to
+      # `pinned`: a real boolean, not a truthy value, because a salvaged or
+      # hand-edited journal is exactly what these records must survive and
+      # `"false"` rebuilding as COMPLETE is the unsafe direction. Loud beats
+      # plausible, for every journal written from here on.
+      def completeness(record)
+        complete = record.fetch("complete", true)
+        unless [true, false].include?(complete)
+          raise Malformed, "session_read for #{record.fetch("path").inspect} must carry complete true or false, " \
+                           "got #{complete.inspect}"
+        end
+
+        complete
       end
 
       def pins

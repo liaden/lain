@@ -614,6 +614,68 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(replayed_session(lines).read?("/tmp/a.rb")).to be(true)
     end
 
+    # T22: completeness has to survive the round trip, or a resumed run could
+    # clobber a file the model only ever saw redacted.
+    describe "read completeness round-trips" do
+      def journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
+
+      it "replays a partial read as partial, not as a whole read" do
+        journaled.record_read("/tmp/secret.rb", complete: false)
+
+        fresh = replayed_session
+
+        expect(fresh.read?("/tmp/secret.rb")).to be(false)
+        expect(fresh.partially_read?("/tmp/secret.rb")).to be(true)
+      end
+
+      # Two lines folding to one final state -- the end state is what a resume
+      # has to reconstruct, not the line count.
+      it "replays a partial-then-complete sequence as complete" do
+        writer = journaled
+        writer.record_read("/tmp/a.rb", complete: false)
+        writer.record_read("/tmp/a.rb")
+
+        expect(replayed_session.read?("/tmp/a.rb")).to be(true)
+      end
+
+      # The security property: the refusal has to survive the resume, or the
+      # boundary only holds within a single process.
+      it "still refuses edit_file after replaying a partial read", :seam do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "hello.txt")
+          File.write(path, "hello world")
+          journaled.record_read(path, complete: false)
+
+          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: replayed_session)
+
+          expect do
+            Lain::Tools::EditFile.new.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation)
+          end.to raise_error(Lain::Tool::ContractViolation)
+          expect(File.read(path)).to eq("hello world")
+        end
+      end
+
+      # A journal written before T22 has no `complete` key. Its absence is
+      # POSITIVE EVIDENCE that the read was whole -- RedactSecretReads (the
+      # only thing that can record a partial read) does not exist yet, so no
+      # writer could have produced a partial read without the key. This is a
+      # historical fact, not a permissive default; do not "fix" it into a raise.
+      it "replays a pre-T22 record with no complete key as a whole read" do
+        legacy = [{ "type" => "session_read", "path" => "/tmp/old.rb" }]
+
+        expect(replayed_session(legacy).read?("/tmp/old.rb")).to be(true)
+      end
+
+      # Strictness still bites where it can: a key that IS present must be a
+      # real boolean, matching what the writer's guard promised.
+      it "raises on a present-but-non-boolean complete, in Replay's loud style" do
+        bogus = [{ "type" => "session_read", "path" => "/tmp/old.rb", "complete" => "false" }]
+
+        expect { replayed_session(bogus) }
+          .to raise_error(Lain::SessionRecord::Replay::Malformed, /complete true or false/)
+      end
+    end
+
     it "replays cleanly to empty run-state from a journal with no session_read/todo_snapshot records" do
       Lain::SessionRecord::Scribe.new(journal:, context:, toolset:, workspace:)
 

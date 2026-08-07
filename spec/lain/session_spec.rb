@@ -31,6 +31,199 @@ RSpec.describe Lain::Session do
         expect(session.read?("./app.rb")).to be(true)
       end
     end
+
+    # The read-set's own window, so a claim about what it holds can be asserted
+    # against IT rather than borrowed from the write-set's mirror.
+    it "exposes #reads as the sorted, normalized, frozen paths" do
+      session.record_read("/tmp/b.rb")
+      session.record_read("/tmp/./a.rb")
+      session.record_read("/tmp/b.rb")
+
+      expect(session.reads).to eq(["/tmp/a.rb", "/tmp/b.rb"])
+      expect(session.reads).to be_frozen
+    end
+  end
+
+  # T22: the read-set distinguishes a WHOLE read from a partial one. A model
+  # that saw only `<redacted:1>` and then writes the file clobbers every secret
+  # in it, so `read?` answers true only for a complete read and
+  # `partially_read?` names the other case -- letting a refusal say WHY rather
+  # than claim the file was never read.
+  describe "read completeness" do
+    it "treats a read with no completeness argument as complete" do
+      session.record_read("/tmp/app.rb")
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+      expect(session.partially_read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "records a partial read as read-but-not-complete" do
+      session.record_read("/tmp/app.rb", complete: false)
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+      expect(session.partially_read?("/tmp/app.rb")).to be(true)
+    end
+
+    it "distinguishes a partial read from no read at all" do
+      session.record_read("/tmp/partial.rb", complete: false)
+
+      expect(session.partially_read?("/tmp/partial.rb")).to be(true)
+      expect(session.read?("/tmp/partial.rb")).to be(false)
+
+      expect(session.partially_read?("/tmp/never.rb")).to be(false)
+      expect(session.read?("/tmp/never.rb")).to be(false)
+    end
+
+    it "upgrades a partial read when the same path is later read complete" do
+      session.record_read("/tmp/app.rb", complete: false)
+      session.record_read("/tmp/app.rb")
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+      expect(session.partially_read?("/tmp/app.rb")).to be(false)
+    end
+
+    # The monotonicity property the parallel-safe tools depend on: completeness
+    # is add-only, so two sibling fibers reading the same file cannot race a
+    # complete read back down to a partial one. An implementation that stores
+    # the bit as a plain overwrite fails exactly here.
+    it "never downgrades a complete read when the same path is later read partially" do
+      session.record_read("/tmp/app.rb")
+      session.record_read("/tmp/app.rb", complete: false)
+
+      expect(session.read?("/tmp/app.rb")).to be(true)
+      expect(session.partially_read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "carries completeness across spellings, as the read-set carries membership" do
+      Dir.chdir("/tmp") do
+        session.record_read("./app.rb", complete: false)
+
+        expect(session.partially_read?("app.rb")).to be(true)
+
+        session.record_read("app.rb")
+
+        expect(session.read?("./app.rb")).to be(true)
+      end
+    end
+
+    # PANEL FINDING (fix 1). The write boundary trusted TRUTHINESS while the
+    # Replay boundary demanded a strict boolean, so the two disagreed in the
+    # unsafe direction: `complete: "false"` recorded a COMPLETE read. The
+    # refusal has to land before either Set is touched, or a caller that
+    # rescues is left holding live state MORE permissive than what replays --
+    # inverting the one-way property the whole design rests on.
+    it "refuses a non-boolean completeness rather than reading it for truthiness" do
+      ["false", "true", 0, 1, nil, "", :yes, [], {}].each do |bogus|
+        expect { session.record_read("/tmp/app.rb", complete: bogus) }
+          .to raise_error(ArgumentError, /complete must be true or false/), "accepted #{bogus.inspect}"
+      end
+    end
+
+    it "records NOTHING when it refuses a non-boolean -- the check precedes both mutations" do
+      expect { session.record_read("/tmp/app.rb", complete: "false") }.to raise_error(ArgumentError)
+
+      expect(session.read?("/tmp/app.rb")).to be(false)
+      expect(session.partially_read?("/tmp/app.rb")).to be(false)
+      expect(session.reads).to eq([])
+    end
+
+    it "lists a partially read path in #reads -- it was read, just not wholly" do
+      session.record_read("/tmp/partial.rb", complete: false)
+
+      expect(session.reads).to eq(["/tmp/partial.rb"])
+      expect(session.read?("/tmp/partial.rb")).to be(false)
+    end
+  end
+
+  # T22 drives the REAL tools here rather than restating their preconditions,
+  # so the assertion is about the contract `edit_file`/`write_file` actually
+  # declare. The file's bytes are asserted too: a refusal that did not in fact
+  # protect the contents would otherwise pass on `is_error` alone.
+  describe "the edit contract and read completeness", :seam do
+    # A refused precondition RAISES {Lain::Tool::ContractViolation}; it does
+    # not return an error Result. So the attempt is handed over unevaluated and
+    # each example expects its own shape. The file's bytes come back either
+    # way: a refusal that did not in fact protect the contents would otherwise
+    # pass on the exception alone.
+    def edit_after(*completions)
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "hello.txt")
+        File.write(path, "hello world")
+        session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
+        completions.each { |complete| session.record_read(path, complete:) }
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+        edit = { path: "hello.txt", old_string: "hello", new_string: "goodbye" }
+
+        yield -> { Lain::Tools::EditFile.new.call(edit, invocation) }, -> { File.read(path) }
+      end
+    end
+
+    it "satisfies edit_file's precondition after a complete read" do
+      edit_after(true) do |attempt, contents|
+        result = attempt.call
+        expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
+        expect(contents.call).to eq("goodbye world")
+      end
+    end
+
+    # Only the exception CLASS is pinned, not its wording: the current message
+    # still says "never read", which is the thing `partially_read?` exists to
+    # let a refusal stop claiming. Sharpening it belongs with the middleware
+    # that knows the read was redacted (T15), not here.
+    it "fails edit_file's precondition after a partial read, leaving the file untouched" do
+      edit_after(false) do |attempt, contents|
+        expect { attempt.call }.to raise_error(Lain::Tool::ContractViolation)
+        expect(contents.call).to eq("hello world")
+      end
+    end
+
+    it "satisfies edit_file's precondition once a partial read is upgraded by a complete one" do
+      edit_after(false, true) do |attempt, contents|
+        result = attempt.call
+        expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
+        expect(contents.call).to eq("goodbye world")
+      end
+    end
+
+    it "keeps edit_file's precondition satisfied when a complete read is followed by a partial one" do
+      edit_after(true, false) do |attempt, contents|
+        result = attempt.call
+        expect(result.is_error).to be(false), -> { "edit_file refused: #{result.content}" }
+        expect(contents.call).to eq("goodbye world")
+      end
+    end
+
+    # write_file's contract is NARROWER than edit_file's: it allows a create
+    # over a path that does not exist, which no read could ever have covered.
+    # Completeness must not accidentally block that.
+    it "still lets write_file create a path that was never read" do
+      Dir.mktmpdir do |dir|
+        session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+
+        result = Lain::Tools::WriteFile.new.call({ path: "new.txt", content: "hi" }, invocation)
+
+        expect(result.is_error).to be(false), -> { "write_file refused: #{result.content}" }
+        expect(File.read(File.join(dir, "new.txt"))).to eq("hi")
+      end
+    end
+
+    # The case this card exists for: the model saw a redacted rendering, so an
+    # overwrite would clobber the secrets it never actually read.
+    it "refuses write_file's overwrite of a file seen only partially" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "existing.txt")
+        File.write(path, "secret")
+        session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
+        session.record_read(path, complete: false)
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+
+        expect do
+          Lain::Tools::WriteFile.new.call({ path: "existing.txt", content: "clobbered" }, invocation)
+        end.to raise_error(Lain::Tool::ContractViolation)
+        expect(File.read(path)).to eq("secret")
+      end
+    end
   end
 
   # T7: the base a relative path resolves against is the SESSION's worker cwd,
@@ -77,6 +270,17 @@ RSpec.describe Lain::Session do
       through_session = spellings.to_h { |spelling| [spelling, described_class.normalize_path(spelling, cwd:)] }
 
       expect(through_session).to eq(spellings.to_h { |spelling| [spelling, worker_env.resolve(spelling)] })
+    end
+
+    # normalize_path's `to_s` claims to cover "the Symbol and nil spellings a
+    # Set query may arrive in", but nil and "" both already resolve to cwd
+    # through WorkerEnv#resolve itself -- a SYMBOL is the only input that
+    # discriminates. It cannot join the equivalence example above, because that
+    # compares against `worker_env.resolve` RAW and File.expand_path(:sym, cwd)
+    # is a TypeError; supplying the coercion is the whole point of the clause.
+    it "coerces a Symbol spelling, the only input its to_s actually covers" do
+      expect(described_class.normalize_path(:notes, cwd:)).to eq(File.join(cwd, "notes"))
+      expect { Lain::WorkerEnv.new(cwd:, env: {}).resolve(:notes) }.to raise_error(TypeError)
     end
 
     it "ignores a Dir.chdir under it -- the session's cwd is the base, the process's is not" do
@@ -245,6 +449,17 @@ RSpec.describe Lain::Session do
     it "satisfies the Session duck without raising: record_read is a no-op, read? is false" do
       expect { null.record_read("/tmp/app.rb") }.not_to raise_error
       expect(null.read?("/tmp/app.rb")).to be(false)
+      expect(null.reads).to eq([])
+    end
+
+    # T22: the completeness duck too, so a tool holding a Null never has to
+    # guard before asking. Records nothing, so it reports NEITHER read nor
+    # partially read -- the "no read at all" answer, for every path.
+    it "keeps the completeness duck a no-op: a partial read records nothing either" do
+      expect { null.record_read("/tmp/app.rb", complete: false) }.not_to raise_error
+      expect(null.read?("/tmp/app.rb")).to be(false)
+      expect(null.partially_read?("/tmp/app.rb")).to be(false)
+      expect(null.reads).to eq([])
     end
 
     it "keeps the write-set duck a no-op: record_write records nothing, writes stays empty" do
@@ -342,15 +557,15 @@ RSpec.describe Lain::Session do
       # Asserted as BYTE-identity, not as `read?(recorded)`: `read?`
       # re-normalizes its argument, so it would answer true for any spelling
       # that merely resolves to the same file, and a decorator journaling a
-      # DIFFERENT string than the read-set holds would still pass. `#writes` is
-      # a public window onto the same {Session#normalize}, so comparing against
-      # it costs nothing and closes that gap.
+      # DIFFERENT string than the read-set holds would still pass. T22 gave the
+      # read-set its own `#reads` window, so this compares against the very set
+      # under discussion rather than borrowing the write-set's mirror.
       it "journals the very string the read-set holds, not merely a spelling of it" do
         journaled.record_read("notes.md")
 
         recorded = of_type("session_read").map(&:path)
         expect(recorded).to eq([File.join(cwd, "notes.md")])
-        expect(recorded).to eq(inner.record_write("notes.md").writes)
+        expect(recorded).to eq(inner.reads)
       end
     end
 
@@ -365,8 +580,93 @@ RSpec.describe Lain::Session do
     # own (the validate-then-freeze convention): a pathless read record could
     # never replay, so it must fail loudly at construction, not at load.
     it "pins SessionRead's guard: a nil path raises at construction" do
-      expect { Lain::Telemetry::SessionRead.new(path: nil) }
+      expect { Lain::Telemetry::SessionRead.new(path: nil, complete: true) }
         .to raise_error(ArgumentError, "path must name the file read, got nil")
+    end
+
+    # `complete` follows SessionPin's `pinned` precedent exactly: a STRICT
+    # boolean, never `presence:`, which would silently reject `false` -- and
+    # `false` is the redacted read this field exists to express.
+    # PANEL FINDING (fix 3): `[]` and `{}` are in this list deliberately.
+    # ActiveModel's InclusionValidator reads an ARRAY value as "every member
+    # must be in the set", and `[].all?` is vacuously true -- so an `inclusion:`
+    # validator accepted `complete: []` and journaled `"complete":[]` while its
+    # docstring claimed strict-boolean. The guard is an explicit check now.
+    it "pins SessionRead's completeness guard: a non-boolean raises at construction" do
+      ["false", "true", 0, 1, nil, "", :yes, [], {}, [true]].each do |bogus|
+        expect { Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: bogus) }
+          .to raise_error(ArgumentError, /complete must be true or false/), "accepted #{bogus.inspect}"
+      end
+    end
+
+    it "accepts complete: false without tripping the guard" do
+      expect(Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: false).complete).to be(false)
+    end
+
+    # T22: the decorator journals a read-set STATE TRANSITION, not a call. The
+    # dedupe that keeps a read/edit loop from emitting one line per iteration
+    # has to survive the completeness bit, and each surviving line has to say
+    # WHICH thing the model saw.
+    describe "journaling read completeness" do
+      it "journals one line, flagged complete, for a whole read" do
+        journaled.record_read("/tmp/app.rb")
+
+        expect(of_type("session_read").map { |r| [r.path, r.complete] }).to eq([["/tmp/app.rb", true]])
+      end
+
+      it "journals one line, flagged incomplete, for a partial read" do
+        journaled.record_read("/tmp/app.rb", complete: false)
+
+        expect(of_type("session_read").map { |r| [r.path, r.complete] }).to eq([["/tmp/app.rb", false]])
+      end
+
+      # The flood this dedupe exists to prevent, in its new form: a loop
+      # re-reading the same REDACTED file must not journal per iteration.
+      it "journals nothing on a re-read at the same completeness" do
+        3.times { journaled.record_read("/tmp/app.rb", complete: false) }
+
+        expect(of_type("session_read").size).to eq(1)
+      end
+
+      # Two lines is correct here, and is the one case that legitimately emits
+      # a second: the model genuinely saw two different things.
+      it "journals a second line when a partial read is upgraded to a complete one" do
+        journaled.record_read("/tmp/app.rb", complete: false)
+        journaled.record_read("/tmp/app.rb")
+
+        expect(of_type("session_read").map(&:complete)).to eq([false, true])
+      end
+
+      # The mirror of the monotonicity AC, in the record stream: a complete
+      # read is never followed by a line that could replay as a downgrade.
+      it "journals nothing when a complete read is followed by a partial one" do
+        journaled.record_read("/tmp/app.rb")
+        journaled.record_read("/tmp/app.rb", complete: false)
+
+        expect(of_type("session_read").map(&:complete)).to eq([true])
+      end
+    end
+
+    # PANEL FINDING (fix 1), at the layer where it actually bit: the record
+    # guard DID raise, but only after the wrapped Session had already mutated,
+    # leaving a complete read in the set and nothing in the Journal -- live
+    # state strictly more permissive than replayed state. The refusal now
+    # happens inside the wrapped Session, so neither layer moves.
+    it "leaves neither the read-set nor the Journal touched when completeness is a non-boolean" do
+      expect { journaled.record_read("/tmp/app.rb", complete: "false") }.to raise_error(ArgumentError)
+
+      expect(inner.read?("/tmp/app.rb")).to be(false)
+      expect(inner.partially_read?("/tmp/app.rb")).to be(false)
+      expect(of_type("session_read")).to be_empty
+    end
+
+    it "forwards partially_read? and reads to the wrapped Session" do
+      journaled.record_read("/tmp/partial.rb", complete: false)
+
+      expect(journaled.partially_read?("/tmp/partial.rb")).to be(true)
+      expect(journaled.read?("/tmp/partial.rb")).to be(false)
+      expect(journaled.reads).to eq(["/tmp/partial.rb"])
+      expect(inner.partially_read?("/tmp/partial.rb")).to be(true)
     end
 
     it "journals every write_todos call as a whole-list TodoSnapshot, forwarding to the wrapped Session too" do

@@ -57,7 +57,7 @@ module Lain
     # live ENV is inherited too; see {WorkerEnv}'s additive-override note.)
     # {Session::Null} sidesteps this by recomputing {WorkerEnv.default} per call.
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default)
-      @reads = Set.new
+      @reads = ReadSet.new
       @writes = Set.new
       @pins = Set.new
       @todo_reminder = nil
@@ -100,15 +100,50 @@ module Lain
     # Record that `path` was read this session. Normalized so a later `read?`
     # cannot be defeated by a different spelling of the same file.
     #
+    # `complete: false` says the model saw only PART of the file -- today, a
+    # rendering with secrets masked. It has to be distinguishable from a whole
+    # read, because a model that saw `<redacted:1>` and then writes the file
+    # clobbers every secret in it; and it has to be distinguishable from NO
+    # read, so a refusal can say why rather than claim the file was unread.
+    #
+    # Completeness is recorded HERE rather than un-recorded from the middleware
+    # that decides to mask: {Tools::ReadFile} records its read below the
+    # middleware, so by the time masking is decided the read already happened,
+    # and the read-set has no retraction. Two ADD-ONLY sets is what keeps it
+    # monotone -- a complete read can never be undone by a later partial one,
+    # so two sibling fibers reading the same file cannot race it backwards.
+    # A single mutable flag per path would lose exactly that.
+    #
     # @return [self]
-    def record_read(path)
-      @reads << normalize(path)
+    def record_read(path, complete: true)
+      @reads.record(normalize(path), complete:)
       self
     end
 
-    # @return [Boolean] whether `path` (in any spelling) was read this session
+    # @return [Boolean] whether `path` (in any spelling) was read IN FULL this
+    #   session -- the question the edit-before-write contracts ask, so a
+    #   partial read answers false
     def read?(path)
-      @reads.include?(normalize(path))
+      @reads.complete?(normalize(path))
+    end
+
+    # @return [Boolean] whether `path` was read, but only in part -- the middle
+    #   answer between {#read?} and never-read, so a refusal can name the real
+    #   reason. Mutually exclusive with {#read?} by construction.
+    def partially_read?(path)
+      @reads.partial?(normalize(path))
+    end
+
+    # Every path read this session, complete or partial, as sorted normalized
+    # paths -- the read-set's own window, mirroring {#writes}. Sorted for the
+    # same reason: a consumer must not vary with the order reads arrived.
+    #
+    # Deliberately WIDER than {#read?}, which answers only for a complete read:
+    # a partially read path was still read, and is still listed here.
+    #
+    # @return [Array<String>]
+    def reads
+      @reads.paths
     end
 
     # Record that `path` was written this session -- the read-set's mirror,
@@ -287,20 +322,97 @@ module Lain
       list.count { |todo| todo.status == "completed" }
     end
 
+    # Which files were read, and which of those were read WHOLE -- the one
+    # concept {Session}'s read-set became once a partial read had to be
+    # distinguishable from both a complete one and from no read at all.
+    #
+    # TWO add-only sets, never a flag per path, and that is the whole design:
+    # membership and completeness both only ever move forward, so a complete
+    # read cannot be raced backwards into a partial one by a sibling fiber, and
+    # the structure itself carries the monotonicity rather than a rule some
+    # caller has to remember. A Hash of path => complete would express the same
+    # states and lose exactly that guarantee.
+    #
+    # Members arrive ALREADY normalized: path identity belongs to {Session},
+    # which owns the worker cwd, so this object never has to know about one.
+    class ReadSet
+      def initialize
+        @all = Set.new
+        @complete = Set.new
+      end
+
+      # The strict-boolean check comes FIRST, ahead of both mutations, and that
+      # ordering is the point: read for truthiness instead and `complete:
+      # "false"` records a COMPLETE read -- the unsafe direction, silently. The
+      # journal record's own guard is not a substitute, because it fires one
+      # layer out and only AFTER this has already mutated, which would leave a
+      # caller that rescues holding live state more permissive than what
+      # replays. That inverts the one-way property the design rests on.
+      #
+      # It costs nothing against the fiber-safety claim: pure Ruby with no IO,
+      # so it runs inside the same yield-free window rather than widening it.
+      #
+      # This DUPLICATES the identical check in {Telemetry::Guards::SessionRead},
+      # deliberately. Neither is redundant: this one guards the in-memory
+      # read-set, which a bare Session mutates with no journal anywhere in
+      # sight, and that one guards the record on its way to disk. Deleting
+      # either because the other exists reopens exactly one of those two
+      # boundaries.
+      #
+      # @param path [String] an already-normalized absolute path
+      # @param complete [Boolean] whether the whole file was seen
+      # @return [self]
+      def record(path, complete:)
+        unless [true, false].include?(complete)
+          raise ArgumentError, "complete must be true or false, got #{complete.inspect}"
+        end
+
+        @all << path
+        @complete << path if complete
+        self
+      end
+
+      # @return [Boolean]
+      def complete?(path) = @complete.include?(path)
+
+      # @return [Boolean]
+      def partial?(path) = @all.include?(path) && !@complete.include?(path)
+
+      # @return [Array<String>] every path recorded, complete or partial, sorted
+      def paths = @all.sort.freeze
+    end
+
     # The no-op Session, mirroring {Channel::Null} and {Sink::Null}: it satisfies
     # the same duck so a tool handed a context can always `record_read`/`read?`/
     # `write_todos` without an `if session` guard. Records nothing, reads back
     # false, offers no reminders. A single shared frozen instance -- it has no
     # state to keep.
     class Null
+      # `complete:` is accepted and discarded, but it cannot be renamed to the
+      # unused-argument underscore: it is a KEYWORD, so the name is the duck.
+      #
       # @return [self]
-      def record_read(_path)
+      def record_read(_path, complete: true) # rubocop:disable Lint/UnusedMethodArgument
         self
       end
 
       # @return [false]
       def read?(_path)
         false
+      end
+
+      # Records nothing, so every path reads back as never-read rather than as
+      # partially read -- {#read?} and this both false is the "no read at all"
+      # answer, and the pair stays mutually exclusive as on a real Session.
+      #
+      # @return [false]
+      def partially_read?(_path)
+        false
+      end
+
+      # @return [Array]
+      def reads
+        [].freeze
       end
 
       # @return [self]
@@ -400,17 +512,37 @@ module Lain
       # (docs/concurrency.md, "parallel tools") and is pinned by
       # spec/lain/session_concurrency_spec.rb; if that spec can only pass by
       # adding a lock here, the claim has failed -- escalate, don't patch.
+      # The completeness check below preserves this exactly: it adds reads to
+      # the pure-Ruby half and nothing to the journal half, so the yield-free
+      # window between check and mutate is the same size it was. Anything that
+      # moves the journal write above the mutation breaks it silently.
+      #
+      # A line is journaled on a read-set STATE TRANSITION, not on a call. With
+      # completeness that is two transitions, not one: nothing-to-recorded, and
+      # partial-to-complete. So a partial read followed by a complete one
+      # journals TWICE -- correct, because the model genuinely saw two
+      # different things -- while a re-read at the same completeness journals
+      # nothing, which is what keeps a read/edit loop over a redacted file from
+      # emitting one line per iteration. A complete read followed by a partial
+      # one journals nothing further, mirroring the read-set's own refusal to
+      # downgrade: no record stream can ever replay as a downgrade.
       #
       # @return [self]
-      def record_read(path)
-        first_read = !@session.read?(path)
-        @session.record_read(path)
-        @journal << Telemetry::SessionRead.new(path: normalized(path)) if first_read
+      def record_read(path, complete: true)
+        transition = complete ? !@session.read?(path) : !recorded?(path)
+        @session.record_read(path, complete:)
+        @journal << Telemetry::SessionRead.new(path: normalized(path), complete:) if transition
         self
       end
 
       # @return [Boolean]
       def read?(path) = @session.read?(path)
+
+      # @return [Boolean]
+      def partially_read?(path) = @session.partially_read?(path)
+
+      # @return [Array<String>]
+      def reads = @session.reads
 
       # The write-set forwards without journaling. The write's record is the
       # :snapshot event {Workspace::Snapshot} lands in the Store -- which is
@@ -488,6 +620,11 @@ module Lain
       # to be the exact string the read-set now holds, or the Journal names a
       # different file than {#read?} answers true for.
       def normalized(path) = Session.normalize_path(path, cwd: @session.worker_env.cwd)
+
+      # "Recorded at all", the union {Session#reads} lists -- the predicate a
+      # PARTIAL read tests against, since for it the transition is out of
+      # never-read, not out of not-yet-complete.
+      def recorded?(path) = @session.read?(path) || @session.partially_read?(path)
     end
   end
 end
