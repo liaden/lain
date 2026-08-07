@@ -57,8 +57,32 @@ module Lain
         #    real failure reach the screen.
         LAIN_START = "execute exists(':LainStart') ? 'LainStart' : ''"
 
+        # Suppresses the user's start screen, which would otherwise cover the
+        # cockpit from launch until the first view arrives -- a dashboard
+        # plugin (snacks.nvim, alpha, dashboard-nvim, mini.starter) draws over
+        # exactly the empty unnamed buffer nvim boots into, and the cockpit's
+        # nvim boots into nothing by design.
+        #
+        # Naming the buffer is what trips snacks' OWN guard, measured against
+        # nvim 0.12.4 + snacks: it bails with reason "buffer has a name". The
+        # neighbouring `argc(-1) > 0` guard is the more portable-looking
+        # answer and is the wrong one here -- the only argument worth passing
+        # is the project directory, and snacks RE-enables the dashboard for a
+        # lone directory argument when its explorer is on.
+        #
+        # Scheme-shaped so `:file` leaves it alone -- a bare word is taken as a
+        # relative filename and expanded against the cwd, which showed up as a
+        # buffer called `/home/joel/dev/lain/[lain]`, reading like a real file
+        # in the project that nobody could open.
+        #
+        # `lain-cockpit://`, NOT `lain://`: init.lua's fallback scan treats
+        # every `^lain://` buffer as layout-eligible, and this is a placeholder
+        # the runtime never created. It survives on tab 1; `:LainStart` lays
+        # the views out in a new tab.
+        SCRATCH_BUFFER = "file lain-cockpit://start"
+
         def nvim_pane_command
-          Shellwords.join(["nvim", *rtp_flag, "--listen", socket, "-c", LAIN_START])
+          Shellwords.join(["nvim", *rtp_flag, "--listen", socket, "-c", SCRATCH_BUFFER, "-c", LAIN_START])
         end
 
         def chat_flags = ["--nvim", socket]

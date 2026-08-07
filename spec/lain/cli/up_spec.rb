@@ -568,9 +568,34 @@ RSpec.describe Lain::CLI::Up do
         # `Up::Cockpit::LAIN_START`.
         expect(new_session_call(calls).last)
           .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
+                                  "-c", Lain::CLI::Up::Cockpit::SCRATCH_BUFFER,
                                   "-c", Lain::CLI::Up::Cockpit::LAIN_START]))
         expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
       end
+    end
+
+    # A dashboard plugin (snacks.nvim here, but alpha/dashboard-nvim/
+    # mini.starter all do it) draws over exactly the empty unnamed buffer the
+    # cockpit's nvim boots into, hiding the cockpit until the first view lands.
+    # Naming the buffer is what trips snacks' own guard -- measured against
+    # nvim 0.12.4, which bailed with reason "buffer has a name".
+    it "names the startup buffer, so a user's dashboard plugin does not cover the cockpit" do
+      Dir.mktmpdir do |runtime|
+        calls = []
+
+        cockpit_up(calls, nvim: "", paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })).call
+
+        expect(new_session_call(calls).last)
+          .to include("-c #{Shellwords.escape(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER)}")
+      end
+    end
+
+    # NOT `lain://`-prefixed: init.lua's fallback scan collects every
+    # `^lain://` buffer as layout-eligible, and this one is a placeholder the
+    # runtime never created, so a matching name would offer the layout a buffer
+    # that is not a view.
+    it "keeps the scratch name out of the lain:// namespace the plugin scans" do
+      expect(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER).not_to include("lain://")
     end
 
     # T2: the gem's own plugin/nvim ships the layout sugar this AC is about --
