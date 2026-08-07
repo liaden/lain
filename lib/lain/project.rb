@@ -117,6 +117,10 @@ end
 # from inside it.
 require_relative "project/resolver"
 
+# Reads {Resolver.config_path} and builds an {Approval::Remembered}, both from
+# method bodies only -- `lain/approval` loads well after this file.
+require_relative "project/consent"
+
 # Dotfiles nests inside Project, so it loads after the class body -- this file
 # is the project subtree's index (see CLAUDE.md, Requires).
 require_relative "project/dotfiles"

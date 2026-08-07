@@ -333,7 +333,7 @@ module Lain
         # `agent = wire_agent(...)` binds a different local in a different scope
         # -- so the first ask_human question and the first subagent spawn both
         # raise NoMethodError on nil.
-        agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:)
+        agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:, notice:)
       end
 
       private
@@ -460,8 +460,8 @@ module Lain
       # not move: `switchboard(backend, toolset)` is the ONLY call to
       # #switchboard, so the memo three later readers depend on is assigned
       # here or nowhere. {AgentBuild}'s comment carries the why.
-      def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil)
-        AgentBuild.build(board: switchboard(backend, toolset), chronicle:, channel:, session:, backend:,
+      def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil, notice: nil)
+        AgentBuild.build(board: switchboard(backend, toolset, notice), chronicle:, channel:, session:, backend:,
                          timeline:, views:)
       end
 
@@ -478,8 +478,9 @@ module Lain
       # never from what the previous posture left behind -- and what comes back
       # as `board.toolset` is the live slot the Agent and its executor hold, so
       # a `/mode` flip changes the rendered schema without rebuilding either.
-      def switchboard(backend, toolset)
-        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model, toolset:)
+      def switchboard(backend, toolset, notice = nil)
+        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model, toolset:,
+                                         rules: Project::Consent.for(project:, notice:).rules)
       end
 
       # The Repl over the run's collaborators -- the accessors are this class's

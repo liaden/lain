@@ -12,8 +12,8 @@ RSpec.describe Lain::CLI::Switchboard do
   # at the first `/mode plan` of a real session instead.
   let(:base) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
-  def switchboard(yolo: false, toolset: base)
-    described_class.new(journal:, yolo:, model: "claude-opus-4-8", toolset:)
+  def switchboard(yolo: false, toolset: base, **rest)
+    described_class.new(journal:, yolo:, model: "claude-opus-4-8", toolset:, **rest)
   end
 
   def mode(posture) = Lain::Mode.new(posture:)
@@ -47,6 +47,42 @@ RSpec.describe Lain::CLI::Switchboard do
 
         expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
                             .map { |record| record["rung"] }.to_a).to eq(%w[triage rules])
+      ensure
+        parked&.stop
+      end
+    end
+
+    # T18: the rules rung was wired EMPTY, because the remembered answers need a
+    # project root this board does not hold. It takes them as `rules:` now, and
+    # what decides whether a root's `[approval]` table may fill that list is
+    # {Lain::Project::Consent} -- not this class, which only carries them.
+    it "hands the ladder's rules rung whatever the session consented to" do
+      allower = Class.new(Lain::Approval::Rule) do
+        def name = "spec_allow"
+        def decide(call) = allow(call, because: "the session remembered this")
+      end.new
+
+      board = switchboard(rules: [allower])
+
+      expect(board.policy_switch.call(gated_call, nil)).to be(true)
+      expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
+                          .select { |record| record["rung"] == "rules" }
+                          .map { |record| record["verdict"] }.to_a).to eq(%w[allow])
+    end
+
+    # The default is what every caller gets until one passes a consented
+    # project's answers, and it has to be the pre-T18 behaviour exactly: an
+    # empty rung abstains, and the call goes on parking on the queue.
+    it "wires no rules by default, so the rung abstains and the call still parks" do
+      board = switchboard
+
+      Sync do |task|
+        parked = task.async { board.policy_switch.call(gated_call, nil) }
+        task.with_timeout(1) { board.approvals.dequeue }
+
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
+                            .select { |record| record["rung"] == "rules" }
+                            .map { |record| record["verdict"] }.to_a).to eq(%w[abstain])
       ensure
         parked&.stop
       end

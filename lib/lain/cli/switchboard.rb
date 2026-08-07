@@ -76,12 +76,15 @@ module Lain
       # @param options [Hash] the CLI's parsed surface flags
       # @param model [String] the model in force until the first /model
       # @param toolset [Lain::Toolset] the run's BASE capability set
+      # @param rules [Enumerable<Approval::Rule>] the deterministic rung's rules,
+      #   which for a live session is {Project::Consent#rules} -- the remembered
+      #   answers a CONSENTED root is allowed to contribute
       # @option options [Boolean] :yolo start approving everything, with no
       #   queue -- the only flag this entry reads off `options`, so a board
       #   built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:)
-        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:)
+      def self.for(chronicle:, options:, model:, toolset:, rules: [])
+        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:)
       end
 
       # @param journal [#record] where flips and approval decisions land
@@ -93,12 +96,19 @@ module Lain
       #   the model would be shown no tools at all and `/mode plan` would raise
       #   {Toolset::UnknownTool} on a name the run really does hold. A forgotten
       #   collaborator must be an ArgumentError here, not a mystery one turn on.
+      # @param rules [Enumerable<Approval::Rule>] consulted by the ladder's
+      #   deterministic `rules` rung, ahead of the queue and ahead of any human.
+      #   EMPTY by default, which abstains on everything and so changes no
+      #   outcome: filling it is {Project::Consent}'s decision, never this
+      #   board's, because only a CONSENTED root's answers may grant authority.
       # @param sensitivity [#gates?] which PATHS this session gates, whatever
       #   the tool's own tier. {Sensitivity::Policy::Null} by default, so a
       #   session that resolved no project root behaves byte-for-byte as it did
       #   before this axis existed.
-      def initialize(journal:, yolo:, model:, toolset:, sensitivity: Sensitivity::Policy::Null.instance)
+      def initialize(journal:, yolo:, model:, toolset:, rules: [],
+                     sensitivity: Sensitivity::Policy::Null.instance)
         @sensitivity = sensitivity
+        @rules = rules.to_a.freeze
         @ledger = Sensitivity::Ledger.new
         # Kept, where the switches merely borrow it: {#gate}'s path refusals are
         # journaled at the moment they happen, and re-resolving one per gate
@@ -178,7 +188,7 @@ module Lain
       def build_ladder(journal:)
         return nil unless @approvals
 
-        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:)
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules)
       end
 
       # The posture's declared symbols as this session's live collaborators.
