@@ -317,13 +317,25 @@ RSpec.describe Lain::CLI::Up do
   # shares it instead of forking the string -- PATH re-export (tmux panes
   # source no interactive chruby) + exec of the LAUNCHING binary, read at
   # call time ($PROGRAM_NAME is not the lain binary under rspec).
+  #
+  # The recipe itself lives in {Up::PaneCommand}; `Up.pane_command` stays the
+  # seam its callers name. Its examples stay in THIS file for the same reason
+  # Cockpit's and Hud's do -- they are Up's children, exercised through the
+  # surface Up presents.
+  def pane_command_class = Lain::CLI::Up::PaneCommand
+
   describe ".pane_command" do
+    # The LAIN_ preamble is delegated rather than spelled out: it reads the
+    # REAL environment, and this suite's own runner legitimately sets
+    # LAIN_-prefixed variables, so a literal here would pass or fail depending
+    # on how the developer invoked rspec. {.lain_exports} has its own examples
+    # below, which drive an injected env and pin the bytes.
     it "composes the env re-exports, the launching binary, and the escaped argv" do
       expect(described_class.pane_command("chat", "--fork", "a b"))
         .to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; " \
                "export GEM_HOME=#{Gem.paths.home}; " \
                "export GEM_PATH=#{Gem.path.join(File::PATH_SEPARATOR)}; " \
-               "exec #{$PROGRAM_NAME} chat --fork a\\ b")
+               "#{pane_command_class.lain_exports}exec #{$PROGRAM_NAME} chat --fork a\\ b")
     end
 
     # The regression this pair exists for, and the reason PATH alone was not
@@ -387,6 +399,62 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  # The direnv half of the same stale-server story GEM_HOME told, and a worse
+  # one: a pane's `$SHELL -c` is NON-interactive, so zsh reads .zshenv and
+  # never .zshrc, direnv's hook never fires, and the pane cannot re-derive
+  # these for itself. Measured 2026-08-06 -- a pane on a pre-existing server
+  # read an EMPTY value even with the variable set on the `tmux new-window`
+  # call, because tmux hands a pane the SERVER's environment, not the client's.
+  describe ".lain_exports" do
+    it "carries the flag defaults direnv pinned, escaped and in a stable order" do
+      env = { "LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3:4b" }
+
+      expect(pane_command_class.lain_exports(env))
+        .to eq("export LAIN_MODEL=qwen3:4b; export LAIN_PROVIDER=ollama; ")
+    end
+
+    it "omits a name that is unset or blank, rather than exporting an empty string over it" do
+      expect(pane_command_class.lain_exports({ "LAIN_PROVIDER" => "", "LAIN_MODEL" => nil })).to eq("")
+    end
+
+    it "escapes a value the pane's shell would otherwise re-interpret" do
+      expect(pane_command_class.lain_exports({ "LAIN_MODEL" => "a b; touch /tmp/pwned" }))
+        .to eq('export LAIN_MODEL=a\ b\;\ touch\ /tmp/pwned; ')
+    end
+
+    # The prefix is shared with this suite's own controls, and those are set on
+    # exactly the machines that also run `lain up` -- a sweep would hand a live
+    # chat pane the test wiring of whoever launched it.
+    it "ignores LAIN_ names that are suite controls, not flag defaults" do
+      env = { "LAIN_OLLAMA" => "1", "LAIN_INTEGRATION" => "1", "LAIN_NVIM" => "0", "LAIN_SPEC_BUDGET" => "30" }
+
+      expect(pane_command_class.lain_exports(env)).to eq("")
+    end
+
+    # Never a secret: a pane command is readable from `tmux list-panes` and the
+    # process table, so an exported key would be legible to every process on
+    # the box. This is the example that fails if someone "fixes" a missing-key
+    # crash by forwarding the credential.
+    it "never carries an API key into a command line the process table can read" do
+      env = { "ANTHROPIC_API_KEY" => "sk-ant-secret", "AWS_SECRET_ACCESS_KEY" => "shh" }
+
+      expect(pane_command_class.lain_exports(env)).to eq("")
+      expect(pane_command_class::PANE_ENV).to all(start_with("LAIN_"))
+    end
+
+    # PANE_ENV is a hand-maintained list against a set that grows in ANOTHER
+    # file, and the failure is silent: a new env-backed flag simply stops
+    # reaching panes, which looks exactly like the direnv bug this fixes. So
+    # re-derive the truth from exe/lain rather than trusting the copy.
+    it "lists every name EnvDefaults actually reads -- no drift against exe/lain" do
+      declared = File.read(File.expand_path("../../../exe/lain", __dir__))
+                     .scan(/EnvDefaults\.(?:string|numeric)\(\s*"(LAIN_[A-Z_]+)"/).flatten.uniq
+
+      expect(declared).not_to be_empty
+      expect(pane_command_class::PANE_ENV).to match_array(declared)
+    end
+  end
+
   # T11: `lain up -- ARGS` threads the trailing chat flags into the spawned
   # window's command. `chat` validates its own flags -- Up never parses
   # `chat_args`, only Shellwords-escapes each element, so these examples
@@ -413,14 +481,14 @@ RSpec.describe Lain::CLI::Up do
       # examples above, which pin every export); what THIS pair is about is the
       # argv tail, so the prefix is delegated rather than duplicated -- the same
       # way btw_spec and fork_spec compare against the recipe.
-      expect(command).to eq("#{described_class.gem_exports}exec #{$PROGRAM_NAME} chat " \
+      expect(command).to eq("#{pane_command_class.gem_exports}exec #{$PROGRAM_NAME} chat " \
                             "--model claude-fable-5 --no-journal")
     end
 
     it "leaves the chat command untouched when no chat args are given" do
       command = capture_new_session_command(chat_args: [])
 
-      expect(command).to eq("#{described_class.gem_exports}exec #{$PROGRAM_NAME} chat")
+      expect(command).to eq("#{pane_command_class.gem_exports}exec #{$PROGRAM_NAME} chat")
     end
 
     it "keeps a hostile chat arg inert -- it reaches chat as one literal argument, never shell syntax" do

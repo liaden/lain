@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require "mixlib/shellout"
-require "rbconfig"
-require "shellwords"
 
 module Lain
   module CLI
@@ -61,58 +59,11 @@ module Lain
       # past); `argv` is exactly {#attach_command}'s `Kernel.exec` array.
       LaunchPlan = Data.define(:messages, :argv)
 
-      # The one pane-command recipe (T16 F2 made it a public seam): tmux's
-      # new pane does not source an interactive shell's chruby (see
-      # CLAUDE.md's toolchain note), so every pane a lain window runs
-      # re-exports the PATH fix and re-invokes the LAUNCHING binary --
-      # composed per call, never a constant, because $PROGRAM_NAME must be
-      # read when the exe runs (under rspec it is not the lain binary).
-      # The bindir itself is read per call too, from `RbConfig.ruby` (the
-      # RUNNING interpreter), never a pinned version literal -- CLAUDE.md's
-      # toolchain note is explicit that the pinned version is a moving floor
-      # (4.0.5 -> 4.0.6 already happened once for a Ractor VM crash), and a
-      # spawned pane must always land on whatever ruby actually launched it.
-      # UNquoted and Shellwords-escaped, same as `argv` below, not wrapped in
-      # the old literal's `"..."` -- Shellwords.escape's backslashes are only
-      # correct as a bare shell word; nested inside double quotes, a
-      # backslash before anything but $/`/"/\ stops being an escape and
-      # becomes a literal character in PATH. RbConfig.ruby is not
-      # attacker-controlled today, but this class's own comment promises no
-      # un-escaped value reaches tmux's `$SHELL -c`, and this is now a
-      # computed value, not a literal.
-      # Callers: `lain up`'s chat window, its cockpit panes, and /fork's window.
-      def self.pane_command(*argv)
-        "#{gem_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
-      end
-
-      # PATH alone is HALF a chruby, and the missing half is what made `lain
-      # up` die instantly on macOS (2026-08-05, exit 7 in the chat pane):
-      # `Bundler::GemNotFound` listing every gem in the Gemfile as missing.
-      #
-      # A pane inherits the tmux SERVER's environment, and the server outlives
-      # the shell that started it -- so a server first started before chruby
-      # ran (or from any shell that never sourced it) hands every later pane an
-      # environment with no GEM_HOME, no matter how clean the iTerm window that
-      # typed `lain up` was. Re-exporting PATH then finds the right `ruby`
-      # binary, and that ruby computes its OWN default `Gem.dir` --
-      # `~/.gem/ruby/4.0.0`, keyed on the ABI version, not the `4.0.6` chruby
-      # points at. That directory exists and is empty, so `bundler/setup`
-      # resolves nothing and the pane is dead before the frontend draws.
-      #
-      # Read live from the launching process for the same reason the bindir is
-      # (see above): these are whatever actually resolved the gems that got us
-      # here, including a `bundle config path` vendor directory, so a pane lands
-      # in the same bundle its parent did. Both come off the ONE `Gem.paths`
-      # rather than pairing it with `Gem.path` -- that is its own delegate
-      # (`rubygems.rb`: `Gem.path` is `Gem.paths.path`), and reading the pair
-      # from one object is what keeps home and path from ever disagreeing.
-      def self.gem_exports
-        paths = Gem.paths
-        ["PATH=#{Shellwords.escape(File.dirname(RbConfig.ruby))}:$PATH",
-         "GEM_HOME=#{Shellwords.escape(paths.home)}",
-         "GEM_PATH=#{Shellwords.escape(paths.path.join(File::PATH_SEPARATOR))}"]
-          .map { |assignment| "export #{assignment}; " }.join
-      end
+      # The pane-command recipe lives in {PaneCommand} -- what a spawned pane
+      # is missing is a question about shells and environments, not about tmux.
+      # Kept here as the public seam T16 F2 established, so /fork's window and
+      # /btw's popup still share it under the name they already use.
+      def self.pane_command(*argv) = PaneCommand.call(*argv)
 
       # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil
       # is off, "" (a bare --nvim) derives the plugin's deterministic socket,
@@ -314,3 +265,4 @@ end
 # load-order note effect/handler.rb's children carry).
 require_relative "up/cockpit"
 require_relative "up/hud"
+require_relative "up/pane_command"
