@@ -42,16 +42,10 @@ module Lain
       # model-facing error; the bytes that matched never are -- see
       # {Telemetry::WriteRefused}.
       #
-      # The sk- shape is anchored with a lookbehind because unanchored it
-      # matched INSIDE hyphenated prose ("ask-someone-to-help-..."), refusing a
-      # benign write under a pattern name it never honestly matched: a real key
-      # stands alone, never run into by a preceding word char or hyphen.
-      PATTERNS = {
-        "openai-style api key" => /(?<![\w-])sk-[A-Za-z0-9_-]{16,}/,
-        "aws access key id" => /AKIA[0-9A-Z]{16}/,
-        "pem private key block" => /-----BEGIN(?: [A-Z]+)? PRIVATE KEY-----/,
-        "credential assignment" => /\b(?:password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i
-      }.freeze
+      # The table itself lives in {CredentialPatterns}, which the read side
+      # shares. This is the WRITE selection: the shapes safe to refuse a user's
+      # own prose over, deliberately narrower than what runs over file bytes.
+      PATTERNS = CredentialPatterns.for(:write)
 
       # A refusal that came from the oracle rather than from a named PATTERNS
       # entry is NOT a pattern hit, and journaling it under the same grammar
@@ -63,22 +57,18 @@ module Lain
       # reader would have to keep in sync with {PATTERNS}. It is a prefix
       # rather than one flat value so a later arm can name WHICH judgment
       # declined without a replay reader learning a new word.
-      DECLINE_PREFIX = "decline:"
+      #
+      # Both live on {CredentialPatterns} now: the table's own load-time guard
+      # rejects a pattern name inside the namespace, which it can only do if it
+      # owns the prefix. One definition, so the guard and this test cannot
+      # disagree about what the namespace is.
+      DECLINE_PREFIX = CredentialPatterns::DECLINE_PREFIX
       ORACLE_DECLINE = "#{DECLINE_PREFIX}oracle".freeze
 
       # @param reason [String] a journaled {Telemetry::WriteRefused#pattern}
       # @return [Boolean] true if a judgment declined the write, false if a
       #   credential pattern matched it
-      def self.decline?(reason) = reason.start_with?(DECLINE_PREFIX)
-
-      # A PATTERNS key inside the reserved namespace would make {.decline?}
-      # report a genuine credential hit as a judgment call -- the exact
-      # inverse of the mislabel the namespace exists to fix, and silent. The
-      # invariant is asserted through {.decline?} itself so it cannot test
-      # something subtly different from what readers call.
-      PATTERNS.each_key do |name|
-        raise "PATTERNS may not use the reserved #{DECLINE_PREFIX.inspect} namespace: #{name.inspect}" if decline?(name)
-      end
+      def self.decline?(reason) = CredentialPatterns.decline?(reason)
 
       # What the MODEL is told about a decline. It deliberately names no
       # pattern and makes no credential claim: the model that reads "matches
