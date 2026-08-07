@@ -424,17 +424,13 @@ RSpec.describe Lain::Gherkin::Criteria do
     end
   end
 
-  describe "the real plan-doc corpus (house-format smoke check)" do
-    corpus = Dir.glob(File.expand_path("../../planning/specs/*.md", __dir__))
-
-    it "has a corpus to check" do
-      expect(corpus).not_to be_empty
-    end
-
-    corpus.each do |doc|
-      it "parses every gherkin block in #{File.basename(doc)} without rejection" do
-        expect { described_class.parse(File.read(doc)) }.not_to raise_error
-      end
-    end
-  end
+  # The house-format smoke check over `planning/specs/*.md` that used to live
+  # here is now `bin/lint-gherkin-docs`, run by pre-commit over STAGED docs.
+  # It asserted a property of the repository's contents rather than of this
+  # subject: prose became part of the test surface, so writing a plan doc could
+  # turn the whole suite red and block unrelated commits, and adding one moved
+  # the example count this repo reads to detect a truncated parallel run.
+  # {Criteria}'s subject is the criteria a USER of lain writes; that lain's own
+  # planning documents use the same fenced blocks is a convenience, not the
+  # thing under test.
 end

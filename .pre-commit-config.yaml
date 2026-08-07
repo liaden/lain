@@ -96,6 +96,17 @@ repos:
         types: [ruby]
         pass_filenames: false
 
+      # Was a spec globbing planning/specs/*.md, which made prose part of the
+      # test surface: one bad block turned `rake pspec` red for everyone, and
+      # each new doc moved the example count this repo reads to detect a
+      # truncated parallel run. Staged files only, so the signal reaches the
+      # person editing the document rather than the next person to commit.
+      - id: gherkin-docs
+        name: gherkin blocks (staged plan docs)
+        entry: bin/lint-gherkin-docs
+        language: script
+        files: '^planning/specs/.*\.md$'
+
       # Deterministic commit-message lint (no gem load, no network, no AI): the
       # mechanical parts of the git-commit-narrative standard. Runs at commit-msg
       # so it sees the final message; pass_filenames hands it COMMIT_EDITMSG.

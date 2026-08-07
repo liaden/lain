@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Do the ```gherkin blocks in a plan doc parse as house-format criteria?
+#
+# This was a spec once, globbing `planning/specs/*.md` and minting one example
+# per file. That made prose part of the test surface: writing a doc could turn
+# `rake pspec` red and block every commit in the repo -- including other
+# people's, on a document they had never opened -- and adding a doc silently
+# moved the suite's example count, which is the number this repo uses to detect
+# a truncated parallel run.
+#
+# It is a lint, and it belongs here. {Lain::Gherkin::Criteria}'s subject is the
+# criteria a USER of lain writes; that lain's own planning documents happen to
+# use the same fenced blocks is a convenience, not the thing under test. A spec
+# asserting a property of the repository's contents tests neither the parser nor
+# the app.
+#
+# Staged files only, the way `yard-lint --staged` works. An already-committed
+# doc cannot block an unrelated commit -- the signal reaches whoever is editing
+# the document, at the moment they edit it, which is the only person who can act
+# on it.
+#
+# Usage: bin/lint-gherkin-docs [FILE...]   (pre-commit passes staged matches)
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+require "lain"
+
+docs = ARGV.reject { |path| path.strip.empty? }
+exit 0 if docs.empty?
+
+failures = docs.filter_map do |path|
+  Lain::Gherkin::Criteria.parse(File.read(path))
+  nil
+rescue Lain::Gherkin::MalformedBlock => e
+  [path, e.message]
+rescue Errno::ENOENT
+  nil # staged-then-deleted in the same commit
+end
+
+exit 0 if failures.empty?
+
+warn "Gherkin blocks that #{Lain::Gherkin::Criteria} cannot parse:\n\n"
+failures.each { |path, message| warn "  #{path}\n    #{message}\n\n" }
+warn <<~GUIDANCE
+  The house grammar is narrow on purpose: fenced ```gherkin blocks of `Scenario:`
+  headers over `Given|When|Then|And` clauses. `Scenario Outline:` and `Examples:`
+  are NOT supported -- write the variations as separate `Scenario:` blocks, or
+  teach {Lain::Gherkin::Criteria} the construct if a user would reasonably use it.
+GUIDANCE
+exit 1
