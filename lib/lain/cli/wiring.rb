@@ -207,6 +207,30 @@ module Lain
       # kept as a Wiring accessor because the Repl and exe read it here.
       def approvals = @switchboard&.approvals
 
+      # T17's opt-in local-model triage surface for parked reads carrying
+      # sensitive regions -- nil without `--secret-oracle`, so the Repl wires
+      # nothing extra by default and the fan-out spawns no extra fiber. A
+      # Wiring accessor beside {#approvals} for the same reason: the Repl reads
+      # it here.
+      #
+      # The oracle is {Oracle::SecretRead.tier} and nothing in this class may
+      # choose its provider. That builder constructs the local ollama arm
+      # itself, and the `--provider` / `--summarizer-provider` knobs this class
+      # holds are exactly what must not reach it -- see that module's header for
+      # what `--summarizer-provider anthropic` would otherwise do to a candidate
+      # secret's path. The journal is resolved ONCE and shared by the surface
+      # and its oracle, on {#goal_journal}'s note: each call OPENS a file.
+      #
+      # @return [Approval::SecretSurface, nil]
+      def secret_surface
+        return nil unless options[:secret_oracle]
+
+        @secret_surface ||= begin
+          journal = goal_journal
+          Approval::SecretSurface.new(oracle: Oracle::SecretRead.tier(journal:), journal:)
+        end
+      end
+
       # The frozen {Command::Env} the run's {Command::Surface} assembled once.
       def command_env = @command_surface.env
 
@@ -499,7 +523,7 @@ module Lain
         @command_surface = assemble_surface(agent:, library: backend.library, tty:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
-                 auto_surface:, goal_driver:)
+                 auto_surface:, secret_surface:, goal_driver:)
       end
 
       # The surface assembly, its own method because T15's ABC trip said so when

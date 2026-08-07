@@ -204,7 +204,7 @@ RSpec.describe Lain::Approval::AutoSurface do
   it "prunes the seen-set through the injected pruning seam, once per sweep" do
     spawn = AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("DEFER") }
     queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
-    pruning = instance_double(Lain::Approval::AutoSurface::Pruning)
+    pruning = instance_double(Lain::Approval::QueueSurface::Pruning)
     allow(pruning).to receive(:call)
 
     Sync do |task|
@@ -242,6 +242,47 @@ RSpec.describe Lain::Approval::AutoSurface do
       b.wait
       expect(spawn.calls.map { |call| call[:prompt] }.grep(/tool_b/)).to be_empty
       expect(spawn.calls.size).to eq(1)
+    end
+  end
+
+  # T17 ruling. This surface prunes ORDINARY approvals: its role catalog and
+  # its one-word prompt were built for those, and neither is told that a file's
+  # sensitive regions are what a yes would release. So an approve on a
+  # region-carrying pending would release secrets with NO human in the loop at
+  # all, on a judgement that was never asked the question --
+  # {Approval::SecretSurface} is the surface that is. The abstention is
+  # structural, not a threshold that happened to fall, and these examples say so
+  # by pinning that the role is never spawned at all.
+  describe "a pending carrying outstanding sensitive regions" do
+    let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n") }
+    let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+
+    let(:spawn) { AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") } }
+
+    def sweep_over(outstanding)
+      queue = Lain::Approval::Queue.new(journal:, timeout: 0.05)
+      Sync do |task|
+        gated = task.async { queue.adjudicate(effect, nil, outstanding:) }
+        task.with_timeout(1) { queue.dequeue }
+        described_class.new(role_spawn: spawn).sweep(queue)
+        task.with_timeout(2) { gated.wait }
+      ensure
+        gated&.stop
+      end
+    end
+
+    it "never asks its role about one, so no auto approval can release a secret" do
+      settled = sweep_over(outstanding)
+
+      expect(spawn.calls).to be_empty
+      expect(settled.surface).to eq(Lain::Approval::Queue::TIMEOUT_SURFACE)
+    end
+
+    it "still adjudicates a pending carrying none, so the abstention is narrow" do
+      settled = sweep_over(Lain::Approval::Queue::Outstanding::NONE)
+
+      expect(spawn.calls.size).to eq(1)
+      expect(settled.surface).to eq(described_class::SURFACE)
     end
   end
 

@@ -5,22 +5,35 @@ module Lain
     class Repl
       # The approval-watching surfaces, lifted out of {Repl} because "which
       # surfaces watch the parked queue, and spawning their fibers" is its own
-      # responsibility. Two (or up to four, under --auto-approve and --nvim)
-      # watch the SAME queue -- the TTY prompt, the desktop notifier, the opt-in
-      # auto surface, and the editor's own list -- and first answer wins
-      # (Pending's own doctrine).
+      # responsibility. Two (or up to five, under --auto-approve, --nvim and
+      # --secret-oracle) watch the SAME queue -- the TTY prompt, the desktop
+      # notifier, the opt-in auto surface, the editor's own list, and the opt-in
+      # local-model secret triage -- and first answer wins (Pending's own
+      # doctrine).
+      #
+      # The two LLM surfaces are DISJOINT rather than a second opinion on one
+      # pending: {Approval::AutoSurface} takes only pendings carrying no
+      # sensitive regions and {Approval::SecretSurface} only pendings carrying
+      # some, each by a structural filter of its own.
       #
       # `watch(task)` spawns one fiber per live surface and hands the set back
       # for {Repl#respond}'s ensure to stop. The queue is nil under --yolo (no
       # queue was wired), so `watch` spawns NOTHING at all; the notifier is Null
-      # with no dunstify, `auto_surface` is nil without --auto-approve, and the
-      # editor's view is nil with no editor attached, so the splats add nothing
-      # and the human surfaces are unchanged.
+      # with no dunstify, `auto_surface` is nil without --auto-approve,
+      # `secret_surface` is nil without --secret-oracle, and the editor's view
+      # is nil with no editor attached, so the splats add nothing and the human
+      # surfaces are unchanged.
       class ApprovalSurfaces
-        def initialize(approvals:, notifier:, auto_surface:, tty:, conductor:)
+        # `secret_surface:` is REQUIRED, like `auto_surface:` and for its
+        # reason: both are nil-by-default capabilities, and a defaulted keyword
+        # turns "the caller forgot to wire it" into a surface that is silently
+        # inert -- which is the same shape as the flag that wires nothing this
+        # class's own comment warns about. Forgetting it is an ArgumentError.
+        def initialize(approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
           @approvals = approvals
           @notifier = notifier
           @auto_surface = auto_surface
+          @secret_surface = secret_surface
           @tty = tty
           @conductor = conductor
         end
@@ -67,6 +80,7 @@ module Lain
           @approvals && [task.async { approval_surface.watch(@approvals) },
                          task.async { @notifier.watch(@approvals) },
                          *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
+                         *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) })]
         end
       end

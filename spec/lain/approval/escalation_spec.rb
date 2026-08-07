@@ -10,6 +10,17 @@ require "stringio"
 module EscalationSpecSupport
   Ruling = Lain::Approval::Escalation::Ruling
 
+  # The surface nobody remembered to classify -- a machine judge added after
+  # `Surfaces::AUTOMATIC` was last read, which is exactly how T17 arrived. It
+  # exists so the generating-rule guard can be shown to FIRE, rather than
+  # merely to pass; deliberately outside the `Lain::` namespace so it is not
+  # itself mistaken for a surface the harness ships.
+  class UnclassifiedSurface < Lain::Approval::QueueSurface
+    SURFACE = "unclassified_spec_surface"
+
+    def judges?(_outstanding) = false
+  end
+
   # A rung with one fixed answer, named at construction so a spec can read the
   # attribution back out of the journal.
   class Fixed
@@ -459,6 +470,71 @@ RSpec.describe Lain::Approval::Escalation do
     it "keeps suppressing an auto-approver's allow, which IS a later automatic rung" do
       expect(settled_by(faulting, surface: Lain::Approval::AutoSurface::SURFACE)).to be(false)
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
+    end
+
+    # T17. `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
+    # automatic surface's allow survives a fault, and that one fails visibly in
+    # a review of a file whose whole subject is adjudication" -- and one card
+    # later a LOCAL 4B MODEL releasing credential-bearing files was that
+    # surface. Unlisted, it counted as human, so the one surface built to
+    # release secrets was the one this ladder trusted MOST.
+    it "suppresses the secret oracle's allow too: a local model is a machine, not a person" do
+      expect(settled_by(faulting, surface: Lain::Approval::SecretSurface::SURFACE)).to be(false)
+      expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
+    end
+
+    # THE GENERATING RULE, and it has to actually generate. A first version of
+    # this guard listed the decider names by hand -- which re-stated exactly
+    # what AUTOMATIC already said, so a NEW machine surface was accounted for by
+    # a literal that did not know about it, and the guard stayed green while the
+    # ladder called it human. That is B1 verbatim, one surface later.
+    #
+    # {Approval::QueueSurface}'s subclass list is the generator, and it covers
+    # precisely the risky class: a surface that is a MACHINE judge. Descended
+    # rather than direct, so subclassing a surface does not escape it.
+    #
+    # Filtered to the `Lain::` namespace because a spec's own fixture surfaces
+    # (queue_surface_spec's, and {EscalationSpecSupport::UnclassifiedSurface}
+    # below) are subclasses too, and would otherwise make this guard depend on
+    # which files share a worker. Every surface this harness SHIPS is defined
+    # under `Lain::Approval::`; the two examples after the guard pin both halves
+    # of that filter, so it cannot quietly widen or empty.
+    def machine_surfaces
+      descended(Lain::Approval::QueueSurface)
+        .select { |klass| klass.name.to_s.start_with?("Lain::") }
+        .map { |klass| klass::SURFACE }
+    end
+
+    def descended(klass) = klass.subclasses.flat_map { |sub| [sub, *descended(sub)] }
+
+    def human_surfaces
+      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Notify::SURFACE,
+       Lain::Frontend::Neovim::ApprovalView::SURFACE]
+    end
+
+    def unaccounted(names) = names - described_class::Surfaces::AUTOMATIC - human_surfaces
+
+    it "accounts for every machine surface the harness ships, without being told their names" do
+      expect(unaccounted(machine_surfaces)).to be_empty
+    end
+
+    it "derives from the subclass list, so a surface added later is seen with nobody editing this spec" do
+      expect(descended(Lain::Approval::QueueSurface))
+        .to include(EscalationSpecSupport::UnclassifiedSurface, Lain::Approval::SecretSurface)
+    end
+
+    it "reports an unclassified machine surface rather than passing it as a person" do
+      expect(unaccounted([EscalationSpecSupport::UnclassifiedSurface::SURFACE]))
+        .to contain_exactly(EscalationSpecSupport::UnclassifiedSurface::SURFACE)
+    end
+
+    it "does not mistake a spec's own fixture for a surface this harness ships" do
+      expect(machine_surfaces).to include("auto_approver", "secret_oracle")
+      expect(machine_surfaces).not_to include(EscalationSpecSupport::UnclassifiedSurface::SURFACE)
+    end
+
+    it "never files one name as both a machine and a person" do
+      expect(described_class::Surfaces::AUTOMATIC & human_surfaces).to be_empty
     end
 
     it "leaves a clean human allow unmarked" do

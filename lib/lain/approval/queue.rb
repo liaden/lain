@@ -77,6 +77,14 @@ module Lain
         def any? = !regions.empty?
         def count = regions.length
 
+        # The complement of {#any?}, spelled out rather than left to each caller
+        # to negate. Two surfaces PARTITION the parked queue on exactly this
+        # question ({Approval::QueueSurface#judges?}), and a partition whose two
+        # halves are written as `x.any?` and `!x.any?` in different files is one
+        # edit away from a silent overlap or a silent gap; written as `any?` and
+        # `none?` over one value object, they are complementary by inspection.
+        def none? = regions.empty?
+
         # The sentence every HUMAN surface puts in front of the question it is
         # about to ask, separator included, empty when there is nothing to say.
         # It lives on the value rather than in a frontend because two surfaces
@@ -137,11 +145,19 @@ module Lain
         # injection become a SECOND ledger whose releases nobody sees, and there
         # is no second anything here -- a missing one renders the ordinary
         # prompt and still releases nothing.
+        #
+        # An EXPLICIT nil resolves to the same {Outstanding::NONE}, and that is
+        # not belt-and-braces: `outstanding:` is public on {Queue#adjudicate},
+        # every surface that reads it dereferences it, and a surface fiber that
+        # raises is a surface that silently stops watching for the rest of the
+        # session (see {Approval::QueueSurface#watch}). "Null Object over nil"
+        # is the rule, and this is the one constructor that can enforce it for
+        # every reader at once.
         def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE)
           @tool = effect.name
           @tool_use_id = effect.tool_use_id
           @input = effect.input
-          @outstanding = outstanding
+          @outstanding = outstanding || Outstanding::NONE
           @requester = requester
           @clock = clock
           @asked_at = clock.call

@@ -63,9 +63,10 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   let(:conductor) { instance_double(Lain::CLI::Conductor, read_reply: "y") }
 
   let(:editor) { ApprovalSurfacesSpecSupport::SpySurface.new }
+  let(:secret_surface) { ApprovalSurfacesSpecSupport::SpySurface.new }
 
-  def surfaces(approvals: queue, auto: nil, attached: nil)
-    described_class.new(approvals:, notifier:, auto_surface: auto, tty:, conductor:)
+  def surfaces(approvals: queue, auto: nil, attached: nil, secret: nil)
+    described_class.new(approvals:, notifier:, auto_surface: auto, secret_surface: secret, tty:, conductor:)
                    .tap { |built| built.bind_editor(attached) }
   end
 
@@ -78,9 +79,9 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # spies, the conductor, and the journal carry the rest of the evidence.
   # `with_timeout` bounds the whole thing so a fan-out that spawned no
   # answerer AND no clock fails in words rather than hanging the suite.
-  def fan_out(auto: nil, attached: nil)
+  def fan_out(auto: nil, attached: nil, secret: nil)
     Sync do |task|
-      watched = surfaces(auto:, attached:).watch(task)
+      watched = surfaces(auto:, attached:, secret:).watch(task)
       gated = task.async { queue.call(effect, nil) }
       { verdict: task.with_timeout(2) { gated.wait }, watched: }
     ensure
@@ -94,7 +95,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
   # this Sync instead of failing it.
   def watch_without_a_queue
     Sync do |task|
-      watched = surfaces(approvals: nil, auto: auto_surface, attached: editor).watch(task)
+      watched = surfaces(approvals: nil, auto: auto_surface, attached: editor, secret: secret_surface).watch(task)
       watched
     ensure
       watched&.each { |surface| surface&.stop }
@@ -131,6 +132,41 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
   it "spawns one fiber per live surface: three, under --auto-approve" do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(3)
+  end
+
+  # T17. The fifth peer, opt-in behind --secret-oracle: a local model triaging
+  # the parked reads that carry sensitive regions, ahead of the human. It is
+  # DISJOINT from the auto surface rather than a second opinion on the same
+  # pendings -- each takes what the other structurally refuses (auto_surface_spec
+  # and secret_surface_spec pin both halves) -- so both watching one queue is a
+  # partition, not a race.
+  describe "--secret-oracle: the local-model triage surface" do
+    it "hands it the SAME queue the TTY surface watches when one is wired" do
+      fan_out(secret: secret_surface)
+
+      expect(secret_surface.queues).to contain_exactly(be(queue))
+    end
+
+    it "spawns a fiber for it too, making three" do
+      expect(fan_out(secret: secret_surface)[:watched].size).to eq(3)
+    end
+
+    # The size AND the class of every member, because that is what the splat's
+    # comment claims and a size alone would survive an `Async::Task` gaining
+    # `to_a` -- the exact upgrade this pin exists to catch.
+    it "makes five with every opt-in surface up, and the human still answers through all of them" do
+      result = fan_out(auto: auto_surface, attached: editor, secret: secret_surface)
+
+      expect(result[:watched].size).to eq(5)
+      expect(result[:watched]).to all(be_an_instance_of(Async::Task))
+      expect(result[:verdict]).to be(true)
+    end
+
+    it "spawns nothing for it by default, which is every chat launched without the flag" do
+      fan_out
+
+      expect(secret_surface.queues).to be_empty
+    end
   end
 
   # T36. These two examples and the one above are the closest anything came to
@@ -185,7 +221,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     it "hands no surface the queue it does not have" do
       watch_without_a_queue
 
-      expect([notifier.queues, auto_surface.queues, editor.queues]).to all(be_empty)
+      expect([notifier.queues, auto_surface.queues, editor.queues, secret_surface.queues]).to all(be_empty)
     end
 
     it "builds no approval policy either: an unwatched session pays for no surface" do
@@ -193,6 +229,14 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
       watch_without_a_queue
     end
+  end
+
+  # Both opt-in surfaces are REQUIRED keywords: a defaulted one turns "the
+  # caller forgot to wire it" into a surface that is silently inert, which is
+  # the flag-that-wires-nothing failure read from the other end.
+  it "refuses to be built without being told about either opt-in surface" do
+    expect { described_class.new(approvals: queue, notifier:, auto_surface: nil, tty:, conductor:) }
+      .to raise_error(ArgumentError, /secret_surface/)
   end
 
   it "memoizes the policy it builds, so every watch of one session shares one surface" do

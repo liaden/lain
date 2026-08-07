@@ -8,11 +8,11 @@ module PruningSpecSupport
   Decided = Struct.new(:decided?)
 end
 
-RSpec.describe Lain::Approval::AutoSurface::Pruning do
+RSpec.describe Lain::Approval::QueueSurface::Pruning do
   # AC2: the seen-set no longer grows unbounded. A long watch adjudicates many
   # pendings; once one SETTLES (decided elsewhere, or by this surface), its
   # entry is released -- observable here, at the pruning seam itself, rather
-  # than via an object-count heuristic on AutoSurface's private @adjudicated.
+  # than via an object-count heuristic on a surface's private @adjudicated.
   it "releases adjudicated entries whose pending has since settled" do
     settled = PruningSpecSupport::Decided.new(true)
     still_parked = PruningSpecSupport::Decided.new(false)

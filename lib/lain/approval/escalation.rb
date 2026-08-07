@@ -619,7 +619,15 @@ module Lain
         # `Pending#decide(verdict, surface:, authority:)` with NO default, so a
         # surface that forgot to declare is a loud ArgumentError at one of five
         # call sites rather than a silent reclassification here. Ticketed.
-        AUTOMATIC = [AutoSurface::SURFACE, Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE].freeze
+        # T17 is what the paragraph above predicted, and it took one card to
+        # arrive: `secret_oracle` is a 4B LOCAL MODEL releasing files the
+        # detector flagged as holding credentials, and an unlisted surface
+        # counts as human -- so the one surface built to release secrets was the
+        # one this ladder trusted most, its allow surviving a fault that
+        # `auto_approver`'s identical judgement does not. Listed here, it is
+        # `:automatic` like every other machine.
+        AUTOMATIC = [AutoSurface::SURFACE, SecretSurface::SURFACE,
+                     Queue::TIMEOUT_SURFACE, Queue::ABANDONED_SURFACE].freeze
 
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"

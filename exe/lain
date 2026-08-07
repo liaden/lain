@@ -680,6 +680,33 @@ class LainCLI < Thor
     end
   end
 
+  # The opt-in surfaces that answer a PARKED approval ahead of the human, both
+  # of them meta-agents racing the person the queue is already asking. Grouped
+  # into a declarer of their own on {ModelFlags}' rule -- the second one pushed
+  # the Thor class past Metrics/ClassLength, and two flags naming one idea are
+  # an object, not a limit to raise.
+  #
+  # They are DISJOINT, and that is the reason it is safe to run both: the auto
+  # surface judges only pendings that release nothing sensitive, and the secret
+  # oracle only pendings that would ({Approval::AutoSurface} and
+  # {Approval::SecretSurface} each filter structurally). Neither can decide the
+  # other's.
+  module SurfaceFlags
+    # @param thor [Class] the Thor class to declare on
+    # @return [void]
+    def self.declare(thor)
+      thor.method_option :auto_approve, type: :boolean, default: false,
+                                        desc: "Wire an extra approval surface: an auto_approver role judges " \
+                                              "pendings the human hasn't yet -- opt-in, races the human/dunst " \
+                                              "surfaces, and abstains on anything holding sensitive regions"
+      thor.method_option :secret_oracle, type: :boolean, default: false,
+                                         desc: "Wire an extra approval surface: a LOCAL model (ollama, never a " \
+                                               "remote provider whatever --provider says) triages parked reads " \
+                                               "that WOULD release sensitive regions, ahead of the human. It is " \
+                                               "shown the path and the region count, never the file's contents"
+    end
+  end
+
   desc "chat", "Start an interactive Lain session"
   method_option :yolo, type: :boolean, default: false,
                        desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
@@ -696,9 +723,7 @@ class LainCLI < Thor
   method_option :prompt, type: :string,
                          desc: "Seed the first question (the /btw child's side-question); the chat then reads " \
                                "the terminal as usual"
-  method_option :auto_approve, type: :boolean, default: false,
-                               desc: "Wire a third approval surface: an auto_approver role judges pendings " \
-                                     "the human hasn't yet -- opt-in, races the human/dunst surfaces"
+  SurfaceFlags.declare(self)
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   # WHICH epic this chat may hand documents to the human from. Unset resolves to

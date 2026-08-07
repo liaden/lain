@@ -1,29 +1,23 @@
 # frozen_string_literal: true
 
-require "async"
-
-require_relative "auto_surface/pruning"
-
 module Lain
   module Approval
     # A meta-agent standing in for the human at {Approval::Queue}'s second
     # surface. Where {Frontend::ApprovalPolicy} draws pendings off the arrival
-    # queue and asks a person, this observes the PARKED set ({Queue#each}) and
-    # asks the `auto_approver` role -- opt-in, never wired by default.
-    #
-    # It observes, it does not consume: draining `dequeue` here would STEAL
-    # pendings the human surface then never sees (`queue.rb`'s two-surface
-    # discipline). {Pending#decide}'s first-answer-wins is what makes the
-    # observe-and-answer race safe -- a human who answers first wins, and this
-    # surface's later verdict is a quiet no-op.
+    # queue and asks a person, this observes the PARKED set and asks the
+    # `auto_approver` role -- opt-in, never wired by default. The observing,
+    # the seen-set and the polling are {QueueSurface}'s; this class is the
+    # role, the prompt, the verdict grammar and the abstention.
     #
     # Every decision it makes is signed {SURFACE}, so a transcript can never
-    # confuse an auto approval with a human one. Its doctrine is deny-when-
+    # confuse an auto approval with a human one, and
+    # {Escalation::Surfaces::AUTOMATIC} lists that name so the ladder reads the
+    # decision as the machine judgement it is. Its doctrine is deny-when-
     # unsure: only a confident `approve`/`deny` settles a pending; a `defer`,
     # an unparseable answer, or a failed spawn leaves the pending for the human
     # surface or the fail-closed timeout -- an ambiguous answer MUST fall toward
     # defer, never toward approve.
-    class AutoSurface
+    class AutoSurface < QueueSurface
       # The plan-pinned surface name every decision wears in the Journal.
       SURFACE = "auto_approver"
 
@@ -32,10 +26,6 @@ module Lain
       # never the parent's conversation.
       ROLE = :auto_approver
       CONTEXT_MODE = :fresh
-
-      # Between polls of the parked set. The surface is a sibling fiber, so the
-      # sleep is a scheduler yield, not a wall-clock stall.
-      DEFAULT_POLL_INTERVAL = 0.05
 
       # The template's contract is ONE word: the WHOLE stripped answer must be a
       # verdict token (an optional trailing period tolerated). A hedged answer
@@ -46,53 +36,28 @@ module Lain
 
       # @param role_spawn [#call] the `(role, context_mode, prompt) -> Tool::Result`
       #   seam ({Skill::RoleSpawn}); injected, so the surface depends on the
-      #   message, not on how the child is assembled.
-      # @param poll_interval [Numeric] seconds between sweeps of the parked set.
-      # @param pruning [#call] releases `@adjudicated` entries for pendings
-      #   that have since settled ({Pruning}); injected so the seen-set's
-      #   own eviction policy carries its own spec.
-      def initialize(role_spawn:, poll_interval: DEFAULT_POLL_INTERVAL, pruning: Pruning.new)
+      #   message, not on how the child is assembled. Every other keyword
+      #   forwards to {QueueSurface} -- `poll_interval:`, `pruning:`, `journal:`.
+      def initialize(role_spawn:, **)
+        super(**)
         @role_spawn = role_spawn
-        @poll_interval = poll_interval
-        @pruning = pruning
-        # Identity-keyed (Pending is a plain object, so `eql?`/`hash` are
-        # identity): a pending gets ONE adjudication, so a defer is not re-asked
-        # on every poll until the clock denies it.
-        @adjudicated = {}.compare_by_identity
       end
 
-      # The surface loop: sweep the parked set, then yield until the next poll.
-      # Runs in its own fiber beside the human surface; stops with its task.
-      def watch(queue)
-        loop do
-          sweep(queue)
-          Async::Task.current.sleep(@poll_interval)
-        end
-      end
-
-      # One pass over the parked set: adjudicate each undecided pending this
-      # surface has not already seen. The parked snapshot is collected with NO
-      # IO yield (the block only reads flags), so the enumeration cannot mutate
-      # under a concurrent park/settle; the spawn -- which yields -- happens
-      # afterwards, over the materialized array. Pruned first, every sweep: a
-      # settled pending's `@adjudicated` entry is released before it can pile
-      # up over a long watch (the seen-set-growth doctrine {Pruning} carries).
-      def sweep(queue)
-        @pruning.call(@adjudicated)
-        queue.reject { |pending| pending.decided? || @adjudicated.key?(pending) }
-             .each { |pending| adjudicate(pending) }
-      end
+      # ORDINARY approvals -- the ones that release nothing sensitive -- and
+      # that abstention is the half of the partition this class owns.
+      #
+      # {ROLE}'s catalog and the one-word prompt below were built for those, and
+      # neither is told that a file's sensitive regions are what a yes would
+      # release. So an approve on a region-carrying pending would release
+      # secrets with NO human in the loop at all, on a judgement that was never
+      # asked the question. {SecretSurface} is the surface that IS asked it, and
+      # it judges exactly the complement of this.
+      #
+      # @param outstanding [Approval::Queue::Outstanding]
+      # @return [Boolean]
+      def judges?(outstanding) = outstanding.none?
 
       private
-
-      def adjudicate(pending)
-        @adjudicated[pending] = true
-        # A sibling surface may have decided it after the parked snapshot was
-        # collected: skip the wasted spawn -- first-answer-wins already stands.
-        return if pending.decided?
-
-        settle(pending, verdict(pending))
-      end
 
       # Only a confident verdict acts; defer is a deliberate no-op that leaves
       # the pending for the human or the clock.
@@ -101,9 +66,8 @@ module Lain
         pending.deny(surface: SURFACE) if verdict == :deny
       end
 
-      def verdict(pending)
-        result = @role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(pending))
-        parse(result)
+      def answer_for(pending)
+        parse(@role_spawn.call(ROLE, CONTEXT_MODE, prompt_for(pending)))
       end
 
       # Fail toward defer: an error result is never signed by this surface at

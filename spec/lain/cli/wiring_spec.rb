@@ -235,6 +235,46 @@ RSpec.describe Lain::CLI::Wiring do
 
       expect(wiring.auto_surface).to be_a(Lain::Approval::AutoSurface)
     end
+
+    # T17 AC1: no --secret-oracle, no surface. Asserted at the CONSTRUCTION
+    # site as well as at the fan-out, because "a flag that wires nothing" and
+    # "a capability with no reachable construction" are the same defect read
+    # from opposite ends, and this chunk produced both.
+    it "wires no secret surface without --secret-oracle" do
+      wire_agent
+      expect(wiring.secret_surface).to be_nil
+    end
+
+    describe "--secret-oracle" do
+      let(:wiring) { described_class.new(options: { grace: 5, secret_oracle: true }, chronicle:, status_feed:) }
+
+      before do
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:)
+      end
+
+      it "constructs the triage surface" do
+        expect(wiring.secret_surface).to be_a(Lain::Approval::SecretSurface)
+      end
+
+      it "memoizes it, so the Repl and any later reader share one surface and one journal fd" do
+        expect(wiring.secret_surface).to be(wiring.secret_surface)
+      end
+
+      # The whole point of the rung: even a run whose every provider knob names
+      # a remote arm judges its parked secrets locally. Captured off the tier
+      # the surface actually holds, not off a `.new` count.
+      it "builds it against the LOCAL ollama provider, whatever --provider and --summarizer-provider say" do
+        remote = { grace: 5, secret_oracle: true, provider: "anthropic", summarizer_provider: "anthropic" }
+        built = described_class.new(options: remote, chronicle:, status_feed:)
+        recorder, session = built.run_state(nil)
+        built.wire_agent(channel:, recorder:, session:, backend:)
+
+        tier = built.secret_surface.instance_variable_get(:@oracle)
+        provider = tier.instance_variable_get(:@inner).instance_variable_get(:@provider)
+        expect(provider).to be_a(Lain::Provider::Ollama)
+      end
+    end
   end
 
   # B1: the tool-phase guard was constructed bare (`RefuseSecretWrites.new`

@@ -31,7 +31,7 @@ module Lain
       # session silently lose its command or reply surface.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
-                     middleware: Lain::Middleware::Stack.new, auto_surface: nil,
+                     middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
                      goal_driver: Lain::CLI::GoalDriver::Null)
         @agent = agent
         @tty = tty
@@ -45,7 +45,7 @@ module Lain
         # TTY prompt, dunst, the opt-in auto surface and -- once #run has
         # attached one -- the editor's own list, over one queue); Repl asks it
         # to `watch` and never touches the individual surfaces.
-        @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, tty:, conductor:)
+        @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
         # And its counterpart one lifetime up (T33): what the CONVERSATION
         # holds open -- the fleet's reactor and the editor's gesture consumer --
         # which is why `supervisor:` is no longer an ivar here.

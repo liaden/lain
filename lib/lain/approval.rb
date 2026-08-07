@@ -12,7 +12,9 @@ module Lain
 end
 
 require_relative "approval/queue"
+require_relative "approval/queue_surface"
 require_relative "approval/auto_surface"
+require_relative "approval/secret_surface"
 require_relative "approval/policy_switch"
 require_relative "approval/signoff_queue"
 require_relative "approval/gate"
