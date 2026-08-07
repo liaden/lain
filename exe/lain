@@ -70,17 +70,129 @@ class LainCLI < Thor
       options[:dry_run] ? pass.dry_report(selector) : pass.report(selector)
     end
 
-    # `up` forwards trailing args to the chat window ONLY when the invocation
-    # carried a `--` separator (see LainCLI.start); a bare `lain up typo`
-    # stays a loud error, never silent pass-through to chat.
-    def chat_flags!(chat_args)
-      return chat_args if chat_args.empty? || self.class.double_dash?
+    # Positionals a command has no use for. `up` forwards trailing args to the
+    # chat window ONLY from past a `--` separator, which {Argv} has already
+    # split off by the time this is asked -- so anything still here is a typo,
+    # and `lain up /tmp/repo typo` stays a loud error rather than silent
+    # pass-through to chat.
+    #
+    # UNCONDITIONAL, and that is a fix rather than a tidy: this used to return
+    # early whenever the invocation carried a `--` ANYWHERE, so
+    # `lain up /tmp/repo typo -- --provider x` forwarded "typo" to the chat
+    # pane, where it died inside tmux after the session already existed. The
+    # `--` gate belonged here only while nothing else knew where the separator
+    # was; {Argv#split_forwarded} knows exactly, so this can be absolute.
+    def refuse_strays!(strays)
+      return if strays.empty?
 
-      raise Thor::Error, "unexpected arguments #{chat_args.inspect} -- pass chat flags after `--`"
+      raise Thor::Error, "unexpected arguments #{strays.inspect} -- pass chat flags after `--`"
     end
   end
 
   include Boundary
+
+  # Which project the command line names, as opposed to which one the shell
+  # happens to be standing in: `up`'s PATH positional and `chat`'s
+  # `--root`/`--cwd`. One home rather than a helper apiece, because both are
+  # the same translation and both refuse the same way -- a path a user TYPED,
+  # expanded against the shell's directory, and named in its own refusal.
+  module ProjectFlags
+    # Declared through a module method rather than inline, the way {ModelFlags}
+    # and {CompactionFlags} already are: Thor accumulates `method_option` onto
+    # the command declared NEXT, so this call goes immediately before
+    # `def chat`.
+    def self.declare(thor)
+      thor.method_option :root, type: :string, banner: "PATH",
+                                desc: "Treat PATH as this run's project root, instead of detecting one " \
+                                      "by walking up from the working directory"
+      thor.method_option :cwd, type: :string, banner: "PATH",
+                               desc: "Run as if the working directory were PATH; must lie under the root, " \
+                                     "and defaults to it"
+    end
+
+    # `up`'s two arguments, cut out of one positional list.
+    #
+    # PATH shares an argv slot with the first `--`-forwarded flag, because Thor
+    # drops the separator before the command method is entered.
+    # {LainCLI.split_forwarded} puts it back from what argv really said.
+    #
+    # The two halves are then treated separately and absolutely: `forwarded` is
+    # forwarded, and every own positional past the first is refused. Adding
+    # them together -- which this did -- threw away the one thing the split
+    # knows for certain, and `lain up /tmp/repo typo -- --provider x` shipped
+    # "typo" to the chat pane to die inside tmux, after the session existed.
+    def up_argv(path, chat_args)
+      own, forwarded = self.class.split_forwarded([path, *chat_args].compact)
+      refuse_strays!(own.drop(1))
+      { path: own.first, chat_args: forwarded }
+    end
+
+    # What `--root`/`--cwd` change about `chat`, or NOTHING. Nothing is the
+    # point of the empty Hash: an unflagged `lain chat` keeps
+    # {Lain::CLI::ChatLaunch}'s own default factory --
+    # `Lain::Project::Resolver.default_project`, the one place a run resolves
+    # its own project -- rather than routing the ordinary case through a second
+    # construction of the same resolver.
+    #
+    # `--cwd` DEFAULTS TO THE ROOT, because "open that project" is what
+    # `--root PATH` alone means and the shell's directory is almost never
+    # inside it. Left to `Resolver#call`'s own `cwd: Dir.pwd`, the common
+    # invocation built a Project whose cwd lies outside its root, which
+    # {Lain::Project}'s guard refuses with an `ArgumentError` -- not a
+    # {Lain::Error}, so nothing between here and Thor rendered it and the flag
+    # whose whole design is about naming a path in its own refusal answered
+    # with a fourteen-frame backtrace.
+    def project_override
+      root = directory!(options[:root], "--root")
+      cwd = directory!(options[:cwd], "--cwd")
+      return {} if root.nil? && cwd.nil?
+
+      { project_factory: -> { resolved_project(root:, cwd: cwd || root) } }
+    end
+
+    # A path the user typed, expanded against the shell's directory and refused
+    # BY NAME when it is not a directory. The resolver would take a regular file
+    # as a root perfectly happily -- it asks realpath, and a file has one -- and
+    # a project rooted at a file is a typo, never an intent.
+    #
+    # A BLANK flag is no flag: `--root ""` is a truthy String, so it would reach
+    # rung 1 and die inside `realpath("")`. An empty shell variable expanding to
+    # nothing is the ordinary way that happens, and "an empty flag means no
+    # flag" is the friendlier reading of it.
+    def directory!(value, flag)
+      return nil if value.nil? || value.empty?
+
+      File.expand_path(value).tap do |path|
+        raise Thor::Error, "#{flag} #{value} is not a directory" unless File.directory?(path)
+      end
+    end
+
+    # The catch-all is the point, not the `UnusableHome` rename above it. This
+    # lambda runs deep inside {Lain::CLI::ChatLaunch}, and only a
+    # {Lain::Error} is rendered from there -- so every OTHER way resolution can
+    # fail on a path a user TYPED (the `ArgumentError` a cwd outside its root
+    # raises, an unreadable ancestor, a `.lain/config.toml` that will not parse)
+    # reached the terminal as a backtrace. Naming both flags and their values is
+    # what makes the message actionable, since either one can be the wrong half.
+    #
+    # rubocop:disable Style/EnvHome -- {Lain::Project::Resolver.default_project}'s
+    # own note, and this is the explicit-flag twin of it: `Dir.home` falls
+    # through to getpwuid with HOME unset and raises a bare ArgumentError, which
+    # is neither a Lain::Error this file can render nor a named refusal. `nil`
+    # reaches Resolver::Home, which refuses it by name -- renamed here to the
+    # same refusal `default_project` gives, so which flag was typed cannot
+    # change what an unusable HOME says.
+    def resolved_project(root:, cwd:)
+      Lain::Project::Resolver.new(home: ENV.fetch("HOME", nil)).call(cwd:, root:).project
+    rescue Lain::Project::Resolver::UnusableHome => e
+      raise Lain::Project::Resolver::UnresolvableProject, e
+    rescue StandardError => e
+      raise Thor::Error, "cannot open --root #{root.inspect} at --cwd #{cwd.inspect}: #{e.message}"
+    end
+    # rubocop:enable Style/EnvHome
+  end
+
+  include ProjectFlags
 
   # Turns the chat flags into the two collaborators the Agent needs a CHOICE
   # about -- which Provider backend, and the Context carrying the model and the
@@ -95,16 +207,70 @@ class LainCLI < Thor
   # message and exit nonzero, instead of Thor's legacy exit-0 default.
   def self.exit_on_failure? = true
 
-  # Thor swallows the "--" separator before a command method sees its argv,
-  # so remember whether this invocation carried one: `up` forwards trailing
-  # args to the chat window ONLY after `--` -- a bare `lain up typo` must
-  # stay a loud error, never silent pass-through to chat.
-  def self.start(given_args = ARGV, config = {})
-    @double_dash = given_args.include?("--")
-    super
+  # What the REAL argv said, kept because Thor's parsed `options` cannot say
+  # it. `extend`ed rather than written as `def self.` so this class's own body
+  # stays the commands (`Metrics/ClassLength`); `super` still reaches Thor's
+  # `start`, which sits behind this module in the singleton ancestry.
+  module Argv
+    # A flag written before `--` that took its value from PAST the separator.
+    # Its own class because the answer is a sentence about argv, not about
+    # anything the command does -- the shape `Up::Cockpit::SwallowedFlag` used
+    # to name, retargeted: `--nvim` no longer takes a value, but the socket did
+    # not stop existing, it moved to `--nvim-socket`, which does and which sits
+    # in the same slot. The guard's reason outlived its subject.
+    class SwallowedFlag < Thor::Error
+      def initialize(written, delivered)
+        super("`--` did not forward what it looks like it forwards: #{written.inspect} follows the " \
+              "separator, but #{delivered.inspect} is what would reach `chat`. A value-taking `up` flag " \
+              "written LAST before `--` takes the first forwarded token as its own value, and the PATH " \
+              "you typed is what gets forwarded in its place. Write that flag with an `=` -- " \
+              "`--nvim-socket=SOCKET`, `--session=NAME` -- so its value cannot come from past `--`.")
+      end
+    end
+
+    # Thor swallows the "--" separator before a command method sees its argv,
+    # so remember what followed it. `up` forwards trailing args to the chat
+    # window ONLY from past `--`; anything else is a stray positional
+    # {Boundary#refuse_strays!} turns into a loud error.
+    #
+    # The TOKENS, not merely their count. Thor leaves everything after `--`
+    # unparsed and hands it over as ordinary positionals -- verified against
+    # this bundle's Thor, flags `up` itself declares included -- so `lain up --
+    # --provider ollama` reaches `def up(path = nil, *chat_args)` with
+    # "--provider" sitting in PATH's own slot, and only what was really in argv
+    # puts it back.
+    #
+    # A count alone is not enough, and the first edition of this used one. Thor
+    # SKIPS the separator when the flag before it still wants a value, so
+    # `lain up /tmp --nvim-socket -- --provider ollama` hands over
+    # `["/tmp", "ollama"]` -- two positionals for two forwarded tokens, so the
+    # arithmetic still balances while the PATH the user typed has silently
+    # become a chat flag. Comparing the delivered tail against the written
+    # tokens is what tells those two apart; see {SwallowedFlag}.
+    def start(given_args = ARGV, config = {})
+      separator = given_args.index("--")
+      @forwarded = separator ? given_args[(separator + 1)..] : []
+      super
+    end
+
+    # A command's positionals, cut back into its OWN and the ones argv's `--`
+    # forwarded.
+    #
+    # @param positionals [Array<String>]
+    # @return [Array(Array<String>, Array<String>)]
+    # @raise [SwallowedFlag] when the tail Thor delivered is not the tail argv wrote
+    def split_forwarded(positionals)
+      forwarded = @forwarded || []
+      return [positionals, []] if forwarded.empty?
+
+      tail = positionals.last(forwarded.length)
+      raise SwallowedFlag.new(forwarded, tail) unless tail == forwarded
+
+      [positionals[0...-forwarded.length], tail]
+    end
   end
 
-  def self.double_dash? = !!@double_dash
+  extend Argv
 
   # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
   # resolves the home, folds the Journal, and returns a String; this class parses
@@ -567,6 +733,12 @@ class LainCLI < Thor
   method_option :desktop, type: :boolean, default: true,
                           desc: "Fire dunstify notifications for approvals and questions; --no-desktop " \
                                 "opts out (LAIN_DESKTOP=0/1 overrides either way)"
+  # The chat-side half of `lain up PATH`: name the project instead of letting
+  # the shell's directory decide it. `--root` is rung 1 of the detection ladder
+  # (Lain::Project::Resolver's `:flag`, exempt from the refusal set, so
+  # `--root $HOME` is intent rather than inference); `--cwd` is where the run
+  # sits INSIDE that root.
+  ProjectFlags.declare(self)
   CompactionFlags.declare(self)
   default_task :chat
 
@@ -575,7 +747,7 @@ class LainCLI < Thor
   # lives in Lain::CLI::ChatLaunch, where it carries specs; this method stays
   # the flag-parse + error-mapping shell, `say` the one output seam lent in.
   def chat
-    Lain::CLI::ChatLaunch.new(options).call { |notice| say notice }
+    Lain::CLI::ChatLaunch.new(options, **project_override).call { |notice| say notice }
   rescue Lain::Error => e
     raise Thor::Error, e.message
   end
@@ -611,19 +783,26 @@ class LainCLI < Thor
   method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per improver turn"
   def improve(selector) = render { journal_pass(Lain::CLI::Improve.from_options(options), selector) }
 
-  desc "up [-- CHAT_FLAGS...]", "Create/attach the lain tmux session (chat window + status HUD)"
+  desc "up [PATH] [-- CHAT_FLAGS...]", "Create/attach the lain tmux session in PATH (chat window + status HUD)"
   method_option :session, type: :string, default: Lain::CLI::Up::DEFAULT_SESSION, desc: "tmux session name"
   method_option :socket, type: :string, desc: "tmux socket (-L); default tmux socket when unset"
-  method_option :nvim, type: :string, banner: "[SOCKET]", lazy_default: "", default: "",
-                       desc: "Split the chat window into an nvim + chat cockpit (the default); a bare " \
-                             "--nvim derives the per-project socket, or give one explicitly"
-  method_option :no_nvim, type: :boolean, default: false, desc: "Plain chat window, no nvim pane"
-  def up(*chat_args)
+  # BOOLEAN, and that is what makes `lain up --nvim PATH` mean what it reads
+  # like. It took an optional value until the PATH argument landed, and an
+  # optional-value flag consumes the next token -- so `--nvim /tmp/repo`
+  # listened on a socket called `/tmp/repo` and the session got no PATH at
+  # all. A valueless boolean cannot swallow anything, `--no-nvim` is Thor's
+  # own negation of it, and the explicit socket moved to its own flag.
+  method_option :nvim, type: :boolean, default: true,
+                       desc: "Split the chat window into an nvim + chat cockpit (the default); " \
+                             "--no-nvim for a plain chat window"
+  method_option :nvim_socket, type: :string, banner: "PATH",
+                              desc: "Listen on this nvim socket instead of the per-project one lain derives"
+  def up(path = nil, *chat_args)
     # ENV.key?("TMUX") is THIS shell's own answer to "am I already an
     # attached tmux client" -- Up#attach_command turns that into the right
     # verb (switch-client vs. attach); see its doc comment for why the
     # branch has to happen before exec, and the cross-server known gap.
-    plan = Lain::CLI::Up.from_options(options, chat_args: chat_flags!(chat_args))
+    plan = Lain::CLI::Up.from_options(options, **up_argv(path, chat_args))
                         .launch_plan(nested: ENV.key?("TMUX"))
     plan.messages.each { |line| say(line) }
     # exec REPLACES this process, so nothing after this line ever runs --

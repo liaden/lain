@@ -10,13 +10,36 @@ module Lain
       # nvim pane's command. The socket is computed ONCE, here, and handed to
       # both panes explicitly ({Up#create_cockpit_session} threads
       # {#chat_flags} into the chat pane) -- agreement is by construction,
-      # never two sides re-deriving the convention. `option` is the exe's
-      # --resume shape: nil is off, "" (a bare --nvim) derives the plugin's
-      # deterministic socket, a non-empty String is used verbatim.
+      # never two sides re-deriving the convention. `option` is the resolved
+      # answer to two flags rather than the spelling of either: nil is
+      # `--no-nvim`, "" is the cockpit with no `--nvim-socket` (derive the
+      # plugin's deterministic socket), a non-empty String is that flag's
+      # value, used verbatim.
       class Cockpit
-        # A `--nvim` that ate the first chat flag. Its own class because the
-        # answer is a sentence about argv, not about tmux -- see {#socket}.
-        class SwallowedFlag < Error; end
+        # A socket that is not a path two panes can both reach. The socket is
+        # the ONE name the editor and the chat must agree on, and a relative one
+        # is resolved against each pane's own directory -- so requiring it
+        # absolute is the rule, not a formatting preference.
+        #
+        # It also refuses a Thor quirk exactly, without knowing about Thor: a
+        # BARE `--nvim-socket` makes Thor supply the flag's own name, so the
+        # cockpit would listen on a relative file literally called
+        # `nvim_socket`. Recognising that by comparing against the flag's name
+        # would be a heuristic; recognising it as "not an absolute path" is the
+        # rule the socket needs anyway.
+        #
+        # The ancestor of this guard was `SwallowedFlag`, which refused a socket
+        # beginning with `-` back when `--nvim` took an optional value and ate
+        # the next argv token. That spelling is gone; {LainCLI::Argv} now holds
+        # the argv half, and this holds the shape half.
+        class UnusableSocket < Error
+          def initialize(option)
+            super("--nvim-socket #{option.inspect} is not an absolute path -- the nvim socket is the one " \
+                  "name the editor pane and the chat pane must agree on, and a relative one resolves " \
+                  "against whichever pane reads it. Write `--nvim-socket=/path/to.sock`, or leave the " \
+                  "flag off to use the per-project socket lain derives.")
+          end
+        end
 
         def initialize(option:, cwd:, paths:)
           @option = option
@@ -87,28 +110,20 @@ module Lain
 
         def chat_flags = ["--nvim", socket]
 
-        # REFUSES a socket that is really a flag, because `--nvim` takes an
-        # OPTIONAL value: written last before `--`, Thor hands it the first
-        # chat flag as its socket, so `lain up --nvim -- --provider ollama` --
-        # the form the usage line teaches -- listened on a path called
-        # `--provider` and the shared socket the cockpit exists to establish
-        # silently was not there. Any flag between `--nvim` and `--` hides it,
-        # which is why `up_spec` never saw it: it passes an explicit socket.
+        # Indifferent to HOW the socket was spelled on the command line: `up`
+        # resolves `--nvim-socket` (or its absence) into this one `option`
+        # before the cockpit is built, so moving the flag never reshapes this.
+        #
+        # EMPTY IS THE DERIVE SENTINEL, and it is deliberate rather than
+        # incidental: `--nvim-socket ""` is an empty shell variable, and "an
+        # empty flag means no flag" is the reading `--root` already takes.
+        # Anything else must be ABSOLUTE -- see {UnusableSocket}.
         def socket
           @socket ||= begin
-            raise SwallowedFlag, swallowed_flag_message if @option.start_with?("-")
+            raise UnusableSocket, @option unless @option.empty? || @option.start_with?(File::SEPARATOR)
 
             @option.empty? ? derived_socket : @option
           end
-        end
-
-        # Names the remedy rather than the parser: a human who typed the
-        # documented form does not care that Thor treats an optional value
-        # greedily, they care which of the two spellings to use instead.
-        def swallowed_flag_message
-          "--nvim took #{@option.inspect} as its socket, which is a flag, not a path -- an optional-value " \
-            "flag swallows the next argument. Write `--nvim=SOCKET` with an explicit path, or move " \
-            "`--nvim` before another `up` flag so it is not the last one before `--`."
         end
 
         # T2 degrade AC: the shipped plugin cannot be located. {Up} probes
@@ -130,7 +145,7 @@ module Lain
         # nvim-<sha256(cwd)[:12]>.sock -- Paths#project_hash is the Ruby twin
         # of its sha256(getcwd)). The directory is ensured (0700, matching the
         # plugin's own mkdir) only on THIS derived path: runtime_dir is ours
-        # to create, an explicit --nvim SOCKET's parent is the caller's.
+        # to create, an explicit --nvim-socket's parent is the caller's.
         def derived_socket
           File.join(@paths.runtime_dir, "nvim-#{@paths.project_hash(@cwd)}.sock").tap do |sock|
             FileUtils.mkdir_p(File.dirname(sock), mode: 0o700)

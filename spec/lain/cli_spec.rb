@@ -220,20 +220,28 @@ RSpec.describe LainCLI do
   describe "up argv threading through .start" do
     let(:plan) { Lain::CLI::Up::LaunchPlan.new(messages: [], argv: %w[tmux attach]) }
 
+    # `debug: true` so Thor RE-RAISES a refusal instead of turning it into
+    # `exit(1)`: RSpec does not rescue SystemExit inside an example, so an
+    # unexpected refusal here ends the whole run and reports the examples that
+    # had already passed as a clean pass. Measured against a deliberate
+    # regression in `up`'s argv split, which stopped the run 22 examples short
+    # with one reported failure.
     it "routes post--- args into Up.new(chat_args:)" do
       up = instance_double(Lain::CLI::Up, launch_plan: plan)
       allow(Lain::CLI::Up).to receive(:new).and_return(up)
       allow(Kernel).to receive(:exec)
 
-      described_class.start(["up", "--", "--model", "claude-x", "--no-journal"])
+      described_class.start(["up", "--", "--model", "claude-x", "--no-journal"], debug: true)
 
       expect(Lain::CLI::Up).to have_received(:new)
         .with(hash_including(chat_args: ["--model", "claude-x", "--no-journal"]))
     end
 
+    # A SECOND stray positional, because the first is `up`'s PATH now -- a lone
+    # `lain up typo` is a directory that does not exist, and refuses as one.
     it "refuses trailing args when the invocation carried no -- separator" do
       expect(Lain::CLI::Up).not_to receive(:new)
-      expect { described_class.start(%w[up typo]) }
+      expect { described_class.start(%w[up /tmp typo]) }
         .to output(/pass chat flags after `--`/).to_stderr
         .and raise_error(SystemExit)
     end
@@ -241,11 +249,18 @@ RSpec.describe LainCLI do
     # The cockpit is what `lain up` is FOR, so a bare invocation gets it
     # without a flag. Up's contract is unchanged and asserted in its own terms:
     # "" is the derive-the-per-project-socket value, nil is off.
+    #
+    # `debug: true` for the reason above: an unexpected refusal here would
+    # `exit(1)` rather than fail, ending the run and reporting the examples
+    # that had already passed as a clean pass. Measured on this very helper --
+    # a deliberate regression in `up`'s argv split took the file from 32
+    # examples to 22, reporting "0 failures", and the truncation point moved
+    # with the seed.
     def start_up(argv)
       allow(Lain::CLI::Up).to receive(:new).and_return(instance_double(Lain::CLI::Up, launch_plan: plan))
       allow(Kernel).to receive(:exec)
 
-      described_class.start(argv)
+      described_class.start(argv, debug: true)
     end
 
     it "spawns the nvim cockpit by default, with no flag at all" do
@@ -254,17 +269,17 @@ RSpec.describe LainCLI do
       expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: ""))
     end
 
-    # A string option has no Thor-synthesized negation (--no-X is generated for
-    # booleans only), which is why the opt-out is its own flag rather than
-    # --nvim's own negative.
+    # `--no-nvim` is Thor's own negation of a BOOLEAN `--nvim` now, not a
+    # separately declared flag: `--nvim` used to take an optional value, which
+    # meant it swallowed the token after it -- fatal once `up` grew a PATH.
     it "takes --no-nvim as the opt-out, handing Up the nil that means off" do
       start_up(%w[up --no-nvim])
 
       expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: nil))
     end
 
-    it "still honours an explicit --nvim SOCKET over the default" do
-      start_up(%w[up --nvim /tmp/explicit.sock])
+    it "still honours an explicit socket, now spelled --nvim-socket, over the default" do
+      start_up(%w[up --nvim-socket /tmp/explicit.sock])
 
       expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: "/tmp/explicit.sock"))
     end
@@ -380,10 +395,13 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   # the env held when `load` happened. Re-declaring onto a throwaway Thor
   # subclass is what lets an example choose the environment first -- and it
   # exercises the same `ModelFlags.declare` the exe calls.
+  # `debug: true` on the same rule as `start_up` above: Thor renders a refusal
+  # as `exit(1)`, RSpec does not rescue SystemExit inside an example, and a
+  # truncated run reports what had already passed as a pass.
   def options_under(env, argv)
     seen = []
     with_env(env) do
-      probe_class(seen).start(["probe", *argv])
+      probe_class(seen).start(["probe", *argv], debug: true)
     end
     seen.first
   end

@@ -1,10 +1,19 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "fileutils"
 require "json"
 require "open3"
 require "shellwords"
+require "tempfile"
 require "time"
+
+# The PATH/`--` argv split and the `--root`/`--cwd` flags are Thor's work, so
+# the examples at the foot of this file drive the REAL command parser. exe/lain
+# is a script, not a lib file: it ends in `LainCLI.start(ARGV)` guarded by
+# `$PROGRAM_NAME == __FILE__`, so this `load` defines the class without parsing
+# rspec's ARGV -- the same seam spec/lain/cli_spec.rb and chat_flags_spec use.
+load File.expand_path("../../../exe/lain", __dir__)
 
 # I2: `lain up` -- create/attach the "lain" tmux session, session-scoped so the
 # global theme is untouched, with a status-right HUD (warmth/fleet/inbox) read
@@ -602,23 +611,14 @@ RSpec.describe Lain::CLI::Up do
     # putting it on the pane's runtimepath is what makes :LainStart exist with
     # zero user config, and the `exists()` ternary (asserted above) is what
     # keeps a bare `nvim --listen` unharmed either way.
-    # `--nvim` takes an OPTIONAL value, so written last before `--` Thor hands
-    # it the first chat flag: `lain up --nvim -- --provider ollama` -- the form
-    # the usage line teaches -- listened on a socket called `--provider`, and
-    # the shared socket the cockpit exists to establish silently was not there.
-    # Every other example here passes an explicit socket, which is exactly why
-    # none of them saw it.
-    it "refuses a --nvim socket that is really the swallowed first chat flag" do
-      calls = []
-
-      expect { cockpit_up(calls, nvim: "--provider").call }
-        .to raise_error(Lain::CLI::Up::Cockpit::SwallowedFlag, /--nvim=SOCKET/)
-      # The read-only probes (has-session, nvim --version) have already run by
-      # then and are harmless; what must not exist is a cockpit built around a
-      # socket named after a flag.
-      expect(new_session_call(calls)).to be_nil
-      expect(split_call(calls)).to be_nil
-    end
+    # There was a refusal here for a socket that was really the swallowed first
+    # chat flag: `--nvim` took an OPTIONAL value, so written last before `--`
+    # Thor handed it "--provider" and the shared socket the cockpit exists to
+    # establish silently was not there. `--nvim` is a valueless boolean now and
+    # the socket has its own `--nvim-socket`, so nothing in that argv position
+    # can be consumed -- the guard was retired with the ambiguity rather than
+    # left inert, and `RSpec.describe LainCLI` below is where the replacement
+    # coverage lives: it pins that `lain up --nvim /tmp/repo` keeps the PATH.
 
     it "puts the gem's plugin/nvim directory on the runtimepath, guarded ahead of --listen" do
       calls = []
@@ -867,6 +867,426 @@ RSpec.describe Lain::CLI::Up do
       status_right_value = status_right_call.last
       expect(status_right_value).not_to include("jq")
       expect(status_right_value).to include(state_path)
+    end
+  end
+end
+
+# T6: `lain up [PATH]` opens a project OTHER than the shell's own directory.
+#
+# The failure these examples exist for is a PARTIAL one, which is what makes it
+# hard to see by inspection. `up` names a directory in three places -- both
+# panes' tmux `-c`, the nvim socket's hash, and the HUD's `.lain/state.json` --
+# and two of them read a value no PATH argument could change. A cockpit sitting
+# in the project the user named, beside a status bar reading the shell's, looks
+# like a stale HUD rather than like the wrong project.
+#
+# `.from_options` is the flag -> contract translator, not a constructor a
+# caller parameterises, so it has no `shell_out_factory` seam. The spy goes on
+# what {Lain::CLI::Up#initialize}'s default reaches for instead:
+# `Mixlib::ShellOut.public_method(:new)` is resolved per construction, so a
+# stub installed here IS the factory the Up ends up holding. That keeps these
+# examples driving the real translation rather than a hand-built Up, which
+# would prove nothing about the argument that produced it.
+RSpec.describe Lain::CLI::Up, "opening a PATH" do
+  # The `up` flags at their exe defaults, so an example varies only its PATH.
+  def up_options(**overrides) = { session: "lain", socket: nil, nvim: true, nvim_socket: nil }.merge(overrides)
+
+  def tmux_calls(path:, **overrides)
+    calls = []
+    allow(Mixlib::ShellOut).to receive(:new) do |*args|
+      calls << args
+      FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+    end
+    described_class.from_options(up_options(**overrides), chat_args: [], path:).call
+    calls
+  end
+
+  def new_session_call(calls) = calls.find { |args| args.include?("new-session") }
+  def split_call(calls) = calls.find { |args| args.include?("split-window") }
+  def status_right_call(calls) = calls.find { |args| args.include?("status-right") }
+
+  # `-c DIR` reaches tmux as two ADJACENT argv elements, so the pair is what
+  # gets asserted -- `include("-c").and include(dir)` would pass on an argv
+  # that carried the directory somewhere else entirely.
+  def pinned_dirs(call) = call.each_cons(2).filter_map { |flag, dir| dir if flag == "-c" }
+
+  # A temp directory with its symlinks ALREADY resolved, so `File.expand_path`
+  # (what the subject does, lexically) and `File.realpath` (what a fixture
+  # would otherwise be spelled with) cannot disagree. They agree by accident on
+  # a box where `/tmp` is a real directory and stop agreeing wherever `TMPDIR`
+  # resolves through a link -- and every example here would then redden for a
+  # reason that has nothing to do with the subject.
+  def scratch_dir(&block) = Dir.mktmpdir { |dir| yield(File.realpath(dir)) }
+
+  it "pins both cockpit panes to a relative PATH, expanded against the shell's directory" do
+    scratch_dir do |dir|
+      services = File.join(dir, "repo", "services")
+      FileUtils.mkdir_p(services)
+
+      calls = Dir.chdir(dir) { tmux_calls(path: "repo/services") }
+
+      expect(pinned_dirs(new_session_call(calls))).to eq([services])
+      expect(pinned_dirs(split_call(calls))).to eq([services])
+    end
+  end
+
+  # The HUD half of the same value. The chat pane publishes its state file from
+  # its OWN cwd (StatusFeed#default_path), so a status bar reading the shell's
+  # project shows a file nothing is writing -- which renders as a HUD frozen at
+  # its startup values, not as an error.
+  it "points the HUD at the PATH's own .lain/state.json, not the shell's" do
+    scratch_dir do |dir|
+      repo = File.join(dir, "repo")
+      FileUtils.mkdir_p(repo)
+
+      calls = tmux_calls(path: repo)
+
+      expect(status_right_call(calls).last).to include(File.join(repo, ".lain", "state.json"))
+    end
+  end
+
+  # --no-nvim spawns ONE pane through a different tmux invocation, which is why
+  # it needs its own example: the cockpit's two `-c`s were already there and
+  # this window's was not, so it would have inherited the tmux SERVER's
+  # directory -- whatever project happened to start the server.
+  it "pins the plain --no-nvim window to the PATH too, rather than inheriting tmux's default-path" do
+    scratch_dir do |dir|
+      calls = tmux_calls(path: dir, nvim: false)
+
+      expect(split_call(calls)).to be_nil
+      expect(pinned_dirs(new_session_call(calls))).to eq([dir])
+    end
+  end
+
+  it "derives a different nvim socket per PATH, since the socket is keyed on the directory" do
+    scratch_dir do |runtime|
+      scratch_dir do |one|
+        scratch_dir do |two|
+          sockets = with_env("XDG_RUNTIME_DIR" => runtime) do
+            [one, two].map { |dir| new_session_call(tmux_calls(path: dir)).last[/--listen (\S+)/, 1] }
+          end
+
+          expect(sockets).to all(start_with(runtime))
+          expect(sockets.uniq.size).to eq(2)
+        end
+      end
+    end
+  end
+
+  # An explicit socket is used verbatim, whichever flag spelled it: Cockpit
+  # takes a resolved `option`, so moving the socket off `--nvim` onto
+  # `--nvim-socket` changed the exe and nothing below it.
+  it "hands --nvim-socket to both panes verbatim, alongside a PATH" do
+    scratch_dir do |dir|
+      calls = tmux_calls(path: dir, nvim_socket: "/x/explicit.sock")
+
+      expect(new_session_call(calls).last).to include("--listen /x/explicit.sock")
+      expect(split_call(calls).last).to include("chat --nvim /x/explicit.sock")
+      expect(pinned_dirs(split_call(calls))).to eq([dir])
+    end
+  end
+
+  it "keeps two --nvim-socket launches on the sockets they named, not on one derived pair" do
+    scratch_dir do |dir|
+      sockets = %w[/x/one.sock /x/two.sock].map do |sock|
+        new_session_call(tmux_calls(path: dir, nvim_socket: sock)).last[/--listen (\S+)/, 1]
+      end
+
+      expect(sockets).to eq(%w[/x/one.sock /x/two.sock])
+    end
+  end
+
+  # An EMPTY --nvim-socket is Cockpit's derive sentinel, which was true by
+  # accident and is now the stated rule: an empty shell variable expands to
+  # nothing, and "an empty flag means no flag" is what `--root` already does.
+  it "reads an empty --nvim-socket as no flag, deriving the per-project socket" do
+    scratch_dir do |runtime|
+      scratch_dir do |dir|
+        socket = with_env("XDG_RUNTIME_DIR" => runtime) do
+          new_session_call(tmux_calls(path: dir, nvim_socket: ""))
+        end.last[/--listen (\S+)/, 1]
+
+        expect(socket).to start_with(runtime)
+      end
+    end
+  end
+
+  # Thor answers a BARE `--nvim-socket` with the flag's own name, so the socket
+  # would be a relative file called `nvim_socket` in whichever pane read it
+  # first -- and the editor and chat would never meet. Refused as "not
+  # absolute", which is the rule the socket needs anyway rather than a
+  # comparison against the flag's name.
+  it "refuses a relative --nvim-socket, which is what a bare one degenerates into" do
+    scratch_dir do |dir|
+      expect { tmux_calls(path: dir, nvim_socket: "nvim_socket") }
+        .to raise_error(Lain::CLI::Up::Cockpit::UnusableSocket, /nvim_socket.*absolute/m)
+    end
+  end
+
+  it "refuses --nvim-socket together with --no-nvim, naming both rather than dropping one" do
+    expect { described_class.from_options(up_options(nvim: false, nvim_socket: "/x.sock"), chat_args: []) }
+      .to raise_error(Lain::CLI::Up::Flags::SocketWithoutCockpit, /--no-nvim.*--nvim-socket/m)
+  end
+
+  it "leaves the shell's own directory in charge when no PATH is given" do
+    scratch_dir do |dir|
+      calls = Dir.chdir(dir) { tmux_calls(path: nil) }
+
+      expect(pinned_dirs(new_session_call(calls))).to eq([dir])
+    end
+  end
+
+  # The refusal lands before an Up exists at all, which is the strongest form
+  # of "no tmux session is created": there is nothing holding a shell_out
+  # factory to make one with.
+  it "refuses a PATH that is a regular file, by name, before it builds anything that could reach tmux" do
+    Tempfile.create("lain-up-not-a-directory") do |file|
+      expect(described_class).not_to receive(:new)
+
+      expect { described_class.from_options(up_options, chat_args: [], path: file.path) }
+        .to raise_error(Lain::CLI::Up::Workdir::NotADirectory, /#{Regexp.escape(file.path)}/)
+    end
+  end
+
+  it "refuses a PATH that does not exist rather than creating it or falling back to the shell" do
+    scratch_dir do |dir|
+      missing = File.join(dir, "no-such-project")
+
+      expect { described_class.from_options(up_options, chat_args: [], path: missing) }
+        .to raise_error(Lain::CLI::Up::Workdir::NotADirectory, /#{Regexp.escape(missing)}/)
+    end
+  end
+end
+
+# The argv half, driven through LainCLI's REAL Thor parsing: what is under test
+# IS the split, and Thor is what does the splitting -- calling #up with a
+# hand-made list would assert the split against itself.
+RSpec.describe LainCLI, "naming a project on the command line" do
+  describe "lain up PATH" do
+    # Driven for the argv split only: Up is replaced wholesale, so no tmux is
+    # touched and #up's Kernel.exec never has a real argv to run.
+    #
+    # `debug: true` ALWAYS, not only where a refusal is expected. Thor's own
+    # `start` rescues Thor::Error into `exit(1)`, and RSpec does not rescue
+    # SystemExit inside an example -- so one unexpected refusal here does not
+    # fail an example, it TRUNCATES the run and reports what had passed so far
+    # as a clean pass. Measured while probing these examples: a mutant that
+    # should have reddened one of them stopped the file at 78 of 113 examples
+    # with a single failure. `debug: true` makes Thor re-raise instead.
+    def run_up(argv, debug: true)
+      seen = nil
+      allow(Lain::CLI::Up).to receive(:from_options) do |options, chat_args:, path:|
+        seen = { path:, chat_args:, session: options[:session], nvim: options[:nvim],
+                 nvim_socket: options[:nvim_socket] }
+        instance_double(Lain::CLI::Up, launch_plan: Lain::CLI::Up::LaunchPlan.new(messages: [], argv: %w[tmux]))
+      end
+      allow(Kernel).to receive(:exec)
+
+      described_class.start(argv, debug:)
+      seen
+    end
+
+    it "binds a lone positional to PATH" do
+      expect(run_up(%w[up /tmp])).to include(path: "/tmp", chat_args: [])
+    end
+
+    it "leaves PATH unset when none is typed" do
+      expect(run_up(%w[up])).to include(path: nil, chat_args: [])
+    end
+
+    # THE case that used to break. `--nvim` took an optional value, so Thor
+    # handed it the next token: the cockpit listened on a socket called
+    # "/tmp" and the session opened in the shell's directory instead. A
+    # valueless boolean cannot consume anything.
+    it "keeps the PATH after a bare --nvim, with the cockpit still on" do
+      expect(run_up(%w[up --nvim /tmp])).to include(path: "/tmp", nvim: true, nvim_socket: nil)
+    end
+
+    it "reads --no-nvim as Thor's negation of the boolean, PATH intact" do
+      expect(run_up(%w[up --no-nvim /tmp])).to include(path: "/tmp", nvim: false)
+    end
+
+    it "takes an explicit socket from --nvim-socket without touching PATH" do
+      expect(run_up(%w[up --nvim-socket /x.sock /tmp]))
+        .to include(path: "/tmp", nvim: true, nvim_socket: "/x.sock")
+    end
+
+    # The documented `--` form. Thor drops the separator before #up is entered
+    # and leaves what followed it UNPARSED, so "--provider" arrives in PATH's
+    # own slot; only the tokens argv really carried put it back.
+    it "forwards every token after `--` as chat flags, with no PATH" do
+      expect(run_up(["up", "--", "--provider", "ollama"]))
+        .to include(path: nil, chat_args: %w[--provider ollama])
+    end
+
+    # ...and a flag `up` itself declares, written after `--`, belongs to CHAT.
+    # `session` proves it: it is still up's own default, not "foo".
+    it "takes a PATH before `--` and forwards even up's own flag names after it" do
+      expect(run_up(["up", "/tmp", "--", "--session", "foo"]))
+        .to include(path: "/tmp", chat_args: %w[--session foo], session: Lain::CLI::Up::DEFAULT_SESSION)
+    end
+
+    # The FIRST `--` is the separator and every later one is payload, because
+    # `chat` may legitimately carry a `--` of its own. Both of these pass a
+    # `--` through to the chat pane, and both are what tells `index` from
+    # `rindex` -- with `rindex` the tail still reconciles (it is a suffix of
+    # itself), so the split silently moves and `up` refuses a stray it invented.
+    it "treats only the FIRST `--` as the separator, forwarding any later one as a chat argument" do
+      expect(run_up(["up", "--", "--provider", "ollama", "--", "extra"]))
+        .to include(path: nil, chat_args: ["--provider", "ollama", "--", "extra"])
+    end
+
+    it "forwards a chat value that is literally `--`" do
+      expect(run_up(["up", "--", "--model", "--"])).to include(path: nil, chat_args: ["--model", "--"])
+    end
+
+    it "still refuses a second bare positional, naming the `--` the user meant" do
+      expect { run_up(%w[up /tmp typo]) }
+        .to raise_error(Thor::Error, /unexpected arguments.*typo.*pass chat flags after `--`/)
+    end
+
+    # ...and refuses it EVEN WHEN a `--` is present, which is the case that got
+    # through: the old gate returned early on any separator anywhere, so "typo"
+    # rode into the chat pane and died inside tmux after the session existed.
+    it "refuses a stray positional that sits before a `--`, not only one without" do
+      expect { run_up(["up", "/tmp", "typo", "--", "--provider", "x"]) }
+        .to raise_error(Thor::Error, /unexpected arguments.*typo/)
+    end
+
+    # A VALUE-TAKING `up` flag written last before `--` skips the separator and
+    # eats the first forwarded token, so Thor hands over a tail that is not the
+    # tail argv wrote -- and the count still balances, which is why counting
+    # alone silently forwarded the PATH to chat and opened the session in the
+    # shell's directory. Both spellings of the trap, both refused by name.
+    it "refuses a value-taking flag that took its value from past the `--`" do
+      expect { run_up(["up", "/tmp", "--nvim-socket", "--", "--provider", "ollama"]) }
+        .to raise_error(LainCLI::Argv::SwallowedFlag, /--nvim-socket=SOCKET/)
+    end
+
+    it "refuses it for a flag whose value would silently become the session name" do
+      expect { run_up(["up", "/tmp", "--session", "--", "--provider", "ollama"]) }
+        .to raise_error(LainCLI::Argv::SwallowedFlag, /--session=NAME/)
+    end
+
+    # The remedy the refusal teaches has to actually work, or the message sends
+    # the user in a circle.
+    it "accepts the `=` spelling the refusal names, keeping PATH and both forwarded tokens" do
+      expect(run_up(["up", "/tmp", "--nvim-socket=/x.sock", "--", "--provider", "ollama"]))
+        .to include(path: "/tmp", chat_args: %w[--provider ollama], nvim_socket: "/x.sock")
+    end
+
+    it "presents a PATH that is not a directory as a clean refusal naming it, never a backtrace" do
+      Tempfile.create("lain-up-cli-not-a-directory") do |file|
+        expect(Lain::CLI::Up).not_to receive(:new)
+
+        expect { described_class.start(["up", file.path], debug: true) }
+          .to raise_error(Thor::Error, /#{Regexp.escape(file.path)}/)
+      end
+    end
+  end
+
+  describe "lain chat --root / --cwd" do
+    # These examples lodge in up_spec because T6's Files list gives it as the
+    # card's one spec file, and both halves are the same translation: an argv
+    # answer to "which project", instead of the shell's directory.
+    #
+    # `debug: true` for the reason {#run_up} records: Thor turns a refusal into
+    # `exit(1)`, which RSpec does not rescue, so it would end the run rather
+    # than the example.
+    def run_chat(argv, debug: true)
+      seen = nil
+      allow(Lain::CLI::ChatLaunch).to receive(:new) do |_options, **overrides|
+        seen = overrides
+        instance_double(Lain::CLI::ChatLaunch, call: nil)
+      end
+
+      described_class.start(argv, debug:)
+      seen
+    end
+
+    # A temp directory with its symlinks already resolved, for the reason
+    # {Lain::CLI::Up "opening a PATH"}'s own helper records: the exe expands
+    # lexically, and a fixture spelled with realpath would only agree with it
+    # where TMPDIR happens not to be a link.
+    def scratch_dir(&block) = Dir.mktmpdir { |dir| yield(File.realpath(dir)) }
+
+    # EVERY example here CALLS the factory. The lambda is where resolution
+    # actually happens, so an example that only inspects the returned Hash
+    # asserts that a flag was noticed and nothing about what it does -- which
+    # is exactly how `--root` alone shipped raising a bare ArgumentError.
+    it "resolves the run's project from --root and --cwd instead of the shell's directory" do
+      scratch_dir do |dir|
+        services = File.join(dir, "services")
+        FileUtils.mkdir_p(services)
+
+        project = run_chat(["chat", "--root", dir, "--cwd", services]).fetch(:project_factory).call
+
+        expect([project.root, project.cwd, project.detected_by]).to eq([dir, services, :flag])
+      end
+    end
+
+    # `--root` ALONE is the common invocation -- "open that project" -- and the
+    # shell is almost never standing inside the root it names. Left to
+    # Resolver's own `cwd: Dir.pwd` it built a Project whose cwd lies outside
+    # its root, which Project's guard refuses with an ArgumentError: not a
+    # Lain::Error, so it reached the terminal as a fourteen-frame backtrace.
+    it "defaults --cwd to the root, so naming a project alone opens it" do
+      scratch_dir do |dir|
+        project = run_chat(["chat", "--root", dir]).fetch(:project_factory).call
+
+        expect([project.root, project.cwd, project.detected_by]).to eq([dir, dir, :flag])
+      end
+    end
+
+    it "resolves --cwd alone by walking, leaving the root to detection" do
+      scratch_dir do |dir|
+        project = run_chat(["chat", "--cwd", dir]).fetch(:project_factory).call
+
+        expect(project.cwd).to eq(dir)
+      end
+    end
+
+    # The default covers the common case; this covers the rest. Any resolver
+    # refusal reaching a typed flag has to arrive as a Thor::Error naming both
+    # flags, because either one can be the wrong half -- and a cwd outside its
+    # root raises an ArgumentError that no `rescue Lain::Error` between here
+    # and Thor would have caught.
+    it "presents a --cwd outside its --root as a refusal naming both flags, never a backtrace" do
+      scratch_dir do |root|
+        scratch_dir do |elsewhere|
+          factory = run_chat(["chat", "--root", root, "--cwd", elsewhere]).fetch(:project_factory)
+
+          expect { factory.call }
+            .to raise_error(Thor::Error, /--root.*#{Regexp.escape(root)}.*--cwd.*#{Regexp.escape(elsewhere)}/m)
+        end
+      end
+    end
+
+    # The ordinary case must keep ChatLaunch's OWN default factory
+    # (Project::Resolver.default_project), not a second construction of the
+    # same resolver wearing the shell's directory as an explicit flag.
+    it "overrides nothing when neither flag is given" do
+      expect(run_chat(%w[chat])).to eq({})
+    end
+
+    # `--root ""` is a truthy String, so it would reach rung 1 and die inside
+    # realpath("") -- which is what an unset shell variable expands to.
+    it "reads an empty --root as no flag at all" do
+      expect(run_chat(["chat", "--root", ""])).to eq({})
+    end
+
+    it "refuses a --root that is a regular file, naming the flag and the path" do
+      Tempfile.create("lain-chat-root") do |file|
+        expect { run_chat(["chat", "--root", file.path]) }
+          .to raise_error(Thor::Error, /--root.*#{Regexp.escape(file.path)}/)
+      end
+    end
+
+    it "refuses a --cwd that is a regular file, naming that flag rather than --root" do
+      Tempfile.create("lain-chat-cwd") do |file|
+        expect { run_chat(["chat", "--cwd", file.path]) }
+          .to raise_error(Thor::Error, /--cwd.*#{Regexp.escape(file.path)}/)
+      end
     end
   end
 end

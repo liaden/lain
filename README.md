@@ -65,13 +65,14 @@ Without an API key the offline paths still run: dry replay, the sweeps, `lain fr
 ## Usage
 
 `lain` is one Ruby process that owns the loop, and it runs tmux-native. `lain up` creates (or
-reattaches to) a tmux session with a `chat` window and a session-scoped status HUD. `lain up
---nvim` splits that window into an `nvim --listen` pane and a `chat` pane pinned to one cwd and one
-deterministic socket, so the editor and the chat that attaches to it can never diverge.
+reattaches to) a tmux session with a `chat` window and a session-scoped status HUD, and splits that
+window into an `nvim --listen` pane and a `chat` pane pinned to one cwd and one deterministic
+socket, so the editor and the chat that attaches to it can never diverge.
 
 ```bash
-lain up                       # the cockpit
-lain up --nvim                # cockpit + editor
+lain up                       # the cockpit + editor, in this directory
+lain up ~/dev/other-project   # ...in that one instead
+lain up --no-nvim             # plain chat window, no editor pane
 lain                          # just the chat, no tmux
 ```
 

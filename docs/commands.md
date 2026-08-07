@@ -40,6 +40,8 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
 | `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in chat today** — see [Isolation](#isolation-flag). |
 | `--grace` | `60` | Seconds a first Ctrl-C or SIGTERM grants a run before it is stopped. |
+| `--root PATH` | detected | Treat `PATH` as this run's project root instead of walking up from the working directory. An explicit root is intent, so it skips the walk's refusal set. |
+| `--cwd PATH` | **the root** | Run as if the working directory were `PATH`. Must lie under the root — and defaults to it, so `--root PATH` alone means "open that project" rather than "that root, from wherever the shell happens to be". |
 
 #### Compaction flags
 
@@ -116,12 +118,14 @@ journal is opened.
 ### lain up
 
 Create or reattach to the `lain` tmux session: a `chat` window plus a session-scoped status HUD.
-Flags after `--` are forwarded to [`lain chat`](#lain-chat).
+`PATH` is the project directory to open — expanded against the shell's own, and refused by name
+if it is not a directory. Flags after `--` are forwarded to [`lain chat`](#lain-chat).
 
 ```bash
-lain up                                  # chat window + HUD
-lain up --nvim                           # split into an nvim pane + a chat pane
-lain up --nvim /tmp/lain-abc123.sock     # explicit socket
+lain up                                        # chat window + HUD, in this directory
+lain up ~/dev/other-project                    # ...in that one instead
+lain up --no-nvim                              # plain chat window, no nvim pane
+lain up --nvim-socket /tmp/lain-abc123.sock    # explicit nvim socket
 lain up -- --provider ollama --no-compact
 ```
 
@@ -129,7 +133,16 @@ lain up -- --provider ollama --no-compact
 |---|---|---|
 | `--session` | `Up::DEFAULT_SESSION` | tmux session name. |
 | `--socket` | tmux's default | tmux socket (`-L`). |
-| `--nvim [SOCKET]` | off | Split the chat window into an nvim + chat cockpit. Bare derives the per-project socket. |
+| `--nvim` / `--no-nvim` | on | Split the chat window into an nvim + chat cockpit. |
+| `--nvim-socket PATH` | derived | Listen on this nvim socket instead of the per-project one lain derives. Must be absolute — the socket is the one name both panes have to agree on, and a relative one resolves against whichever pane reads it. |
+
+One directory feeds all three of the places `up` names one: both panes' `-c`, the nvim socket's
+hash, and the HUD's `.lain/state.json`.
+
+**Write a value-taking flag with an `=` when it is the last thing before `--`.** `lain up /tmp
+--nvim-socket -- --provider ollama` is refused, because the option parser skips the separator and
+takes `--provider` as the socket — which would silently forward the `PATH` you typed to `chat`
+instead. `--nvim-socket=/tmp/x.sock` cannot be read that way.
 
 `lain up` `exec`s into tmux, replacing the process. From inside tmux it uses `switch-client`;
 from outside, `attach`.

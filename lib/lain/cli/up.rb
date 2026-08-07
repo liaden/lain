@@ -34,6 +34,41 @@ module Lain
       # machine.
       class TmuxUnavailable < Error; end
 
+      # The PATH argument: a directory a user typed, expanded against the
+      # shell's own and checked ONCE. Everything below that names a directory
+      # reads the result -- both panes' tmux `-c`, the nvim socket's hash, and
+      # the HUD's `.lain/state.json` -- so a PATH honoured by only some of them
+      # would leave a cockpit in the project the user asked for beside a status
+      # bar reading the shell's, which looks like a stale HUD rather than the
+      # wrong project.
+      class Workdir
+        # Refused BY NAME rather than left to tmux, whose answer to `-c <file>`
+        # is a pane that dies before anything reaches the screen -- and rather
+        # than falling back to the shell's directory, which would open a
+        # session somewhere the user did not ask for and say nothing about it.
+        class NotADirectory < Error
+          def initialize(path)
+            super("#{path} is not a directory -- `lain up [PATH]` opens the project directory you name")
+          end
+        end
+
+        # nil is "wherever the shell is", which needs neither expansion nor a
+        # check -- and yields NO keyword at all, so {Up#initialize}'s own
+        # default stays the single place this class reads the working directory.
+        #
+        # @param path [String, nil]
+        # @return [Hash] the `cwd:` keyword this PATH makes, or none
+        # @raise [NotADirectory]
+        def self.option(path) = path.nil? ? {} : { cwd: new(path).to_s }
+
+        def initialize(path)
+          @path = File.expand_path(path)
+          raise NotADirectory, path unless File.directory?(@path)
+        end
+
+        def to_s = @path
+      end
+
       DEFAULT_SESSION = "lain"
       CHAT_WINDOW = "chat"
       DEFAULT_STATUS_INTERVAL = 5
@@ -65,33 +100,86 @@ module Lain
       # /btw's popup still share it under the name they already use.
       def self.pane_command(*argv) = PaneCommand.call(*argv)
 
-      # The `up` flags, mapped to this class's contract -- the same shape
-      # {Consolidate.from_options} and {Improve.from_options} use, and here it
-      # earns its keep by keeping ONE translation in one place: `nvim:` is nil
-      # for off, "" to derive the per-project socket, a String for an explicit
-      # one, and the exe has no business knowing which flag makes which. The
-      # cockpit is the DEFAULT, so only an explicit --no-nvim produces the nil.
-      #
-      # @option options [String] :session tmux session name
-      # @option options [String, nil] :socket tmux socket (-L), default socket when nil
-      # @option options [String] :nvim "" to derive the per-project socket, or an explicit path
-      # @option options [Boolean] :no_nvim opt out of the cockpit entirely
-      # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
-      def self.from_options(options, chat_args:)
-        new(session: options[:session], socket: options[:socket],
-            nvim: options[:no_nvim] ? nil : options[:nvim], chat_args:)
+      # The `up` flags, as this class's constructor keywords -- the same shape
+      # {Consolidate.from_options} and {Improve.from_options} use, and it earns
+      # its keep by keeping ONE translation in one place: two flags decide
+      # `nvim:`, and the exe has no business knowing which combination makes
+      # which value.
+      class Flags
+        # `--no-nvim` with `--nvim-socket`. Refused rather than resolved either
+        # way: silently dropping the socket loses a request the user made, and
+        # letting it turn the cockpit back on overrides the one they made more
+        # explicitly. Two flags that cancel are a typo, and the only useful
+        # answer is to say which two.
+        class SocketWithoutCockpit < Error
+          def initialize(socket)
+            super("--no-nvim turns the cockpit off, so --nvim-socket #{socket.inspect} has nothing to " \
+                  "listen on -- drop whichever of the two you did not mean")
+          end
+        end
+
+        # @param options [Hash] `up`'s parsed flags
+        # @option options [String] :session tmux session name
+        # @option options [String, nil] :socket tmux socket (-L), default socket when nil
+        # @option options [Boolean] :nvim open the nvim + chat cockpit
+        # @option options [String, nil] :nvim_socket an explicit nvim socket; derived when unset
+        def initialize(options)
+          @options = options
+        end
+
+        # @return [Hash] the keywords {Up#initialize} takes
+        # @raise [SocketWithoutCockpit]
+        def to_h = { session: @options[:session], socket: @options[:socket], nvim: }
+
+        private
+
+        # nil is off. "" is the cockpit with no explicit socket, which is
+        # {Cockpit}'s own derive sentinel -- so an absent flag and an empty one
+        # arrive as the same value, deliberately.
+        def nvim
+          socket = @options[:nvim_socket]
+          raise SocketWithoutCockpit, socket if socket && !@options[:nvim]
+
+          @options[:nvim] ? socket.to_s : nil
+        end
       end
 
-      # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil
-      # is off, "" (a bare --nvim) derives the plugin's deterministic socket,
-      # a non-empty String is an explicit socket path used verbatim. `cwd:`
-      # and `paths:` feed {Cockpit}, which owns the socket/pane planning.
-      def initialize(session: DEFAULT_SESSION, socket: nil, state_path: default_state_path,
+      # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
+      # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
+      # @param path [String, nil] the PATH argument: the project directory to open
+      # @option options [String] :session tmux session name
+      # @option options [String, nil] :socket tmux socket (-L), default socket when nil
+      # @option options [Boolean] :nvim open the nvim + chat cockpit
+      # @option options [String, nil] :nvim_socket an explicit nvim socket; derived when unset
+      # @raise [Workdir::NotADirectory]
+      # @raise [Flags::SocketWithoutCockpit]
+      def self.from_options(options, chat_args:, path: nil)
+        new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path))
+      end
+
+      # `nvim:` is the T19 cockpit switch: nil is off (`--no-nvim`), "" is the
+      # cockpit with no explicit `--nvim-socket` (derive the plugin's
+      # deterministic one), a non-empty String is that socket path used
+      # verbatim. `cwd:` and `paths:` feed {Cockpit}, which owns the
+      # socket/pane planning.
+      #
+      # `cwd:` is declared BEFORE `state_path:` so the HUD's default can read
+      # it. `.lain/` is a project artifact like `.git/`, not an XDG concern,
+      # and the file is a fact about the directory the PANES sit in rather than
+      # about the shell that typed `lain up PATH` -- the chat pane publishes it
+      # from its own cwd ({StatusFeed}'s `default_path`), so a HUD defaulted
+      # independently reads another project's file and merely looks stale.
+      # {ProjectDir} is a THIRD object both this class and {StatusFeed} name,
+      # never one reaching into the other's private path helper; threading a
+      # root through it is what that separation was left room for.
+      def initialize(session: DEFAULT_SESSION, socket: nil, cwd: Dir.pwd,
+                     state_path: ProjectDir.new(root: cwd).state_path,
                      chat_command: nil, chat_args: [], status_interval: DEFAULT_STATUS_INTERVAL,
-                     nvim: nil, cwd: Dir.pwd, paths: Paths.new,
+                     nvim: nil, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @session = session
         @socket = socket
+        @cwd = cwd
         @hud = Hud.new(state_path:)
         @chat_args = chat_args
         @chat_command = chat_command || default_chat_command
@@ -172,21 +260,29 @@ module Lain
         cockpit_wanted? ? create_cockpit_session : act(*new_session_args)
       end
 
+      # `-c` on the plain window too, not only on the cockpit's two panes: a
+      # `--no-nvim` session that inherited tmux's default-path would run its
+      # chat wherever the tmux SERVER was started, which is a different project
+      # from the one `lain up PATH` names and from the one the HUD reads.
       def new_session_args
-        args = ["new-session", "-d", "-s", @session, "-n", CHAT_WINDOW]
+        args = ["new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd]
         @chat_command ? args + [@chat_command] : args
       end
 
-      # T19's degrade AC: --nvim without an nvim binary is TODAY's single chat
-      # pane plus a named warning -- mirroring the jq fallback's "degraded is
-      # never silent" rule, and probed only on the create path (a reattaching
-      # `up --nvim` changes nothing, so it has nothing to warn about).
+      # T19's degrade AC: the cockpit without an nvim binary is TODAY's single
+      # chat pane plus a named warning -- mirroring the jq fallback's "degraded
+      # is never silent" rule, and probed only on the create path (a reattaching
+      # `lain up` changes nothing, so it has nothing to warn about).
+      #
+      # The message does not name a FLAG, because the cockpit is the default and
+      # the operator need not have typed one -- "--nvim ignored" read as a
+      # reproach for something they did not do.
       def cockpit_wanted?
         return false unless @cockpit.requested?
         return true if binary_present?("nvim")
 
-        @warnings << "nvim not found on PATH -- --nvim ignored, spawning the plain chat window " \
-                     "(install neovim for the editor cockpit)"
+        @warnings << "nvim not found on PATH -- opening the plain chat window instead of the cockpit " \
+                     "(install neovim for the editor pane, or pass --no-nvim to stop asking)"
         false
       end
 
@@ -213,8 +309,8 @@ module Lain
       # diverge between the editor and the chat that attaches to it.
       def create_cockpit_session
         warn_missing_plugin
-        act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cockpit.cwd, @cockpit.nvim_pane_command)
-        act("split-window", "-h", "-t", "#{@session}:#{CHAT_WINDOW}", "-c", @cockpit.cwd,
+        act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd, @cockpit.nvim_pane_command)
+        act("split-window", "-h", "-t", "#{@session}:#{CHAT_WINDOW}", "-c", @cwd,
             self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
       end
 
@@ -254,9 +350,7 @@ module Lain
       # and failing `lain up` outright on an older tmux would trade a working
       # cockpit for a diagnostic nicety. A tmux too old simply keeps today's
       # behaviour.
-      def keep_failed_pane
-        run("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "remain-on-exit", "failed")
-      end
+      def keep_failed_pane = run("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "remain-on-exit", "failed")
 
       def set_option(name, value) = act("set-option", "-t", @session, name, value)
 
@@ -285,16 +379,6 @@ module Lain
       rescue Errno::ENOENT
         false
       end
-
-      # `.lain/` is a project artifact like `.git/`, not an XDG concern.
-      #
-      # This was a duplicated literal, deliberately, so I2 (this class) and I1
-      # ({StatusFeed}, which publishes the file) would not depend on each other's
-      # private path helper. They still do not: {ProjectDir} is a THIRD object
-      # both name, not {StatusFeed}'s helper reached into from here -- and it is
-      # what a project-root flag would thread through (`cli/wiring.rb`'s
-      # `fleet_isolation` note) instead of three separate literals.
-      def default_state_path = ProjectDir.new.state_path
     end
   end
 end

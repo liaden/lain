@@ -51,8 +51,14 @@ module ChatFlags
   #
   # `nvim` is deliberately absent -- `chat` declares it too, so it resolves
   # through `declared` with no claim needed here.
+  #
+  # `no_nvim` USED to be here and is gone with the flag: `up`'s `--nvim` is a
+  # boolean now, so `--no-nvim` is Thor's own negation of it rather than a
+  # separately declared key `up` reads. `nvim_socket` is what replaced its
+  # value form, and it is `up`'s alone -- `chat --nvim SOCKET` still spells the
+  # same thing with the flag it always had.
   ELSEWHERE = { dry_run: %w[consolidate improve], session: %w[up watch],
-                socket: %w[up], no_nvim: %w[up] }.freeze
+                socket: %w[up], nvim_socket: %w[up] }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the
