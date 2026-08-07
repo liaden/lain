@@ -312,6 +312,82 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(null).to be(described_class.instance)
       expect(null).to be_frozen
     end
+
+    # It is the default of BOTH layers, so it has to answer both ducks -- a
+    # Null only one of them accepts would contradict the premise that the gate
+    # and the denial handler take the same injected object.
+    it "answers both layers' ducks, which is what lets one object serve both" do
+      expect(null).to respond_to(:gates?, :denial)
+      expect(null.denial(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                                    input: { "path" => "/home/tester/.ssh/id_rsa" }))).to be_nil
+    end
+  end
+
+  # T12's half of the same question, asked of the SAME object so the two axes
+  # read one table. Covered here rather than only through the handler that
+  # consults it: a method whose only test lives in a consumer is a method a
+  # refactor can delete without anything noticing.
+  describe "#denial" do
+    let(:denied) { "#{home}/.ssh/id_ed25519" }
+
+    it "answers a Denial naming the call, the tool, the path and the verdict" do
+      denial = policy.denial(call("read_file", { "path" => denied }))
+
+      expect(denial).to be_a(Lain::Sensitivity::Denial)
+      expect(denial).to have_attributes(tool_use_id: "tu_1", tool: "read_file", path: denied, reason: :protected)
+      expect(denial.verdict).to have_attributes(denied?: true, explanation: "a protected path")
+    end
+
+    it "answers nil for a GATED path, which is the gate's to decide and not this one's" do
+      expect(policy.denial(call("read_file", { "path" => ".env" }))).to be_nil
+      expect(policy.gates?(call("read_file", { "path" => ".env" }))).to be(true)
+    end
+
+    it "answers nil for an ordinary path, and for a tool the table does not name" do
+      expect(policy.denial(call("read_file", { "path" => "README.md" }))).to be_nil
+      expect(policy.denial(call("web_search", { "path" => denied }))).to be_nil
+    end
+
+    it "names the tool a WRITE refusal refused, so the Journal can tally by verb" do
+      expect(policy.denial(call("write_file", { "path" => denied })).tool).to eq("write_file")
+      expect(policy.denial(call("bash", { "cwd" => "#{home}/.gnupg" })).tool).to eq("bash")
+    end
+
+    # {#path_in} reads `effect.name`, which these have not got. A NoMethodError
+    # on the dispatch path invites a `rescue` answering "not denied", which is
+    # this boundary failing OPEN.
+    it "answers nil rather than raising for an effect that names no tool" do
+      expect(policy.denial(Lain::Effect::ModelCall.new(request: nil))).to be_nil
+    end
+
+    describe "an Approval wrapper" do
+      def wrapped(effect) = Lain::Effect::Approval.new(effect:)
+
+      # Without this, wrapping LIFTS a denial: the handler sits ahead of the
+      # Gate, so it sees the wrapper, declines, and the Gate then unwraps and
+      # approves. The unwrap belongs here because this class already owns
+      # "which effects name paths".
+      it "is looked through, so wrapping cannot lift a denial" do
+        expect(policy.denial(wrapped(call("read_file", { "path" => denied })))).not_to be_nil
+      end
+
+      it "is looked through however many times it is applied" do
+        deep = (1..6).inject(call("read_file", { "path" => denied })) { |effect, _| wrapped(effect) }
+
+        expect(policy.denial(deep)).to have_attributes(path: denied, tool_use_id: "tu_1")
+      end
+
+      # The asymmetry, pinned so it is not "tidied" away: Gate unwraps BEFORE
+      # it consults `gates?`, so teaching `gates?` to unwrap would change when
+      # the gate fires.
+      it "is deliberately NOT looked through by #gates?" do
+        expect(policy.gates?(wrapped(call("read_file", { "path" => ".env" })))).to be(false)
+      end
+
+      it "does not promote a wrapped gated path into a denial" do
+        expect(policy.denial(wrapped(call("read_file", { "path" => ".env" })))).to be_nil
+      end
+    end
   end
 
   describe "construction" do

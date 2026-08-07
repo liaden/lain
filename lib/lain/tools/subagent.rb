@@ -816,8 +816,18 @@ module Lain
         # inversion, since the child is the LESS supervised of the two. It is
         # read per call through the same board thunk `gate_policy` travels, so
         # the two can never resolve to different sessions.
+        # Ahead of that gate sits the DENIAL half (T12), over the same seam and
+        # the same board thunk, and it is here rather than only in
+        # {CLI::Switchboard#gate} for the reason the sensitivity axis itself is:
+        # a child gated only by its parent's chain reads what its parent may
+        # not, and the child is the LESS supervised of the two. No new Seam
+        # member -- `sensitivity` and `journal` are both already on it, and
+        # {UNJUDGED} denies nothing, so a spawn that wired neither is unchanged.
         def gated(inner)
-          Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:)
+          Effect::Handler::Sensitivity.new(
+            sensitivity: @seam.sensitivity, journal: @seam.journal,
+            inner: Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:)
+          )
         end
       end
     end

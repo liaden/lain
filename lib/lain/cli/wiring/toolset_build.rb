@@ -97,6 +97,7 @@ module Lain
         # they cannot be wired to disagree about which paths are sensitive.
         LiveSensitivity = Data.define(:board) do
           def gates?(effect) = board.call.sensitivity.gates?(effect)
+          def denial(effect) = board.call.sensitivity.denial(effect)
         end
 
         # A frozen {Lain::Mode} answers `#posture` exactly as {Mode::Switch}

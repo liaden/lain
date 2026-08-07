@@ -227,8 +227,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # `gates?` must reach that policy, not a Null it was quietly built with.
       # The parent's own gate is driven beside it, over the same effect, so the
       # claim is a comparison rather than two separate readings.
+      # `#gate` returns T12's denial handler with the Gate one step in, so the
+      # GATING axis is read off that Gate: the outer handler answers the
+      # denial question, and `.env` is gated rather than denied.
       it "gates a child's read of .env exactly as the parent's own gate does" do
-        parent_gate = switchboard.gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
+        parent_gate = switchboard
+                      .gate(inner: Lain::Effect::Handler::Live.new(toolset: switchboard.toolset.current))
+                      .instance_variable_get(:@inner)
 
         expect(child_sensitivity.gates?(reads(".env"))).to be(true)
         expect(parent_gate.handles?(reads(".env"))).to be(true)

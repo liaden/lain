@@ -59,7 +59,13 @@ module Lain
         #   `lain/sensitivity`, so a constant in this class body is a hard
         #   NameError at load -- the debt `mode/resolution.rb` records and
         #   defers the same way.
-        def initialize(policy: DenyAll.new, inner: nil, sensitivity: Sensitivity::Policy::Null.instance)
+        #
+        #   ROOT-QUALIFIED, and it has to be: {Effect::Handler::Sensitivity}
+        #   (T12) is a sibling under this very namespace, so a bare
+        #   `Sensitivity` resolves through `Module.nesting` to the HANDLER and
+        #   this expression dies on `Handler::Sensitivity::Policy`. It failed
+        #   only when a caller omitted `sensitivity:`, which is most of them.
+        def initialize(policy: DenyAll.new, inner: nil, sensitivity: Lain::Sensitivity::Policy::Null.instance)
           super(inner:)
           @policy = policy
           @sensitivity = sensitivity
@@ -94,7 +100,8 @@ module Lain
           # this handler's problem to report: it falls through to inner, which
           # raises the usual unknown-tool error the way any declined effect does.
           # Two axes, OR'd: the TIER the tool declares about itself, and the
-          # PATH this particular call names ({Sensitivity::Policy}). Neither can
+          # PATH this particular call names ({Lain::Sensitivity::Policy} --
+          # root-qualified for the reason #initialize gives). Neither can
           # ungate the other -- a policy that gates nothing leaves `bash` gated,
           # and a tier-1 tool still reaches a human for `.env`.
           #

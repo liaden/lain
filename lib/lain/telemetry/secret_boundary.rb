@@ -11,8 +11,15 @@ module Lain
       class ReadRefused < Guard
         attribute :path
         attribute :reason
+        attribute :tool
         validates :path, presence: { message: "must name the refused path, got nil" }
         validates :reason, presence: { message: "must name what refused, got nil" }
+        # The record covers writers as well as readers, so a Journal reader
+        # tallying by verb needs the tool NAME rather than having to infer one
+        # from the record's own. Required, not optional: a refusal that cannot
+        # say which call it refused is the same unattributable record `path`
+        # exists to prevent.
+        validates :tool, presence: { message: "must name the refused tool, got nil" }
       end
 
       # A redaction record must carry two non-negative Integer COUNTS, never
@@ -50,20 +57,31 @@ module Lain
       end
     end
 
-    # A `read` refused before the tool ever produced bytes -- T12's denial
-    # path, and {WriteRefused}'s counterpart for reads. `reason` names WHAT
-    # refused (a pattern name or a declined judgment), never the file's bytes,
-    # matching {WriteRefused}'s discipline; `path` is the deliberate widening
-    # documented on {Guards::ReadRefused}. `path` is coerced with `to_s`
-    # because T12 plausibly hands this a `Pathname`, and an uncoerced one would
-    # leave the in-process field and the journaled JSON string disagreeing.
-    ReadRefused = Data.define(:tool_use_id, :path, :reason) do
+    # ANY tool call refused at the path boundary before the tool ran -- T12's
+    # denial path, and {WriteRefused}'s counterpart on the read side of the
+    # house. `reason` names WHAT refused (a pattern name or a declined
+    # judgment), never the file's bytes, matching {WriteRefused}'s discipline;
+    # `path` is the deliberate widening documented on {Guards::ReadRefused}.
+    # `path` is coerced with `to_s` because T12 plausibly hands this a
+    # `Pathname`, and an uncoerced one would leave the in-process field and the
+    # journaled JSON string disagreeing.
+    #
+    # It is NOT reads only, though the name says so.
+    # {Sensitivity::Policy::PATH_FIELDS} names `write_file`, `edit_file`, `bash`
+    # and `core_exec` beside the readers, and refusing a WRITE to
+    # `~/.ssh/id_ed25519` is as much this boundary's job as refusing a read --
+    # so `tool` carries the verb and a Journal reader tallies on it rather than
+    # counting a refused write as a refused read. The derived type stays
+    # `read_refused`: renaming a shipped record mid-chunk would break every
+    # replay reader keyed on it, to fix a word.
+    ReadRefused = Data.define(:tool_use_id, :tool, :path, :reason) do
       include Journalable
 
-      def initialize(tool_use_id:, path:, reason:)
-        Guards::ReadRefused.check!(path:, reason:)
+      def initialize(tool_use_id:, tool:, path:, reason:)
+        Guards::ReadRefused.check!(path:, reason:, tool:)
 
-        super(tool_use_id: tool_use_id.dup.freeze, path: path.to_s.dup.freeze, reason: reason.dup.freeze)
+        super(tool_use_id: tool_use_id.dup.freeze, tool: tool.to_s.dup.freeze,
+              path: path.to_s.dup.freeze, reason: reason.dup.freeze)
       end
     end
 

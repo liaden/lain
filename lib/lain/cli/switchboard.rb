@@ -100,6 +100,12 @@ module Lain
       def initialize(journal:, yolo:, model:, toolset:, sensitivity: Sensitivity::Policy::Null.instance)
         @sensitivity = sensitivity
         @ledger = Sensitivity::Ledger.new
+        # Kept, where the switches merely borrow it: {#gate}'s path refusals are
+        # journaled at the moment they happen, and re-resolving one per gate
+        # would leak an fd -- {Chronicle::Null#record_journal} opens the null
+        # device on EVERY call, which is the leak this class was extracted to
+        # stop happening once.
+        @journal = journal
         @approvals = yolo ? nil : Approval::Queue.new(journal:)
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
@@ -113,7 +119,23 @@ module Lain
       # The session's approval gate over `inner`: the Gate holds this board's
       # ONE policy switch, so /yolo flips and posture flips both reach it while
       # the Gate itself stays construction-fixed.
-      def gate(inner:) = Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:)
+      #
+      # {Effect::Handler::Sensitivity} sits AHEAD of it, over the SAME one
+      # policy: a denied path is not approvable, and a Gate policy answer is a
+      # Boolean, so every Boolean is approvable by construction. Two axes, two
+      # handlers, in the order that leaves the human a move on the axis that has
+      # one -- the gated path reaches the queue, the denied one never does.
+      #
+      # Nothing here reads `--yolo`, and that is the point: the refusal is
+      # decided before the policy switch is consulted, so a `--yolo` session
+      # (which wires no queue at all) refuses a denied path exactly as an
+      # attended one does.
+      def gate(inner:)
+        Effect::Handler::Sensitivity.new(
+          sensitivity:, journal: @journal,
+          inner: Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:)
+        )
+      end
 
       # This board's contribution to the {Command::Surface}: the three switches,
       # plus /approve's inline drain prompt over the SAME conductor-routed

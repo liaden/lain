@@ -2,6 +2,34 @@
 
 module Lain
   class Sensitivity
+    Denial = Data.define(:tool_use_id, :tool, :path, :verdict)
+
+    # What {Policy#denial} answers with: which call, which tool, the path as
+    # that call wrote it, and the {Verdict} that refused it.
+    #
+    # It lives at THIS level rather than under the handler that consults it,
+    # because the arrow has to point away from the consumers: {Telemetry} and a
+    # later masking arm read a verdict too, and none of them should have to name
+    # a handler's constant to do it.
+    #
+    # The verdict travels whole rather than collapsed to a Boolean, because the
+    # model's message and the journaled record both want the REASON --
+    # `:protected` and `:configured` are different findings, and reporting a
+    # project's own rule as ours makes "why is my file denied?" unanswerable.
+    #
+    # `tool_use_id` and `tool` ride along rather than being read back off the
+    # effect, and that is what keeps the {Effect::Approval} unwrapping in ONE
+    # place: {Effect::Handler::Sensitivity} sits ahead of the Gate, so it sees
+    # wrappers, which carry neither field. This class has already looked through
+    # the wrapper to decide, so it alone holds the call they belong to.
+    #
+    # Frozen but deliberately NOT deeply so: `path` is whatever the model's
+    # input held, and coercing it here would duplicate the normalization
+    # {Telemetry::ReadRefused} already does on the way into the record.
+    class Denial
+      def reason = verdict.reason
+    end
+
     # Does this tool call name a sensitive path -- asked by
     # {Effect::Handler::Gate}, so a `read_file` on `.env` reaches a human
     # although `read_file` declares itself tier 1.
@@ -75,6 +103,7 @@ module Lain
       # compare unequal.
       class Null
         def gates?(_effect) = false
+        def denial(_effect) = nil
 
         INSTANCE = new.freeze
 
@@ -98,7 +127,54 @@ module Lain
         !path.nil? && !@sensitivity.classify(path).ordinary?
       end
 
+      # The DENIAL half of the same question, for {Effect::Handler::Sensitivity},
+      # which refuses a denied path outright rather than gating it. It reads the
+      # SAME table {#gates?} does -- one extraction, so the two axes cannot drift
+      # about which field names a path -- and hands back the whole verdict,
+      # because the refusal message and {Telemetry::ReadRefused} both want the
+      # REASON: `:protected` and `:configured` are different findings, and
+      # reporting a project's own rule as ours makes "why is my file denied?"
+      # unanswerable.
+      #
+      # == Why this unwraps an Approval and {#gates?} does not
+      #
+      # The asymmetry is real and it is not an oversight, so do not "fix" it by
+      # adding an unwrap to {#gates?} -- that would change WHEN the gate fires.
+      # {Effect::Handler::Gate#perform} unwraps before it evaluates its own
+      # axis, so `gates?` only ever sees the inner call.
+      # {Effect::Handler::Sensitivity} sits AHEAD of the gate and sees the
+      # wrapper, and without this an {Effect::Approval} around a denied
+      # `read_file` would be declined here, unwrapped by Gate, and approved --
+      # wrapping would lift a denial nothing is supposed to lift. Looking
+      # through it belongs HERE and not in that handler: this class already owns
+      # "which effects name paths", so this is the single home for the knowledge
+      # rather than a second copy of Gate's unwrapping contract.
+      #
+      # @param effect [Lain::Effect] any effect at all; the question is total
+      #   over the vocabulary, so no caller guards on kind first
+      # @return [Denial, nil] nil when nothing here refuses
+      def denial(effect)
+        call = unwrapped(effect)
+        # {#path_in} reads `effect.name`, which a {Effect::ModelCall} has not
+        # got. Without this guard the boundary raises NoMethodError on the
+        # synchronous dispatch path, and the repair a crash there invites is a
+        # `rescue` answering "not denied" -- this class failing OPEN to quiet an
+        # exception, which is the worst shape a security control can take.
+        return nil unless call.tool_call?
+
+        path = path_in(call)
+        verdict = path && @sensitivity.classify(path)
+        return nil unless verdict&.denied?
+
+        Denial.new(tool_use_id: call.tool_use_id, tool: call.name, path:, verdict:)
+      end
+
       private
+
+      # Recursive rather than a single unwrap: {Effect::Approval} takes any
+      # effect, including another Approval, and one level of unwrapping would
+      # make a double wrap the bypass a single wrap no longer is.
+      def unwrapped(effect) = effect.approval? ? unwrapped(effect.effect) : effect
 
       def path_in(effect)
         field = PATH_FIELDS[effect.name]
