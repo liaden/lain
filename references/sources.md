@@ -45,7 +45,33 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
 ### HN discussion survey (complementary, recurring)
 - **Access:** `https://hn.algolia.com/api/v1/search?query=…&tags=story&numericFilters=created_at_i>…,points>…`
   for stories; `…/api/v1/items/<id>` for a full nested comment tree. Digest into a **dated** `.md`
-  (news ages), labelled ⚠️ LLM-generated. First run: `hn-agent-landscape-2026-07.md`.
+  (news ages), labelled ⚠️ LLM-generated. Runs: `hn-agent-landscape-2026-07.md` (first),
+  `hn-agent-landscape-2026-08.md` (2026-07-18 → 2026-08-06).
+- **Window each run from the previous run's date and write the delta**, not a re-survey. Carry the
+  previous runs' story IDs as an exclusion set; the 2026-08 run excluded 27 and still shortlisted 42
+  from 367.
+- **Run a query-free sweep alongside the topic queries.** `search_by_date&tags=story` at a high
+  `points>` floor catches what the topic terms miss, and it is not a marginal supplement: in the
+  2026-08 run **10 of the 20 threads that made the writeup matched no topic query**, including the
+  session-portability post, the Codex context-window cut and the Copilot-worm disclosure. Topic
+  queries alone are a filter shaped like the *previous* run's vocabulary, so they systematically
+  miss whatever the window is actually about.
+- **⚠️ Algolia prefix-matches ONLY the last token of a query; earlier words need an exact token
+  match.** This silently gutted the 2026-08 run's topic sweep: `"agent harness"` returns 6 hits and
+  **does not find "Building an Advanced Agentic Harness"**, because `agent` ≠ `agentic` in
+  non-final position. `"harness agent"` finds it (now `agent` is last and prefix-matches), and bare
+  `"harness"` finds it among 16. Every 2–3 word query whose *non-final* word needed stemming —
+  `agent loop`, `agent framework`, `agent sandbox isolation`, `LLM agent memory` — under-returned
+  the same way, with no error and a plausible-looking hit count. **Prefer single-word queries**, or
+  put the stem-needing term last, and accept the precision cost: bare `MCP`/`TUI`/`RAG` match inside
+  URLs and author names, so a single-word sweep needs a title filter afterwards.
+- **The query-free floor was set too high.** The 2026-08 run swept `points>250`, which structurally
+  could not see a 122-point post. A second pass at `points>100` (query-free) plus stem-safe single
+  words returned **566 stories the first sweep never produced, ~79 of them SCOPE-plausible** — an
+  entire second tier the first pass was blind to. Sweep the 100–250 band.
+- **Points are a poor relevance proxy in both directions.** The single best statement of grader
+  discipline in the 2026-08 window came from a **59-point** Show HN's author comment; several
+  700-point threads yielded nothing. Rank the shortlist by SCOPE fit, then read.
 - **Unique data:** practitioner *reactions* — failure cases, benchmarking-methodology critiques, and
   outbound links to lab blogs / repos / arXiv that never reach the HN front page. The comment
   cross-links were higher-signal than several top-level stories (swyx's loopcraft taxonomy, zby's
@@ -56,7 +82,9 @@ knowledge is split roughly: ~50% arXiv preprints, ~30% engineering writeups from
   story for an ID — verify the returned `title` matches. (3) Comment links are stored as
   **entity-encoded visible text** (`&#x2F;`), often **without an `http://` scheme** and with no
   `href` — `html.unescape` the text *before* regexing, and match scheme-less domains, or you find
-  ~1 link where there are hundreds.
+  ~1 link where there are hundreds. (4) `http://export.arxiv.org/api/query` returns an **empty
+  body** from this environment while `https://` works — vetting comment-mined arXiv IDs silently
+  produced "NOT FOUND" for all ten until the scheme was changed.
 
 ## Recommended acquisition order
 

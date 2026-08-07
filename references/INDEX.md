@@ -73,6 +73,71 @@ story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **No
 Effect/Middleware guardrail sweep, the model-migration A/B harness, the M6 retrieval axes, and
 `Agent::Budget` per-effect cost accounting. Comment-linked arXiv IDs are parked for SCOPE vetting.
 
+### [hn-agent-landscape-2026-08.md](hn-agent-landscape-2026-08.md) ⚠️ LLM-generated
+The second run of the recurring scan, covering **2026-07-18 → 2026-08-06** — a *delta* over the
+2026-07 file, which it does not supersede. Same reduction and same caveat: story IDs/points/URLs
+are verifiable, the "→ Lain" readings are Claude's. **Not a primary source.**
+
+**What's inside:**
+- **The prelude question got a vendor answer** — Anthropic removed **>80% of Claude Code's system
+  prompt with no measurable loss** on their coding evals, and named six inversions (rules→judgment,
+  examples→tool-parameter design, upfront context→progressive disclosure). Nobody outside can
+  reproduce it; a prelude-ablation sweep per model tier is the highest-credibility early result
+  available to the bench.
+- **A portability contract that reads like a spec for the Timeline** (Pi/earendil) — canonical local
+  event log, auditable agent lineage, observable tool provenance, **inspectable compaction carrying
+  the instruction that produced it**. Most clauses Lain already satisfies structurally rather than
+  by policy; compaction provenance is the clear gap, and closing it is a `:snapshot` meta field
+  plus a spec.
+- **Cache mechanics with a closed-form rule** — reordering tools breaks the cache (an unasserted
+  `Request`-level property here); and the rewrite break-even `surviving × (uncached − cache_read) ≈
+  pruned × cache_read` makes "compact only when it pays" a computable guard rather than a heuristic.
+- **"Harness engineering is not enough"** (Horthy, 394pts) — the one thread arguing against this
+  project's premise, and it concedes the bench's case: the objection is that harnesses optimize a
+  cost function omitting maintainability. **SlopCodeBench (`2603.24755`), published in the same
+  window, is that missing cost function** — deterministic erosion/verbosity grading; agent code
+  2.3× more verbose and 2.0× more eroded than 473 human repos.
+- **The oracle-upper-bound trick** (Echo) — compute the post-hoc best-per-task arm to bound the
+  headroom, then report each arm as a *fraction of achievable headroom*. Generalizes to every
+  swappable seam and turns a leaderboard into a study.
+- **"Signal, not a score"** (Homebench) — the cleanest public statement of grader discipline in the
+  window: deterministic checks are scores, LLM judges are signals, and incomparable measurements are
+  never blended into one confident number.
+- **Per-turn model routing fights the cache, and the threshold is computable** (§7) — caches are
+  model-scoped, so a switch invalidates the whole prefix. At published multipliers (read ≈ 0.1×
+  input, write 1.25× at 5-min TTL) a cold switch beats a warm stay only when the target is **>~12.5×
+  cheaper per input token** — which no intra-family tier shift clears, and open-weight pools do. The
+  condition is short *prefix*, not small *task*. Lain's content-addressed Timeline makes per-model
+  cache state a query rather than the "local shadow" every external router has to maintain.
+- **Two unguarded cache hazards found here** — tool render order is unasserted at the `Request`
+  level (a reorder invalidates everything), and the **20-content-block lookback** means a
+  parallel-tool fan-out silently misses the previous turn's cache. Both are property tests; the
+  second bears directly on the parallel-tools chunk. Also corrects `CLAUDE.md`'s flat "4096-token
+  minimum cacheable prefix" — the minimum is model-dependent and non-monotonic (512 on Opus 5).
+
+- **A `.git` leak is a live hazard in this repo's own fixtures** (§5.5) — an AI-evaluation
+  practitioner notes coding-agent benchmarks "sometimes forget to delete `.git`". Every fixture in
+  `spec/` builds a real git repository, so a grader whose fixture history contains the fixing commit
+  records a pass that measured nothing. Assert it before writing any coding-task grader. Same
+  section imports **item response theory** as the honest replacement for averaged pass rates.
+- **Static verifiers beat both prompt scaffolding and fine-tuning** (§2.5) — a checker survives the
+  model upgrade that invalidates a prompt, which makes "prompt vs deleted vs verifier" a testable
+  three-arm sweep, and makes this repo's own lint stack the exemplar. The same source gives the one
+  routing shape that doesn't fight the cache: expensive model writes the verifier, cheap model
+  iterates against it.
+- **Human view ≢ LLM view** (§3.4) — ANSI escapes render one way to a terminal and read another to
+  the model. Lain's premise is that the Journal *is* the record; nothing currently checks that what
+  the human saw, what the model saw, and what the Journal stored are the same thing.
+- **"Fewer *repeated* dead ends"** (§5.6) — the best available objective function for M6, computable
+  from the Journal, and the success metric the retrieval experiment was missing.
+
+**Useful for:** the prelude/progressive-disclosure arms, `planning/specs/cache-economics.md`,
+`planning/specs/oracles.md` (grader vs judge, verification-as-budgeted-effect), the compaction
+sweep, the attested-context/injection arm, the M6 trace-preservation axes, and the
+isolation-strategy comparison (linked worktree vs hardlinked clone vs jj workspace), fixture hygiene
+and grader statistics, and the human-loop/approval seam. **38 threads**; seven arXiv IDs vetted for
+acquisition, five rejected with reasons.
+
 ### [firecracker-microvm-isolation.md](firecracker-microvm-isolation.md) ⚠️ LLM-generated
 Whether microVMs can back a Lain isolation/exec arm on *these two machines*. Upstream docs and
 Lima issues are verifiable; the Lain-mapping section is Claude's inference from this repo's code
