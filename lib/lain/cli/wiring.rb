@@ -53,6 +53,13 @@ module Lain
     # is where that is written down -- not repeated here, because it is a fact
     # about the extracted module rather than about this list.
     #
+    # T5 is what T4's headroom was made for, and it spent six of the fourteen
+    # lines: the run's {Lain::Project} arrives as one keyword and replaces the
+    # five independent `Dir.pwd` reads that used to answer "where is this
+    # project" five times. It also spent the last of #build_toolset's AbcSize
+    # budget, which is why {#epic_mount} is a method now -- the same rule, at
+    # a different cop.
+    #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
     # is not. So spend the headroom the same way -- {CompactionMount},
@@ -185,7 +192,7 @@ module Lain
       # arrival widening removed.
       MAIN_AGENT = "lain"
 
-      attr_reader :ask_human, :askers, :notifier, :supervisor, :conductor, :command_surface
+      attr_reader :ask_human, :askers, :notifier, :supervisor, :conductor, :command_surface, :project
 
       # Both are the {ToolsetBuild}'s discoveries, not this object's state --
       # kept as Wiring accessors because the Repl and the exe read them here.
@@ -220,18 +227,24 @@ module Lain
       # @param chronicle [Chronicle] the run's session file and its journal
       # @param status_feed [StatusFeed] what the tmux HUD reads
       # @param run_clock [RunClock] the RUN's clock, built by {ChatLaunch}
+      # @param project [Project] where this run's writes belong and where it is
+      #   being run FROM -- {ChatLaunch} resolves it once and passes it here, so
+      #   the five collaborators below take one answer rather than each asking
+      #   `Dir.pwd` its own version of the question
       # @param tty_factory [#call] #run's TTY seam; a spec hands in a StringIO-backed one
       # @param conductor_opener [#call] #run's Conductor seam
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new,
+                     project: Project::Resolver.default_project,
                      tty_factory: Lain::Frontend::TTY.public_method(:new),
                      conductor_opener: Lain::CLI::Conductor.public_method(:open))
         @options = options
         @chronicle = chronicle
         @status_feed = status_feed
         @run_clock = run_clock
+        @project = project
         @tty_factory = tty_factory
         @conductor_opener = conductor_opener
       end
@@ -283,10 +296,19 @@ module Lain
       # identity under --no-journal.
       def run_state(resumed)
         recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
-        session = resumed ? resumed.session : Lain::Session.new(memory: recorder, worker_env: Lain::WorkerEnv.default)
+        session = resumed ? resumed.session : Lain::Session.new(memory: recorder, worker_env: chat_env)
         chronicle.wrap_memory(recorder)
         [recorder, chronicle.wrap_session(session)]
       end
+
+      # The main chat's host-side context: {WorkerEnv.default}'s environment
+      # snapshot, at the PROJECT's cwd. Still not a leased environment -- the
+      # comment on #fleet_isolation is unchanged and still the reason -- the
+      # user's own edits still land in the user's own tree; the tree is now
+      # named by the resolved Project rather than by whatever `Dir.pwd` was when
+      # the default was computed. The two agree whenever a chat is started from
+      # its own root, which is why this is byte-identical for the ordinary run.
+      def chat_env = Lain::WorkerEnv.default.with(cwd: project.cwd)
 
       def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
         agent = nil
@@ -329,13 +351,12 @@ module Lain
       # always {Isolation::Journal}-wrapped ({IsolationBackend}'s by-need
       # decoration), never a bare backend.
       #
-      # `root:` is passed EXPLICITLY even though `Dir.pwd` is its default. It is
-      # what `.lain/services.rb` is read from and where the repository search
-      # starts, so it is a real dependency of this wiring, not a detail of the
-      # resolver's signature -- and the day a project-root flag lands, this call
-      # is where it has to be threaded. Silently inheriting the default would
-      # make that omission invisible.
-      def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: Dir.pwd, journal:)
+      # `root:` is passed EXPLICITLY, and it is the {Project}'s -- not `Dir.pwd`,
+      # which is what the previous edition of this comment predicted would have
+      # to change "the day a project-root flag lands". It is what
+      # `.lain/services.rb` is read from and where the repository search starts,
+      # so a run from a subdirectory declares the services its PROJECT declares.
+      def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: project.root, journal:)
 
       # T13: the prompt's state reader is assembled HERE because this is the
       # only object holding the live Agent, the run's RunClock and the
@@ -373,10 +394,12 @@ module Lain
 
       # `epic:` is WHICH epic this chat is in and the review baton over it --
       # {EpicMount}, or its NoEpic when none resolves, which is why nothing here
-      # or in the build asks whether there is one. It is constructed at this call
-      # rather than in a method of its own for a measured reason: this class is
-      # two lines under its ClassLength budget, and a named accessor here would
-      # buy nothing the keyword does not already say.
+      # or in the build asks whether there is one. It stood at this call site
+      # until T5, on the measured ground that the class was two lines under its
+      # ClassLength budget and a named method would buy nothing; T5 threaded the
+      # project ROOT into it and into the review seams, which put #build_toolset
+      # over Metrics/AbcSize, so it is #epic_mount below now. The rule the class
+      # comment states applied, one cop over: extract, do not loosen.
       #
       # `bindings:` is the same late-binding the `parent` thunk above uses, for a
       # sharper reason: {HumanReplies} is built in #build_repl, strictly AFTER
@@ -401,9 +424,17 @@ module Lain
                                           chronicle:, options:,
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
-                                          epic: EpicMount.for(chronicle:, options:, notice:, notify: @notifier,
-                                                              bindings: replies, **ReviewSeams.for(replies)))
+                                          epic: epic_mount(notice))
         @toolset_build.build(recorder, ask_human:)
+      end
+
+      # The chat's epic and the review baton over it, over the PROJECT's root --
+      # so a chat started in `services/ingest` mounts the epic its project
+      # declares and reviews the repository that project is, rather than
+      # whichever of the two the working directory happened to name.
+      def epic_mount(notice)
+        EpicMount.for(chronicle:, options:, notice:, notify: @notifier, root: project.root,
+                      bindings: replies, **ReviewSeams.for(replies, root: project.root))
       end
 
       # The run's ONE live {HumanReplies}, late. Every seam that needs it takes
@@ -492,7 +523,7 @@ module Lain
       # comment's whole complaint, one layer down.
       def assemble_surface(agent:, library:, tty:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
-                             chronicle: @chronicle, status_feed: @status_feed,
+                             chronicle: @chronicle, status_feed: @status_feed, root: project.root,
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 

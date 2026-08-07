@@ -305,8 +305,13 @@ module Lain
       # in one project before either journaled -- which `lain up`'s fleet makes
       # reachable. A generation carrying a session id would close it; that is
       # the epic tier's to answer, not this caller's.
+      # `sessions_dir`'s OWN default, NOT `project_hash(@root)` -- see the note
+      # on {CLI::Epic::Journals#walk}. This mount is handed the resolved project
+      # root, and the claims it replays were written by a chat whose journal
+      # lands in the cwd-keyed directory; keying the read on the root sent it
+      # looking somewhere nothing is ever written.
       def prior_claims
-        SessionJournals.new(dir: @paths.sessions_dir(project: @paths.project_hash(@root)),
+        SessionJournals.new(dir: @paths.sessions_dir,
                             types: [Lain::Epic::ReviewOpened::JOURNAL_TYPE,
                                     Lain::Epic::ReviewClosed::JOURNAL_TYPE]).to_a
       end

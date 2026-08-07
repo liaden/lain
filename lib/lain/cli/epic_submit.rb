@@ -257,8 +257,17 @@ module Lain
       #   Asked rather than reimplemented: `lain epic submit` must mean the same
       #   epic `lain epic status` reports on, and two spellings of "the sole
       #   epic in the home" would disagree without either of them raising.
-      def initialize(root: Dir.pwd, paths: Paths.new, config: Config.load(root:), input: nil, output: nil,
-                     epics: Epic.new(root:, paths:, config:))
+      #
+      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
+      # reason {CLI::Epic#initialize} states -- and asking `epics` was not
+      # enough on its own: this default is what that collaborator is BUILT with,
+      # so a `Dir.pwd` here made the object it asks look somewhere else. `lain
+      # epic status|land` moved first, which left this the only one of the four
+      # still keyed on the working directory -- the worst of the states to be
+      # in, since three commands agreeing with the chat and one not is harder to
+      # diagnose than four disagreeing together. See T5.
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+                     input: nil, output: nil, epics: Epic.new(root:, paths:, config:))
         @root = root
         @paths = paths
         @config = config

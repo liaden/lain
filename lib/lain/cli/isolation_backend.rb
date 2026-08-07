@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "pathname"
 require "mixlib/shellout"
 
 module Lain
@@ -67,6 +66,22 @@ module Lain
       # reason at the same moment -- see the class doc.
       class NoComposeFile < Error; end
 
+      # `--isolation worktree` where the repository search cannot be BOUNDED:
+      # its walk stops at the refusal set, and the refusal set needs a usable
+      # `$HOME`. Its own class rather than {NotARepository} because the cause is
+      # different in kind -- there may well be a repository; nothing could go
+      # looking for it -- and its own message because
+      # {Project::Resolver::UnusableHome}'s names neither the flag the operator
+      # passed nor the variable they have to set. A container run with a uid
+      # that has no `/etc/passwd` entry is the realistic way to reach it, and
+      # `--isolation none` (which never walks) is the way out.
+      class UnboundedSearch < Error
+        def initialize(cause)
+          super("--isolation worktree bounds its repository search at $HOME, and #{cause.message}; " \
+                "set HOME to the user's home directory, or use --isolation #{DEFAULT}")
+        end
+      end
+
       # The backends `--isolation` selects between, in the order help text lists
       # them: the shared-process baseline first, since it is the default.
       BACKENDS = %w[none worktree].freeze
@@ -85,16 +100,35 @@ module Lain
       #   starts
       # @param journal [#<<] where {Telemetry::IsolationLease} records land;
       #   the Null channel (the default) earns no journal decorator
-      # @param paths [Paths] supplies the worktree root and the per-worker keys
+      # @param paths [Paths] supplies the worktree root, the per-worker keys,
+      #   and the three XDG bases {#repo_root}'s stop rule names
+      # @param home [String, nil] the user's home directory, read from `ENV` by
+      #   the CALLER and injected here for {Project::Resolver}'s stated reason;
+      #   consulted only by {#repo_root}, so `--isolation none` neither needs it
+      #   nor refuses a run that has none. NOT `Dir.home`, which the cop
+      #   disabled below asks for: with `HOME` unset it falls through to getpwuid
+      #   and raises a bare ArgumentError, where `nil` reaches
+      #   {Project::Resolver::Home} and is refused there by name -- renamed once
+      #   more, to {UnboundedSearch}, so the message says which flag to drop.
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as a factory exactly as {Isolation::Worktree} and {Tools::Bash} do, so
       #   a spec substitutes it
+      #
+      # `realpath`, not `expand_path`. This object and {Project::Resolver} both
+      # ascend for `.git`, and until T5 they ascended DIFFERENT ancestries: a
+      # symlink whose lexical parent holds a repository its real parent does not
+      # made the resolver answer the plain leaf and this walk answer the trap.
+      # {Project::Resolver.resolved} is the resolver's own spelling of it, and
+      # keeps the tolerance a lexical expansion had for a root naming nothing on
+      # disk.
       def initialize(name = nil, root: Dir.pwd, journal: Channel::Null.instance, paths: Paths.new,
+                     home: ENV.fetch("HOME", nil), # rubocop:disable Style/EnvHome -- see the `home:` tag
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @name = name || DEFAULT
-        @root = File.expand_path(root)
+        @root = Project::Resolver.resolved(File.expand_path(root), File)
         @journal = journal
         @paths = paths
+        @home = home
         @shell_out_factory = shell_out_factory
       end
 
@@ -138,14 +172,38 @@ module Lain
       # The repository `git worktree add` branches from, found by ascending from
       # the project -- so `lain --isolation worktree` works from a subdirectory
       # the way every other git-aware tool does. `.git` is a FILE inside a linked
-      # worktree and a directory in a primary one, and `exist?` covers both.
+      # worktree and a directory in a primary one, and `exist?` covers both,
+      # which is why {Project::Resolver::GIT_ENTRY} is shared rather than
+      # re-spelled: two walks looking for the same thing must agree on what it
+      # looks like.
+      #
+      # THE SAME STOP RULE, and it is not decoration. This walk had no ceiling,
+      # so on a box whose `$HOME` is itself a git work-tree -- the `~/.cfg`
+      # dotfiles convention -- a chat started anywhere under home resolved HOME
+      # as the repository and branched worker checkouts off the dotfiles repo,
+      # straight past the refusal set {Project::Resolver} was given for exactly
+      # that case. {Project::Resolver::Walk} cuts the ancestry at the first
+      # refused directory, so a repository BELOW one is still found (the rule
+      # stops the walk, it does not ban the subtree) and one AT or above it is
+      # not reachable at all.
       def repo_root
-        found = Pathname.new(@root).ascend.find { |dir| dir.join(".git").exist? }
-        return found.to_s if found
+        walk = Project::Resolver::Walk.new(cwd: @root, refusals:)
+        found = walk.find { |dir| File.exist?(File.join(dir, Project::Resolver::GIT_ENTRY)) }
+        return found if found
 
         raise NotARepository, "--isolation worktree needs a git repository to branch checkouts from, and " \
-                              "#{@root} is not inside one; run it from a repository or use " \
-                              "--isolation #{DEFAULT}"
+                              "#{@root} is not inside one up to #{walk.boundary} (#{walk.reason}); run it " \
+                              "from a repository or use --isolation #{DEFAULT}"
+      end
+
+      # Built HERE and not in #initialize, so `--isolation none` pays neither the
+      # `stat` per ancestor nor the {Project::Resolver::UnusableHome} refusal an
+      # absent `$HOME` earns: only the worktree branch walks.
+      def refusals
+        Project::Resolver::Refusals.new(cwd: @root, home: Project::Resolver::Home.new(@home, File),
+                                        paths: @paths, filesystem: File)
+      rescue Project::Resolver::UnusableHome => e
+        raise UnboundedSearch, e
       end
 
       # Read ONCE: both decorators partition the same declarations, and a second

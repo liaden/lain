@@ -135,6 +135,81 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
     end
   end
 
+  # T5. THIS OBJECT WALKS FOR `.git` TOO, and it used to walk with no ceiling
+  # and no refusal set -- so on a box whose `$HOME` is a git work-tree (the
+  # `~/.cfg` dotfiles convention this chunk exists for), `--isolation worktree`
+  # anywhere under home resolved HOME as the repository and branched worker
+  # checkouts off the dotfiles repo, straight past {Lain::Project::Resolver}'s
+  # stop rule. Both walks now cut at the same refusal set.
+  describe "the repository walk, against the same refusal set the project resolver obeys" do
+    # A fake home that IS a repository, exactly the shape the stop rule is
+    # about. Injected, never `ENV["HOME"]`: the machine running this suite has
+    # a real one and it is not the subject.
+    def in_git_home
+      Dir.mktmpdir("lain-isolation-home") do |home|
+        real = File.realpath(home)
+        init_repo(real)
+        yield(real)
+      end
+    end
+
+    def resolve_in(root, home:) = described_class.resolve("worktree", root:, home:, paths:, shell_out_factory: shells)
+
+    it "does not answer home for a project under a git home" do
+      in_git_home do |home|
+        scratch = File.join(home, "scratch")
+        FileUtils.mkdir_p(scratch)
+
+        expect { resolve_in(scratch, home:) }.to raise_error(described_class::NotARepository, /git repository/)
+      end
+    end
+
+    # The stop rule stops the WALK; it does not ban the subtree. A real
+    # repository below a refused directory is still a repository.
+    it "still answers a repository that lives under home in its own right" do
+      in_git_home do |home|
+        scratch = File.join(home, "scratch")
+        FileUtils.mkdir_p(scratch)
+        init_repo(scratch)
+
+        expect(resolve_in(scratch, home:)).to be_a(Lain::Isolation::Worktree)
+      end
+    end
+
+    # The stop rule needs a home to stop AT, so `--isolation worktree` now has a
+    # dependency `--isolation none` does not: a container run with no `HOME`
+    # (uid with no `/etc/passwd` entry -- Docker's default) reaches this. It
+    # must name the flag and the variable, because {Resolver::UnusableHome}'s
+    # own message names neither and a user reading it has nothing to act on.
+    it "names the flag and $HOME when the search cannot be bounded, rather than leaking the resolver's refusal" do
+      expect { described_class.resolve("worktree", root: @project, home: nil, paths:, shell_out_factory: shells) }
+        .to raise_error(described_class::UnboundedSearch, /--isolation worktree.*HOME.*--isolation none/m)
+    end
+
+    # Still a {Lain::Error}, so `exe/lain` renders it as a message rather than a
+    # backtrace -- the property the rename must not cost.
+    it "keeps that refusal inside the taxonomy exe/lain rescues" do
+      expect { described_class.resolve("worktree", root: @project, home: "", paths:, shell_out_factory: shells) }
+        .to raise_error(Lain::Error)
+    end
+
+    # The SECOND divergence the T2 panel found, beyond the ceiling: this walk
+    # expanded lexically where the resolver realpaths, so a symlink whose
+    # LEXICAL parent is a repository its REAL parent is not made the two walks
+    # answer different directories -- and this one answered the trap.
+    it "ascends the resolved ancestry, not the lexical one, so a symlink cannot borrow a repository" do
+      trap = File.join(@project, "trap")
+      leaf = File.join(@project, "plain", "leaf")
+      FileUtils.mkdir_p(leaf)
+      FileUtils.mkdir_p(trap)
+      init_repo(trap)
+      File.symlink(leaf, File.join(trap, "link"))
+
+      expect { resolve("worktree", root: File.join(trap, "link")) }
+        .to raise_error(described_class::NotARepository)
+    end
+  end
+
   describe "declared services" do
     it "provisions a declared postgres service over the worktree lease" do
       init_repo(@project)

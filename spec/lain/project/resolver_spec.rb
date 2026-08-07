@@ -564,6 +564,52 @@ RSpec.describe Lain::Project::Resolver do
       expect { described_class.new(home: nil, paths:) }.to raise_error(described_class::UnusableHome)
     end
 
+    # {.default_project} is the ONE exception to the injection rule above -- it
+    # is the process-default construction, so somebody has to read the process
+    # environment, and this is where. `lain chat` and the three `lain epic`
+    # verbs all reach it and nothing else.
+    describe ".default_project" do
+      it "resolves the working directory's project, reading $HOME for itself" do
+        cwd = mkdir("repo", "services", "ingest")
+        mkdir("repo", ".lain")
+
+        with_env("HOME" => tmp) do
+          Dir.chdir(cwd) do
+            expect(described_class.default_project)
+              .to have_attributes(root: File.join(tmp, "repo"), cwd:)
+          end
+        end
+      end
+
+      # The message a user actually gets. Three CLI verbs print this refusal and
+      # nothing else, so `home must be an absolute path other than "/", got nil`
+      # -- {UnusableHome}'s own wording -- leaves them with neither the variable
+      # to set nor any hint that a PROJECT is what could not be identified. A
+      # container run with a uid that has no `/etc/passwd` entry is the
+      # realistic way to arrive here.
+      it "renames an unusable $HOME to a refusal naming the variable and the remedy" do
+        with_env("HOME" => nil) do
+          expect { described_class.default_project }
+            .to raise_error(described_class::UnresolvableProject, /which project.*set HOME/m)
+        end
+      end
+
+      it "keeps that refusal inside the taxonomy exe/lain renders without a backtrace" do
+        with_env("HOME" => "") do
+          expect { described_class.default_project }.to raise_error(Lain::Error)
+        end
+      end
+
+      # The cause is carried into the message rather than swallowed: WHAT was
+      # wrong with the value is still the most useful half.
+      it "keeps the underlying complaint about the value" do
+        with_env("HOME" => "relative/home") do
+          expect { described_class.default_project }
+            .to raise_error(described_class::UnresolvableProject, %r{"relative/home"})
+        end
+      end
+    end
+
     it "reads $HOME from nothing but the injected value" do
       cwd = mkdir("elsewhere", "notes")
       mkdir("elsewhere", ".git")

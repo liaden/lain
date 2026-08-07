@@ -252,6 +252,74 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # T5: the run's ONE {Lain::Project}, resolved here -- the point above both
+  # the chronicle and the wiring -- and threaded down, exactly as the RunClock
+  # and the StatusFeed above are. Five collaborators read a root off it, and
+  # two resolutions could hand them two different projects.
+  describe "the run's one Project" do
+    def recording_wiring_factory(seen)
+      lambda do |project:, **|
+        seen << project
+        instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor)).tap do |double|
+          allow(double).to receive(:run)
+        end
+      end
+    end
+
+    it "hands the resolved project to the wiring, and keeps it readable" do
+      seen = []
+      project = Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project, detected_by: :flag)
+      instance = launch({ journal: false }, project_factory: -> { project },
+                                            wiring_factory: recording_wiring_factory(seen))
+
+      instance.call { |_notice| nil }
+
+      expect(seen).to eq([project])
+      expect(instance.project).to be(project)
+    end
+
+    # ONE resolution, however many readers ask: the walk touches the disk and,
+    # more to the point, two of them could disagree if the tree changed between.
+    it "resolves it exactly once" do
+      calls = 0
+      project = Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project, detected_by: :flag)
+      instance = launch({ journal: false },
+                        project_factory: lambda {
+                          calls += 1
+                          project
+                        },
+                        wiring_factory: recording_wiring_factory([]))
+
+      instance.call { |_notice| nil }
+      instance.project
+
+      expect(calls).to eq(1)
+    end
+
+    # The resume-before-journal ordering, extended to the project: an
+    # unresolvable cwd or an unusable `$HOME` must refuse while the session
+    # record is still nothing, so a refusal never orphans a fresh journal.
+    it "resolves it before any journal is opened" do
+      chronicle_factory = spy("chronicle_factory")
+      instance = launch({ journal: true, provider: "ollama", model: nil, max_tokens: 16 },
+                        project_factory: -> { raise Lain::Error, "cannot resolve cwd" },
+                        chronicle_factory:)
+
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "cannot resolve cwd")
+      expect(chronicle_factory).not_to have_received(:call)
+    end
+
+    it "defaults to the working directory's own project" do
+      Dir.mktmpdir("lain-chat-launch-project") do |dir|
+        Dir.chdir(File.realpath(dir)) do
+          project = launch({ journal: false }).project
+
+          expect([project.root, project.cwd]).to eq([File.realpath(dir), File.realpath(dir)])
+        end
+      end
+    end
+  end
+
   # A resolver double honoring Resume#call's keyword signature.
   def refusing_resolver(refusal)
     resolver = Object.new

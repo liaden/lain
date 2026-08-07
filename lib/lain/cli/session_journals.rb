@@ -87,6 +87,13 @@ module Lain
         @types = types
       end
 
+      # WHICH directory this walk folded. Public because a report that prints a
+      # fold has to be able to say where the fold came from -- the epic tier
+      # keys its container on the project root and its journals on the working
+      # directory, so "which epic" and "whose records" are two answers and a
+      # reader cannot infer the second from the first.
+      attr_reader :dir
+
       def each(&block)
         return to_enum(:each) unless block
 

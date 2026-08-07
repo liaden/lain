@@ -145,6 +145,13 @@ module Lain
         end
       end
 
+      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd` (T5). A
+      # `lain chat` mounts its epic under {Project::Resolver.default_project}'s
+      # root, and this command has to ask the same question of the same object
+      # or the two go blind to each other's epics -- no flag required, because
+      # the resolver WALKS, so anything run under a `.lain/` or a `.git` already
+      # has root != cwd. They agreed before only because both read `Dir.pwd`.
+      #
       # @param root [String] the project root; the config file and a repo-mode
       #   home both resolve under it
       # @param paths [Paths] injected, so a spec resolves against a throwaway
@@ -152,7 +159,8 @@ module Lain
       # @param config [Config] `.lain/config.toml`, already read
       # @param ignores [#reason] the git question, injected so no spec has to
       #   build a repository to exercise the warning
-      def initialize(root: Dir.pwd, paths: Paths.new, config: Config.load(root:), ignores: GitIgnores.new(root))
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+                     ignores: GitIgnores.new(root))
         @root = root
         @paths = paths
         @config = config
@@ -193,14 +201,19 @@ module Lain
       # and it is pure path arithmetic over values this object already holds.
       def container = @container ||= Lain::Epic::Home.container(config: @config, paths: @paths, root: @root)
 
+      # ONE {Journals}, so the records folded and the directory reported are the
+      # same walk rather than two that could disagree.
       def report(slug)
         home = Lain::Epic::Home.resolve(config: @config, paths: @paths, slug:, root: @root)
-        graph = home.read_epic
-        progress = Lain::Epic::Progress.fold(records_for(slug), graph:, epic_slug: slug)
-        Report.new(slug:, path: home.path, progress:, note: untracked_note(home.path)).to_s
+        walked = journals_for(slug)
+        progress = Lain::Epic::Progress.fold(walked.to_a, graph: home.read_epic, epic_slug: slug)
+        Report.new(slug:, path: home.path, sessions: walked.dir, progress:,
+                   note: untracked_note(home.path)).to_s
       end
 
-      def records_for(slug) = Journals.new(paths: @paths, root: @root, epic_slug: slug).to_a
+      def journals_for(slug) = Journals.new(paths: @paths, root: @root, epic_slug: slug)
+
+      def records_for(slug) = journals_for(slug).to_a
 
       # A directory whose name is a legal slug. Anything else -- a stray file, an
       # editor's backup, a name the filesystem grammar refuses -- is skipped
@@ -304,12 +317,27 @@ module Lain
         # `Dir.children`, the house idiom, and pins the case.
         def files = walk.files
 
+        # WHICH directory this walk folded, forwarded so {Report} can print it.
+        # The epic tier keys its container on the resolved project root and its
+        # journals here on the working directory, so a report that named only
+        # the home would leave two runs with different progress for one epic
+        # indistinguishable.
+        def dir = walk.dir
+
         private
 
-        def walk
-          @walk ||= SessionJournals.new(dir: @paths.sessions_dir(project: @paths.project_hash(@root)),
-                                        types: epic_types)
-        end
+        # `sessions_dir`'s OWN default -- the working directory -- and not
+        # `project_hash(@root)`, which this line said until T5. The two used to
+        # be the same string, because `@root` WAS `Dir.pwd`; once `@root` became
+        # the resolved project root this line quietly stopped folding the
+        # directory `lain epic submit` and `lain epic land` write into, and a
+        # verdict submitted from a subdirectory became invisible to `status`.
+        #
+        # The epic tier keys its CONTAINER on the resolved root and its JOURNAL
+        # DIRECTORY on the cwd. Two keyings, each uniform; the alternative is
+        # moving `sessions_dir`, which relocates every resumable session on the
+        # machine. See spec/lain/seams/epic_project_keying_seam_spec.rb.
+        def walk = @walk ||= SessionJournals.new(dir: @paths.sessions_dir, types: epic_types)
 
         # A method rather than a constant: a constant's value is evaluated when
         # this file LOADS, and the epic unit loads after the CLI unit (see the
@@ -365,9 +393,17 @@ module Lain
       # would mean constructing a Report with nothing to report on, so they stay
       # on the command and arrive as the `note` this object simply prints.
       class Report
-        def initialize(slug:, path:, progress:, note:)
+        # `sessions:` is the directory the fold came FROM, and it is printed
+        # rather than merely held. The epic tier keys its container on the
+        # resolved project root and its journals on the working directory, so
+        # one epic at one home can fold different records from different
+        # directories and report different progress -- confidently, with nothing
+        # in the output to say why. Naming the directory is what lets a reader
+        # tell two such runs apart in the one place they are already looking.
+        def initialize(slug:, path:, sessions:, progress:, note:)
           @slug = slug
           @path = path
+          @sessions = sessions
           @progress = progress
           @note = note
         end
@@ -377,7 +413,8 @@ module Lain
         private
 
         def preamble
-          ["epic `#{@slug}` — #{@progress.summary}", "home: #{@path}", @note].reject(&:empty?).join("\n")
+          ["epic `#{@slug}` — #{@progress.summary}", "home: #{@path}", "sessions: #{@sessions}", @note]
+            .reject(&:empty?).join("\n")
         end
 
         # First, because it is the one section that answers "what do I do now".

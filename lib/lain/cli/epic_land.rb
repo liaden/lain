@@ -165,6 +165,11 @@ module Lain
         def resume(entries:, world:) = Lain::Forge::Landing.resume(entries:, world:, **@wiring)
       end
 
+      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
+      # reason {CLI::Epic#initialize} states: this command ASKS that object
+      # which epic a bare invocation means, so a root that travels differently
+      # would have it answering about a different home. See T5.
+      #
       # @param root [String] the project root: the config, a repo-mode epic
       #   home, and the checkout holding the anchored commit all resolve under it
       # @param paths [Paths] injected, so a spec resolves against a throwaway
@@ -178,7 +183,7 @@ module Lain
       #   -- injected the way {CLI::Epic::GitIgnores} injects one, so no spec
       #   needs a repository or a remote
       # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]
-      def initialize(root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      epics: Epic.new(root:, paths:, config:),
                      shell_out_factory: Mixlib::ShellOut.public_method(:new),
                      github: Lain::Forge::Gh.new(cwd: root, shell_out_factory:))

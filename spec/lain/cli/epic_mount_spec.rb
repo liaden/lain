@@ -32,6 +32,14 @@ RSpec.describe Lain::CLI::EpicMount do
   # journals can reach an example: repo-mode home under the tmpdir, and an XDG
   # state home inside it too.
   def paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "HOME" => @dir })
+
+  # `sessions_dir`'s OWN default -- the working directory -- because that is
+  # where {EpicMount#prior_claims} folds and where a chat's Chronicle writes.
+  # It said `project_hash(@dir)` until T5, matching what `prior_claims` said,
+  # and the two agreed only because BOTH halves were written here. See
+  # spec/lain/seams/epic_project_keying_seam_spec.rb; `paths` is injected on a
+  # throwaway XDG state home, so this stays inside the fixture's tmpdir.
+  def sessions_dir = paths.sessions_dir
   def config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :repo))
 
   def mount_for(options: {}, **overrides)
@@ -234,7 +242,7 @@ RSpec.describe Lain::CLI::EpicMount do
   describe "a chat restarted mid-review" do
     it "rebuilds the open baton from the session journals and still refuses to regenerate" do
       home = create_epic("alpha")
-      sessions = paths.sessions_dir(project: paths.project_hash(@dir))
+      sessions = sessions_dir
       File.open(File.join(sessions, "prior.ndjson"), "ab") do |file|
         prior = Lain::Epic::Review.new(journal: Lain::Journal.new(io: file), epic_slug: "alpha")
         prior.open(path: home.epic.path, written: written_side(home))
@@ -252,7 +260,7 @@ RSpec.describe Lain::CLI::EpicMount do
     it "ignores a claim belonging to another epic" do
       home = create_epic("alpha")
       other = create_epic("beta")
-      sessions = paths.sessions_dir(project: paths.project_hash(@dir))
+      sessions = sessions_dir
       File.open(File.join(sessions, "prior.ndjson"), "ab") do |file|
         prior = Lain::Epic::Review.new(journal: Lain::Journal.new(io: file), epic_slug: "beta")
         prior.open(path: other.epic.path, written: written_side(other))

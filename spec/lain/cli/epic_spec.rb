@@ -48,7 +48,16 @@ RSpec.describe Lain::CLI::Epic do
     Lain::Epic::Home.resolve(config: config(home), paths:, root:, slug:).write_epic(graph)
   end
 
-  def sessions_dir = paths.sessions_dir(project: paths.project_hash(root))
+  # `sessions_dir`'s OWN default -- the working directory -- because that is what
+  # {Lain::CLI::Epic::Journals} folds. This helper said `project_hash(root)`
+  # until T5, matching what that method said, and the pair agreed only because
+  # BOTH halves were written here: the code keyed on `@root` and the fixture
+  # wrote to `@root`. When `@root` stopped meaning the working directory the two
+  # came apart and no example could see it, which is the whole argument in
+  # spec/lain/seams/epic_project_keying_seam_spec.rb. `paths` is injected on a
+  # throwaway XDG state home, so the cwd-keyed directory is still inside the
+  # fixture's tmpdir.
+  def sessions_dir = paths.sessions_dir
 
   # One session file, stamped with a clock the example controls: ordering across
   # files is by the `ts` on the record, never by the filename.
@@ -397,6 +406,142 @@ RSpec.describe Lain::CLI::Epic do
 
     it "warns on an empty repo home too, where the advice matters most" do
       expect(command(home: :repo, ignored: ".gitignore:5:/.lain/").status).to include("makes git ignore this home")
+    end
+  end
+
+  # T5, F1. The two keyings this tier now has -- container by resolved project
+  # root, journals by working directory -- have a cost the report must not hide.
+  # From the project root and from a subdirectory, `lain epic status` names the
+  # SAME epic at the SAME home and folds DIFFERENT session directories, so it
+  # can confidently report different progress for one epic:
+  #
+  #   status from <repo>                 : epic `alpha` -- 1/1 done
+  #   status from <repo>/services/ingest : epic `alpha` -- 0/1 done
+  #
+  # Before the container axis was fixed the subdirectory answered "no epics yet
+  # in .../epics/614ee07f1323" -- wrong, but UNMISSABLE. Fixing one axis and not
+  # the other turns an absurd answer into a PLAUSIBLE one, which is worse to
+  # read. Moving the journal axis means relocating every resumable session on
+  # the machine, so it is ticketed rather than done here; printing the folded
+  # directory is the mitigation, and it makes the partition visible in the one
+  # place a user is already looking.
+  describe "the session directory the projection folded" do
+    it "prints it beside the home, so two runs reporting differently can be told apart" do
+      write_epic("alpha", graph_of(issue("a1")))
+
+      expect(command.status).to include("sessions: #{sessions_dir}")
+    end
+
+    it "names it even when the fold found nothing, which is exactly when it is needed" do
+      write_epic("alpha", graph_of(issue("a1")))
+      FileUtils.rm_rf(sessions_dir)
+
+      expect(command.status).to include("sessions: #{sessions_dir}")
+    end
+  end
+
+  # T5. `lain chat` mounts its epic under the resolved PROJECT ROOT, so this
+  # command has to resolve the same root or the two go blind to each other's
+  # epics -- and no flag is needed to reach it, because the resolver WALKS: a
+  # chat or a subcommand run anywhere under a `.lain/` or a `.git` already has
+  # root != cwd. Before this, both sides read `Dir.pwd` and agreed by accident.
+  describe "the root a bare invocation resolves" do
+    # A real project with a repo-mode epic home, entered from a subdirectory.
+    # `HOME` and `XDG_STATE_HOME` are injected at the tmpdir base so the walk
+    # stops inside the fixture and neither this developer's real epics nor
+    # their real state home can decide an example.
+    def in_subdirectory_of_a_project
+      Dir.mktmpdir("epic-project-root") do |dir|
+        base = File.realpath(dir)
+        project = File.join(base, "repo")
+        sub = File.join(project, "services", "ingest")
+        FileUtils.mkdir_p(sub)
+        File.write(project_config(project), %([epics]\nhome = "repo"\n))
+        with_env("HOME" => base, "XDG_STATE_HOME" => File.join(base, "state")) do
+          Dir.chdir(sub) { yield(project, sub) }
+        end
+      end
+    end
+
+    def project_config(project)
+      FileUtils.mkdir_p(File.join(project, ".lain"))
+      File.join(project, ".lain", "config.toml")
+    end
+
+    def write_repo_epic(project, slug)
+      path = File.join(project, ".lain", "epics", slug, "epic.md")
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, Lain::Epic::Document.to_markdown(graph_of(issue("a1"))))
+    end
+
+    # The regression stated as the user sees it: the epic is right there, the
+    # chat can see it, and `lain epic status` from a subdirectory could not.
+    it "reports on an epic the chat can see, from a subdirectory of its project" do
+      in_subdirectory_of_a_project do |project, _sub|
+        write_repo_epic(project, "alpha")
+
+        expect(described_class.new.status).to include("alpha")
+      end
+    end
+
+    it "resolves the same root the chat's project does" do
+      in_subdirectory_of_a_project do |project, sub|
+        resolved = described_class.new.instance_variable_get(:@root)
+
+        expect(resolved).to eq(project).and eq(Lain::Project::Resolver.default_project.root)
+        expect(resolved).not_to eq(sub)
+      end
+    end
+
+    # `lain epic land` and `lain epic submit` both ASK {Lain::CLI::Epic} which
+    # epic a bare invocation means -- each one's own comment says two spellings
+    # would disagree silently -- so their roots have to travel the same way, or
+    # the object they ask is looking somewhere else entirely.
+    #
+    # One example over both, because what is under test is that the set AGREES.
+    # Fixing three of the four and leaving `submit` behind would be the worse
+    # bug: a user whose status, queue and land match the chat while submit does
+    # not has a harder thing to diagnose than four that disagree together.
+    {
+      "lain epic land" => -> { Lain::CLI::EpicLand.new(github: instance_double(Lain::Forge::Gh)) },
+      "lain epic submit" => -> { Lain::CLI::EpicSubmit.new(input: nil, output: nil) }
+    }.each do |command, build|
+      it "hands #{command} the same root, so the epic it resolves is the same one" do
+        in_subdirectory_of_a_project do |project, _sub|
+          write_repo_epic(project, "alpha")
+          subject = instance_exec(&build)
+
+          expect(subject.instance_variable_get(:@root)).to eq(project)
+          expect(subject.instance_variable_get(:@epics).resolve_slug(nil)).to eq("alpha")
+        end
+      end
+    end
+
+    # The symptom as `lain epic submit` prints it, and it is the nastiest of the
+    # four: the epic is on disk, the chat has it mounted, and submit answers
+    # "no epics yet" naming a container keyed on a HASH of the working
+    # directory -- a path the user cannot recognise and would never think to
+    # look at. Captured rather than `not_to raise_error(UnknownEpic)`, which
+    # would pass just as happily on a NoMethodError.
+    it "gets past WHICH epic, instead of refusing over a cwd-keyed container" do
+      in_subdirectory_of_a_project do |project, _sub|
+        write_repo_epic(project, "alpha")
+        refusal = submit_research
+
+        expect(refusal).not_to be_a(Lain::CLI::Epic::UnknownEpic)
+        expect(Lain::CLI::EpicSubmit.new(input: nil, output: nil).instance_variable_get(:@root)).to eq(project)
+      end
+    end
+
+    # The refusal `submit` answers with, or nil when it got all the way through.
+    # Every stage past slug resolution raises {Lain::Error} of some kind here --
+    # there is no artifact -- so what this reports is WHICH refusal, and the
+    # example above is about that being a later one.
+    def submit_research
+      Lain::CLI::EpicSubmit.new(input: nil, output: nil).submit("research")
+      nil
+    rescue Lain::Error => e
+      e
     end
   end
 

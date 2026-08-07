@@ -1235,8 +1235,10 @@ RSpec.describe Lain::CLI::Wiring do
         end
 
         # A project that is BOTH an epic home and a git repository with
-        # something to review, because {Wiring#review_seams} reads its changeset
-        # source off `Dir.pwd`: the two have to be one directory.
+        # something to review, because {Wiring#epic_mount} builds its changeset
+        # source over the resolved project's ROOT ({CLI::ReviewSeams.for}'s
+        # `root:`): the two have to be one directory. It read `Dir.pwd` when
+        # this was written, and named a `#review_seams` that never existed.
         # The epic's own files are written AFTER the commit, so they stay
         # untracked and the changeset under review is the one file this example
         # is about. Committed first, the epic document is in the diff too --
@@ -1333,6 +1335,211 @@ RSpec.describe Lain::CLI::Wiring do
 
             expect(sink.string).to include("README")
             expect(gesture.report).to include("lain://review")
+          end
+        end
+      end
+    end
+  end
+
+  # T5: the run's {Lain::Project}, threaded. Five collaborators used to reach
+  # `Dir.pwd` for themselves, which made "where is this project" a question
+  # five objects answered independently -- and answered WRONG from a
+  # subdirectory, where the root is up the tree and the cwd is not it.
+  #
+  # NOTHING HERE CHDIRS, and that is the whole design of the block: the process
+  # working directory stays the repository this suite runs in, so every
+  # assertion below distinguishes the injected project from `Dir.pwd` rather
+  # than watching the two agree by construction.
+  describe "the resolved project" do
+    require "fileutils"
+    require "tmpdir"
+
+    # A root with a real subdirectory to sit in, so root and cwd are DIFFERENT
+    # directories and an assertion can say which one a collaborator got.
+    # Realpath'd because {Lain::Project} resolves, and a tmpdir is a symlink on
+    # more boxes than not.
+    #
+    # The XDG state home moves under the tree for {Lain::CLI::EpicMount}'s
+    # sake -- the group one describe up does the same -- so this developer's
+    # real epics can never decide an example.
+    def in_project_tree
+      Dir.mktmpdir("lain-t5-project") do |dir|
+        root = File.realpath(dir)
+        cwd = File.join(root, "services", "ingest")
+        FileUtils.mkdir_p(cwd)
+        with_env("XDG_STATE_HOME" => File.join(root, "state")) { yield(root, cwd) }
+      end
+    end
+
+    def project_at(root, cwd) = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
+
+    def wiring_for(project, options: { grace: 5 })
+      described_class.new(options:, chronicle:, status_feed:, project:)
+    end
+
+    # The whole run, so {Lain::CLI::Command::Surface} exists: it is built in
+    # #build_repl, which only #run reaches. The conductor opener is the real
+    # default -- what is under test is the project, not the seams the #run
+    # group above already drives.
+    def run_project(project, options: { grace: 5 })
+      Dir.mktmpdir("lain-t5-tty") do |dir|
+        wiring = described_class.new(options:, chronicle:, status_feed:, project:,
+                                     tty_factory: project_tty_factory("quit\n", dir))
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+        wiring
+      end
+    end
+
+    def project_tty_factory(input, dir)
+      lambda do |channel:, **|
+        Lain::Frontend::TTY.new(channel:, output: StringIO.new, input: StringIO.new(input),
+                                history_path: File.join(dir, "history"))
+      end
+    end
+
+    it "runs the chat's Session in the project's CWD, which is not its root" do
+      in_project_tree do |root, cwd|
+        _, session = wiring_for(project_at(root, cwd)).run_state(nil)
+
+        expect(session.worker_env.cwd).to eq(cwd)
+      end
+    end
+
+    # The env half of the WorkerEnv is untouched: this card moves the working
+    # directory a chat's tools resolve against, and nothing else about the
+    # host-side execution context.
+    it "leaves the chat's environment snapshot exactly as WorkerEnv.default takes it" do
+      in_project_tree do |root, cwd|
+        _, session = wiring_for(project_at(root, cwd)).run_state(nil)
+
+        expect(session.worker_env.env).to eq(Lain::WorkerEnv.default.env)
+      end
+    end
+
+    # Spies rather than effect-reading, for one reason: three of the four
+    # consume the root into a path they then only use on the way to git or to
+    # disk, so what a spec could see afterwards is a derived artifact and not
+    # the root. What is under test is the THREADING, and the argument IS the
+    # threading. The two that leave a readable trace get it asserted below as
+    # well.
+    it "hands the isolation backend, epic mount, review seams and command surface the ROOT" do
+      allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_call_original
+      allow(Lain::CLI::EpicMount).to receive(:for).and_call_original
+      allow(Lain::CLI::ReviewSeams).to receive(:for).and_call_original
+      allow(Lain::CLI::Command::Surface).to receive(:new).and_call_original
+
+      in_project_tree do |root, cwd|
+        run_project(project_at(root, cwd))
+
+        expect(Lain::CLI::IsolationBackend).to have_received(:resolve).with(anything, hash_including(root:))
+        expect(Lain::CLI::EpicMount).to have_received(:for).with(hash_including(root:))
+        expect(Lain::CLI::ReviewSeams).to have_received(:for).with(anything, root:)
+        expect(Lain::CLI::Command::Surface).to have_received(:new).with(hash_including(root:))
+      end
+    end
+
+    # The surface's own trace, so the spy above is not the only witness: `/meta`,
+    # `/review` and `/review-submit` are each constructed with this root.
+    it "leaves that root where /meta and the two review commands read it" do
+      in_project_tree do |root, cwd|
+        surface = run_project(project_at(root, cwd)).command_surface
+
+        expect(surface.instance_variable_get(:@root)).to eq(root)
+      end
+    end
+
+    # A run whose cwd is a subdirectory still journals against the project, and
+    # the two are asserted TOGETHER because the pair is the point: the tools
+    # work where the user is, the project-scoped collaborators work where the
+    # project is.
+    it "sends the cwd to the Session and the root to the collaborators, from one Project" do
+      in_project_tree do |root, cwd|
+        wiring = run_project(project_at(root, cwd))
+
+        expect(wiring.command_env.agent.session.worker_env.cwd).to eq(cwd)
+        expect(wiring.command_surface.instance_variable_get(:@root)).to eq(root)
+      end
+    end
+
+    # AC4: with nothing injected the default resolves the process's own
+    # project, and a chat started in a directory that IS its own root gets the
+    # WorkerEnv it got before this card existed -- byte for byte.
+    describe "the default" do
+      it "is byte-identical to WorkerEnv.default when the cwd is its own root" do
+        Dir.mktmpdir("lain-t5-default") do |dir|
+          Dir.chdir(File.realpath(dir)) do
+            _, session = described_class.new(options: { grace: 5 }, chronicle:, status_feed:).run_state(nil)
+
+            expect(session.worker_env).to eq(Lain::WorkerEnv.default)
+          end
+        end
+      end
+
+      it "resolves the working directory's own project" do
+        Dir.mktmpdir("lain-t5-default") do |dir|
+          Dir.chdir(File.realpath(dir)) do
+            project = described_class.new(options: { grace: 5 }, chronicle:, status_feed:).project
+
+            expect([project.root, project.cwd]).to eq([File.realpath(dir), File.realpath(dir)])
+          end
+        end
+      end
+
+      # THE EXAMPLE THAT MAKES THE TWO ABOVE MEAN SOMETHING. Both of them chdir
+      # into a bare tmpdir that is its own root, so `root == cwd` holds by
+      # construction and `Dir.pwd` would satisfy them exactly as the resolver
+      # does -- the T5 review demonstrated it: replacing #default_project's body
+      # with `Project.new(root: Dir.pwd, cwd: Dir.pwd, ...)` reverted the whole
+      # card at its one production entry point and left every delivered example
+      # green. This one WALKS: `.lain/` is two directories up, so the two fields
+      # must differ, and only a resolution can tell them apart.
+      #
+      # `HOME` is injected at the tmpdir base so the walk's stop rule is the
+      # fixture's and not this developer's, exactly as {Project::Resolver}
+      # requires its home to be given rather than guessed.
+      it "walks for the root, so a chat started in a subdirectory gets root != cwd" do
+        Dir.mktmpdir("lain-t5-walk") do |dir|
+          base = File.realpath(dir)
+          root = File.join(base, "repo")
+          cwd = File.join(root, "services", "ingest")
+          FileUtils.mkdir_p(File.join(root, ".lain"))
+          FileUtils.mkdir_p(cwd)
+
+          with_env("HOME" => base) do
+            Dir.chdir(cwd) do
+              project = Lain::Project::Resolver.default_project
+
+              expect(project.root).to eq(root)
+              expect(project.cwd).to eq(cwd)
+              expect(project.root).not_to eq(project.cwd)
+            end
+          end
+        end
+      end
+
+      # And what that resolution BUYS at the wiring, since #default_project
+      # answering correctly is worth nothing if the instance then ignores it:
+      # the Session's cwd comes from the project the instance resolved for
+      # ITSELF, with nothing injected. The root half below is the attr_reader
+      # read back, not a threading -- what the collaborators do with the root is
+      # the injected-project group above, which can tell root from cwd.
+      it "threads its own resolution into the Session's working directory" do
+        Dir.mktmpdir("lain-t5-walk-wired") do |dir|
+          base = File.realpath(dir)
+          root = File.join(base, "repo")
+          cwd = File.join(root, "services", "ingest")
+          FileUtils.mkdir_p(File.join(root, ".lain"))
+          FileUtils.mkdir_p(cwd)
+
+          with_env("HOME" => base, "XDG_STATE_HOME" => File.join(base, "state")) do
+            Dir.chdir(cwd) do
+              wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+              _, session = wiring.run_state(nil)
+
+              expect(session.worker_env.cwd).to eq(cwd)
+              expect(wiring.project.root).to eq(root)
+            end
           end
         end
       end

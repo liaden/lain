@@ -38,7 +38,9 @@ module Lain
     # future card that DOES shell to git must merge into the child's env.
     #
     # `home:` is a required, injected collaborator and is never read from `ENV`
-    # here: a sibling class silently disabled its entire denied table when
+    # by an INSTANCE ({.default_project} is the one class-level exception, and
+    # it injects what it read): a sibling class silently disabled its entire
+    # denied table when
     # `HOME` was `/` or `""` (Docker's default for a uid with no `/etc/passwd`
     # entry), so an unusable home raises {UnusableHome} instead of degrading.
     # The claim is exact and covers `home:` only -- the DEFAULT `paths:` is a
@@ -61,9 +63,11 @@ module Lain
 
       # `.git` is a DIRECTORY in a primary checkout and a one-line `gitdir:`
       # pointer FILE in a linked worktree, so this is only ever tested with
-      # `exist?` -- the same call {CLI::IsolationBackend#repo_root} makes, so
-      # the two walks agree about what a repository looks like even while this
-      # one carries a ceiling the other has not been given yet.
+      # `exist?`. {CLI::IsolationBackend#repo_root} reads THIS constant rather
+      # than spelling `".git"` again (T5), so the two walks cannot come to
+      # disagree about what a repository looks like -- and they now share the
+      # ceiling as well: that walk builds a {Refusals} and a {Walk} of its own
+      # from the same inputs.
       GIT_ENTRY = ".git"
 
       CONFIG_FILE = "config.toml"
@@ -73,6 +77,20 @@ module Lain
       class UnusableHome < Error
         def initialize(home)
           super("home must be an absolute path other than \"/\", got #{home.inspect}")
+        end
+      end
+
+      # `$HOME` was unusable when a caller asked for the PROCESS's own project.
+      # {UnusableHome} says what is wrong with the value; this says what it cost
+      # and what to do about it, which is the difference between a message a
+      # user can act on and one they cannot. `lain epic status|submit|land`
+      # print their refusal and nothing else, and
+      # `home must be an absolute path other than "/", got nil` names neither
+      # the variable to set nor the fact that no project could be identified.
+      class UnresolvableProject < Error
+        def initialize(cause)
+          super("cannot tell which project this is -- #{cause.message}; set HOME to the user's home " \
+                "directory, which is where the project walk stops")
         end
       end
 
@@ -244,13 +262,13 @@ module Lain
         # @param cwd [String] a resolved absolute directory
         # @param refusals [Refusals]
         def initialize(cwd:, refusals:)
-          # `Pathname#ascend` is lexical, as {CLI::IsolationBackend#repo_root}'s
-          # is -- but the two walks do NOT agree on the ancestry they ascend.
-          # `repo_root` starts from `File.expand_path(root)`; this one starts
-          # from a `realpath`. For a symlink whose LEXICAL parent holds a `.git`
-          # its real parent does not, `repo_root` finds that repo and this
-          # resolver does not. That is a second divergence beyond the ceiling,
-          # and T5 owns reconciling both.
+          # `Pathname#ascend` is lexical, so what is handed in decides the
+          # ancestry: this class is always given a `realpath`. T5 reconciled
+          # {CLI::IsolationBackend#repo_root} to the same rule -- it expanded
+          # lexically until then, so a symlink whose LEXICAL parent held a
+          # `.git` its real parent does not made that walk find a repository
+          # this one cannot see. It resolves its root before ascending now, and
+          # drives this same class to do the ascending.
           ascent = Pathname.new(cwd).ascend.map(&:to_s)
           @candidates = ascent.take_while { |dir| !refusals.refuse?(dir) }
           # Never nil: `/` terminates every absolute ascent and is always in
@@ -346,8 +364,44 @@ module Lain
         end
       end
 
+      # THE ONE PLACE A RUN RESOLVES ITS OWN PROJECT. `lain chat` reaches it
+      # through {CLI::ChatLaunch}'s default `project_factory:`; a
+      # directly-constructed {CLI::Wiring} takes it as a keyword default; and
+      # `lain epic status|submit|land` each default their `root:` to its root,
+      # which is what keeps a chat and the subcommands looking at one set of
+      # epics from anywhere in the tree.
+      #
+      # It lived on {CLI::Wiring} until the T5 re-review, which is the wrong
+      # arrow twice over: three subcommands depended on the CHAT ASSEMBLER for a
+      # question with nothing to do with chat wiring, and a method whose own
+      # docstring claims to be the single authority on projects does not belong
+      # on the object that merely happens to have needed it first.
+      #
+      # It is the ONE exception to the "never read from `ENV` here" rule the
+      # class docstring states, and deliberately: that rule is about the
+      # INSTANCE's `home:` collaborator, which stays required and injected. This
+      # is the process-default construction, so somebody has to read the process
+      # environment, and doing it in one named place is what keeps every other
+      # caller honest.
+      #
+      # rubocop:disable Style/EnvHome -- `Dir.home` falls through to getpwuid
+      # with `HOME` unset and raises a bare ArgumentError, which is neither a
+      # {Lain::Error} `exe/lain` can render nor the named refusal below. `nil`
+      # reaches {Home}, which refuses it by name.
+      #
+      # @return [Project] the working directory's project: its root by the rungs
+      #   above, its cwd where the process actually is
+      # @raise [UnresolvableProject] when `$HOME` is unset or unusable
+      def self.default_project
+        new(home: ENV.fetch("HOME", nil)).call.project
+      rescue UnusableHome => e
+        raise UnresolvableProject, e
+      end
+      # rubocop:enable Style/EnvHome
+
       # @param home [String] the user's home directory; required and injected,
-      #   never read from `ENV` here
+      #   never read from `ENV` here -- {.default_project} is the one place that
+      #   reads it, and it injects what it read
       # @param paths [Paths] supplies the three XDG bases the refusal set names
       # @param filesystem [#exist?, #directory?, #realpath, #stat] injected so a
       #   spec can pin a mount boundary over an otherwise real tree

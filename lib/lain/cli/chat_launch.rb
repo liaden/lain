@@ -16,12 +16,33 @@ module Lain
     # flow through {#call}'s block (the exe's `say`, the one output seam this
     # object is lent); nothing here touches $stdout.
     class ChatLaunch
+      # @param options [Hash] the exe's parsed chat flags. Most are passed
+      #   through whole to {Backend}, {LiveViews} and {Wiring} rather than read
+      #   here — this object owns the bracket's ORDER, not the meaning of any
+      #   one flag. The six it reads itself are the ones the ORDER depends on.
+      # @param resume_factory [#call] builds the --resume resolver
+      # @param chronicle_factory [#call] opens the run's chronicle
+      # @param live_views_factory [#call] builds the editor views
+      # @param wiring_factory [#call] assembles the chat
+      # @param run_clock_factory [#call] the run's clock
+      # @param project_factory [#call] resolves the run's {Project}; called
+      #   ONCE, before the chronicle opens, so nothing downstream reads a cwd
+      #   the project has not already settled
+      # @param status_feed_factory [#call] the HUD's feed
+      # @option options [Boolean] :journal whether the run records one
+      # @option options [Boolean] :btw whether asides join the record
+      # @option options [Boolean] :nvim whether the editor views open
+      # @option options [Boolean] :windows whether the HUD panes open
+      # @option options [String] :fork a session to fork from
+      # @option options [String] :resume a session to resume
+      # @return [ChatLaunch]
       def initialize(options,
                      resume_factory: -> { Resume.new },
                      chronicle_factory: Chronicle.public_method(:for),
                      live_views_factory: LiveViews.public_method(:new),
                      wiring_factory: Wiring.public_method(:new),
                      run_clock_factory: -> { Lain::RunClock.new },
+                     project_factory: Lain::Project::Resolver.public_method(:default_project),
                      status_feed_factory: ->(run_clock:) { Lain::StatusFeed.new(run_clock:) })
         @options = options
         @resume_factory = resume_factory
@@ -29,6 +50,7 @@ module Lain
         @live_views_factory = live_views_factory
         @wiring_factory = wiring_factory
         @run_clock_factory = run_clock_factory
+        @project_factory = project_factory
         @status_feed_factory = status_feed_factory
       end
 
@@ -44,6 +66,7 @@ module Lain
         refuse_windows_without_journal!
         backend = Backend.new(@options)
         resumed = resumed_run(backend)
+        resolve_project!
         open_chronicle
         converse(backend:, resumed:, &notice)
       ensure
@@ -88,6 +111,22 @@ module Lain
       # and threaded down, exactly as the status feed is.
       def run_clock = @run_clock ||= @run_clock_factory.call
 
+      # The ONE {Lain::Project} for the run (T5), resolved on first read and
+      # threaded into the wiring exactly as {#run_clock} and {#status_feed} are.
+      # Five collaborators down there take a root off it -- the isolation
+      # backend, the command surface, the epic mount, the review seams -- and
+      # the Session takes its cwd; two resolutions could hand them two different
+      # projects, which is the failure a `Dir.pwd` apiece already was.
+      def project = @project ||= @project_factory.call
+
+      # A COMMAND, named as one, because a bare `project` in #call reads as dead
+      # code and `Lint/Void` does not fire on a method call. What it does is
+      # force the resolution to happen HERE, for #resumed_run's reason one line
+      # above it: an unresolvable cwd or an unusable `$HOME` must refuse BEFORE
+      # any journal file is opened, so a refusal never orphans a fresh journal.
+      # Left to #converse's lazy read it would land after.
+      def resolve_project! = project
+
       # The session record's lifecycle collaborator (journal, scribe, observer,
       # per-iteration durability -- see {Chronicle}). Defaults to the Null duck
       # so a directly-constructed instance records nothing and checks nothing
@@ -124,7 +163,7 @@ module Lain
       # bracket it reads as; @wiring is instance state because the ensure closes
       # its conductor.
       def converse(backend:, resumed:, &notice)
-        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:)
+        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end
