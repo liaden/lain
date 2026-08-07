@@ -116,3 +116,7 @@ end
 # {Project::DETECTED_BY} and {Project::Unresolvable} are all resolved by name
 # from inside it.
 require_relative "project/resolver"
+
+# Dotfiles nests inside Project, so it loads after the class body -- this file
+# is the project subtree's index (see CLAUDE.md, Requires).
+require_relative "project/dotfiles"
