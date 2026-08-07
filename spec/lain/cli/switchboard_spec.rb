@@ -60,6 +60,41 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  # The card that built the ledger owns this: T15 (masking) reads it and T16 (the
+  # prompt) writes it, through different files in different waves, so two
+  # half-wirings would give the run two ledgers and a release control that
+  # silently releases nothing. One board, one ledger, and it is exposed for that
+  # reason alone.
+  #
+  # `switchboard` here is the HELPER METHOD at the top of this file, not a `let`,
+  # so every call builds a fresh board. That is what makes "the SAME one every
+  # time" and "not shared between two boards" agree rather than contradict --
+  # the first pins one board, the second pins two. Memoize the helper into a
+  # `let` and the second example goes red for a reason that is not about the
+  # subject.
+  describe "the region ledger" do
+    it "holds one" do
+      expect(switchboard.ledger).to be_a(Lain::Sensitivity::Ledger)
+    end
+
+    it "answers the SAME one every time, so a late reader cannot get a second" do
+      board = switchboard
+
+      expect(board.ledger).to be(board.ledger)
+    end
+
+    # The posture decides who is asked, not whether the run has somewhere to
+    # record an answer -- and --yolo wires no queue, so this is the arm most
+    # likely to be skipped by accident.
+    it "holds one under --yolo too, where there is no queue" do
+      expect(switchboard(yolo: true).ledger).to be_a(Lain::Sensitivity::Ledger)
+    end
+
+    it "does not share one between two boards, which is what a run-scoped ledger means" do
+      expect(switchboard.ledger).not_to be(switchboard.ledger)
+    end
+  end
+
   describe "the model side" do
     let(:store) { Lain::Store.new }
     let(:timeline) do

@@ -482,6 +482,8 @@ module Lain
   end
 end
 
-# Policy and Regions both reopen Sensitivity, so the class body must load first.
+# Policy, Regions and Ledger all reopen Sensitivity, so the class body must load
+# first.
 require_relative "sensitivity/policy"
 require_relative "sensitivity/regions"
+require_relative "sensitivity/ledger"

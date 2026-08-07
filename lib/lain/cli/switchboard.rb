@@ -52,7 +52,14 @@ module Lain
       # it hands out the reading ("which paths this session gates") and no
       # authority. It is read here by the parent's gate and, through the board
       # thunk, by every child's -- ONE policy, so the two cannot disagree.
-      attr_reader :approvals, :ladder, :policy_switch, :model_switch, :mode_switch, :toolset, :sensitivity
+      # `ledger` is the opposite kind of slot and sits beside `approvals`, not
+      # beside those two: it is deliberately mutable run state, and the reading
+      # IS the authority to release. It is exposed for one reason -- the masking
+      # arm and the approval arm must hold the SAME one, and two half-wirings
+      # would give the run two ledgers and a release control that silently
+      # releases nothing. Constructed under --yolo too: the posture decides who
+      # is asked, not whether the run has somewhere to record an answer.
+      attr_reader :approvals, :ladder, :ledger, :policy_switch, :model_switch, :mode_switch, :toolset, :sensitivity
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
@@ -92,6 +99,7 @@ module Lain
       #   before this axis existed.
       def initialize(journal:, yolo:, model:, toolset:, sensitivity: Sensitivity::Policy::Null.instance)
         @sensitivity = sensitivity
+        @ledger = Sensitivity::Ledger.new
         @approvals = yolo ? nil : Approval::Queue.new(journal:)
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
