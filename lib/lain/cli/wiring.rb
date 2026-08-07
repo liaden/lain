@@ -2,6 +2,7 @@
 
 require "active_support/core_ext/module/delegation"
 
+require_relative "wiring/agent_build"
 require_relative "wiring/base_tools"
 require_relative "wiring/toolset_build"
 
@@ -15,10 +16,11 @@ module Lain
     # back the built Agent, and exposes @ask_human/@questions so #run_chat can
     # give the Repl the reply path this object wired.
     #
-    # ⚠️ THIS CLASS IS NEAR ITS 110-LINE Metrics/ClassLength BUDGET. Measure it
-    # (`rubocop --only Metrics/ClassLength`) rather than trusting a number
-    # written here; the last two cards left it in single-digit headroom, which is
-    # not room for a feature: EXTRACT FIRST.
+    # ⚠️ THIS CLASS LIVES AGAINST A 110-LINE Metrics/ClassLength BUDGET. Measure
+    # it (`rubocop --only Metrics/ClassLength`, with the Max forced low enough to
+    # make it report) rather than trusting a number written here; three of the
+    # four times it has been read it was in single-digit headroom, which is not
+    # room for a feature: EXTRACT FIRST.
     #
     # It has been through that twice. It sat a year at 109, reached 110 exactly,
     # and that is what forced {ToolsetBuild} out of it (T1 review): "what
@@ -37,9 +39,19 @@ module Lain
     # not this one's, and the tell was the tell again: the
     # `(home:, review:, notes:)` triple {Lain::Tools::RequestReview} takes, three
     # collaborators that travel together AND carry an invariant between them.
-    # What is left here is one keyword at one call site. There is no longer room
-    # for a fourth: the NEXT card must extract before it adds, and
-    # #assemble_surface below already names which object that is.
+    # What is left here is one keyword at one call site. That left no room for a
+    # fourth, so T4 was the extraction the previous edition of this comment
+    # demanded of whatever card came next -- and, unlike the three above, it was
+    # spent on nothing: it added no feature and moved {AgentBuild} out. Its tell
+    # was a different one, worth naming because the next reader will meet it
+    # rather than the parameter triple: the Agent, the provider it talks to,
+    # that provider's compaction mount and the instrumentation over it are ONE
+    # subject with no share in "who are this chat's collaborators", and they had
+    # simply accumulated here.
+    #
+    # The board is what could not go with them, and {AgentBuild}'s own comment
+    # is where that is written down -- not repeated here, because it is a fact
+    # about the extracted module rather than about this list.
     #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
@@ -385,7 +397,8 @@ module Lain
       # the asker and the registration that releases it -- so nothing else
       # about this seam crosses into the child path.
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
-        @toolset_build = ToolsetBuild.new(backend:, provider: spooled_provider(backend), chronicle:, options:,
+        @toolset_build = ToolsetBuild.new(backend:, provider: AgentBuild.spooled_provider(backend, chronicle:),
+                                          chronicle:, options:,
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
                                           epic: EpicMount.for(chronicle:, options:, notice:, notify: @notifier,
@@ -410,66 +423,15 @@ module Lain
       # could see it.
       def replies = -> { @replies }
 
-      # Gate and Live share ONE Toolset (the single-map invariant the plan
-      # calls out): a second Toolset reference here could let the approval gate
-      # and the executor disagree about what a tool name means. RefuseSecretWrites
-      # sits in the tool phase so a credential-shaped memory_write is withheld
-      # before it ever reaches the recorder (a memory, once indexed, replays into
-      # every future context -- there is no un-indexing it).
-      # `session:` is REQUIRED, not defaulted: a defaulted fresh Session would
-      # silently mis-wire memory -- a caller passing a recorder-bearing toolset
-      # but forgetting session: would get working memory tools with a permanently
-      # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
-      # degrade (T1 panel, Schneeman).
-      # Telemetry (TurnUsage via journal:, RequestSent via the JournalRequests
-      # phase) and per-iteration turn durability both come from the chronicle;
-      # under --nvim they fan through the tee to the live views too. The `tap`
-      # gives the turn middleware's thunk the same late-bound agent binding the
-      # subagent's parent handle uses. `timeline:` seeds a resumed chat's Agent
-      # with the chain-verified Timeline (nil = Agent's fresh default).
-      # `views:` is T1's: a streamed tool's bytes are a view, not a record, so
-      # the executor writes them to the TTY Channel AND the editor's -- never
-      # to the journal, which already holds them in the turn's tool_result.
+      # The Agent and everything hung off the provider it talks to is
+      # {AgentBuild}'s question now, not this assembler's. This method survives
+      # the extraction because it still does the one piece of work that could
+      # not move: `switchboard(backend, toolset)` is the ONLY call to
+      # #switchboard, so the memo three later readers depend on is assigned
+      # here or nowhere. {AgentBuild}'s comment carries the why.
       def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil)
-        board = switchboard(backend, toolset)
-        gate = board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset,
-                                                                 channel: LiveViews.tool_output(channel, views)))
-
-        agent = nil
-        Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: gate, session:,
-                        timeline:, request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
-                        **agent_backing(backend, channel, -> { agent.timeline })).tap { |built| agent = built }
-      end
-
-      # A8: the provider, and the compaction wiring hung off it -- the per-turn
-      # Context source, the eager-summary observer, and the journal tee that
-      # feeds the source the cache-read counts the render seam cannot see
-      # ({CompactionMount}). One method, because the mount must reference THE
-      # ONE provider the run talks to: {Compaction::Cold} compares idle time
-      # against that provider's own cache TTL, so a second construction would
-      # be a second answer, and the pairing cannot be allowed to come apart.
-      #
-      # The mount is deliberately NOT memoized. Every piece of run state it
-      # hands over -- the Source's accumulated warmth, the Eager's fired
-      # summaries -- is memoized in {Backend}, which is loud about a differing
-      # rebind ({Backend::Rebound}); the mount itself is a pure assembler over
-      # those, so a memo here would only add a second place for a stale
-      # collaborator to hide.
-      def agent_backing(backend, channel, timeline)
-        provider = spooled_provider(backend, channel:)
-        mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
-        { provider:, instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle),
-                                                                 turn_middleware: chronicle.turn_middleware(timeline)) }
-      end
-
-      # Both provider construction sites tee their round trips into the
-      # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real
-      # ResponseWal when journaling, the Null spool under --no-journal. `channel:`
-      # is the live TTY Channel for the MAIN agent (CE-5 stream_started reaches
-      # the frontend); a subagent leaves the Null default -- its stream is not
-      # rendered, only the spool tee matters there.
-      def spooled_provider(backend, channel: Lain::Channel::Null.instance)
-        backend.provider(spool: chronicle.spool, channel:)
+        AgentBuild.build(board: switchboard(backend, toolset), chronicle:, channel:, session:, backend:,
+                         timeline:, views:)
       end
 
       # I4/T14: the {Switchboard} owns Gate's policy now -- the queue (or
