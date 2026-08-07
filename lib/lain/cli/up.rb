@@ -218,6 +218,27 @@ module Lain
         set_option("status-right", status_right)
         set_option("status-interval", @status_interval.to_s)
         act("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "monitor-bell", "on")
+        keep_failed_pane
+      end
+
+      # A chat pane that dies takes its error message with it, and when it is
+      # the session's only pane it takes the whole tmux SERVER too -- so a
+      # refusal that printed a perfectly clear line (a missing API key, an
+      # unknown provider) reaches the operator as a terminal that blinks once
+      # and returns to the shell. That is how the 2026-08-06 report ("starts
+      # and immediately crashes") looked from the outside, with the actual
+      # cause legible only from a probe socket with remain-on-exit forced on.
+      #
+      # `failed` and not `on`: a clean exit should still close the pane, so
+      # this costs nothing in the ordinary case and only holds the screen when
+      # there is something to read.
+      #
+      # #run, not #act -- best-effort ON PURPOSE. `failed` needs tmux >= 3.2,
+      # and failing `lain up` outright on an older tmux would trade a working
+      # cockpit for a diagnostic nicety. A tmux too old simply keeps today's
+      # behaviour.
+      def keep_failed_pane
+        run("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "remain-on-exit", "failed")
       end
 
       def set_option(name, value) = act("set-option", "-t", @session, name, value)

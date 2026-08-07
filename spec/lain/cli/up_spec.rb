@@ -112,6 +112,23 @@ RSpec.describe Lain::CLI::Up do
       expect(tmux("show-window-options", "-t", "#{session}:chat", "monitor-bell")).to eq("monitor-bell on")
     end
 
+    # How the 2026-08-06 "starts and immediately crashes" report looked from
+    # the outside: `chat` refused a missing API key, printed a perfectly clear
+    # line, exited 1 -- and because it was the session's ONLY pane, tmux tore
+    # down the whole server and took the message with it. The cause was legible
+    # only from a probe socket with this option forced on.
+    #
+    # `failed`, not `on`: a clean exit still closes the pane, so this holds the
+    # screen only when there is something left to read.
+    it "keeps a FAILED chat pane on screen, so its refusal outlives the process" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+
+      up.call
+
+      expect(tmux("show-window-options", "-t", "#{session}:chat", "remain-on-exit"))
+        .to eq("remain-on-exit failed")
+    end
+
     it "threads -- chat args into the spawned window's command, each argument shell-escaped" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       chat_args = ["--model", "claude-fable-5", "--no-journal"]
