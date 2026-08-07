@@ -111,3 +111,8 @@ module Lain
     def to_s = "#{kind}:#{root} cwd=#{cwd} via=#{detected_by}"
   end
 end
+
+# Reopens the class above, so it loads after the whole body -- {KINDS},
+# {Project::DETECTED_BY} and {Project::Unresolvable} are all resolved by name
+# from inside it.
+require_relative "project/resolver"
