@@ -81,9 +81,20 @@ module Lain
     # WHICH path to record, since it must match exactly what {#read?} will
     # answer true for afterwards.
     #
+    # `cwd:` is required, never defaulted: a class method has no `worker_env`,
+    # and falling back to `Dir.pwd` would let the decorator journal a
+    # process-relative path while the read-set stored a worker-relative one --
+    # a divergence in the Journal, which is the experiment record.
+    #
+    # The rule itself is {WorkerEnv#resolve}'s -- the one both exec arms
+    # already share -- so this DELEGATES rather than re-deriving it, and a
+    # throwaway WorkerEnv is how a bare `cwd` reaches an instance method. Only
+    # `cwd` is read, hence the empty `env`. `to_s` covers the Symbol and nil
+    # spellings a Set query may arrive in; `resolve` itself wants a String.
+    #
     # @return [String]
-    def self.normalize_path(path)
-      File.expand_path(path.to_s)
+    def self.normalize_path(path, cwd:)
+      WorkerEnv.new(cwd:, env: {}).resolve(path.to_s)
     end
 
     # Record that `path` was read this session. Normalized so a later `read?`
@@ -247,17 +258,19 @@ module Lain
       -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index).to_reminder}"
     end
 
-    # Path identity is `File.expand_path`: "./app.rb" recorded and "app.rb"
-    # queried (or the reverse) are the same file, so the read-set answers on the
-    # file, not on the string the model happened to type.
+    # Path identity is `File.expand_path` against the WORKER's cwd: "./app.rb"
+    # recorded and "app.rb" queried (or the reverse) are the same file, so the
+    # read-set answers on the file, not on the string the model happened to
+    # type -- and on the file the TOOLS resolved, which under isolation is not
+    # the one `Dir.pwd` names.
     def normalize(path)
-      self.class.normalize_path(path)
+      self.class.normalize_path(path, cwd: @worker_env.cwd)
     end
 
-    # A digest has no empty spelling the way a path has "" -> `Dir.pwd`, so a
-    # blank one is refused rather than coerced: `-nil.to_s` would otherwise put
-    # "" in the set, after which `pinned?(nil)` answers TRUE and a turn that
-    # does not exist reads as protected.
+    # A digest has no empty spelling the way a path has "" -> the worker's cwd
+    # (see {.normalize_path}), so a blank one is refused rather than coerced:
+    # `-nil.to_s` would otherwise put "" in the set, after which `pinned?(nil)`
+    # answers TRUE and a turn that does not exist reads as protected.
     def named!(digest)
       name = -digest.to_s
       raise ArgumentError, "a pin must name a turn digest, got #{digest.inspect}" if name.strip.empty?
@@ -392,7 +405,7 @@ module Lain
       def record_read(path)
         first_read = !@session.read?(path)
         @session.record_read(path)
-        @journal << Telemetry::SessionRead.new(path: Session.normalize_path(path)) if first_read
+        @journal << Telemetry::SessionRead.new(path: normalized(path)) if first_read
         self
       end
 
@@ -468,6 +481,13 @@ module Lain
       #   untouched -- WorkerEnv is sent-not-stored, so there is nothing to
       #   journal.
       def worker_env = @session.worker_env
+
+      private
+
+      # The wrapped session's cwd, never the process's: the journaled path has
+      # to be the exact string the read-set now holds, or the Journal names a
+      # different file than {#read?} answers true for.
+      def normalized(path) = Session.normalize_path(path, cwd: @session.worker_env.cwd)
     end
   end
 end

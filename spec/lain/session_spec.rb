@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 RSpec.describe Lain::Session do
   subject(:session) { described_class.new }
 
@@ -27,6 +29,84 @@ RSpec.describe Lain::Session do
         session.record_read("app.rb")
 
         expect(session.read?("./app.rb")).to be(true)
+      end
+    end
+  end
+
+  # T7: the base a relative path resolves against is the SESSION's worker cwd,
+  # not the process's. Under isolation the two differ, so a Dir.pwd-relative
+  # record names a file the session never read.
+  describe "path identity under a worker cwd that is not the process directory" do
+    subject(:session) { described_class.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {})) }
+
+    let(:cwd) { File.join(Dir.tmpdir, "lain-t7-repo", "sub") }
+
+    it "resolves a relative read against the worker cwd" do
+      session.record_read("notes.md")
+
+      expect(session.read?(File.join(cwd, "notes.md"))).to be(true)
+      expect(session.read?(File.expand_path("notes.md", Dir.pwd))).to be(false)
+    end
+
+    it "honors an absolute path as given" do
+      session.record_read("/etc/hosts")
+
+      expect(session.read?("/etc/hosts")).to be(true)
+    end
+
+    it "resolves the write-set against the same cwd" do
+      session.record_write("notes.md")
+
+      expect(session.writes).to eq([File.join(cwd, "notes.md")])
+    end
+
+    it "takes the base as an explicit argument, so the class method has one too" do
+      expect(described_class.normalize_path("notes.md", cwd:)).to eq(File.join(cwd, "notes.md"))
+      expect(described_class.normalize_path("/etc/hosts", cwd:)).to eq("/etc/hosts")
+    end
+
+    # The read-set resolves through WorkerEnv's rule rather than owning a
+    # second copy of it, so the two cannot drift. Pinned as an equivalence
+    # across the spellings that would distinguish them: re-inline an
+    # expand_path here and a change to WorkerEnv#resolve stops reaching the
+    # read-set, which is what this catches.
+    it "resolves exactly as WorkerEnv#resolve does, spelling for spelling" do
+      worker_env = Lain::WorkerEnv.new(cwd:, env: {})
+      spellings = [nil, "", "x.rb", "./x.rb", "../x.rb", "/abs/x.rb", "a//b/./c"]
+
+      through_session = spellings.to_h { |spelling| [spelling, described_class.normalize_path(spelling, cwd:)] }
+
+      expect(through_session).to eq(spellings.to_h { |spelling| [spelling, worker_env.resolve(spelling)] })
+    end
+
+    it "ignores a Dir.chdir under it -- the session's cwd is the base, the process's is not" do
+      Dir.chdir(Dir.tmpdir) { session.record_read("notes.md") }
+
+      expect(session.read?(File.join(cwd, "notes.md"))).to be(true)
+    end
+  end
+
+  # T7: the edit-before-read contract resolves through the same worker cwd, so
+  # the spelling the model happens to send cannot defeat it.
+  describe "the edit contract across spellings", :seam do
+    it "satisfies edit_file's precondition for a relative path read absolutely" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "hello.txt")
+        File.write(path, "hello world")
+        session = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
+
+        read = Lain::Tools::ReadFile.new.call({ path: }, invocation)
+        edit = Lain::Tools::EditFile.new.call(
+          { path: "hello.txt", old_string: "hello", new_string: "goodbye" }, invocation
+        )
+
+        # The refusal text is carried into the failure message on purpose: a
+        # bare `is_error: false` reports "expected false, got true" and throws
+        # away the one string that says WHY the contract went unmet.
+        expect(read.is_error).to be(false), -> { "read_file refused: #{read.content}" }
+        expect(edit.is_error).to be(false), -> { "edit_file refused: #{edit.content}" }
+        expect(File.read(path)).to eq("goodbye world")
       end
     end
   end
@@ -61,7 +141,7 @@ RSpec.describe Lain::Session do
 
     it "exposes #writes as the sorted, normalized, frozen paths -- deterministic snapshot input" do
       session.record_write("/tmp/b.rb")
-      Dir.chdir("/tmp") { session.record_write("./a.rb") }
+      session.record_write("/tmp/./a.rb")
       session.record_write("/tmp/b.rb")
 
       expect(session.writes).to eq(["/tmp/a.rb", "/tmp/b.rb"])
@@ -186,6 +266,19 @@ RSpec.describe Lain::Session do
       expect(null).to be_deeply_frozen
       expect(described_class.instance).to be(null)
     end
+
+    # T7: one frozen instance cannot capture a directory that moves under it,
+    # so its worker_env is recomputed per call and a bare tool still resolves
+    # against the LIVE process directory.
+    it "keeps tracking the process directory across a Dir.chdir" do
+      here = Lain::Session.normalize_path("app.rb", cwd: null.worker_env.cwd)
+      there = Dir.chdir(Dir.tmpdir) do
+        Lain::Session.normalize_path("app.rb", cwd: null.worker_env.cwd)
+      end
+
+      expect(there).to eq(File.join(Dir.chdir(Dir.tmpdir) { Dir.pwd }, "app.rb"))
+      expect(there).not_to eq(here)
+    end
   end
 
   # T16: the decorator that journals a real Session's reads/todos while
@@ -224,12 +317,41 @@ RSpec.describe Lain::Session do
       expect(reads.first.path).to eq("/tmp/app.rb")
     end
 
-    it "journals nothing on a re-read of the same path (any spelling) -- no chatty per-iteration lines" do
-      journaled.record_read("/tmp/app.rb")
-      journaled.record_read("/tmp/app.rb")
-      Dir.chdir("/tmp") { journaled.record_read("app.rb") }
+    # The wrapped session's cwd is pinned rather than inherited from the
+    # process, so "any spelling" can mean what it says: absolute, bare
+    # relative and dotted relative all reach the same file.
+    context "when the wrapped session's worker cwd is /tmp" do
+      let(:inner) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/tmp", env: {})) }
 
-      expect(of_type("session_read").size).to eq(1)
+      it "journals nothing on a re-read of the same path (any spelling) -- no chatty per-iteration lines" do
+        journaled.record_read("/tmp/app.rb")
+        journaled.record_read("app.rb")
+        journaled.record_read("./app.rb")
+
+        expect(of_type("session_read").size).to eq(1)
+      end
+    end
+
+    # T7: the decorator must journal the string the READ-SET holds. It has no
+    # cwd of its own, so it takes the wrapped session's -- otherwise the
+    # Journal (the experiment record) names a different file than #read? does.
+    context "when the wrapped session's worker cwd is not the process directory" do
+      let(:cwd) { File.join(Dir.tmpdir, "lain-t7-journal") }
+      let(:inner) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {})) }
+
+      # Asserted as BYTE-identity, not as `read?(recorded)`: `read?`
+      # re-normalizes its argument, so it would answer true for any spelling
+      # that merely resolves to the same file, and a decorator journaling a
+      # DIFFERENT string than the read-set holds would still pass. `#writes` is
+      # a public window onto the same {Session#normalize}, so comparing against
+      # it costs nothing and closes that gap.
+      it "journals the very string the read-set holds, not merely a spelling of it" do
+        journaled.record_read("notes.md")
+
+        recorded = of_type("session_read").map(&:path)
+        expect(recorded).to eq([File.join(cwd, "notes.md")])
+        expect(recorded).to eq(inner.record_write("notes.md").writes)
+      end
     end
 
     it "journals a fresh SessionRead for a genuinely different path" do
