@@ -157,10 +157,11 @@ module Lain
       #   the switchboard does not hold. An empty rung abstains on everything,
       #   which by this class's own composability property changes no outcome.
       # * `triage:` defaults to a {Shell::Verdict} over
-      #   {Shell::Verdict::AnyProgram}, which permits every program -- and nothing
-      #   in `lib/` constructs a restricting capability set. So {Triage}'s DENY
-      #   arm, which is the one thing in this file that refuses anything on its
-      #   own, cannot fire until something wires one.
+      #   {Shell::Verdict::AnyProgram}, which permits every program, and to
+      #   {Triage::AnyPath}, which protects no path -- and nothing in `lib/`
+      #   constructs a restricting capability set or knows a home to anchor a
+      #   {Sensitivity} on. So BOTH of {Triage}'s deny arms, the two things in
+      #   this file that refuse anything on their own, wait on a call site.
       #
       # Both are seams rather than hardcoded, so wiring either is a call-site
       # change and not an edit to this file. Until then a gated call gets two
@@ -400,6 +401,29 @@ module Lain
       # `Tools::Bash` runs the reconstructed argv rather than the string once
       # approved -- and that is a property of the execution, not a licence to
       # skip the human.
+      #
+      # == ...with one refusal read off the allowed argv
+      #
+      # An allow hands over the PARSED WORDS, and that is the only place in this
+      # ladder where a path a command names can be read without guessing. So the
+      # allow branch asks a {Sensitivity} about each word and refuses when one of
+      # them is a path nothing may read -- a private key, a keyring, a `.netrc`.
+      #
+      # Three properties hold it in scope, and each is a spec:
+      #
+      # * *The argv, never the command string.* `approval/rule.rb:36-52` and
+      #   `risk.rb:74-80` both name the same hole -- a signal read off one flat
+      #   field is confident about text it has not understood -- so a command the
+      #   verdict abstained on is not scanned at all. `cat '~/.ssh/id_rsa'`
+      #   abstains and reaches a human; it does not deny on a substring.
+      # * *Denied only, and only when written as a path.* A GATED path stays an
+      #   abstention, because an abstention already reaches a human and a second
+      #   gating notion here would decide nothing the queue does not already
+      #   decide. A denied name written as a BARE word does too -- it is named in
+      #   the record and nothing more. {PATHLIKE} carries that ruling and the
+      #   measurement behind it.
+      # * *Inert until wired.* No home is known where a ladder is built, so the
+      #   classifier is injected and defaults to {AnyPath}.
       class Triage
         NAME = "triage"
 
@@ -408,18 +432,98 @@ module Lain
         # should have to be added here deliberately.
         COMMAND_TOOLS = %w[bash core_exec].freeze
         FIELD = "command"
+        # Both tools take this from `Bash::Input` too, and `Tools::Bash` runs
+        # every command under it (`bash.rb:137`), so it is where a relative word
+        # in the argv lands.
+        CWD_FIELD = "cwd"
 
         NOT_JUDGED = "this rung judges only the tools whose input is a command string"
         NOT_A_COMMAND = "the call carries no command string to judge"
         NOT_SAFE = "an allow claims the command is literal and fully understood, never that it is safe"
+        PROTECTED = "the command's argv names a path no approval may lift"
+        BARE = "a word matches a protected name but is not written as a path, so this rung only says so"
+
+        # A word is evidence about a PATH when it is written as one: it carries
+        # a separator, or it names a home. MEASURED, and the reason the refusal
+        # is this narrow: six of the denied rules match a bare basename, four of
+        # them (`.netrc`, `.gnupg`, `.password-store`, `*.kdbx`) from ANY cwd and
+        # two (`Cookies`, `key4.db`) anywhere under `$HOME` -- which is where
+        # checkouts live. Denying on a bare word therefore stops
+        # `grep -n Cookies lib/lain/sensitivity.rb` in this very repository, and
+        # NOTHING lifts it: not a policy, not `--yolo`, not `ApproveAll`, and not
+        # `[sensitivity] exempt`, which subtracts from the gated half only
+        # (`sensitivity.rb:170-175`).
+        #
+        # The trade is deliberate and it is small. A denied path named as a bare
+        # word DROPS FROM DENY TO ABSTAIN -- it is still named in the record, the
+        # call still reaches a human because {Triage} downgrades every allow
+        # anyway, `Tools::Bash` is gated regardless, and the read boundary proper
+        # ({Sensitivity::Policy}) classifies the RESOLVED path when a tool opens
+        # it. This rung is a bonus refusal on unambiguous evidence, and a word
+        # with neither a separator nor a tilde is not unambiguous evidence.
+        #
+        # The tilde arm earns its place only barely, and it is worth saying how
+        # narrowly. It needs the `verdict:` seam in every case: today's
+        # {Shell::Verdict} abstains on any word matching its `EXPANDING`, which
+        # includes every `~`. Past that, a SLASHLESS tilde word is rewritten by
+        # {Sensitivity} to the home directory ITSELF, so the arm fires when that
+        # directory is denied -- by EITHER a `[sensitivity] denied` rule naming
+        # the home's basename, OR a home that is a denied path in its own right
+        # (`/home/.gnupg`, `/home/x/.netrc`; both verified). No config is needed
+        # for the second. It stays because the two objects agree deliberately
+        # about what a leading `~` means and dropping it would silently
+        # disagree, and because {Shell::Verdict} contemplates widening.
+        PATHLIKE = %r{/|\A~}
+
+        # Bounded like {Shell::Verdict}'s own unaccounted-bytes reason: a long
+        # command can name many, and a Journal line wants the shape rather than
+        # the census. Bounds the RENDERING only -- every word is still classified,
+        # or a refusal could hide behind eight harmless ones.
+        MAX_NAMED = 8
+
+        # The classifier of a session that protects nothing, and the shape of
+        # {Shell::Verdict::AnyProgram} for the same reason: an inert default that
+        # answers the same messages a real one does, so no branch below guards on
+        # nil. It is its own factory, because there is nothing to build.
+        class AnyPath
+          ORDINARY = Sensitivity::Verdict.new(level: :ordinary, reason: :none)
+
+          def call(_cwd) = self
+          def classify(_path) = ORDINARY
+        end
 
         # `verdict:` defaults at CALL time, not in a constant: `lain.rb` loads
         # `lain/approval` twenty-odd entries before `lain/shell`, so a
         # `Shell::Verdict.new` in this class body is a hard NameError at load.
-        def initialize(verdict: Shell::Verdict.new, tools: COMMAND_TOOLS, field: FIELD)
+        # {Sensitivity} loads BEFORE approval, so {AnyPath} may be built here.
+        #
+        # @param verdict [#call] `String -> Shell::Verdict::Decision`
+        # @param tools [Enumerable<String>] the tools whose input is a command
+        # @param field [String] the input field carrying that command
+        # @param sensitivity [#call] `cwd -> #classify`, a {Sensitivity} FACTORY
+        #   rather than one classifier: a bash call names its own working
+        #   directory, so a classifier built once at wiring time would anchor a
+        #   relative word under whatever directory the agent started in -- and
+        #   could refuse a project file for a name it happens to share with a
+        #   browser profile, which no policy can then lift. The cwd is handed
+        #   over AS THE CALL WROTE IT (relative, or nil when it named none),
+        #   because only the wiring knows what it resolves against.
+        #
+        #   IT MUST BE TOTAL, and that is a security property rather than
+        #   tidiness. `cwd` is MODEL-CONTROLLED (`bash.rb:50`) and
+        #   `Sensitivity.new` refuses a cwd that is not absolute and readable, so
+        #   a factory that lets those raise hands the model a one-argument
+        #   disarm: the raise becomes a {RUNG_BROKE} fault, the fault turns this
+        #   deny into the abstention it exists to replace, and a human -- whose
+        #   allow is honoured over a fault, by design -- approves the read. A
+        #   factory resolves the cwd itself and falls back to a classifier that
+        #   refuses NOTHING when it cannot, because a wiring error is not
+        #   evidence about a path. {AnyPath} is that fallback.
+        def initialize(verdict: Shell::Verdict.new, tools: COMMAND_TOOLS, field: FIELD, sensitivity: AnyPath.new)
           @verdict = verdict
           @tools = tools.to_a.map { |name| -name.to_s }.freeze
           @field = -field.to_s
+          @sensitivity = sensitivity
           freeze
         end
 
@@ -431,16 +535,45 @@ module Lain
           command = effect.input[@field]
           return Ruling.abstain(rung: NAME, because: NOT_A_COMMAND) unless command.is_a?(String)
 
-          judge(@verdict.call(command))
+          judge(@verdict.call(command), effect)
         end
 
         private
 
-        def judge(decision)
+        def judge(decision, effect)
           return Ruling.deny(rung: NAME, because: because(decision)) if decision.deny?
-          return Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE)) if decision.allow?
+          return literal(decision, effect) if decision.allow?
 
           Ruling.abstain(rung: NAME, because: because(decision))
+        end
+
+        # The allow branch, and the only one with an argv to read: `term` is
+        # {Shell::Verdict::NO_TERM} on a deny and on every abstention
+        # (`shell/verdict.rb:249-253`), so a path check anywhere else would be
+        # interrogating a Null Object about a path nobody wrote.
+        def literal(decision, effect)
+          written, bare = refused(decision.term, effect.input[CWD_FIELD]).partition { |word, _| word.match?(PATHLIKE) }
+          return Ruling.deny(rung: NAME, because: because(decision, named(PROTECTED, written))) unless written.empty?
+          return Ruling.abstain(rung: NAME, because: because(decision, named(BARE, bare))) unless bare.empty?
+
+          Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE))
+        end
+
+        # EVERY word of every stage, including each argv0: a word is offered as
+        # written, and one that is not a path at all resolves to a name under the
+        # cwd and classifies ordinary. What separates a refusal from a mention is
+        # {PATHLIKE}, applied after the classification rather than before it, so
+        # a bare match can still be named in the record.
+        def refused(term, cwd)
+          classifier = @sensitivity.call(cwd)
+          term.flatten.uniq.filter_map do |word|
+            verdict = classifier.classify(word)
+            [word, verdict.explanation] if verdict.denied?
+          end
+        end
+
+        def named(label, refusals)
+          "#{label}: #{refusals.first(MAX_NAMED).map { |word, why| "#{word.inspect} is #{why}" }.join("; ")}"
         end
 
         # {Shell::Verdict::CLAIM} rides on every record, so nothing a reader of

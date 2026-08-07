@@ -113,6 +113,62 @@ module EscalationSpecSupport
   class DeadJournal
     def record(_entry) = raise(IOError, "the journal is gone")
   end
+
+  # A real {Lain::Sensitivity} with every path it was asked about written down,
+  # so an example can tell "the check ran and found nothing" from "no check ran
+  # at all" -- which is the whole of the unparseable-command scenario.
+  class Watched
+    def initialize(sensitivity, paths)
+      @sensitivity = sensitivity
+      @paths = paths
+    end
+
+    def classify(path)
+      @paths << path
+      @sensitivity.classify(path)
+    end
+  end
+
+  # What a session's wiring would hand the triage rung, and the reference for
+  # the contract {Lain::Approval::Escalation::Triage#initialize} states: a
+  # classifier per call, anchored on the cwd THAT call named, resolved against
+  # the session's the way {Lain::WorkerEnv#resolve} resolves it before the
+  # command runs -- and TOTAL.
+  #
+  # Total is the part that matters. `cwd` is model-controlled, and
+  # `Sensitivity.new` refuses anything not absolute and readable, so a factory
+  # that let those raise would let the model disarm the rung with one argument:
+  # the raise becomes a fault, the fault replaces the deny with an abstention,
+  # and a human approves the read. A cwd this cannot resolve falls back to
+  # {Triage::AnyPath} -- which refuses nothing, because the failure is a wiring
+  # error rather than evidence about a path, and an unliftable deny on a wiring
+  # error is a dead end where an abstention still reaches a person.
+  class Classifiers
+    attr_reader :cwds, :paths
+
+    def initialize(home:, base:, rules: Lain::Sensitivity::Rules.empty)
+      @home = home
+      @base = base
+      @rules = rules
+      @cwds = []
+      @paths = []
+    end
+
+    def call(cwd)
+      @cwds << cwd
+      Watched.new(anchored(cwd), @paths)
+    end
+
+    private
+
+    def anchored(cwd)
+      Lain::Sensitivity.new(home: @home, cwd: resolved(cwd), rules: @rules)
+    rescue StandardError
+      Lain::Approval::Escalation::Triage::AnyPath.new
+    end
+
+    def resolved(cwd) = Lain::WorkerEnv.new(cwd: @base, env: {}).resolve(cwd)
+  end
 end
 
 RSpec.describe Lain::Approval::Escalation do
@@ -497,6 +553,197 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "abstains when the command field is not a String at all" do
       expect(triaged(nil)).to be(false)
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+    end
+  end
+
+  # T20. The one arm that refuses on its own without a capability set: a command
+  # whose ARGV names a path {Lain::Sensitivity} denies. It hangs off the allow
+  # branch because that is the only decision carrying a term to read.
+  describe "the triage rung's argv path check" do
+    let(:home) { "/home/tester" }
+    let(:base) { "/srv/project" }
+    let(:classifiers) { EscalationSpecSupport::Classifiers.new(home:, base:) }
+
+    def triaged(command, cwd: nil, sensitivity: classifiers, verdict: Lain::Shell::Verdict.new)
+      rung = described_class::Triage.new(sensitivity:, verdict:)
+      input = { "command" => command, "cwd" => cwd }.compact
+      ladder(rung).call(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:), nil)
+    end
+
+    # Scenario: a literal read of a denied path is denied
+    it "denies a literal read of a protected path, and names it" do
+      expect(triaged("cat #{home}/.ssh/id_ed25519")).to be(false)
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "deny", "faulted" => false)
+      expect(rulings.first["reason"]).to include("#{home}/.ssh/id_ed25519", described_class::Triage::PROTECTED)
+    end
+
+    it "reads every stage of a pipeline, not merely the one that leads it" do
+      expect(triaged("cat notes.txt | grep -f #{home}/.netrc")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(rulings.first["reason"]).to include("#{home}/.netrc")
+    end
+
+    # The case that separates the argv from the text on the ALLOW branch, where
+    # every other allowed command splits the same either way: an unspaced pipe
+    # merges the path into the next program name (`"#{home}/.netrc|wc"`), which
+    # matches no rule. Reading the words the parser found finds it; splitting
+    # the string does not.
+    it "reads a path the raw text merges into the next program at an unspaced pipe" do
+      expect(triaged("cat #{home}/.netrc|wc -l")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(rulings.first["reason"]).to include("#{home}/.netrc\" is")
+    end
+
+    # {Shell::Verdict::Doubts} bounds its own offender lists for this reason: a
+    # Journal line wants the shape, not the census. The BOUND is on the
+    # rendering only -- every word is still classified, or a refusal could hide
+    # behind eight harmless ones.
+    it "bounds how many protected paths one reason names" do
+      named = (1..12).map { |nth| "#{home}/#{nth}/.netrc" }
+
+      expect(triaged("cat #{named.join(" ")}")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(rulings.first["reason"].scan("is a protected path").size).to eq(described_class::Triage::MAX_NAMED)
+      expect(classifiers.paths).to include(*named)
+    end
+
+    # Scenario: an ordinary command still abstains
+    it "abstains on an ordinary command, exactly as it did before this arm existed" do
+      expect(triaged("ls -la")).to be(false)
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+      expect(rulings.first["reason"]).to include(described_class::Triage::NOT_SAFE)
+      expect(classifiers.paths).to eq(%w[ls -la])
+    end
+
+    # Scenario: an unparseable command still abstains
+    it "attempts no path check at all when the verdict did not understand the command" do
+      expect(triaged("echo hi; ls")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(classifiers.paths).to be_empty
+      expect(classifiers.cwds).to be_empty
+    end
+
+    # Scenario: a gated path is not denied here
+    #
+    # Written as a PATH deliberately: a bare `.env` would abstain under
+    # {Triage::PATHLIKE} whatever this rung thought of gating, so it could not
+    # tell "gated is not denied" from "bare is not denied".
+    it "leaves a gated path to the human rather than denying it" do
+      expect(triaged("cat ./.env")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(rulings.first["reason"]).to include(described_class::Triage::NOT_SAFE)
+      expect(classifiers.paths).to include("./.env")
+    end
+
+    # Scenario: the deny is read off argv, not the string
+    it "denies off the argv and never off the raw command text" do
+      expect(triaged("cat '#{home}/.ssh/id_ed25519'")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(classifiers.paths).to be_empty
+    end
+
+    # A home-anchored name is the pair that shows WHOSE cwd a relative word
+    # resolves against: `./Cookies` is denied under the injected home and
+    # ordinary anywhere else, so a rung reading the session's cwd instead of
+    # the call's answers one of these two wrong.
+    it "anchors a relative path on the cwd the CALL named" do
+      expect(triaged("cat ./Cookies", cwd: home)).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(classifiers.cwds).to eq([home])
+    end
+
+    it "does not anchor a relative path under home when the call runs elsewhere" do
+      expect(triaged("cat ./Cookies")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(classifiers.cwds).to eq([nil])
+    end
+
+    # The panel's ruling. A word with no separator and no tilde is not written
+    # as a path, so it is not evidence about one -- and denying on it would
+    # make `grep -n Cookies lib/lain/sensitivity.rb` unrunnable from a checkout
+    # under `$HOME` with nothing anywhere able to lift it, `[sensitivity]
+    # exempt` included (it subtracts from the gated half only).
+    it "does not refuse a bare word that merely matches a protected name" do
+      expect(triaged("grep -n Cookies lib/lain/sensitivity.rb", cwd: home)).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '"Cookies"')
+    end
+
+    # `.netrc`, `.gnupg`, `.password-store` and `*.kdbx` match from ANY cwd, so
+    # the bare-word class is not confined to a session sitting in `$HOME`.
+    it "leaves the any-cwd names bare too, so a checkout stays greppable from anywhere" do
+      expect(triaged("grep -rn .netrc lib spec")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '".netrc"')
+    end
+
+    # The tilde half of the ruling, and it is doubly out of reach by accident
+    # rather than by design: today's Shell::Verdict abstains on any word
+    # carrying a `~`, and `Sensitivity` rewrites a SLASHLESS tilde word to the
+    # home directory itself, which no built-in rule names. It takes an injected
+    # verdict AND a project that denied its own home's basename to observe --
+    # but `verdict:` is a seam and `[sensitivity] denied` is a real key, so the
+    # arm is reachable rather than dead, and a rule nothing exercises rots.
+    it "treats a tilde word as written-as-a-path even with no separator in it" do
+      denied = Lain::Sensitivity::Rules.from({ "denied" => [File.basename(home)] })
+      allowing = lambda do |_command|
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows", term: [%w[cat ~somebody]])
+      end
+
+      answer = triaged("irrelevant", verdict: allowing,
+                                     sensitivity: EscalationSpecSupport::Classifiers.new(home:, base:, rules: denied))
+
+      expect(answer).to be(false)
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(rulings.first["reason"]).to include('"~somebody"')
+    end
+
+    it "still refuses the same name the moment it is written as a path" do
+      expect(triaged("grep -rn ./.netrc lib spec")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny")
+      expect(rulings.first["reason"]).to include(described_class::Triage::PROTECTED, '"./.netrc"')
+    end
+
+    # `cwd` is MODEL-CONTROLLED (`bash.rb:50`), and `Sensitivity.new` refuses a
+    # relative one. A factory that let that raise would hand the model a
+    # one-argument disarm: the raise is a fault, a fault suppresses no DENY --
+    # it replaces one with an abstention -- and a human then approves the very
+    # read the rung existed to refuse.
+    it "still refuses when the model names a relative cwd, and faults on nothing" do
+      expect(triaged("cat #{home}/.ssh/id_ed25519", cwd: "src")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "deny", "faulted" => false)
+      expect(faults).to be_empty
+      expect(classifiers.cwds).to eq(["src"])
+    end
+
+    it "abstains rather than faulting when the cwd cannot be resolved at all" do
+      expect(triaged("cat #{home}/.ssh/id_ed25519", cwd: "bad\0dir")).to be(false)
+
+      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(faults).to be_empty
+    end
+
+    # The default is inert for {Triage}'s other deny arm's reason: nothing in
+    # `lib/` knows a home where a ladder is built, so an unwired session
+    # behaves exactly as it did.
+    it "protects no path at all until a session wires a classifier" do
+      expect(triaged("cat #{home}/.ssh/id_ed25519", sensitivity: described_class::Triage::AnyPath.new)).to be(false)
+
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
     end
   end
