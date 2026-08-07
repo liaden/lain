@@ -200,4 +200,41 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
     expect(built.approval_surface).to be(built.approval_surface)
   end
+
+  # T16. This class builds the SECOND of the three Frontend::ApprovalPolicys a
+  # process can hold (the switchboard's /approve prompt is the first, and
+  # Command::Surface's fallback the third), and nothing coordinates them. So
+  # "the watch surface shows what a read would release" is a claim about THIS
+  # construction and has to be asserted here: an ApprovalPolicy that grew a
+  # ledger or a renderer as a constructor collaborator would leave this one
+  # wired differently from the drain prompt, and the two would disagree about
+  # what has already been released with every object present and nothing to see.
+  describe "a parked call carrying outstanding sensitive regions" do
+    let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+    let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
+    let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+
+    def fan_out_disclosing
+      Sync do |task|
+        watched = surfaces.watch(task)
+        gated = task.async { queue.adjudicate(effect, nil, outstanding:) }
+        task.with_timeout(2) { gated.wait }
+      ensure
+        watched&.each { |surface| surface&.stop }
+      end
+    end
+
+    it "asks the human at this surface which file, and how many regions are outstanding" do
+      fan_out_disclosing
+
+      expect(conductor).to have_received(:read_reply)
+        .with(tty, a_string_starting_with('"/repo/.env": 1 sensitive region outstanding -- '))
+    end
+
+    it "puts none of the regions' bytes on the terminal" do
+      fan_out_disclosing
+
+      expect(conductor).not_to have_received(:read_reply).with(tty, a_string_including(secret))
+    end
+  end
 end

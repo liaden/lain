@@ -471,4 +471,166 @@ RSpec.describe Lain::Approval::Queue do
       expect(pending).to have_attributes(surface: "timeout", decision: :deny)
     end
   end
+
+  # T16: a pending can CARRY the sensitive regions approving it would release,
+  # so a surface can say what is at stake. A capability, not a flow -- the queue
+  # sits below the read and has only a path, so the arm holding the file's bytes
+  # is what builds one. Nothing here detects, and nothing here releases.
+  describe "a pending carrying outstanding sensitive regions" do
+    # Real regions, not doubles: the two security claims below (no bytes in the
+    # journal, no write to the ledger) can only discriminate against regions
+    # that genuinely hold the secret.
+    let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+    let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
+    let(:outstanding) { described_class::Outstanding.new(path: "/repo/.env", regions:) }
+
+    it "carries the regions and their file onto the parked pending" do
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil, outstanding:) }
+
+        expect(queue.first.outstanding).to have_attributes(path: "/repo/.env", count: 1)
+        queue.dequeue.approve(surface: "spec")
+        run.wait
+      end
+    end
+
+    it "discloses nothing by default, which is every ordinary gated call" do
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+
+        expect(queue.first.outstanding.any?).to be(false)
+        queue.dequeue.approve(surface: "spec")
+        run.wait
+      end
+    end
+
+    it "answers the verdict exactly as an undisclosing pending does" do
+      verdict = Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil, outstanding:) }
+        queue.dequeue.approve(surface: "spec")
+        run.wait.approved?
+      end
+
+      expect(verdict).to be(true)
+    end
+
+    # Telemetry::ApprovalPending leaves the Pending's `input` off because tool
+    # arguments may carry credential bytes; regions ARE those bytes, so the same
+    # rule binds harder. The whole journal is searched, not one record type.
+    it "keeps the regions' bytes out of the journal entirely" do
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil, outstanding:) }
+        queue.dequeue.approve(surface: "spec")
+        run.wait
+      end
+
+      expect(journal_io.string).not_to include(secret)
+    end
+
+    # The card's ruling: `decide` stays a pure single-shot decision, and
+    # releasing is the settling caller's move.
+    #
+    # Asserted as SHAPE, not as behaviour, and that distinction cost a review
+    # round: an example that builds a Ledger, hands it to nobody and then finds
+    # it empty is vacuous, because no implementation of `decide` could write to
+    # an object it was never given. What makes the ruling true is that there is
+    # no ledger to write -- so the parameter list is the thing to pin, and a
+    # `ledger:` added with a default (the likely shape, since every other
+    # collaborator here has one) fails right here.
+    it "takes no ledger, so `decide` has nothing to release into" do
+      expect(described_class::Pending.instance_method(:initialize).parameters)
+        .to eq([%i[keyreq effect], %i[keyreq requester], %i[keyreq clock], %i[key outstanding]])
+    end
+
+    # The other half of the same ruling, one level up: a queue that constructed
+    # a ledger of its own would satisfy the parameter pin above. Comments may
+    # cite the ruling, so only code lines are searched.
+    it "names no ledger anywhere in the queue's code" do
+      code = File.read(File.expand_path("../../lib/lain/approval/queue.rb", __dir__))
+                 .lines.grep_v(/\A\s*#/).join
+
+      expect(code).not_to match(/ledger/i)
+    end
+
+    # queue.rb's no-lock claim covers a pending that carries regions exactly as
+    # it covers one that does not: nothing added here yields.
+    it "is still ordinary coordination state -- first answer wins, the second reports that it lost" do
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil, outstanding:) }
+        first_surface = queue.dequeue
+        second_surface = queue.first
+
+        expect(first_surface.approve(surface: "tty")).to be(true)
+        expect(second_surface.deny(surface: "nvim")).to be(false)
+        expect(second_surface).to have_attributes(surface: "tty", decision: :approve, outstanding:)
+        run.wait
+      end
+    end
+
+    # The Gherkin says "decided from two fibers at once", and the example above
+    # does not do that -- it decides one object twice inside ONE fiber, a path
+    # HEAD already covered. This is the real claim: both racers are awake and
+    # released together, so the scheduler, not the writing order, picks the
+    # winner. Repeated, because a race that holds once may hold by luck.
+    it "keeps exactly one winner when two live fibers race to decide it" do
+      verbs = %i[approve deny]
+      outcomes = Array.new(25) do
+        pending = described_class::Pending.new(effect: tool_call, requester: "agent",
+                                               clock: -> { 0.0 }, outstanding:)
+        won = []
+
+        Sync do |task|
+          gate = Async::Queue.new
+          racers = verbs.map do |verb|
+            task.async do
+              gate.dequeue
+              won << pending.public_send(verb, surface: verb.to_s)
+            end
+          end
+          racers.length.times { gate.enqueue(:go) }
+          racers.each(&:wait)
+        end
+
+        [won.count(true), won.count(false), pending.outstanding]
+      end
+
+      expect(outcomes).to all(eq([1, 1, outstanding]))
+    end
+  end
+
+  # T16, and a NIT the panel raised: a blank path renders a warning that says
+  # secrets are at stake and names no file, which is a question no human can
+  # answer. The ledger's absolute-path check is a different rule and lives one
+  # object over; it is not an argument for coercing nil to "" here.
+  describe Lain::Approval::Queue::Outstanding do
+    let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n") }
+
+    it "refuses to carry regions without naming the file they came from" do
+      expect { described_class.new(path: nil, regions:) }
+        .to raise_error(ArgumentError, /regions are outstanding but no file was named/)
+    end
+
+    it "refuses a blank path for the same reason" do
+      expect { described_class.new(path: "", regions:) }.to raise_error(ArgumentError)
+    end
+
+    it "still allows the pathless NONE, which carries nothing and renders nothing" do
+      expect(described_class::NONE).to have_attributes(path: "", any?: false, preamble: "")
+    end
+
+    # `Array#to_a` returns SELF, so a bare `to_a.freeze` freezes the CALLER's
+    # array -- at a distance, from a constructor it only meant to read. The
+    # fixture is a list built BY HAND rather than `Regions.detect`'s output,
+    # because that output is already frozen and cannot discriminate.
+    it "leaves the caller's own array unfrozen" do
+      mine = [regions.first]
+      described_class.new(path: "/repo/.env", regions: mine)
+
+      expect(mine).not_to be_frozen
+    end
+
+    it "still holds its own regions frozen" do
+      expect(described_class.new(path: "/repo/.env", regions: regions.to_a).regions).to be_frozen
+    end
+  end
 end

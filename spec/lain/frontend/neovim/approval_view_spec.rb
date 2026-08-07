@@ -64,10 +64,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # `with_timeout` bounds the whole thing, so a view that resolves nothing
   # fails in words instead of hanging: under parallel_rspec a hung worker
   # reports as "fewer examples, zero failures".
-  def gated(timeout: 0.4, calls: [effect], &block)
+  def gated(timeout: 0.4, calls: [effect], outstanding: Lain::Approval::Queue::Outstanding::NONE, &block)
     Sync do |task|
       queue = Lain::Approval::Queue.new(journal:, timeout:)
-      parked = calls.map { |call| task.async { queue.call(call, nil) } }
+      parked = calls.map { |call| task.async { queue.adjudicate(call, nil, outstanding:).approved? } }
       task.with_timeout(10) { answered(queue, parked, &block) }
     ensure
       parked&.each(&:stop)
@@ -302,6 +302,43 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       gated(timeout: window) { |_queue| nil }
 
       expect(rpc.last[:lines].first).to include("agent")
+    end
+
+    # T16. `y` on a row is a FULL approval signing surface "nvim", so a row that
+    # said nothing about the file's secrets would let a human release them from
+    # the editor having been shown no warning at all -- the terminal's warning
+    # and this one are the same sentence for exactly that reason.
+    describe "a pending whose approval would release sensitive regions" do
+      let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+      let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
+      let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
+
+      def row
+        gated(timeout: window, outstanding:) { |_queue| nil }
+        rpc.last[:lines].first
+      end
+
+      it "warns on the row, in the terminal prompt's own words" do
+        expect(row).to include('"/repo/.env": 1 sensitive region outstanding -- ')
+      end
+
+      it "puts the warning ahead of the unbounded input, where a narrow window still shows it" do
+        expect(row.index("sensitive region")).to be < row.index("bash(")
+      end
+
+      it "still leads with the requester, so a fleet's rows stay separable" do
+        expect(row).to start_with("agent  ")
+      end
+
+      it "puts none of the regions' bytes in the editor" do
+        expect(row).not_to include(secret)
+      end
+
+      it "leaves an ordinary row exactly as it was" do
+        gated(timeout: window) { |_queue| nil }
+
+        expect(rpc.last[:lines].first).to eq("agent  bash(#{{ "command" => "pwd" }.inspect})")
+      end
     end
 
     it "stamps how many leading lines are rows, so the editor's keys are inert on the rest" do

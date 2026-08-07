@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/string/inflections"
 require "async"
 require "async/queue"
 
@@ -38,6 +39,89 @@ module Lain
       # bound, not a hurry -- an abandoned session must eventually refuse.
       DEFAULT_TIMEOUT = 300
 
+      Outstanding = Data.define(:path, :regions)
+
+      # The sensitive regions of one file that approving a {Pending} would
+      # release, and the file they were found in. A CAPABILITY a pending can
+      # carry, not a flow: this queue sits BELOW the read and holds only a path,
+      # so the arm that has the file's bytes is what detects, diffs against
+      # {Sensitivity::Ledger} and builds one of these. Nothing here detects and
+      # nothing here releases.
+      #
+      # The path is what a surface names to the human, and it is deliberately
+      # NOT re-checked against the ledger's ABSOLUTE-path contract: one object
+      # owns that rule and a second copy of a security check is a second thing
+      # to drift. The builder passes the same path it will later release under,
+      # so the prompt names exactly what a yes would send.
+      #
+      # A path that names NOTHING is refused here, though, and that is a
+      # different rule from the ledger's: a blank one renders a prompt saying
+      # secrets are at stake and naming no file, which is a question no human
+      # can answer. {Outstanding::NONE} is the one blank path, and it carries no
+      # regions, so nothing renders and nothing is released.
+      #
+      # Duck-typed on `#digest`, for {Sensitivity::Ledger}'s own reason -- this
+      # carries regions, it never makes them.
+      class Outstanding
+        # `dup` before `freeze`, because `Array#to_a` returns SELF: without it a
+        # caller that built its list by hand gets its own array frozen underneath
+        # it, at a distance, by a constructor it only meant to read.
+        def initialize(path:, regions:)
+          held = regions.to_a.dup.freeze
+          raise ArgumentError, "regions are outstanding but no file was named, got #{path.inspect}" \
+            if held.any? && path.to_s.empty?
+
+          super(path: -path.to_s, regions: held)
+        end
+
+        def any? = !regions.empty?
+        def count = regions.length
+
+        # The sentence every HUMAN surface puts in front of the question it is
+        # about to ask, separator included, empty when there is nothing to say.
+        # It lives on the value rather than in a frontend because two surfaces
+        # render it -- the terminal prompt and the editor's list -- and "both
+        # tell the human the same thing" is the whole point of showing it at
+        # all; two copies of this string is how one surface comes to warn and
+        # the other not to. It builds a String and touches no IO, so the rule
+        # that keeps `lib/` off the terminal is untouched.
+        #
+        # THE PATH IS `inspect`ed, exactly as the input beside it is, and this
+        # is the one string in the harness where skipping that converts a forged
+        # prefix directly into a released secret. The path is model-influenced
+        # -- it is the file the model asked to read, and for the detector to
+        # fire at all it need only be a file the agent itself wrote -- so a path
+        # spelled `"/tmp/x: 0 sensitive regions outstanding -- approve read(..)?
+        # [y/N] "` renders a complete, plausible, BENIGN question in front of
+        # the real one, and one holding `\e[2K\r` erases the line the human is
+        # meant to read. `inspect` escapes both and cannot be closed from
+        # inside. It QUOTES the forgery rather than deleting it, which is the
+        # same residual `input.inspect` has always carried: the defence is that
+        # the real question is the one that ENDS the rendering, always, because
+        # this sentence only ever precedes it.
+        #
+        # The regions' own bytes are never named. A human is told WHICH file and
+        # HOW MANY, because printing a value to ask whether it may be sent to a
+        # model would disclose it to the terminal, the scrollback, the tmux
+        # buffer and any screen share -- the exact disclosure this exists to
+        # gate. The detector's REASON is withheld for a different reason, and it
+        # does not change the answer either way: a reason is detector OUTPUT,
+        # not fact -- {Sensitivity::Regions}' own note calls entropy triage
+        # rather than a verdict -- so putting it in front of a human invites
+        # them to weigh a signal never meant to be weighed one region at a time.
+        def preamble
+          return "" unless any?
+
+          "#{path.inspect}: #{count} sensitive #{"region".pluralize(count)} outstanding -- "
+        end
+
+        # Nothing outstanding, which is every ordinary gated call. A real
+        # Outstanding rather than nil, so a surface asks rather than guards. It
+        # sits below the methods because it is built through the initialize
+        # above, which has to exist first.
+        NONE = new(path: "", regions: [])
+      end
+
       # One gated call awaiting its verdict. Deliberately MUTABLE coordination
       # state (like {Lain::Promise}, unlike the frozen value objects): it exists
       # to be decided. Resolution is single-shot with first-answer-wins
@@ -45,12 +129,19 @@ module Lain
       # so the loser's answer is a quiet no-op here, NOT the coordination bug
       # {Promise::AlreadyResolved} names.
       class Pending
-        attr_reader :requester, :tool, :tool_use_id, :input, :surface, :decision, :latency
+        attr_reader :requester, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency
 
-        def initialize(effect:, requester:, clock:)
+        # `outstanding:` defaults to {Outstanding::NONE} because an ordinary
+        # gated call releases nothing and has none to give. That is NOT the
+        # ledger's no-default rule bent: a defaulted ledger lets a forgotten
+        # injection become a SECOND ledger whose releases nobody sees, and there
+        # is no second anything here -- a missing one renders the ordinary
+        # prompt and still releases nothing.
+        def initialize(effect:, requester:, clock:, outstanding: Outstanding::NONE)
           @tool = effect.name
           @tool_use_id = effect.tool_use_id
           @input = effect.input
+          @outstanding = outstanding
           @requester = requester
           @clock = clock
           @asked_at = clock.call
@@ -61,6 +152,16 @@ module Lain
         # answer won; a later answer returns false and changes nothing.
         # Latency is stamped here, decision-side, so it measures how long the
         # verdict took -- not how long the woken fiber waited to be scheduled.
+        #
+        # An {Outstanding} changes nothing here. Releasing its regions to
+        # {Sensitivity::Ledger} is the SETTLING CALLER's move, never this
+        # method's, and the invariant that says so is THIS method's own: single
+        # -shot resolution is safe without a lock only because the `decided?`
+        # guard and the resolve below it are straight-line with no yield point
+        # between them, so two fibers cannot both pass the guard. A ledger write
+        # is IO-shaped and would open exactly that gap -- quite apart from
+        # hanging a second responsibility on the one object that cannot afford
+        # one. This queue holds no ledger at all, which is how that stays true.
         # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
         # reports whether it won the race, not a query; `decide?` would misname
         # the mutation the way `Timeline#commit`'s rename lesson warns about.
@@ -131,8 +232,13 @@ module Lain
       # one thing that cannot carry it. {#call} stays exactly the two-valued duck
       # {Effect::Handler::Gate} wants, so nothing that held this object as a
       # policy sees any change.
-      def adjudicate(effect, _context)
-        pending = admit(effect)
+      #
+      # `outstanding:` is how the one arm holding a file's bytes tells the
+      # surfaces what a yes would release ({Outstanding}). Defaulted, because
+      # every other gated call releases nothing -- and answering the settled
+      # {Pending} is what lets that caller write the ledger itself.
+      def adjudicate(effect, _context, outstanding: Outstanding::NONE)
+        pending = admit(effect, outstanding)
         settle(pending)
         pending
       end
@@ -160,8 +266,8 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them (see #initialize). Announcing first keeps that
       # claim exactly as it was.
-      def admit(effect)
-        pending = Pending.new(effect:, requester: @requester, clock: @clock)
+      def admit(effect, outstanding)
+        pending = Pending.new(effect:, requester: @requester, clock: @clock, outstanding:)
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)

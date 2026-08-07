@@ -75,6 +75,69 @@ RSpec.describe Lain::Notify do
       expect(invocations.first.join(" ")).to include("bash").and include("rm -rf /tmp/x")
     end
 
+    # T16, and the review round's own correction: this surface DECIDES. A click
+    # on Approve signs a full approval as surface "dunst", racing the TTY prompt
+    # and the editor's list -- so it is the third deciding surface and it says
+    # the same sentence they do.
+    describe "a pending whose approval would release sensitive regions" do
+      let(:secret) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
+      let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
+
+      def notified(path: "/repo/.env", regions: self.regions)
+        factory, invocations = stub_dunstify(answer: "deny")
+        outstanding = Lain::Approval::Queue::Outstanding.new(path:, regions:)
+        described_class.new(shell_out_factory: factory)
+                       .decide(Lain::Approval::Queue::Pending.new(effect:, requester: "agent",
+                                                                  clock: -> { 0.0 }, outstanding:))
+        invocations.first
+      end
+
+      it "warns on the notification, in the terminal prompt's own words" do
+        expect(notified.join(" ")).to include("1 sensitive region outstanding")
+      end
+
+      it "names the file, so a click is not blind" do
+        expect(notified.join(" ")).to include("/repo/.env")
+      end
+
+      it "puts none of the regions' bytes on the desktop" do
+        expect(notified.join(" ")).not_to include(secret)
+      end
+
+      it "leaves an ordinary approval's notification unwarned" do
+        factory, invocations = stub_dunstify(answer: "deny")
+
+        described_class.new(shell_out_factory: factory).decide(pending)
+
+        expect(invocations.first.join(" ")).not_to include("outstanding")
+      end
+
+      # dunst renders Pango markup, so `<` and `&` are markup on this surface
+      # and nowhere else -- and `inspect`, which the body has always used,
+      # escapes neither. A path is model-influenced, so a crafted one could
+      # otherwise re-word the question a click answers.
+      it "escapes markup a crafted path would otherwise inject" do
+        summary = notified(path: "/repo/<b>SAFE</b>&.env").find { |arg| arg.include?("outstanding") }
+
+        expect(summary).to include("&lt;b&gt;SAFE&lt;/b&gt;&amp;")
+        expect(summary).not_to include("<b>")
+      end
+
+      # The pre-existing half of the same hole, closed in the same commit: the
+      # body has carried unescaped `input.inspect` since I5.
+      it "escapes markup in the input body too" do
+        crafted = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "<i>ls</i> & go" })
+        factory, invocations = stub_dunstify(answer: "deny")
+
+        described_class.new(shell_out_factory: factory)
+                       .decide(Lain::Approval::Queue::Pending.new(effect: crafted, requester: "agent",
+                                                                  clock: -> { 0.0 }))
+
+        expect(invocations.first.join(" ")).to include("&lt;i&gt;ls&lt;/i&gt; &amp; go")
+        expect(invocations.first.join(" ")).not_to include("<i>")
+      end
+    end
+
     it "approves when the human clicks Approve" do
       factory, = stub_dunstify(answer: "approve")
       approval = pending

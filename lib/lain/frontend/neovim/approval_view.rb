@@ -295,13 +295,22 @@ module Lain
           parked.map { |pending| row_for(pending) } + ["", HINT]
         end
 
-        # {Frontend::ApprovalPolicy#prompt_for}'s two facts in the terminal's
-        # own spelling -- `tool(input.inspect)` -- so a human who has answered
-        # one of these at the prompt reads the same call here. The requester
-        # LEADS, {InboxView#line_for}'s shape: with a fleet running, "who is
-        # asking" is what separates two identical-looking rows.
+        # {Frontend::ApprovalPolicy#prompt_for}'s THREE facts in the terminal's
+        # own spelling -- what a yes would release, then `tool(input.inspect)`
+        # -- so a human who has answered one of these at the prompt reads the
+        # same call here. The release sentence is the terminal's own
+        # ({Approval::Queue::Outstanding#preamble}) rather than a second
+        # spelling of it: `y` on a row is a FULL approval signing
+        # `surface: "nvim"`, so a row that omitted it would let a human release
+        # a file's secrets from the editor having been shown no warning at all.
+        #
+        # The requester still LEADS, {InboxView#line_for}'s shape: with a fleet
+        # running, "who is asking" is what separates two identical-looking rows.
+        # The release sentence sits between it and the call rather than at the
+        # end, because `input.inspect` is unbounded and a warning past the edge
+        # of a nomodifiable window is a warning nobody read.
         def row_for(pending)
-          "#{pending.requester}  #{pending.tool}(#{pending.input.inspect})"
+          "#{pending.requester}  #{pending.outstanding.preamble}#{pending.tool}(#{pending.input.inspect})"
         end
       end
     end

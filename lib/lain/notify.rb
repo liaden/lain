@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "cgi/escape"
 require "mixlib/shellout"
 
 module Lain
@@ -157,6 +158,11 @@ module Lain
     # Names the ASKING agent so a human glancing at their desktop knows who's
     # asking before they alt-tab to answer for real, at a real surface.
     #
+    # Deliberately NOT markup-escaped, unlike {#approval_args}: this one offers
+    # no buttons and decides nothing, so the worst a crafted `text` buys is a
+    # bolded notification. Re-wording a question whose answer is given elsewhere
+    # is not the same hazard as re-wording one answered by a click.
+    #
     # @return [nil]
     def question(agent:, text:)
       run(question_args(agent:, text:))
@@ -165,11 +171,32 @@ module Lain
 
     private
 
+    # THE THIRD DECIDING SURFACE, so it carries the same warning the other two
+    # do. A click on Approve here signs a full approval in the Journal as
+    # {SURFACE}, racing the TTY prompt and the editor's list -- so a
+    # notification naming only the tool and its input would let a human release
+    # a file's secrets having been shown nothing about them. The sentence is
+    # {Approval::Queue::Outstanding#preamble}, the terminal's and the editor's
+    # own, which is the whole reason it lives on the value rather than in a
+    # frontend.
     def approval_args(pending)
       ["-a", "lain", "-u", "critical", "-t", @timeout_ms.to_s,
        "-A", "#{APPROVE},Approve", "-A", "#{DENY},Deny",
-       "approve #{pending.tool}?", pending.input.inspect]
+       markup_safe("#{pending.outstanding.preamble}approve #{pending.tool}?"),
+       markup_safe(pending.input.inspect)]
     end
+
+    # dunst renders Pango markup, so on THIS surface alone a `<` or an `&` is
+    # markup rather than text -- and every field above is model-influenced (the
+    # tool name and input come from a tool_use block, the path from the file the
+    # model asked to read). `inspect` escapes control bytes and quotes and does
+    # not touch either character, which is why it is not enough here and is
+    # enough everywhere else.
+    #
+    # The cosmetic cost is real and is the smaller one: a dunst configured
+    # `markup = strip` shows `&lt;` literally rather than `<`. A notification
+    # that reads slightly wrong beats one a crafted path can re-word.
+    def markup_safe(text) = CGI.escapeHTML(text)
 
     def question_args(agent:, text:)
       ["-a", "lain", "-u", "normal", "-t", @timeout_ms.to_s, "#{agent} asks", text]

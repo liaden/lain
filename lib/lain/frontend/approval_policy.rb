@@ -14,6 +14,22 @@ module Lain
     # what lets a second surface (a Neovim view) coexist, first answer winning.
     # It still lives in Frontend because asking the question IS the terminal
     # write; the queue, which touches no IO, lives in lib proper.
+    #
+    # It is also where an {Approval::Queue::Outstanding} is RENDERED, for that
+    # same reason -- a pending can carry the sensitive regions a yes would
+    # release, and putting them in front of a human is a terminal write. The
+    # rendering is a function of the PENDING alone, with no collaborator and no
+    # state, and that is what keeps THIS class's own instances agreeing: a live
+    # process builds up to three of them (the switchboard's `/approve` prompt,
+    # {CLI::Repl::ApprovalSurfaces}' watch surface, {CLI::Command::Surface}'s
+    # fallback) with nothing coordinating them, so an injected ledger or
+    # renderer is how two would come to disagree about what has been released.
+    #
+    # That argument reaches no FURTHER than this class. The queue has other
+    # surfaces -- {Notify}, {Neovim::ApprovalView}, {Approval::AutoSurface} --
+    # and each renders (or declines to render) an outstanding release on its
+    # own; agreement between THOSE is a property of the pending they all read,
+    # not of anything here.
     class ApprovalPolicy
       # The name this surface signs its decisions with in the journal record.
       SURFACE = "tty"
@@ -61,8 +77,14 @@ module Lain
 
       private
 
+      # What a yes would RELEASE leads, and the ordinary question stays
+      # byte-identical behind it: a human scanning a prompt reads the sensitive
+      # fact first. The sentence itself is {Approval::Queue::Outstanding#preamble},
+      # which is where its rulings (the path is escaped, the bytes and the
+      # detector's reason are withheld) are argued -- it is shared with the
+      # editor's list so the two human surfaces cannot say different things.
       def prompt_for(pending)
-        "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
+        "#{pending.outstanding.preamble}approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end
 
       def prompt_and_read(prompt)
