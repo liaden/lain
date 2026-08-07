@@ -65,6 +65,23 @@ module Lain
       # /btw's popup still share it under the name they already use.
       def self.pane_command(*argv) = PaneCommand.call(*argv)
 
+      # The `up` flags, mapped to this class's contract -- the same shape
+      # {Consolidate.from_options} and {Improve.from_options} use, and here it
+      # earns its keep by keeping ONE translation in one place: `nvim:` is nil
+      # for off, "" to derive the per-project socket, a String for an explicit
+      # one, and the exe has no business knowing which flag makes which. The
+      # cockpit is the DEFAULT, so only an explicit --no-nvim produces the nil.
+      #
+      # @option options [String] :session tmux session name
+      # @option options [String, nil] :socket tmux socket (-L), default socket when nil
+      # @option options [String] :nvim "" to derive the per-project socket, or an explicit path
+      # @option options [Boolean] :no_nvim opt out of the cockpit entirely
+      # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
+      def self.from_options(options, chat_args:)
+        new(session: options[:session], socket: options[:socket],
+            nvim: options[:no_nvim] ? nil : options[:nvim], chat_args:)
+      end
+
       # `nvim:` is the T19 cockpit switch, shaped like the exe's --resume: nil
       # is off, "" (a bare --nvim) derives the plugin's deterministic socket,
       # a non-empty String is an explicit socket path used verbatim. `cwd:`

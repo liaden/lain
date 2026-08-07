@@ -42,7 +42,17 @@ module ChatFlags
   # mapped to the commands that do. An entry is a CLAIM, and the examples below
   # check it both ways: the named commands really declare the flag, and the key
   # is really still read. An empty allowlist would be better; this one is honest.
-  ELSEWHERE = { dry_run: %w[consolidate improve] }.freeze
+  # `up`'s three arrived when {Lain::CLI::Up.from_options} took the flag ->
+  # contract translation off the exe, the same shape consolidate/improve
+  # already used -- so the reads moved from a file this glob CANNOT see into
+  # one it can. That is a net gain in coverage, not a loss: `up`'s flags now
+  # get the read-implies-declared direction they never had, which is what the
+  # "backs each allowlisted key" example below actually checks.
+  #
+  # `nvim` is deliberately absent -- `chat` declares it too, so it resolves
+  # through `declared` with no claim needed here.
+  ELSEWHERE = { dry_run: %w[consolidate improve], session: %w[up watch],
+                socket: %w[up], no_nvim: %w[up] }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the

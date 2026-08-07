@@ -278,8 +278,14 @@ RSpec.describe "lain bench arms" do
     # matching -- or that narrowed back to one class -- cannot pass this.
     # `:isolation` is deliberately NOT here: it is map-driven, and the example
     # above is what covers it.
+    #
+    # `:project` (improvements) stands where `:nvim` (up) used to: `up`'s option
+    # reads left the exe entirely for {Lain::CLI::Up.from_options}, so this file
+    # can no longer see them and chat_flags_spec's ELSEWHERE now carries them.
+    # The sentinel is swapped rather than dropped -- four keys from four
+    # distinct commands is the property, not the particular four.
     it "finds the reads at all, so an empty scan cannot pass this spec vacuously" do
-      expect(literal).to include(:journal, :all, :session, :nvim)
+      expect(literal).to include(:journal, :all, :session, :project)
     end
   end
 

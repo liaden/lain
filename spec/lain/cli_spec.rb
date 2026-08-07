@@ -237,6 +237,37 @@ RSpec.describe LainCLI do
         .to output(/pass chat flags after `--`/).to_stderr
         .and raise_error(SystemExit)
     end
+
+    # The cockpit is what `lain up` is FOR, so a bare invocation gets it
+    # without a flag. Up's contract is unchanged and asserted in its own terms:
+    # "" is the derive-the-per-project-socket value, nil is off.
+    def start_up(argv)
+      allow(Lain::CLI::Up).to receive(:new).and_return(instance_double(Lain::CLI::Up, launch_plan: plan))
+      allow(Kernel).to receive(:exec)
+
+      described_class.start(argv)
+    end
+
+    it "spawns the nvim cockpit by default, with no flag at all" do
+      start_up(%w[up])
+
+      expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: ""))
+    end
+
+    # A string option has no Thor-synthesized negation (--no-X is generated for
+    # booleans only), which is why the opt-out is its own flag rather than
+    # --nvim's own negative.
+    it "takes --no-nvim as the opt-out, handing Up the nil that means off" do
+      start_up(%w[up --no-nvim])
+
+      expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: nil))
+    end
+
+    it "still honours an explicit --nvim SOCKET over the default" do
+      start_up(%w[up --nvim /tmp/explicit.sock])
+
+      expect(Lain::CLI::Up).to have_received(:new).with(hash_including(nvim: "/tmp/explicit.sock"))
+    end
   end
 end
 
