@@ -102,6 +102,22 @@ RSpec.describe "Lain::Telemetry secret boundary records" do
       expect(event.hash).to eq(twin.hash)
     end
 
+    # This record DRIVES a control now: SessionRecord::Replay folds it back into
+    # the masked read-set. An unnamed path coerces to "", which a resume
+    # normalizes to its own cwd -- so the mask lands on a directory, the file
+    # reads back as wholly seen, and write_file replaces the secret with the
+    # placeholder. The live writer always has a resolved path; a salvaged
+    # journal is what the guard is for.
+    it "refuses a record that names no path, which a replay would apply to the cwd" do
+      expect { described_class.new(tool_use_id: "tu_2", path: nil, regions: 1, released: 0) }
+        .to raise_error(ArgumentError, /path must name the redacted path/)
+    end
+
+    it "refuses a blank path for the same reason" do
+      expect { described_class.new(tool_use_id: "tu_2", path: "", regions: 1, released: 0) }
+        .to raise_error(ArgumentError, /path must name the redacted path/)
+    end
+
     it "is Ractor-shareable even when built from mutable Strings" do
       mutable = described_class.new(tool_use_id: +"tu_2", path: +"/tmp/config.yml", regions: 3, released: 1)
       expect(mutable).to be_deeply_frozen

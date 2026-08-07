@@ -48,7 +48,8 @@ module Lain
           agent = nil
           Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: gate, session:,
                           timeline:, request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
-                          **backing(backend, channel, -> { agent.timeline }, chronicle:)).tap { |built| agent = built }
+                          **backing(backend, channel, -> { agent.timeline },
+                                    chronicle:, board:)).tap { |built| agent = built }
         end
 
         # A8: the provider, and the compaction wiring hung off it -- the per-turn
@@ -65,11 +66,32 @@ module Lain
         # rebind ({Backend::Rebound}); the mount itself is a pure assembler over
         # those, so a memo here would only add a second place for a stale
         # collaborator to hide.
-        def backing(backend, channel, timeline, chronicle:)
+        # `board:` reaches {ToolGuard} for the read guard's ledger and queue --
+        # the BOARD's, so this agent releases into the run's one region ledger
+        # rather than a second nobody reads.
+        #
+        # It says nothing about subagents, and an earlier edition of this
+        # comment claimed it did. {Tools::Subagent} builds its child through a
+        # bare `Agent.new` with no `instrumentation:`, so a child's tool
+        # middleware is EMPTY: neither this guard nor
+        # {Middleware::RefuseSecretWrites} runs for a subagent's tools.
+        #
+        # Read that as path-kept, content-lost, not as ungated. The child keeps
+        # the PATH boundary -- `child_handler` composes its own gate, so a
+        # child's `read_file(".env")` still reaches the escalation ladder. What
+        # it loses is the CONTENT boundary, which is middleware: an
+        # ordinary-classified file's sensitive regions reach a subagent
+        # unmasked, and those bytes flow back into the parent's Timeline.
+        #
+        # The gap predates this card -- the write guard has always had it -- and
+        # closing it is a wiring change in `subagent.rb`, not a line here. It is
+        # recorded rather than papered over, because a comment claiming coverage
+        # that does not exist is worse than no comment.
+        def backing(backend, channel, timeline, chronicle:, board:)
           provider = spooled_provider(backend, chronicle:, channel:)
           mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
           { provider:,
-            instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle),
+            instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                                         turn_middleware: chronicle.turn_middleware(timeline)) }
         end
 

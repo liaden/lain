@@ -135,6 +135,97 @@ RSpec.describe Lain::Session do
     end
   end
 
+  # T15: a masked read is the one partial read that arrives AFTER a complete
+  # one. {Lain::Tools::ReadFile} records inside `#perform`, below the middleware
+  # that decides to mask, so by the time masking is known the whole read is
+  # already in the set -- and the set has no retraction, deliberately. So
+  # masking is a THIRD add-only set rather than a downgrade of the second, and
+  # every claim in "read completeness" above has to survive it untouched.
+  describe "a masked read, which is a partial read the whole-read record precedes" do
+    it "stops a path being editable even though it was recorded as read whole" do
+      session.record_read("/tmp/.env")
+      session.record_masked_read("/tmp/.env")
+
+      expect(session.read?("/tmp/.env")).to be(false)
+      expect(session.partially_read?("/tmp/.env")).to be(true)
+    end
+
+    it "names WHICH cause the partial read had, so a refusal can say re-read or ask for a release" do
+      session.record_read("/tmp/.env")
+      session.record_masked_read("/tmp/.env")
+      session.record_read("/tmp/half.rb", complete: false)
+
+      expect(session.masked_read?("/tmp/.env")).to be(true)
+      expect(session.masked_read?("/tmp/half.rb")).to be(false)
+      expect(session.masked_read?("/tmp/never.rb")).to be(false)
+    end
+
+    # The residual, asserted rather than left to be discovered: over-strict, in
+    # the direction this boundary is meant to fail in. Clearing it needs a
+    # removal, which is the one thing the read-set refuses.
+    it "keeps a masked path masked even after a later read releases everything" do
+      session.record_masked_read("/tmp/.env")
+      session.record_read("/tmp/.env")
+
+      expect(session.read?("/tmp/.env")).to be(false)
+    end
+
+    it "records membership too, so a masked path is never mistaken for one never read" do
+      session.record_masked_read("/tmp/.env")
+
+      expect(session.reads).to eq(["/tmp/.env"])
+      expect(session.partially_read?("/tmp/.env")).to be(true)
+    end
+
+    it "carries across spellings, as the rest of the read-set does" do
+      Dir.mktmpdir do |dir|
+        masked = described_class.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: {}))
+        masked.record_masked_read("./.env")
+
+        expect(masked.masked_read?(".env")).to be(true)
+        expect(masked.read?(File.join(dir, ".env"))).to be(false)
+      end
+    end
+
+    # The set T22 owns must not learn about masking: a caller able to spell
+    # `complete: false` over a masked path would be able to spell "this read hid
+    # nothing" over a read that hid something.
+    it "is not reachable through record_read's completeness argument" do
+      session.record_read("/tmp/app.rb", complete: false)
+
+      expect(session.masked_read?("/tmp/app.rb")).to be(false)
+    end
+
+    it "reads back the same through the Null session, which records nothing" do
+      expect(Lain::Session::Null.instance.record_masked_read("/tmp/.env")).to be(Lain::Session::Null.instance)
+      expect(Lain::Session::Null.instance.masked_read?("/tmp/.env")).to be(false)
+    end
+
+    # The decorator forwards and writes NO `session_read` line, deliberately:
+    # that record says only `complete:`, and a replay folds it through
+    # `record_read`, which cannot reach the masked set -- so a line here would
+    # replay to a wholly-read path. `Telemetry::ReadRedacted`, written by
+    # `Middleware::RedactSecretReads` into this same journal, is the record, and
+    # `SessionRecord::Replay#redactions` is what folds it back.
+    describe "through the journaling decorator" do
+      let(:journal) { [] }
+      let(:journaled) { Lain::Session::Journaled.new(session:, journal:) }
+
+      it "reaches the wrapped session's masked set" do
+        journaled.record_masked_read("/tmp/.env")
+
+        expect(journaled.masked_read?("/tmp/.env")).to be(true)
+        expect(session.read?("/tmp/.env")).to be(false)
+      end
+
+      it "writes no session_read line, which would replay as a whole read" do
+        journaled.record_masked_read("/tmp/.env")
+
+        expect(journal.grep(Lain::Telemetry::SessionRead)).to be_empty
+      end
+    end
+  end
+
   # T22 drives the REAL tools here rather than restating their preconditions,
   # so the assertion is about the contract `edit_file`/`write_file` actually
   # declare. The file's bytes are asserted too: a refusal that did not in fact

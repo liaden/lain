@@ -35,6 +35,27 @@ module Lain
       # single tool call runs to completion before the next fiber gets
       # scheduled, so this is sound for the one-call-at-a-time model this
       # harness runs today, not in general against a concurrent writer.
+      # The masked case first, and for a harder reason than {EditFile}'s: an
+      # edit over a masked file rewrites one span, but a WRITE replaces the
+      # whole file with what the model has -- and what the model has is the
+      # projection, placeholders included. So the secret is not merely
+      # clobbered, it is replaced on disk by the literal string `<redacted:1>`
+      # and gone. That is the destruction {Lain::Session}'s read-set comment
+      # names as the reason the masked state exists at all.
+      #
+      # It is deliberately NOT short-circuited by `!File.exist?`, unlike the
+      # overwrite guard below: a path that was read is a path that exists, so
+      # the create case cannot reach this predicate with a mask recorded, and
+      # ordering the exist? test first would only hide that.
+      # No remedy named, for {EditFile}'s reason: there is none within the
+      # session, and a message that implies one produces a loop.
+      requires("path was read only in part this session -- sensitive regions were masked out of what " \
+               "you saw, so writing it back would replace them with their placeholders. Nothing in this " \
+               "session will lift that: report it and do something else") do |input, invocation|
+        session = session_of(invocation)
+        !session.masked_read?(File.expand_path(input.path, session.worker_env.cwd))
+      end
+
       requires("path exists and was never read this session") do |input, invocation|
         session = session_of(invocation)
         path = File.expand_path(input.path, session.worker_env.cwd)

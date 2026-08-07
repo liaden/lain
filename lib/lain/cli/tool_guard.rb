@@ -12,12 +12,38 @@ module Lain
     # credential-shaped memory_write is withheld before it ever reaches the
     # recorder: a memory, once indexed, replays into every future context, and
     # there is no un-indexing it.
+    #
+    # {Middleware::RedactSecretReads} is its mirror and sits beside it for the
+    # same reason on the read side: an unreleased region masked out of a
+    # `read_file` result never reaches an Event, a digest or the prompt-cache
+    # prefix. The write guard is listed first only because reading order is
+    # execution order and the two guard disjoint tools -- there is no ordering
+    # constraint between them to get wrong.
     module ToolGuard
       module_function
 
       # @param chronicle [CLI::Chronicle] resolves where a refusal is recorded
+      # @param board [CLI::Switchboard] holds the run's ONE region ledger and its
+      #   approval queue. The board is passed rather than the two slots because
+      #   "one ledger per run" is the board's invariant to keep, not this
+      #   module's to re-derive.
       # @return [Middleware::Stack] the tool-phase stack, for the instrumentation
-      def stack(chronicle) = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle))])
+      def stack(chronicle, board)
+        Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
+                               Middleware::RedactSecretReads.new(**read_kwargs(chronicle, board))])
+      end
+
+      # `--yolo` wires NO queue ({Switchboard#approvals} is nil), and the
+      # stand-in is named HERE rather than defaulted inside the middleware: a
+      # `queue:` with a default is how a forgotten injection becomes silent
+      # approval, which is exactly the failure the ledger's own no-default rule
+      # exists to prevent. Under the flag, approving is what every other gate in
+      # the run already does.
+      def read_kwargs(chronicle, board)
+        { ledger: board.ledger,
+          queue: board.approvals || Middleware::RedactSecretReads::Unqueued.instance,
+          journal: chronicle.instrumentation.journal }
+      end
 
       # The journal is READ off the chronicle's {Agent::Instrumentation}, which
       # is what made a `.slice(:journal)` necessary before it existed: the key had

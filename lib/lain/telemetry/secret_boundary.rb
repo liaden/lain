@@ -35,8 +35,21 @@ module Lain
       # impossible one -- shape, same as every other guard here, not a second
       # security check layered on top.
       class ReadRedacted < Guard
+        attribute :path
         attribute :regions
         attribute :released
+        # {ReadRefused} validates `path` for a record that only DESCRIBES a
+        # refusal; this one now drives a control. `SessionRecord::Replay` folds
+        # a `read_redacted` back into the masked read-set, so a record with no
+        # path is a mask applied to `path.to_s` -> `""` -> whatever the resume's
+        # cwd normalizes to: the mask lands on a directory, the file it was
+        # meant to protect reads back as wholly seen, and `write_file` replaces
+        # the secret with its own placeholder. Not reachable from the live
+        # writer, which always has a resolved path -- but a salvaged or
+        # hand-edited journal is exactly what these records exist to survive
+        # (`replay.rb`'s own doctrine), and that is where an unguarded field
+        # gets its value.
+        validates :path, presence: { message: "must name the redacted path, got nil" }
         validates :regions, numericality: { only_integer: true, greater_than_or_equal_to: 0,
                                             message: "must be a non-negative Integer, got %<value>s" }
         validates :released, numericality: { only_integer: true, greater_than_or_equal_to: 0,
@@ -99,7 +112,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, path:, regions:, released:)
-        Guards::ReadRedacted.check!(regions:, released:)
+        Guards::ReadRedacted.check!(path:, regions:, released:)
 
         super(tool_use_id: tool_use_id.dup.freeze, path: path.to_s.dup.freeze,
               regions: regions.to_i, released: released.to_i)

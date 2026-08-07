@@ -52,6 +52,15 @@ module Lain
 
       # Built from the parked {Approval::Queue::Pending} at admit time, so the
       # queue names the fields once and this record owns the projection.
+      #
+      # ⚠️ `outstanding` is ABSENT and must stay absent. A {Pending} carries the
+      # sensitive regions a yes would release, bytes and all
+      # ({Approval::Queue::Outstanding}), and the ONLY thing keeping them out of
+      # the Journal is that this hand-maintained list does not name them. Adding
+      # the field -- for a HUD, for a replay, for symmetry -- writes real
+      # credentials to disk, and no test would catch it, because every test here
+      # asserts the fields that ARE listed. {Queue::Pending#to_journal} carries
+      # the identical hazard and the identical note.
       def self.from(pending)
         new(requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id)
       end

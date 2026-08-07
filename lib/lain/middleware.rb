@@ -257,5 +257,6 @@ end
 require_relative "middleware/env"
 require_relative "middleware/journal_requests"
 require_relative "middleware/journal_turns"
+require_relative "middleware/redact_secret_reads"
 require_relative "middleware/refuse_secret_writes"
 require_relative "middleware/skill_dispatch"

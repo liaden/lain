@@ -127,11 +127,33 @@ module Lain
       @reads.complete?(normalize(path))
     end
 
+    # Record that the model was shown a MASKED rendering of `path`: bytes it
+    # never saw were withheld, so it must not be trusted to rewrite the file.
+    #
+    # Separate from `record_read(complete: false)` because the two facts arrive
+    # from different layers and only this one can arrive AFTER a whole read has
+    # already been recorded -- {Tools::ReadFile} records below the middleware
+    # that decides to mask. See {ReadSet} for why that forces a third set rather
+    # than a retraction.
+    #
+    # @return [self]
+    def record_masked_read(path)
+      @reads.mask(normalize(path))
+      self
+    end
+
     # @return [Boolean] whether `path` was read, but only in part -- the middle
     #   answer between {#read?} and never-read, so a refusal can name the real
     #   reason. Mutually exclusive with {#read?} by construction.
     def partially_read?(path)
       @reads.partial?(normalize(path))
+    end
+
+    # @return [Boolean] whether what the model saw of `path` had bytes masked
+    #   out of it -- which of the two causes {#partially_read?} covers, so a
+    #   refusal can tell "re-read this" from "ask for a release"
+    def masked_read?(path)
+      @reads.masked?(normalize(path))
     end
 
     # Every path read this session, complete or partial, as sorted normalized
@@ -326,12 +348,39 @@ module Lain
     # concept {Session}'s read-set became once a partial read had to be
     # distinguishable from both a complete one and from no read at all.
     #
-    # TWO add-only sets, never a flag per path, and that is the whole design:
-    # membership and completeness both only ever move forward, so a complete
-    # read cannot be raced backwards into a partial one by a sibling fiber, and
-    # the structure itself carries the monotonicity rather than a rule some
-    # caller has to remember. A Hash of path => complete would express the same
-    # states and lose exactly that guarantee.
+    # THREE add-only sets, never a flag per path, and that is the whole design:
+    # membership, completeness and masking all only ever move forward, so a
+    # complete read cannot be raced backwards into a partial one by a sibling
+    # fiber, and the structure itself carries the monotonicity rather than a
+    # rule some caller has to remember. A Hash of path => complete would express
+    # the same states and lose exactly that guarantee.
+    #
+    # == Why completeness needs TWO sets and not one flag
+    #
+    # `@complete` and `@masked` answer different questions, and collapsing them
+    # is the refactor to refuse:
+    #
+    #   @complete -- was the whole file READ? {#record}'s `complete:` answers
+    #                it, and its answer only ever improves, so a prefix read
+    #                followed by a whole one upgrades and never the reverse.
+    #   @masked   -- were bytes WITHHELD from the model? Only
+    #                {Middleware::RedactSecretReads} can answer it, one layer
+    #                ABOVE the tool that did the reading.
+    #
+    # The distinction is forced by where each fact is known.
+    # {Tools::ReadFile} calls `record_read` inside `#perform`, BELOW the
+    # middleware, and it read the whole file, so `@complete` gains the path
+    # before masking is even decided. A later `record(complete: false)` cannot
+    # take it back -- that is the monotonicity above, working exactly as
+    # designed -- and un-recording is precisely the removal this structure
+    # exists to make impossible. So the masking arm adds to a THIRD set instead,
+    # and {#complete?} is the conjunction: read whole AND nothing withheld.
+    #
+    # Masking is add-only too, so the composite answer moves only toward
+    # refusing an edit. That direction is the safe one and it is deliberate: a
+    # path masked on an earlier read stays un-editable for the rest of the run
+    # even if a later read releases everything. Over-strict, ticketed, and NOT
+    # to be fixed with a delete.
     #
     # Members arrive ALREADY normalized: path identity belongs to {Session},
     # which owns the worker cwd, so this object never has to know about one.
@@ -339,6 +388,7 @@ module Lain
       def initialize
         @all = Set.new
         @complete = Set.new
+        @masked = Set.new
       end
 
       # The strict-boolean check comes FIRST, ahead of both mutations, and that
@@ -372,11 +422,44 @@ module Lain
         self
       end
 
-      # @return [Boolean]
-      def complete?(path) = @complete.include?(path)
+      # Bytes were withheld from the model at this path. Add-only, like the two
+      # sets above, and deliberately NOT a parameter on {#record}: the fact
+      # arrives from a different layer than completeness does (see the class
+      # comment), and a caller that could pass `masked: false` would be able to
+      # spell "this read hid nothing" over a read that hid something.
+      #
+      # It records membership too, because a masked read IS a read: without it
+      # a path masked before it was ever recorded would answer false to both
+      # {#complete?} and {#partial?}, i.e. "never read".
+      #
+      # @param path [String] an already-normalized absolute path
+      # @return [self]
+      def mask(path)
+        @all << path
+        @masked << path
+        self
+      end
 
+      # Was the whole file read AND nothing withheld from the model? Both
+      # halves, because either one alone answers a question the edit-before-
+      # write contract is not asking.
+      #
       # @return [Boolean]
-      def partial?(path) = @all.include?(path) && !@complete.include?(path)
+      def complete?(path) = @complete.include?(path) && !@masked.include?(path)
+
+      # Read, but not wholly seen -- whether that is because only part was read
+      # or because part was masked. The two causes are distinguished by
+      # {#masked?}, not here: a caller asking this one wants "is there more of
+      # this file the model has not seen", and for that they are the same fact.
+      #
+      # @return [Boolean]
+      def partial?(path) = @all.include?(path) && !complete?(path)
+
+      # Which of the two causes {#partial?} covers, for a refusal that has to
+      # tell the model whether to re-read or to ask for a release.
+      #
+      # @return [Boolean]
+      def masked?(path) = @masked.include?(path)
 
       # @return [Array<String>] every path recorded, complete or partial, sorted
       def paths = @all.sort.freeze
@@ -401,12 +484,22 @@ module Lain
         false
       end
 
+      # @return [self]
+      def record_masked_read(_path)
+        self
+      end
+
       # Records nothing, so every path reads back as never-read rather than as
       # partially read -- {#read?} and this both false is the "no read at all"
       # answer, and the pair stays mutually exclusive as on a real Session.
       #
       # @return [false]
       def partially_read?(_path)
+        false
+      end
+
+      # @return [false]
+      def masked_read?(_path)
         false
       end
 
@@ -535,11 +628,38 @@ module Lain
         self
       end
 
+      # Forwards WITHOUT journaling a {Telemetry::SessionRead}, and that is a
+      # decision rather than an omission -- but NOT because the mask goes
+      # unrecorded. It is recorded, as a different record, and replayed from it.
+      #
+      # A mask IS a read-set state transition, so by {#record_read}'s own rule
+      # it wants a line. `SessionRead` cannot be that line: it says only
+      # `complete:`, and {SessionRecord::Replay} folds each one through
+      # `record_read`, which by construction cannot reach the masked set. So a
+      # `complete: false` line here would replay to a wholly-read path -- a
+      # record that LOOKS like the mask was persisted while a resumed session
+      # permitted the write the mask exists to refuse.
+      #
+      # {Middleware::RedactSecretReads} already writes a
+      # {Telemetry::ReadRedacted} naming the path, at the same moment, one layer
+      # out, into this same journal; {SessionRecord::Replay#redactions} folds it
+      # back. So a second record here would be a duplicate of a fact the
+      # journal already carries, in a shape that replays wrongly.
+      #
+      # @return [self]
+      def record_masked_read(path)
+        @session.record_masked_read(path)
+        self
+      end
+
       # @return [Boolean]
       def read?(path) = @session.read?(path)
 
       # @return [Boolean]
       def partially_read?(path) = @session.partially_read?(path)
+
+      # @return [Boolean]
+      def masked_read?(path) = @session.masked_read?(path)
 
       # @return [Array<String>]
       def reads = @session.reads

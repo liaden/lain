@@ -201,6 +201,13 @@ module Lain
         # Park the calling fiber until decided (see Promise#await).
         def await = @promise.await
 
+        # ⚠️ `outstanding` is ABSENT and must stay absent -- and `input` is too,
+        # for the same reason. This pending may hold the sensitive regions a yes
+        # would release, bytes included, and the only thing keeping them off
+        # disk is that this hand-maintained list does not name them. Adding the
+        # field writes real credentials into the Journal with no test to notice,
+        # since every test here asserts the fields that ARE listed.
+        # {Telemetry::ApprovalPending.from} carries the identical note.
         def to_journal
           { "type" => "approval_decision", "requester" => requester, "tool" => tool,
             "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,

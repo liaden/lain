@@ -27,11 +27,41 @@ module Lain
 
       input_model Input
 
+      # TWO contracts, not one, because {Lain::Session} answers two different
+      # refusals and a single message could only name one of them. Order is
+      # declaration order, and it matters: a masked read is ALSO not a complete
+      # one, so the narrower cause has to be tested first or every masked file
+      # would be refused as though it had never been read.
+      #
+      # That wrong message is not cosmetic. A model told "path was never read
+      # this session" about a file it just read re-reads it, gets the same
+      # masked projection, is refused identically, and loops -- with the one
+      # move that would actually work (asking for the regions to be released)
+      # never suggested. Naming the real cause is what breaks the loop.
+      #
       # Named so the composed violation ("precondition failed for edit_file:
-      # #{this}") reads as the fact the model needs -- that the session never
-      # saw this file -- rather than as a bare contract label. `input.path`
-      # (the coerced Tool::Input, not a Hash) is what {Tool#call} hands
-      # contracts: see tool.rb:117-119.
+      # #{this}") reads as the fact the model needs rather than as a bare
+      # contract label. `input.path` (the coerced Tool::Input, not a Hash) is
+      # what {Tool#call} hands contracts: see tool.rb:117-119.
+      # The message names NO remedy, because there is none within the session,
+      # and every softer wording tried so far was false.
+      #
+      # "Ask for those regions to be released, then read it again" was advice
+      # the model cannot act on. "A human must release those regions" reads as
+      # a remedy and is false in both halves: a re-read never re-asks anybody
+      # ({Middleware::RedactSecretReads} remembers the decline, so no second
+      # prompt is ever raised), and even a human who releases every region out
+      # of band leaves this refusal standing, because the masked set is add-only
+      # by {Lain::Session::ReadSet}'s design.
+      #
+      # So it says the true thing: this is permanent for the session. A model
+      # given any hint of a move takes it, and here every move is a loop.
+      requires("path was read only in part this session -- sensitive regions were masked out of what " \
+               "you saw, so editing it would clobber bytes you never read. Nothing in this session " \
+               "will lift that, and re-reading will not: report it and do something else") do |input, invocation|
+        !session_of(invocation).masked_read?(resolved_path(input, invocation))
+      end
+
       requires("path was never read this session") do |input, invocation|
         session_of(invocation).read?(resolved_path(input, invocation))
       end

@@ -46,12 +46,18 @@ end
 # what an example needs to see is which object the Agent was built over, and
 # that the module never went looking for a board of its own.
 class AgentBuildSpecBoard
-  attr_reader :toolset, :gate_calls, :grafted
+  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals
 
-  def initialize(toolset)
+  # The run's ONE region ledger, and the approval queue a `--yolo` board leaves
+  # nil -- both real, because {Lain::Middleware::RedactSecretReads} takes them
+  # as required keywords with no default and a double answering nil for either
+  # would test a construction production cannot reach.
+  def initialize(toolset, approvals: nil)
     @toolset = toolset
     @gate_calls = []
     @grafted = []
+    @ledger = Lain::Sensitivity::Ledger.new
+    @approvals = approvals
   end
 
   def gate(inner:)
@@ -105,7 +111,7 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
   end
 
   describe ".backing" do
-    subject(:backing) { described_class.backing(backend, channel, -> {}, chronicle:) }
+    subject(:backing) { described_class.backing(backend, channel, -> {}, chronicle:, board:) }
 
     it "hands back the provider it spooled and the instrumentation over it" do
       expect(backing[:provider]).to be(mock_provider)
@@ -114,10 +120,20 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
 
     # The same class list `spec/lain/cli_spec.rb` pins through the Wiring seam,
     # asserted here against the module that now builds it: a credential-shaped
-    # memory_write is withheld in the TOOL phase, before it reaches the recorder.
-    it "puts the secret-write guard in the tool phase" do
+    # memory_write is withheld in the TOOL phase, before it reaches the recorder,
+    # and an unreleased region is masked out of a read in the same phase, before
+    # its bytes can reach an Event or the prompt-cache prefix.
+    it "puts both secret guards in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites])
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads])
+    end
+
+    # `--yolo` leaves {Lain::CLI::Switchboard#approvals} nil, and the read guard
+    # takes its queue as a required keyword -- so the stand-in has to be
+    # substituted HERE, at the wiring, or a yolo run raises on construction.
+    it "substitutes the unqueued stand-in when the board wired no approval queue" do
+      expect { backing }.not_to raise_error
+      expect(backing[:instrumentation].tool_middleware.to_a.last).to be_a(Lain::Middleware::RedactSecretReads)
     end
 
     it "takes the turn phase from the chronicle, which is empty for the Null one" do

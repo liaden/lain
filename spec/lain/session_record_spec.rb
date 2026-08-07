@@ -655,6 +655,70 @@ RSpec.describe Lain::SessionRecord::Replay do
         end
       end
 
+      # A MASK replays from `read_redacted`, not from `session_read`, and it has
+      # to: `session_read` says only `complete:`, and `record_read` by
+      # construction cannot reach the masked set -- so the whole read
+      # `Tools::ReadFile` records BELOW the middleware would win on replay and a
+      # resumed session would permit the write a mask exists to refuse. This is
+      # the record `Middleware::RedactSecretReads` already writes.
+      it "replays a masked read as masked, not as the whole read recorded under it" do
+        journaled.record_read("/tmp/.env")
+        journal << Lain::Telemetry::ReadRedacted.new(tool_use_id: "tu_1", path: "/tmp/.env",
+                                                     regions: 2, released: 0)
+
+        fresh = replayed_session
+
+        expect(fresh.read?("/tmp/.env")).to be(false)
+        expect(fresh.masked_read?("/tmp/.env")).to be(true)
+      end
+
+      # A `read_redacted` with no `session_read` beside it still masks. This is
+      # what makes the redaction the RECORD of the mask rather than a modifier
+      # on a read line: a salvaged journal that lost the read still rebuilds the
+      # refusal.
+      it "masks from the redaction alone, with no session_read to modify" do
+        fresh = described_class.new([{ "type" => "read_redacted", "tool_use_id" => "t",
+                                       "path" => "/tmp/.env", "regions" => 1, "released" => 0 }]).session
+
+        expect(fresh.masked_read?("/tmp/.env")).to be(true)
+        expect(fresh.read?("/tmp/.env")).to be(false)
+      end
+
+      # The FOLD order, not the journal order: `restore_reads` always folds
+      # reads-then-redactions, so varying the entries' order in the file exercises
+      # one path twice and proves nothing. What has to hold is that the read-set
+      # itself reaches the same state either way -- that is the add-only property
+      # the fixed fold order is allowed to rely on, and it belongs to
+      # {Lain::Session}, which is where it is driven from.
+      it "reaches the same state whichever order the two facts are applied in" do
+        masked_first = Lain::Session.new.record_masked_read("/tmp/.env").record_read("/tmp/.env")
+        read_first = Lain::Session.new.record_read("/tmp/.env").record_masked_read("/tmp/.env")
+
+        [masked_first, read_first].each do |fresh|
+          expect(fresh.read?("/tmp/.env")).to be(false)
+          expect(fresh.masked_read?("/tmp/.env")).to be(true)
+        end
+      end
+
+      # The security property, on the tool that destroys rather than clobbers:
+      # a resumed write_file over a masked file would replace the secret on disk
+      # with the placeholder the model was shown.
+      it "still refuses write_file after replaying a masked read", :seam do
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, ".env")
+          File.write(path, "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
+          journaled.record_read(path)
+          journal << Lain::Telemetry::ReadRedacted.new(tool_use_id: "tu_1", path:, regions: 1, released: 0)
+
+          invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_2", context: replayed_session)
+
+          expect do
+            Lain::Tools::WriteFile.new.call({ "path" => path, "content" => "API_KEY=<redacted:1>\n" }, invocation)
+          end.to raise_error(Lain::Tool::ContractViolation, /read only in part/)
+          expect(File.read(path)).to include("sk-ant-api03")
+        end
+      end
+
       # A journal written before T22 has no `complete` key. Its absence is
       # POSITIVE EVIDENCE that the read was whole -- RedactSecretReads (the
       # only thing that can record a partial read) does not exist yet, so no

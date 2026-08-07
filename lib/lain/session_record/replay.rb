@@ -35,6 +35,7 @@ module Lain
       class Malformed < Error; end
 
       SESSION_READ_TYPE = "session_read"
+      READ_REDACTED_TYPE = "read_redacted"
       SESSION_PIN_TYPE = "session_pin"
       TODO_SNAPSHOT_TYPE = "todo_snapshot"
       MEMORY_ROOT_TYPE = "memory_root"
@@ -59,9 +60,9 @@ module Lain
       #   reconstructs
       def session
         Session.new(memory:).tap do |fresh|
-          reads.each { |record| fresh.record_read(record.fetch("path"), complete: completeness(record)) }
-          pins.each { |record| apply_pin(fresh, record) }
-          todo_records.each { |record| fresh.write_todos(items(record)) }
+          restore_reads(fresh)
+          restore_pins(fresh)
+          restore_todos(fresh)
         end
       end
 
@@ -78,8 +79,35 @@ module Lain
 
       private
 
+      # The read-set is TWO record types, folded together here because they
+      # rebuild one thing: what the model has seen of each file.
+      def restore_reads(fresh)
+        reads.each { |record| fresh.record_read(record.fetch("path"), complete: completeness(record)) }
+        redactions.each { |record| fresh.record_masked_read(record.fetch("path")) }
+      end
+
+      def restore_pins(fresh) = pins.each { |record| apply_pin(fresh, record) }
+
+      def restore_todos(fresh) = todo_records.each { |record| fresh.write_todos(items(record)) }
+
       def reads
         Journal.records(@records, type: SESSION_READ_TYPE)
+      end
+
+      # A masked read replays from {Telemetry::ReadRedacted}, NOT from a
+      # `session_read` line, and that is the only shape available:
+      # `session_read` says `complete:` and nothing else, and `record_read` by
+      # construction cannot reach the masked set, so a `complete: false` line
+      # would replay to a wholly-read path and quietly permit the write that a
+      # mask exists to refuse. `read_redacted` already names the path, is
+      # already written by {Middleware::RedactSecretReads} into this same
+      # journal, and needs no new field.
+      #
+      # Order against {#reads} does not matter: both sets are add-only and
+      # {Session#record_masked_read} is idempotent, so a redaction folded before
+      # or after its own `session_read` lands on the same state.
+      def redactions
+        Journal.records(@records, type: READ_REDACTED_TYPE)
       end
 
       # A MISSING `complete` key means the read was whole, and that is a

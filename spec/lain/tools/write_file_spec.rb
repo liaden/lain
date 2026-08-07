@@ -74,6 +74,62 @@ RSpec.describe Lain::Tools::WriteFile do
     end
   end
 
+  # T15: a masked read is a read whose secrets the model never saw, and writing
+  # the file back is worse here than an edit is. An edit rewrites one span; a
+  # write replaces the WHOLE file with what the model holds -- the projection,
+  # placeholders included -- so the secret is not clobbered, it is destroyed and
+  # replaced by the literal string `<redacted:1>`.
+  describe "AC: a masked read never satisfies the write contract" do
+    let(:secret) { "API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n" }
+
+    def masked_session(path)
+      Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: {}))
+                   .record_read(path).record_masked_read(path)
+    end
+
+    it "refuses the write and leaves the secret on disk" do
+      path = write(".env", secret)
+
+      expect do
+        tool.call({ path:, content: "API_KEY=<redacted:1>\n" }, invocation_with(masked_session(path)))
+      end.to raise_error(Lain::Tool::ContractViolation, /read only in part/)
+
+      expect(File.read(path)).to eq(secret)
+    end
+
+    # The refusal must name the MASK, not "never read": a model told the file
+    # was never read re-reads it, gets the same projection, and loops.
+    it "names the masking rather than claiming the file was never read" do
+      path = write(".env", secret)
+      message = begin
+        tool.call({ path:, content: "x" }, invocation_with(masked_session(path)))
+        nil
+      rescue Lain::Tool::ContractViolation => e
+        e.message
+      end
+
+      expect(message).to include("read only in part")
+      expect(message).not_to include("never read")
+    end
+
+    # The masked guard must not close the create case, and it cannot: a path
+    # that was read is a path that exists.
+    it "still lets a create through, since only a read path can carry a mask" do
+      path = File.join(tmpdir, "fresh.rb")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: {}))
+
+      expect { tool.call({ path:, content: "x" }, invocation_with(session)) }.not_to raise_error
+      expect(File.read(path)).to eq("x")
+    end
+
+    it "allows the write once the same path is recorded as wholly read and unmasked" do
+      path = write("plain.rb", "x = 1\n")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: {})).record_read(path)
+
+      expect { tool.call({ path:, content: "x = 2\n" }, invocation_with(session)) }.not_to raise_error
+    end
+  end
+
   describe "AC: overwriting an existing file requires it was read this session" do
     it "raises ContractViolation when the session never read the path" do
       path = write("existing.rb", "original")
