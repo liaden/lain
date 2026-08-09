@@ -484,6 +484,7 @@ end
 
 # Policy, Regions and Ledger all reopen Sensitivity, so the class body must load
 # first.
+require_relative "sensitivity/filter"
 require_relative "sensitivity/policy"
 require_relative "sensitivity/regions"
 require_relative "sensitivity/ledger"

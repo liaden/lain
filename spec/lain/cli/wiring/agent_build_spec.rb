@@ -121,19 +121,25 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     # The same class list `spec/lain/cli_spec.rb` pins through the Wiring seam,
     # asserted here against the module that now builds it: a credential-shaped
     # memory_write is withheld in the TOOL phase, before it reaches the recorder,
-    # and an unreleased region is masked out of a read in the same phase, before
-    # its bytes can reach an Event or the prompt-cache prefix.
-    it "puts both secret guards in the tool phase" do
+    # an unreleased region is masked out of a read in the same phase, before its
+    # bytes can reach an Event or the prompt-cache prefix, and a sensitive path
+    # is dropped out of a listing before the enumeration is believed.
+    it "puts all three secret guards in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads])
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths])
     end
 
     # `--yolo` leaves {Lain::CLI::Switchboard#approvals} nil, and the read guard
     # takes its queue as a required keyword -- so the stand-in has to be
     # substituted HERE, at the wiring, or a yolo run raises on construction.
+    # Selected by CLASS, not by position: this example is about the read guard
+    # being constructible without a queue, and indexing at the end of the stack
+    # tied it to being the last entry, which a third guard then made false.
     it "substitutes the unqueued stand-in when the board wired no approval queue" do
       expect { backing }.not_to raise_error
-      expect(backing[:instrumentation].tool_middleware.to_a.last).to be_a(Lain::Middleware::RedactSecretReads)
+      expect(backing[:instrumentation].tool_middleware.to_a.grep(Lain::Middleware::RedactSecretReads))
+        .not_to be_empty
     end
 
     it "takes the turn phase from the chronicle, which is empty for the Null one" do

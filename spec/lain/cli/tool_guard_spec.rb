@@ -50,9 +50,22 @@ RSpec.describe Lain::CLI::ToolGuard do
   def read_guard(board) = guards(board).grep(Lain::Middleware::RedactSecretReads).first
 
   describe "the stack it builds" do
-    it "puts the write guard and the read guard in the tool phase, in that order" do
+    it "puts the write, read and listing guards in the tool phase, in that order" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
-        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads])
+        .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                Lain::Middleware::WithholdSecretPaths])
+    end
+
+    # Pinned by NAME, and asserting the guard is inert, because a stack entry
+    # is only half of what makes a guard live: nothing constructs a
+    # {Lain::Sensitivity} classifier yet, so the only filter there is to pass
+    # is the Null. Naming it here is what stops the swap to a real filter from
+    # happening silently, and what stops the example above from reading as
+    # "the listing guard works" when it cannot yet withhold anything.
+    it "wires the listing guard with the Null filter, because no classifier is constructed yet" do
+      guard = guards(ToolGuardSpecBoard.new).grep(Lain::Middleware::WithholdSecretPaths).first
+
+      expect(guard.filter).to be(Lain::Sensitivity::Filter::Null.instance)
     end
   end
 

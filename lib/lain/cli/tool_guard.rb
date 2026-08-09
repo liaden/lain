@@ -30,8 +30,25 @@ module Lain
       # @return [Middleware::Stack] the tool-phase stack, for the instrumentation
       def stack(chronicle, board)
         Middleware::Stack.new([Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
-                               Middleware::RedactSecretReads.new(**read_kwargs(chronicle, board))])
+                               Middleware::RedactSecretReads.new(**read_kwargs(chronicle, board)),
+                               Middleware::WithholdSecretPaths.new(filter: path_filter(board))])
       end
+
+      # The third guard covers the LISTING tools -- grep, glob, list_files --
+      # which the other two do not touch: masking a region inside one file's
+      # content and dropping a row out of an enumeration are different result
+      # shapes, and the count of what was dropped has to be reported or the
+      # agent reads the listing as complete.
+      #
+      # It is wired with the Null filter, and that is the honest wiring TODAY
+      # rather than a stub: nothing in this process constructs a
+      # {Sensitivity} classifier yet, so `board.sensitivity` is
+      # {Sensitivity::Policy::Null} and there is no classifier to hand over.
+      # {Sensitivity::Filter} refuses a nil one rather than defaulting, so the
+      # choice has to be made HERE and be visible. T23 replaces this with the
+      # real filter; the spec pins the Null by name so that swap cannot happen
+      # silently, and so this stack entry cannot be mistaken for a live guard.
+      def path_filter(_board) = Sensitivity::Filter::Null.instance
 
       # `--yolo` wires NO queue ({Switchboard#approvals} is nil), and the
       # stand-in is named HERE rather than defaulted inside the middleware: a
