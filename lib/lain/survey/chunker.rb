@@ -46,7 +46,55 @@ module Lain
       # every other named encoding is refused outright.
       PARSEABLE_ENCODINGS = [Encoding::UTF_8, Encoding::US_ASCII, Encoding::BINARY].freeze
 
+      # The extensions {Markdown} claims. A README picks one of these three
+      # arbitrarily and none of them says anything different about the content,
+      # so all three route the same way. Everything this list does not name
+      # takes the floor, which is an honest answer rather than a degraded one --
+      # widening it further is a decision somebody makes rather than one that
+      # leaks in.
+      MARKDOWN = %w[.md .markdown .mdown].freeze
+
       module_function
+
+      # Which chunker a path gets.
+      #
+      # The dispatch is a NAMED function rather than a case statement inside the
+      # corpus, because it is the seam a caller substitutes: `Source::Corpus`
+      # takes it as `chunker:` and defaults to this, which is how a survey's
+      # laziness is observable at all -- a counting chunker pushed through here
+      # rides the real stack instead of spying on one.
+      #
+      # Structure first, floor last. Markdown goes to its section tree; a
+      # language lain has an authored symbols query for goes to its definitions;
+      # everything else -- an unknown extension, a language whose query was
+      # withdrawn, a `Makefile` -- goes to {Paragraphs}. The floor is never a
+      # failure: a survey that cannot read a `.lua` file at all is worse than
+      # one that reads it as prose.
+      #
+      # A fresh instance per call, and that costs nothing that matters: a
+      # chunker is a frozen `Data`, so two built the same way are EQUAL, which
+      # is exactly the property {Review::LazyFile}'s equality needs of whatever
+      # chunks a file.
+      #
+      # @param path [String, Pathname] the file's path; only its extension is read
+      # @return [#call] a chunker, answering `call(path:, source:)`
+      def for(path)
+        extension = File.extname(path.to_s)
+        return Markdown.new if MARKDOWN.include?(extension)
+        return Code.new if parsed_language?(extension)
+
+        Paragraphs.new
+      end
+
+      # {Structural::Queries} is the one classifier and is asked here rather
+      # than trusted to {Code}'s own fallback: a language whose authored query
+      # is withdrawn must take the floor by the dispatch's decision, so the
+      # routing a reader can see is the routing that happens.
+      def parsed_language?(extension)
+        language = Code::EXTENSIONS[extension]
+
+        !language.nil? && Structural::Queries.languages_for(:symbols).include?(language.name)
+      end
 
       # Whether {Ext::TreeSitter} will read this source, asked BEFORE handing it
       # over so its offset-naming EncodingError never escapes a chunker. A
