@@ -68,6 +68,17 @@ module Lain
                     "`lain chat --nvim <socket>`) and run /review there. `lain review open <target>` " \
                     "renders one as text without an editor."
 
+        # The refusal a changeset review opened over an open SURVEY gets. The
+        # mirror of {Command::Survey::ALREADY_OPEN}, and the same rule read from
+        # the other side: one chat has one set of gesture rails, so a second
+        # SURFACE over the first would rebind them to a sidebar the survey's
+        # marks cannot reach. A second `/review` over a `/review` still rebinds
+        # -- see {#drawn} for why that recovery has to stay open.
+        SURVEY_OPEN = "%<target>s is already open in this chat, and one chat draws one review at a time -- " \
+                      "a changeset review opened over it would rebind the gesture rails to a sidebar the " \
+                      "survey's marks cannot reach. Run `lain review open <target>` for a text rendering " \
+                      "outside this chat."
+
         # What the human is told once the sidebar is up. The headline is
         # {Lain::CLI::Review::HEADLINE}'s, read from that class rather than
         # restated, so the two surfaces cannot describe the same review
@@ -175,12 +186,28 @@ module Lain
         # why {#wired} is one step and not two.
         def opened(parsed, env)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
+          refuse_over_survey!
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
           wired(resolved, session, env)
           drawn(resolved, session, scope)
+        end
+
+        # The KIND is the question, not `open?`: a second `/review` over a
+        # `/review` rebinds, which is both what {#drawn} documents as the
+        # recovery from a bounded refusal and what `command/review_spec.rb`
+        # pins. What may not happen is a changeset review drawn over an open
+        # SURVEY, because the two share one set of gesture rails.
+        #
+        # The word is asked of {Command::Survey}, which is the one place it is
+        # derived -- a second spelling of `corpus` here, or an opinion about
+        # kinds on the outbox, would each be a place for the two to disagree.
+        def refuse_over_survey!
+          return unless @outbox.held_source == Survey.source_name
+
+          raise Error, format(SURVEY_OPEN, target: @outbox.target)
         end
 
         # Everything that must be complete before a human can touch the sidebar:

@@ -101,7 +101,10 @@ module Lain
         # with the old round: what may not happen twice is one round reaching
         # GitHub twice, not a chat reviewing twice.
         #
-        # @param session [Review::Session] the round, read and never written
+        # @param session [Review::Session] the round, read and never written.
+        #   Read for `#source` as well as at submit time, since {#held_source}
+        #   answers off it -- a holder passing something that cannot name its
+        #   source will hear about it from there.
         # @param number [Integer, String, nil] the pull request, or nil for a
         #   branch review
         # @param label [String] how the target was named on screen
@@ -114,6 +117,20 @@ module Lain
 
         # @return [Boolean] whether a round is held at all
         def open? = !@held.nil?
+
+        # WHAT the held round was opened over, in its source's own word --
+        # `local_branch`, `github_pr`, `corpus`. Data, not a judgement: a chat
+        # has one set of gesture rails, so `/review` and `/survey` each need to
+        # tell the round THEY opened from the other command's before rebinding
+        # them, and each of them already knows its own word. Deciding here which
+        # word means what would put a kind test on the object whose one
+        # responsibility is submission.
+        #
+        # nil with nothing held, which is what makes every caller's `open? &&
+        # ...` read as one question rather than two.
+        #
+        # @return [String, nil]
+        def held_source = @held&.session&.source
 
         # How the held round's target was named on screen, which is what a
         # report says instead of restating a class or re-deriving a number.

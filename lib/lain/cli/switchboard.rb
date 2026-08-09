@@ -161,8 +161,14 @@ module Lain
       # This board's contribution to the {Command::Surface}: the three switches,
       # plus /approve's inline drain prompt over the SAME conductor-routed
       # reader the Repl's watch surface uses (see Repl::ApprovalSurfaces#approval_surface's WHY).
+      #
+      # `ledger` rides along for the reason the reader above exists: `/survey`
+      # projects a corpus through the region model, and a command holding a
+      # ledger of its own would show `<redacted:N>` for regions this run has
+      # already released. One ledger, or the release control silently releases
+      # nothing.
       def surface_kwargs(conductor:, tty:)
-        { policy_switch:, model_switch:, mode_switch:, approval_prompt: prompt(conductor:, tty:) }
+        { policy_switch:, model_switch:, mode_switch:, ledger:, approval_prompt: prompt(conductor:, tty:) }
       end
 
       private

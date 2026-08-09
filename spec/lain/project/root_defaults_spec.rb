@@ -113,6 +113,12 @@ module RootDefaultDiscipline
     # project's `[sensitivity]` table is in force and what a relative rule in it
     # resolves against, which is the working directory by definition.
     "lain/cli/survey.rb" => %w[initialize:cwd],
+    # `/survey` in a chat, and the SAME entry `command/review.rb` above has for
+    # the same reason: {Lain::CLI::Command::Surface} threads its `root:` in on
+    # the live path, and the default is the library-usability one a spec
+    # constructing the command by hand would otherwise have to restate. It is
+    # not the surveyed tree, which is the path argument.
+    "lain/cli/command/survey.rb" => %w[initialize:root],
     "lain/cli/up.rb" => %w[initialize:cwd],
     "lain/config.rb" => %w[self.load:root],
     "lain/dsl_catalog.rb" => %w[self.load:root],

@@ -42,13 +42,21 @@ module Lain
         #
         # `root:` survives the library, on its own business: {Meta} reads the
         # project's `.lain/` config from it. It no longer feeds a snapshot load.
+        #
+        # `ledger:` is required on exactly the same terms and for the sharpest
+        # version of the reason: {Lain::Sensitivity::Ledger} states no-default as
+        # a rule of its own, because a defaulted one lets a forgotten injection
+        # become a SECOND ledger whose releases nobody ever sees -- `/survey`
+        # would mask regions this run has already released, with every object
+        # present and nothing about the wiring looking wrong.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
-                       model_switch:, mode_switch:, library:, approvals: nil, root: Dir.pwd, approval_prompt: nil,
-                       goal_driver: GoalDriver::Null)
+                       model_switch:, mode_switch:, library:, ledger:, approvals: nil, root: Dir.pwd,
+                       approval_prompt: nil, goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
           @root = root
           @library = library
+          @ledger = ledger
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
@@ -123,12 +131,16 @@ module Lain
            *review_commands]
         end
 
-        # The two halves of one review: `/review` opens a round into {#outbox}
-        # and `/review-submit` takes it out and posts it. Their own line because
-        # they are the only pair here sharing a collaborator -- and because
-        # #builtins reached its ABC budget, which is the same pressure saying
-        # the same thing.
-        def review_commands = [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:)]
+        # The commands of one review: `/review` and `/survey` each open a round
+        # into {#outbox} -- the run's ONE, which is what lets each refuse over
+        # the other's open surface -- and `/review-submit` takes it out and posts
+        # it. Their own line because they are the only group here sharing a
+        # collaborator, and because #builtins reached its ABC budget, which is
+        # the same pressure saying the same thing.
+        def review_commands
+          [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:),
+           Survey.new(root: @root, outbox:, ledger: @ledger)]
+        end
       end
     end
   end

@@ -84,13 +84,11 @@ module DeletionMap
       forces: %w[prefill], untestable: nil
     ),
     Capability.new(
-      key: "prefill",
-      constants: %w[Prefill],
+      key: "prefill", constants: %w[Prefill],
       files: ["lib/lain/review/prefill.rb", "lib/lain/review/prefill/finding.rb",
               "lib/lain/review/prefill/sidecar.rb", "spec/lain/review/prefill_spec.rb"],
       consumers: [],
-      edits: { "lib/lain/review.rb" => ['require_relative "review/prefill"'] },
-      forces: [], untestable: nil
+      edits: { "lib/lain/review.rb" => ['require_relative "review/prefill"'] }, forces: [], untestable: nil
     ),
     Capability.new(
       key: "thread",
@@ -131,22 +129,30 @@ module DeletionMap
       constants: %w[Submit REVIEW_SUBMIT submit_review],
       # T34 added the REACH -- the outbox, the verb and their specs; and
       # `endpoint.rb` builds only a review POST's own REST path, so it goes too.
-      files: ["lib/lain/review/submit.rb", "lib/lain/review/submit/outbox.rb",
-              "spec/lain/review/submit_spec.rb", "spec/lain/review/submit/outbox_spec.rb",
-              "lib/lain/cli/command/review_submit.rb", "spec/lain/cli/command/review_submit_spec.rb",
-              "lib/lain/forge/gh/endpoint.rb"],
+      files: ["lib/lain/review/submit.rb", "lib/lain/review/submit/outbox.rb", "spec/lain/review/submit_spec.rb",
+              "spec/lain/review/submit/outbox_spec.rb", "lib/lain/cli/command/review_submit.rb",
+              "spec/lain/cli/command/review_submit_spec.rb", "lib/lain/forge/gh/endpoint.rb"],
       consumers: ["lib/lain/forge/gh.rb", "lib/lain/forge/gh/recorded.rb", "lib/lain/forge/intent.rb",
                   "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
+                  "spec/lain/cli/command/survey_spec.rb",
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],
         "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],
         "lib/lain/cli/command.rb" => ['require_relative "command/review_submit"'],
-        # Four sites the constant sweep is blind to: two spell the verb as the
+        # FIVE sites the constant sweep is blind to: two spell the verb as the
         # wire STRING, one is the command set pinned as a LITERAL (the wiring
-        # examples beside it go too), one is the keyword `/review` holds through.
-        "lib/lain/cli/command/review.rb" => ["outbox:", "@outbox.hold"],
+        # examples beside it go too), and BOTH review commands reach the outbox
+        # through keywords and messages that name no constant at all. `/survey`
+        # is the heavier of the two -- it holds a round AND reads the held
+        # round's kind back to refuse a second review surface -- and this list
+        # is checked for STALENESS only, never for completeness, so an omitted
+        # row stays green while leaving a human who deleted the capability with
+        # a file still talking to it.
+        "lib/lain/cli/command/review.rb" => ["outbox:", "@outbox.hold", "@outbox.held_source", "@outbox.target"],
+        "lib/lain/cli/command/survey.rb" => ["outbox:", "@outbox.hold", "@outbox.held_source",
+                                             "@outbox.open?", "@outbox.target"],
         "spec/lain/cli/command/surface_spec.rb" => ["review-submit"],
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']

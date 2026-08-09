@@ -211,7 +211,7 @@ RSpec.describe "the /btw and /keep registration" do
         policy_switch: instance_double(Lain::Approval::PolicySwitch),
         model_switch: instance_double(Lain::Context::ModelSwitch),
         mode_switch: instance_double(Lain::Mode::Switch),
-        library: Lain::Skill::Library.load(root:)
+        library: Lain::Skill::Library.load(root:), ledger: Lain::Sensitivity::Ledger.new
       )
 
       # A Null chronicle refuses loudly (no journal_path) -- but the REFUSAL
