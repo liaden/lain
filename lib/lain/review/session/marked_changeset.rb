@@ -59,6 +59,12 @@ module Lain
         # Frozen and shared rather than a fresh `[]` per hunkless file.
         NO_KEYS = [].freeze
 
+        # The derivation for a changeset nobody has asked a question of yet: it
+        # names no path, so every row falls to {HUNKLESS} by the rule that
+        # constant already states. The Null Object of a states table, and the
+        # reason {.of} can decline to build a real one -- see its comment.
+        NO_STATES = {}.freeze
+
         # `path => the review keys of that path's hunks`, by exactly the rule
         # {Marks} applies to the same changeset (`group_by(&:path)`, then
         # `Hunk.keys` over one file's hunks at a time -- the batch is a
@@ -85,6 +91,34 @@ module Lain
         # resolve.
         WALK = Review::Partition::STRATEGIES.fetch(:commits)
 
+        # The join is built from the key table it is HANDED, and skips {Marks}
+        # entirely when that table names NO path at all. {Marks#states} walks
+        # every hunk of every file, and a survey that has chunked nothing has
+        # nothing for that walk to judge -- so presenting it derives nothing and
+        # reads no file, at the one place every render passes through
+        # ({Session#present} rebuilds this on purpose, never memoized).
+        #
+        # An unchunked file is {HUNKLESS} for exactly the reason a binary one
+        # is: no hunk of it is marked reviewed, because none of it is here yet.
+        # That is the honest answer to a question nobody has asked, not a
+        # guess -- and the only state it can be, since a mark names a hunk key
+        # and this file has produced none.
+        #
+        # == The shortcut is all-or-nothing, and that is a limit, not a shape
+        #
+        # An EMPTY table skips the derivation; a table naming one path of fifty
+        # takes it, and {Marks#states} then walks all fifty. Measured: 0 keys
+        # chunks 0 of 50 files, 1 key chunks 50 of 50. So this does not scale
+        # down with how much a corpus has read, and a caller must not read it as
+        # if it did -- there is a spec pinning the partial case for that reason.
+        # Deriving per path is what would fix it, and it needs a message on
+        # {Marks} taking a path's KEYS rather than a whole changeset; two
+        # existing specs double {Marks} on `states` and pin this call, so that
+        # move is a deliberate change rather than a refactor.
+        #
+        # A diff names every path in its table, so this is the same derivation
+        # it has always been, arrived at the same way.
+        #
         # @param changeset [Review::Changeset] the whole, unfiltered changeset
         # @param marks [Review::Marks] recorded against the same base
         # @param keys_by_path [Hash{String => Array<String>}] {keys_by_path}'s
@@ -93,7 +127,7 @@ module Lain
         # @return [MarkedChangeset]
         # @raise [Marks::BaseMismatch] if the marks name another base
         def self.of(changeset, marks, keys_by_path: keys_by_path(changeset), strategy: WALK)
-          states = marks.states(changeset)
+          states = keys_by_path.empty? ? NO_STATES : marks.states(changeset)
           # Keyed by the ChangedFile itself, not by its path: a Partition holds
           # the very same value objects, so the lookup is exact and two files
           # that somehow shared a path could not silently collapse into one row.

@@ -99,12 +99,39 @@ module Lain
       # `preserve_hunks` flag on the wrong side of this call is the bug, not
       # the fix).
       #
+      # == An empty set is pruned without reading anything
+      #
+      # A set with nothing in it has nothing that could be stale, so the walk
+      # below would establish only what the emptiness already says. Over a
+      # lazily-chunked corpus that walk is the whole chunking cost, so a review
+      # that has marked nothing would otherwise pay it to prune nothing.
+      #
+      # What that is worth is a RESUME of a round nobody marked, and only until
+      # the first question is asked -- said precisely because the obvious wider
+      # claim is false. {Session.open} composes its journaled digest through
+      # `MarkedChangeset.keys_by_path` BEFORE it builds the session, so an open
+      # has already read every file by the time this runs (measured: `.open`
+      # chunks 50 of 50 at zero marks, `.from_journal` chunks 0 of 50).
+      #
+      # It goes no further than that, and the limit is worth stating rather
+      # than leaving to be rediscovered: a mark carries a hunk key and NOTHING
+      # else ({Review::HunkMarked}), and a key is a digest no path can be read
+      # back out of ({Hunk#key}). So a mark set cannot name the paths it
+      # belongs to, and a surviving mark is told from a stale one only by
+      # walking every path to prove absence. A non-empty set reads the
+      # changeset whole.
+      #
+      # The base check stays ahead of the shortcut: a base move is refused
+      # whether or not there is a mark to carry across it.
+      #
       # @param changeset [#base_ref, #hunks] the unfiltered changeset
-      # @return [Marks]
+      # @return [Marks] `self` when there was nothing to prune -- this object is
+      #   frozen and immutable, so a copy would differ from it in nothing
       # @raise [BaseMismatch] if `changeset` was not built against this mark
       #   set's {#base_ref}
       def reconcile(changeset)
         assert_same_base!(changeset)
+        return self if @marks.empty?
 
         valid = valid_keys(changeset)
         self.class.new(base_ref:, marks: @marks.select { |hunk_key, _| valid.key?(hunk_key) })

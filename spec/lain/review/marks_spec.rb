@@ -21,6 +21,17 @@ RSpec.describe Lain::Review::Marks do
     pairs.reduce(described_class.new(base_ref:)) { |marks, (key, state)| marks.mark(key, state) }
   end
 
+  # A changeset that CANNOT be read: asking it for hunks raises. That is how the
+  # laziness group below asserts "nothing was chunked" -- `bounds_spec.rb`'s
+  # shape for the same claim -- rather than by spying on the subject, which
+  # would pass just as well against a subject that walked and threw the answer
+  # away.
+  def unreadable_changeset(base_ref:)
+    instance_double(Lain::Review::Changeset, base_ref:).tap do |changeset|
+      allow(changeset).to receive(:hunks).and_raise("the changeset's hunks were read")
+    end
+  end
+
   describe "deriving a file's tri-state indicator" do
     it "is :partial when only some of a file's hunks are marked" do
       hunks = [hunk(lines: ["+a"]), hunk(lines: ["+b"]), hunk(lines: ["+c"])]
@@ -131,6 +142,45 @@ RSpec.describe Lain::Review::Marks do
     # hand one through.
     it "has no scope parameter -- a caller cannot filter what reconcile sees" do
       expect(described_class.instance_method(:reconcile).parameters).to eq([%i[req changeset]])
+    end
+  end
+
+  # Reconciling is what `Session#initialize` does on EVERY open and every
+  # resume, so it is the first thing a survey of a large corpus would pay for.
+  # A mark set with nothing in it has nothing to prune, and reading a whole
+  # corpus to establish that is the entire cost.
+  describe "reconciling what there is nothing to prune from" do
+    it "prunes an empty mark set without reading a single hunk" do
+      marks = described_class.new(base_ref: "base1")
+
+      expect { marks.reconcile(unreadable_changeset(base_ref: "base1")) }.not_to raise_error
+    end
+
+    it "still answers an empty set against the same base, not merely a fast nothing" do
+      reconciled = described_class.new(base_ref: "base1").reconcile(unreadable_changeset(base_ref: "base1"))
+
+      expect([reconciled.to_h, reconciled.base_ref]).to eq([{}, "base1"])
+    end
+
+    # The base check is the one thing that must happen before the shortcut: a
+    # base move is refused whether or not there is a mark to carry across it,
+    # and a session resumed against a moved base must hear so.
+    it "refuses a base change before it decides there is nothing to prune" do
+      expect { described_class.new(base_ref: "base-v1").reconcile(unreadable_changeset(base_ref: "base-v2")) }
+        .to raise_error(described_class::BaseMismatch)
+    end
+
+    # The counterpart, pinned so the shortcut above is not read as a general
+    # one. A mark carries a hunk key and NOTHING else (`Review::HunkMarked`),
+    # and a key is a digest that no path can be read back out of -- so a mark
+    # set cannot name the paths it belongs to, and a mark is proved stale only
+    # by being absent from every path. A non-empty set therefore reads the
+    # changeset, and this is the cost B15 could not remove.
+    it "reads the changeset when there IS a mark to prune, because absence is what proves one stale" do
+      marks = marked("base1", [["hunk-content-v1:abc", "reviewed"]])
+
+      expect { marks.reconcile(unreadable_changeset(base_ref: "base1")) }
+        .to raise_error(/hunks were read/)
     end
   end
 
