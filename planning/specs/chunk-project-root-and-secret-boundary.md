@@ -130,7 +130,12 @@ draft of this plan had T15 masking silently with no release path, which left an 
   (`git -C .claude/worktrees/agent-<id> merge --ff-only <main sha>`) immediately after spawn,
   and the implementer brief tells the agent to verify `git rev-parse HEAD` and *stop and ask*
   rather than run git. Two wave-1 agents caught the skew and escalated instead of working
-  around it, which is the behavior the brief wants.
+  around it, which is the behavior the brief wants. **Resolved for waves 2-7 by pushing `main`
+  to `origin` (Joel's call, taken mid-wave-1), so `origin/main == main` and later worktrees fork
+  correctly with no salvage.** The plan doc was also committed before the fan-out: `gherkin_spec`
+  globs `planning/specs/*.md` for one example per doc, so an untracked plan doc makes the primary
+  tree read one example higher than every worktree and a sub-agent cannot tell that gap from a
+  truncated run. Baseline at `0e5fab5`: **11211 examples, 0 failures, 14 pendings.**
 
 ## Open decisions
 
@@ -154,6 +159,17 @@ Wave 2: T2 (←T1), T3 (←T1), T10 (←T9), T11 (←T8), T20 (←T8), T22 (←T
 Wave 3: T5 (←T1,T2,T4), T12 (←T8,T11), T14 (←T10)
 Wave 4: T6 (←T2,T5), T16 (←T14), T18 (←T5)
 Wave 5: T15 (←T10,T13,T14,T16,T22), T17 (←T13,T16)
+        ⚠️ **T15 and T16 land as a PAIR, and the ledger wiring lands with T15** (2026-08-07,
+        T14's panel; corrected from an earlier note of mine that said "T16 depends on T15", which
+        would be circular — the plan already has T15 ← T16, and that order is right). T16 alone is
+        a dormant capability (`Pending` *can* carry regions, nothing constructs one), so it is
+        safe on its own. The window to avoid is landing the ledger's `ToolGuard`/`AgentBuild`
+        wiring before T15 exists to consume it. T14-without-either is safe: the masking arm is
+        absent, not half-wired.
+        **T16 also absorbs `Repl::ApprovalSurfaces#approval_surface` (`cli/repl/approval_surfaces.rb:51-55`)**,
+        which builds a SECOND `Frontend::ApprovalPolicy` for the watch fiber and is in no card's
+        Files list — miss it and the TTY watch surface and the `/approve` drain prompt disagree
+        about what has been released, which is the two-ledger bug at half scale.
 Wave 6: T19 (←T8,T15)
 Wave 7: T21 (←T11,T12,T15,T19,T20)
 ```
@@ -721,7 +737,7 @@ argues for.
 Scenario: a dotenv key is one region
   Given a file with three ordinary lines and one line assigning an API key
   When regions are detected
-  Then exactly one region is reported and it covers the assignment
+  Then exactly one region is reported, covering the VALUE and not the name
 
 Scenario: a region's digest survives an unrelated edit
   Given a file with one detected region
@@ -1739,6 +1755,382 @@ two ACs are verified by the panel's own re-read at integration check 4.
 - If rewriting the `Glob` header requires stating that tier-1 tools *do* check paths, stop — they
   do not, and a comment saying so would be false in the opposite direction.
 
+## Discovered during execution (orchestrator-owned)
+
+**Wiring conflict to settle at integration — `lib/lain.rb` load order.** T8 placed
+`require_relative "lain/sensitivity"` at `:15` (leaf, needs only `Error` + `Pathname`); T9 placed
+`require_relative "lain/credential_patterns"` at `:49`, before `middleware`. `sensitivity.rb` is a
+leaf *today*, so both load — but T10 adds a `sensitivity/regions` child that consumes
+`CredentialPatterns`, and `sensitivity.rb` is that subtree's index. The orchestrator moves
+`lain/sensitivity` to sit after `lain/credential_patterns` when wiring the two cards together;
+CLAUDE.md's rule is that a load-time `NameError` means the entry is too early.
+
+**API change every downstream card must honour: `Sensitivity.new(home:, cwd:, rules:)`.** T8's panel
+found that a relative path never reached the home-anchored half — `../../home/tester/.ssh/id_rsa`
+classified `:ordinary` — which is not the symlink hole the card deliberately accepted, and T20
+classifies **bash argv**, where relative paths are the norm. Ruling taken: inject `cwd:` and join
+lexically before `cleanpath`, rather than document a precondition that T11, T19 and T20 would each
+re-implement — three copies of one rule is the drift this chunk exists to prevent. It is a
+**required** keyword with no `Dir.pwd` default, so **T11, T12, T19 and T20 must each supply it**.
+No production caller exists yet, so nothing is broken today; the failure mode if a card forgets is
+a loud `ArgumentError` at construction, which is the intended posture.
+
+**The plan's git-env scrub list is INCOMPLETE, and names the wrong vars as the dangerous ones
+(T3, 2026-08-07, pending panel confirmation).** T2's and T3's cards both say to scrub `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR` and `GIT_CEILING_DIRECTORIES`. T3's implementer found that a
+command-line `--git-dir` already beats `GIT_DIR`/`GIT_COMMON_DIR`, so those are not where the teeth
+are — **`GIT_INDEX_FILE` and `GIT_CONFIG_*` are**. An inherited `GIT_INDEX_FILE` makes `git
+ls-files` report *another repository's* files as this home's editable surface, and `GIT_CONFIG_*`
+rewrites `core.worktree` underneath the detector. Any future card shelling to git must scrub the
+wider set, not the four the cards name.
+
+Same card: **`git ls-files` truncates paths against the PROCESS directory** — from `~/sub` a bare
+home repo answers `deep.txt` rather than `sub/deep.txt`, which is both a short surface and paths
+that rejoin to the *wrong file*. lain's cwd is routinely inside a home root, so any `ls-files` call
+must pin its directory explicitly.
+
+**A CORRECT FIX IN ONE PLACE CAN DELETE COVERAGE IN ANOTHER, and a green suite cannot show you
+(twice this chunk).** T20: narrowing the argv rung to path-shaped words left "a gated path is not
+denied here" passing via the *bare* rule instead of the *gated* one. T10: excluding quotes from a
+region — a fix I ordered — removed the one-byte offset that had made `coalesced`'s rank precedence
+observable, so the mutant killed in round 1 now survives and the rule is held by a comment alone.
+Neither went red. **After any fix that changes a subject's shape, re-run the mutants that were
+killed BEFORE it** — not just the suite.
+
+**A ruling that NARROWS a subject can void an existing example without failing it (T20, 2026-08-07).**
+When option (c) narrowed the argv rung to path-shaped words only, T20's "a gated path is not denied
+here" example kept passing — but `cat .env` is a bare word, so it now abstained via the *bare* rule
+rather than the *gated* rule it was written to exercise. The mutant that should have died survived,
+and nothing went red. **After any orchestrator ruling that shrinks what a subject does, sweep the
+spec for examples that still reach their assertion by a different route than the one they name** —
+a green suite is not evidence the ruling left coverage intact.
+
+**SELF-REFERENTIAL vacuity is the variant nobody looks for (T10, three instances in one card).**
+A test artifact that derives from the thing it is testing cannot fail. (a) The panel's corpus
+**included the file being mutated**, and the mutation `", _1[:rank]"` is exactly 11 characters — so
+the "region offsets shift by 11 bytes" blocker was the mutation editing the bytes it was scanning;
+excluding the subject gives zero differences. (b) A hex fixture sliced itself with
+`described_class::HEX_LENGTH`, so it moved with the mutant and passed against any floor. (c)
+`HEX_LENGTH` binds only upward, since it equals `TOKEN`'s `{20,}` minimum, so lowering it is
+genuinely equivalent. **Rule: a fixture must use literals, and a corpus must exclude the subject.**
+
+**FOUR mutation harnesses lied in this chunk, each differently — treat the harness as a subject
+that needs its own canary.** (1) T10: `String#sub` reads `\0` in the *replacement* as a
+backreference, so two mutants were **syntax errors scoring as kills**. (2) T2: the survival test was
+`result.start_with?("4")`, so once the suite grew past 49 examples **every mutant was relabelled
+"killed"** — it printed a false all-clear before the implementer caught it. (3) T10 again: three of
+the *panel's* own probe mutations were **no-ops**, because their `sub` targets no longer existed
+after a reshape, and a no-op scores as a kill. The invariant that catches all three: **every mutant
+must assert it APPLIED (anchor present, text changed, exactly once), that the result still PARSES,
+and the scoring must key on the failure count rather than on any string prefix** — plus a green
+canary and a byte-identical restore check.
+
+**A mutation harness that lies, found again (T10, 2026-08-07) — propagate this.** `String#sub`
+reads `\0` in the *replacement* as a backreference, so two of T10's mutants were **syntax errors
+scoring as kills**. Fixed with the block form plus a `ruby -c` validity check, which then exposed
+**three genuine survivors**. This is the pattern already recorded across earlier chunks: the
+harness is as capable of being vacuous as the specs it audits. **Every mutation pass in this repo
+must assert two things per mutant — that the edit APPLIED, and that the result still parses** — and
+should carry a green canary. T10 also found two of its own fixtures vacuous once the harness was
+honest (a BOM example used a key an *unanchored* shape matched anyway; a blob-framing example
+passed with the framing removed entirely).
+
+**Carried into T5/T6 from T2's panel (2026-08-07).** T5 already owns reconciling
+`IsolationBackend#repo_root`'s ceiling with the resolver's stop rule. Four additions:
+- **The two walks diverge on more than the ceiling.** `IsolationBackend#initialize` does
+  `File.expand_path(root)`; the resolver does `realpath`. A symlink whose *lexical* parent holds a
+  `.git` its real parent does not gives `resolver -> /plain/leaf` (rung 6) against
+  `repo_root -> /trap`. Harmless today because the single caller passes `Dir.pwd`, but the
+  escalation trigger is about mechanics, not today's caller.
+- **`Paths#runtime_dir` (`$XDG_RUNTIME_DIR/lain`) is not in the refusal set.** The card names three
+  XDG bases; the `/tmp/lain` default is covered only incidentally by the `/tmp` literal.
+- **`Resolver.call(cwd: <a regular file>)` returns a Project whose root IS that file.** `Project`
+  does not check directory-ness either, so it is inherited — but `--root <file>` reaches the
+  resolver, and T6 is the card that accepts a user-typed path.
+- **`root: ""` is truthy**, so it takes rung 1 and raises `Unresolvable` on `realpath("")`. Loud,
+  but "an empty flag means no flag" is the friendlier reading for a CLI.
+
+**T22 RULINGS (2026-08-07), and one item ASSIGNED TO T15.** T22's escalation trigger fired for
+real: once `read?` means *complete*, `Journaled#record_read`'s dedupe predicate breaks twice over —
+a partial re-read journals a line per iteration (the flood its docstring calls "the escalation this
+design closes without inventing batching"), and, worse, `Replay#session` folds `SessionRead` back
+through `record_read(path)` at the new `complete: true` default, so **a resumed run would treat a
+redacted read as whole and permit exactly the secret-clobbering write T22 and T15 exist to
+prevent**. T22 lands in wave 2 and T15 in wave 5, so deferring would leave four waves of `main`
+carrying that. Rulings: (1) T22 owns `telemetry/session_state.rb` and `session_record/replay.rb` —
+nobody else is scoped to them, and "T15 will fix it" means nobody does; (2) journaling fires on a
+read-set **state transition**, carrying the flag; (3) `fetch("complete", true)` for a pre-T22
+journal, documented as a *historical fact* rather than a permissive default — no masking path can
+have existed before T15, so an absent key is positive evidence of a whole read — with a key that is
+present but not a strict boolean still raising, so `Replay`'s loud-beats-plausible posture survives.
+
+**Assigned to T15:** `edit_file` still reports *"path was never read this session"* for a partially
+read file, which is the misleading claim T22's card wants stopped — but the tools are outside T22's
+Files list, and **no partial read can exist until T15 lands**, so the message is unreachable until
+then. T15 owns making the refusal name the real reason via `partially_read?`.
+
+**T11 RULING (2026-08-07) — the privilege inversion its escalation trigger predicted is REAL, and
+the fix is a scope expansion, not a follow-up ticket.** `Tools::Subagent::ChildBuilder#gated`
+(`subagent.rb:797`) builds its own `Effect::Handler::Gate` from `@seam.gate_policy`, and `Seam`
+carries no sensitivity — so with the card's wiring list (sensitivity injected only into
+`Switchboard#gate`) a `research_subagent`, which holds `base` and therefore `read_file`, would run
+`read_file(path: ".env")` **ungated** while the identical call from the parent reaches the
+escalation ladder. There is no in-scope route to fix it: `LivePolicy` answers exactly one message,
+`call(effect, context)`, and the Gate never asks its policy anything else.
+
+Granted: `Seam` gains a `sensitivity:` member defaulting to `Sensitivity::Policy::Null.instance`
+(alongside its existing `UNGATED`/`Permits::All` defaults), and `ToolsetBuild#spawn_seam` passes a
+third delegator over the **same `-> { @switchboard }` thunk** `LivePolicy` already uses — so parent
+and child cannot resolve different switchboards, and sensitivity cannot go stale, by construction.
+Files added to T11's scope: `lib/lain/tools/subagent.rb`, `lib/lain/cli/wiring/toolset_build.rb`.
+Deferring this behind an `xit` was refused: it would turn a uniform absence of gating into a
+specific documented bypass.
+
+Also settled, so a later reader does not re-derive it: **T11's escalation trigger 2 does not fire.**
+`Approval::Rule::Call`'s `Decision#gated` is written at `rule.rb:209` and read nowhere in `lib/` —
+journaled description, not control flow — so the second reader's disagreement with the gate
+changes no decision.
+
+**T10 RULINGS (2026-08-07), taken after the implementer measured the flood rather than estimating
+it.** The warning below was right and understated. Measured with `for(:content)` as the card
+specified: **markdown 102/134 files (2588 regions), `lib/**/*.rb` 516/598 (5040), `spec/**/*.rb`
+556/577 (14816)**. In Ruby the driver is not the yaml shape but `dotenv assignment`, because
+`^ident = value` *is* Ruby assignment syntax. T15 would have parked a pending on essentially every
+read. Three rulings:
+
+1. **Gate the assignment shapes; issuer-fixed shapes (`sk-`, AKIA, PEM) always fire.** The gate is
+   **name-substring OR value-shape** — the name matched as a *substring*, not on a word boundary,
+   which is what preserves `DATABASE_PASSWORD=hunter2`. A value-shape-only gate is cheaper
+   (`lib/` 8.0%) but structurally cannot see a low-entropy named secret, which is the exact miss
+   `for(:content)`'s docstring exists to defend against.
+2. **Split the entropy detector by charset: hex ≥3.0/len ≥20, base64 ≥4.2/len ≥24.** The naive
+   single-threshold base64 detector's false positives were file paths and URLs, because `/`, `_`
+   and `-` are in the base64url charset. Split, the residual is **zero across 598 `lib/` files**.
+   The remaining residuals — blake3 digest fixtures in `spec/`, long URLs in markdown — are
+   recorded as measured imprecision in the docstring rather than special-cased, following
+   `credential_patterns.rb`'s own precedent.
+3. **A region covers the VALUE, not the whole assignment — and T10's AC above was wrong, not
+   T15's.** The two cards contradicted: T10 said "it covers the assignment", T15 requires that for
+   a `.env` "all three key names are present and no value is". A whole-match region makes T15
+   unsatisfiable unless it re-parses assignment syntax the detector already parsed. Consequence
+   accepted and documented: two identical values in one file share a digest, which is the honest
+   semantics — identical bytes are the same secret, so one release decision covers both. T14 keys
+   by `(path, region_digest)`, so nothing leaks across files.
+
+**T10 RULINGS, ROUND 2 (2026-08-07) — three more wire contracts T14 and T15 must build against.**
+The panel re-measured the residual and the "narrowing crosses into T9" premise turned out wrong for
+most of it: of 134 `lib/` regions, **50 are `yaml assignment` and 42 `dotenv assignment` — both
+read-side-only `ASSIGNMENTS`** — against 42 for the write-side `credential assignment`. It read all
+134 and **none is a credential**; 45 are under 8 bytes, 24 are pure punctuation (`)`, `,`, `>`),
+4 are bare integers. So:
+1. **A minimum-substance floor inside T10's gate**: a name-gated region qualifies only if its
+   unquoted value is ≥8 bytes and holds an alphanumeric run, unless issuer-fixed.
+2. **`yaml assignment` is VALUE-gated only.** `dotenv` keeps name-OR-value (that is what preserves
+   `DATABASE_PASSWORD=hunter2`). Nothing real is lost: a named credential is still caught by
+   `credential assignment`, and a real `secrets.yml` is gated by **path** at T8 before content
+   matters. This is the "narrow at ITS end" T9's own docstring invites.
+3. **A region EXCLUDES surrounding quotes.** Including them split one secret across two digests
+   (quoted and unquoted differing, so T14's cache misses) and — decisively — meant T15 replacing
+   `"sk-…"` with `<redacted:N>` would destroy the quoting that made the file parse, contradicting
+   ruling 3's own "the structure survives" argument.
+4. **The framing is `"sensitive-region-v1 #{length}\0"`, NOT `blob`, and that is confirmed
+   deliberate.** House precedent is `Hunk`'s `hunk-content-v1`/`hunk-span-v1`, and
+   `snapshot.rb:75`'s own comment says the header exists *to* domain-separate; reusing `blob` would
+   have silently merged two content-addressing keyspaces.
+
+**Known and documented for T14/T15, not defects:** a bare JWT splits into **three** entropy regions,
+and its HS256 header segment is byte-identical across every such token ever issued — so under
+content-addressed identity, releasing one JWT pre-releases that header at that path. And detection
+costs ~1ms/KB on dense input (4.5s for a 4MB single base64 line, linear) — so the "runs per read
+without a budget" claim holds only under a few hundred KB, and the consuming cards need a size cap.
+
+**Carried into T10 as a measured warning, not a ruling.** T9's panel measured
+`CredentialPatterns.for(:content)` against this repo's own markdown: the `yaml assignment` shape
+`/^[ \t]*[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/` matches **54 of 60 files**, against 5 for
+`for(:write)`. `"TODO: fix this"` matches, and journals as `"yaml assignment"`. T10's card argues
+false positives "cost one review each because T14 caches by digest and T15 gives every masked
+region a release path", and reasons from `risk.rb:66-72` that a miss is worse than a prompt — but
+that argument was made about **entropy**, where the base rate is low. At 54/60 the cost is not one
+review each; it is every prose file the agent reads. The distinction T9's panel drew is the one to
+carry: the name-agnostic **dotenv** shape is justified by `DATABASE_PASSWORD=hunter2`; the **yaml**
+shape, which needs only a colon and a space, is not equally justified by it. **T10 must measure its
+region detector against ordinary repo prose and escalate if it floods** — do not let "widen, never
+sharpen" import an argument from a different base rate.
+
+**`Ractor::UnsafeError` in a suite run is EXPECTED NOISE, not a failure — do not ticket it.**
+Two specs deliberately pin the recorded gap that `Ext` methods are main-Ractor-only:
+`spec/lain/review/hunk_spec.rb:264` (`Ext.blake3_hex`) and `spec/lain/rust/fuzzy_spec.rb:200`
+(`Fuzzy#match`), both asserting the raise. Ruby's Ractor machinery prints the error to stderr from
+those *passing* examples, so it appears in a green run at the exact expected count. It is worth
+recording because it looks alarming next to a truncated `parallel_tests` tail and invites exactly
+the wrong diagnosis — **the example COUNT, not the presence of this message, is the signal**.
+Relevant to T10, which digests region bytes with `Ext.blake3_hex`: `review/hunk.rb:14-18` is the
+precedent, and it pins the constraint in a spec rather than leaving it to be rediscovered.
+
+**A FIFTH approval surface that no card owned, found by T16's panel (2026-08-07) — the plan had a
+hole, not just the card.** `Frontend::Neovim::ApprovalView#row_for` renders
+`"#{requester}  #{tool}(#{input.inspect})"`, never consults `pending.outstanding`, and its
+`#decide` is a full approval path signing `surface: "nvim"`. **A human approving in the editor would
+release a file's secrets having been shown no warning at all** — on the surface Joel actually runs.
+`approval_view.rb` appears in **no card** in this plan. **Granted to T16**, whose title is already
+"…and show them to a human". Its parity comment at `:298-302` also became false the moment
+`prompt_for` grew a third fact.
+
+**ASSIGNED TO T17:** `Approval::AutoSurface` can approve a region-carrying pending with **no human
+in the loop at all**. T17 is the card that deals with an LLM surface adjudicating secret reads, so
+the ruling belongs there: **`AutoSurface` must abstain (`:defer`) on a pending carrying regions**
+rather than answer it. It was built to prune ordinary approvals, not to release secrets.
+
+**Two gaps T14 found that NO CARD OWNS — T15/T16/T17 must absorb them or they ship broken.**
+1. **`Repl::ApprovalSurfaces` builds a SECOND `ApprovalPolicy`**, which needs the same ledger and is
+   in nobody's Files list. This is the two-half-wirings bug T14 exists to prevent, one layer up:
+   miss it and the surfaces a human actually answers through hold a different ledger from the one
+   the masking arm reads.
+2. **`--yolo` wires no queue at all**, so T15 has nowhere to park a pending. Masking with no release
+   path is the dead end the plan's own ruling forbids, so T15 must decide deliberately what a
+   masked read does under `--yolo` — return full bytes, refuse, or mask with no release — and say
+   which.
+
+**The rule T14 shipped to prevent two ledgers, which every later holder must honour:** `ledger:` is
+a **required kwarg with no default and no Null Object**. A default is how the second ledger gets
+constructed silently. T14 therefore staged its own wiring diff by when each part can land —
+`sensitivity.rb` require plus the Switchboard construction now, `ToolGuard`/`AgentBuild` with T15,
+`surface_kwargs` with T16 — because landing `ledger:` early would need a
+`Lint/UnusedMethodArgument` disable inside the security wiring.
+
+**The general form of T5's two regressions, worth stating once: A CARD THAT CHANGES WHAT A VALUE
+MEANS BREAKS CODE IT NEVER EDITED.** T5 did not touch `epic.rb:318` or `epic_mount.rb:309` — it
+changed what `@root` resolves to, and two spellings that had agreed *by accident* (both landing on
+the working directory) began to disagree. The divergence is invisible in the diff, so only a sweep
+finds it. Both instances were found that way, not by review:
+1. the epic **container** (`lain epic status|queue|submit|land` still on `Dir.pwd` while the chat
+   moved to the resolved root — fixed, all four now uniform);
+2. the epic **journal directory** (`epic.rb:318`/`epic_mount.rb:309` key it `project_hash(@root)`
+   while `epic_submit`/`land`/`queue` and `chronicle.rb` take `sessions_dir`'s `Dir.pwd` default —
+   **reverted those two lines**, restoring the pre-T5 invariant on the axis the card never meant to
+   touch, rather than half-doing the `sessions_dir` migration that is separately ticketed).
+
+**And why neither had a failing spec: every epic spec injects `paths:` and `root:` TOGETHER**, so
+the two keyings cannot disagree inside a fixture. A fixture that supplies both halves of a
+relationship cannot test the relationship — the same family as this chunk's other vacuity findings.
+
+**A PLAN DEFECT the cards could not have caught individually: T22 and T15 demanded opposite
+outcomes from the same production sequence.** T22's landed AC says a complete read is **not**
+downgraded by a later partial one (monotonicity, which the parallel-safe tools depend on); T15's
+says a read with a masked region **must** fail the edit contract. Production runs exactly that
+order — `ReadFile#perform` records complete at `read_file.rb:52`, *below* the middleware, and the
+middleware then records partial — so the two ACs contradict. No ordering inside the middleware
+reconciles them: recording before `downstream` still lets `ReadFile` add to `@complete` afterwards,
+and the card forbids short-circuiting. **Found by T15's implementer with a probe, not by review of
+either card**, and it would have been invisible in a unit spec that drove `record_read` on a fresh
+session — which would have made both ACs green while production stayed broken.
+
+**Settlement (2026-08-07):** a **third add-only set** on `Session::ReadSet` distinguishing
+*"partial because only part was read"* from *"partial because bytes were WITHHELD from the model"*
+— different facts, and only the second claims the model never saw those bytes.
+`complete?(path) = @complete.include?(path) && !@masked.include?(path)`. No removal API, so the
+trigger's ban holds; monotone fail-closed, so T22's sibling-fiber race cannot reopen; and
+`record_read(complete: false)` never touches `@masked`, so every T22 AC stays green by
+construction. Masking is recorded **only when the model actually received a masked projection** —
+on approval the full bytes are returned and nothing is recorded — which is what keeps T15's
+"a released read does satisfy it" reachable as written.
+
+**Accepted residual, ticketed:** a path masked on an earlier read stays un-editable for the run even
+if a later read is fully released. Over-strict and safe; clearing it needs either a removal or an
+ordering two add-only sets cannot express.
+
+**Follow-up tickets (not fixes in this chunk):**
+- **`Paths#sessions_dir` keys session state on `project_hash(Dir.pwd)`**, so once a resolved root
+  differs from cwd — which the resolver now makes ordinary — the sessions directory is keyed on a
+  different value from the epic container. **Deliberately NOT changed in T5**: the keying decides
+  where resumable session state lives, so moving it orphans every existing session. It needs a
+  migration decision, not a keying change. Found by T5's panel, which also noted the declaration is
+  a *positional* default (`def project_hash(dir = Dir.pwd)`) and so invisible to T5's guard until
+  that guard was widened.
+- **A FOURTH flaky spec, outside the nvim family**: `spec/lain/rust/canonical_spec.rb:167` failed one
+  run in three for an agent whose card touched no Rust and no canonical code, and passes 23/0
+  standalone three times. Different subsystem from the nvim seams, so possibly a second cause.
+- **THREE real-nvim seam specs flake under parallel load** — all seen 2026-08-07, by four different
+  agents, each on code none of them had touched: `frontend/neovim/thread_view_spec.rb:378` (a
+  `set_buf` call count; failed **2 of 5 ISOLATED runs**, so not merely worker pressure),
+  `frontend/neovim_runtime_spec.rb:884` (57/0 alone) and `frontend/neovim/buffers_spec.rb:329` (a
+  `]]` motion's cursor landing; 5/5 alone). **Three distinct seams flaking on one day reads like one
+  shared cause rather than three bugs** — that is the ticket's starting hypothesis. They make false
+  REDs that get blamed on whatever diff is in flight; two agents this chunk had to stop and prove
+  innocence. **Two more members, hit by the orchestrator while landing T17**:
+  `frontend/neovim/diff_mode_spec.rb:283` (3/3 green isolated) and
+  `frontend/neovim/changeset_diff_spec.rb:342` (an ECONNREFUSED, so the nvim process itself was
+  gone). Three commit attempts failed on a *different* member each time, which is the family's
+  signature and not a regression — but it cost three full suite runs, and **the load source was
+  our own concurrency**: a review panel was running suites while the orchestrator ran the hook.
+  Worth pricing into the schedule, not just diagnosing after the fact.
+  **Record these by NAME, never by line number.** The four originally recorded as `up_spec.rb:115`
+  and `:175` no longer point at the flaky examples — T6 and T20 grew that file by 454 lines and the
+  live failure now reports at `:166`. A stale line number in a flake list is worse than no list:
+  it reads as "not a known flake" and sends the next agent hunting a regression that is not there.
+- **`Telemetry::SessionPin#pinned`'s "strict boolean" guard is not strict.** ActiveModel 8.1's
+  `InclusionValidator` reads an Array value as "every member must be included", and `[].all?` is
+  vacuously true — so `inclusion: { in: [true, false] }` accepts `[]`. Found by T22's panel on its
+  own new field (closed there); `pinned` is the precedent it was copied from and has the identical
+  hole. Any other `inclusion` guard over a boolean in this codebase shares it.
+- **`Guards::Dropped` does not coerce its count**, so `Dropped.new(count: +"1")` stores a mutable
+  String and `Ractor.shareable?` is **false** — a live deep-freeze violation in shipped
+  `telemetry/turn_stream.rb`. Surfaced by T13's panel while probing the same class of bug in the
+  new records; T13 closed its own door and does not own this one.
+- **`WorkerEnv` does not expand its own `cwd`.** `WorkerEnv#initialize` is `cwd.dup.freeze` with no
+  `expand_path`, so a *relative* worker cwd makes the base itself resolve against `Dir.pwd` at each
+  call — reintroducing, one layer down, exactly the divergence T7 removes. T7's panel reproduced
+  it. Unreachable today because `Isolation::Worktree#worker_env_for` builds an absolute path, but
+  `lain up ../other-repo` is the entry point T6 adds. One-line fix, but it touches `WorkerEnv`'s
+  spec surface, so it wants its own card — **and it should carry a second finding with it**:
+  `cwd: nil` also resolves silently against `Dir.pwd`, because `nil.dup` is `nil`, so a `WorkerEnv`
+  can hold a nil cwd and every read through it goes process-relative. T7's docstring says `cwd:` is
+  "required, never defaulted" and the card's escalation trigger calls a `Dir.pwd` default exactly
+  the divergence it removes — but the guard is a sentence, not a mechanism, and the mechanism
+  belongs in `WorkerEnv`. Both predate T7 and neither is caused or cured by it.
+- **T7 left one claim untested, for T22 to close in the same file.** `normalize_path`'s comment
+  justifies its `.to_s` as covering "the Symbol and nil spellings a Set query may arrive in", but
+  `resolve(nil)` and `resolve("")` both already yield `cwd`, so **a Symbol is the only input that
+  discriminates** — and dropping the coercion leaves the file at 38/0. Add `:sym` to the
+  equivalence example's spellings array, or drop the Symbol clause from the comment. Nothing
+  reaches the read-set with a Symbol today, so it is a claim without a test rather than a defect.
+- **The read-set has no reader.** Journal and read-set agree only because two independent call
+  sites happen to call the same function with the same base; there is no `Session#reads` to compare
+  against, which is why T7's byte-identity assertion has to borrow `#writes` as a proxy. Having
+  `record_read` return the normalized path would let the decorator take the answer rather than
+  re-derive it. **Fold into T22**, which is already in that file.
+- **`Approval::Risk::Credential::SHAPES` carries a weaker form of the hyphenated-prose bug.**
+  Its `\bsk-` is the unanchored shape that `refuse_secret_writes.rb:44-48` records as having
+  refused benign prose under a pattern name it never honestly matched. T9 correctly did **not**
+  fold it in: `Risk` is dead code this chunk, and widening it now would make a later card's
+  behavior impossible to attribute. Found by T9's implementer, confirmed at review.
+- **A non-UTF-8 path silently loses a security record.** `JSON.generate` raises on ASCII-8BIT
+  bytes; `Journal#encode` (`journal.rb:256-265`) catches it and emits a `journal_error` line, so
+  NDJSON parseability is safe — but the path and reason of a refusal are replaced by an exception
+  string. `WriteRefused` has the identical property, so T13 introduces the *exposure*, not the
+  mechanism: `pattern` comes from a fixed ASCII vocabulary while `path` is whatever bytes the
+  filesystem hands T12. Wants one policy across every path-bearing record. Found by T13's panel.
+- **A subagent's tool phase runs NO middleware, so neither secret guard reaches it** — the
+  *second* half of the privilege inversion T11 fixed, by a different mechanism, and still open.
+  `Tools::Subagent::ChildBuilder#spawn_agent` (`subagent.rb:756`) passes seven keywords and
+  `instrumentation:` is not among them, so the child takes `Agent.new`'s `Collaborators::OMITTED`
+  default and its `tool_middleware` is empty. **Verified by the orchestrator at both ends**, not
+  taken on report, and confirmed by T15's panel: `ToolGuard.stack` has exactly one call site
+  (`agent_build.rb:86`). **State it as path-kept, content-lost — "the tool phase is empty"
+  over-reads as ungated.** T11 closed the *path* half, and the child keeps it: `child_handler`
+  composes `gated(...)`, so a child's `read_file(".env")` does reach the escalation ladder. What
+  the child loses is the **content** half, because the guards that mask and refuse are middleware.
+  So the exposure is precisely the case T15 exists for: a child reading an **ordinary-classified**
+  file whose sensitive regions would have been parked and masked for the parent gets them
+  **unmasked** — and those bytes flow back into the parent's Timeline, and so into its digest and
+  its cache prefix. T15's implementer found this while
+  retracting its own false claim that `agent_build` covered it, which is the right way for a
+  wrong comment to die. Predates this chunk on the write side — `RefuseSecretWrites` has always
+  been missing there too — so T15 introduces neither the gap nor its exposure, and records it
+  rather than widening its Files list a second time. Wants its own card: the fix is to thread
+  instrumentation through `Seam` the way T11 threaded sensitivity, and it should be measured
+  against the same question T11 answered — whether parent and child can resolve different ones.
+
 ## Integration checks
 
 After the last wave, before the chunk is called done:
@@ -1753,7 +2145,26 @@ After the last wave, before the chunk is called done:
 4. **`CLAUDE.md` (orchestrator-owned).** Add the project-root/cwd distinction and the two-boundary
    split (paths pre-read at the handler, content post-read at the middleware) to "Architecture, in
    one breath", and record the ruling that tier-1 tools do not check paths. One edit, after every
-   card lands.
+   card lands. **Four Known-traps entries earned during execution, to add in the same edit:**
+   - **A class named for a top-level constant SHADOWS it for everything lexically inside the
+     enclosing namespace.** Defining `Effect::Handler::Sensitivity` made `gate.rb`'s bare
+     `Sensitivity::Policy` resolve to `Handler::Sensitivity::Policy` and die — for every caller
+     omitting the keyword, i.e. most. `Module.nesting` order is not something anyone reasons about
+     until it bites; root-qualify (`::Lain::Sensitivity`) at such a site.
+   - **`pre-commit` exports `GIT_INDEX_FILE` into every hook**, so any spec fixture that shells to
+     `git` without scrubbing builds against *lain's* index. It passes in every normal run and fails
+     only at commit time. Thirteen of T2's examples were exposed; only the one that *commits*
+     failed loudly. Scrub the wider set, not just `GIT_DIR` — a command-line `--git-dir` already
+     beats that one, while `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_CONFIG_*`
+     are the ones that actually redirect git.
+   - **Mutation harnesses lie by default here.** Same-size mutants are the norm (`20`→`10`,
+     `<=`→`<`) and collide with bootsnap's `(mtime-seconds, size)` iseq key, so they run against
+     **stale bytecode**. Stamp a unique mtime per write; assert each mutant applied exactly once and
+     still parses; score on the failure count, never a string prefix; use literal fixtures and
+     exclude the subject from any corpus. Five harnesses lied in this chunk, each differently.
+   - **`ls-files` truncates against the PROCESS directory**, so a home-repo surface read from a
+     subdirectory is both short and rejoins to the wrong file. `-C <dir>` is the fix; `--full-name`
+     is not sufficient.
 5. **Journal integrity.** Run a real chat that triggers one denial, one gated read and one
    release, then `JSON.parse` every line of the resulting Journal. This chunk adds two record
    types and several refusal paths, and one stray write breaks NDJSON.
