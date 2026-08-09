@@ -109,6 +109,39 @@ RSpec.describe Lain::Review::Bounds do
     Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
   end
 
+  # `dir`'s share of a directory-keyed fixture: `sizes.size` paths under
+  # `dir/`, each `[path, body_lines]`. Shared by the two directory fixtures
+  # below so neither repeats the naming scheme.
+  def dir_files(dir, sizes)
+    sizes.each_with_index.map { |body, i| [format("%<dir>s/f%<i>03d.rb", dir:, i:), body] }
+  end
+
+  # A changeset whose files sit in DISTINCT directories but all belong to ONE
+  # commit -- so grouping BY COMMIT cannot narrow it at all (one group, the
+  # whole changeset again) while grouping BY DIRECTORY can. `dirs` maps a
+  # directory name to a list of per-file body-line counts, e.g.
+  # `{"a" => [2, 2], "b" => [2, 2]}` -- two files of 2 body lines each, in
+  # each of two directories, all attributed to the one commit.
+  def changeset_by_directory(dirs)
+    named = dirs.flat_map { |dir, sizes| dir_files(dir, sizes) }
+    diff = named.map { |path, body| file_section(path, body) }.join
+    commits = [commit_record(sha: "c0", paths: named.map(&:first))]
+    Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
+  end
+
+  # ONE commit per directory, each owning exactly that directory's files --
+  # built so {Partition::ByCommit} and {Partition::ByDirectory} produce the
+  # SAME two groups by two different roads. Whichever one `#advice` names is
+  # settled purely by {Bounds::NARROWING_CANDIDATES} registry ORDER, since fit
+  # cannot distinguish them. `dirs` maps a directory name (also its commit's
+  # sole content) to a list of per-file body-line counts.
+  def changeset_commits_matching_directories(dirs)
+    groups = dirs.map { |dir, sizes| dir_files(dir, sizes) }
+    diff = groups.flatten(1).map { |path, body| file_section(path, body) }.join
+    commits = groups.each_with_index.map { |files, i| commit_record(sha: "c#{i}", paths: files.map(&:first)) }
+    Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
+  end
+
   describe "the defaults, and the evidence for each" do
     it "sets the file ceiling where two independent sources put it" do
       expect(described_class::DEFAULT_MAX_FILES).to eq(300)
@@ -154,6 +187,20 @@ RSpec.describe Lain::Review::Bounds do
 
     it "reads it out of the registry rather than constructing a second one" do
       expect(described_class::COMMIT_STRATEGY).to equal(Lain::Review::Partition::STRATEGIES.fetch(:commits))
+    end
+  end
+
+  # A4's own registry: every strategy a cumulative refusal may recommend
+  # narrowing to, minus the strategy that IS the cumulative view.
+  describe "the candidates a cumulative refusal may narrow to" do
+    it "holds every registered strategy except the whole-changeset one" do
+      expect(described_class::NARROWING_CANDIDATES)
+        .to eq(Lain::Review::Partition::STRATEGIES.values - [Lain::Review::Partition::STRATEGIES.fetch(:cumulative)])
+    end
+
+    it "excludes the whole-changeset strategy itself" do
+      expect(described_class::NARROWING_CANDIDATES)
+        .not_to include(Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
     end
   end
 
@@ -260,6 +307,47 @@ RSpec.describe Lain::Review::Bounds do
 
       expect { bounds.check_presentation!(changeset_from([[2, 2], [20]]), scope: :cumulative) }
         .to raise_error(described_class::TooLarge, /no scope that presents/)
+    end
+
+    # AC 1 (A4): the axis is real once a SECOND strategy can be the one a
+    # refusal recommends. One commit owns every file, so grouping by commit
+    # cannot narrow anything -- the walk is one group, the whole changeset
+    # again -- while grouping by directory splits it into two that both fit.
+    it "recommends the directory partitioning when the commit walk cannot narrow but directories can" do
+      bounds = described_class.new(max_files: 2, max_lines: 100)
+      changeset = changeset_by_directory("a" => [2, 2], "b" => [2, 2])
+
+      expect { bounds.check_presentation!(changeset, scope: :cumulative) }
+        .to raise_error(described_class::TooLarge) { |error|
+          expect(error.message).to include("present it per directory (scope: by_directory) instead")
+          expect(error.message).not_to match(/commit/i)
+        }
+    end
+
+    # AC 2 (A4): the measured-advice property one level up from a single
+    # strategy -- when EVERY candidate refuses, not just the commit walk, the
+    # refusal still offers no narrowing rather than a strategy-specific one
+    # that would also refuse.
+    it "offers no narrowing when every candidate strategy also refuses" do
+      bounds = described_class.new(max_files: 10, max_lines: 12)
+      changeset = changeset_by_directory("a" => [20], "b" => [20])
+
+      expect { bounds.check_presentation!(changeset, scope: :cumulative) }
+        .to raise_error(described_class::TooLarge, /no scope that presents this changeset whole/)
+    end
+
+    # Pins the ORDERING itself, not just NARROWING_CANDIDATES' own structure:
+    # two commits, each owning exactly one directory, so BY COMMIT and BY
+    # DIRECTORY produce the identical two groups and BOTH fit. Only registry
+    # order decides -- {Partition::ByCommit} is tried first -- so this is
+    # "first fit, not best fit" as an observed sentence, not an inference from
+    # {Bounds::NARROWING_CANDIDATES}'s own definition.
+    it "recommends the FIRST candidate that fits, not the best one, when more than one does" do
+      bounds = described_class.new(max_files: 3, max_lines: 100)
+      changeset = changeset_commits_matching_directories("a" => [2, 2], "b" => [2, 2])
+
+      expect { bounds.check_presentation!(changeset, scope: :cumulative) }
+        .to raise_error(described_class::TooLarge, /scope: commits/)
     end
 
     # Two sides of one probe, same five files, only the ceiling differs. The

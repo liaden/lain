@@ -33,13 +33,14 @@ module Lain
     # is reached on a file count alone and never costs a walk over the thing it
     # is refusing to walk over.
     #
-    # The MESSAGE is the other half, and it is not free: naming the commit walk
-    # only when the commit walk actually fits means measuring it, so a refusal
-    # may sum hunks after it has decided to refuse. That sum is arithmetic over
-    # hunks `view.files` already materialized -- never a second parse -- and it
-    # gives up at the first commit whose FILE count is over, so the common case
-    # stops before reading a hunk at all. {#cumulative_advice} is where that
-    # happens and says so again at the point of use.
+    # The MESSAGE is the other half, and it is not free: naming a narrower
+    # scope only when that scope actually fits means measuring it, so a
+    # refusal may sum hunks after it has decided to refuse. That sum is
+    # arithmetic over hunks `view.files` already materialized -- never a
+    # second parse -- and it gives up at the first candidate's first group
+    # whose FILE count is over, so the common case stops before reading a
+    # hunk at all. {#cumulative_advice} is where that happens and says so
+    # again at the point of use.
     #
     # Stated once here in the form the code actually has, because the first cut
     # of this paragraph claimed the whole call read no hunks, which stopped
@@ -122,23 +123,42 @@ module Lain
       # commit walk here is the rename and nothing more.
       COMMIT_STRATEGY = Partition::STRATEGIES.fetch(:commits)
 
-      # `.freeze` by hand, unlike its two neighbours: the magic comment freezes
-      # only literals, and this one interpolates.
+      # Every strategy a cumulative refusal may recommend narrowing TO -- every
+      # registered strategy except {Whole} itself, since "narrow to the whole
+      # changeset" recommends nothing. Registry order, so the same candidate
+      # wins whenever a changeset fits more than one: {#cumulative_advice}
+      # takes the FIRST fit, not the best one, and repeat runs must agree.
       #
-      # BYTE-IDENTICAL to {Partition::ByCommit::ADVICE}, which is the whole
-      # point of a strategy answering `#advice` -- a LATER card reads the advice
-      # off the strategy and deletes this constant along with {NO_NARROWER} and
-      # {NO_PRESENTABLE_SCOPE}. Left duplicated on purpose: collapsing it is a
-      # policy change, and this card owns the subject of a refusal, not its
-      # recommendation.
-      COMMIT_WALK_ADVICE = "present it per commit (scope: #{COMMIT_WALK}) instead".freeze
+      # This is what makes a refusal's advice strategy-neutral: nothing here
+      # spells "commit" or "directory", so a fourth strategy is recommended the
+      # moment it registers, with no matching edit to this file -- the
+      # sentence itself comes off the winning candidate's own `#advice`.
+      #
+      # Tried in this order with NO `#supports?(source)` filtering: `#fits?`
+      # calls straight through to `strategy.partition(view)`, so a source
+      # {ByCommit} cannot walk (no `#commits`) raises `NoMethodError` here
+      # rather than falling through to {ByDirectory}, which would have
+      # accepted it. NOT a regression -- the pre-A4 code only ever consulted
+      # {ByCommit} and failed the same way -- but it means this registry is
+      # only as safe as its FIRST candidate, not as safe as its safest one.
+      # Filtering by source belongs to {Session#present} (A3's Open decision:
+      # "`#supports?` is consulted where the source is in hand"), not here --
+      # adding it in `Bounds` would be the object taking on a resolution
+      # decision the escalation triggers reserve for that card.
+      NARROWING_CANDIDATES = Partition::STRATEGIES.except(:cumulative).values.freeze
 
-      NO_NARROWER = "and a commit is already the narrowest scope, so there is nothing to fall back to"
+      # What a group's own refusal says: below a {Partition}'s files there is
+      # no narrower PRESENTATION scope, whatever strategy produced the group --
+      # only `/critique`'s file-level packing splits further, and that is a
+      # different operation, not a smaller scope.
+      NO_NARROWER = "and this is already the narrowest scope, so there is nothing to fall back to"
 
-      # What a cumulative refusal says INSTEAD of {COMMIT_WALK_ADVICE} when the
-      # commit walk would refuse as well. Advice that sends a human down a path
-      # which also refuses is worse than no advice.
-      NO_PRESENTABLE_SCOPE = "and presenting per commit would refuse too, so there is no scope " \
+      # What a cumulative refusal says when NO candidate in {NARROWING_CANDIDATES}
+      # fits either. Strategy-neutral by construction -- naming one candidate's
+      # strategy here would be exactly the "commit" prose this port replaced.
+      # Advice that sends a human down a path which also refuses is worse than
+      # no advice.
+      NO_PRESENTABLE_SCOPE = "and no other scope presents it either, so there is no scope " \
                              "that presents this changeset whole"
 
       # The refusal below the FILE, which is where splitting genuinely stops.
@@ -278,15 +298,23 @@ module Lain
       #
       # This is where the short-circuit's promise gets its exact wording: the
       # DECISION to refuse still reads no hunks, but the MESSAGE may, because
-      # deciding whether the commit walk actually fits means measuring it. The
+      # deciding whether a narrower scope actually fits means measuring it. The
       # cost is a sum over hunks already materialized by `view.files` -- not a
-      # second parse -- and `all?` gives up at the first scope whose FILE count
-      # is over, so the common case stops before touching a hunk at all. A true
-      # sentence is worth more than that sum; Schneeman's finding was a message
-      # that sent a human down a path which also refuses.
+      # second parse -- and `all?` gives up at the first candidate's first
+      # group whose FILE count is over, so the common case stops before
+      # touching a hunk at all. A true sentence is worth more than that sum;
+      # Schneeman's finding was a message that sent a human down a path which
+      # also refuses.
+      #
+      # {NARROWING_CANDIDATES} is tried in registry order and the FIRST fit
+      # wins, `#advice` read off that strategy rather than composed here.
       def cumulative_advice(view)
-        walk = view.partitions(COMMIT_STRATEGY)
-        walk.all? { |group| presentable?(group) } ? COMMIT_WALK_ADVICE : NO_PRESENTABLE_SCOPE
+        candidate = NARROWING_CANDIDATES.find { |strategy| fits?(view, strategy) }
+        candidate ? candidate.advice : NO_PRESENTABLE_SCOPE
+      end
+
+      def fits?(view, strategy)
+        view.partitions(strategy).all? { |group| presentable?(group) }
       end
 
       def presentable?(group)
