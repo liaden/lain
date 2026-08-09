@@ -1,0 +1,151 @@
+# frozen_string_literal: true
+
+module Lain
+  module Review
+    # A file in a changeset that has not been chunked yet, and is chunked once,
+    # when something finally asks for its hunks.
+    #
+    # It answers {Changeset::ChangedFile}'s messages -- `old_path`, `new_path`,
+    # `path`, `binary?`, `status`, `hunks` -- and is what a corpus source hands
+    # a {Changeset} in place of one. A survey opens over a directory, not a
+    # diff: chunking every file up front is the cost the corpus arm exists to
+    # avoid, and the file whose hunks nobody reads should never have been read.
+    #
+    # == Why this is NOT a Data, when everything shaped like it is
+    #
+    # Because a memo is reachable mutable state, and in this codebase a `Data`
+    # is the claim that there is none: `spec/value_object_shareability_spec.rb`
+    # builds one of every `Data` subclass under `Lain` and asserts
+    # `Ractor.shareable?` on all of them. A `Data` here memoises fine -- an ivar
+    # box set BEFORE `super` survives the freeze `super` applies (verified under
+    # 4.0.6; assignment after `super`, and `instance_variable_set`, both raise
+    # `FrozenError`) -- and it fails that sweep, correctly. So this is a plain
+    # class that writes its own value equality, which is the honest spelling of
+    # "defined by its attributes, but not a value object".
+    #
+    # The other shape that fits -- a `ChangedFile` whose `hunks` member is a
+    # lazy collection answering `to_ary` (which `flat_map` flattens), needing no
+    # parallel duck at all -- was rejected on EQUALITY. `Data#hash` hashes every
+    # member, so `ChangedFile`'s identity would run through that collection.
+    # Deriving the collection's hash from its contents chunks the file to answer
+    # `#hash`, and {Session::MarkedChangeset.of}'s `files.to_h` hashes every
+    # file, so building the row table would chunk the whole corpus. Deriving it
+    # from anything else gives one class two equality semantics, value-flavoured
+    # for a diff file and identity-flavoured for a surveyed one.
+    #
+    # == What it is honest about
+    #
+    # `Ractor.shareable?` is **false**, where a {Changeset::ChangedFile} is
+    # deeply frozen and true. Twice over: the memo Hash is mutable, and a
+    # callable is never shareable. That is the price of memoising anything at
+    # all, and it reaches further than this object. TWO existing pins are
+    # therefore DIFF-source laws, not universal ones, and both are spec'd next
+    # to this class rather than left to be discovered:
+    #
+    #   - `changeset_spec.rb`'s deep-immutability group, over `changeset.files`;
+    #   - `session_spec.rb`'s "the values this card adds are shareable", which
+    #     asserts the whole {Session::MarkedChangeset} graph -- a {FileRow}
+    #     holds its file, so one lazy leaf makes the graph unshareable.
+    #
+    # Equality is by value over `(old_path, new_path, binary, chunker)`, and the
+    # memo is deliberately outside it: a file that has chunked still fetches the
+    # row its unchunked twin keyed, which is what {Session::MarkedChangeset}'s
+    # no-default `rows.fetch(file)` needs. The chunker IS in the value, because
+    # it stands in for the content -- two files over one path that would produce
+    # different hunks are different files.
+    #
+    # Equality over the chunker is the chunker's OWN, which decides how a caller
+    # keeps two derivations of one corpus comparing equal. A rebuilt lambda never
+    # compares equal, so a caller building lambdas must thread the same instances
+    # through; a chunker shaped as a VALUE -- a frozen `Data` answering `#call`
+    # -- compares equal across derivations and needs no threading at all. The
+    # second is the cheaper half and is the one to prefer when the chunker is
+    # being designed rather than inherited.
+    class LazyFile
+      # The vocabulary itself, not a copy of it -- {Changeset::ChangedFile}
+      # declares it and this is the same object, so a member dropped there
+      # raises here too. Resolvable at class-body time because `review.rb`
+      # requires `changeset` first, which is why the wiring line sits after it.
+      STATUSES = Changeset::ChangedFile::STATUSES
+
+      attr_reader :old_path, :new_path, :binary, :chunker
+
+      # @param old_path [String, nil] nil for a file this changeset adds
+      # @param new_path [String, nil] nil for a file it deletes
+      # @param chunker [#call] answers this file's hunks, called at most once
+      # @param binary [Boolean]
+      def initialize(old_path:, new_path:, chunker:, binary: false)
+        @old_path = old_path && -old_path
+        @new_path = new_path && -new_path
+        @binary = binary
+        @chunker = chunker
+        # The memo is a BOX because the freeze below forbids assigning an ivar
+        # afterwards. Everything this file IS stays immutable; the cache is the
+        # one mutable thing, and it is the whole of what costs shareability.
+        @memo = {}
+        freeze
+      end
+
+      # @return [String] the file's identity: the new path wherever there is one
+      def path = new_path || old_path
+
+      def binary? = binary
+
+      # {Changeset::ChangedFile#status}'s rule, over {STATUSES}' spellings. The
+      # rule is restated rather than shared because its home is `changeset.rb`;
+      # a spec drives both objects over the same four path pairs, so the two
+      # cannot drift while they are apart.
+      #
+      # @return [Symbol] one of {STATUSES}' values
+      def status
+        return STATUSES.fetch("added") if old_path.nil?
+        return STATUSES.fetch("deleted") if new_path.nil?
+
+        STATUSES.fetch(old_path == new_path ? "modified" : "renamed")
+      end
+
+      # The splat COPIES, and that is the whole reason it is there: the array
+      # belongs to the chunker, which is injected and unknown, so freezing it in
+      # place would raise inside somebody else's object on a later file with
+      # nothing in the backtrace naming the file that froze it. `.to_a` is not a
+      # copy -- `Array#to_a` answers `self` -- and neither is `Array()`. The
+      # splat also accepts any Enumerable, which `.freeze` alone would not.
+      #
+      # @return [Array<Hunk>] frozen, and the same array every time: `Hunk.keys`
+      #   tallies twice over a whole file's hunks, so the batch is materialised
+      #   rather than streamed
+      def hunks = @memo.fetch(:hunks) { @memo[:hunks] = [*chunker.call].freeze }
+
+      # `dup` copies the ivars and does not re-freeze, so a copy would otherwise
+      # share -- and write into -- the frozen original's cache. A copy gets its
+      # own empty box and is frozen like anything else this class hands out.
+      def initialize_copy(other)
+        super
+        @memo = {}
+        freeze
+      end
+
+      # `instance_of?`, not `is_a?`, so equality stays symmetric under any
+      # future subclass -- what `Data` does, for the reason it does it.
+      def ==(other) = other.instance_of?(self.class) && identity == other.identity
+
+      alias eql? ==
+
+      # The class is hashed in for the same reason `Data` hashes it in: without
+      # it a subclass shares this bucket while comparing unequal, and so does a
+      # bare Array of the same parts.
+      def hash = [self.class, *identity].hash
+
+      # What a `KeyError` from {Session::MarkedChangeset}'s `rows.fetch(file)`
+      # prints, and the reason it is not the default: Ruby truncates the key's
+      # `inspect` at 80 characters, and the default spends most of that on an
+      # object id and the memo -- cutting the path and the status, which are the
+      # only two facts that identify the file that missed.
+      def inspect = "#<#{self.class.name} #{path.inspect} #{status}>"
+
+      protected
+
+      def identity = [old_path, new_path, binary, chunker]
+    end
+  end
+end
