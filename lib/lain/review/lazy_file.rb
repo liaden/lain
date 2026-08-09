@@ -135,6 +135,20 @@ module Lain
       #   rather than streamed
       def hunks = @memo.fetch(:hunks) { @memo[:hunks] = [*chunker.call].freeze }
 
+      # Whether the hunks are already in hand -- asked BEFORE anything derives a
+      # review state from them, which is what lets a key table name only what a
+      # survey has read.
+      #
+      # `key?` and not the memo's value: a file that chunked to nothing is read,
+      # and an empty array is a real answer rather than a missing one. It forces
+      # nothing, so the message is not a lie -- if it had to chunk to decide,
+      # every caller asking it would pay the cost it exists to avoid.
+      #
+      # Deliberately outside {#identity}: a file that has chunked is still the
+      # same file, and {Session::MarkedChangeset}'s no-default `rows.fetch(file)`
+      # resolves across the two.
+      def chunked? = @memo.key?(:hunks)
+
       # `dup` copies the ivars and does not re-freeze, so a copy would otherwise
       # share -- and write into -- the frozen original's cache. A copy gets its
       # own empty box and is frozen like anything else this class hands out.

@@ -33,9 +33,24 @@ module Lain
       # Rows are built ONCE and shared: the {FileRow} under a partition is the
       # same object as the one at whole scope, so a re-render cannot show two
       # different states for one file.
+      #
+      # == It costs only what has been read
+      #
+      # The derivation is per PATH, and a file that has not been chunked is
+      # never asked about ({.of}). That is what makes a survey affordable to
+      # present: a corpus of fifty files nobody has opened draws its whole table
+      # having read none of them, where the previous all-or-nothing shortcut
+      # read all fifty as soon as one mark existed.
+      #
+      # The hazard that buys is worth naming, because it is this class's own
+      # warning turned on itself: "not read yet" and "read, and it has no hunk"
+      # both render {HUNKLESS}, and both are ABSENT from the key table. Letting
+      # the table answer both would put two meanings on one lookup -- so the
+      # FILE answers the first (`#chunked?`) and a read file missing from the
+      # table is refused rather than drawn ({.keys_of}).
       class MarkedChangeset
         # The Symbol -> canonical-String projection of {Review::FILE_STATES}.
-        # `Marks#states` answers Symbols; every glyph table, every journaled
+        # `Marks#state_of` answers Symbols; every glyph table, every journaled
         # record and every wire form spells the state as a String, and
         # {Review::FILE_STATES} is where that spelling is decided. Derived
         # rather than restated, and read through `fetch`, so a state Marks
@@ -44,10 +59,15 @@ module Lain
         STATES = Review::FILE_STATES.to_h { |name| [name.to_sym, name] }.freeze
 
         # What a file with NO hunks shows: a binary change, a mode-only change,
-        # a pure rename. {Marks#states} never names such a file -- it groups
-        # hunks, and there are none -- so this is not a state Marks refused to
-        # answer, it is the honest reading of the question it was never asked:
-        # no hunk of this file is marked reviewed, because it has none.
+        # a pure rename -- and, since the survey arm, a file nothing has read
+        # yet. {Marks} never derives such a file from a mark, because it has no
+        # key to derive one from, so this is not a state Marks refused to
+        # answer: it is the honest reading of the question it was never asked.
+        # No hunk of this file is marked reviewed, because it has none here.
+        #
+        # The two cases stay TOLD APART where it matters even though they render
+        # alike -- {.keys_of} refuses a read file the key table does not name,
+        # rather than letting an absent entry mean either thing.
         #
         # It can never become `reviewed`, and that is disclosed rather than
         # papered over. It does not wedge an approve: {Verdict::Policy::EveryHunk}
@@ -59,29 +79,35 @@ module Lain
         # Frozen and shared rather than a fresh `[]` per hunkless file.
         NO_KEYS = [].freeze
 
-        # The derivation for a changeset nobody has asked a question of yet: it
-        # names no path, so every row falls to {HUNKLESS} by the rule that
-        # constant already states. The Null Object of a states table, and the
-        # reason {.of} can decline to build a real one -- see its comment.
-        NO_STATES = {}.freeze
-
-        # `path => the review keys of that path's hunks`, by exactly the rule
-        # {Marks} applies to the same changeset (`group_by(&:path)`, then
-        # `Hunk.keys` over one file's hunks at a time -- the batch is a
-        # precondition of the key scheme, not a convenience). This is the ONE
-        # place that grouping is written for the session tier: {Session} reads
-        # it for its own key guard and for the changeset digest, and passes the
-        # result in here so a whole-changeset blake3 pass happens once per
-        # render rather than three times.
+        # `path => the review keys of that path's hunks`, over the files that
+        # have been READ, by exactly the rule {Marks} applies to the same hunks
+        # (`group_by(&:path)`, then `Hunk.keys` over one file's hunks at a
+        # time -- the batch is a precondition of the key scheme, not a
+        # convenience). This is the ONE place that grouping is written for the
+        # session tier.
+        #
+        # == It names what has been read, not what exists
+        #
+        # A {LazyFile} nobody has chunked has no keys to name, and asking it for
+        # some is the whole cost a survey exists to defer -- so the table grows
+        # with what a session has actually looked at. For a DIFF nothing moves:
+        # every {Source::ChangedFile} is read the moment the parser produces it,
+        # so `files.select(&:chunked?).flat_map(&:hunks)` is `changeset.hunks`
+        # exactly and the table is the one it has always been.
+        #
+        # The select goes over FILES rather than the changeset's hunks because
+        # `Changeset#hunks` is `files.flat_map(&:hunks)` -- reading it to find
+        # out what has been read would chunk everything to answer.
         #
         # A spec pins these keys equal to the ones {Marks} judges, because a row
         # that handed a marking gesture a differently-derived key would mark
         # something the tri-state never reads.
         #
-        # @param changeset [#hunks]
+        # @param changeset [#files]
         # @return [Hash{String => Array<String>}]
         def self.keys_by_path(changeset)
-          changeset.hunks.group_by(&:path).transform_values { |hunks| Hunk.keys(hunks) }.freeze
+          changeset.files.select(&:chunked?).flat_map(&:hunks)
+                   .group_by(&:path).transform_values { |hunks| Hunk.keys(hunks) }.freeze
         end
 
         # The commit walk is the DEFAULT strategy rather than the only one, so
@@ -91,33 +117,35 @@ module Lain
         # resolve.
         WALK = Review::Partition::STRATEGIES.fetch(:commits)
 
-        # The join is built from the key table it is HANDED, and skips {Marks}
-        # entirely when that table names NO path at all. {Marks#states} walks
-        # every hunk of every file, and a survey that has chunked nothing has
-        # nothing for that walk to judge -- so presenting it derives nothing and
-        # reads no file, at the one place every render passes through
-        # ({Session#present} rebuilds this on purpose, never memoized).
+        # The join, derived one path at a time, so a presentation costs only
+        # what has been read.
         #
-        # An unchunked file is {HUNKLESS} for exactly the reason a binary one
-        # is: no hunk of it is marked reviewed, because none of it is here yet.
-        # That is the honest answer to a question nobody has asked, not a
-        # guess -- and the only state it can be, since a mark names a hunk key
-        # and this file has produced none.
+        # Each file answers whether it has been chunked; only the ones that have
+        # reach {Marks}, and they reach it through {Marks#state_of}, which takes
+        # that path's keys and reads nothing else. A survey that has chunked
+        # nothing therefore derives nothing and opens no file, at the one place
+        # every render passes through ({Session#present} rebuilds this on
+        # purpose, never memoized).
         #
-        # == The shortcut is all-or-nothing, and that is a limit, not a shape
+        # An unread file is {HUNKLESS} for exactly the reason a binary one is:
+        # no hunk of it is marked reviewed, because none of it is here yet. That
+        # is the honest answer to a question nobody has asked, not a guess -- and
+        # the only state it can be, since a mark names a hunk key and this file
+        # has produced none.
         #
-        # An EMPTY table skips the derivation; a table naming one path of fifty
-        # takes it, and {Marks#states} then walks all fifty. Measured: 0 keys
-        # chunks 0 of 50 files, 1 key chunks 50 of 50. So this does not scale
-        # down with how much a corpus has read, and a caller must not read it as
-        # if it did -- there is a spec pinning the partial case for that reason.
-        # Deriving per path is what would fix it, and it needs a message on
-        # {Marks} taking a path's KEYS rather than a whole changeset; two
-        # existing specs double {Marks} on `states` and pin this call, so that
-        # move is a deliberate change rather than a refactor.
+        # This replaced an all-or-nothing shortcut on the table's emptiness, and
+        # the measurement is worth keeping: an EMPTY table skipped the
+        # derivation, a table naming one path of fifty took it, and
+        # {Marks#states} then walked all fifty. 0 keys chunked 0 of 50 files, 1
+        # key chunked 50 of 50 -- which is the partial table every corpus
+        # session actually hands over.
         #
-        # A diff names every path in its table, so this is the same derivation
-        # it has always been, arrived at the same way.
+        # A diff's files are all read, so this is the same derivation it has
+        # always been, arrived at the same way.
+        #
+        # The base check is asked HERE, once. It used to be made on
+        # {Marks#states}' way past; per-path derivation never passes the
+        # changeset to marks at all, and this is the object that holds the pair.
         #
         # @param changeset [Review::Changeset] the whole, unfiltered changeset
         # @param marks [Review::Marks] recorded against the same base
@@ -126,12 +154,13 @@ module Lain
         # @param strategy [Review::Partition::Strategy] how the files are grouped
         # @return [MarkedChangeset]
         # @raise [Marks::BaseMismatch] if the marks name another base
+        # @raise [KeyError] for a table that omits a file with hunks -- see {.keys_of}
         def self.of(changeset, marks, keys_by_path: keys_by_path(changeset), strategy: WALK)
-          states = keys_by_path.empty? ? NO_STATES : marks.states(changeset)
+          marks.assert_same_base!(changeset)
           # Keyed by the ChangedFile itself, not by its path: a Partition holds
           # the very same value objects, so the lookup is exact and two files
           # that somehow shared a path could not silently collapse into one row.
-          rows = changeset.files.to_h { |file| [file, row(file, states, keys_by_path)] }
+          rows = changeset.files.to_h { |file| [file, row(file, marks, keys_by_path)] }
           new(files: rows.values.freeze, partitions: grouped(changeset, rows, strategy),
               base_ref: changeset.base_ref, head_ref: changeset.head_ref)
         end
@@ -145,36 +174,43 @@ module Lain
         end
         private_class_method :grouped
 
-        def self.row(file, states, keys_by_path)
-          FileRow.new(file:, state: state_of(file, states),
-                      hunk_keys: keys_by_path.fetch(file.path, NO_KEYS))
+        # A file nobody has read is {HUNKLESS} and carries no key, and it says so
+        # from the FILE rather than from the table's silence -- which is what
+        # keeps "not asked yet" and "asked, and there is nothing" two facts. A
+        # file that HAS been read reaches the vocabulary through `STATES.fetch`,
+        # so a tri-state {Marks} invents that the vocabulary does not know raises
+        # instead of rendering blank. There is a spec for that raise.
+        def self.row(file, marks, keys_by_path)
+          return FileRow.new(file:, state: HUNKLESS, hunk_keys: NO_KEYS) unless file.chunked?
+
+          keys = keys_of(file, keys_by_path)
+          FileRow.new(file:, state: STATES.fetch(marks.state_of(keys)), hunk_keys: keys)
         end
         private_class_method :row
 
-        # An absent path is the hunkless case ({HUNKLESS} says why); a path
-        # {Marks} DID name is looked up in the vocabulary, so a tri-state the
-        # vocabulary does not know raises through `STATES.fetch` instead of
-        # rendering blank. There is a spec for that raise.
+        # `fetch` with no fallback for a file that HAS hunks, and that refusal is
+        # the whole of what makes a partial table safe. `.of(changeset, marks,
+        # keys_by_path: {})` used to render every file of a fully-reviewed diff
+        # as `unreviewed` in silence, because an absent entry and an unread file
+        # asked the same question of the same table. The FILE answers the second
+        # question now, so an absent entry can only mean one thing -- and a read
+        # file with hunks that the table does not name is a table disagreeing
+        # with the changeset, which is a wrong glyph waiting to be drawn.
         #
-        # The shape this must not take is `STATES.fetch(states[path], HUNKLESS)`,
-        # which swallows that second case as a hunkless file -- an unknown
-        # tri-state would then render `[ ]` on a file somebody had reviewed. An
-        # earlier version of this comment claimed the `key?`/`fetch` PAIR was
-        # what preserved the distinction. It is not -- and the form that comment
-        # named as equivalent was wrong too, which is worth an extra sentence
-        # rather than a third try. A bare `states.fetch(path) { HUNKLESS }` is
-        # RED: the block's value falls straight into `STATES.fetch`, `HUNKLESS`
-        # is a String, `STATES`' keys are Symbols, and it raises. The form that
-        # IS equivalent is `STATES.fetch(states.fetch(file.path) { return
-        # HUNKLESS })`, and the `return` is what makes it so -- it leaves the
-        # method before the vocabulary lookup can happen. Two lines are kept
-        # over that for reading alone, which is a taste and is labelled as one.
-        def self.state_of(file, states)
-          return HUNKLESS unless states.key?(file.path)
+        # A read file with NO hunks is legitimately absent, for {HUNKLESS}'
+        # original reason: a binary change, a mode-only change, a pure rename.
+        # Reading `#hunks` to tell the two apart is free here and only here --
+        # the file has already been chunked, or the guard above returned.
+        def self.keys_of(file, keys_by_path)
+          return NO_KEYS if file.hunks.empty?
 
-          STATES.fetch(states.fetch(file.path))
+          keys_by_path.fetch(file.path) do
+            raise KeyError, "#{file.path.inspect} has hunks, and the key table handed to this join does not " \
+                            "name it -- deriving its state from an empty batch would show a file somebody " \
+                            "reviewed as unreviewed, with nothing failing"
+          end
         end
-        private_class_method :state_of
+        private_class_method :keys_of
 
         # One file's row: the diff's own facts, forwarded unchanged, plus the
         # one fact the diff cannot know.

@@ -33,7 +33,7 @@ RSpec.describe Lain::Review::LazyFile do
     changeset = instance_double(Lain::Review::Changeset, files: [keyed], hunks: [hunk],
                                                          partitions: [partition],
                                                          base_ref: -("b" * 40), head_ref: -("h" * 40))
-    marks = instance_double(Lain::Review::Marks, states: { "a.rb" => :reviewed })
+    marks = instance_double(Lain::Review::Marks, assert_same_base!: nil, state_of: :reviewed)
     Lain::Review::Session::MarkedChangeset.of(changeset, marks)
   end
 
@@ -68,6 +68,56 @@ RSpec.describe Lain::Review::LazyFile do
 
       expect(file.old_path).to be_frozen
       expect(file.new_path).to be_frozen
+    end
+  end
+
+  # The message {Session::MarkedChangeset} asks before it derives anything, and
+  # the whole of what makes a partial key table honest: a file that has not been
+  # read has no keys, and that is a different fact from having none.
+  #
+  # Every example here is a claim about a message that must NOT force the work
+  # it reports on -- a `#chunked?` that chunked to find out would be a lie in
+  # the shape of a message, so the chunker's call count is asserted beside the
+  # answer rather than trusted.
+  describe "whether it has been chunked, which it must answer without chunking" do
+    it "is false before anything reads its hunks, and answering does not read them" do
+      file = lazy(chunker: exploding)
+
+      expect(file.chunked?).to be(false)
+    end
+
+    it "is true once something has, and asking runs the chunker no extra time" do
+      file = lazy
+
+      file.hunks
+
+      expect(file.chunked?).to be(true)
+      expect(calls.size).to eq(1)
+    end
+
+    # The case a boolean over the memo's VALUE would get wrong: an empty array
+    # is a real answer, and a file that chunked to nothing has been asked.
+    it "is true for a file that chunked to nothing, which is read and hunkless" do
+      file = lazy(chunker: -> { calls << :chunked and [] })
+
+      file.hunks
+
+      expect(file.chunked?).to be(true)
+    end
+
+    it "is false again for a dup, which is given its own empty memo" do
+      original = lazy
+      original.hunks
+
+      expect(original.dup.chunked?).to be(false)
+    end
+
+    # The other half of the duck. A {Source::ChangedFile} is built by a parser
+    # that has already produced its hunks, so there is no moment at which one of
+    # them is unread -- which is why a diff review's key table names every path
+    # and this card changes nothing for it.
+    it "is what a ChangedFile always answers, hunks or no hunks" do
+      expect([changed_file.chunked?, changed_file(hunks: []).chunked?]).to eq([true, true])
     end
   end
 

@@ -253,6 +253,15 @@ module Lain
         #
         # @return [Integer]
         def rendered_lines = hunks.sum { |hunk| hunk.lines.size + 1 }
+
+        # Always, and for the same reason {#rendered_lines} is free here: a
+        # parser has already produced these hunks, so there is no moment at
+        # which one of these files is unread. {LazyFile} is the kind that has
+        # one, and the question goes to the file so that nothing above has to
+        # ask which kind it is holding.
+        #
+        # @return [Boolean]
+        def chunked? = true
       end
 
       Identity = Data.define(:scheme, :parts) do

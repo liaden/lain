@@ -110,6 +110,89 @@ RSpec.describe Lain::Review::Marks do
     end
   end
 
+  # The per-path primitive {#states} is the whole-changeset application of, and
+  # what lets a caller holding ONE path's keys pay for one path. It takes keys
+  # rather than a changeset on purpose: a caller that has already chunked a file
+  # has its keys in hand, and handing the changeset back would re-derive every
+  # other file's to answer about this one.
+  describe "deriving one path's state from its keys alone" do
+    def keys_of(hunks) = Lain::Review::Hunk.keys(hunks)
+
+    it "is :unreviewed when none of the keys carry a mark" do
+      keys = keys_of([hunk(lines: ["+a"]), hunk(lines: ["+b"])])
+
+      expect(described_class.new(base_ref: "base1").state_of(keys)).to eq(:unreviewed)
+    end
+
+    it "is :partial when some do" do
+      keys = keys_of([hunk(lines: ["+a"]), hunk(lines: ["+b"])])
+      marks = marked("base1", [[keys.first, "reviewed"]])
+
+      expect(marks.state_of(keys)).to eq(:partial)
+    end
+
+    it "is :reviewed when every one of them does" do
+      keys = keys_of([hunk(lines: ["+a"]), hunk(lines: ["+b"])])
+      marks = marked("base1", keys.map { |key| [key, "reviewed"] })
+
+      expect(marks.state_of(keys)).to eq(:reviewed)
+    end
+
+    # {Session::MarkedChangeset::HUNKLESS}'s rule, reached rather than restated:
+    # a binary file, a mode-only change and a pure rename all produce no key, and
+    # no hunk of them is marked reviewed because they have none.
+    it "is :unreviewed for a path with no keys at all, which is the hunkless reading" do
+      expect(described_class.new(base_ref: "base1").state_of([])).to eq(:unreviewed)
+    end
+
+    # The claim that makes it the per-PATH primitive: it is handed keys and
+    # nothing else, so there is no changeset for it to walk behind the caller's
+    # back. Pinned by the arity, because "it did not read the changeset" over an
+    # argument it was never given is not otherwise expressible.
+    it "takes the keys and nothing else, so there is no changeset for it to walk" do
+      expect(described_class.instance_method(:state_of).parameters).to eq([%i[req keys]])
+    end
+
+    it "answers exactly what #states answers for the same path, so the two cannot drift" do
+      a = hunk(path: "a.rb", lines: ["+a"])
+      b = hunk(path: "b.rb", lines: ["+b"])
+      cs = changeset(base_ref: "base1", hunks: [a, b])
+      marks = marked("base1", [[keys_of([a, b]).first, "reviewed"]])
+
+      derived = { "a.rb" => marks.state_of(keys_of([a])), "b.rb" => marks.state_of(keys_of([b])) }
+
+      expect(derived).to eq(marks.states(cs))
+      expect(derived.values).to eq(%i[reviewed unreviewed])
+    end
+  end
+
+  # The base check, promoted out of the private derivation it used to be
+  # welded to. {Session::MarkedChangeset.of} holds a changeset and a mark set
+  # and derives per PATH, so it no longer passes the changeset to a message
+  # that would check for it -- and mismatching the pair is exactly the defect
+  # this refusal exists for, so the check stays where the pair is joined.
+  describe "the base check, asked on its own" do
+    it "passes silently for a changeset recorded against this mark set's base" do
+      marks = described_class.new(base_ref: "base-v1")
+
+      expect(marks.assert_same_base!(unreadable_changeset(base_ref: "base-v1"))).to be_nil
+    end
+
+    it "refuses one recorded against another, naming both" do
+      marks = described_class.new(base_ref: "base-v1")
+
+      expect { marks.assert_same_base!(unreadable_changeset(base_ref: "base-v2")) }
+        .to raise_error(described_class::BaseMismatch, /base-v1/)
+    end
+
+    # The whole reason it can stand in front of a lazy derivation: it reads the
+    # changeset's `base_ref` and nothing else, so asking it costs no chunking.
+    it "reads the base and no hunk, which is what lets a lazy derivation ask it first" do
+      expect { described_class.new(base_ref: "base-v1").assert_same_base!(unreadable_changeset(base_ref: "base-v1")) }
+        .not_to raise_error
+    end
+  end
+
   describe "reconciliation" do
     it "drops a mark whose hunk key is no longer in the changeset" do
       present = hunk(lines: ["+a"])

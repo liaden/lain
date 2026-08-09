@@ -371,11 +371,30 @@ module Lain
 
       private
 
-      # Memoized: the changeset a session holds never changes, and this is a
-      # blake3 pass over every hunk in it.
-      def keys_by_path = @keys_by_path ||= MarkedChangeset.keys_by_path(@changeset)
+      # NOT memoized, and the memo that used to be here was the reason
+      # {#present} chunked a corpus it had been handed lazily. The table names
+      # the files something has READ ({MarkedChangeset.keys_by_path}), and a
+      # survey reads more of itself as it is looked at -- so a table built once
+      # answers for the corpus as it stood before anything was opened, and
+      # {#mark} then refuses a key off a row the reader is looking at as a hunk
+      # this changeset does not produce.
+      #
+      # It is {#marked}'s rule for {#marked}'s reason: a stale view is exactly
+      # the defect a marker exists to prevent.
+      #
+      # The cost is a blake3 pass over the hunks already in hand, and it grows
+      # with what has been READ rather than with the changeset -- so a survey
+      # pays nothing and a diff pays what the memo used to save. Where that
+      # lands is worth saying precisely, because the average hides it: the FIRST
+      # present is unchanged (3.3ms at 40 files and 400 hunks), and what got
+      # slower is every LATER present (1.3ms -> 3.2ms) and every {#mark} gesture
+      # (free off the memo, 2.5ms now). At {Bounds}' default ceiling that is
+      # 18.4ms per gesture against a 25ms present -- still under anything a
+      # human perceives, which is what makes the table being true the better
+      # trade.
+      def keys_by_path = MarkedChangeset.keys_by_path(@changeset)
 
-      def hunk_keys = @hunk_keys ||= keys_by_path.values.flatten.to_set
+      def hunk_keys = keys_by_path.values.flatten.to_set
 
       # BEFORE the ceiling, and the order is the point rather than taste: the
       # ceiling walks the partitions, and that walk is the thing that would die

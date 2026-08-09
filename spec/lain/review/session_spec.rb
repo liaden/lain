@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "stringio"
+require "tmpdir"
 
 RSpec.describe Lain::Review::Session do
   # Two files, three hunks, two commits -- the smallest changeset that can
@@ -606,7 +607,7 @@ RSpec.describe Lain::Review::Session do
     # vocabulary does not know raises, rather than rendering as a blank glyph on
     # a file somebody had reviewed.
     it "refuses a tri-state the vocabulary does not know rather than rendering it blank" do
-      marks = instance_double(Lain::Review::Marks, states: { "a.rb" => :skimmed, "b.rb" => :unreviewed })
+      marks = instance_double(Lain::Review::Marks, assert_same_base!: nil, state_of: :skimmed)
 
       expect { Lain::Review::Session::MarkedChangeset.of(changeset, marks) }
         .to raise_error(KeyError, /skimmed/)
@@ -1326,6 +1327,129 @@ RSpec.describe Lain::Review::Session do
       every_key.each { |key| session.mark(key, "reviewed") }
       session.submit("approve")
       expect(session.verdict).not_to be_empty
+    end
+  end
+
+  # What the whole card is FOR, measured where it is actually paid: a real
+  # {Source::Corpus} over a real directory, a real {Survey::Chunker} dispatch,
+  # and a real session presenting through it.
+  #
+  # Every claim here is a count of CHUNKER INVOCATIONS, taken at the chunker's
+  # own `#call` -- not a flag, not a memo ivar, and not a spy on the subject.
+  # "Nothing was read" is a claim about work that did not happen, and a subject
+  # asked to testify about itself passes just as well when it walked the corpus
+  # and threw the answer away. Measured before this card: `.open` chunked 0 of
+  # 50 and `#present` chunked 50 of 50, with no mark anywhere.
+  describe "presenting a corpus, which must cost only what has been read", :seam do
+    # Fifty, because the number is the point: the defect this card closes was
+    # invisible at two files and cost the whole tree at fifty.
+    let(:corpus_size) { 50 }
+
+    around do |example|
+      Dir.mktmpdir("lain-session-corpus") { |made| @root = File.realpath(made) and example.run }
+    end
+
+    # Records every file it actually chunks, and chunks it for real -- the
+    # `chunker:` seam {Source::Corpus} declares for exactly this, so the count
+    # rides the production stack rather than replacing it.
+    def counting_dispatch(log)
+      lambda do |path|
+        real = Lain::Survey::Chunker.for(path)
+        lambda do |path:, source:|
+          log << path
+          real.call(path:, source:)
+        end
+      end
+    end
+
+    def corpus_session(log, drawn_on: surface)
+      sensitivity = Lain::Sensitivity.new(home: "/home/surveyor", cwd: @root)
+      corpus = Lain::Review::Source::Corpus.new(walk: Lain::Survey::Walk.new(root: @root, sensitivity:),
+                                                projection: Lain::Survey::Projection.new(
+                                                  ledger: Lain::Sensitivity::Ledger.new
+                                                ),
+                                                chunker: counting_dispatch(log))
+      described_class.open(changeset: Lain::Review::Changeset.new(source: corpus), journal:,
+                           source: "corpus", surface: drawn_on)
+    end
+
+    before do
+      corpus_size.times do |n|
+        File.binwrite(File.join(@root, "f#{n}.rb"), "# frozen_string_literal: true\n\ndef m#{n}\n  #{n}\nend\n")
+      end
+    end
+
+    it "opens without reading a file, which is what the identity pass already bought" do
+      log = []
+
+      corpus_session(log)
+
+      expect(log).to be_empty
+    end
+
+    it "presents without reading one either, where it used to read every one" do
+      log = []
+      session = corpus_session(log)
+
+      session.present(scope: :cumulative)
+
+      expect(log).to be_empty
+    end
+
+    it "presents every file as unreviewed all the same, which is the honest answer to an unasked question" do
+      states = corpus_session([]).marked(strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
+                                 .files.map(&:state)
+
+      expect(states).to eq([Lain::Review::Session::MarkedChangeset::HUNKLESS] * corpus_size)
+    end
+
+    # The card's second scenario, and the one B15's shortcut could not reach: a
+    # single mark took the derivation and {Marks#states} then walked all fifty.
+    it "costs one file when one file has been marked, not fifty" do
+      log = []
+      session = corpus_session(log)
+      marked_file = session.changeset.files.first
+      session.mark(Lain::Review::Hunk.keys(marked_file.hunks).first, "reviewed")
+
+      session.present(scope: :cumulative)
+
+      expect(log.uniq).to eq([marked_file.path])
+    end
+
+    it "shows that one file reviewed and the other forty-nine unreviewed" do
+      session = corpus_session([])
+      marked_file = session.changeset.files.first
+      Lain::Review::Hunk.keys(marked_file.hunks).each { |key| session.mark(key, "reviewed") }
+
+      rows = session.marked(strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative)).files
+
+      expect(rows.map(&:state).tally).to eq({ "reviewed" => 1, "unreviewed" => corpus_size - 1 })
+    end
+
+    # Through the surface a `lain review` actually reaches, not the null one --
+    # the claim is about what a USER pays to see a survey's table, and a null
+    # surface would prove only that the session did not chunk on its own.
+    it "draws the whole table through a real text surface, still without reading a file" do
+      log = []
+      sink = StringIO.new
+      session = corpus_session(log, drawn_on: Lain::Review::Surface::Text.new(sink:))
+
+      session.present(scope: :cumulative)
+
+      expect(log).to be_empty
+      expect(sink.string.lines.size).to eq(corpus_size)
+    end
+
+    # The probe's own canary. Every count above is zero or one, and a seam that
+    # measured nothing would report exactly that -- so one example drives the
+    # corpus the eager way and must see all fifty.
+    it "counts fifty when every file is genuinely read, so the counter is not measuring nothing" do
+      log = []
+      session = corpus_session(log)
+
+      session.changeset.files.each(&:hunks)
+
+      expect(log.uniq.size).to eq(corpus_size)
     end
   end
 end

@@ -214,7 +214,7 @@ RSpec.shared_examples "a review changeset source" do |config|
     it "answers the model values a changeset reads, so nothing downstream parses anything" do
       expect(changeset_source.files).not_to be_empty
       expect(changeset_source.files)
-        .to all(respond_to(:path, :old_path, :new_path, :status, :binary?, :hunks, :rendered_lines))
+        .to all(respond_to(:path, :old_path, :new_path, :status, :binary?, :hunks, :rendered_lines, :chunked?))
     end
 
     it_behaves_like "files a bound can size" do

@@ -106,20 +106,33 @@ module Lain
       # lazily-chunked corpus that walk is the whole chunking cost, so a review
       # that has marked nothing would otherwise pay it to prune nothing.
       #
-      # What that is worth is a RESUME of a round nobody marked, and only until
-      # the first question is asked -- said precisely because the obvious wider
-      # claim is false. {Session.open} composes its journaled digest through
-      # `MarkedChangeset.keys_by_path` BEFORE it builds the session, so an open
-      # has already read every file by the time this runs (measured: `.open`
-      # chunks 50 of 50 at zero marks, `.from_journal` chunks 0 of 50).
+      # This is the only eager path a PRESENTATION can reach, which is a
+      # narrower claim than "the only eager path over a corpus" and is the one
+      # that is true. {Verdict::Policy::EveryHunk#admit!} calls {#states}, so
+      # `submit` walks the whole corpus however little of it has been drawn
+      # (measured: a 10-file session that presented with 0 chunked chunks 10 of
+      # 10 on approve alone), and {Frontend::Neovim::ReviewView} forces every
+      # file at render until B19 lands. Both are outside this object.
       #
-      # It goes no further than that, and the limit is worth stating rather
-      # than leaving to be rediscovered: a mark carries a hunk key and NOTHING
-      # else ({Review::HunkMarked}), and a key is a digest no path can be read
-      # back out of ({Hunk#key}). So a mark set cannot name the paths it
-      # belongs to, and a surviving mark is told from a stale one only by
-      # walking every path to prove absence. A non-empty set reads the
-      # changeset whole.
+      # The limit here is worth stating rather than leaving to be
+      # rediscovered: a mark carries a hunk
+      # key and NOTHING else ({Review::HunkMarked}), and a key is a digest no
+      # path can be read back out of ({Hunk#key}). So a mark set cannot name the
+      # paths it belongs to, and a surviving mark is told from a stale one only
+      # by walking every path to prove absence. A non-empty set reads the
+      # changeset whole, and no per-path derivation can help: pruning against
+      # the READ files alone would drop every mark on a file nobody has reopened
+      # yet. Two things would close it and neither is an execution-time patch:
+      # journalling the path beside the mark ({Review::HunkMarked}), which is a
+      # persisted-record change with a migration behind it; or DEFERRING the
+      # prune -- keeping every mark and pruning a path the first time its file
+      # is chunked, which needs no record change and trades for a mark set that
+      # is only provisionally clean until then.
+      #
+      # Opening and PRESENTING no longer pay this, so a resume that marked
+      # nothing is not the whole of what the shortcut is worth any more: a
+      # session opens, presents and re-presents a fifty-file corpus reading none
+      # of it (measured), and only a resume carrying marks reads it whole.
       #
       # The base check stays ahead of the shortcut: a base move is refused
       # whether or not there is a mark to carry across it.
@@ -167,14 +180,46 @@ module Lain
         assert_same_base!(changeset)
 
         changeset.hunks.group_by(&:path).each_with_object({}) do |(path, hunks), result|
-          keys = Hunk.keys(hunks)
-          reviewed = keys.count { |hunk_key| @marks[hunk_key] == REVIEWED }
-          result[path] = tri_state(reviewed, keys.size)
+          result[path] = state_of(Hunk.keys(hunks))
         end
       end
 
-      private
+      # One path's tri-state, from that path's keys and nothing else -- the
+      # primitive {#states} is the whole-changeset application of.
+      #
+      # It takes KEYS rather than a path and a changeset, and that is what makes
+      # a lazily-chunked corpus affordable: a caller holding one file's keys has
+      # already chunked that file, and handing the changeset back would re-derive
+      # every other file's keys to answer about this one. {#state_for} is the
+      # convenience that does exactly that, and says so.
+      #
+      # There is no base check here, because keys carry no base to check against
+      # -- {#assert_same_base!} is the message for that, and the caller joining a
+      # changeset to a mark set asks it once rather than per path.
+      #
+      # An empty batch answers :unreviewed, which is {Session::MarkedChangeset::
+      # HUNKLESS}'s rule reached rather than restated: no hunk of a binary or
+      # mode-only change is marked reviewed, because it has none.
+      #
+      # @param keys [Array<String>] one path's hunk keys, from {Hunk.keys}
+      # @return [:reviewed, :partial, :unreviewed]
+      def state_of(keys)
+        tri_state(keys.count { |hunk_key| @marks[hunk_key] == REVIEWED }, keys.size)
+      end
 
+      # That `changeset` was recorded against the revision these marks were.
+      #
+      # Public because the check outlived the derivation it used to be welded
+      # to. {Session::MarkedChangeset.of} holds a changeset and a mark set and
+      # derives per PATH through {#state_of}, so it never passes the changeset
+      # to a message that would check on its way past -- and mismatching that
+      # pair is precisely the defect this refusal exists for. It reads
+      # `base_ref` and no hunk, which is what lets a lazy derivation ask it
+      # first.
+      #
+      # @param changeset [#base_ref]
+      # @return [nil]
+      # @raise [BaseMismatch] naming both revisions
       def assert_same_base!(changeset)
         # Both sides through the SAME normalization `#initialize` already
         # applies to `base_ref` -- comparing one normalized side against the
@@ -188,6 +233,8 @@ module Lain
               "reconciling across a base change can hand a stale mark to the wrong hunk"
       end
 
+      private
+
       def valid_keys(changeset)
         changeset.hunks.group_by(&:path)
                  .flat_map { |_path, hunks| Hunk.keys(hunks) }
@@ -195,10 +242,11 @@ module Lain
       end
 
       # Ordered so a hunkless file (`total.zero?`) reads honestly as
-      # :unreviewed rather than :reviewed, even though {#states} never
-      # produces one -- `group_by` only ever yields non-empty groups, so
-      # `keys.size` cannot be 0 there. Kept honest anyway: a private method is
-      # still a promise to whatever calls it next.
+      # :unreviewed rather than :reviewed. {#states} still never produces one --
+      # `group_by` only ever yields non-empty groups -- but {#state_of} is
+      # reached directly with an empty batch by every binary and mode-only
+      # change a caller derives per path, so this ordering stopped being merely
+      # defensive.
       def tri_state(reviewed, total)
         return :unreviewed if reviewed.zero?
         return :reviewed if reviewed == total
