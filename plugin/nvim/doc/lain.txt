@@ -253,8 +253,8 @@ your own `:highlight link` overrides any of them without a fight:
 Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 `:LainResend`, `:LainContext`, `:LainReply {answer}`, `:LainOpen`, `:LainPin`,
 `:LainVersion`, `:LainReviewOpen`, `:LainReviewMark {state}`,
-`:LainReviewVerdict {verdict}`, `:LainApprove`, `:LainDeny`, and -- only
-meaningful inside a review
+`:LainReviewVerdict {verdict}`, `:LainApprove`, `:LainDeny`, `:LainSurveyAdd`,
+and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
 Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteDone` and
 `:LainThread`.
@@ -289,6 +289,20 @@ one turn forever.
 Both are ordinary global commands reading the CURRENT window's cursor, so each
 refuses outside the buffer it is about rather than acting on whatever happens
 to sit on that line somewhere else.
+
+                                                           *:LainSurveyAdd*
+
+`<leader>sa`, from a real file buffer, runs `:LainSurveyAdd`: it adds the
+file you are reading to a survey open in this chat. Unlike every gesture
+above it is not scoped to a buffer lain named ahead of time -- a survey grows
+from whatever you are reading, so the keymap is global rather than
+buffer-local. It refuses and says so, rather than sending anything, from a
+buffer with no file OR from one of lain's own (`lain://timeline`,
+`lain://review`, a compose or question pane, ...) -- a view URI is not a
+survey path. It carries the buffer's absolute path and
+`b:lain_view_generation` (nil for an ordinary file; an unstamped buffer's
+payload may then cross the wire as a one-element array rather than
+`[path, nil]`, since Lua drops a trailing nil before it reaches msgpack).
 
                                                             *:LainReviewOpen*
                                                               *lain://review*

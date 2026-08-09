@@ -428,6 +428,94 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
   end
+
+  # B16's editor half: the add-to-survey gesture only EMITS `survey_add`; B12
+  # (not yet landed) is what gives the verb a route and a meaning. Real nvim,
+  # `pin`'s reason above: only the keybinding round trip needs one.
+  describe "the add-to-survey gesture on a real file buffer" do
+    def open_real_file(path)
+      inspector.exec_lua(<<~LUA, [path])
+        local path = ...
+        vim.cmd("edit " .. vim.fn.fnameescape(path))
+        return vim.api.nvim_get_current_buf()
+      LUA
+    end
+
+    def stamp_generation(buf, gen)
+      inspector.exec_lua("local buf, gen = ...; vim.b[buf].lain_view_generation = gen", [buf, gen])
+    end
+
+    # A tmp file rather than a lain:// buffer: the gesture's whole premise is
+    # that it fires from a buffer this runtime does not name ahead of time
+    # (see 46_sidebar.lua's comment on why the keymap is GLOBAL).
+    def real_file(content = "hello\n")
+      path = File.join(Dir.mktmpdir, "notes.md")
+      File.write(path, content)
+      path
+    end
+
+    it "emits survey_add carrying the buffer's absolute path and its view generation" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      path = real_file
+
+      frontend.run do |handle|
+        buf = open_real_file(path)
+        stamp_generation(buf, 7)
+
+        feed(path, "\\sa", cursor: [1, 0])
+
+        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
+        expect(verb).to eq("survey_add")
+        expect(args).to eq([path, 7])
+      end
+    end
+
+    # The trigger this card exists to check: Ruby has no route for `survey_add`
+    # yet (B12 is unmerged), so `Router#call`'s unrouted-verb path
+    # (`rpc_thread.rb:741`) is exercised for real rather than assumed. If the
+    # ack had not returned -- a raise reaching `dispatch`, or the connection
+    # wedged -- neither the inbox pop nor the round trip below would return
+    # inside their timeouts.
+    it "acks the gesture and keeps serving requests, with no route wired for it" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      path = real_file
+
+      frontend.run do |handle|
+        open_real_file(path)
+
+        feed(path, "\\sa", cursor: [1, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to include("survey_add")
+        expect { Timeout.timeout(5) { inspector.command("echo 'still here'") } }.not_to raise_error
+        expect(messages).not_to match(/E5108|Error executing lua/)
+      end
+    end
+
+    # Fix round (panel finding, Linus): the empty-name guard alone let this
+    # fire from any lain:// buffer -- which HAS a name -- and send the view
+    # URI as though it were a file path. `:LainPin`'s own wrong-buffer spec
+    # above is the shape this follows: asserted without a sleep, because the
+    # lain://timeline press is followed by a real one and the FIRST thing to
+    # reach the inbox must be the real one, not the URI.
+    it "refuses from a lain:// buffer, and says so, rather than sending its URI as a path" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      path = real_file
+
+      frontend.run do |handle|
+        wait_until { bufnr("lain://timeline") != -1 }
+        set_view("lain://timeline", ["user: first", "assistant: second"])
+
+        feed("lain://timeline", "\\sa", cursor: [1, 0])
+        open_real_file(path)
+        feed(path, "\\sa", cursor: [1, 0])
+
+        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
+        expect(verb).to eq("survey_add")
+        expect(args.first).to eq(path)
+        expect(messages).to include("LainSurveyAdd")
+      end
+    end
+  end
 end
 
 # B4's plain-Ruby half: the line -> digest index, the pin marker, and the pin
