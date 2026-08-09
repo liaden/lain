@@ -130,6 +130,15 @@ module Lain
       # @return [String] the resolved head every new-side anchor rests on
       def head_ref = @source.head_ref
 
+      # The source's walk, oldest first, forwarded because a {Partition::Strategy}
+      # takes a CHANGESET and never a source -- {Partition::ByCommit} needs the
+      # walk to attribute a file, and a strategy holding a source would be the
+      # seam in the wrong place (a strategy would then need a repository to be
+      # testable at all).
+      #
+      # @return [Array<Source::Commit>]
+      def commits = @source.commits
+
       # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
       def files = @files ||= Parser.new(@source.diff).files.freeze
 
