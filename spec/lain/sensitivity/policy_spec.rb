@@ -399,4 +399,68 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(policy).to be_frozen
     end
   end
+
+  # T23. The listing filter is this object's SECOND answer over the SAME
+  # classifier, rather than something a caller builds beside it. That is what
+  # makes "the gate refused a path the listing enumerated" unrepresentable: the
+  # classifier is exposed nowhere, so there is no second filter to construct
+  # from a different one.
+  describe "#filter" do
+    def sift(subject_filter, path) = subject_filter.sift([path]) { |row| [row] }
+
+    it "answers a real filter over this policy's own classifier" do
+      expect(policy.filter).to be_a(Lain::Sensitivity::Filter)
+    end
+
+    # Identity, not equality: two filters built from one classifier would still
+    # agree, so only sameness says the wiring reached THIS policy's filter.
+    it "is the same filter every time, so a caller cannot hold a stale one" do
+      expect(policy.filter).to equal(policy.filter)
+    end
+
+    # Built at construction rather than memoized on first read, because this
+    # object freezes itself -- a lazy `@filter ||=` raises FrozenError the
+    # first time anybody asks, which is a trap worth not laying.
+    it "is already built by the time the policy is frozen" do
+      expect(policy.filter).to be_frozen
+    end
+
+    # The property the whole shape exists for, stated as behaviour: what the
+    # gate gates is what the filter withholds, because there is one classifier.
+    it "withholds exactly what the gate gates" do
+      gated = "#{cwd}/.env"
+
+      expect(policy.gates?(call("read_file", { "path" => gated }))).to be(true)
+      expect(sift(policy.filter, gated).withheld.map(&:reason)).to eq([:credential])
+    end
+
+    it "keeps a row the gate would let through" do
+      ordinary = "#{cwd}/README.md"
+
+      expect(policy.gates?(call("read_file", { "path" => ordinary }))).to be(false)
+      expect(sift(policy.filter, ordinary).kept).to eq([ordinary])
+    end
+
+    it "carries this project's own rules into the filter, not just the built-ins" do
+      declared = Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] })
+      configured = described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd:, rules: declared))
+
+      expect(sift(configured.filter, "#{cwd}/prod.secret").withheld.map(&:reason)).to eq([:configured])
+    end
+  end
+
+  # The Null's own second answer, and it needs no new object: a policy that
+  # gates nothing withholds nothing, and {Filter::Null} already means exactly
+  # that.
+  describe "Null#filter" do
+    it "is the Null filter, so a run that wired no classifier lists as it always did" do
+      expect(described_class::Null.instance.filter).to be(Lain::Sensitivity::Filter::Null.instance)
+    end
+
+    it "withholds nothing" do
+      sifted = described_class::Null.instance.filter.sift(["/home/tester/.ssh/id_rsa"]) { |row| [row] }
+
+      expect([sifted.kept, sifted.withheld]).to eq([["/home/tester/.ssh/id_rsa"], []])
+    end
+  end
 end

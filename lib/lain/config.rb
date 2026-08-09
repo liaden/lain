@@ -14,13 +14,18 @@ module Lain
   # root with no file returns the same value {.empty} does, so a caller never
   # writes an `if File.exist?` guard of its own (Null Object).
   #
-  # `[epics]` and `[approval]` are understood. Every OTHER top-level table is
-  # tolerated and ignored: other consumers are coming (chat-ux's prompt config
-  # may converge on this same file later), and a table this class doesn't yet
-  # read is not this class's typo to catch. Each table it DOES read is one
-  # small class's whole surface -- {Epics}, {Answers} -- so a typo or a
-  # wrong-shaped value inside one is loud instead of silently defaulting or
-  # crashing three call frames deep.
+  # `[epics]`, `[approval]` and `[sensitivity]` are understood. Every OTHER
+  # top-level table is tolerated and ignored: other consumers are coming
+  # (chat-ux's prompt config may converge on this same file later), and a table
+  # this class doesn't yet read is not this class's typo to catch. Each table it
+  # DOES read is one small class's whole surface -- {Epics}, {Answers},
+  # {Sensitivity::Rules} -- so a typo or a wrong-shaped value inside one is loud
+  # instead of silently defaulting or crashing three call frames deep.
+  #
+  # `[sensitivity]` is read by {.sensitivity} and NOT by {.load}, which is a
+  # decision rather than an oversight: the two have opposite postures about a
+  # typo, and reading them together forces one on both. {.sensitivity} carries
+  # the argument.
   class Config
     # Named per the error-taxonomy convention: a refusal subclasses
     # {Lain::Error} next to the owner that raises it (see {Paths::Unwritable}).
@@ -77,21 +82,66 @@ module Lain
     # @raise [Answers::NotAList] when a strength is not a list of tables
     # @raise [Answers::MalformedEntry] when a remembered entry could never match a call
     def self.load(root: Dir.pwd)
-      path = File.join(root, ".lain", "config.toml")
+      path = path_for(root)
       return empty unless File.exist?(path)
 
-      raw =
-        begin
-          Tomlrb.load_file(path)
-        rescue Tomlrb::ParseError, ArgumentError, SystemCallError => e
-          # ArgumentError: invalid byte sequence (bad encoding). SystemCallError:
-          # EACCES/EISDIR and siblings -- "the file is there but unusable" is one
-          # failure to a caller, whichever of the three raised it.
-          raise Malformed.new(path, e)
-        end
-
+      raw = read(path)
       new(epics: Epics.from(raw["epics"], path:), approval: Answers.from(raw["approval"], path:))
     end
+
+    # The `[sensitivity]` table, and NOTHING else in the file -- what a project
+    # adds to the path classifier's built-in tables, and the one thing it may
+    # take away.
+    #
+    # Read on its own rather than off a loaded {Config}, and the separation is
+    # the whole point. This table RESTRICTS, so a project's denials silently
+    # not being in force is the worst outcome available and it must refuse
+    # loudly. Every OTHER table tolerates its own typo at the cost of its own
+    # feature -- {Project::Consent} drops a broken `[approval]` to a notice,
+    # {CLI::EpicMount} does the same for `[epics]` -- because those grant, so
+    # dropping them fails closed. Reading them together forces one posture on
+    # both, and the posture it forced was the strict one: a typo in `[epics]`
+    # took `lain chat` down with it.
+    #
+    # An unparseable FILE still raises {Malformed} here, because a file nobody
+    # can parse is a sensitivity table nobody can read -- but that is the one
+    # failure {CLI::Wiring::BoardBuild} degrades to a notice, since only there
+    # is there a human to tell.
+    #
+    # `root:` is REQUIRED, where {.load}'s is defaulted -- this entry is new, its
+    # one production caller holds a resolved {Project}, and a working-directory
+    # default is precisely the divergence this chunk exists to remove
+    # ({Sensitivity.new} refuses one for the same reason). `spec/lain/project/
+    # root_defaults_spec.rb` is the guard, and it caught this.
+    #
+    # @param root [String] a project root; `.lain/config.toml` is resolved under it
+    # @return [Sensitivity::Rules] empty when the file or the table is absent
+    # @raise [Malformed] when the file exists but cannot be read as TOML
+    # @raise [Sensitivity::Rules::NotATable] when `sensitivity` is not a table
+    # @raise [Sensitivity::Rules::UnknownKeys] when it names a strength this class does not know
+    # @raise [Sensitivity::Rules::NotAList] when a strength is not a list of patterns
+    # @raise [Sensitivity::Rules::MalformedPattern] when a pattern could never match anything
+    def self.sensitivity(root:)
+      path = path_for(root)
+      return Sensitivity::Rules.empty unless File.exist?(path)
+
+      Sensitivity::Rules.from(read(path)["sensitivity"], path:)
+    end
+
+    def self.path_for(root) = File.join(root, ".lain", "config.toml")
+
+    # The shared parse, so the two readers above cannot disagree about what the
+    # file says -- only about how loudly to complain.
+    def self.read(path)
+      Tomlrb.load_file(path)
+    rescue Tomlrb::ParseError, ArgumentError, SystemCallError => e
+      # ArgumentError: invalid byte sequence (bad encoding). SystemCallError:
+      # EACCES/EISDIR and siblings -- "the file is there but unusable" is one
+      # failure to a caller, whichever of the three raised it.
+      raise Malformed.new(path, e)
+    end
+
+    private_class_method :path_for, :read
 
     # @return [Config] every field at its default -- the value an absent file yields.
     def self.empty

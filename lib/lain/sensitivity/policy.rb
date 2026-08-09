@@ -105,15 +105,36 @@ module Lain
         def gates?(_effect) = false
         def denial(_effect) = nil
 
+        # {Filter::Null}, which already means "withholds nothing" -- so the
+        # Null's third answer needs no third object. A policy that gates
+        # nothing listing everything is the same posture said once more.
+        def filter = Filter::Null.instance
+
         INSTANCE = new.freeze
 
         def self.instance = INSTANCE
       end
 
+      # The listing half of the same boundary: what {Middleware::WithholdSecretPaths}
+      # sifts a `grep`/`glob`/`list_files` result through.
+      #
+      # It is THIS object's second answer rather than something a caller builds
+      # beside it, and that is the whole point. The classifier is exposed
+      # nowhere -- not here, not on the board -- so there is no way to construct
+      # a second filter over a different one. A gate that refuses a path while
+      # the listing that found it enumerates the same path is the one
+      # disagreement this boundary cannot have, and this shape makes it
+      # unrepresentable rather than a property somebody has to remember to test.
+      attr_reader :filter
+
       # @param sensitivity [Sensitivity] the classifier, injected -- its home,
       #   cwd and project rules are all somebody else's to resolve
       def initialize(sensitivity:)
         @sensitivity = sensitivity
+        # Built HERE, not memoized in the reader: this object freezes itself, so
+        # a lazy `@filter ||=` raises FrozenError the first time anybody asks --
+        # and the first asker is the tool phase, mid-run.
+        @filter = Filter.new(sensitivity:)
         freeze
       end
 

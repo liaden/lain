@@ -46,18 +46,26 @@ end
 # what an example needs to see is which object the Agent was built over, and
 # that the module never went looking for a board of its own.
 class AgentBuildSpecBoard
-  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals
+  attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity
 
-  # The run's ONE region ledger, and the approval queue a `--yolo` board leaves
-  # nil -- both real, because {Lain::Middleware::RedactSecretReads} takes them
-  # as required keywords with no default and a double answering nil for either
-  # would test a construction production cannot reach.
+  # The run's ONE region ledger, the approval queue a `--yolo` board leaves
+  # nil, and the path policy -- all real, because the three tool-phase guards
+  # take them as required keywords with no default and a double answering nil
+  # for any of them would test a construction production cannot reach.
+  #
+  # `sensitivity` joined that list at T23, when {CLI::ToolGuard} started
+  # reading the listing filter off the board's policy instead of passing a
+  # Null. It is the slot a real {CLI::Switchboard} has always had; this
+  # stand-in simply had no reason to answer it until something asked.
   def initialize(toolset, approvals: nil)
     @toolset = toolset
     @gate_calls = []
     @grafted = []
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
+    @sensitivity = Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
+    )
   end
 
   def gate(inner:)

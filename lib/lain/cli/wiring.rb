@@ -4,6 +4,7 @@ require "active_support/core_ext/module/delegation"
 
 require_relative "wiring/agent_build"
 require_relative "wiring/base_tools"
+require_relative "wiring/board_build"
 require_relative "wiring/toolset_build"
 
 module Lain
@@ -350,6 +351,11 @@ module Lain
         @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation(channel))
         @ask_human = wire_askers(parent)
         toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human, notice:)
+        # The board is resolved BEFORE the record opens, and the statement order
+        # IS the guarantee -- see #switchboard for what can refuse here and why
+        # a refusal must land ahead of the header. Memoized there, so the
+        # #build_agent below resolves the same board rather than a second one.
+        switchboard(backend, toolset, notice)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
         # ASSIGNED, not merely returned: `parent` above closes over this local,
         # and the tools built between here and there read it at CALL time. Left
@@ -357,7 +363,7 @@ module Lain
         # `agent = wire_agent(...)` binds a different local in a different scope
         # -- so the first ask_human question and the first subagent spawn both
         # raise NoMethodError on nil.
-        agent = build_agent(toolset:, channel:, session:, backend:, timeline: resumed&.timeline, views:, notice:)
+        agent = build_agent(toolset:, channel:, session:, backend:, resumed:, views:, notice:)
       end
 
       private
@@ -391,6 +397,21 @@ module Lain
       def prompt_renderer(agent, notice)
         state = Frontend::PromptComposer::RunState.new(agent:, clock: run_clock, status_feed: @status_feed)
         Frontend::PromptComposer.renderer(state:, notify: notice || Frontend::PromptComposer::SILENT)
+      end
+
+      # The Agent and everything hung off the provider it talks to is
+      # {AgentBuild}'s question now, not this assembler's. This method survives
+      # the extraction because it is the seam `spec/lain/cli_spec.rb` drives --
+      # which is also what pins `session:` as required, so a defaulted fresh
+      # Session cannot silently mis-wire memory.
+      #
+      # It takes `resumed:` rather than a `timeline:` lifted off it, because the
+      # caller reading `resumed&.timeline` cost #wire_agent the one branch that
+      # put it over AbcSize -- and a method that takes the resume RESULT, as
+      # #resume_start already does, is the better-shaped one anyway.
+      def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil, notice: nil)
+        AgentBuild.build(board: switchboard(backend, toolset, notice), chronicle:, channel:, session:, backend:,
+                         timeline: resumed&.timeline, views:)
       end
 
       # A resumed chat opens its NEW journal chained to the old one; a fresh chat
@@ -478,23 +499,20 @@ module Lain
       # could see it.
       def replies = -> { @replies }
 
-      # The Agent and everything hung off the provider it talks to is
-      # {AgentBuild}'s question now, not this assembler's. This method survives
-      # the extraction because it still does the one piece of work that could
-      # not move: `switchboard(backend, toolset)` is the ONLY call to
-      # #switchboard, so the memo three later readers depend on is assigned
-      # here or nowhere. {AgentBuild}'s comment carries the why.
-      def build_agent(toolset:, channel:, session:, backend:, timeline: nil, views: nil, notice: nil)
-        AgentBuild.build(board: switchboard(backend, toolset, notice), chronicle:, channel:, session:, backend:,
-                         timeline:, views:)
-      end
-
       # I4/T14: the {Switchboard} owns Gate's policy now -- the queue (or
       # ApproveAll under --yolo) behind the ONE PolicySwitch /yolo flips; Gate
       # itself stays construction-fixed. It resolves its own journal from the
-      # chronicle (the null device under --no-journal). Memoized where
-      # build_agent first needs it, so the direct build_agent seam the specs
-      # drive assembles it too.
+      # chronicle (the null device under --no-journal). Memoized because
+      # #wire_agent resolves it and {AgentBuild} is handed what came back.
+      #
+      # #wire_agent calls this BEFORE `chronicle.start`, and that ordering is a
+      # requirement rather than a reading order: everything below can REFUSE --
+      # {Project::Consent} reads this root's `[approval]` table, {BoardBuild}
+      # compiles its `[sensitivity]` one, and a bad sensitivity table is a
+      # refusal by design. `#start` builds the {SessionRecord::Scribe}, whose
+      # constructor writes the session header, so a refusal after it leaves a
+      # record on disk for a chat that never ran. {#fleet_isolation} keeps the
+      # same refusal-before-journal ordering, for the same reason.
       #
       # T10: it owns the run's CAPABILITY set on the same terms. `toolset:` is
       # the BASE set every posture resolves from -- attenuation is monotone, so
@@ -502,9 +520,17 @@ module Lain
       # never from what the previous posture left behind -- and what comes back
       # as `board.toolset` is the live slot the Agent and its executor hold, so
       # a `/mode` flip changes the rendered schema without rebuilding either.
+      #
+      # T23: it owns the run's PATH boundary on the same terms. What that
+      # boundary is built FROM -- the consented root's remembered answers and
+      # this project's `[sensitivity]` table -- is {BoardBuild}'s question, not
+      # this assembler's: the class comment's rule bit here first, at
+      # Metrics/ClassLength, and it says extract rather than loosen. Until that
+      # module existed the board took the constructor's
+      # {Lain::Sensitivity::Policy::Null} default, so `gates?` answered false for
+      # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset, notice = nil)
-        @switchboard ||= Switchboard.for(chronicle:, options:, model: backend.context.model, toolset:,
-                                         rules: Project::Consent.for(project:, notice:).rules)
+        @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:, notice:)
       end
 
       # The Repl over the run's collaborators -- the accessors are this class's

@@ -9,11 +9,20 @@ require "stringio"
 # ledger from a freshly constructed second one, which is exactly the mistake
 # this file exists to catch.
 class ToolGuardSpecBoard
-  attr_reader :ledger, :approvals
+  attr_reader :ledger, :approvals, :sensitivity
 
-  def initialize(approvals: nil)
+  # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
+  # for this file's own reason, one slot over: T23's claim is that the listing
+  # guard filters through the BOARD's policy rather than through a second
+  # filter built beside it, and a double answering `filter` cannot tell those
+  # apart. The default is the live one because that is what {CLI::Wiring} now
+  # builds; a `--yolo`-shaped board with no classifier passes the Null.
+  def initialize(approvals: nil, sensitivity: nil)
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
+    @sensitivity = sensitivity || Lain::Sensitivity::Policy.new(
+      sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/project")
+    )
   end
 end
 
@@ -49,6 +58,8 @@ RSpec.describe Lain::CLI::ToolGuard do
 
   def read_guard(board) = guards(board).grep(Lain::Middleware::RedactSecretReads).first
 
+  def read_call(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
+
   describe "the stack it builds" do
     it "puts the write, read and listing guards in the tool phase, in that order" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
@@ -56,14 +67,43 @@ RSpec.describe Lain::CLI::ToolGuard do
                 Lain::Middleware::WithholdSecretPaths])
     end
 
-    # Pinned by NAME, and asserting the guard is inert, because a stack entry
-    # is only half of what makes a guard live: nothing constructs a
-    # {Lain::Sensitivity} classifier yet, so the only filter there is to pass
-    # is the Null. Naming it here is what stops the swap to a real filter from
-    # happening silently, and what stops the example above from reading as
-    # "the listing guard works" when it cannot yet withhold anything.
-    it "wires the listing guard with the Null filter, because no classifier is constructed yet" do
-      guard = guards(ToolGuardSpecBoard.new).grep(Lain::Middleware::WithholdSecretPaths).first
+    # This example was the Null pin -- "wires the listing guard with the Null
+    # filter, because no classifier is constructed yet" -- and it existed so
+    # T23's swap could not happen silently. It has happened, so the pin is
+    # INVERTED rather than deleted: a stack entry is still only half of what
+    # makes a guard live, and this is the other half.
+    #
+    # Identity against `board.sensitivity.filter`, never `be_a(Filter)`: a
+    # filter built HERE from a freshly constructed classifier would be a real
+    # Filter, would answer every message, and would judge a DIFFERENT set of
+    # paths than the gate -- the run enumerating a path its own gate refuses to
+    # read. Only sameness can see that, and the shape makes it structural: the
+    # Policy exposes no classifier, so this is the only filter reachable.
+    it "wires the listing guard with the board's own filter, over the classifier the gate reads" do
+      board = ToolGuardSpecBoard.new
+      guard = guards(board).grep(Lain::Middleware::WithholdSecretPaths).first
+
+      expect(guard.filter).to be(board.sensitivity.filter)
+      expect(guard.filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
+    end
+
+    # The consequence a reader can check, and it fails against any second
+    # filter whatever its construction: the row the gate would gate is the row
+    # this guard drops.
+    it "so a path the gate gates is a path the listing guard withholds" do
+      board = ToolGuardSpecBoard.new
+      guard = guards(board).grep(Lain::Middleware::WithholdSecretPaths).first
+      gated = "/home/tester/project/.env"
+
+      expect(board.sensitivity.gates?(read_call(gated))).to be(true)
+      expect(guard.filter.sift([gated]) { |row| [row] }.withheld.map(&:reason)).to eq([:credential])
+    end
+
+    # The other half of the Null story: a board that resolved no classifier
+    # produces byte-identical listings, with no `if filter` anywhere.
+    it "passes the Null filter through when the board wired no classifier" do
+      board = ToolGuardSpecBoard.new(sensitivity: Lain::Sensitivity::Policy::Null.instance)
+      guard = guards(board).grep(Lain::Middleware::WithholdSecretPaths).first
 
       expect(guard.filter).to be(Lain::Sensitivity::Filter::Null.instance)
     end

@@ -40,15 +40,30 @@ module Lain
       # shapes, and the count of what was dropped has to be reported or the
       # agent reads the listing as complete.
       #
-      # It is wired with the Null filter, and that is the honest wiring TODAY
-      # rather than a stub: nothing in this process constructs a
-      # {Sensitivity} classifier yet, so `board.sensitivity` is
-      # {Sensitivity::Policy::Null} and there is no classifier to hand over.
-      # {Sensitivity::Filter} refuses a nil one rather than defaulting, so the
-      # choice has to be made HERE and be visible. T23 replaces this with the
-      # real filter; the spec pins the Null by name so that swap cannot happen
-      # silently, and so this stack entry cannot be mistaken for a live guard.
-      def path_filter(_board) = Sensitivity::Filter::Null.instance
+      # The filter is the BOARD's, and specifically its policy's own second
+      # answer -- never one built here. {Sensitivity::Policy} exposes no
+      # classifier, so this is the only filter reachable from a board, which is
+      # what makes the failure it prevents unrepresentable rather than merely
+      # untested: a filter constructed here over a freshly built classifier
+      # would answer every message and judge a DIFFERENT set of paths than the
+      # gate, so a run would enumerate paths its own gate refuses to read.
+      #
+      # It stops being a Null the moment a session resolves a project, because
+      # {CLI::Wiring::BoardBuild} builds the classifier the policy wraps (T23).
+      # A board that resolved none carries {Sensitivity::Policy::Null}, whose
+      # filter is {Sensitivity::Filter::Null} -- so listings are byte-identical
+      # to what that run produced before this boundary existed, and no line
+      # here asks which case it is in.
+      #
+      # This SNAPSHOTS the filter, where the gate and
+      # {Wiring::ToolsetBuild::LiveSensitivity} both re-read `board.sensitivity`
+      # per call -- so the agreement above rests on that slot being
+      # construction-fixed. It is: {Switchboard} exposes no writer for it, and
+      # it is not one of the live slots the board re-binds in place (`toolset`
+      # is, through {Switchboard#apply}, which is why the distinction is worth
+      # stating rather than assuming). Should `sensitivity` ever become
+      # re-bindable, this line has to become late too.
+      def path_filter(board) = board.sensitivity.filter
 
       # `--yolo` wires NO queue ({Switchboard#approvals} is nil), and the
       # stand-in is named HERE rather than defaulted inside the middleware: a

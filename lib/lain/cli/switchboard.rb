@@ -71,6 +71,12 @@ module Lain
       # session was built with and never from what the previous posture left
       # behind (see {Mode::Resolution}'s note on `base:`).
       #
+      # `rules:` and `sensitivity:` are two vocabularies and never one. `rules:`
+      # is APPROVAL -- remembered answers about call SHAPES, which grant. The
+      # other is the PATH classifier, which restricts and grants nothing. They
+      # travel side by side here because the run has exactly one of each, and
+      # neither may be passed where the other is expected.
+      #
       # @param chronicle [#record_journal] the run's chronicle; its journal is
       #   what the switches record onto
       # @param options [Hash] the CLI's parsed surface flags
@@ -79,12 +85,17 @@ module Lain
       # @param rules [Enumerable<Approval::Rule>] the deterministic rung's rules,
       #   which for a live session is {Project::Consent#rules} -- the remembered
       #   answers a CONSENTED root is allowed to contribute
+      # @param sensitivity [#gates?] which PATHS this session gates, built by
+      #   {CLI::Wiring} over the resolved {Project} and that project's
+      #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
+      #   so the direct-construction seams a spec drives are unchanged
       # @option options [Boolean] :yolo start approving everything, with no
       #   queue -- the only flag this entry reads off `options`, so a board
       #   built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:, rules: [])
-        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:)
+      def self.for(chronicle:, options:, model:, toolset:, rules: [],
+                   sensitivity: Sensitivity::Policy::Null.instance)
+        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:, sensitivity:)
       end
 
       # @param journal [#record] where flips and approval decisions land

@@ -59,6 +59,26 @@ class WiringSpecWorker
   def dead? = @stopped
 end
 
+# Counts the calls to `#start` and is otherwise the chronicle it wraps. T23
+# needs an ORDERING claim -- that a config refusal lands before the session
+# record is opened -- and `#start` is the moment that record exists: it builds
+# the {Lain::SessionRecord::Scribe}, whose constructor writes the header. So
+# "start was never called" is exactly "no orphan header on disk", asserted
+# without parsing journal bytes.
+class WiringSpecStartSpy < SimpleDelegator
+  attr_reader :starts
+
+  def initialize(inner)
+    super
+    @starts = 0
+  end
+
+  def start(**)
+    @starts += 1
+    super
+  end
+end
+
 RSpec.describe Lain::CLI::Wiring do
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
@@ -1581,6 +1601,229 @@ RSpec.describe Lain::CLI::Wiring do
               expect(wiring.project.root).to eq(root)
             end
           end
+        end
+      end
+    end
+  end
+
+  # T23. Every OTHER spec of this boundary passes by handing a classifier in,
+  # and production handed one in nowhere -- `Switchboard.for` never passed
+  # `sensitivity:`, so the constructor's Null default stood and `gates?`
+  # answered false for every path in every real chat. So nothing here injects a
+  # classifier or a policy: each example builds a chat the way #run does,
+  # through #wire_agent, and reads the board that assembly memoized. An example
+  # that passed a Sensitivity in would prove exactly what the last twenty-two
+  # cards' specs proved, which is nothing.
+  describe "the path boundary a real chat builds" do
+    def board_for(root:, cwd: root)
+      wiring = wired(root:, cwd:)
+      # The memo #build_agent assigned -- arguments ignored, since `||=` has
+      # already answered. Reaching for it privately rather than adding a public
+      # reader: the board IS this run's authority, and nothing in lib/ asks
+      # Wiring for it.
+      wiring.send(:switchboard, backend, nil)
+    end
+
+    def wired(root:, cwd: root, chronicle: self.chronicle)
+      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
+                                   project: Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag))
+      recorder, session = wiring.run_state(nil)
+      wiring.wire_agent(channel:, recorder:, session:, backend:)
+      wiring
+    end
+
+    def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
+
+    # The reason the board's own classifier gave, asked through the surface
+    # that reports one. `gates?` answers a Boolean, and the GATED half of the
+    # table carries its verdict out through exactly one production reader --
+    # the listing filter's withheld rows, which is what prints `2 paths
+    # withheld (credential)`. So this is the board's real answer, not a second
+    # classifier built to the same recipe, and it needs no reach past the Policy.
+    def verdict_for(board, path) = board.sensitivity.filter.sift([path]) { |row| [row] }.withheld.first
+
+    # `HOME` is injected at the tmpdir base for the reason the T5 walk group
+    # above injects it: the home-ANCHORED half of the classifier's denied table
+    # is built from it, so a fixture reading this developer's real home would
+    # assert against a directory nobody controls. {Lain::Paths} is where the
+    # boundary reads it, and it reads the environment it is given.
+    def in_tree(config: nil)
+      Dir.mktmpdir("lain-t23") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo")
+        home = File.join(base, "home")
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(File.join(root, ".lain", "config.toml"), config) if config
+        with_env("HOME" => home, "XDG_STATE_HOME" => File.join(base, "state")) { yield(root, home) }
+      end
+    end
+
+    it "gates a credential-shaped path under the project root" do
+      in_tree do |root|
+        board = board_for(root:)
+
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+      end
+    end
+
+    it "names a credential as the reason it gated one" do
+      in_tree do |root|
+        verdict = verdict_for(board_for(root:), File.join(root, ".env"))
+
+        expect([verdict&.level, verdict&.reason]).to eq(%i[gated credential])
+      end
+    end
+
+    it "leaves an ordinary path ungated" do
+      in_tree do |root|
+        board = board_for(root:)
+
+        expect(board.sensitivity.gates?(read_of(File.join(root, "README.md")))).to be(false)
+      end
+    end
+
+    # No config at all: the built-in tables are what a project gets, and the
+    # unambiguous half of the denied table matches wherever it sits.
+    it "denies a private key with no config to say so" do
+      in_tree do |root, home|
+        denial = board_for(root:).sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")))
+
+        expect([denial&.path, denial&.reason]).to eq([File.join(home, ".ssh", "id_rsa"), :protected])
+      end
+    end
+
+    # The home-ANCHORED half of the same table, which is the half that can only
+    # work if the injected home actually reached the classifier: `.kube/config`
+    # is denied under this run's home and ordinary anywhere else.
+    it "anchors the home-relative rules at the home it was given" do
+      in_tree do |root, home|
+        board = board_for(root:)
+
+        expect(board.sensitivity.denial(read_of(File.join(home, ".kube", "config")))&.reason).to eq(:protected)
+        expect(board.sensitivity.denial(read_of(File.join(root, ".kube", "config")))).to be_nil
+      end
+    end
+
+    it "denies what the project's own [sensitivity] table denies, in the project's own words" do
+      in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root|
+        denial = board_for(root:).sensitivity.denial(read_of(File.join(root, "prod.secret")))
+
+        expect(denial&.reason).to eq(:configured)
+        expect(denial&.verdict&.explanation).to eq("named by this project's sensitivity config")
+      end
+    end
+
+    it "gates what the project's [sensitivity] table merely gates" do
+      in_tree(config: "[sensitivity]\ngated = [\"*.private\"]\n") do |root|
+        board = board_for(root:)
+
+        expect(board.sensitivity.gates?(read_of(File.join(root, "notes.private")))).to be(true)
+        expect(board.sensitivity.denial(read_of(File.join(root, "notes.private")))).to be_nil
+      end
+    end
+
+    # LOUD, and not rescued the way a broken [approval] table is: that one
+    # grants, so dropping it fails closed; this one restricts, so a session that
+    # ran with it silently un-parsed would be running with the project's
+    # denials off.
+    it "refuses a malformed [sensitivity] table at construction, naming the file" do
+      in_tree(config: "sensitivity = \"strict\"\n") do |root|
+        expect { wired(root:) }
+          .to raise_error(Lain::Sensitivity::Rules::NotATable,
+                          /#{Regexp.escape(File.join(root, ".lain", "config.toml"))}.*must be a table/)
+      end
+    end
+
+    # BEFORE the session header is pinned, which is {Wiring#fleet_isolation}'s
+    # stated ordering one method away: a refusal after `chronicle.start` leaves
+    # a session record on disk for a chat that never ran. `#start` is what
+    # builds the Scribe, and the Scribe writes the header in its constructor, so
+    # "start was never called" IS "no orphan record".
+    it "refuses before the session record is opened, leaving no orphan header" do
+      in_tree(config: "sensitivity = \"strict\"\n") do |root|
+        spy = WiringSpecStartSpy.new(Lain::CLI::Chronicle::Null.new)
+
+        expect { wired(root:, chronicle: spy) }.to raise_error(Lain::Sensitivity::Rules::NotATable)
+        expect(spy.starts).to eq(0)
+      end
+    end
+
+    # And the converse, so the ordering above is not satisfied by never starting
+    # at all: an ordinary chat still pins its header.
+    it "still opens the session record when the config is fine" do
+      in_tree do |root|
+        spy = WiringSpecStartSpy.new(Lain::CLI::Chronicle::Null.new)
+        wired(root:, chronicle: spy)
+
+        expect(spy.starts).to eq(1)
+      end
+    end
+
+    # F2's ruling, at the session: the strict compile is the sensitivity table's
+    # alone. A typo in a table this boundary never reads costs that table's
+    # feature, never the chat -- which is how it was before this card, and how a
+    # user mid-task needs it to stay.
+    it "does not take the session down for a typo in an unrelated table" do
+      in_tree(config: %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n)) do |root|
+        board = board_for(root:)
+
+        expect(board.sensitivity.denial(read_of(File.join(root, "prod.secret")))&.reason).to eq(:configured)
+      end
+    end
+
+    it "keeps the built-in rules when the config file will not parse at all" do
+      in_tree(config: "this is not [valid toml") do |root, home|
+        board = board_for(root:)
+
+        expect(board.sensitivity.denial(read_of(File.join(home, ".ssh", "id_rsa")))&.reason).to eq(:protected)
+        expect(board.sensitivity.gates?(read_of(File.join(root, ".env")))).to be(true)
+      end
+    end
+
+    # The child's half of the same wiring: {ToolsetBuild::LiveSensitivity}
+    # delegates to `board.sensitivity` per call, so a subagent asks THIS
+    # classifier. It answered the Null's false until the board held a real one.
+    it "hands the same classifier to the subagent seam" do
+      in_tree do |root|
+        live = wired(root:).send(:toolset_build).send(:seam).sensitivity
+
+        expect(live.gates?(read_of(File.join(root, ".env")))).to be(true)
+      end
+    end
+
+    # The TOOL phase, from the production board. Two independent things had to
+    # be true for this axis to fire, and asserting only one is how the card
+    # half-lands and looks done: the stack has to CARRY the listing guard, and
+    # that guard's filter has to be a live one rather than the Null. Both here,
+    # in one example, over the board a real chat built.
+    describe "the tool phase over that board" do
+      def listing_guard(board)
+        Lain::CLI::ToolGuard.stack(chronicle, board).to_a.grep(Lain::Middleware::WithholdSecretPaths).first
+      end
+
+      it "carries the listing guard, filtering through the board's own classifier" do
+        in_tree do |root|
+          board = board_for(root:)
+
+          expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
+            .to eq([Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
+                    Lain::Middleware::WithholdSecretPaths])
+          expect(listing_guard(board).filter).to be(board.sensitivity.filter)
+          expect(listing_guard(board).filter).not_to be(Lain::Sensitivity::Filter::Null.instance)
+        end
+      end
+
+      # And what that buys, end to end: a listing that names a credential-shaped
+      # path has that row dropped, with the count and the reason reported --
+      # never silently, because a truncated listing reads as "that is
+      # everything" and the agent acts on it.
+      it "withholds a credential-shaped row from a listing, and says so" do
+        in_tree do |root|
+          sifted = listing_guard(board_for(root:))
+                   .filter.sift([File.join(root, "README.md"), File.join(root, ".env")]) { |row| [row] }
+
+          expect(sifted.kept).to eq([File.join(root, "README.md")])
+          expect([sifted.count, sifted.reasons]).to eq([1, [:credential]])
         end
       end
     end

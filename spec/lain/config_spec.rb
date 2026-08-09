@@ -202,4 +202,102 @@ RSpec.describe Lain::Config do
       expect(a.hash).not_to eq(b.hash)
     end
   end
+
+  # T23. The `[sensitivity]` table is read on its OWN, by {.sensitivity} rather
+  # than through {.load}, and that separation is the point rather than an
+  # accident of load order: this table RESTRICTS, so it must refuse loudly, and
+  # every other table TOLERATES a typo at the cost of its own feature. Reading
+  # them together would force one posture on both -- which it did, briefly, and
+  # a typo in `[epics]` took `lain chat` down with it.
+  describe ".sensitivity" do
+    # No working-directory default, unlike {.load}: the caller holds a resolved
+    # project root, and defaulting one here is the divergence this chunk exists
+    # to remove.
+    it "takes its root from the caller rather than the working directory" do
+      expect { described_class.sensitivity }.to raise_error(ArgumentError, /root/)
+    end
+
+    it "compiles the project's patterns into rules the classifier can hold" do
+      Dir.mktmpdir do |root|
+        write_config(root, <<~TOML)
+          [sensitivity]
+          denied = ["*.secret"]
+          gated = ["*.private"]
+          exempt = [".gitconfig"]
+        TOML
+
+        rules = described_class.sensitivity(root:)
+
+        expect([rules.denied.size, rules.gated.size, rules.exempt.size]).to eq([1, 1, 1])
+      end
+    end
+
+    # Null Object, not nil: an absent table leaves the built-in tables in force,
+    # which is the difference between "this project adds nothing" and "this
+    # project has no boundary".
+    it "answers empty rules when a config file carries no sensitivity table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nhome = \"repo\"\n")
+
+        expect(described_class.sensitivity(root:)).to eq(Lain::Sensitivity::Rules.empty)
+      end
+    end
+
+    it "answers empty rules for a root with no config file at all" do
+      Dir.mktmpdir do |root|
+        expect(described_class.sensitivity(root:)).to eq(Lain::Sensitivity::Rules.empty)
+      end
+    end
+
+    # THE INDEPENDENCE, in both directions. A broken `[epics]` must not cost the
+    # project its path rules, and a broken `[sensitivity]` must not be excused
+    # by the rest of the file parsing cleanly.
+    it "reads the sensitivity table even when another table is malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n))
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect(described_class.sensitivity(root:).denied.size).to eq(1)
+      end
+    end
+
+    it "refuses its own bad table even when every other table is fine" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(sensitivity = "strict"\n\n[epics]\nhome = "repo"\n))
+
+        expect { described_class.load(root:) }.not_to raise_error
+        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Sensitivity::Rules::NotATable)
+      end
+    end
+
+    it "refuses a scalar where the table belongs, naming the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(sensitivity = "strict"\n))
+
+        expect { described_class.sensitivity(root:) }
+          .to raise_error(Lain::Sensitivity::Rules::NotATable, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    it "refuses a pattern that could never match, naming the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[sensitivity]\ndenied = [\"config/secrets/prod.key\"]\n")
+
+        expect { described_class.sensitivity(root:) }
+          .to raise_error(Lain::Sensitivity::Rules::MalformedPattern, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    # A file nobody can parse is a file whose sensitivity table nobody can read
+    # either, so this one stays a Malformed -- and {CLI::Wiring::BoardBuild} is
+    # where that degrades to a notice, because only there is there somebody to
+    # tell.
+    it "still reports an unparseable file as Malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, "this is not [valid toml")
+
+        expect { described_class.sensitivity(root:) }.to raise_error(Lain::Config::Malformed)
+      end
+    end
+  end
 end

@@ -155,6 +155,16 @@ module Lain
 
     attr_reader :nvim_plugin_root
 
+    # The user's home directory, from the INJECTED env -- the base every XDG
+    # accessor below falls back to, and the anchor {Sensitivity} classifies
+    # against. Public since T23: the path classifier needs a home that a spec
+    # can pin, and this class is already the one place that resolves it from a
+    # substitutable environment. It reads no filesystem and creates nothing, so
+    # exposing it hands out a naming and no authority.
+    #
+    # @return [String]
+    def home = present(@env["HOME"]) || Dir.home
+
     def config_home = xdg_dir("XDG_CONFIG_HOME", ".config")
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")
     def state_home = xdg_dir("XDG_STATE_HOME", ".local/state")
@@ -211,8 +221,6 @@ module Lain
     def xdg_dir(var, fallback)
       File.join(present(@env[var]) || File.join(home, fallback), "lain")
     end
-
-    def home = present(@env["HOME"]) || Dir.home
 
     # The XDG Base Directory spec: a non-absolute value is invalid and MUST be
     # ignored, so relative folds into the same treat-as-unset branch as empty.

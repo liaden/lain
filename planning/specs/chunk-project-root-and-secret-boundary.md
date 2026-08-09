@@ -2152,6 +2152,11 @@ ordering two add-only sets cannot express.
   signature and not a regression — but it cost three full suite runs, and **the load source was
   our own concurrency**: a review panel was running suites while the orchestrator ran the hook.
   Worth pricing into the schedule, not just diagnosing after the fact.
+  A ninth and tenth, found during T23: `frontend/neovim/layout_spec.rb` (failed once, then 21/21
+  serially and in two later full runs) and **`review/projection/diagnostics_spec.rb` — the first
+  member outside the nvim/tmux families**, which is worth watching: if the shared cause is worker
+  pressure rather than a real editor, the family is larger than "the seam specs". Every member found since the by-name rule was adopted has been recorded in
+  one line with no archaeology, which is the rule paying for itself.
   **Record these by NAME, never by line number.** The four originally recorded as `up_spec.rb:115`
   and `:175` no longer point at the flaky examples — T6 and T20 grew that file by 454 lines and the
   live failure now reports at `:166`. A stale line number in a flake list is worse than no list:
