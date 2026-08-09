@@ -19,8 +19,10 @@ RSpec.describe Lain::Review::Partition::ByCommit do
   end
 
   def changeset_over(diff, commits:)
-    source = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: commits.freeze,
-                                                                base_ref: "b" * 40, head_ref: "h" * 40)
+    source = DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: diff.b,
+                                                                                commits: commits.freeze,
+                                                                                base_ref: "b" * 40,
+                                                                                head_ref: "h" * 40))
     Lain::Review::Changeset.new(source:)
   end
 

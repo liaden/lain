@@ -51,6 +51,15 @@ module Lain
       # fetched, and {LocalBranch} refuses a ref that does not resolve -- rather
       # than quietly reviewing whatever the ref points at now. There is a spec.
       class GithubPr
+        # {#files} and {#identity}, over THIS class's {#diff} -- which is the
+        # reason they are included rather than delegated to {#local} the way
+        # {#commits} and {#file_at} are. {#diff} has two producers and the
+        # API-served bytes never reach the local branch, so a delegated `#files`
+        # would parse a locally regenerated diff instead of the bytes actually
+        # served: the same changeset most days, and silently a different one
+        # whenever the two disagree.
+        include Diffed
+
         # A wedged gh must not stall the bench driving it -- {Forge::Gh}'s
         # bound, at the same scale of one API round trip.
         DEFAULT_TIMEOUT = 60

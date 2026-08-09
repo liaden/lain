@@ -53,14 +53,14 @@ module Lain
       # place is the same shape that let the numstat and the diff disagree.
       #
       # It lives here rather than beside either caller because NEITHER can own
-      # it: putting it with the git invocation would make {Changeset::Parser}
+      # it: putting it with the git invocation would make {Source::Parser}
       # depend on {Source::LocalBranch}, inverting the port's premise that
-      # everything downstream reads four messages and does not know which source
-      # answered them.
+      # everything downstream reads the port's messages and does not know which
+      # source answered them.
       #
       # The one crossing in this module that is not a
       # record's: {Source::LocalBranch} reads a path out of a numstat and
-      # {Changeset::Parser} reads one out of a diff header, and the whole reason
+      # {Source::Parser} reads one out of a diff header, and the whole reason
       # this lives in ONE place is that those two answers are JOINED to each
       # other. They were not, and an ordinary `we"ird.rb` took a whole changeset
       # down with an `Unattributed` refusal because each side spelled it

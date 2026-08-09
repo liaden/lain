@@ -119,10 +119,18 @@ RSpec.describe Lain::Review::Changeset do
     Lain::Review::Source::Commit.new(sha:, subject:, body:, numstat: numstat.freeze)
   end
 
+  # The source hands down MODEL VALUES, so the double answers `files` and NOT
+  # `diff` -- and that is the assertion, not a convenience: an `instance_double`
+  # raises on a message nobody stubbed, so every example in this file fails the
+  # moment the changeset reaches for bytes it was not given. The parse itself is
+  # {Lain::Review::Source::Parser}'s, exercised here through the values it
+  # produces rather than restated as hand-written expectations.
+  def parsed(diff) = Lain::Review::Source::Parser.new(diff.b).files.freeze
+
   def fake_source(diff:, commits: [commit_record(sha: "c1", paths: ["one.rb"])],
                   base_ref: "b" * 40, head_ref: "h" * 40)
     instance_double(Lain::Review::Source::LocalBranch,
-                    diff: diff.b, commits: commits.freeze, base_ref:, head_ref:)
+                    files: parsed(diff), commits: commits.freeze, base_ref:, head_ref:)
   end
 
   def changeset_over(diff, **) = described_class.new(source: fake_source(diff:, **))
@@ -187,21 +195,21 @@ RSpec.describe Lain::Review::Changeset do
 
   describe "the line walk is lazy" do
     # An Enumerator that has already run the walk is not lazy, however it is
-    # spelled. Reading the SOURCE is the observable: no diff, no parse.
-    it "returns an Enumerator without reading the source's diff" do
+    # spelled. Reading the SOURCE is the observable: it is asked for nothing.
+    it "returns an Enumerator without reading the source at all" do
       source = fake_source(diff: one_file_diff)
       enumerator = described_class.new(source:).each_anchor
 
       expect(enumerator).to be_a(Enumerator)
-      expect(source).not_to have_received(:diff)
+      expect(source).not_to have_received(:files)
     end
 
-    it "reads the diff only once the enumerator is drawn from" do
+    it "reads the source only once the enumerator is drawn from" do
       source = fake_source(diff: one_file_diff)
       enumerator = described_class.new(source:).each_anchor
 
       expect(enumerator.first.anchor_text).to eq("alpha")
-      expect(source).to have_received(:diff)
+      expect(source).to have_received(:files)
     end
 
     it "does not materialize the walk: taking one line does not build the rest" do
@@ -209,11 +217,11 @@ RSpec.describe Lain::Review::Changeset do
       expect(changeset.each_anchor.lazy.map(&:line).first(2)).to eq([1, 2])
     end
 
-    it "reads neither the diff nor the walk when merely constructed" do
+    it "reads neither the files nor the walk when merely constructed" do
       source = fake_source(diff: one_file_diff)
       described_class.new(source:)
 
-      expect(source).not_to have_received(:diff)
+      expect(source).not_to have_received(:files)
       expect(source).not_to have_received(:commits)
     end
 
@@ -221,12 +229,12 @@ RSpec.describe Lain::Review::Changeset do
     # being consistent: a caller holding an `Enumerable` cannot tell which of the
     # two it has, and the eager one parses a work-scale diff to hand back an
     # object nobody has asked a question of yet.
-    it "returns an Enumerator from #each without reading the source's diff" do
+    it "returns an Enumerator from #each without reading the source at all" do
       source = fake_source(diff: one_file_diff)
       enumerator = described_class.new(source:).each
 
       expect(enumerator).to be_a(Enumerator)
-      expect(source).not_to have_received(:diff)
+      expect(source).not_to have_received(:files)
     end
 
     # An Enumerator with no size block answers `nil`, which a reader takes for
@@ -236,9 +244,9 @@ RSpec.describe Lain::Review::Changeset do
       source = fake_source(diff: one_file_diff)
       enumerator = described_class.new(source:).each_anchor
 
-      expect(source).not_to have_received(:diff)
+      expect(source).not_to have_received(:files)
       expect(enumerator.size).to eq(4)
-      expect(source).to have_received(:diff)
+      expect(source).to have_received(:files)
     end
 
     it "sizes each side's walk separately, agreeing with what that walk yields" do
@@ -415,7 +423,7 @@ RSpec.describe Lain::Review::Changeset do
     # about its own size.
     it "answers exactly the statuses the shared vocabulary declares, no more and no fewer" do
       answered = [%w[a a], [nil, "a"], ["a", nil], %w[a b]].map do |old_path, new_path|
-        described_class::ChangedFile.new(old_path:, new_path:, hunks: []).status
+        Lain::Review::Source::ChangedFile.new(old_path:, new_path:, hunks: []).status
       end
       expect(answered.uniq).to match_array(Lain::Review::FILE_STATUSES.map(&:to_sym))
     end
@@ -504,7 +512,7 @@ RSpec.describe Lain::Review::Changeset do
     let(:diff) { one_file_diff }
     let(:source) do
       instance_double(Lain::Review::Source::LocalBranch,
-                      diff: diff.b, commits: [commit_record(sha: "c1", paths:)].freeze,
+                      files: parsed(diff), commits: [commit_record(sha: "c1", paths:)].freeze,
                       base_ref: "b" * 40, head_ref: "h" * 40).tap do |double|
         allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
       end
@@ -776,16 +784,37 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
-  describe "deep immutability" do
-    subject(:changeset) { changeset_over(one_file_diff) }
+  # What a changeset does with what its source handed it -- which, since B2, is
+  # nothing at all. The files' own shareability and instance stability are the
+  # SOURCE's laws now (see the diff-bearing half of the port contract): a
+  # changeset can only be as immutable as the values it was given, so pinning
+  # them here would be pinning somebody else's promise.
+  describe "what it does with its source's model values" do
+    subject(:changeset) { described_class.new(source:) }
 
-    it "answers frozen, shareable value objects, so no reachable mutable state remains" do
-      expect(changeset.files).to all(satisfy { |file| Ractor.shareable?(file) })
+    let(:source) { fake_source(diff: one_file_diff) }
+
+    # The double answers no `diff` at all, so a changeset that still reached for
+    # bytes would raise here rather than quietly parse them a second time.
+    it "hands down the very array its source gave it, having parsed nothing" do
+      expect(changeset.files).to equal(source.files)
+    end
+
+    it "answers the same file objects on a second call" do
+      expect(changeset.files).to equal(changeset.files)
+    end
+
+    it "keeps a partition shareable, which is the changeset's own arithmetic over those values" do
       expect(changeset.partitions(walk)).to all(satisfy { |group| Ractor.shareable?(group) })
     end
 
-    it "answers the same file objects on a second call rather than reparsing" do
-      expect(changeset.files).to equal(changeset.files)
+    # The receiver is the SOURCE, and there is exactly one Changeset class, so
+    # there is no type test to be had here and none anywhere above it.
+    it "forwards its identity to the source rather than composing an address of its own" do
+      identity = Lain::Review::Source::Identity.new(scheme: "test-v1", parts: %w[a b])
+      allow(source).to receive(:identity).and_return(identity)
+
+      expect(changeset.identity).to equal(identity)
     end
   end
 

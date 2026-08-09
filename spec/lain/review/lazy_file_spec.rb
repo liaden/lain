@@ -6,7 +6,7 @@ RSpec.describe Lain::Review::LazyFile do
   end
 
   def changed_file(old_path: "a.rb", new_path: "a.rb", hunks: [hunk], binary: false)
-    Lain::Review::Changeset::ChangedFile.new(old_path:, new_path:, hunks:, binary:)
+    Lain::Review::Source::ChangedFile.new(old_path:, new_path:, hunks:, binary:)
   end
 
   # The chunker's CALLS are counted, not a memo ivar: "produced once" is a claim
@@ -50,7 +50,7 @@ RSpec.describe Lain::Review::LazyFile do
       expect(lazy(chunker: exploding, binary: true).binary?).to be(true)
     end
 
-    # {Changeset::ChangedFile} owns the status rule; this drives both over the
+    # {Source::ChangedFile} owns the status rule; this drives both over the
     # same path pairs so a drift is red rather than latent. The literal answers
     # are asserted too -- two objects agreeing on a raise would otherwise pass.
     it "answers exactly what a ChangedFile answers, for every path pair" do

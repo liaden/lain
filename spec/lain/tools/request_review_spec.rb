@@ -330,9 +330,10 @@ RSpec.describe Lain::Tools::RequestReview do
   # A double and not a repository: what the tool does WITH a changeset is the
   # subject here, and git's own answers are `Source`'s own spec's.
   def changeset_source
-    instance_double(Lain::Review::Source::LocalBranch, diff: changeset_diff.b,
-                                                       commits: changeset_commits.freeze,
-                                                       base_ref: -("b" * 40), head_ref: -("h" * 40))
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: changeset_diff.b,
+                                                                       commits: changeset_commits.freeze,
+                                                                       base_ref: -("b" * 40),
+                                                                       head_ref: -("h" * 40)))
   end
 
   # `Permissive` by default so the approve examples are about the VERDICT
@@ -1178,9 +1179,10 @@ RSpec.describe Lain::Tools::RequestReview do
 
     def oversized_source
       paths = oversized_paths
-      instance_double(Lain::Review::Source::LocalBranch, diff: oversized_diff(paths).b,
-                                                         commits: oversized_commits(paths).freeze,
-                                                         base_ref: -("b" * 40), head_ref: -("h" * 40))
+      DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: oversized_diff(paths).b,
+                                                                         commits: oversized_commits(paths).freeze,
+                                                                         base_ref: -("b" * 40),
+                                                                         head_ref: -("h" * 40)))
     end
 
     it "refuses in Bounds' own words rather than raising out of the tool call" do

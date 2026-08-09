@@ -10,8 +10,9 @@ RSpec.describe Lain::Review::Partition::ByDirectory do
     diff = paths.map do |path|
       "diff --git a/#{path} b/#{path}\n--- a/#{path}\n+++ b/#{path}\n@@ -1 +1 @@\n-old\n+new\n"
     end.join
-    source = instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: [],
-                                                                base_ref: "b" * 40, head_ref: "h" * 40)
+    source = DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: [],
+                                                                                base_ref: "b" * 40,
+                                                                                head_ref: "h" * 40))
     Lain::Review::Changeset.new(source:)
   end
 

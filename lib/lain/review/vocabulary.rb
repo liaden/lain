@@ -50,7 +50,7 @@ module Lain
     FILE_STATES = %w[reviewed partial unreviewed].freeze
 
     # What a diff says HAPPENED to a file, in the four spellings a TWO-TREE git
-    # diff can produce. Here rather than inside `Changeset::ChangedFile` for
+    # diff can produce. Here rather than inside `Source::ChangedFile` for
     # {SIDES}' reason: one declaration, with the Symbol form derived from it
     # (`ChangedFile::STATUSES`) instead of restated beside it.
     #

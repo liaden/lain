@@ -94,10 +94,6 @@ module Lain
       # decision nobody took.
       class AlreadySettled < Error; end
 
-      # Hashed, never merely prefixed -- {Hunk#key}'s lesson, for the same
-      # forgery reason, and this address IS journaled.
-      DIGEST_SCHEME = "review-changeset-v1"
-
       # Every scope a caller may name, which is every strategy that registered.
       # Read off {Partition::STRATEGIES}' keys rather than restated, so
       # shipping a strategy is the whole of making it reachable -- that is the
@@ -106,30 +102,24 @@ module Lain
 
       # The changeset's content address, and what {ReviewVerdict} judges.
       #
-      # Base, paths, statuses and hunk keys -- and deliberately NOT the head.
-      # The head moves every time the author commits, and surviving that is the
-      # entire purpose of {Hunk}'s content-addressed keys; an address that
-      # included it would open a new round on every amend and throw away every
-      # mark. The BASE is in it because {Marks} refuses to cross one at all, so
-      # a base change is genuinely a different review.
+      # ASKED, not composed. This method used to know what a changeset was made
+      # of -- base, paths, statuses, hunk keys -- which meant one method here had
+      # to know what every KIND of source was made of, and there is exactly one
+      # {Review::Changeset} class, so a second kind could only have been served
+      # by a type test. Now the object that HAS the parts supplies them: the
+      # changeset forwards to its source, and the source answers a
+      # {Source::Identity} carrying its scheme and its parts together. Nothing
+      # anywhere on this path asks what it is holding.
       #
-      # Statuses and paths are in it so a change no hunk can express -- a pure
-      # rename, a mode change, a binary blob swapped -- still moves the address.
+      # A diff source composes exactly what this method composed, so every
+      # `/review` address is bit-identical across the change and every journalled
+      # `changeset_digest` still joins. `session_spec.rb` pins that against a
+      # recomposition built here, independently, from
+      # {MarkedChangeset.keys_by_path}.
       #
       # @param changeset [Review::Changeset]
       # @return [String] scheme-prefixed hex digest
-      def self.digest(changeset) = Keying.digest(DIGEST_SCHEME, digest_parts(changeset))
-
-      # WHICH parts, in which order -- the only thing this object decides about
-      # its own address. How they are framed and how the scheme is bound to them
-      # belong to {Review::Keying}, where both properties have specs of their own
-      # rather than a comment here claiming them.
-      def self.digest_parts(changeset)
-        keys = MarkedChangeset.keys_by_path(changeset)
-        [changeset.base_ref,
-         *changeset.files.flat_map { |file| [file.path, file.status.to_s, *keys.fetch(file.path, [])] }]
-      end
-      private_class_method :digest_parts
+      def self.digest(changeset) = changeset.identity.digest
 
       # Resolve a name against the strategy registry.
       #

@@ -3,17 +3,31 @@
 module Lain
   module Review
     # A changeset is files -> hunks -> anchorable lines, read from a {Source} and
-    # from nothing else. The parser is `spike/review-probe/diff_map.rb` promoted:
-    # a unified diff is a line-oriented state machine with two counters, one per
-    # side, and the three predicates below are what keep both honest.
+    # from nothing else. The line walk is `spike/review-probe/diff_map.rb`
+    # promoted: two counters, one per side, and the three predicates below are
+    # what keep both honest.
     #
-    # == Nothing is parsed until something is asked for
+    # == It reads MODEL VALUES, and parses nothing
+    #
+    # {#files} is `@source.files`. It used to be `Parser.new(@source.diff).files`,
+    # which quietly made "a source" mean "a thing with unified-diff bytes in it"
+    # -- so a source with no diff had to synthesize some for this object to take
+    # apart again. {Source::Parser} now lives with the sources that HAVE bytes,
+    # and this class holds the arithmetic over whatever values it was handed:
+    # anchors, the old side, the grouping, the address's forwarding.
+    #
+    # There is exactly ONE of this class, parameterised by its source. That is
+    # why {#identity} forwards rather than composes: polymorphism on the
+    # changeset does not exist, so an address that branched here would have to
+    # branch on the source's TYPE, which is the shape {Source}'s own doc condemns.
+    #
+    # == Nothing is read until something is asked for
     #
     # Every answer memoizes on first demand, and {#each_anchor} without a block
-    # returns an {Enumerator} that has not read the source's diff yet. A work-scale
-    # changeset is 80,800 rendered lines (research §3.7); materializing an Anchor
-    # per line for a caller that wanted the first screenful is the cost this shape
-    # exists to avoid.
+    # returns an {Enumerator} that has not asked the source for anything yet. A
+    # work-scale changeset is 80,800 rendered lines (research §3.7); materializing
+    # an Anchor per line for a caller that wanted the first screenful is the cost
+    # this shape exists to avoid.
     #
     # == The diff is a TWO-TREE diff, so no hunk ever has two old sides
     #
@@ -24,84 +38,18 @@ module Lain
     # its own parents. T3 already closed the other half of the same gap, by
     # passing `--diff-merges=first-parent` so a file changed only by a hand
     # resolution reaches some commit's numstat. There is a spec for both.
-    #
-    # == Where the marks-derived tri-state is NOT
-    #
-    # A {ChangedFile} answers {ChangedFile#status} -- the diff's own fact -- and
-    # deliberately not `#state`, which is what T9's `Surface::Text` reads as the
-    # marks-derived tri-state. This object cannot know that; joining the two is
-    # the session's (T13), and putting both meanings on one message name is how
-    # a table renders the wrong glyph without anything failing.
     class Changeset
-      # A file in the diff that no commit's numstat accounts for. Refused rather
-      # than dropped or given an invented owner: silently skipping it loses every
-      # anchor under it without saying so, and {Source}'s own contract
+      # A file in the changeset that no commit's numstat accounts for. Refused
+      # rather than dropped or given an invented owner: silently skipping it
+      # loses every anchor under it without saying so, and {Source}'s own contract
       # ("names every file the diff touches in some commit's numstat") says it
       # cannot happen -- so when it does, the source is wrong and must say so.
       class Unattributed < Error; end
 
-      # A file section whose header names no `a/`+`b/` pair at all. `diff.noprefix`
-      # is the realistic cause and {Source::LocalBranch::DIFF_HYGIENE} pins it off,
-      # so reaching this means the bytes did not come from a source that pinned it.
-      class Unparseable < Error; end
-
-      ChangedFile = Data.define(:old_path, :new_path, :binary, :hunks) do
-        def initialize(old_path:, new_path:, hunks:, binary: false)
-          super(old_path: old_path && -old_path, new_path: new_path && -new_path,
-                binary:, hunks: hunks.freeze)
-        end
-
-        def path = new_path || old_path
-
-        def binary? = binary
-      end
-
-      # One file's slice of the changeset.
-      #
-      # Two paths, because a rename has two and neither side can be assumed: an
-      # addition has no old path, a deletion no new one. {#path} is the file's
-      # IDENTITY -- the new path where there is one -- and is what {Hunk#path}
-      # carries and what a mark is keyed under. The side-specific paths are what an
-      # ANCHOR needs: an old-side anchor on a renamed file resolves against
-      # `git show <base>:<old_path>`, and naming the new path there would resolve
-      # nothing while still looking like a well-formed anchor.
-      #
-      # A binary file, a mode-only change and a pure rename each carry zero hunks.
-      # They are still files here, because dropping them would lose the fact that
-      # they changed.
-      #
-      # Reopened rather than folded into the `Data.define` block, {Anchor}'s
-      # reason exactly: {STATUSES} written inside that block would scope to
-      # `Lain::Review` and `#status` would not find it, because `class_eval`
-      # resolves a constant against the block's own lexical scope and not against
-      # the class it is evaluated on. The docstring lives HERE for the second
-      # half of the same rule -- YARD keeps one per namespace and discards the
-      # rest.
-      class ChangedFile
-        # The Symbol projection of {Review::FILE_STATUSES}, keyed by the String
-        # spelling that declares it. `Anchor::SIDES`' shape, with one difference
-        # that is the point of it: this projection is read by PRODUCTION code.
-        # The first cut declared the vocabulary and then never referenced it --
-        # `#status` restated four Symbol literals and a spec held the two lists
-        # equal, which is a shared vocabulary in name only.
-        STATUSES = Review::FILE_STATUSES.to_h { |name| [name, name.to_sym] }.freeze
-
-        # `fetch` makes the dependency real: drop or rename a member of
-        # {Review::FILE_STATUSES} and this raises a `KeyError` where the status
-        # is asked for, rather than drifting quietly apart from it.
-        #
-        # @return [Symbol] one of {STATUSES}' values
-        def status
-          return STATUSES.fetch("added") if old_path.nil?
-          return STATUSES.fetch("deleted") if new_path.nil?
-
-          STATUSES.fetch(old_path == new_path ? "modified" : "renamed")
-        end
-      end
-
       include Enumerable
 
-      # @param source [#diff, #commits, #base_ref, #head_ref] a {Review::Source}
+      # @param source [#files, #identity, #base_ref, #head_ref, #file_at] a
+      #   {Review::Source}
       def initialize(source:)
         @source = source
       end
@@ -121,8 +69,18 @@ module Lain
       # @return [Array<Source::Commit>]
       def commits = @source.commits
 
-      # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
-      def files = @files ||= Parser.new(@source.diff).files.freeze
+      # The source's own model values, handed down rather than derived: this
+      # object has no opinion about how a file came to be a file.
+      #
+      # @return [Array<Source::ChangedFile>] in the source's own order
+      def files = @files ||= @source.files
+
+      # The source's answer to "what changeset is this", forwarded. ONE message
+      # carrying both the scheme and the parts, so nothing here assembles an
+      # address out of two -- and nothing here asks what kind of source it holds.
+      #
+      # @return [Source::Identity]
+      def identity = @source.identity
 
       # Every hunk in the WHOLE changeset, flat and unfiltered -- what
       # `Marks#reconcile` prunes against, and what `Hunk.keys` needs a whole
@@ -131,13 +89,13 @@ module Lain
       # @return [Array<Hunk>]
       def hunks = @hunks ||= files.flat_map(&:hunks).freeze
 
-      # One file, by the path that IDENTIFIES it -- {ChangedFile#path}, which is
+      # One file, by the path that IDENTIFIES it -- {Source::ChangedFile#path}, which is
       # the new path wherever there is one. Indexed rather than scanned because
       # the caller is a human's keystroke and §3.7 measured a real changeset at
       # 810 files.
       #
       # @param path [String]
-      # @return [ChangedFile, nil] nil when this changeset carries no such file,
+      # @return [Source::ChangedFile, nil] nil when this changeset carries no such file,
       #   which is a real answer rather than an error: a gesture can name a row
       #   drawn from a changeset that has since been replaced
       def file(path) = by_path[path.to_s]
@@ -158,7 +116,7 @@ module Lain
       # changeset that genuinely CONVERTED a file's endings must show that rather
       # than have it quietly stripped here.
       #
-      # @param file [ChangedFile] one of {#files}
+      # @param file [Source::ChangedFile] one of {#files}
       # @return [Array<String>, nil] the lines; `[]` for a file this changeset
       #   ADDS, which has an empty old side rather than no old side; nil when the
       #   base does not carry the path at all, which is a repository that cannot
@@ -291,160 +249,8 @@ module Lain
       # EVIDENCE, so decoded but never scrubbed: `anchor_text` is compared byte
       # for byte against the line the file now holds, and substituting U+FFFD for
       # a latin-1 source file's bytes would report drift on a line nobody touched.
-      # A path is the opposite case and is scrubbed -- see {Parser#path_text}.
+      # A path is the opposite case and is scrubbed -- see {Source::Parser#path_text}.
       def evidence(line) = line.byteslice(1..).to_s.dup.force_encoding(Encoding::UTF_8)
-
-      # The unified-diff reader, promoted from `spike/review-probe/diff_map.rb`.
-      #
-      # The one structural change from the spike: head and body are split at the
-      # file's FIRST `@@`, and the predicates run only over the body. The spike
-      # walked the whole diff in one pass, so it had to guard `addition?` against
-      # `+++` and `deletion?` against `---`; with the split that guard is actively
-      # WRONG, because a deleted line that itself begins with `--` is content and
-      # would be miscounted as a file header. There is a spec.
-      class Parser
-        HUNK = /\A@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)\z/
-        SECTION = /^(?=diff --git )/
-
-        # @param diff [String] raw diff bytes
-        def initialize(diff)
-          @diff = diff
-        end
-
-        # @return [Array<ChangedFile>]
-        def files = sections.map { |section| changed_file(section) }
-
-        private
-
-        # A body line always carries an origin marker (` `, `+`, `-`, `\`), so no
-        # content line can be mistaken for the `diff --git` that starts the next
-        # file's section.
-        def sections = @diff.split(SECTION).grep(/\Adiff --git /)
-
-        def changed_file(section)
-          # `delete_suffix` and not `chomp`: a body line may legitimately END in a
-          # carriage return (a CRLF file's content), and `chomp` would eat it.
-          lines = section.each_line.map { |line| line.delete_suffix("\n") }
-          split = lines.index { |line| HUNK.match?(line) }
-          head = split ? lines[0...split] : lines
-          old_path, new_path = sided_paths(head)
-          ChangedFile.new(old_path:, new_path:, binary: binary?(head),
-                          hunks: hunks(new_path || old_path, split ? lines[split..] : []))
-        end
-
-        # `new file mode` / `deleted file mode` are applied after the paths are
-        # read rather than instead of them: a binary addition names its path only
-        # in the `diff --git` header, where both sides are spelled regardless.
-        def sided_paths(head)
-          old_path, new_path = marker_paths(head) || rename_paths(head) || header_paths(head.first)
-          [head.any? { |line| line.start_with?("new file mode") } ? nil : old_path,
-           head.any? { |line| line.start_with?("deleted file mode") } ? nil : new_path]
-        end
-
-        def binary?(head) = head.any? { |line| line.start_with?("Binary files ", "GIT binary patch") }
-
-        # Present whenever the file has hunks, and unambiguous where the header is
-        # not: one path per line, `/dev/null` for the side that does not exist.
-        def marker_paths(head)
-          old = head.find { |line| line.start_with?("--- ") }
-          new = head.find { |line| line.start_with?("+++ ") }
-          return nil unless old && new
-
-          [marker_path(old.delete_prefix("--- "), "a/"), marker_path(new.delete_prefix("+++ "), "b/")]
-        end
-
-        # git terminates the name with a TAB when it carries a space, so the tab
-        # is a delimiter and never part of the name -- a path containing a real
-        # tab is C-quoted instead, which is why stripping here is safe.
-        #
-        # Anything that is not `a/…`/`b/…` is the side not existing: git spells
-        # that `/dev/null`, and reading it as "no prefix, no path" rather than
-        # matching the token means an added file is recognised the same way
-        # whatever a non-git source spells its absent side.
-        def marker_path(field, prefix)
-          named = unquote(field.sub(/\t.*\z/, ""))
-          named.start_with?(prefix) ? path_text(named.delete_prefix(prefix)) : nil
-        end
-
-        def rename_paths(head)
-          from = head.find { |line| line.start_with?("rename from ") }
-          to = head.find { |line| line.start_with?("rename to ") }
-          return nil unless from && to
-
-          [path_text(unquote(from.delete_prefix("rename from "))),
-           path_text(unquote(to.delete_prefix("rename to ")))]
-        end
-
-        # The last resort, and it is reached only by a file with neither hunks nor
-        # rename lines -- a binary change or a mode-only one -- both of which carry
-        # the SAME path on each side. That is what makes the split point arithmetic
-        # rather than a guess: `<A> <B>` with `|A| == |B|` fixes it, quoted or not.
-        def header_paths(header)
-          rest = header.to_s.delete_prefix("diff --git ")
-          half = (rest.bytesize - 1) / 2
-          pair = [rest.byteslice(0, half).to_s, rest.byteslice(half + 1, half).to_s]
-          return even_header_paths(pair) if rest.byteslice(half) == " " && even_header?(pair)
-
-          loose_header_paths(rest)
-        end
-
-        def even_header?((old, new)) = unquote(old).start_with?("a/") && unquote(new).start_with?("b/")
-
-        def even_header_paths((old, new))
-          [path_text(unquote(old).delete_prefix("a/")), path_text(unquote(new).delete_prefix("b/"))]
-        end
-
-        def loose_header_paths(rest)
-          loose = rest.match(%r{\Aa/(.+) b/(.+)\z})
-          raise Unparseable, "no a/ and b/ paths in diff header #{rest.inspect}" unless loose
-
-          [path_text(loose[1]), path_text(loose[2])]
-        end
-
-        # `slice_before` rather than an index walk: every chunk begins with its own
-        # `@@` header, and the body was cut at the first one, so no chunk can be
-        # headerless.
-        def hunks(path, body)
-          body.slice_before { |line| HUNK.match?(line) }.map { |chunk| hunk(path, chunk) }
-        end
-
-        def hunk(path, (header, *lines))
-          span = HUNK.match(header)
-          Hunk.new(path:, lines:, old_start: span[1].to_i, old_count: (span[2] || 1).to_i,
-                   new_start: span[3].to_i, new_count: (span[4] || 1).to_i,
-                   heading: path_text(span[5].to_s.delete_prefix(" ")))
-        end
-
-        # SCRUBBED, unlike an anchor's text: a path is journalled as JSON and is
-        # joined against the numstat paths {Source} already scrubbed, so bytes that
-        # cannot survive either would break the join and the record both. A hunk
-        # heading gets the same treatment for the same reason -- it is display
-        # text, never evidence.
-        #
-        # == The trade this makes, and what it costs
-        #
-        # A filename whose bytes are not valid UTF-8 is legal on this filesystem
-        # and git does NOT quote it (`core.quotePath` governs non-ASCII, not
-        # invalid), so `bad\xFF.rb` arrives as those bytes and leaves here as
-        # `bad<U+FFFD>.rb`. That name is journallable, and it still JOINS --
-        # {Source} scrubs identically, which is the half the commit walk needs -- but
-        # it is NOT a name any caller can open. `File.read` will not find it, so
-        # {Anchor#drifted?} and T15's file-opening cannot reach that one file.
-        #
-        # The journal won on purpose: the alternative is a BINARY String reaching
-        # `JSON.generate`, which raises, into the NDJSON Journal where one bad
-        # line breaks the parse of the whole experiment record. The fix, when
-        # something needs it, is to carry the raw bytes BESIDE the scrubbed name
-        # rather than instead of it. Nothing does yet -- and pretending the cost
-        # is zero is how it would go unnoticed when something does.
-        def path_text(bytes) = -bytes.dup.force_encoding(Encoding::UTF_8).scrub
-
-        # {Wire.unquote}, never a private copy. {Source::LocalBranch} decodes the
-        # NUMSTAT side with the same function and {Partition::ByCommit} joins the two by
-        # name; two decoders is precisely how those two names drift apart, which
-        # they did.
-        def unquote(field) = Wire.unquote(field)
-      end
     end
   end
 end

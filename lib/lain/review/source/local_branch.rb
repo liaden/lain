@@ -27,6 +27,11 @@ module Lain
       # the same way: an argv array, never a command string, so there is no place
       # to put one and no shell to reach.
       class LocalBranch
+        # {#files} and {#identity}, over this class's own {#diff}. Included
+        # rather than written out, because {GithubPr} owes the same two answers
+        # over DIFFERENT bytes -- see the module's own note.
+        include Diffed
+
         # git's own field separators inside `--format`: NUL starts a record (git
         # forbids NUL in a commit message, so it cannot collide), unit separator
         # divides sha/subject/body, and record separator ends the header so the

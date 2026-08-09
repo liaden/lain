@@ -17,7 +17,7 @@ RSpec.describe Lain::Review::Partition do
 
   def file(path, added: 1, deleted: 1, binary: false)
     hunks = binary ? [] : [hunk(path, added:, deleted:)]
-    Lain::Review::Changeset::ChangedFile.new(old_path: path, new_path: path, binary:, hunks:)
+    Lain::Review::Source::ChangedFile.new(old_path: path, new_path: path, binary:, hunks:)
   end
 
   def partition(label: "lib/a", files: [file("lib/a/one.rb")], **rest)

@@ -386,6 +386,28 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
       expect(build.diff_origin.origin).to eq("combined_diff_api")
     end
 
+    # THE reason `#files` is included from {Source::Diffed} rather than
+    # delegated to `#local` the way `#commits` and `#file_at` are. GitHub served
+    # these bytes and they never reach the local branch, so a delegated `#files`
+    # would fetch, regenerate a diff locally, and parse THAT -- the same answer
+    # most days, and silently a different one whenever the two disagree, which is
+    # exactly the case nobody would notice. The API's diff here names a file the
+    # locally regenerated one cannot, so the two are told apart.
+    it "parses the bytes it actually served, rather than a locally regenerated diff" do
+      served = "#{expected_diff}#{<<~DIFF}"
+        diff --git a/only-github-served-this.rb b/only-github-served-this.rb
+        new file mode 100644
+        --- /dev/null
+        +++ b/only-github-served-this.rb
+        @@ -0,0 +1 @@
+        +served
+      DIFF
+      replies[:diff] = answered(stdout: served)
+
+      expect(build.files.map(&:path)).to include("only-github-served-this.rb")
+      expect(fetch_call).to be_nil
+    end
+
     # The walk cannot come from a combined diff, so this is where the fetch has
     # to happen -- and it is `refs/pull/N/head`, the ref GitHub serves, rather
     # than a branch name a fork may not even have.
@@ -615,7 +637,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   describe "the port contract, over the object database" do
     let(:rich) { true }
 
-    it_behaves_like "a review changeset source", source: lambda {
+    it_behaves_like "a diff-bearing review changeset source", source: lambda {
       local_repo_with_head
       build
     }
@@ -634,7 +656,7 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
   describe "the port contract, over the combined diff API" do
     let(:rich) { true }
 
-    it_behaves_like "a review changeset source", source: lambda {
+    it_behaves_like "a diff-bearing review changeset source", source: lambda {
       local_repo_without_head
       replies[:diff] = answered(stdout: expected_diff)
       build.tap(&:diff)

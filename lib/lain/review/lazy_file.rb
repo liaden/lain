@@ -5,7 +5,7 @@ module Lain
     # A file in a changeset that has not been chunked yet, and is chunked once,
     # when something finally asks for its hunks.
     #
-    # It answers {Changeset::ChangedFile}'s messages -- `old_path`, `new_path`,
+    # It answers {Source::ChangedFile}'s messages -- `old_path`, `new_path`,
     # `path`, `binary?`, `status`, `hunks` -- and is what a corpus source hands
     # a {Changeset} in place of one. A survey opens over a directory, not a
     # diff: chunking every file up front is the cost the corpus arm exists to
@@ -35,7 +35,7 @@ module Lain
     #
     # == What it is honest about
     #
-    # `Ractor.shareable?` is **false**, where a {Changeset::ChangedFile} is
+    # `Ractor.shareable?` is **false**, where a {Source::ChangedFile} is
     # deeply frozen and true. Twice over: the memo Hash is mutable, and a
     # callable is never shareable. That is the price of memoising anything at
     # all, and it reaches further than this object. TWO existing pins are
@@ -62,11 +62,15 @@ module Lain
     # second is the cheaper half and is the one to prefer when the chunker is
     # being designed rather than inherited.
     class LazyFile
-      # The vocabulary itself, not a copy of it -- {Changeset::ChangedFile}
+      # The vocabulary itself, not a copy of it -- {Source::ChangedFile}
       # declares it and this is the same object, so a member dropped there
       # raises here too. Resolvable at class-body time because `review.rb`
-      # requires `changeset` first, which is why the wiring line sits after it.
-      STATUSES = Changeset::ChangedFile::STATUSES
+      # requires `source` before this file, and {Source::ChangedFile} is defined
+      # in `source.rb`'s own module body rather than in one of its children --
+      # so it exists as soon as that line has run. `changeset` between the two
+      # is incidental: this constant stopped coming from there when the file
+      # value moved onto the port.
+      STATUSES = Source::ChangedFile::STATUSES
 
       attr_reader :old_path, :new_path, :binary, :chunker
 
@@ -91,7 +95,7 @@ module Lain
 
       def binary? = binary
 
-      # {Changeset::ChangedFile#status}'s rule, over {STATUSES}' spellings. The
+      # {Source::ChangedFile#status}'s rule, over {STATUSES}' spellings. The
       # rule is restated rather than shared because its home is `changeset.rb`;
       # a spec drives both objects over the same four path pairs, so the two
       # cannot drift while they are apart.

@@ -141,8 +141,10 @@ RSpec.describe Lain::Review::Docent do
 
   let(:changeset) do
     Lain::Review::Changeset.new(
-      source: instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, commits: commits.freeze,
-                                                                 base_ref: base_sha, head_ref: head_sha)
+      source: DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: diff.b,
+                                                                                 commits: commits.freeze,
+                                                                                 base_ref: base_sha,
+                                                                                 head_ref: head_sha))
     )
   end
   let(:view) { RecordingThreadPane.new }

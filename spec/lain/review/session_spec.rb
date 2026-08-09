@@ -82,9 +82,12 @@ RSpec.describe Lain::Review::Session do
 
   def head_sha = -("h" * 40)
 
+  # Wrapped in {DiffSource}, so `files` and `identity` are the PRODUCTION
+  # composition rather than two more stubs -- see that file for why stubbing
+  # them would make every digest example below assert about its own fixture.
   def source_double(diff_text: diff, walk: commits, base_ref: base_sha, head_ref: head_sha)
-    instance_double(Lain::Review::Source::LocalBranch,
-                    diff: diff_text.b, commits: walk.freeze, base_ref:, head_ref:)
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                    diff: diff_text.b, commits: walk.freeze, base_ref:, head_ref:))
   end
 
   def changeset_over(**) = Lain::Review::Changeset.new(source: source_double(**))
@@ -147,6 +150,27 @@ RSpec.describe Lain::Review::Session do
 
     it "addresses the changeset by its CONTENT, so two reads of one diff open the same round" do
       expect(described_class.digest(changeset)).to eq(described_class.digest(changeset_over))
+    end
+
+    # The address moved OFF this class and onto the source (B2), and the whole
+    # requirement was that it not move a byte in doing so: `/review` addresses are
+    # journalled, and a `changeset_digest` that stopped joining would silently
+    # orphan every verdict ever recorded.
+    #
+    # Recomposed HERE, independently, exactly as `Session.digest_parts` composed
+    # it -- base, then path/status/keys per file, with the keys derived by
+    # {MarkedChangeset.keys_by_path} rather than by the source. That second half
+    # is the anti-drift half: the source now writes the `group_by(&:path)` +
+    # `Hunk.keys` rule for itself, and a session addressing a changeset by keys
+    # the marks do not recognise would unmark everything without failing
+    # anything else.
+    it "composes the address the parts were composed in before it moved to the source, byte for byte" do
+      keys = Lain::Review::Session::MarkedChangeset.keys_by_path(changeset)
+      parts = [changeset.base_ref,
+               *changeset.files.flat_map { |file| [file.path, file.status.to_s, *keys.fetch(file.path, [])] }]
+
+      expect(described_class.digest(changeset))
+        .to eq(Lain::Review::Keying.digest("review-changeset-v1", parts))
     end
 
     it "addresses a rewritten changeset differently, which is what makes a new round detectable" do
@@ -398,10 +422,17 @@ RSpec.describe Lain::Review::Session do
     # honest stand-in for the corpus source rather than a double that merely
     # says so. An `instance_double` of a real Source would still respond to the
     # walk and the example would pass against a subject that never checked.
+    #
+    # Wrapped in {DiffSource} for the port's model-value half (`#files` and
+    # `#identity`) and for nothing else: the wrapper is a `SimpleDelegator`, so
+    # `respond_to?(:commits)` still reaches the Data and still answers false,
+    # which is the whole property these examples rest on. The Data itself
+    # cannot include `Source::Diffed` -- a Data instance is frozen, so the
+    # module's `@files ||=` memo raises `FrozenError` on first read.
     def commitless_changeset
-      source = Data.define(:diff, :base_ref, :head_ref)
-                   .new(diff: diff.b, base_ref: base_sha, head_ref: head_sha)
-      Lain::Review::Changeset.new(source:)
+      data = Data.define(:diff, :base_ref, :head_ref)
+                 .new(diff: diff.b, base_ref: base_sha, head_ref: head_sha)
+      Lain::Review::Changeset.new(source: DiffSource.over(data))
     end
 
     it "refuses the commit walk, naming the scope and the source" do

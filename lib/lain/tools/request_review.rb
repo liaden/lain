@@ -588,7 +588,7 @@ module Lain
           return Refusals.no_changeset if source.nil?
 
           judged(*opened(session_over(source), source))
-        rescue Review::Source::UnknownRef, Review::Changeset::Unparseable,
+        rescue Review::Source::UnknownRef, Review::Source::Unparseable,
                Review::Changeset::Unattributed, Epic::Review::AlreadyOpen,
                Review::Surface::Incomplete, Review::Bounds::TooLarge, Unroutable => e
           Refusals.unopened(e)

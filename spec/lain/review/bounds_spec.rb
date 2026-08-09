@@ -34,8 +34,9 @@ RSpec.describe Lain::Review::Bounds do
   end
 
   def fake_source(diff:, commits:)
-    instance_double(Lain::Review::Source::LocalBranch,
-                    diff: diff.b, commits: commits.freeze, base_ref: "b" * 40, head_ref: "h" * 40)
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                    diff: diff.b, commits: commits.freeze,
+                                    base_ref: "b" * 40, head_ref: "h" * 40))
   end
 
   def paths_for(file_count) = Array.new(file_count) { |i| format("f%04d.rb", i) }
@@ -51,7 +52,7 @@ RSpec.describe Lain::Review::Bounds do
   # is not sent -- which no real object can report on itself.
   def spying_view(reads)
     files = Array.new(5) do
-      instance_double(Lain::Review::Changeset::ChangedFile).tap do |file|
+      instance_double(Lain::Review::Source::ChangedFile).tap do |file|
         allow(file).to receive(:hunks) do
           reads << file
           []
@@ -244,7 +245,7 @@ RSpec.describe Lain::Review::Bounds do
     end
 
     it "counts a hunkless file as one file and no lines" do
-      size = described_class::Size.of([Lain::Review::Changeset::ChangedFile.new(
+      size = described_class::Size.of([Lain::Review::Source::ChangedFile.new(
         old_path: "a.bin", new_path: "a.bin", binary: true, hunks: []
       )])
 
@@ -346,12 +347,19 @@ RSpec.describe Lain::Review::Bounds do
       # `diff`, `base_ref` and `head_ref` and nothing else -- a Data genuinely
       # does not answer `#commits`, which is what keeps this from being a
       # double that merely says so.
+      #
+      # Wrapped in {DiffSource} for the port's model-value half (`#files` and
+      # `#identity`) and for nothing else: the wrapper is a `SimpleDelegator`,
+      # so `respond_to?(:commits)` still reaches the Data and still answers
+      # false, which is the property this group rests on. The Data cannot
+      # include `Source::Diffed` itself -- a Data instance is frozen, so the
+      # module's `@files ||=` memo raises `FrozenError` on first read.
       def commitless_changeset(dirs)
         named = dirs.flat_map { |dir, sizes| dir_files(dir, sizes) }
         diff = named.map { |path, body| file_section(path, body) }.join
-        source = Data.define(:diff, :base_ref, :head_ref)
-                     .new(diff: diff.b, base_ref: "b" * 40, head_ref: "h" * 40)
-        Lain::Review::Changeset.new(source:)
+        data = Data.define(:diff, :base_ref, :head_ref)
+                   .new(diff: diff.b, base_ref: "b" * 40, head_ref: "h" * 40)
+        Lain::Review::Changeset.new(source: DiffSource.over(data))
       end
 
       it "refuses with a measured sentence rather than dying inside the walk" do

@@ -101,8 +101,9 @@ RSpec.describe Lain::Review::Handover do
   end
 
   def source_double
-    instance_double(Lain::Review::Source::LocalBranch,
-                    diff: diff.b, commits: commits.freeze, base_ref: base_sha, head_ref: head_sha)
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                    diff: diff.b, commits: commits.freeze,
+                                    base_ref: base_sha, head_ref: head_sha))
   end
 
   def keys_for(path)

@@ -72,10 +72,10 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
   end
 
   def source_for(text, paths)
-    instance_double(Lain::Review::Source::LocalBranch,
-                    diff: text.b, commits: walk(paths), base_ref: base, head_ref: head).tap do |double|
-      allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
-    end
+    double = instance_double(Lain::Review::Source::LocalBranch,
+                             diff: text.b, commits: walk(paths), base_ref: base, head_ref: head)
+    allow(double).to receive(:file_at) { |revision, path| blobs[[revision, path]] }
+    DiffSource.over(double)
   end
 
   def changeset_over(text = modified_diff, paths = ["guide.rb"])
@@ -353,7 +353,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
     end
 
     # The sidebar's own duck, which is T13's to build: a file row answers the
-    # marks-derived `state` a {Lain::Review::Changeset::ChangedFile} deliberately
+    # marks-derived `state` a {Lain::Review::Source::ChangedFile} deliberately
     # does not. Only enough of it to render one row.
     def marked_like(changeset)
       rows = changeset.files.map { |file| Struct.new(:path, :state, :hunks).new(file.path, "unreviewed", file.hunks) }

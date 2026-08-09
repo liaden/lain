@@ -650,7 +650,22 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
   describe "the port contract" do
     let(:rich) { true }
 
-    it_behaves_like "a review changeset source",
+    it_behaves_like "a diff-bearing review changeset source",
                     source: -> { described_class.new(base: "base", repo_root: @repo) }
+  end
+
+  # `Tools::RequestReview` reads `source.diff` for `Epic::Intake::Prose`'s
+  # byte digest, and that is the one consumer in `lib/` that still wants BYTES
+  # rather than model values. It reaches a source only through this factory, so
+  # what the factory builds is what decides whether that consumer can ever be
+  # handed something with no diff in it. Asserted mechanically rather than
+  # documented, because a comment claiming it would not notice the day it stops
+  # being true.
+  describe "the factory the raw-bytes consumer reaches a source through" do
+    it "resolves a LocalBranch and nothing else, so a source with no diff can never arrive there" do
+      factory = Lain::Review::Source::Repository.new(repo_root: @repo)
+
+      expect(factory.source(base: "base", head: "HEAD")).to be_a(described_class)
+    end
   end
 end

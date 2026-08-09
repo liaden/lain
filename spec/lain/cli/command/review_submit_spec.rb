@@ -57,8 +57,8 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
 
   def changeset
     @changeset ||= Lain::Review::Changeset.new(
-      source: instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, base_ref: base_sha,
-                                                                 head_ref: head_sha, commits: [])
+      source: DiffSource.over(instance_double(Lain::Review::Source::LocalBranch, diff: diff.b, base_ref: base_sha,
+                                                                                 head_ref: head_sha, commits: []))
     )
   end
 

@@ -43,9 +43,14 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
 
   def head_sha = -("h" * 40)
 
+  # Wrapped in {DiffSource}, so `files` and `identity` are the production
+  # composition rather than two more stubs -- the port hands the changeset model
+  # values, and stubbing them here would make these examples assert about their
+  # own fixture.
   def source_double
-    instance_double(Lain::Review::Source::LocalBranch,
-                    diff: diff.b, commits: [].freeze, base_ref: base_sha, head_ref: head_sha)
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                    diff: diff.b, commits: [].freeze,
+                                    base_ref: base_sha, head_ref: head_sha))
   end
 
   # The flat view, so no example here depends on a commit walk it does not

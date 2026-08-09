@@ -727,11 +727,11 @@ RSpec.describe Lain::Frontend::Neovim do
       text = "diff --git a/lib/a.rb b/lib/a.rb\n--- a/lib/a.rb\n+++ b/lib/a.rb\n@@ -1 +1 @@\n-old\n+new\n"
       stat = Lain::Review::Source::FileStat.new(path: "lib/a.rb", added: 1, deleted: 1)
       commit = Lain::Review::Source::Commit.new(sha: "c1", subject: "s", body: "", numstat: [stat].freeze)
-      source = instance_double(Lain::Review::Source::LocalBranch,
+      double = instance_double(Lain::Review::Source::LocalBranch,
                                diff: text.b, commits: [commit].freeze,
                                base_ref: "b" * 40, head_ref: "h" * 40)
-      allow(source).to receive(:file_at).and_return("old\n".b)
-      Lain::Review::Changeset.new(source:)
+      allow(double).to receive(:file_at).and_return("old\n".b)
+      Lain::Review::Changeset.new(source: DiffSource.over(double))
     end
 
     # T32a's acceptance test, from the one place that decides it. The pair is a

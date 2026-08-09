@@ -868,14 +868,18 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
       DIFF
     end
 
-    def changeset
-      commit = Lain::Review::Source::Commit.new(
+    def walk
+      [Lain::Review::Source::Commit.new(
         sha: -("c" * 40), subject: -"the work", body: "",
         numstat: [Lain::Review::Source::FileStat.new(path: -"a.rb", added: 1, deleted: 1)].freeze
-      )
-      Lain::Review::Changeset.new(source: instance_double(Lain::Review::Source::LocalBranch,
-                                                          diff: diff.b, commits: [commit].freeze,
-                                                          base_ref: -("b" * 40), head_ref: -("h" * 40)))
+      )].freeze
+    end
+
+    def changeset
+      source = DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                               diff: diff.b, commits: walk,
+                                               base_ref: -("b" * 40), head_ref: -("h" * 40)))
+      Lain::Review::Changeset.new(source:)
     end
 
     let(:io) { StringIO.new }

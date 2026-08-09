@@ -10,7 +10,7 @@ module Lain
       # `present`'s `changeset` (see {Surface}'s class doc for that duck).
       #
       # Neither half can answer it alone, and that is a matter of ownership
-      # rather than of convenience. {Changeset::ChangedFile#status} is a DIFF
+      # rather than of convenience. {Source::ChangedFile#status} is a DIFF
       # fact (added/deleted/modified/renamed) and deliberately does not answer
       # `#state`; {Marks} derives a REVIEW fact per path and has no notion of
       # files, commits or hunk order. Putting both meanings on one message name
