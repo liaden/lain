@@ -181,14 +181,33 @@ Assertions must be made at the **`Changeset`** level (files, hunk keys, digest) 
 `LocalBranch` *produces*, could break it entirely while this stays green.
 
 ```gherkin
-Scenario Outline: rewriting history leaves every mark standing
+Scenario: reordering the commits leaves every mark standing
   Given a feature branch of two commits reviewed against main, with every hunk marked reviewed
-  When the history is rewritten by <operation>
+  When the commits are reordered
   Then the merge base is unchanged
   And the changeset digest is unchanged
   And every mark survives reconciliation
-  Examples: reordering the commits | squashing them into one |
-            splitting one in two | rewording a commit message
+
+Scenario: squashing the commits into one leaves every mark standing
+  Given a feature branch of two commits reviewed against main, with every hunk marked reviewed
+  When the commits are squashed into one
+  Then the merge base is unchanged
+  And the changeset digest is unchanged
+  And every mark survives reconciliation
+
+Scenario: splitting one commit in two leaves every mark standing
+  Given a feature branch of two commits reviewed against main, with every hunk marked reviewed
+  When one commit is split in two
+  Then the merge base is unchanged
+  And the changeset digest is unchanged
+  And every mark survives reconciliation
+
+Scenario: rewording a commit message leaves every mark standing
+  Given a feature branch of two commits reviewed against main, with every hunk marked reviewed
+  When a commit message is reworded
+  Then the merge base is unchanged
+  And the changeset digest is unchanged
+  And every mark survives reconciliation
 
 Scenario: main advancing without a rebase changes nothing
   Given a feature branch reviewed against main with every hunk marked reviewed

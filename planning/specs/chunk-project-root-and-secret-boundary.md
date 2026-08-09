@@ -1705,7 +1705,7 @@ Scenario: a capped grep reports capping and withholding separately
 
 ### T21 — Make the docs say what the code now does          [wave 7] [risk: low]
 
-**Depends on:** T11, T12, T15, T19, T20
+**Depends on:** T11, T12, T15, T19, T20, T23
 **Files:** modify `lib/lain/tools/glob.rb`, `lib/lain/tool/input.rb`,
 `planning/project-root-and-secret-boundary.md`, `ROADMAP.md`
 **Reuse:** the comment being corrected is `tools/glob.rb:10-17`; the adjacent claim is
@@ -1754,6 +1754,94 @@ two ACs are verified by the panel's own re-read at integration check 4.
   (CLAUDE.md, Known traps). Any prose referencing a keyword argument must be written inline.
 - If rewriting the `Glob` header requires stating that tier-1 tools *do* check paths, stop — they
   do not, and a comment saying so would be false in the opposite direction.
+
+### T23 — Construct the classifier, so the path boundary actually fires          [wave 7] [risk: high]
+
+**Depends on:** T5, T8, T11, T12, T19
+**Files:** modify `lib/lain/cli/wiring.rb`, `lib/lain/cli/switchboard.rb`,
+`lib/lain/cli/tool_guard.rb`; modify `spec/lain/cli/wiring_spec.rb`,
+`spec/lain/cli/switchboard_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
+**Reuse:** `Sensitivity#initialize(home:, cwd:, rules: Rules.empty)` (T8);
+`Sensitivity::Rules.from(table, path:)` (T8) for the config `[sensitivity]` table;
+`Sensitivity::Policy.new(sensitivity:)` (T11); `Sensitivity::Filter` (T19);
+`Project#root`/`#cwd` (T5), already held by `Wiring`.
+**Shared-file wiring:** this card IS the wiring.
+
+**Added 2026-08-09 by Joel's ruling, after T19's implementer found the gap and T19's panel
+confirmed it empirically.** Every part of the path boundary is built and tested, and **none of it
+runs**. `Switchboard.for` never passes `sensitivity:`, so the constructor's
+`Sensitivity::Policy::Null.instance` default stands; `Null#gates?` is `false` unconditionally, and
+`ToolsetBuild::LiveSensitivity` only delegates back to that same Null. Measured on the real
+production board: `gates?("/proj/.env") => false`. **Nothing anywhere calls `Sensitivity.new`, and
+nothing anywhere calls `Rules.from`**, so the config `[sensitivity]` table is parsed by nobody
+either.
+
+The chunk's own Intent says "a read of a credential-shaped path is **gated**, region-approved, and
+journaled". Region-approved and journaled are true today — T15's `RedactSecretReads` calls
+`Sensitivity::Regions.detect` directly and needs no classifier, and a read of a real key was
+observed parking on the real `Approval::Queue`. Gated is not. This card is the difference.
+
+**Why this is high risk and not a wiring chore.** Every card's specs pass because each injects its
+own classifier; production injects Null. That is the chunk's recurring "green tests that do not
+test their subject" pattern appearing at chunk scale, and it means **the delivered specs cannot
+tell you whether this card worked**. The acceptance criteria below are therefore written against
+the *production construction path*, not against an injected double.
+
+**Two independent reasons the guard is dark, and both must be fixed.** T19's panel found the
+production tool stack prints as `[RefuseSecretWrites, RedactSecretReads]` — `WithholdSecretPaths`
+is not in it at all. A classifier alone would not wake it, and the stack entry alone would filter
+with a Null. Assert the stack's class list *and* the classifier, or this card can half-land and
+look done.
+
+**Acceptance criteria:**
+
+```gherkin
+Scenario: the production board gates a credential-shaped path
+  Given a Switchboard built the way a real chat builds one
+  When it is asked whether a read of ".env" under the project root is gated
+  Then it says yes, and the reason names a credential
+
+Scenario: an ordinary path is still ungated
+  Given the same board
+  When it is asked about a read of "README.md"
+  Then it says no
+
+Scenario: the tool phase carries the path filter
+  Given the tool-phase stack a real chat builds
+  Then its class list contains WithholdSecretPaths
+  And that middleware's filter is not the Null filter
+
+Scenario: the config's sensitivity table reaches the classifier
+  Given a project config declaring one denied pattern
+  When the board classifies a path matching it
+  Then it is denied, and the reason is the one the config gave
+
+Scenario: a malformed sensitivity table refuses loudly at construction
+  Given a project config whose sensitivity key is a string, not a table
+  When the session is built
+  Then it refuses with the NotATable message and names the config path
+
+Scenario: no config means the built-in rules, not no rules
+  Given a project with no sensitivity table at all
+  When the board is asked about "~/.ssh/id_rsa"
+  Then it is denied
+```
+→ spec files: `spec/lain/cli/wiring_spec.rb`, `spec/lain/cli/tool_guard_spec.rb`
+
+**Escalation triggers:**
+- `Sensitivity.new` takes `home:` and `cwd:` as **required** keywords with no `Dir.pwd` default,
+  deliberately (recorded at the T8 API-change ruling below). If wiring it tempts you to add a
+  default, stop — that default is the divergence this chunk exists to remove.
+- `Switchboard.for` already takes a `rules:` keyword and it is **approval** rules (T18's consent),
+  not sensitivity rules. If the two get conflated, stop and report; they are different vocabularies
+  and one silently accepting the other is a security-relevant confusion.
+- If making the path boundary live turns any existing spec red, that spec is describing the dormant
+  behavior. Report the list before changing any of them — a spec that asserted "not gated" may have
+  been asserting the bug.
+- If a real classifier gates so much that ordinary work is unusable, stop and report the measured
+  counts rather than widening the exempt list. T10 measured this flood once already.
+
+---
 
 ## Discovered during execution (orchestrator-owned)
 
