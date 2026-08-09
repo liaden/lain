@@ -102,6 +102,11 @@ RSpec.describe Lain::Review::Session do
     Lain::Review::Anchor.new(path:, side: :new, line:, anchor_text: text, revision:)
   end
 
+  # The commit walk, which is what the session still groups by -- named once
+  # here so an example reaching for a commit's sha says which grouping it read
+  # it out of.
+  def walk = Lain::Review::Partition::STRATEGIES.fetch(:commits)
+
   let(:changeset) { changeset_over }
   let(:io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io:) }
@@ -269,7 +274,7 @@ RSpec.describe Lain::Review::Session do
     # cumulative-scope test.
     it "records the revision the ANCHOR names, not the changeset head" do
       session = open_session
-      one_commit = changeset.by_commit.first.sha
+      one_commit = changeset.partitions(walk).first.detail.sha
 
       session.annotate(anchor_on("a.rb", 2, "TWO", revision: one_commit), "here", kind: :note, drifted: false)
 
@@ -494,32 +499,66 @@ RSpec.describe Lain::Review::Session do
         .to eq({ "a.rb" => keys_for("a.rb"), "b.rb" => keys_for("b.rb") })
     end
 
-    it "answers a commit entry's subject and its share of the files" do
-      walk = open_session.marked.by_commit
+    # A partition row is headed by its LABEL, which for the commit walk is the
+    # commit's subject. The sha is on the DETAIL, because a directory partition
+    # has none and a row that forwarded one would be lying on every strategy
+    # but this one.
+    it "answers a partition entry's label and its share of the files" do
+      rows = open_session.marked.partitions
 
-      expect(walk.map { |row| [row.subject, row.files.map(&:path)] })
+      expect(rows.map { |row| [row.label, row.files.map(&:path)] })
         .to eq([["first: touch a", ["a.rb"]], ["second: touch b", ["b.rb"]]])
     end
 
-    # The ruling: `CommitScope#numstat` is an Array<FileStat> and answers
+    # The ruling: `ByCommit::Commit#numstat` is an Array<FileStat> and answers
     # neither. A row that shadowed `#numstat` with an aggregate would read as
     # satisfied against a double and crash on the real object.
-    it "answers a commit entry's added and deleted as scalars" do
-      walk = open_session.marked.by_commit
+    it "answers a partition entry's added and deleted as scalars" do
+      rows = open_session.marked.partitions
 
-      expect(walk.map { |row| [row.added, row.deleted] }).to eq([[3, 1], [5, 2]])
+      expect(rows.map { |row| [row.added, row.deleted] }).to eq([[3, 1], [5, 2]])
     end
 
-    it "forwards #numstat unshadowed, still the Array<FileStat> CommitScope answers" do
-      row = open_session.marked.by_commit.first
+    # The commit's OWN figure, not the group's share of the diff, and it is the
+    # DETAIL that decides that: a partition whose strategy reports no accounting
+    # gets the hunk-derived count instead, which is what keeps a directory row
+    # from rendering a numstat nobody produced.
+    it "reads the accounting off the detail rather than counting the group's hunks" do
+      rows = open_session.marked.partitions
+      hunkwise = Lain::Review::Partition::Undetailed
 
-      expect(row.numstat).to eq(changeset.by_commit.first.numstat)
+      expect(rows.map(&:added)).not_to eq(rows.map { |row| hunkwise.added(row.files) })
     end
 
-    it "carries the same file row object under a commit as at cumulative scope, so one mark redraws both" do
+    it "leaves #numstat on the detail, still the Array<FileStat> a commit answers" do
+      row = open_session.marked.partitions.first
+
+      expect(row.detail.numstat).to eq(changeset.partitions(walk).first.detail.numstat)
+    end
+
+    it "does not forward a commit's own facts onto the row, which no directory could answer" do
+      row = open_session.marked.partitions.first
+
+      expect(row).not_to respond_to(:sha)
+      expect(row).not_to respond_to(:numstat)
+    end
+
+    it "carries the same file row object under a partition as at whole scope, so one mark redraws both" do
       marked = open_session.marked
 
-      expect(marked.by_commit.first.files.first).to be(marked.files.first)
+      expect(marked.partitions.first.files.first).to be(marked.files.first)
+    end
+
+    # The join is built at whichever strategy it is handed, so the axis reaches
+    # the renderers rather than stopping at the changeset. The session still
+    # asks for the walk, which is what keeps this a rename and not a feature.
+    it "joins at whichever strategy it is built with, not only the commit walk" do
+      by_directory = Lain::Review::Session::MarkedChangeset
+                     .of(changeset, Lain::Review::Marks.new(base_ref: base_sha),
+                         strategy: Lain::Review::Partition::ByDirectory.new)
+
+      expect(by_directory.partitions.map(&:label)).to eq(["."])
+      expect(by_directory.partitions.first.files.map(&:path)).to eq(%w[a.rb b.rb])
     end
 
     it "forwards the diff's own facts on a file row, unchanged and unrenamed" do
@@ -534,11 +573,11 @@ RSpec.describe Lain::Review::Session do
       expect([marked.base_ref, marked.head_ref]).to eq([base_sha, head_sha])
     end
 
-    # CommitScope answers neither #hunks nor #base_ref on purpose, so a FILTERED
-    # scope can never reach Marks#reconcile. A row that delegated everything
+    # A Partition answers neither #hunks nor #base_ref on purpose, so a FILTERED
+    # group can never reach Marks#reconcile. A row that delegated everything
     # would hand that guarantee back.
-    it "does not let a commit row answer the pair Marks#reconcile reads" do
-      row = open_session.marked.by_commit.first
+    it "does not let a partition row answer the pair Marks#reconcile reads" do
+      row = open_session.marked.partitions.first
 
       expect(row).not_to respond_to(:hunks)
       expect(row).not_to respond_to(:base_ref)
@@ -575,7 +614,7 @@ RSpec.describe Lain::Review::Session do
     # claim about lines nobody can make. The sums skip them, so the count is
     # what keeps a `+0 -0` commit row from reading as "nothing changed".
     it "counts the binary files its line sums had to skip" do
-      row = open_session(over: binary_changeset).marked.by_commit.first
+      row = open_session(over: binary_changeset).marked.partitions.first
 
       expect([row.added, row.deleted, row.binaries]).to eq([0, 0, 1])
     end
@@ -802,8 +841,9 @@ RSpec.describe Lain::Review::Session do
       keys = every_key
       keys.each { |key| session.mark(key, "reviewed") }
       session.annotate(anchor_on("a.rb", 2, "TWO"), "first note", kind: :note, drifted: false)
-      session.annotate(anchor_on("b.rb", 2, "Y", revision: changeset.by_commit.last.sha), "second", kind: :blocker,
-                                                                                                    drifted: true)
+      session.annotate(anchor_on("b.rb", 2, "Y", revision: changeset.partitions(walk).last.detail.sha),
+                       "second", kind: :blocker,
+                                 drifted: true)
       session
     end
 
@@ -837,7 +877,7 @@ RSpec.describe Lain::Review::Session do
       rebuilt = replayed
 
       expect(rebuilt.annotations.map { |note| [note.kind, note.drifted, note.revision] })
-        .to eq([["note", false, head_sha], ["blocker", true, changeset.by_commit.last.sha]])
+        .to eq([["note", false, head_sha], ["blocker", true, changeset.partitions(walk).last.detail.sha]])
     end
 
     it "restores a submitted verdict" do
@@ -1060,7 +1100,7 @@ RSpec.describe Lain::Review::Session do
   # is the MECHANICAL statement of "no reachable mutable state" -- it broke once
   # already because `Symbol#to_s` and interpolation both answer mutable Strings.
   # Every value this card added is spec'd against it, including the row graph,
-  # whose leaves are T7's ChangedFile/CommitScope and T2's Hunk.
+  # whose leaves are T7's ChangedFile, a Review::Partition and T2's Hunk.
   describe "the values this card adds are shareable" do
     it "holds for the whole marked-changeset graph, rows, files and commits alike" do
       session = open_session

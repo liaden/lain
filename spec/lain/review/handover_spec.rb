@@ -86,7 +86,7 @@ RSpec.describe Lain::Review::Handover do
   def head_sha = -("h" * 40)
 
   # Both files attributed, because a changeset whose diff names a file no
-  # commit's numstat does is one `Changeset#by_commit` refuses -- and every
+  # commit's numstat does is one `Partition::ByCommit` refuses -- and every
   # rendering below walks it.
   def commit(sha:, subject:, path:)
     Lain::Review::Source::Commit.new(

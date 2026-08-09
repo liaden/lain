@@ -365,9 +365,16 @@ RSpec.describe Lain::CLI::Review, :seam do
         .to raise_error(Lain::Review::Bounds::TooLarge, /no scope that presents this changeset whole/)
     end
 
+    # The subject comes from the PARTITION's detail, not from `"commit <sha>"` --
+    # a sentence no other grouping could make honest, and a directory partition
+    # refusing with a sha is the defect the rename closes. Against a REAL
+    # repository, so the sha is a real abbreviated one: the commit walk's detail
+    # puts it back beside the subject, because subjects repeat and a reader told
+    # their review is too large has to be able to reach the commit.
     it "guards the commit walk itself when that is the scope asked for" do
       expect { bounded(max_files: 0).present("feature", scope: "commits") }
-        .to raise_error(Lain::Review::Bounds::TooLarge, /commit [0-9a-f]{40}.*narrowest scope/m)
+        .to raise_error(Lain::Review::Bounds::TooLarge,
+                        /first: touch a \(commit [0-9a-f]{12}\) is 1 files.*narrowest scope/m)
     end
 
     # THE PROPERTY THAT MATTERS, and the one that survived the move intact:

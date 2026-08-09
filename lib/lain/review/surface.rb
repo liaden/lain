@@ -41,14 +41,24 @@ module Lain
     # inventing its own reading (T19) is exactly that drift.
     #
     # `changeset.files` answers an Enumerable of file entries (`#path`,
-    # `#state` -- one of `Review::FILE_STATES`) for `scope: :cumulative`.
-    # `changeset.by_commit` answers an Enumerable of commit entries
-    # (`#subject`, `#files` -- same file-entry shape) for `scope: :commits`.
+    # `#state` -- one of `Review::FILE_STATES`) for the FLAT scope,
+    # `:cumulative`. `changeset.partitions` answers an Enumerable of group
+    # entries (`#label`, `#files` -- same file-entry shape) for every GROUPED
+    # scope, whichever {Review::Partition::Strategy} produced them.
+    #
+    # It reads `#partitions` and not `#by_commit`, and the rename is the
+    # contract rather than a spelling: grouping-by-commit is one strategy on
+    # that axis, so a surface that named it would be a surface that could only
+    # ever render one. A group answers `#label` -- what heads it -- because a
+    # directory has no subject and a commit's sha is not what a heading shows.
+    # `#partitions` takes no argument HERE: whoever built the view chose the
+    # strategy, and a renderer re-partitioning what it was handed could draw
+    # rows the session never marked.
     #
     # Neither `Changeset` nor `Marks` alone answers this: a changeset (T7) is
     # files/hunks/anchorable lines with no notion of review state, and marks
     # (T8) derives that state from hunks with no notion of files-as-such. The
-    # object that answers `#files`/`#by_commit` above has to be built by
+    # object that answers `#files`/`#partitions` above has to be built by
     # JOINING the two -- T13's session is the one place both are held
     # together, so it is T13's job to produce it (from a real `Changeset`'s
     # structure and `Marks`' derived tri-state per file), not either T7 or T8

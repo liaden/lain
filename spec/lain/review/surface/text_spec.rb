@@ -5,8 +5,8 @@ require "stringio"
 # Lain::Review::Changeset (T7) and Lain::Review::Marks (T8) are siblings that
 # have not landed -- see Surface's own port doc ("What present's changeset
 # argument answers") for the exact duck assumed here: `#files` (Enumerable of
-# `#path`/`#state`) for the flat view, `#by_commit` (Enumerable of
-# `#subject`/`#files`) for the grouped one. Everything below builds that
+# `#path`/`#state`) for the flat view, `#partitions` (Enumerable of
+# `#label`/`#files`) for the grouped one. Everything below builds that
 # shape directly with anonymous Structs rather than a real Changeset/Marks,
 # matching `spec/lain/session_pins_spec.rb` and `spec/lain/status_feed_spec.rb`'s
 # own house style for a duck double.
@@ -17,9 +17,9 @@ RSpec.describe Lain::Review::Surface::Text do
 
   def file_entry(path:, state:) = Struct.new(:path, :state).new(path, state)
 
-  def commit_entry(subject:, files:) = Struct.new(:subject, :files).new(subject, files)
+  def commit_entry(subject:, files:) = Struct.new(:label, :files).new(subject, files)
 
-  def changeset(files:, commits: []) = Struct.new(:files, :by_commit).new(files, commits)
+  def changeset(files:, commits: []) = Struct.new(:files, :partitions).new(files, commits)
 
   def real_anchor(path: "lib/lain/agent.rb", line: 14)
     Lain::Review::Anchor.new(path:, side: :new, line:, anchor_text: "  @store.write(input)", revision: "abc123")
@@ -35,6 +35,16 @@ RSpec.describe Lain::Review::Surface::Text do
     changeset(files: [reviewed, partial, unreviewed],
               commits: [commit_entry(subject: "add a.rb", files: [reviewed]),
                         commit_entry(subject: "touch b.rb and c.rb", files: [partial, unreviewed])])
+  end
+
+  # REAL {Review::Partition}s over the same file entries -- the grouped
+  # rendering is drawn from whatever the session partitioned by, and a Struct
+  # could answer a `#label` no strategy ever produces.
+  def directory_changeset
+    spec_file = file_entry(path: "spec/c.rb", state: :unreviewed)
+    changeset(files: [reviewed, partial, spec_file],
+              commits: [Lain::Review::Partition.new(label: "lib", files: [reviewed, partial]),
+                        Lain::Review::Partition.new(label: "spec", files: [spec_file])])
   end
 
   it_behaves_like "a review surface",
@@ -61,18 +71,34 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("[ ] lib/c.rb")
     end
 
-    it "groups rows under commit subjects at :commits scope" do
+    it "heads each group with its partition's label at :commits scope" do
       surface.present(two_commit_changeset, scope: :commits)
 
       expect(sink.string).to include("add a.rb")
       expect(sink.string).to include("touch b.rb and c.rb")
     end
 
+    # The axis reaching the renderer, against a REAL {Review::Partition} rather
+    # than a Struct: a directory label heads the files under it, and the same
+    # renderer that draws the commit walk draws it.
+    it "heads each group with its directory at :by_directory scope" do
+      surface.present(directory_changeset, scope: :by_directory)
+
+      expect(sink.string).to eq(<<~TABLE)
+        lib
+          [x] lib/a.rb
+          [~] lib/b.rb
+
+        spec
+          [ ] spec/c.rb
+      TABLE
+    end
+
     # The positive assertion is what makes this catch a silent-sink mutant --
     # a `#present` that writes nothing would pass the two `not_to include`s
     # for free (a review-panel finding on this exact example: pure negative
     # space survives a no-op).
-    it "renders one flat table with no commit subjects at :cumulative scope" do
+    it "renders one flat table with no partition labels at :cumulative scope" do
       surface.present(two_commit_changeset, scope: :cumulative)
 
       expect(sink.string).to include("[x] lib/a.rb")
@@ -180,9 +206,24 @@ RSpec.describe Lain::Review::Surface::Text do
     end
   end
 
+  # The completeness law that replaced a literal equality against
+  # `Review::SCOPES`: what has to hold is that every strategy anybody can be
+  # handed HAS a rendering here, which an equality against a two-member
+  # vocabulary stopped saying the moment a third strategy shipped.
   describe "SCOPE_RENDERER" do
-    it "is keyed by Review::SCOPES, the one place the vocabulary is declared" do
-      expect(described_class::SCOPE_RENDERER.keys.map(&:to_s).sort).to eq(Lain::Review::SCOPES.sort)
+    it "declares a rendering for every registered partition strategy" do
+      expect(described_class::SCOPE_RENDERER.keys)
+        .to include(*Lain::Review::Partition::STRATEGIES.keys)
+    end
+
+    it "resolves a real private renderer for each, so a name alone is not enough" do
+      expect(described_class::SCOPE_RENDERER.values)
+        .to all(satisfy { |renderer| described_class.private_method_defined?(renderer) })
+    end
+
+    it "refuses a strategy it declares no rendering for, naming it" do
+      expect { surface.present(two_commit_changeset, scope: :by_size) }
+        .to raise_error(KeyError, /by_size/)
     end
   end
 

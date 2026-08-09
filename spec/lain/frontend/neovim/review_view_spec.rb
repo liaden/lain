@@ -11,7 +11,7 @@ require "tmpdir"
 # resolves against the rendering the human is actually looking at.
 #
 # The changeset duck is the one `Lain::Review::Surface`'s class doc states
-# (`#files` / `#by_commit`), plus the two members that doc does not name and
+# (`#files` / `#partitions`), plus the two members that doc does not name and
 # this view needs: a file entry's `#hunks` (for the new-side line an open lands
 # on) and a commit entry's `#numstat`. `Lain::Review::Changeset` (T7) and the
 # session that joins it to `Marks` (T13) are both unlanded, so the doubles here
@@ -35,21 +35,21 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     Struct.new(:path, :state, :hunks).new(path, state, [hunk(path:, new_start: first)])
   end
 
-  # `#added` / `#deleted` as SCALARS on the commit entry, and NOT reached
-  # through `#numstat`. `Changeset::CommitScope#numstat` is a frozen Array of
-  # per-file stats, so it answers neither -- a double that invented an aggregate
-  # behind that name would read as satisfied while the real object crashed the
-  # walk. The `numstat:` member is carried here in its REAL shape so the two
-  # facts sit side by side in the fixture.
+  # `#added` / `#deleted` as SCALARS on the group entry, and NOT reached
+  # through `#numstat`. `Partition::ByCommit::Commit#numstat` is a frozen Array
+  # of per-file stats, so it answers neither -- a double that invented an
+  # aggregate behind that name would read as satisfied while the real object
+  # crashed the walk. The `numstat:` member is carried here in its REAL shape so
+  # the two facts sit side by side in the fixture.
   def commit_entry(subject:, files:, added: 1, deleted: 0, stats: [])
-    Struct.new(:subject, :files, :numstat, :added, :deleted)
+    Struct.new(:label, :files, :numstat, :added, :deleted)
           .new(subject, files, stats.freeze, added, deleted)
   end
 
   def file_stat(path:, added:, deleted:) = Struct.new(:path, :added, :deleted).new(path, added, deleted)
 
   def changeset(files: [], commits: [])
-    Struct.new(:files, :by_commit).new(files, commits)
+    Struct.new(:files, :partitions).new(files, commits)
   end
 
   # Where a resolved row is actually opened -- {ReviewView::Unwired}'s duck,
@@ -91,7 +91,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
                                     "  [ ] lib/d.rb", "  [ ] lib/e.rb"])
     end
 
-    # The T7 panel's measurement: with a merge in the range, `by_commit`
+    # The T7 panel's measurement: with a merge in the range, the commit walk
     # attributes at FILE granularity and the merge absorbs every file it
     # re-reports, so the authoring commits come back with `files: []`. Two of
     # three scopes blank is what that looks like, and a walk that renders them
@@ -110,12 +110,47 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect { view.render(changeset, scope: :cumulatve) }.to raise_error(KeyError)
     end
 
-    it "dispatches on exactly the scopes the vocabulary declares" do
-      expect(described_class::SCOPE_ROWS.keys.map(&:to_s)).to match_array(Lain::Review::SCOPES)
+    # The completeness law that replaced a literal equality against
+    # `Review::SCOPES`: what has to hold is that every strategy anybody can be
+    # handed HAS a rendering here, which a two-member equality stopped saying
+    # the moment a third strategy shipped.
+    it "declares rows for every registered partition strategy" do
+      expect(described_class::SCOPE_ROWS.keys).to include(*Lain::Review::Partition::STRATEGIES.keys)
+    end
+
+    it "resolves a real private renderer for each, so a name alone is not enough" do
+      expect(described_class::SCOPE_ROWS.values)
+        .to all(satisfy { |renderer| described_class.private_method_defined?(renderer) })
+    end
+
+    it "refuses a strategy it declares no rows for, naming it" do
+      expect { view.render(changeset, scope: :by_size) }.to raise_error(KeyError, /by_size/)
+    end
+
+    # The ONE reason `:commits` and `:by_directory` have separate entries.
+    # WALK_LEGEND is a claim about AUTHORSHIP, which only the commit walk makes;
+    # rendering it over a directory grouping is a lie about who wrote what. The
+    # completeness law cannot catch a `by_directory: :commit_rows` mutant,
+    # because `commit_rows` is a real method that resolves.
+    it "renders a directory grouping with its labels and WITHOUT the walk's authorship legend" do
+      groups = [commit_entry(subject: "lib", files: [file_entry(path: "lib/a.rb")], added: 2, deleted: 1),
+                commit_entry(subject: "spec", files: [file_entry(path: "spec/a_spec.rb")], added: 4, deleted: 0)]
+
+      rendered = view.render(changeset(commits: groups), scope: :by_directory)
+
+      expect(rendered.lines).to eq(["+2 -1  lib", "  [ ] lib/a.rb", "+4 -0  spec", "  [ ] spec/a_spec.rb"])
+      expect(rendered.lines).not_to include(described_class::WALK_LEGEND)
+    end
+
+    it "still heads the commit walk with it, so the two scopes are not one renderer" do
+      groups = [commit_entry(subject: "Add the thing", files: [file_entry(path: "lib/a.rb")])]
+
+      expect(view.render(changeset(commits: groups), scope: :commits).lines)
+        .to start_with(described_class::WALK_LEGEND)
     end
   end
 
-  # The BLOCKER a review panel found: `Changeset::CommitScope#numstat` is an
+  # The BLOCKER a review panel found: `Partition::ByCommit::Commit#numstat` is an
   # `Array<Source::FileStat>` and answers neither `#added` nor `#deleted`, so a
   # walk reaching through it raises NoMethodError against the real object while
   # every spec double invented to match it passes.
@@ -153,7 +188,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
 
     it "gives each scope its own wording" do
-      expect(described_class::PLACEHOLDERS.values.uniq.size).to eq(2)
+      expect(described_class::PLACEHOLDERS.values.uniq.size).to eq(described_class::PLACEHOLDERS.size)
     end
 
     it "declares a placeholder for every scope it dispatches on" do

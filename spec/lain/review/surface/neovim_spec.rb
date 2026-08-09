@@ -129,11 +129,11 @@ RSpec.describe Lain::Review::Surface::Neovim do
   end
 
   def commit_entry(subject:, files:, added: 3, deleted: 1)
-    Struct.new(:subject, :files, :added, :deleted).new(subject, files, added, deleted)
+    Struct.new(:label, :files, :added, :deleted).new(subject, files, added, deleted)
   end
 
   def changeset(files:, commits: [])
-    Struct.new(:files, :by_commit).new(files, commits)
+    Struct.new(:files, :partitions).new(files, commits)
   end
 
   def reviewed = file_entry(path: "lib/a.rb", state: :reviewed)

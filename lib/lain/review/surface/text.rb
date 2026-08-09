@@ -50,14 +50,24 @@ module Lain
 
         STATE_MARKERS = Review::FILE_STATES.to_h { |state| [state, glyph_for(state)] }.freeze
 
-        # `scope:` dispatch, keyed by `Review::SCOPES`' own spellings so a
-        # third value (or a typo of one of the two real ones) fails loudly via
-        # `Hash#fetch` -- the same loud-failure choice {STATE_MARKERS} makes,
-        # rather than a bare `==` that silently treats anything-not-`:commits`
-        # as `:cumulative`. A spec pins these keys against `Review::SCOPES`.
-        SCOPE_RENDERER = { commits: :commit_table, cumulative: :file_table }.freeze
+        # `scope:` dispatch, keyed by the NAME of each {Review::Partition}
+        # strategy so a value nothing declares (or a typo of one that does)
+        # fails loudly via `Hash#fetch` -- the same loud-failure choice
+        # {STATE_MARKERS} makes, rather than a bare `==` that silently treats
+        # anything-not-`:commits` as `:cumulative`.
+        #
+        # A LITERAL rather than derived from {Review::Partition::STRATEGIES},
+        # because what a strategy renders AS is this surface's decision and not
+        # the strategy's: only {Review::Partition::Whole} is flat, and every
+        # grouping gets the same table whatever it grouped by. The spec pins
+        # completeness in the direction that matters -- every registered
+        # strategy resolves here -- so a strategy shipped with no rendering
+        # declared for it is a red spec rather than a `KeyError` the first time
+        # somebody asks for that scope.
+        SCOPE_RENDERER = { cumulative: :file_table, commits: :partition_table,
+                           by_directory: :partition_table }.freeze
 
-        # What `#file_table`/`#commit_table` render when there is nothing to
+        # What `#file_table`/`#partition_table` render when there is nothing to
         # show. A bare `""` would write a lone `"\n"` to the sink -- a
         # near-invisible line that reads as a rendering glitch, not as "this
         # changeset touches nothing".
@@ -68,13 +78,13 @@ module Lain
           @sink = sink
         end
 
-        # @param changeset [#files, #by_commit] see {Surface}'s class doc
+        # @param changeset [#files, #partitions] see {Surface}'s class doc
         #   ("What `present`'s `changeset` argument answers") for the one
         #   place this duck is stated, and why neither `Changeset` (T7) nor
         #   `Marks` (T8) alone can answer it.
-        # @param scope [Symbol] one of `Review::SCOPES`, as Symbols
-        #   (`:commits`/`:cumulative`); anything else raises via
-        #   {SCOPE_RENDERER}'s `fetch`.
+        # @param scope [Symbol] the name of a {Review::Partition} strategy, as
+        #   a Symbol (`:cumulative`/`:commits`/`:by_directory`); anything else
+        #   raises via {SCOPE_RENDERER}'s `fetch`, naming what was asked for.
         # @return [Integer] {#write}'s byte count -- never a String, which is
         #   what this port reserves for "the surface could not deliver this"
         def present(changeset, scope:)
@@ -130,13 +140,13 @@ module Lain
           rows.empty? ? NOTHING_CHANGED : rows.join("\n")
         end
 
-        def commit_table(changeset)
-          sections = changeset.by_commit.map { |commit| commit_section(commit) }
+        def partition_table(changeset)
+          sections = changeset.partitions.map { |partition| partition_section(partition) }
           sections.empty? ? NOTHING_CHANGED : sections.join("\n\n")
         end
 
-        def commit_section(commit)
-          ([legible(commit.subject)] + commit.files.map { |file| "  #{row(file)}" }).join("\n")
+        def partition_section(partition)
+          ([legible(partition.label)] + partition.files.map { |file| "  #{row(file)}" }).join("\n")
         end
 
         def row(file) = "#{STATE_MARKERS.fetch(file.state.to_s)} #{legible(file.path)}"

@@ -17,9 +17,9 @@ module Lain
     #
     # == The diff is a TWO-TREE diff, so no hunk ever has two old sides
     #
-    # A merge commit shows up in the WALK ({#by_commit}), never in the diff's
-    # shape: {Source::LocalBranch#diff} is `git diff <base> <head>`, and git emits
-    # a combined diff (`@@@ -1,8 -1,8 +1,8 @@@`, two old sides, which {Hunk}'s
+    # A merge commit shows up in the WALK ({Partition::ByCommit}), never in the
+    # diff's shape: {Source::LocalBranch#diff} is `git diff <base> <head>`, and git
+    # emits a combined diff (`@@@ -1,8 -1,8 +1,8 @@@`, two old sides, which {Hunk}'s
     # single `(old_start, old_count)` cannot represent) only for a commit against
     # its own parents. T3 already closed the other half of the same gap, by
     # passing `--diff-merges=first-parent` so a file changed only by a hand
@@ -98,24 +98,6 @@ module Lain
           STATUSES.fetch(old_path == new_path ? "modified" : "renamed")
         end
       end
-
-      # One commit's slice of the changeset -- and, deliberately, a VIEW that
-      # cannot be mistaken for the whole one.
-      #
-      # It answers neither `#hunks` nor `#base_ref`, which are exactly the two
-      # messages `Marks#reconcile` reads. That is what makes handing a FILTERED
-      # changeset to the pruner impossible rather than merely discouraged: the
-      # reconciler drops every key the changeset it is given does not produce, so
-      # a filtered one silently prunes the marks on everything the filter hid.
-      # tuicr#247 closed that with a `preserve_hunks` flag whose own comment admits
-      # the default path still reaches the bug; a flag on the wrong side of the
-      # call is the special case, and the missing message is the fix. The hunk
-      # count is still reachable the honest way, through {#files}.
-      #
-      # `numstat` is the commit's OWN, unpartitioned figure (T14's sidebar renders
-      # it), while `files` is this commit's share of the cumulative diff -- see
-      # {Changeset#by_commit} for why those two are not the same set.
-      CommitScope = Data.define(:sha, :subject, :body, :numstat, :files)
 
       include Enumerable
 
@@ -199,43 +181,20 @@ module Lain
         files.each(&block)
       end
 
-      # The commit walk, one {CommitScope} per commit in the source's walk --
-      # including a commit whose every file was later superseded, which gets an
-      # empty `files` rather than disappearing from the sidebar.
+      # Group the changeset for reading, by whichever {Partition::Strategy} the
+      # caller hands over -- the commit walk ({Partition::ByCommit}), the flat
+      # view ({Partition::Whole}), by directory, or whatever is registered next.
       #
-      # The files are PARTITIONED, not replicated: a file two commits touched
-      # appears under the LAST of them, because the cumulative diff shows its
-      # hunks once and the last commit is the one that left the content now on
-      # screen. Handing it to both would double-count, and the acceptance
-      # criterion this card is written against ("groups whose hunks sum to the
-      # cumulative hunk count") is precisely that conservation law.
+      # NOT memoized, and deliberately: a memo keyed by strategy is a stale
+      # partition waiting to happen under a re-render, which is the same reason
+      # {Session#marked} is rebuilt on demand. Grouping is arithmetic over
+      # `files`, which IS memoized, so the parse still happens once.
       #
-      # Attribution is at FILE granularity because that is the finest the port
-      # answers: {Source::Commit} carries a numstat, not a per-commit diff. Real
-      # hunk-level provenance would need a fifth message on the port.
-      #
-      # == What a consumer may and may not claim about a scope
-      #
-      # A scope means "this commit is the LAST in the range to touch these files,
-      # and here are their net hunks". It does not mean "this commit did this",
-      # and one case makes the difference stark rather than academic: with a
-      # merge in the range, `--diff-merges=first-parent` re-reports everything
-      # the merge brought in, so the merge's numstat names the side branch's
-      # files too and last-writer-wins hands them ALL to the merge. The commit
-      # that actually authored a side-branch file then shows an EMPTY scope.
-      #
-      # Empty scopes for an empty commit or an add-then-delete pair are honest.
-      # An empty scope for real work absorbed by a merge is not, and it cannot be
-      # fixed from inside this object: telling a merge from an ordinary commit
-      # needs a parent count, and {Source::Commit} carries sha, subject, body and
-      # numstat with no parents. That is a port change. Until then {CommitScope}
-      # keeps `numstat` -- the commit's OWN figure, which a merge does not steal
-      # -- so a sidebar that needs "what did this commit do" has something true
-      # to read. There is a spec pinning the behaviour, not endorsing it.
-      #
-      # @return [Array<CommitScope>]
-      # @raise [Unattributed] if a file in the diff reaches no commit
-      def by_commit = @by_commit ||= scopes.freeze
+      # @param strategy [Partition::Strategy] anything answering the port
+      # @return [Array<Partition>] disjoint, together covering every file once
+      # @raise [Unattributed] if the strategy cannot attribute a file -- see
+      #   {Partition::ByCommit}, which is the one that can fail this way
+      def partitions(strategy) = strategy.partition(self)
 
       # Every anchorable line of the changeset, on ONE side, in diff order.
       #
@@ -320,44 +279,6 @@ module Lain
       # a latin-1 source file's bytes would report drift on a line nobody touched.
       # A path is the opposite case and is scrubbed -- see {Parser#path_text}.
       def evidence(line) = line.byteslice(1..).to_s.dup.force_encoding(Encoding::UTF_8)
-
-      def scopes
-        grouped = files.group_by { |file| owner_of(file) }
-        @source.commits.map do |commit|
-          CommitScope.new(sha: commit.sha, subject: commit.subject, body: commit.body,
-                          numstat: commit.numstat, files: (grouped[commit.sha] || []).freeze)
-        end
-      end
-
-      # The new path first: for a rename, that is the commit that performed it,
-      # while the old path would name whoever last touched the file beforehand.
-      def owner_of(file)
-        ownership[file.new_path] || ownership[file.old_path] ||
-          raise(Unattributed,
-                "#{file.path.inspect} is in the diff but in no commit's numstat, so grouping it " \
-                "by commit would either drop the file or invent an owner for it")
-      end
-
-      # name => the LAST commit in the walk that named it. Oldest-first order is
-      # the source's contract, so a later write is a later commit.
-      def ownership
-        @ownership ||= @source.commits.each_with_object({}) do |commit, owner|
-          commit.numstat.each do |entry|
-            rename_sides(entry.path).each { |name| owner[name] = commit.sha }
-          end
-        end
-      end
-
-      # A rename reaches a numstat path as `old => new` or `pre/{old => new}/post`,
-      # and BOTH sides count as named -- the cumulative diff may have detected the
-      # rename where a single commit did not, or the reverse.
-      def rename_sides(path)
-        braced = path.match(/\A(?<pre>.*)\{(?<old>.*) => (?<new>.*)\}(?<post>.*)\z/m)
-        return %i[old new].map { |side| "#{braced[:pre]}#{braced[side]}#{braced[:post]}" } if braced
-
-        arrow = path.match(/\A(?<old>.*) => (?<new>.*)\z/m)
-        arrow ? [arrow[:old], arrow[:new]] : [path]
-      end
 
       # The unified-diff reader, promoted from `spike/review-probe/diff_map.rb`.
       #
@@ -492,7 +413,7 @@ module Lain
         # and git does NOT quote it (`core.quotePath` governs non-ASCII, not
         # invalid), so `bad\xFF.rb` arrives as those bytes and leaves here as
         # `bad<U+FFFD>.rb`. That name is journallable, and it still JOINS --
-        # {Source} scrubs identically, which is the half `by_commit` needs -- but
+        # {Source} scrubs identically, which is the half the commit walk needs -- but
         # it is NOT a name any caller can open. `File.read` will not find it, so
         # {Anchor#drifted?} and T15's file-opening cannot reach that one file.
         #
@@ -505,7 +426,7 @@ module Lain
         def path_text(bytes) = -bytes.dup.force_encoding(Encoding::UTF_8).scrub
 
         # {Wire.unquote}, never a private copy. {Source::LocalBranch} decodes the
-        # NUMSTAT side with the same function and {#by_commit} joins the two by
+        # NUMSTAT side with the same function and {Partition::ByCommit} joins the two by
         # name; two decoders is precisely how those two names drift apart, which
         # they did.
         def unquote(field) = Wire.unquote(field)

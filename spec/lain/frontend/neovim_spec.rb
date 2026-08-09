@@ -700,7 +700,7 @@ RSpec.describe Lain::Frontend::Neovim do
 
     def changeset
       file = Struct.new(:path, :state, :hunks).new("lib/a.rb", "unreviewed", [hunk(path: "lib/a.rb")])
-      Struct.new(:files, :by_commit).new([file], [])
+      Struct.new(:files, :partitions).new([file], [])
     end
 
     it "is one pair for the session, so a gesture resolves against what was drawn" do

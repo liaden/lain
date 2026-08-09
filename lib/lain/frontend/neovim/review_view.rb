@@ -9,18 +9,20 @@ module Lain
       # resolved through that index -- and never nvim itself; `runtime/46_sidebar.lua`
       # does the rendering.
       #
-      # TWO SCOPES, and the walk is a requirement rather than a convenience:
-      # research §3.7 measured a real work changeset at 81,810 rendered lines
-      # cumulatively against 2,727 for one commit, so "scroll the flat list" is
-      # not a usable surface at that size. Which scope is on screen is NOT held
-      # here -- T13 records that the presented scope is the SURFACE's state --
-      # so it rides in as an argument on every render.
+      # A FLAT scope and a GROUPED one, and the grouping is a requirement rather
+      # than a convenience: research §3.7 measured a real work changeset at
+      # 81,810 rendered lines cumulatively against 2,727 for one commit, so
+      # "scroll the flat list" is not a usable surface at that size. Which scope
+      # is on screen is NOT held here -- T13 records that the presented scope is
+      # the SURFACE's state -- so it rides in as an argument on every render.
       #
-      # == What this view may claim about a commit, and what it may not
+      # == What this view may claim about a COMMIT group, and what it may not
       #
-      # `by_commit` attributes at FILE granularity: the last commit in the range
-      # to touch a file gets that file's hunks. Three things follow, and all
-      # three are the reader's to know rather than this object's to hide.
+      # {Review::Partition::ByCommit} attributes at FILE granularity: the last
+      # commit in the range to touch a file gets that file's hunks. Three things
+      # follow, and all three are the reader's to know rather than this object's
+      # to hide. None of them is true of a grouping that is not the walk, which
+      # is why {WALK_LEGEND} heads that scope and only that one.
       #
       # 1. It is not per-hunk provenance, and with a MERGE in the range it is
       #    not even close -- the merge absorbs every file it re-reports and the
@@ -32,8 +34,9 @@ module Lain
       # 2. A merge's own numstat is the WHOLE SIDE BRANCH (`Changeset` runs
       #    `--diff-merges=first-parent`), so `+9 -9  Merge branch 'side'` can
       #    outrank the commit that actually wrote the code. This view cannot
-      #    suppress it: `Changeset::CommitScope` carries no parent count, and its
-      #    own doc records that telling a merge apart "is a port change". A
+      #    suppress it: `Source::Commit` carries no parent count, and
+      #    {Review::Partition::ByCommit}'s doc records that telling a merge apart
+      #    "is a port change". A
       #    subject matching /^Merge/ is a guess, not a fact, and this codebase
       #    does not ship those.
       # 3. The tri-state marker on a nested file row is that file's WHOLE
@@ -47,19 +50,20 @@ module Lain
       #
       # == The changeset duck
       #
-      # {Review::Surface}'s class doc is where the `#files` / `#by_commit` duck
-      # is stated for every adapter, and this view needs two members it does not
-      # name: a file entry's `#hunks` (whose first hunk's `#new_start` is the
-      # line an open lands on -- a `Review::Hunk` already answers it) and a
-      # commit entry's `#added` / `#deleted`, as SCALARS.
+      # {Review::Surface}'s class doc is where the `#files` / `#partitions` duck
+      # is stated for every adapter, and this view needs three members it does
+      # not name: a file entry's `#hunks` (whose first hunk's `#new_start` is the
+      # line an open lands on -- a `Review::Hunk` already answers it), and a
+      # group entry's `#label` and its `#added` / `#deleted`, as SCALARS.
       #
       # Not `#numstat`. That name is already taken and already means something
-      # else: `Changeset::CommitScope#numstat` is a frozen `Array` of per-file
-      # stats, so `numstat.added` raises. A duck that borrows an occupied name
-      # for a different shape is worse than a missing method, because it reads
-      # as satisfied -- a T13 session that decorates `CommitScope` and forwards
-      # what it does not answer would have crashed this walk. The aggregate
-      # belongs on the row object that can honestly supply it.
+      # else: `Partition::ByCommit::Commit#numstat` is a frozen `Array` of
+      # per-file stats, so `numstat.added` raises. A duck that borrows an
+      # occupied name for a different shape is worse than a missing method,
+      # because it reads as satisfied -- a T13 session that decorated the
+      # detail and forwarded what it does not answer would have crashed this
+      # walk. The aggregate belongs on the row object that can honestly supply
+      # it, which is where it now lives.
       #
       # == What a row NAMES, and why the keys are cut from the whole changeset
       #
@@ -73,13 +77,13 @@ module Lain
       # Cut from `changeset.files` -- the WHOLE file's hunks -- in BOTH scopes,
       # never from the file entry the row was drawn from. `Hunk.keys` is a batch
       # operation by construction ("a hunk cannot tell on its own that it is
-      # duplicated"), and a commit-scope entry carries only the hunks reachable
-      # in that commit, so keying that subset can hand a duplicated hunk a
+      # duplicated"), and a group entry carries only the hunks reachable in that
+      # group, so keying that subset can hand a duplicated hunk a
       # different key than the cumulative view gives it -- a mark landing on a
       # key `Marks` never produces. `Marks#states` groups by path over the whole
       # changeset and keys within the group; this does the identical thing, so
       # the two cannot disagree. It also means a nested row means what its
-      # marker already means: the WHOLE file, not its part in that commit.
+      # marker already means: the WHOLE file, not its part in that group.
       #
       # THREAD CONTRACT. {#render} is driven by the surface and {#open}/{#marks}
       # by whichever fiber serves the editor's commands, and they share the
@@ -98,8 +102,8 @@ module Lain
         # each says what THAT scope looked for. One shared "(no changeset under
         # review)" was wrong in the case that actually happens: a changeset with
         # files but an empty walk announced that there was no changeset at all.
-        PLACEHOLDERS = { cumulative: "(no files in this changeset)",
-                         commits: "(no commits in this changeset)" }.freeze
+        PLACEHOLDERS = { cumulative: "(no files in this changeset)", commits: "(no commits in this changeset)",
+                         by_directory: "(no directories in this changeset)" }.freeze
 
         # One glyph per canonical file state, and a LITERAL table rather than
         # `Review::FILE_STATES.to_h { ... }` -- which is what {Surface::Text}
@@ -115,13 +119,19 @@ module Lain
         # the String.
         STATE_MARKERS = { "reviewed" => "[x]", "partial" => "[~]", "unreviewed" => "[ ]" }.freeze
 
-        # `scope:` dispatch, keyed by `Review::SCOPES`' own two spellings as
-        # Symbols. `fetch`, never a bare `==`: a typo'd scope must fail loudly
-        # rather than fall through to whichever branch happened to be the
-        # default. A spec pins these keys against the vocabulary.
-        SCOPE_ROWS = { commits: :commit_rows, cumulative: :file_rows }.freeze
+        # `scope:` dispatch, keyed by the NAME of each {Review::Partition}
+        # strategy. `fetch`, never a bare `==`: a scope nothing declares must
+        # fail loudly rather than fall through to whichever branch happened to
+        # be the default, and the `KeyError` names what was asked for.
+        #
+        # `:commits` gets its own entry rather than sharing `:by_directory`'s,
+        # and the difference is one row: {WALK_LEGEND} is a caveat about
+        # AUTHORSHIP, which is a claim only the commit walk makes. A spec pins
+        # completeness -- every registered strategy resolves here.
+        SCOPE_ROWS = { cumulative: :file_rows, commits: :commit_rows, by_directory: :grouped_rows }.freeze
 
-        # The walk's one caveat row, and it is caveat-SIZED because the sidebar
+        # The COMMIT walk's one caveat row -- no other grouping claims
+        # authorship, so no other scope carries it. Caveat-SIZED because the sidebar
         # is 40 columns (`41_layout`'s `lain_review_sidebar_width` default). The
         # honest full statement is three clauses long and wrapped to four screen
         # rows at the top of every render, which spends a navigator's most
@@ -134,9 +144,9 @@ module Lain
         # default and the target against the doc.
         WALK_LEGEND = "-- not authored here: :h lain://review"
 
-        # A commit the range attributes no file to -- normal, and the merge case
-        # above is why. Rendered rather than left blank so the walk accounts for
-        # every commit, and short for {WALK_LEGEND}'s reason.
+        # A group the range attributes no file to -- normal for a commit, and the
+        # merge case above is why. Rendered rather than left blank so the walk
+        # accounts for every commit, and short for {WALK_LEGEND}'s reason.
         NO_HUNKS_HERE = "  (no hunks reachable here)"
 
         # How many renderings stay resolvable. {InboxView::Renderings::HELD}'s
@@ -251,9 +261,9 @@ module Lain
           @slot = Mutex.new
         end
 
-        # @param changeset [#files, #by_commit] see the class doc
-        # @param scope [Symbol] one of `Review::SCOPES` as Symbols; anything
-        #   else raises via {SCOPE_ROWS}' `fetch`
+        # @param changeset [#files, #partitions] see the class doc
+        # @param scope [Symbol] the name of a {Review::Partition} strategy as a
+        #   Symbol; anything else raises via {SCOPE_ROWS}' `fetch`
         # @return [Rendered] the whole buffer and the stamp it must be posted
         #   under, which is `RenderQueue::SET_REVIEW`'s second argument --
         #   REQUIRED there rather than optional as `SET_VIEW`'s is, because a
@@ -383,34 +393,39 @@ module Lain
           changeset.files.map { |file| file_row(file, "", keys) }
         end
 
-        def commit_rows(changeset)
+        # The walk, and the ONE thing that makes it different from any other
+        # grouping: its legend, which is a claim about authorship.
+        def commit_rows(changeset) = led(grouped_rows(changeset), WALK_LEGEND)
+
+        def led(rows, legend) = rows.empty? ? [] : [plain(legend), *rows]
+
+        def grouped_rows(changeset)
           keys = keys_by_path(changeset)
-          sections = changeset.by_commit.flat_map { |commit| commit_section(commit, keys) }
-          sections.empty? ? [] : [plain(WALK_LEGEND), *sections]
+          changeset.partitions.flat_map { |partition| partition_section(partition, keys) }
         end
 
-        def commit_section(commit, keys)
-          nested = commit.files.map { |file| file_row(file, "  ", keys) }
-          [commit_header(commit), *(nested.empty? ? [plain(NO_HUNKS_HERE)] : nested)]
+        def partition_section(partition, keys)
+          nested = partition.files.map { |file| file_row(file, "  ", keys) }
+          [partition_header(partition), *(nested.empty? ? [plain(NO_HUNKS_HERE)] : nested)]
         end
 
         # `Review::Hunk` resolves at CALL time, which is what makes this legal at
         # all: `lain.rb` loads `lain/frontend` first, so the same reference in a
         # class body would not resolve (see {STATE_MARKERS}).
         #
-        # Cut from `changeset.files` in both scopes -- the class doc says why a
-        # commit entry's own subset cannot be keyed. A path the cumulative view
+        # Cut from `changeset.files` in every scope -- the class doc says why a
+        # group entry's own subset cannot be keyed. A path the flat view
         # does not carry gets {NO_KEYS} and its row refuses the gesture by name,
         # rather than being handed keys cut from a narrower batch.
         def keys_by_path(changeset)
           changeset.files.to_h { |file| [file.path.to_s, Review::Hunk.keys(file.hunks)] }
         end
 
-        # The figures LEAD, ahead of the subject, for the reason the class doc
-        # gives: they are the only numbers on this row that are certainly the
-        # commit's own -- with the merge caveat the class doc states and
-        # {WALK_LEGEND} points at.
-        def commit_header(commit) = plain("+#{commit.added} -#{commit.deleted}  #{legible(commit.subject)}")
+        # The figures LEAD, ahead of the label, for the reason the class doc
+        # gives: for a commit they are the only numbers on this row that are
+        # certainly the commit's own -- with the merge caveat the class doc
+        # states and {WALK_LEGEND} points at.
+        def partition_header(group) = plain("+#{group.added} -#{group.deleted}  #{legible(group.label)}")
 
         def file_row(file, indent, keys)
           path = file.path.to_s

@@ -29,10 +29,9 @@ RSpec.describe Lain::Review::LazyFile do
   # are shareable" pins for a diff. Every String is interned, or the graph would
   # be unshareable because of the FIXTURE rather than because of the file.
   def marked_over(keyed, walked = keyed)
-    scope = Lain::Review::Changeset::CommitScope.new(sha: -("c" * 40), subject: -"s", body: -"",
-                                                     numstat: [].freeze, files: [walked].freeze)
+    partition = Lain::Review::Partition.new(label: -"s", files: [walked].freeze)
     changeset = instance_double(Lain::Review::Changeset, files: [keyed], hunks: [hunk],
-                                                         by_commit: [scope],
+                                                         partitions: [partition],
                                                          base_ref: -("b" * 40), head_ref: -("h" * 40))
     marks = instance_double(Lain::Review::Marks, states: { "a.rb" => :reviewed })
     Lain::Review::Session::MarkedChangeset.of(changeset, marks)
@@ -183,7 +182,7 @@ RSpec.describe Lain::Review::LazyFile do
     it "lets a re-derived file fetch the row its twin keyed" do
       marked = marked_over(file, twin)
 
-      expect(marked.by_commit.first.files.first).to equal(marked.files.first)
+      expect(marked.partitions.first.files.first).to equal(marked.files.first)
     end
 
     it "keeps that fetch resolving after one of them has chunked, so the memo is not in the key" do
@@ -191,7 +190,7 @@ RSpec.describe Lain::Review::LazyFile do
       marked = marked_over(file, twin)
 
       expect(file.hash).to eq(twin.hash)
-      expect(marked.by_commit.first.files.first).to equal(marked.files.first)
+      expect(marked.partitions.first.files.first).to equal(marked.files.first)
     end
 
     # The negative half, so the example above is not passing on a fetch that
@@ -219,7 +218,7 @@ RSpec.describe Lain::Review::LazyFile do
       marked = marked_over(lazy(chunker: valued.new(hunks: [hunk].freeze)),
                            lazy(chunker: valued.new(hunks: [hunk].freeze)))
 
-      expect(marked.by_commit.first.files.first).to equal(marked.files.first)
+      expect(marked.partitions.first.files.first).to equal(marked.files.first)
     end
 
     # `instance_of?`, not `is_a?`: under `is_a?` the base would equal a subclass

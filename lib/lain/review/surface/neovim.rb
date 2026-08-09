@@ -211,12 +211,12 @@ module Lain
           @thread_view = thread_view
         end
 
-        # @param changeset [#files, #by_commit] see {Review::Surface}'s class
+        # @param changeset [#files, #partitions] see {Review::Surface}'s class
         #   doc for the one place this duck is stated; {Frontend::Neovim::ReviewView}
-        #   needs two members beyond it (a file's `#hunks`, a commit's
+        #   needs two members beyond it (a file's `#hunks`, a group's
         #   `#added`/`#deleted`) and its own doc says why
-        # @param scope [Symbol] one of `Review::SCOPES` as Symbols; anything
-        #   else raises from the view's own `fetch`
+        # @param scope [Symbol] the name of a {Review::Partition} strategy as a
+        #   Symbol; anything else raises from the view's own `fetch`
         # @return [String, nil] the editor's refusal, or nothing
         def present(changeset, scope:)
           rendered = @view.render(changeset, scope:)

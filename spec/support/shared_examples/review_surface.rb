@@ -90,8 +90,8 @@
 #    Checked against the duck {Lain::Review::Surface}'s own class doc states
 #    for `present`'s argument and against nothing else -- at `:cumulative`
 #    every `changeset.files`' `#path` reaches the transcript and no
-#    `changeset.by_commit`'s `#subject` does; at `:commits` every subject
-#    does. That pair is what makes `scope:` carry weight rather than decorate:
+#    `changeset.partitions`' `#label` does; at `:commits` every label does.
+#    That pair is what makes `scope:` carry weight rather than decorate:
 #    a surface ignoring it fails one half or the other, whichever single
 #    rendering it settled on.
 #
@@ -99,7 +99,7 @@
 #    what the first three checked and what the doc claimed. They checked only
 #    that an IDENTIFIER appears, never the STATE beside it -- which is the
 #    surface's entire purpose -- so a probe that flattened every tri-state to
-#    one marker was green; and they checked a commit's subject without its
+#    one marker was green; and they checked a group's label without its
 #    FILES, so a probe that dropped every nested row at `:commits` was green
 #    too. The state half compares a DISTINCTION rather than any particular
 #    glyph, since the glyph is each adapter's own: strip the path out of the
@@ -111,8 +111,8 @@
 #    told so by NAME rather than by `NoMethodError` on a fixture three
 #    indirections away. It must be NON-EMPTY on both collections, because
 #    every law here is an `all` and `[].all?` is `true`; it must carry files in
-#    at least two states, or the state half compares nothing; and its commit
-#    subjects must not be substrings of its own file paths, which is the one
+#    at least two states, or the state half compares nothing; and its group
+#    labels must not be substrings of its own file paths, which is the one
 #    way the `:cumulative` half could read as a failure for a surface that is
 #    behaving. All four are refused by name at resolve time.
 #
@@ -335,11 +335,11 @@ RSpec.shared_examples "a review surface" do |config = {}|
   # twice. A local Hash rather than a constant, for `no_observation_channel`'s
   # reason: this block re-runs once per inclusion.
   fixture_claims = {
-    changeset_duck: "changeset: must answer #files and #by_commit for the rendering laws -- see " \
+    changeset_duck: "changeset: must answer #files and #partitions for the rendering laws -- see " \
                     "Lain::Review::Surface's class doc, \"What present's changeset argument answers\". A " \
                     "surface that supplies a real transcript: must supply a real changeset: too",
-    changeset_empty: "changeset: must carry at least one file AND at least one commit -- every rendering law " \
-                     "is an `all` over one of those two and `[].all?` is true, so an empty one passes " \
+    changeset_empty: "changeset: must carry at least one file AND at least one partition -- every rendering " \
+                     "law is an `all` over one of those two and `[].all?` is true, so an empty one passes " \
                      "without comparing anything",
     changeset_states: "changeset: must carry files in at least TWO of Review::FILE_STATES -- a single-state " \
                       "fixture cannot tell a tri-state rendering from a constant one",
@@ -351,8 +351,8 @@ RSpec.shared_examples "a review surface" do |config = {}|
 
   define_method(:resolve_review_changeset) do |callable|
     resolved = resolve_review_fixture(callable)
-    review_fixture_refusal(:changeset_duck) unless resolved.respond_to?(:files) && resolved.respond_to?(:by_commit)
-    review_fixture_refusal(:changeset_empty) if resolved.files.to_a.empty? || resolved.by_commit.to_a.empty?
+    review_fixture_refusal(:changeset_duck) unless resolved.respond_to?(:files) && resolved.respond_to?(:partitions)
+    review_fixture_refusal(:changeset_empty) if resolved.files.to_a.empty? || resolved.partitions.to_a.empty?
 
     resolved
   end
@@ -387,24 +387,24 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(presented.files.map(&:path)).to all(satisfy { |path| rendered.include?(path) })
   end
 
-  it "renders every commit subject it was given at :commits scope" do
+  it "renders every partition label it was given at a grouped scope" do
     skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
 
     presented = resolve_review_changeset(changeset)
     subject.present(presented, scope: :commits)
 
     rendered = resolve_review_fixture(transcript)
-    expect(presented.by_commit.map(&:subject)).to all(satisfy { |line| rendered.include?(line) })
+    expect(presented.partitions.map(&:label)).to all(satisfy { |line| rendered.include?(line) })
   end
 
-  it "renders no commit subject at :cumulative scope, so the two scopes differ" do
+  it "renders no partition label at :cumulative scope, so the two scopes differ" do
     skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
 
     presented = resolve_review_changeset(changeset)
     subject.present(presented, scope: :cumulative)
 
     rendered = resolve_review_fixture(transcript)
-    expect(presented.by_commit.map(&:subject)).to all(satisfy { |line| !rendered.include?(line) })
+    expect(presented.partitions.map(&:label)).to all(satisfy { |line| !rendered.include?(line) })
   end
 
   # #4d, and the half a T19 review panel proved missing: the three halves above
@@ -428,16 +428,16 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(decorations.values.uniq.size).to eq(by_state.size)
   end
 
-  # #4e: a commit section is its SUBJECT and the files under it. Checking only
-  # the subject passed a probe whose `:commits` rendering dropped every file row.
-  it "renders the files under each commit at :commits scope, not the subjects alone" do
+  # #4e: a partition section is its LABEL and the files under it. Checking only
+  # the label passed a probe whose grouped rendering dropped every file row.
+  it "renders the files under each partition at a grouped scope, not the labels alone" do
     skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
 
     presented = resolve_review_changeset(changeset)
     subject.present(presented, scope: :commits)
 
     rendered = resolve_review_fixture(transcript)
-    nested = presented.by_commit.flat_map { |commit| commit.files.map(&:path) }
+    nested = presented.partitions.flat_map { |partition| partition.files.map(&:path) }
     expect(nested).to all(satisfy { |path| rendered.include?(path) })
   end
 

@@ -357,7 +357,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
     # does not. Only enough of it to render one row.
     def marked_like(changeset)
       rows = changeset.files.map { |file| Struct.new(:path, :state, :hunks).new(file.path, "unreviewed", file.hunks) }
-      Struct.new(:files, :by_commit).new(rows, [])
+      Struct.new(:files, :partitions).new(rows, [])
     end
   end
 

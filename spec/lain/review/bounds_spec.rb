@@ -42,6 +42,10 @@ RSpec.describe Lain::Review::Bounds do
 
   def rendered_lines_of(files) = Lain::Review::Bounds::Size.of(files).lines
 
+  # The grouping the two commit-scoped checks and `/critique` chunking read,
+  # named once here rather than restated at each call.
+  def walk = Lain::Review::Partition::STRATEGIES.fetch(:commits)
+
   # Five hunkless files that RECORD being asked for their hunks. The only
   # double in the file, and it is here because the assertion is that a message
   # is not sent -- which no real object can report on itself.
@@ -54,10 +58,10 @@ RSpec.describe Lain::Review::Bounds do
         end
       end
     end
-    # `by_commit` is empty so the refusal's ADVICE measures nothing: what this
+    # The walk is empty so the refusal's ADVICE measures nothing: what this
     # probe isolates is the DECISION, which must reach a refusal on the file
     # count alone. (The advice may read hunks -- see `cumulative_advice`.)
-    instance_double(Lain::Review::Changeset, files:, by_commit: [])
+    instance_double(Lain::Review::Changeset, files:, partitions: [])
   end
 
   # A changeset described commit by commit, each commit a list of per-file
@@ -136,6 +140,20 @@ RSpec.describe Lain::Review::Bounds do
 
     it "refuses a ceiling that is not a number, rather than coercing it to zero" do
       expect { described_class.new(max_files: "many") }.to raise_error(ArgumentError)
+    end
+  end
+
+  # The registry's whole point, checked where both readers are in scope: these
+  # are plain objects with identity equality, so a registry that minted a fresh
+  # strategy per read would leave the two constants neither `equal?` nor `==` --
+  # and the first code to compare or cache a resolved scope would fail silently.
+  describe "the strategy it groups by" do
+    it "holds the registry's own instance, the same one the session's join holds" do
+      expect(described_class::COMMIT_STRATEGY).to equal(Lain::Review::Session::MarkedChangeset::WALK)
+    end
+
+    it "reads it out of the registry rather than constructing a second one" do
+      expect(described_class::COMMIT_STRATEGY).to equal(Lain::Review::Partition::STRATEGIES.fetch(:commits))
     end
   end
 
@@ -278,25 +296,38 @@ RSpec.describe Lain::Review::Bounds do
     # Without this, "each commit presents without refusal" is satisfied by a
     # walk whose scopes are all empty -- true and useless at the same time.
     it "covers every file across the walk, with no empty scope" do
-      scopes = changeset.by_commit
+      scopes = changeset.partitions(walk)
 
       expect(scopes.size).to eq(30)
       expect(scopes.sum { |scope| scope.files.size }).to eq(800)
       expect(scopes.map { |scope| scope.files.size }).to all(be_positive)
     end
 
-    it "refuses the ONE commit that is over, naming its sha" do
+    # The subject comes from the group's DETAIL, not from `"commit #{sha}"` --
+    # a refusal that says "commit" in prose is one no other grouping could make
+    # honest, and every strategy names its own groups. The commit walk's detail
+    # puts the sha back, because a subject alone cannot be looked up.
+    it "refuses the ONE commit that is over, naming it by subject AND sha" do
       merged = changeset_with_merge(file_count: 9)
       bounds = described_class.new(max_files: 4, max_lines: 10_000)
 
       expect { bounds.check_presentation!(merged, scope: :commits) }
-        .to raise_error(described_class::TooLarge, /merge/)
+        .to raise_error(described_class::TooLarge, /\As merge \(commit merge\) is 9 files, over the ceiling of 4 --/)
+    end
+
+    # The half a subject alone cannot carry: two commits can share one, and a
+    # reader told their review is too large has to be able to reach the commit.
+    it "names a sha a reader can look the commit up by" do
+      merged = changeset_with_merge(file_count: 9)
+
+      expect { described_class.new(max_files: 4).check_presentation!(merged, scope: :commits) }
+        .to raise_error(described_class::TooLarge, /commit merge/)
     end
 
     # The hazard stated rather than hidden: two of three scopes are empty, so a
     # merge-blanked walk "presents" only because there is nothing in it.
     it "pins the merge blanking that makes an empty scope possible" do
-      scopes = changeset_with_merge(file_count: 9).by_commit
+      scopes = changeset_with_merge(file_count: 9).partitions(walk)
 
       expect(scopes.map { |scope| scope.files.size }).to eq([0, 0, 9])
     end
@@ -316,7 +347,7 @@ RSpec.describe Lain::Review::Bounds do
     it "yields one chunk per commit" do
       chunks = described_class.new.each_critique_chunk(changeset).to_a
 
-      expect(chunks.map(&:sha)).to eq(changeset.by_commit.map(&:sha))
+      expect(chunks.map(&:label)).to eq(changeset.partitions(walk).map(&:label))
     end
 
     it "drops nothing: the chunks' files are the changeset's files" do
@@ -333,15 +364,15 @@ RSpec.describe Lain::Review::Bounds do
     end
 
     # {Changeset#each_anchor}'s promise, kept one level up: holding the
-    # enumerator walks no commits. `by_commit` is where the parse happens, so
-    # "was it called" is the observable -- and the second half proves the size
-    # block is wired to it rather than to a constant.
+    # enumerator walks no commits. `#partitions` is where the grouping happens,
+    # so "was it called" is the observable -- and the second half proves the
+    # size block is wired to it rather than to a constant.
     it "walks no commits when no block is given" do
       walks = 0
       view = instance_double(Lain::Review::Changeset)
-      allow(view).to receive(:by_commit) do
+      allow(view).to receive(:partitions) do
         walks += 1
-        changeset.by_commit
+        changeset.partitions(walk)
       end
 
       enumerator = described_class.new.each_critique_chunk(view)
@@ -354,14 +385,14 @@ RSpec.describe Lain::Review::Bounds do
 
     # A frozen Bounds cannot memoize on itself, so asking an Enumerator for its
     # size and then iterating it used to pack the whole changeset twice --
-    # `Changeset#by_commit` memoizes, but the packing walk and its per-file
-    # guard do not.
+    # `Changeset#files` memoizes, but neither the grouping, the packing walk nor
+    # its per-file guard does.
     it "packs once however many times the enumerator is asked" do
       walks = 0
       view = instance_double(Lain::Review::Changeset)
-      allow(view).to receive(:by_commit) do
+      allow(view).to receive(:partitions) do
         walks += 1
-        changeset.by_commit
+        changeset.partitions(walk)
       end
 
       enumerator = described_class.new.each_critique_chunk(view)
@@ -387,7 +418,7 @@ RSpec.describe Lain::Review::Bounds do
 
       expect(chunks.size).to eq(2)
       expect(chunks.map { |chunk| chunk.files.size }).to eq([2, 1])
-      expect(chunks.map(&:sha).uniq).to eq(["c0"])
+      expect(chunks.map { |chunk| chunk.detail.sha }.uniq).to eq(["c0"])
     end
 
     # UNSORTED on purpose. `pack` promises "greedy, in the diff's own order",

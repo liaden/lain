@@ -115,8 +115,22 @@ module Lain
       # scope after the vocabulary stopped serving it, and `fetch` will not.
       COMMIT_WALK = SCOPE_NAMES.fetch(:commits)
 
+      # The strategy `:commits` means, read out of the registry rather than
+      # constructed here so there is one instance and one spelling. A LATER card
+      # takes the strategy as an argument; today the two scope checks below are
+      # still named for the two groupings the vocabulary declares, so naming the
+      # commit walk here is the rename and nothing more.
+      COMMIT_STRATEGY = Partition::STRATEGIES.fetch(:commits)
+
       # `.freeze` by hand, unlike its two neighbours: the magic comment freezes
       # only literals, and this one interpolates.
+      #
+      # BYTE-IDENTICAL to {Partition::ByCommit::ADVICE}, which is the whole
+      # point of a strategy answering `#advice` -- a LATER card reads the advice
+      # off the strategy and deletes this constant along with {NO_NARROWER} and
+      # {NO_PRESENTABLE_SCOPE}. Left duplicated on purpose: collapsing it is a
+      # policy change, and this card owns the subject of a refusal, not its
+      # recommendation.
       COMMIT_WALK_ADVICE = "present it per commit (scope: #{COMMIT_WALK}) instead".freeze
 
       NO_NARROWER = "and a commit is already the narrowest scope, so there is nothing to fall back to"
@@ -129,7 +143,7 @@ module Lain
 
       # The refusal below the FILE, which is where splitting genuinely stops.
       #
-      # The first cut said this of a COMMIT, and it was false: `CommitScope`
+      # The first cut said this of a COMMIT, and it was false: a {Partition}
       # answers `#files`, so the file is a boundary GIT SUPPLIES below the
       # commit, and packing by it drops nothing and invents nothing.
       #
@@ -178,7 +192,7 @@ module Lain
         freeze
       end
 
-      # @param view [#files, #by_commit] a {Changeset}
+      # @param view [#files, #partitions] a {Changeset}
       # @param scope [Symbol] one of {SCOPE_CHECKS}' keys
       # @return [nil] when the whole view can be presented at this scope
       # @raise [TooLarge] naming the measurement, the ceiling and the alternative
@@ -191,34 +205,36 @@ module Lain
       # The `/critique` input, chunked by the boundaries git already supplies:
       # the commit first, and the FILE within a commit that is too big to send
       # whole. Both are boundaries the changeset hands over -- neither drops
-      # content nor invents a split -- so a chunk is always a {CommitScope},
-      # carrying its commit's sha whether it holds all of that commit's files or
-      # some of them. A caller that cannot tell which of two types it was handed
-      # would have to branch; joining chunks is its business anyway.
+      # content nor invents a split -- so a chunk is always a {Review::Partition},
+      # carrying its commit's label whether it holds all of that commit's files
+      # or some of them. A caller that cannot tell which of two types it was
+      # handed would have to branch; joining chunks is its business anyway.
       #
-      # An empty scope still yields -- see {Changeset#by_commit} for how a merge
+      # An empty group still yields -- see {Partition::ByCommit} for how a merge
       # produces one -- because skipping it is the silent drop this object exists
       # to refuse.
       #
       # == What a SPLIT commit's chunks share, and what that costs a renderer
       #
-      # N chunks from one commit carry the same `sha`, `subject`, `body` AND the
-      # same `numstat` -- the commit's OWN, unpartitioned figure, because that is
-      # what {CommitScope} means and partitioning it would invent per-chunk
-      # numbers git never reported. `files` is the only member that differs.
+      # N chunks from one commit carry the same `label` AND the same `detail` --
+      # including the commit's OWN, unpartitioned numstat, because that is what
+      # {Partition::ByCommit::Commit} means and partitioning it would invent
+      # per-chunk numbers git never reported. `files` is the only member that
+      # differs.
       #
       # The cost lands on a renderer: T14's sidebar renders `numstat`, so a
       # commit split into three chunks renders that one figure three times, and
       # the three do not sum to it. A consumer that shows per-chunk totals must
-      # derive them from `files` (what {Size.of} answers) rather than read
-      # `numstat`, which describes the whole commit however it was chunked.
+      # derive them from `files` (what {Size.of} answers) rather than read the
+      # detail's `numstat`, which describes the whole commit however it was
+      # chunked.
       #
       # Every chunk is packed and measured BEFORE any is yielded. Checking as it
       # goes would hand chunks 1 and 2 to the model and then refuse at chunk 3,
       # which is neither handling the whole thing nor refusing it.
       #
-      # @param changeset [#by_commit]
-      # @return [Enumerator<Changeset::CommitScope>] when no block is given; one
+      # @param changeset [#partitions]
+      # @return [Enumerator<Review::Partition>] when no block is given; one
       #   or more per commit, disjoint, together covering every file exactly once
       # @raise [TooLarge] if ONE FILE alone is past {#max_critique_lines} -- see
       #   {UNSPLITTABLE} for why the file is where splitting stops
@@ -239,13 +255,23 @@ module Lain
       end
 
       def check_commits!(view)
-        view.by_commit.each { |scope| check_commit!(scope) }
+        view.partitions(COMMIT_STRATEGY).each { |group| check_group!(group) }
       end
 
-      def check_commit!(scope)
-        files = scope.files
-        guard!(files.size, max_files, "files", "commit #{scope.sha}") { NO_NARROWER }
-        guard!(Size.lines_in(files), max_lines, "rendered lines", "commit #{scope.sha}") { NO_NARROWER }
+      # The subject is what the group's DETAIL calls it, which is what replaced
+      # `"commit #{sha}"`: a refusal that says "commit" in prose is one this
+      # object cannot make honest for any other grouping, and only the strategy
+      # knows how its own groups are looked up. The commit walk puts the sha
+      # back there; a directory answers its path, which names itself already.
+      #
+      # Asked ONCE and shared by both guards, because the two ceilings refuse
+      # the same group and a reader comparing two messages should not have to
+      # check whether they name one thing.
+      def check_group!(group)
+        files = group.files
+        subject = group.detail.named(group.label)
+        guard!(files.size, max_files, "files", subject) { NO_NARROWER }
+        guard!(Size.lines_in(files), max_lines, "rendered lines", subject) { NO_NARROWER }
       end
 
       # Computed only on the refusal path, and only there.
@@ -259,11 +285,12 @@ module Lain
       # sentence is worth more than that sum; Schneeman's finding was a message
       # that sent a human down a path which also refuses.
       def cumulative_advice(view)
-        view.by_commit.all? { |scope| presentable?(scope) } ? COMMIT_WALK_ADVICE : NO_PRESENTABLE_SCOPE
+        walk = view.partitions(COMMIT_STRATEGY)
+        walk.all? { |group| presentable?(group) } ? COMMIT_WALK_ADVICE : NO_PRESENTABLE_SCOPE
       end
 
-      def presentable?(scope)
-        scope.files.size <= max_files && Size.lines_in(scope.files) <= max_lines
+      def presentable?(group)
+        group.files.size <= max_files && Size.lines_in(group.files) <= max_lines
       end
 
       # Packs at most ONCE however many times the Enumerator is asked, while
@@ -272,8 +299,8 @@ module Lain
       # holds -- which also scopes it to this one walk rather than growing a
       # cache keyed by changeset. `enum_for` would re-enter this method per
       # query, and `#size` followed by `#each` then packed the whole changeset
-      # twice: {Changeset#by_commit} memoizes, but the packing walk and its
-      # per-file guard do not.
+      # twice: {Changeset#files} memoizes, but neither the grouping, the packing
+      # walk nor its per-file guard does.
       def critique_enumerator(changeset)
         packed = nil
         chunks = -> { packed ||= critique_chunks(changeset) }
@@ -283,13 +310,13 @@ module Lain
       end
 
       def critique_chunks(changeset)
-        changeset.by_commit.flat_map do |scope|
-          pack(scope.files).map { |files| scope.with(files: files.freeze) }
+        changeset.partitions(COMMIT_STRATEGY).flat_map do |group|
+          pack(group.files).map { |files| group.with(files: files.freeze) }
         end
       end
 
       # Greedy, in the diff's own order: a new chunk opens only when the next
-      # file would push the current one past the ceiling. An empty scope packs
+      # file would push the current one past the ceiling. An empty group packs
       # to one empty chunk rather than none, which is what keeps a merge-blanked
       # commit in the walk.
       def pack(files)

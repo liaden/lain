@@ -127,6 +127,11 @@ RSpec.describe Lain::Review::Changeset do
 
   def changeset_over(diff, **) = described_class.new(source: fake_source(diff:, **))
 
+  # The commit walk, which is where the grouping this file used to own now
+  # lives -- its own rules are spec'd in `partition/by_commit_spec.rb`, and what
+  # is left here is what a CHANGESET owes it.
+  def walk = Lain::Review::Partition::STRATEGIES.fetch(:commits)
+
   describe "the parse, against a hand-written diff" do
     subject(:changeset) { changeset_over(one_file_diff) }
 
@@ -446,7 +451,7 @@ RSpec.describe Lain::Review::Changeset do
     end
 
     it "attributes a renamed file to the commit whose numstat spells the rename" do
-      expect(changeset.by_commit.map { |scope| scope.files.map(&:path) }).to eq([["to.rb"]])
+      expect(changeset.partitions(walk).map { |group| group.files.map(&:path) }).to eq([["to.rb"]])
     end
   end
 
@@ -612,12 +617,9 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
-  describe "grouping by commit" do
+  describe "what a changeset owes a partition strategy" do
     subject(:changeset) { changeset_over(diff, commits:) }
 
-    # `shared.rb` is touched by both commits. The cumulative diff shows its
-    # hunks ONCE, so a grouping that hands them to every commit that touched the
-    # file double-counts and the sum stops meaning anything.
     let(:commits) do
       [commit_record(sha: "c1", subject: "first", paths: %w[shared.rb only_first.rb]),
        commit_record(sha: "c2", subject: "second", paths: %w[shared.rb only_second.rb])]
@@ -629,38 +631,50 @@ RSpec.describe Lain::Review::Changeset do
       end.join
     end
 
-    it "yields one group per commit, in walk order" do
-      expect(changeset.by_commit.map(&:sha)).to eq(%w[c1 c2])
-      expect(changeset.by_commit.map(&:subject)).to eq(%w[first second])
+    # The seam: a strategy takes a CHANGESET, never a source, so the walk has
+    # to be reachable from here. Holding a source instead would make every
+    # strategy need a repository to be testable at all.
+    it "forwards the source's walk, which is what the commit strategy groups by" do
+      expect(changeset.commits.map(&:sha)).to eq(%w[c1 c2])
     end
 
-    it "partitions the files, so the groups' hunks sum to the cumulative hunk count" do
-      expect(changeset.by_commit.sum { |scope| scope.files.sum { |file| file.hunks.size } })
-        .to eq(changeset.hunks.size)
+    it "groups by whichever strategy it is handed, rather than one it was built with" do
+      expect(changeset.partitions(walk).map(&:label)).to eq(%w[first second])
+      expect(changeset.partitions(Lain::Review::Partition::Whole.new).map(&:label))
+        .to eq(["the whole changeset"])
     end
 
-    it "gives an overlapping file to the LAST commit that touched it, never to both" do
-      expect(changeset.by_commit.map { |scope| scope.files.map(&:path) })
-        .to eq([["only_first.rb"], %w[shared.rb only_second.rb]])
+    # Two strategies over one changeset, and neither answers the other's
+    # grouping -- which is the whole claim of the axis.
+    it "keeps the two groupings apart, so neither returns the other's" do
+      grouped = changeset.partitions(walk).map { |group| group.files.map(&:path) }
+      flat = changeset.partitions(Lain::Review::Partition::Whole.new).map { |group| group.files.map(&:path) }
+
+      expect(grouped).to eq([["only_first.rb"], %w[shared.rb only_second.rb]])
+      expect(flat).to eq([%w[only_first.rb shared.rb only_second.rb]])
     end
 
-    it "carries each commit's own numstat, which is the walk's figure and not the partition's" do
-      expect(changeset.by_commit.first.numstat.map(&:path)).to eq(%w[shared.rb only_first.rb])
+    # NOT memoized, deliberately -- a cache keyed by strategy is a stale
+    # partition under a re-render. The files behind it still are, which is what
+    # keeps the parse to once.
+    it "regroups on demand rather than memoizing, while reusing the parsed files" do
+      expect(changeset.partitions(walk)).not_to equal(changeset.partitions(walk))
+      expect(changeset.partitions(walk).first.files.first).to equal(changeset.files.first)
     end
 
-    it "refuses loudly rather than drop a file no commit's numstat accounts for" do
-      orphaned = changeset_over(diff, commits: [commit_record(sha: "c1", paths: ["shared.rb"])])
-      expect { orphaned.by_commit }
-        .to raise_error(described_class::Unattributed, /only_first\.rb/)
+    # The message is REMOVED rather than aliased: a migration alias would be a
+    # special case with no card scheduled to remove it.
+    it "no longer answers the commit axis directly" do
+      expect(changeset).not_to respond_to(:by_commit)
     end
   end
 
   # The distinction T8's reconciler depends on is made STRUCTURAL here rather
   # than by naming convention: a commit scope is a different class that does not
   # answer the two messages the reconciler reads.
-  describe "a commit scope cannot be mistaken for the whole changeset" do
+  describe "a partition cannot be mistaken for the whole changeset" do
     subject(:scope) do
-      changeset_over(one_file_diff).by_commit.first
+      changeset_over(one_file_diff).partitions(walk).first
     end
 
     it "does not answer #hunks, so no caller can hand a filtered set to the pruner" do
@@ -707,10 +721,10 @@ RSpec.describe Lain::Review::Changeset do
       expect(batched.uniq.size).to eq(2)
     end
 
-    # T9's Surface::Text reads #files and #by_commit.
-    it "answers #files and #by_commit with entries carrying the messages the text surface reads" do
+    # T9's Surface::Text reads #files and #partitions.
+    it "answers #files and #partitions with entries carrying the messages the text surface reads" do
       expect(changeset.files.first).to respond_to(:path)
-      expect(changeset.by_commit.first).to respond_to(:subject, :files)
+      expect(changeset.partitions(walk).first).to respond_to(:label, :files)
     end
 
     # Deliberately ABSENT. `state` is the marks-derived tri-state in T9's table,
@@ -732,7 +746,7 @@ RSpec.describe Lain::Review::Changeset do
 
     it "answers frozen, shareable value objects, so no reachable mutable state remains" do
       expect(changeset.files).to all(satisfy { |file| Ractor.shareable?(file) })
-      expect(changeset.by_commit).to all(satisfy { |scope| Ractor.shareable?(scope) })
+      expect(changeset.partitions(walk)).to all(satisfy { |group| Ractor.shareable?(group) })
     end
 
     it "answers the same file objects on a second call rather than reparsing" do
@@ -891,14 +905,14 @@ RSpec.describe Lain::Review::Changeset do
 
     # AC 4.
     it "yields one group per commit whose hunks sum to the cumulative hunk count" do
-      expect(changeset.by_commit.map(&:sha)).to eq([@first, @second, @third])
-      expect(changeset.by_commit.sum { |scope| scope.files.sum { |file| file.hunks.size } })
+      expect(changeset.partitions(walk).map { |group| group.detail.sha }).to eq([@first, @second, @third])
+      expect(changeset.partitions(walk).sum { |group| group.files.sum { |file| file.hunks.size } })
         .to eq(changeset.hunks.size)
     end
 
     it "gives shared.rb to the second commit, which is the last one to touch it" do
-      owner = changeset.by_commit.find { |scope| scope.files.any? { |file| file.path == "shared.rb" } }
-      expect(owner.sha).to eq(@second)
+      owner = changeset.partitions(walk).find { |group| group.files.any? { |file| file.path == "shared.rb" } }
+      expect(owner.detail.sha).to eq(@second)
     end
 
     it "reports paths as UTF-8, since an anchor is journalled as JSON" do
@@ -928,12 +942,13 @@ RSpec.describe Lain::Review::Changeset do
       end
 
       it "attributes the merge's hand-resolved file to the merge commit rather than dropping it" do
-        owner = changeset.by_commit.find { |scope| scope.files.any? { |file| file.path == "only_in_merge.rb" } }
-        expect(owner.sha).to eq(@merge)
+        owner = changeset.partitions(walk)
+                         .find { |group| group.files.any? { |file| file.path == "only_in_merge.rb" } }
+        expect(owner.detail.sha).to eq(@merge)
       end
 
       it "still partitions every file, merge included" do
-        expect(changeset.by_commit.flat_map { |scope| scope.files.map(&:path) })
+        expect(changeset.partitions(walk).flat_map { |group| group.files.map(&:path) })
           .to match_array(changeset.files.map(&:path))
       end
 
@@ -956,12 +971,13 @@ RSpec.describe Lain::Review::Changeset do
       # not a grouping change, which is why this is disclosed rather than
       # patched. `#numstat` stays the commit's OWN figure, so a consumer that
       # needs "what did this commit do" has an honest answer to read.
-      it "hands a merge every file it re-reports, emptying the scopes that authored them" do
-        authored = changeset.by_commit.find { |scope| scope.subject == "side one" }
-        merge = changeset.by_commit.find { |scope| scope.sha == @merge }
+      it "hands a merge every file it re-reports, emptying the groups that authored them" do
+        groups = changeset.partitions(walk)
+        authored = groups.find { |group| group.label == "side one" }
+        merge = groups.find { |group| group.detail.sha == @merge }
 
         expect(authored.files).to be_empty
-        expect(authored.numstat.map(&:path)).to include("side_only.rb")
+        expect(authored.detail.numstat.map(&:path)).to include("side_only.rb")
         expect(merge.files.map(&:path)).to include("side_only.rb")
       end
     end
@@ -979,8 +995,8 @@ RSpec.describe Lain::Review::Changeset do
       end
 
       it "groups them by commit rather than refusing the whole changeset" do
-        expect { changeset.by_commit }.not_to raise_error
-        expect(changeset.by_commit.flat_map { |scope| scope.files.map(&:path) })
+        expect { changeset.partitions(walk) }.not_to raise_error
+        expect(changeset.partitions(walk).flat_map { |group| group.files.map(&:path) })
           .to include('we"ird.rb', "ta\tb.rb")
       end
 
@@ -1009,8 +1025,8 @@ RSpec.describe Lain::Review::Changeset do
       end
 
       it "still joins the diff to the walk, because both sides scrub the same way" do
-        expect { changeset.by_commit }.not_to raise_error
-        expect(changeset.by_commit.flat_map { |scope| scope.files.map(&:path) }.size)
+        expect { changeset.partitions(walk) }.not_to raise_error
+        expect(changeset.partitions(walk).flat_map { |group| group.files.map(&:path) }.size)
           .to eq(changeset.files.size)
       end
 
@@ -1045,7 +1061,7 @@ RSpec.describe Lain::Review::Changeset do
       end
 
       it "attributes both to a commit, so neither goes missing from the walk" do
-        walked = changeset.by_commit.flat_map { |scope| scope.files.map(&:path) }
+        walked = changeset.partitions(walk).flat_map { |group| group.files.map(&:path) }
         expect(walked).to include("blob.bin", "café.rb")
       end
     end

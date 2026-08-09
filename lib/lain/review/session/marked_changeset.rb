@@ -3,7 +3,7 @@
 module Lain
   module Review
     class Session
-      MarkedChangeset = Data.define(:files, :by_commit, :base_ref, :head_ref)
+      MarkedChangeset = Data.define(:files, :partitions, :base_ref, :head_ref)
 
       # A changeset's STRUCTURE joined to its marks' TRI-STATE -- the one object
       # that can answer both, and the argument every {Review::Surface} means by
@@ -19,19 +19,19 @@ module Lain
       #
       # == What it answers
       #
-      #   #files      -> Array<FileRow>    every file, in the diff's own order
-      #   #by_commit  -> Array<CommitRow>  the commit walk, files partitioned
-      #   #base_ref / #head_ref            the refs every anchor rests on
+      #   #files       -> Array<FileRow>       every file, in the diff's own order
+      #   #partitions  -> Array<PartitionRow>  the groups, files partitioned
+      #   #base_ref / #head_ref                the refs every anchor rests on
       #
       # It does NOT answer `#hunks`. {Marks#reconcile} reads `#base_ref` and
       # `#hunks` together, and it must only ever be handed the whole, unfiltered
       # {Changeset} -- the session keeps that one and hands this one to
       # renderers, so a view can never be mistaken for the thing the pruner
-      # takes. {Changeset::CommitScope} withholds the same pair for the same
-      # reason, and {CommitRow} does not restore it.
+      # takes. {Review::Partition} withholds the same pair for the same
+      # reason, and {PartitionRow} does not restore it.
       #
-      # Rows are built ONCE and shared: the {FileRow} under a commit is the same
-      # object as the one at cumulative scope, so a re-render cannot show two
+      # Rows are built ONCE and shared: the {FileRow} under a partition is the
+      # same object as the one at whole scope, so a re-render cannot show two
       # different states for one file.
       class MarkedChangeset
         # The Symbol -> canonical-String projection of {Review::FILE_STATES}.
@@ -78,31 +78,38 @@ module Lain
           changeset.hunks.group_by(&:path).transform_values { |hunks| Hunk.keys(hunks) }.freeze
         end
 
+        # The commit walk is the DEFAULT strategy rather than the only one, so
+        # a caller that has not chosen still gets the grouping the review model
+        # has always had. Naming one here is what keeps {Session#marked} a
+        # no-argument message until a later card gives the session a scope to
+        # resolve.
+        WALK = Review::Partition::STRATEGIES.fetch(:commits)
+
         # @param changeset [Review::Changeset] the whole, unfiltered changeset
         # @param marks [Review::Marks] recorded against the same base
         # @param keys_by_path [Hash{String => Array<String>}] {keys_by_path}'s
         #   answer, passed in when the caller already computed it
+        # @param strategy [Review::Partition::Strategy] how the files are grouped
         # @return [MarkedChangeset]
         # @raise [Marks::BaseMismatch] if the marks name another base
-        def self.of(changeset, marks, keys_by_path: keys_by_path(changeset))
+        def self.of(changeset, marks, keys_by_path: keys_by_path(changeset), strategy: WALK)
           states = marks.states(changeset)
-          # Keyed by the ChangedFile itself, not by its path: a CommitScope
-          # holds the very same value objects, so the lookup is exact and two
-          # files that somehow shared a path could not silently collapse into
-          # one row.
+          # Keyed by the ChangedFile itself, not by its path: a Partition holds
+          # the very same value objects, so the lookup is exact and two files
+          # that somehow shared a path could not silently collapse into one row.
           rows = changeset.files.to_h { |file| [file, row(file, states, keys_by_path)] }
-          new(files: rows.values.freeze, by_commit: walk(changeset, rows),
+          new(files: rows.values.freeze, partitions: grouped(changeset, rows, strategy),
               base_ref: changeset.base_ref, head_ref: changeset.head_ref)
         end
 
-        # `fetch` without a default: a scope names only files the changeset
-        # named, so a miss is a broken partition and must say so.
-        def self.walk(changeset, rows)
-          changeset.by_commit.map do |scope|
-            CommitRow.new(scope:, files: scope.files.map { |file| rows.fetch(file) }.freeze)
+        # `fetch` without a default: a partition names only files the changeset
+        # named, so a miss is a broken grouping and must say so.
+        def self.grouped(changeset, rows, strategy)
+          changeset.partitions(strategy).map do |partition|
+            PartitionRow.new(partition:, files: partition.files.map { |file| rows.fetch(file) }.freeze)
           end.freeze
         end
-        private_class_method :walk
+        private_class_method :grouped
 
         def self.row(file, states, keys_by_path)
           FileRow.new(file:, state: state_of(file, states),
@@ -144,12 +151,12 @@ module Lain
         #   #hunk_keys                                   what a marking gesture names
         #
         # `#state` is the file's WHOLE-CHANGESET tri-state, and it is the same
-        # number under a commit as at cumulative scope. That is structural, not
-        # a coincidence to be relied on quietly: {Changeset#by_commit}
+        # number under a partition as at whole scope. That is structural, not a
+        # coincidence to be relied on quietly: a {Review::Partition::Strategy}
         # PARTITIONS files rather than replicating them, so every hunk of a file
-        # sits under exactly one commit and the two derivations cannot differ.
+        # sits under exactly one group and the two derivations cannot differ.
         # Were attribution ever to become per-hunk, this row would have to stop
-        # implying a per-commit reading.
+        # implying a per-group reading.
         FileRow = Data.define(:file, :state, :hunk_keys) do
           def path = file.path
           def old_path = file.old_path
@@ -159,42 +166,46 @@ module Lain
           def hunks = file.hunks
         end
 
-        # One commit's row: its identity and subject, its share of the files as
-        # {FileRow}s, and its own line accounting.
+        # One group's row: what heads it, its share of the files as {FileRow}s,
+        # and its line accounting.
         #
-        # `#added`/`#deleted` are SCALARS and `#numstat` is left alone. That is a
-        # correction, not a style choice: {Changeset::CommitScope#numstat} is a
-        # frozen `Array<Source::FileStat>` and answers neither, so a row that
-        # shadowed the name with an aggregate would satisfy a test double and
-        # raise `NoMethodError` on the real object.
+        # `#added`/`#deleted` are SCALARS and the accounting is asked of the
+        # partition's DETAIL. That is a correction, not a style choice:
+        # {Partition::ByCommit::Commit#numstat} is a frozen
+        # `Array<Source::FileStat>` and answers neither, so a row that shadowed
+        # the name with an aggregate would satisfy a test double and raise
+        # `NoMethodError` on the real object. The detail is asked rather than
+        # the hunks counted here because only the strategy knows whether it has
+        # an accounting of its own -- {Partition::Undetailed} reads the hunks,
+        # which is the honest answer when it does not.
         #
         # == What these figures may and may not be read as
         #
-        # They are the commit's OWN numstat, summed -- not its share of the
-        # cumulative diff, which is what `#files` is. For a MERGE under
-        # `--diff-merges=first-parent` that figure is the entire side branch, so
-        # a merge row legitimately outranks the commit that actually wrote the
-        # code; {Changeset#by_commit}'s own doc records why that cannot be fixed
-        # from inside these objects (it needs a parent count {Source::Commit}
-        # does not carry). Forwarding the commit's own numbers unchanged is the
-        # option that does not make it worse.
+        # For a commit they are the commit's OWN numstat, summed -- not its
+        # share of the cumulative diff, which is what `#files` is. Under
+        # `--diff-merges=first-parent` a merge's figure is the entire side
+        # branch, so a merge row legitimately outranks the commit that actually
+        # wrote the code; {Partition::ByCommit}'s own doc records why that
+        # cannot be fixed from inside these objects (it needs a parent count
+        # {Source::Commit} does not carry). Forwarding the commit's own numbers
+        # unchanged is the option that does not make it worse.
         #
-        # A binary file's stats are nil rather than 0 -- git spells it `-` for
-        # exactly that reason -- so they are skipped in the sums, and
-        # `#binaries` says how many were, because a bare `+0 -0` on an all-binary
-        # commit reads as "nothing changed".
-        CommitRow = Data.define(:scope, :files) do
-          def sha = scope.sha
-          def subject = scope.subject
-          def body = scope.body
-          def numstat = scope.numstat
-          def added = total(:added)
-          def deleted = total(:deleted)
-          def binaries = scope.numstat.count(&:binary?)
-
-          private
-
-          def total(field) = scope.numstat.filter_map(&field).sum
+        # It does NOT forward `#sha`, `#subject`, `#body` or `#numstat`. Those
+        # are a COMMIT's facts and a directory has none of them, so they live on
+        # {#detail} where only the rows that have them answer -- which is the
+        # whole reason the partition axis stopped being the commit axis.
+        #
+        # `#binaries` is forwarded and DRAWN BY NOBODY -- neither surface
+        # renders it, so an all-binary group still shows `+0 -0` and reads as
+        # "nothing changed", which is the misreading the count exists to
+        # prevent. Said out loud rather than left implied by a comment claiming
+        # the defect is closed; rendering it is a card nobody has written.
+        PartitionRow = Data.define(:partition, :files) do
+          def label = partition.label
+          def detail = partition.detail
+          def added = partition.detail.added(files)
+          def deleted = partition.detail.deleted(files)
+          def binaries = partition.detail.binaries(files)
         end
       end
     end
