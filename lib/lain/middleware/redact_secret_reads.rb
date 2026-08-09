@@ -83,8 +83,6 @@ module Lain
       # in this set -- that is the path boundary's job and a different card's.
       GUARDED_TOOLS = Set["read_file"].freeze
 
-      PLACEHOLDER = "<redacted:%d>"
-
       # The provider content-block key this can read. Anything else in an Array
       # result is bytes this detector cannot see -- see {Scan}.
       TEXT = "text"
@@ -473,24 +471,13 @@ module Lain
           Piece.new(text: block[key], key:) if key
         end
 
-        # Regions are byte offsets into `piece.b` and {Sensitivity::Regions}
-        # guarantees them ascending and non-overlapping, so one forward walk
-        # rebuilds the file with each withheld span swapped for its placeholder.
-        # The whole walk is in BINARY because an offset into re-decoded text is
-        # a different offset; the original encoding is restored at the end, and
-        # the placeholder is ASCII so it cannot invalidate it.
-        def redact(piece, hidden, ordinals)
-          bytes = piece.b
-          cursor, parts = hidden.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals) }
-          (parts << bytes.byteslice(cursor..)).join.force_encoding(piece.encoding)
-        end
-
-        # The bytes kept since the previous region, then the placeholder that
-        # stands in for this one -- carrying forward the offset just past it.
-        def swap(bytes, (at, kept), region, ordinals)
-          [region.start + region.length,
-           kept + [bytes.byteslice(at, region.start - at), format(PLACEHOLDER, ordinals.next)]]
-        end
+        # The masked rendering is {Sensitivity::Masking}'s, and this class owns
+        # only the piece bookkeeping around it: {Survey::Projection} withholds
+        # regions too, and two walks over the same byte offsets is how the read
+        # path and a survey would drift on what a masked file looks like.
+        # `ordinals` is threaded through so the numbering stays consecutive
+        # ACROSS the pieces of one result.
+        def redact(piece, hidden, ordinals) = Sensitivity::Masking.render(piece, hidden, ordinals:)
 
         # Written back under the key it was READ from, never a hardcoded one --
         # see {#piece_of}. A nil key means the element WAS the String, so the

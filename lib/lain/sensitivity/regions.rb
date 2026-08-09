@@ -114,6 +114,19 @@ module Lain
     # 2.1s. So this runs per read without a budget under a few hundred KB, and a
     # caller reading megabyte blobs should know the cost is linear in bytes.
     module Regions
+      # What a withheld region looks like wherever one is rendered. It lives
+      # HERE, beside the detector and not in either arm that renders one,
+      # because two arms mask now -- a `read_file` result on its way out of the
+      # tool phase ({Middleware::RedactSecretReads}) and a survey's projection of
+      # a file it may list ({Survey::Projection}) -- and a human has to
+      # recognise the same thing in both.
+      #
+      # The `%d` is an ORDINAL, counting masked regions in reading order, and
+      # never the byte length withheld: a length discloses how long the secret
+      # is, which is a fact about the secret. The ordinal discloses only how many
+      # there are, which the release prompt already tells the human.
+      PLACEHOLDER = "<redacted:%d>"
+
       # A region no pattern named. Journaled as-is, so triage stays legible as
       # triage rather than reading like a matched credential.
       ENTROPY_REASON = "high-entropy token"

@@ -487,4 +487,6 @@ end
 require_relative "sensitivity/filter"
 require_relative "sensitivity/policy"
 require_relative "sensitivity/regions"
+# Masking renders what Regions detects, so it reads PLACEHOLDER off it.
+require_relative "sensitivity/masking"
 require_relative "sensitivity/ledger"

@@ -138,6 +138,20 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(content).to include("<redacted:1>", "<redacted:2>", "<redacted:3>")
     end
 
+    # The format and the walk that applies it belong to the region model, not to
+    # this middleware: a survey's projection masks the same bytes the same way,
+    # and a second copy of either is how the two arms drift on what a masked
+    # region looks like. The literals above stay literal on purpose -- they are
+    # what would catch a change to the shared rendering.
+    it "renders the region model's own placeholder, with no second copy of the format here" do
+      path = write("notes.txt", one_secret)
+
+      content = read(path).fetch(:result).content
+
+      expect(content).to include(format(Lain::Sensitivity::Regions::PLACEHOLDER, 1))
+      expect(described_class.const_defined?(:PLACEHOLDER, false)).to be(false)
+    end
+
     it "leaves a file with no regions byte-identical, and parks nothing" do
       path = write("plain.rb", ordinary)
 
