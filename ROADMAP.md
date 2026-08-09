@@ -120,11 +120,12 @@ deterministic diff under another, and `Compare` reports distributions over `n` r
 compare mismatched capability-degraded sets). The remaining committed work — the key-gated **P**
 cleanup and the **M4-2/M5/M6** bands — is inventoried with acceptance criteria in
 [`planning/remaining-work.md`](planning/remaining-work.md); this ROADMAP layers the research- and
-TODO-driven `[exp]` ideas on top and sequences them. Suite: **2513 examples, 0 failures, 1
-pending** (a `:desktop`-tagged real-dunstify test, excluded by default — the four Ruby↔Rust
-digest-parity pendings were un-parked by S2's T25 re-port, zero incidental pendings remain);
-RuboCop clean at default metrics; `cargo test` **86/0** (post
-chunk-meet-supervision-fanout-interface, 2026-07-17).
+TODO-driven `[exp]` ideas on top and sequences them. Suite: **12272 examples, 0 failures, 14
+pending**; RuboCop clean at default metrics; `cargo test` **288/0** (post
+chunk-project-root-and-secret-boundary, 2026-08-09). The previous edition of this line read
+*2513 examples and `cargo test` 86/0*, dated three weeks earlier — the suite had grown almost
+five-fold underneath it. It is a headline figure nobody re-reads, so treat it as a date stamp
+rather than a fact and re-measure before quoting it.
 
 ---
 
@@ -1219,6 +1220,67 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    already names when it refuses to spawn while unwinding, so it needs a deadline and a loud
    deterministic fallback; and a driver sees one file and no suite, so the suite gate stays the
    real verification.
+
+29. **Landed 2026-08-09** (24 commits, `d0b3cc4`..this one; planned 2026-08-07, panel-reviewed) —
+   **the project root, and the secret boundary.** `planning/specs/chunk-project-root-and-secret-boundary.md`
+   (requirements draft: `planning/project-root-and-secret-boundary.md`, now stamped at every
+   position the grounding overrode). **Twenty-three cards, seven waves** — the plan was written
+   with twenty-two and gained T23 mid-execution, which is the entry's real finding and is worth
+   more than the feature. Suite **12272 examples, 0 failures, 14 pending** (from 11211).
+   **Every part of the path boundary was built, specced and green, and none of it ran.**
+   `Switchboard.for` never passed `sensitivity:`, so the constructor's `Sensitivity::Policy::Null`
+   default stood: `gates?` answered **false for every path in every real chat**, nothing anywhere
+   called `Sensitivity.new` or `Rules.from`, so the `[sensitivity]` config table was parsed by
+   nobody, and `Middleware::WithholdSecretPaths` was not in the production tool stack at all —
+   two independent reasons the guard was dark, either of which alone would have made the fix look
+   done. Twenty-two cards' specs all passed because **each injected its own classifier while
+   production injected the Null**: this bench's recurring "green tests that do not test their
+   subject" pattern, appearing at chunk scale rather than card scale, and invisible to the suite
+   by construction. T19's implementer found it and T19's panel confirmed it empirically; T23's
+   acceptance criteria were therefore written against the *production construction path*, and
+   `CLI::Wiring::BoardBuild` now owns it. Measured on a real board afterwards: `gates?` on a
+   `.env` under the project root is **true**, `denial("~/.ssh/id_rsa")` is **`:protected`**, and
+   the tool phase carries `[RefuseSecretWrites, RedactSecretReads, WithholdSecretPaths]` with the
+   listing filter taken from the same classifier the gate reads — one object, so a gate that
+   refuses a path and a listing that enumerates it is unrepresentable rather than untested. The
+   feature itself: `Lain::Project` splits **root** from **cwd** (`Dir.pwd` was the default at ~40
+   sites), `lain up <path>` is real, `$HOME` is refused as an *inferred* root while `lain up ~`
+   stays explicit; `Lain::Sensitivity` classifies ordinary/gated/denied and a denied read is
+   refused ahead of any approval; `Sensitivity::Regions` content-addresses credential-shaped
+   regions so an unrelated edit does not re-prompt and a newly added secret always does;
+   `Approval::SecretSurface` lets an opt-in local ollama triage parked reads beside the human.
+   Rulings held: **tier-1 tools keep their doctrine** — no path check landed in `read_file` or
+   `glob`, the gate sits on the effect and the filter on the result; **content cannot gate
+   pre-read**, so paths gate at the handler and content masks at the middleware; the local oracle
+   is an `Approval::Queue` **surface**, not a middleware oracle; a denied read is **loud**; and
+   `[[approval.allow]]` is honoured only from a **consented** root. `Approval::Remembered`'s read
+   side is unblocked; `Remembered::Persister` and `Approval::Risk` stay dead, as scoped. The typed
+   egress tool and Landlock confinement in `crates/lain-core` remain **deferred**.
+
+30. **Planned (2026-08-07, panel-reviewed) — `/survey`: reviewing a corpus, in two chunks.**
+   `planning/specs/chunk-partition-strategy.md` (4 cards, 3 waves) then
+   `planning/specs/chunk-survey-corpus.md` (14 cards, 6 waves), strictly in that order. A review
+   of a **folder as it stands** — a LaTeX resume, a `docs/` folder read for prose quality, a
+   subsystem — reusing everything below `Source`: hunk keys, marks, anchors, `Session`, every
+   surface, the docent. Two spikes established the load-bearing facts. **The two ways in are
+   byte-identical** — synthesizing diff bytes and handing down model values produce the same
+   keys, digests and anchors over 14 real files — so the choice was architectural, not risk, and
+   model values win because the byte route forces a permanent fake commit walk. **History
+   rewriting already preserves every mark** (reorder, squash, split, reword: base same, digest
+   same, marks kept), because the changeset is a *two-tree* diff and `Session.digest` excludes
+   head; a **rebase discards all of them**, by two independent mechanisms — `BaseMismatch` on any
+   base move, and separately a neighbour's edit inside the `-U3` window rewriting a content key
+   with no conflict at all. `Review::Delta` was built for exactly that and **is not wired**.
+   Chunk A is a pure refactor useful on its own (`lain review --scope by_directory`): the
+   `commits`/`cumulative` axis becomes `Partition::Strategy`, and a fourth hardcoded scope list
+   hides in `exe/lain:174`'s Thor enum, ahead of any registry. Chunk B adds the corpus source,
+   markdown/code/paragraph chunking (tree-sitter-md is **already compiled in**; no Rust), lazy
+   per-file chunking, and accretion — the survey grows as files are opened. Panel review reversed
+   the first draft on three points: `Session.digest_parts` cannot be polymorphic (one `Changeset`
+   class, so identity comes from the **source**), the port's reversed-diff law is a *two-witness*
+   cross-check a corpus cannot satisfy and so is a diff-source law, and `Bounds#check_cumulative!`
+   evaluates `Size.lines_in` **eagerly as a `guard!` argument** — so laziness needed its own card
+   or it would have shipped decorative.
 
 ---
 

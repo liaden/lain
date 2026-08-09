@@ -7,14 +7,39 @@ module Lain
     # which already leans on `Dir.glob` internally for its own recursive
     # listing.
     #
-    # No confinement to a project root is enforced here, deliberately: no
-    # sibling tier-1 tool ({ReadFile}, {ListFiles}, {EditFile}) confines its
-    # `path` either, and {Tool::Input}'s own docs are explicit that these
-    # validations check shape, not safety -- the real boundary is the tier
-    # system, {Effect::Handler::Gate}, and eventual OS confinement, never a
-    # path check inside a tier-1 tool. An absolute pattern, or one that
-    # climbs out via `../`, is therefore honored rather than rejected, same
-    # as it would be for `read_file` or `list_files`.
+    # == No path check here, and where the boundary actually is
+    #
+    # This tool checks no path, and no sibling tier-1 tool ({ReadFile},
+    # {ListFiles}, {EditFile}) confines its `path` either. That is doctrine
+    # rather than an omission: {Tool::Input}'s own docs are explicit that its
+    # validations check shape, not safety, and a control a tool applies to
+    # itself is one every later tool has to remember to copy.
+    #
+    # The boundary is built, wired and live -- it just sits in three positions
+    # outside the tools, judging three different things:
+    #
+    # 1. GATE ON THE EFFECT, before a tool runs. {Lain::Sensitivity::Policy}
+    #    classifies the path an effect names, and two handlers read that one
+    #    table: {Effect::Handler::Sensitivity} refuses a DENIED path outright,
+    #    where no approval can lift it, and {Effect::Handler::Gate} sends a
+    #    GATED one to a human. It cannot be a property a tool declares about
+    #    itself -- `read_file` is tier 1 for `README.md` and worth asking about
+    #    for `.env`, and the difference is in the argument.
+    # 2. FILTER ON THE RESULT, after it runs. {Middleware::WithholdSecretPaths}
+    #    drops the sensitive rows out of a `glob`/`grep`/`list_files` listing
+    #    and reports how many it dropped. It sifts through the same policy's own
+    #    filter, so a listing cannot enumerate what the gate refuses to read --
+    #    and this tool is unchanged by it.
+    # 3. MASK ON THE CONTENT, once bytes exist. Whether a file's BYTES look like
+    #    a credential is a question no path classifier can answer before the
+    #    open, so {Middleware::RedactSecretReads} masks the flagged regions
+    #    post-read and parks a pending for their release. OS confinement
+    #    (M5/M6) is the layer under all three.
+    #
+    # It withholds SENSITIVE paths, never OUTSIDE-ROOT ones. An absolute
+    # pattern, or one that climbs out via `../`, is still honored rather than
+    # rejected, same as it would be for `read_file` or `list_files`; what a
+    # denied path loses is its row in the answer, not the walk that found it.
     class Glob < Tool
       # The wire shape: a required glob pattern, plus an optional base
       # directory it is matched from.

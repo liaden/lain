@@ -3,6 +3,14 @@
 Requirements draft, 2026-08-07. Not a task plan — no cards, no waves. This is the
 "what must be true" pass that `/create-plan` reads afterwards.
 
+> **This draft is not the design, and it is superseded wherever the two differ.**
+> `planning/specs/chunk-project-root-and-secret-boundary.md` is what was planned, panel-reviewed
+> and built (23 cards, landed 2026-08-09); its **Grounding** section records six positions here
+> that the code overrode, and its **Open decisions** section records four rulings. Every section
+> below that one of those touched now carries a stamp saying which ruling won and where the
+> answer lives. Sections with no stamp survived the grounding pass unchanged. Part 3 (the typed
+> egress tool and Landlock confinement) was **deferred** by Joel's ruling and is not built.
+
 ## What exists today
 
 There is no project root. `Dir.pwd` is the default for every consumer that takes a
@@ -138,7 +146,15 @@ nobody reads this as containment.
 
 ### Q1 — Should we protect high-entropy files? **Yes, as triage — never as a verdict.**
 
-*(Revised 2026-08-07 after Joel's push-back. The first draft said no; that argument was
+> **Overridden in part — the ladder held, rung 3's seam moved.** Grounding disagreement 3:
+> `oracle/memory_save.rb:8-17` forbids a model round trip on the live dispatch path, and the
+> `RefuseSecretWrites` `oracle:` seam named below sits exactly there. *Doctrine won and the seam
+> moved:* the local model is an `Approval::Queue` **surface** (`Approval::SecretSurface`, T17,
+> modelled on `AutoSurface`) adjudicating an already-parked pending asynchronously, so nothing
+> sits on the synchronous path. Rungs 1 and 2 shipped as drafted, in `Sensitivity::Regions` (T10)
+> — with a gate the draft did not anticipate: patterns alone matched **70.9%, 86.0% and 95.4%** of
+> three corpora here, so a name-or-value gate and a substance floor were needed before entropy
+> triage was usable at all. `--secret-oracle` is opt-in and never wired by default. The first draft said no; that argument was
 against entropy as a terminal ACCESS decision, and it does not survive being pointed at a
 triage rung feeding a review loop. What follows is the corrected position.)*
 
@@ -191,6 +207,17 @@ Three constraints on it, each of which is a way to get this wrong:
 
 ### Q2 — Default deny list? **Yes, in two tiers, keyed on path shape.**
 
+> **Overridden on two points; both tiers shipped as drafted** (`Lain::Sensitivity`, T8).
+> First, the API-change ruling recorded under the plan's *Discovered during execution*:
+> `Sensitivity.new` takes **required** `home:` and `cwd:` with no `Dir.pwd` default, because
+> T8's panel found a relative path never reached the home-anchored half —
+> `../../home/tester/.ssh/id_rsa` classified `:ordinary` — and T20 classifies bash argv, where
+> relative paths are the norm. "Cheap and total" survives; "needs no context at all" did not.
+> Second, "called by everything in Q4" is false by Q4's own ruling below: the classifier is
+> reachable **only** through `Sensitivity::Policy`, which exposes it nowhere, so no second
+> classifier can be built beside it. The "config may only add" rule shipped as an ORDER rule in
+> `Sensitivity::Rules.from`, with `exempt` as the one narrowing key.
+
 One pure classifier, `Lain::Sensitivity`, that answers `ordinary | gated | denied` for a
 path. No filesystem access, no entropy, no reading the file to decide. It's called by
 everything in Q4, so it has to be cheap and total.
@@ -217,6 +244,19 @@ denied entry needs the hand-edit. Config that only widens is the safe direction,
 the same asymmetry `Approval::Risk` argues for on its patterns.
 
 ### Q3 — Redacted read with confirm-once? **Yes — this is the best of the three, with four constraints.**
+
+> **Overridden on what it leans on, and extended by a ruling it lacked.** Grounding
+> disagreement 1: `Approval::Risk` has **zero production call sites** — it is reachable only
+> through `Remembered::Persister`, which this chunk does not wire — so constraint 3's appeal to
+> `Approval::Risk::Classification#keepsake` cites a rule that does not run. *Code won:* dead code
+> to switch on (T18), not a control to extend; session-scoping is enforced by
+> `Sensitivity::Ledger` being per-RUN, not by `keepsake`. The ruling this draft was missing:
+> **a masked read parks a pending for release** (T15/T16) — an earlier plan draft masked silently
+> with no release path, which leaves an ordinary `Cargo.lock` permanently `<redacted:1>` with no
+> move available to anyone. Constraint 2 shipped whole (region digests, `Sensitivity::Ledger`
+> keyed by `(path, digest)` — the path half added because an HS256 JWT header is the same bytes in
+> every file). Constraint 4 shipped as T22. The shared pattern table the last paragraph asks for
+> is `Lain::CredentialPatterns` (T9), selected per consumer.
 
 The shape: a gated read returns the file's *structure* with values masked —
 `ANTHROPIC_API_KEY=<redacted>` — because for `.env` and `.envrc` the model almost always
@@ -278,6 +318,28 @@ assignment shapes. That constant should move somewhere both middlewares read it,
 read side and the write side cannot drift on what a credential looks like.
 
 ### Q4 — Exfiltration through bash. **The classifier belongs to every arm, not to `read_file`.**
+
+> **The premise held; every mechanism below it was overridden.** Three grounding disagreements
+> land here.
+>
+> *Disagreement 2 — no tool consults the classifier.* `tools/glob.rb`'s header states that
+> confinement never lives inside a tier-1 tool, and **doctrine won by Joel's ruling.** So the
+> arms below are not call sites in `Tools::*`: the check is a **gate on the effect**
+> (`Sensitivity::Policy`, read by `Effect::Handler::Sensitivity` for a denial and
+> `Effect::Handler::Gate` for a gating) and a **filter on the result**
+> (`Middleware::WithholdSecretPaths`, which drops rows out of a `glob`/`grep`/`list_files`
+> listing and reports the count, exactly as this section asks). No tier-1 tool changed.
+>
+> *Disagreement 4 — the bash hole was overstated.* `Escalation::Triage` already downgrades a
+> `Shell::Verdict` **allow** to **abstain** (`escalation.rb:441`), so a literal `cat .env` reaches
+> a human today under any `queue` gate policy. *Code won:* T20 is a **new deny on the allow
+> branch**, over path-shaped argv words, not the closing of an open egress.
+>
+> *Disagreement 1 — the first "hole" is moot.* `Approval::Risk` is dead code, so "rides MA-1's
+> fix or inherits MA-1's hole" describes a control with no production caller. The second hole is
+> real and stands as written.
+>
+> The `Tools::WebFetch` / URL arm is **not built** — that is Part 3's egress question, deferred.
 
 A control on `read_file` alone is theatre: `cat .env` is a fully literal command,
 `Shell::Verdict` covers every byte of it, and a capability set holding `cat` allows it.
@@ -394,6 +456,11 @@ what you want when you're at the keyboard; the queue is what makes it work for a
 run. `Approval::Escalation` already has the ladder. My read: inline, with the queue as the
 non-TTY fallback, no new mechanism.
 
+> **Overridden — ruled: the queue, never inline.** Recorded under *Open decisions* in the plan.
+> `Approval::Queue` already holds the ladder, the fail-closed 300s timer and four surfaces; an
+> inline prompt would be a second mechanism duplicating all of it, and the local oracle of Q1
+> only exists because the parked set is what a human and a model can share.
+
 **Q-C. Should `denied` be invisible or loud?** A `read_file` on `~/.ssh/id_ed25519` can
 answer "refused: protected path" or "no such file." Loud teaches the model the boundary and
 it stops asking; invisible is marginally better against a model that's probing. Given the
@@ -402,6 +469,13 @@ threat model above I'd go loud, but it's a real fork.
 **Q-D. Does the `.lain/` at rung 3 need to be *committed* to count?** An uncommitted
 `.lain/` in a directory you don't own — a vendored dep, a downloaded archive — silently
 redefines the project root. Probably paranoid. Flagging it.
+
+> **Overridden — it was not paranoid, and the plan initially dropped it.** Grounding
+> disagreement 5, *restored*: once rung 3 lets any ancestor `.lain/` define the root and T18 reads
+> that root's `.lain/config.toml` as a pre-approval table, a **cloned repo can pre-authorize tool
+> calls**. So the answer is not about the commit at all — `[[approval.allow]]` is honoured only
+> from a root the user has **consented** to (`Project::Consent`, T18), and an unconsented root's
+> table is ignored with a startup notice. Rung 3 itself is unchanged.
 
 **Q-E. Multi-root?** A monorepo session that legitimately spans two subtrees. My read:
 one root, and rung 4 (repo top) is the answer for that case. Adding a root *list* makes

@@ -223,17 +223,34 @@ module Lain
     # write. A `format:` validator that "only permits safe commands" is a comforting
     # lie.
     #
-    # The real boundary lives in three other places:
+    # The real boundary lives in four other places:
     #
     #   1. Tool tier. A structured tool (`delete_file(path:)` calling `File.delete`)
     #      has no string to interpolate. Prefer it to shelling out. A pre-canned
     #      command tool passes an argv *Array* to Mixlib::ShellOut, which execs with
     #      no shell at all -- only a String command goes through `sh -c`.
-    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens.
-    #   3. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
+    #   2. `Effect::Handler::Gate`, which gates the invocation before it happens --
+    #      on the TIER axis (does the model control the command string?) and on the
+    #      ARGUMENT axis beside it: `Sensitivity::Policy` classifies the path an
+    #      effect names, and `Effect::Handler::Sensitivity` refuses a denied one
+    #      ahead of the gate, where no approval lifts it.
+    #   3. The READ side, which the two above cannot cover, because a read that has
+    #      already happened cannot be un-approved. `Middleware::RedactSecretReads`
+    #      masks the credential-shaped regions of a result's content and parks a
+    #      pending for their release; `Middleware::WithholdSecretPaths` drops the
+    #      sensitive rows out of a listing and reports the count. Both sit in the
+    #      tool phase, above the tool, so no tool gains a check of its own.
+    #   4. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
     #      out-of-process Rust exec boundary (M5/M6). A forked child is a process
     #      boundary, not a security boundary: it inherits our uid, filesystem, and
     #      network.
+    #
+    # None of those certifies safety either, and the read side is the easiest place
+    # to forget it. A path classifier judges a NAME, before anything is opened. A
+    # region detector judges BYTES and is bounded by its own recall -- whatever it
+    # did not flag leaves with the unflagged remainder, and nobody looked at it.
+    # They narrow the ACCIDENT, which is the threat model this repo wrote down; they
+    # do not contain a model that is trying.
     #
     # So: validate that `timeout` is a positive integer under ten minutes. Do not
     # pretend to validate that `command` is safe.

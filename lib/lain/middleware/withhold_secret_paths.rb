@@ -21,7 +21,7 @@ module Lain
     # it produced. The tools are unchanged.
     #
     # This withholds SENSITIVE paths, never OUTSIDE-ROOT ones. A pattern that
-    # climbs out via `../` is still honoured, exactly as `tools/glob.rb:10-17`
+    # climbs out via `../` is still honoured, exactly as {Tools::Glob}'s header
     # says it is; what changes is only that a `.env` it reaches is not listed.
     #
     # == The filtering is always reported

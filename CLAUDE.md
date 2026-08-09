@@ -370,6 +370,26 @@ is the object of study.
 Timeline. Subagents get a *fresh* Timeline root whose `meta["spawned_from"]` names the parent's
 head, so causal lineage survives while the child never inherits the parent's prompt.
 
+**`Project` splits root from cwd**, and they are different questions: **root** is the authority
+boundary (what `.lain/` governs, what a pre-approval may speak for), **cwd** is where a relative
+path resolves. A monorepo session runs with cwd deep in a subtree and root at the repo top, and
+`$HOME` can never be *inferred* as a root — `lain up ~` says it explicitly or it does not happen.
+
+**The secret boundary is three places, not one, and the split is forced.** A path classifier
+answers before a file is opened; a region detector cannot answer until it has the bytes. So:
+**gate on the effect** (`Sensitivity::Policy`, read by `Effect::Handler::Sensitivity` and `Gate`),
+**filter on the result** (`Middleware::WithholdSecretPaths`, so `grep`/`glob`/`list_files` stop
+enumerating a denied path), and **mask on the content** (`Middleware::RedactSecretReads`, which
+parks a pending and releases by region). **Tier-1 tools keep their doctrine: `read_file`, `grep`,
+`glob` and `list_files` do not check paths.** That is deliberate — the boundary is one place a
+reader can find, not a check scattered through every tool.
+
+**One classifier, and disagreement is unrepresentable.** `Sensitivity::Policy` builds its own
+`Filter` in `#initialize` (before it freezes — a lazy one raises `FrozenError` at its first
+caller, mid-run), and nothing exposes the classifier, so there is exactly one `Filter.new` in
+`lib/`. A gate that refuses a read while the listing enumerates the same path cannot be
+constructed, rather than being merely untested.
+
 ## Rust, and which capabilities earn a binding
 
 **Rust is here for its data model and for capabilities Ruby has no good answer to, not for
@@ -470,6 +490,40 @@ Structures that plausibly qualify, and what they buy:
   from such a copy **deleted the entire copy**. Nothing warns you; the pointer file looks inert.
   Copying a worktree for mutation, bisect or spike work is otherwise reasonable, so the rule is just:
   delete the pointer first, or copy from a real clone.
+- **A class named for a top-level constant SHADOWS it for everything lexically inside the
+  enclosing namespace.** Defining `Effect::Handler::Sensitivity` made `gate.rb`'s bare
+  `Sensitivity::Policy` resolve to `Handler::Sensitivity::Policy` and die — for every caller
+  omitting the keyword, i.e. most of them. `Module.nesting` order is not something anyone reasons
+  about until it bites; root-qualify (`::Lain::Sensitivity`) at such a site.
+- **`pre-commit` exports `GIT_INDEX_FILE` into every hook**, so a spec fixture that shells to
+  `git` without scrubbing builds against *lain's* index. It passes in every normal run and fails
+  only at commit time. Thirteen examples in one card were exposed; only the one that *commits*
+  failed loudly. Scrub the wider set, not just `GIT_DIR` — a command-line `--git-dir` already
+  beats that one, while `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and `GIT_CONFIG_*`
+  are the ones that actually redirect git.
+- **Mutation harnesses lie by default here, and same-size mutants are the NORM.** `20`→`10`,
+  `<=`→`<` and `min_by`→`max_by` are all byte-identical in length, so they collide with
+  bootsnap's `(mtime-seconds, size)` iseq key and run against **stale bytecode** while `git diff`
+  reads clean. Stamp a unique mtime per write (`File.utime`); assert each mutant applied exactly
+  once and still parses; score on the failure COUNT, never a string prefix (`start_with?("4")`
+  relabels everything once the example count crosses a digit boundary); use literal fixtures and
+  exclude the subject from any corpus that scans it. **Wrap the run in `ensure`** — two agents in
+  one chunk died mid-run leaving a live mutant in the tree, caught by re-reading the file rather
+  than by any test. And **never park the harness in `spec/support/`**: `spec_helper.rb` globs
+  `support/**/*.rb`, so it loads in every worker of every run — one defined `Object#run` globally
+  and called `Dir.chdir` at load.
+- **`ls-files` truncates against the PROCESS directory**, so a home-repo surface read from a
+  subdirectory is both short and rejoins to the wrong file. `-C <dir>` is the fix; `--full-name`
+  is not sufficient.
+- **A `SystemExit` inside an example truncates the run and still reports "0 failures".** Thor
+  turns a refusal into `exit(1)` and RSpec does not rescue `SystemExit` inside an example — one
+  regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
+  point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
+  shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
+- **Record a flaky spec by NAME, never by line number.** The four first recorded as
+  `cli/up_spec.rb:115`/`:175` drifted within days — one chunk grew that file by 454 lines and the
+  live failure moved to `:166`. A stale line number is worse than no list: it reads as "not a
+  known flake" and sends the next reader hunting a regression that is not there.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
   parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
   A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default
