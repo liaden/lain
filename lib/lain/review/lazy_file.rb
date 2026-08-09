@@ -6,10 +6,12 @@ module Lain
     # when something finally asks for its hunks.
     #
     # It answers {Source::ChangedFile}'s messages -- `old_path`, `new_path`,
-    # `path`, `binary?`, `status`, `hunks` -- and is what a corpus source hands
-    # a {Changeset} in place of one. A survey opens over a directory, not a
-    # diff: chunking every file up front is the cost the corpus arm exists to
-    # avoid, and the file whose hunks nobody reads should never have been read.
+    # `path`, `binary?`, `status`, `rendered_lines`, `hunks` -- and every one of
+    # them but the last without chunking, which is what lets {Bounds} size a
+    # whole view over these. It is what a corpus source hands a {Changeset} in
+    # place of one. A survey opens over a directory, not a diff: chunking every
+    # file up front is the cost the corpus arm exists to avoid, and the file
+    # whose hunks nobody reads should never have been read.
     #
     # == Why this is NOT a Data, when everything shaped like it is
     #
@@ -50,7 +52,12 @@ module Lain
     # Equality is by value over `(old_path, new_path, binary, chunker)`, and the
     # memo is deliberately outside it: a file that has chunked still fetches the
     # row its unchunked twin keyed, which is what {Session::MarkedChangeset}'s
-    # no-default `rows.fetch(file)` needs. The chunker IS in the value, because
+    # no-default `rows.fetch(file)` needs. `rendered_lines` is outside it for a
+    # different reason -- it is DERIVED from the same content the chunker stands
+    # for, so two sources disagreeing about it is a bug in one of them rather
+    # than two files, and inside the value that bug would surface as a `KeyError`
+    # three objects away naming the path it could not name the size of. The
+    # chunker IS in the value, because
     # it stands in for the content -- two files over one path that would produce
     # different hunks are different files.
     #
@@ -72,17 +79,25 @@ module Lain
       # value moved onto the port.
       STATUSES = Source::ChangedFile::STATUSES
 
-      attr_reader :old_path, :new_path, :binary, :chunker
+      attr_reader :old_path, :new_path, :binary, :chunker, :rendered_lines
 
       # @param old_path [String, nil] nil for a file this changeset adds
       # @param new_path [String, nil] nil for a file it deletes
       # @param chunker [#call] answers this file's hunks, called at most once
+      # @param rendered_lines [Integer] what this file costs a reader, in
+      #   {Bounds::Size}'s unit. SUPPLIED and never derived, which is the half
+      #   of laziness {Bounds} needs: a size answered by chunking would chunk
+      #   the corpus to decide whether the corpus can be presented. A source
+      #   harvests it in the streamed read its identity pass already makes.
+      #   See {#sized} for why it is checked here and nowhere else.
       # @param binary [Boolean]
-      def initialize(old_path:, new_path:, chunker:, binary: false)
+      # @raise [ArgumentError] for a negative size, or one that is not a number
+      def initialize(old_path:, new_path:, chunker:, rendered_lines:, binary: false)
         @old_path = old_path && -old_path
         @new_path = new_path && -new_path
         @binary = binary
         @chunker = chunker
+        @rendered_lines = sized(rendered_lines)
         # The memo is a BOX because the freeze below forbids assigning an ivar
         # afterwards. Everything this file IS stays immutable; the cache is the
         # one mutable thing, and it is the whole of what costs shareability.
@@ -150,6 +165,32 @@ module Lain
       protected
 
       def identity = [old_path, new_path, binary, chunker]
+
+      private
+
+      # An asserted size is one a source can get WRONG, and this is the only
+      # place the mistake can still be caught. {Bounds} sums what it is told, so
+      # a single file reporting a negative cancels its neighbours: 250,000
+      # rendered lines pass a 30,000-line ceiling and go on to a `/critique`
+      # chunk 35x the context ceiling, which is precisely the
+      # success-that-isn't-one {Bounds} exists to refuse -- produced by {Bounds}
+      # itself, in silence. Downstream cannot check it without the walk this
+      # message exists to avoid, so the check is here or it is nowhere.
+      #
+      # There is no honest negative. Zero IS honest and is left alone: it is
+      # what a binary file, a mode-only change and an unrendered file all cost.
+      #
+      # `Integer()` first, for {Bounds}' own reason -- a ceiling compared
+      # against a String is a `nil`-shaped failure with an `ArgumentError`'s
+      # cure. A decimal String is deliberately not blessed by any spec:
+      # `Integer("010")` is 8, and a line count that reads as octal is a defect
+      # nobody would look for.
+      def sized(value)
+        lines = Integer(value)
+        raise ArgumentError, "a file cannot render #{lines} lines" if lines.negative?
+
+        lines
+      end
     end
   end
 end

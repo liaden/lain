@@ -427,6 +427,45 @@ RSpec.describe Lain::Review::Changeset do
       end
       expect(answered.uniq).to match_array(Lain::Review::FILE_STATUSES.map(&:to_sym))
     end
+
+    # What {Review::Bounds} measures a view by, asked of the FILE rather than
+    # counted off its hunks by the caller. A parsed file answers from the hunks
+    # it was built with, which cost nothing extra; a file that has not been
+    # chunked answers from what its source knows, which is the whole point.
+    #
+    # The unit is {Bounds::Size}'s: each hunk's body plus its `@@` header, and
+    # NOT the four-line `diff --git`/`index`/`---`/`+++` preamble.
+    describe "#rendered_lines, which is what a bound measures a file by" do
+      it "counts each hunk's body plus its @@ header, and not the file preamble" do
+        file = changeset_over(one_file_diff).files.first
+
+        expect(file.rendered_lines).to eq(file.hunks.sum { |hunk| hunk.lines.size + 1 })
+      end
+
+      it "counts a file with two hunks as both bodies and both headers" do
+        file = changeset_over(<<~DIFF).files.first
+          diff --git a/dup.rb b/dup.rb
+          --- a/dup.rb
+          +++ b/dup.rb
+          @@ -1 +1 @@
+          -old
+          +new
+          @@ -10,2 +10,2 @@
+           keep
+          -old
+          +new
+        DIFF
+
+        expect(file.rendered_lines).to eq((2 + 1) + (3 + 1))
+      end
+
+      it "counts a hunkless file as no lines at all" do
+        binary = Lain::Review::Source::ChangedFile.new(old_path: "a.bin", new_path: "a.bin",
+                                                       binary: true, hunks: [])
+
+        expect(binary.rendered_lines).to eq(0)
+      end
+    end
   end
 
   describe "which path each side of a rename anchors against" do

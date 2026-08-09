@@ -238,6 +238,21 @@ module Lain
 
           STATUSES.fetch(old_path == new_path ? "modified" : "renamed")
         end
+
+        # What this file costs a reader, in {Bounds::Size}'s unit: each hunk's
+        # body plus its `@@` header, and never the four-line `diff --git` /
+        # `index` / `---` / `+++` preamble, which is a constant per file and is
+        # what the file ceiling already governs.
+        #
+        # On the FILE because a bound must be able to size a view without
+        # chunking it. {Bounds} used to sum `file.hunks` itself, which is free
+        # here -- these hunks are the ones the parser already produced -- and is
+        # the whole corpus for a source whose files have not been chunked yet.
+        # So the question goes to the file, and each kind answers from what it
+        # already knows: this one counts, {LazyFile} was told.
+        #
+        # @return [Integer]
+        def rendered_lines = hunks.sum { |hunk| hunk.lines.size + 1 }
       end
 
       Identity = Data.define(:scheme, :parts) do

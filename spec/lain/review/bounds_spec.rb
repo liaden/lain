@@ -47,24 +47,35 @@ RSpec.describe Lain::Review::Bounds do
   # named once here rather than restated at each call.
   def walk = Lain::Review::Partition::STRATEGIES.fetch(:commits)
 
-  # Five hunkless files that RECORD being asked for their hunks. The only
-  # double in the file, and it is here because the assertion is that a message
-  # is not sent -- which no real object can report on itself.
-  def spying_view(reads)
-    files = Array.new(5) do
-      instance_double(Lain::Review::Source::ChangedFile).tap do |file|
-        allow(file).to receive(:hunks) do
-          reads << file
-          []
-        end
+  # Files that RAISE when their hunks are read, and answer their own size the
+  # way a source-supplied file does. The only doubles in the file, and they are
+  # here because the assertion is that a message is never sent -- which no real
+  # object can report on itself, and which a RECORDER only reports rather than
+  # enforces. A recorder leaves the green run resting on the recorder; a raised
+  # exception cannot be scored as a pass by anything.
+  def unchunkable_files(count:, rendered_lines:)
+    Array.new(count) do
+      instance_double(Lain::Review::Source::ChangedFile, rendered_lines:).tap do |file|
+        allow(file).to receive(:hunks) { raise "a bounded presentation read a file's hunks" }
       end
     end
-    # The walk is empty so the refusal's ADVICE measures nothing: what this
-    # probe isolates is the DECISION, which must reach a refusal on the file
-    # count alone. (The advice may read hunks -- see `cumulative_advice`.)
-    # `supports?` answers true so applicability never short-circuits the
-    # candidate walk -- this probe is about hunk reads, not about grouping.
-    instance_double(Lain::Review::Changeset, files:, partitions: [], supports?: true)
+  end
+
+  # `supports?` answers true so applicability never short-circuits the candidate
+  # walk -- these probes are about hunk reads, not about grouping. `partitions`
+  # defaults to empty, which makes the refusal's ADVICE measure nothing, so a
+  # probe over it isolates the DECISION; a probe that wants the advice measured
+  # hands over groups of its own.
+  def unchunkable_view(count:, rendered_lines: 1, partitions: [])
+    instance_double(Lain::Review::Changeset,
+                    files: unchunkable_files(count:, rendered_lines:),
+                    partitions:, supports?: true)
+  end
+
+  # A group of unchunkable files, for the advice half: {Bounds#cumulative_advice}
+  # measures each candidate's groups, and this is what it measures.
+  def unchunkable_group(count:, rendered_lines:)
+    Lain::Review::Partition.new(label: "g", files: unchunkable_files(count:, rendered_lines:).freeze)
   end
 
   # A changeset described commit by commit, each commit a list of per-file
@@ -418,22 +429,95 @@ RSpec.describe Lain::Review::Bounds do
         .to raise_error(described_class::TooLarge, /scope: commits/)
     end
 
-    # Two sides of one probe, same five files, only the ceiling differs. The
-    # negative alone would pass against a Size that never read a hunk at all.
+    # Two sides of one probe, same five files, only the ceiling differs -- and
+    # BOTH sides must now come back clean, which is the change. The refusal was
+    # already cheap because the file guard short-circuits; the SUCCESS was not,
+    # because the line guard summed `file.hunks` over every file it had just
+    # agreed to present.
     it "decides the file ceiling without reading a single hunk" do
-      reads = []
-
-      expect { described_class.new(max_files: 4).check_presentation!(spying_view(reads), scope: :cumulative) }
+      expect { described_class.new(max_files: 4).check_presentation!(unchunkable_view(count: 5), scope: :cumulative) }
         .to raise_error(described_class::TooLarge)
-      expect(reads).to be_empty
     end
 
-    it "does read every file's hunks once the file ceiling has passed" do
-      reads = []
+    it "presents a view inside both ceilings without reading a single hunk" do
+      view = unchunkable_view(count: 50, rendered_lines: 10)
 
-      described_class.new(max_files: 5).check_presentation!(spying_view(reads), scope: :cumulative)
+      expect { described_class.new.check_presentation!(view, scope: :cumulative) }.not_to raise_error
+    end
 
-      expect(reads.size).to eq(5)
+    # The negative above passes against a line guard that reads nothing AND
+    # against one that measures nothing at all, so the ceiling has to be shown
+    # still firing off the same source-known sizes.
+    it "refuses on the line ceiling off the sizes the files answer, still reading no hunk" do
+      view = unchunkable_view(count: 50, rendered_lines: 10)
+
+      expect { described_class.new(max_lines: 499).check_presentation!(view, scope: :cumulative) }
+        .to raise_error(described_class::TooLarge, /500 rendered lines/)
+    end
+
+    # The AC that keeps the promise honestly stated: the promise is about the
+    # DECISION, and the MESSAGE is composed by measuring each candidate's groups.
+    # That measurement now runs off the same per-file sizes, so this composes a
+    # full refusal sentence -- advice included -- over files that raise if read.
+    it "composes the advice by measuring partitions, and measures them without hunks either" do
+      view = unchunkable_view(count: 5, rendered_lines: 4,
+                              partitions: [unchunkable_group(count: 2, rendered_lines: 4)])
+
+      expect { described_class.new(max_files: 4, max_lines: 100).check_presentation!(view, scope: :cumulative) }
+        .to raise_error(described_class::TooLarge, /5 files, over the ceiling of 4 -- \S/)
+    end
+  end
+
+  # AC 5 and 6. The ceiling that is not a number, and the one that is by default.
+  describe "an unbounded ceiling" do
+    it "is infinity, which answers the whole comparison duck a number does" do
+      expect(described_class::UNBOUNDED).to eq(Float::INFINITY)
+    end
+
+    it "presents what a number would refuse" do
+      bounds = described_class.new(max_files: described_class::UNBOUNDED)
+
+      expect { bounds.check_presentation!(unchunkable_view(count: 600), scope: :cumulative) }.not_to raise_error
+    end
+
+    it "survives the coercion every other ceiling goes through" do
+      bounds = described_class.new(max_files: described_class::UNBOUNDED,
+                                   max_lines: described_class::UNBOUNDED,
+                                   max_critique_lines: described_class::UNBOUNDED)
+
+      expect([bounds.max_files, bounds.max_lines, bounds.max_critique_lines])
+        .to eq([described_class::UNBOUNDED] * 3)
+    end
+
+    # The failure {Bounds} exists to prevent is a view that got through: an
+    # absent argument must be a NUMBER, so a ceiling nobody configured refuses
+    # what an unbounded one presents.
+    it "is never what an absent ceiling defaults to" do
+      expect { described_class.new.check_presentation!(unchunkable_view(count: 600), scope: :cumulative) }
+        .to raise_error(described_class::TooLarge, /600 files/)
+    end
+
+    it "does not make every non-number acceptable" do
+      expect { described_class.new(max_files: "many") }.to raise_error(ArgumentError)
+    end
+
+    # The constant is ONE object, so `equal?` would pass every example above and
+    # fail only the ceiling a caller COMPUTED -- which is how an unbounded
+    # ceiling will actually arrive once a flag parses one. Infinity is not a
+    # flonum, so `1.0/0` is a different object with the same value.
+    it "recognises a computed infinity, not merely the one constant" do
+      bounds = described_class.new(max_files: 1.0 / 0)
+
+      expect { bounds.check_presentation!(unchunkable_view(count: 600), scope: :cumulative) }.not_to raise_error
+    end
+
+    # `value == UNBOUNDED` asks the ARGUMENT, so an object that answers true to
+    # everything became an unbounded ceiling with the coercion never run. The
+    # comparison has to be the one infinity itself makes.
+    it "is not fooled by an argument that merely claims to equal it" do
+      liar = Class.new { def ==(_other) = true }.new
+
+      expect { described_class.new(max_files: liar) }.to raise_error(TypeError)
     end
   end
 

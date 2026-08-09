@@ -19,6 +19,39 @@ class ReviewSourceStandIn < SimpleDelegator
   attr_reader :files
 end
 
+# What makes {Lain::Review::Bounds} able to size a view without chunking it: the
+# SOURCE knows what a file costs -- a diff source from the hunks it parsed, a
+# corpus from the line counts its identity pass harvested -- so nobody above has
+# to sum `file.hunks` to find out.
+#
+# Only the SHAPE is a law here, deliberately. Holding a size against the
+# rendered hunk stream would demand a cheap size be exact to the chunking, which
+# a source can only answer BY chunking -- the very walk this message exists to
+# avoid. That equality is a diff-source law and lives in the diff-bearing group
+# below.
+#
+# == Its own group, because the port's group cannot witness it
+#
+# "a review changeset source" is nested INSIDE "a diff-bearing review changeset
+# source", so every source that runs it derives its sizes off parsed hunks and
+# is structurally incapable of answering a negative or an unstable one. A law
+# whose only witnesses cannot break it is shape-checking with no discriminating
+# power -- this file's own stated failure mode, one level down. Split out so a
+# witness that CAN break it ({Lain::Review::LazyFile}, told its size rather than
+# deriving it) is held to the same two sentences.
+RSpec.shared_examples "files a bound can size" do
+  it "sizes every file in the unit a bound measures" do
+    expect(sized_files.map(&:rendered_lines)).to all(be_a(Integer).and(be >= 0))
+  end
+
+  # A size that moved between two reads would let a view pass a ceiling and then
+  # be presented over a different one -- #files' own read-model rule, one level
+  # down.
+  it "answers the same size when asked twice" do
+    expect(sized_files.map(&:rendered_lines)).to eq(sized_files.map(&:rendered_lines))
+  end
+end
+
 # The changeset-source port. A source answers six messages -- #files, #identity,
 # #base_ref, #head_ref, #file_at and #diff_origin -- and every implementation
 # must pass this group unchanged. {Lain::Review::Source::LocalBranch} is the
@@ -180,7 +213,12 @@ RSpec.shared_examples "a review changeset source" do |config|
   describe "#files" do
     it "answers the model values a changeset reads, so nothing downstream parses anything" do
       expect(changeset_source.files).not_to be_empty
-      expect(changeset_source.files).to all(respond_to(:path, :old_path, :new_path, :status, :binary?, :hunks))
+      expect(changeset_source.files)
+        .to all(respond_to(:path, :old_path, :new_path, :status, :binary?, :hunks, :rendered_lines))
+    end
+
+    it_behaves_like "files a bound can size" do
+      let(:sized_files) { changeset_source.files }
     end
 
     # A file with neither side is not a change, and a source answering one has
@@ -499,6 +537,15 @@ RSpec.shared_examples "a diff-bearing review changeset source" do |config|
 
     it "answers the very same objects on a second call rather than reparsing" do
       expect(changeset_source.files).to equal(changeset_source.files)
+    end
+
+    # The universal group pins the SHAPE of a file's size; this is the half only
+    # a source with bytes can be held to, and it is the one that says the number
+    # is the right number: for a parsed file the size is exactly the stream a
+    # reader scrolls, each hunk's body plus its `@@`.
+    it "sizes each file as exactly the hunk stream it parsed" do
+      expect(changeset_source.files.map(&:rendered_lines))
+        .to eq(changeset_source.files.map { |file| file.hunks.sum { |hunk| hunk.lines.size + 1 } })
     end
   end
 

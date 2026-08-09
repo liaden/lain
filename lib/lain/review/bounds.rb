@@ -25,7 +25,7 @@ module Lain
     # constraints are downstream of it: a human reading a cumulative view, and
     # a `/critique` prompt against a context window.
     #
-    # == Deciding cheaply, and the order that makes it cheap
+    # == Deciding cheaply, and why nothing here reads a hunk
     #
     # The file count is the cheapest fact and, at the work scale that motivates
     # this card, the one that fires first -- 800 files against a ceiling of 300.
@@ -33,20 +33,31 @@ module Lain
     # is reached on a file count alone and never costs a walk over the thing it
     # is refusing to walk over.
     #
-    # The MESSAGE is the other half, and it is not free: naming a narrower
-    # scope only when that scope actually fits means measuring it, so a
-    # refusal may sum hunks after it has decided to refuse. That sum is
-    # arithmetic over hunks `view.files` already materialized -- never a
-    # second parse -- and it gives up at the first candidate's first group
-    # whose FILE count is over, so the common case stops before reading a
-    # hunk at all. {#cumulative_advice} is where that happens and says so
-    # again at the point of use.
+    # Ordering alone was never the whole of it, and reading it as such is the
+    # trap this paragraph exists to close: a short-circuit fires on the REFUSAL
+    # path, so every SUCCESSFUL presentation went on to sum `file.hunks` over
+    # every file it had just agreed to present. Wrapping the argument in a
+    # lambda fixes nothing -- the ordering was already right and the input was
+    # wrong. So the line ceiling now asks a FILE what it costs
+    # ({Source::ChangedFile#rendered_lines}), and each file answers from what
+    # its own source already knows: a parsed diff from the hunks it parsed, a
+    # corpus from the line counts its identity pass harvested in one streamed
+    # read. Nothing here sends `#hunks`, so a file nobody has chunked survives a
+    # whole bounded presentation unchunked.
     #
-    # Stated once here in the form the code actually has, because the first cut
-    # of this paragraph claimed the whole call read no hunks, which stopped
-    # being true the moment the advice was conditioned -- two claims in one file
-    # disagreeing is `vocabulary.rb`'s second-declaration trap in prose.
-    # There is a spec on each half.
+    # That now covers the MESSAGE as well as the DECISION, which it did not
+    # use to: naming a narrower scope only when that scope actually fits still
+    # means measuring the candidate's groups, but the measurement is the same
+    # per-file arithmetic and it still gives up at the first candidate's first
+    # group whose FILE count is over. {#cumulative_advice} says so again at the
+    # point of use. The promise is nevertheless stated as being about the
+    # DECISION, because that is the one a future strategy cannot quietly break:
+    # composing a sentence is allowed to measure, and a candidate that had to
+    # read content to know whether it fits would be within its rights.
+    #
+    # There is a spec on each half, and both drive files that RAISE when their
+    # hunks are read -- the only proof that a message was not sent, since a
+    # recording double leaves a green run resting on the recorder.
     class Bounds
       # A view is past a ceiling. Carries the measurement, the ceiling and the
       # alternative in its message, because a bare "too large" leaves the
@@ -189,6 +200,21 @@ module Lain
       UNSPLITTABLE = "and a file is the smallest chunk this splits by, because a critique of one " \
                      "hunk without the rest of its file is a different task rather than a smaller one"
 
+      # A ceiling that refuses nothing, for the caller who has said so.
+      #
+      # `Float::INFINITY` rather than `nil`, and the difference is the whole
+      # reason it is a constant: infinity answers the entire comparison duck a
+      # number does -- `x <= INFINITY` is true, `x > INFINITY` is false -- so
+      # every guard below is untouched and only the coercion has to know. `nil`
+      # would need a branch at each comparison, and, worse, it is what a missed
+      # config lookup hands you. This value cannot arrive by accident.
+      #
+      # Nothing DEFAULTS to it, deliberately: an absent ceiling is a number, and
+      # a silently unbounded view is precisely the success-that-isn't-one this
+      # object exists to refuse. It is opt-in, at the command line, by a human
+      # who has said the word.
+      UNBOUNDED = Float::INFINITY
+
       # What a view costs, in the two units the ceilings are set in.
       #
       # ONE line unit, deliberately. `lines` is RENDERED lines -- what a reader
@@ -201,23 +227,31 @@ module Lain
       # `diff --git`/`index`/`---`/`+++` preamble: that is a constant per FILE,
       # which is the quantity the file ceiling already governs.
       Size = Data.define(:files, :lines) do
-        # @param files [Enumerable<#hunks>] a changeset's or a scope's files
+        # @param files [Enumerable<#rendered_lines>] a changeset's or a scope's
+        #   files. Not `#hunks` -- asking a file its own size instead of
+        #   counting its hunks is the whole of what lets a bound run over a
+        #   corpus nobody has chunked.
         def self.of(files) = new(files: files.size, lines: lines_in(files))
 
         # The measurement without the value object, because the guards below run
         # it per commit and per FILE on the packing walk and never read
         # {Size#files}. One implementation, two callers -- {.of} is for a caller
         # that wants both numbers to show a human.
-        def self.lines_in(files) = files.sum { |file| file.hunks.sum { |hunk| hunk.lines.size + 1 } }
+        #
+        # It ASKS rather than counts, and that is the difference between a
+        # bound a survey can afford and one it cannot. See
+        # {Source::ChangedFile#rendered_lines}, which is where the unit above is
+        # actually implemented for a parsed file.
+        def self.lines_in(files) = files.sum(&:rendered_lines)
       end
 
       attr_reader :max_files, :max_lines, :max_critique_lines
 
       def initialize(max_files: DEFAULT_MAX_FILES, max_lines: DEFAULT_MAX_LINES,
                      max_critique_lines: DEFAULT_MAX_CRITIQUE_LINES)
-        @max_files = Integer(max_files)
-        @max_lines = Integer(max_lines)
-        @max_critique_lines = Integer(max_critique_lines)
+        @max_files = ceiling(max_files)
+        @max_lines = ceiling(max_lines)
+        @max_critique_lines = ceiling(max_critique_lines)
         freeze
       end
 
@@ -275,6 +309,22 @@ module Lain
 
       private
 
+      # The ONE place {UNBOUNDED} is a special case, which is what buys every
+      # comparison below staying a plain `<=`. The predicate is exact, and both
+      # of the obvious spellings are wrong:
+      #
+      # - `equal?` passes only the CONSTANT. Infinity is not a flonum, so the
+      #   constant is one heap object and a COMPUTED `1.0/0` is another -- which
+      #   is how an unbounded ceiling actually arrives once a flag parses one.
+      # - `value == UNBOUNDED` dispatches to the ARGUMENT, so an object
+      #   answering `true` to everything becomes an unbounded ceiling with
+      #   `Integer()` never run. Reversing it does not help either: `Float#==`
+      #   falls back to asking `other == self`.
+      #
+      # `eql?` on infinity itself is neither: true for any Float of that value,
+      # false for anything that is not a Float at all.
+      def ceiling(value) = UNBOUNDED.eql?(value) ? UNBOUNDED : Integer(value)
+
       def check_cumulative!(view)
         files = view.files
         guard!(files.size, max_files, "files", "the cumulative view") { cumulative_advice(view) }
@@ -314,14 +364,14 @@ module Lain
       # Computed only on the refusal path, and only there.
       #
       # This is where the short-circuit's promise gets its exact wording: the
-      # DECISION to refuse still reads no hunks, but the MESSAGE may, because
-      # deciding whether a narrower scope actually fits means measuring it. The
-      # cost is a sum over hunks already materialized by `view.files` -- not a
-      # second parse -- and `all?` gives up at the first candidate's first
-      # group whose FILE count is over, so the common case stops before
-      # touching a hunk at all. A true sentence is worth more than that sum;
-      # Schneeman's finding was a message that sent a human down a path which
-      # also refuses.
+      # DECISION to refuse reads no hunks, and the MESSAGE is allowed to
+      # measure, because deciding whether a narrower scope actually fits means
+      # measuring it. It happens not to cost a hunk either -- the measurement is
+      # {Size.lines_in}, which asks each file its own size -- but that is the
+      # candidates' property rather than this method's promise, and `all?` gives
+      # up at the first candidate's first group whose FILE count is over anyway.
+      # A true sentence is worth the measurement; Schneeman's finding was a
+      # message that sent a human down a path which also refuses.
       #
       # {NARROWING_CANDIDATES} is tried in registry order and the FIRST fit
       # wins, `#advice` read off that strategy rather than composed here.
@@ -390,10 +440,15 @@ module Lain
         lines
       end
 
-      def guard!(measured, ceiling, unit, subject)
-        return if measured <= ceiling
+      # `limit` rather than `ceiling`, which is what this argument means and was
+      # called until {#ceiling} became a method: a parameter shadowing a private
+      # method of the same object is one edit away from a collision nobody
+      # reading either half would predict. The MESSAGE still says "ceiling",
+      # because that is the word the reader was refused by.
+      def guard!(measured, limit, unit, subject)
+        return if measured <= limit
 
-        raise TooLarge, "#{subject} is #{measured} #{unit}, over the ceiling of #{ceiling} -- #{yield}"
+        raise TooLarge, "#{subject} is #{measured} #{unit}, over the ceiling of #{limit} -- #{yield}"
       end
     end
   end

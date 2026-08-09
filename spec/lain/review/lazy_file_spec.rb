@@ -18,8 +18,8 @@ RSpec.describe Lain::Review::LazyFile do
   # Constructing over this is how a scenario says "and nothing chunked it".
   let(:exploding) { -> { raise "chunked when it should not have been" } }
 
-  def lazy(old_path: "a.rb", new_path: "a.rb", chunker: self.chunker, binary: false)
-    described_class.new(old_path:, new_path:, chunker:, binary:)
+  def lazy(old_path: "a.rb", new_path: "a.rb", chunker: self.chunker, binary: false, rendered_lines: 4)
+    described_class.new(old_path:, new_path:, chunker:, binary:, rendered_lines:)
   end
 
   # `MarkedChangeset.of` keys its row table by the file OBJECT and `walk`
@@ -82,6 +82,56 @@ RSpec.describe Lain::Review::LazyFile do
       [file.old_path, file.new_path, file.path, file.status, file.binary?]
 
       expect(calls).to be_empty
+    end
+
+    # The whole of what makes {Review::Bounds} able to bound a survey: a bound
+    # measures a view in rendered lines, and a file that answered that by
+    # chunking would chunk the corpus to decide whether to present it. The size
+    # is SUPPLIED -- a corpus harvests it in the same streamed read its identity
+    # pass already makes -- so this is a stored fact, not a derived one.
+    it "answers what a bound measures it by, without chunking" do
+      file = lazy(chunker: exploding, rendered_lines: 42)
+
+      expect(file.rendered_lines).to eq(42)
+      expect(calls).to be_empty
+    end
+
+    # The other half of "asserted, not derived", and the half a first cut left
+    # out. A size nobody can check is a size a source can get wrong, and a wrong
+    # one is not caught downstream: {Bounds} sums what it is told, so ONE file
+    # reporting a negative cancels its neighbours and carries a 250,000-line
+    # view under a 30,000-line ceiling -- the success-that-isn't-one that object
+    # exists to refuse, produced by the object itself. There is no honest
+    # negative; zero is honest, and is what a hunkless file answers.
+    describe "the size it is told, which nothing downstream can check" do
+      it "refuses a negative, which would carry the whole view under the ceiling with it" do
+        expect { lazy(chunker: exploding, rendered_lines: -1) }
+          .to raise_error(ArgumentError, /-1/)
+      end
+
+      it "refuses a negative however it is spelled, since the coercion runs first" do
+        expect { lazy(chunker: exploding, rendered_lines: -400_000) }.to raise_error(ArgumentError)
+      end
+
+      it "accepts zero, which is what a file with nothing to render honestly costs" do
+        expect(lazy(chunker: exploding, rendered_lines: 0).rendered_lines).to eq(0)
+      end
+
+      # Coerced for {Bounds}' own reason: a ceiling compared against a String is
+      # a `nil`-shaped failure with an `ArgumentError`'s cure. A decimal String
+      # is deliberately NOT blessed -- `Integer("010")` is 8, and a line count
+      # that reads as octal is a defect nobody would look for.
+      it "refuses what is not a number at all, rather than coercing it to zero" do
+        expect { lazy(chunker: exploding, rendered_lines: "many") }.to raise_error(ArgumentError)
+        expect { lazy(chunker: exploding, rendered_lines: nil) }.to raise_error(TypeError)
+      end
+
+      # The port's own law, held against the one file type that could break it:
+      # every source running it in `review_source.rb` derives its sizes off
+      # parsed hunks, so the law never met a witness with anything to get wrong.
+      it_behaves_like "files a bound can size" do
+        let(:sized_files) { [lazy(chunker: exploding, rendered_lines: 0), lazy(rendered_lines: 7)] }
+      end
     end
 
     it "runs the chunker once however often the hunks are read" do
@@ -201,6 +251,16 @@ RSpec.describe Lain::Review::LazyFile do
         .to raise_error(KeyError, /z\.rb/)
     end
 
+    # The size is DERIVED from the same content the chunker stands for, so it
+    # adds nothing to the value and two sources disagreeing about it is a bug in
+    # one of them rather than two different files. Keeping it out is also what
+    # stops that bug surfacing as a `KeyError` from a row table three objects
+    # away, which names the path and could not name the size.
+    it "is equal to a file over the same path and chunker that reports another size" do
+      expect(file).to eq(lazy(rendered_lines: file.rendered_lines + 1))
+      expect(file.hash).to eq(lazy(rendered_lines: file.rendered_lines + 1).hash)
+    end
+
     # The chunker is part of the value: two files over one path that would
     # produce different hunks are different files.
     it "is not equal to a file over the same path with another chunker" do
@@ -224,7 +284,7 @@ RSpec.describe Lain::Review::LazyFile do
     # `instance_of?`, not `is_a?`: under `is_a?` the base would equal a subclass
     # instance while the subclass did not equal it back.
     it "is not equal to a subclass instance, in either direction" do
-      sub = Class.new(described_class).new(old_path: "a.rb", new_path: "a.rb", chunker:)
+      sub = Class.new(described_class).new(old_path: "a.rb", new_path: "a.rb", chunker:, rendered_lines: 4)
 
       expect(file == sub).to be(false)
       expect(sub == file).to be(false)
@@ -234,7 +294,7 @@ RSpec.describe Lain::Review::LazyFile do
     # Without it a subclass shares the bucket while comparing unequal, and so
     # does a bare Array of the same parts.
     it "hashes its class in, so an unequal object does not share its bucket" do
-      sub = Class.new(described_class).new(old_path: "a.rb", new_path: "a.rb", chunker:)
+      sub = Class.new(described_class).new(old_path: "a.rb", new_path: "a.rb", chunker:, rendered_lines: 4)
 
       expect(sub.hash).not_to eq(file.hash)
       expect(file.hash).not_to eq([file.old_path, file.new_path, file.binary, file.chunker].hash)
