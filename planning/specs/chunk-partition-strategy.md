@@ -24,20 +24,23 @@ than satisfying one.
 ## Grounding
 
 Verified 2026-08-07 against `main` at `2e26748` by parallel Explore passes, then re-verified
-against a review panel's counter-check. Facts every card depends on:
+against a review panel's counter-check. Re-verified 2026-08-09 at `d7e41b7` by a second panel
+pass (`.critique-partition-survey.md`), which settled the decisions recorded under Open
+decisions and refreshed the cites below. Facts every card depends on:
 
 - `SCOPES = %w[commits cumulative]` (`vocabulary.rb:93`). Four dispatch tables derive from it:
   `Bounds::SCOPE_NAMES`/`SCOPE_CHECKS`/`COMMIT_WALK` (`bounds.rb:106,111,116`),
   `Session::SCOPES` (`session.rb:87`), `Surface::Text::SCOPE_RENDERER` (`text.rb:58`),
   `ReviewView::SCOPE_ROWS` (`review_view.rb:122`). The last two are literals, spec-pinned equal
   to the vocabulary.
-- **Five production readers of `by_commit`**: `bounds.rb:242` (`check_commits!`), `bounds.rb:262`
-  (`cumulative_advice`), `bounds.rb:286` (`critique_chunks`), `marked_changeset.rb:101`,
-  `surface/text.rb:134`, `review_view.rb:388`. **`cumulative_advice` is the one that decides the
-  wave structure**: it is reached from the *cumulative* path (`bounds.rb:234,236`), so renaming
+- **Six production reader sites of `by_commit`, in four files**: `bounds.rb:242`
+  (`check_commits!`), `bounds.rb:262` (`cumulative_advice`), `bounds.rb:286`
+  (`critique_chunks`), `marked_changeset.rb:101`,
+  `surface/text.rb:134`, `review_view.rb:388`. **`cumulative_advice` is the one that forces the
+  reader move to be atomic**: it is reached from the *cumulative* path (`bounds.rb:234,236`), so renaming
   `by_commit` without touching `bounds.rb` in the same commit leaves the suite red.
-- `bounds.rb:286` calls `scope.with(files:)`, so a partition must be a `Data`, not a duck
-  answering `#files`.
+- `bounds.rb:287` calls `scope.with(files:)`, so a partition must answer `#with(files:)` — a
+  `Data` supplies it free. Pin the message, not the class.
 - `bounds.rb:247-248` interpolates `"commit #{scope.sha}"` into a refusal message. Replacing the
   *advice* alone (`COMMIT_WALK_ADVICE`) leaves an oversized directory partition refusing with
   `"commit lib/a: 240 files over the ceiling"`.
@@ -55,7 +58,9 @@ against a review panel's counter-check. Facts every card depends on:
 - **Four sites hardcode a scope name**, not three: `CLI::Review#default_scope`
   (`review.rb:136`), `Command::Review::DEFAULT_SCOPE` (`command/review.rb:54`),
   `Tools::RequestReview::SCOPE = :cumulative` (`request_review.rb:100`, used at `:620`), and
-  **`exe/lain:174`** — `method_option :scope, enum: %w[commits cumulative]`. Thor rejects an
+  the `method_option :scope, enum: %w[commits cumulative]` line in `exe/lain`'s nested
+  `class Review < Thor` (**`exe/lain:340` today** — this file drifted 166 lines between this
+  plan's drafts, so cite the construct, not the number). Thor rejects an
   unlisted value *before* any registry is consulted, so the enum must move too or
   `--scope by_directory` fails at the CLI layer with the registry none the wiser.
 - **Five** spec files build `Struct.new(:files, :by_commit)` doubles — verified by grep, not by
@@ -67,7 +72,10 @@ against a review panel's counter-check. Facts every card depends on:
 - Specs pinning the vocabulary: `bounds_spec.rb:143-149,159-162`, `session_spec.rb:342-346`,
   `text_spec.rb:184-186`, `review_view_spec.rb:113-115,159`,
   `shared_examples/review_surface.rb:390,400,433`.
-- There is **no `origin/main`** ref in this clone; worktrees fork from local `main`.
+- `origin/main` **exists** and agent worktrees fork the remote-tracking ref: run
+  `git rev-parse origin/main main` before spawning each card's agent, the first included, and ask Joel
+  to push if they differ. (An earlier edition of this line claimed the ref was absent; it
+  resolves.)
 
 ## Orchestrator contract (plan-specific only)
 
@@ -76,70 +84,132 @@ against a review panel's counter-check. Facts every card depends on:
   `exe/lain` is shared **except** for A3, which owns its `--scope` enum as card scope (see A3).
 - A new lib file, its index line and its spec land in **one** commit (CLAUDE.md), so the
   orchestrator applies each wiring line with the card that needs it.
-- Check the example **count** against the pre-chunk baseline after each wave, not just the
-  failure count — a dead worker reports as "fewer examples, 0 failures".
+- Check the example **count** against the pre-chunk baseline after each card's merge, not just
+  the failure count — a dead worker reports as "fewer examples, 0 failures".
+- Dispatch is eager, per card **Blocked on** lines (see Dispatch graph): start a card's agent
+  the moment its blockers have merged; re-verify the card's cites against main at dispatch
+  time, since an earlier card may have moved them.
 
 ## Open decisions
 
-None. Two decisions were taken during planning and are recorded so they are not reopened as
-oversights:
+None. Five decisions were taken during planning — the last three by the 2026-08-09 panel pass
+(`.critique-partition-survey.md`) — and are recorded so they are not reopened as oversights:
 
-- **`Partition` carries a small core plus a per-strategy detail, not `CommitScope`'s five
-  members.** Making a directory partition answer `sha`, `body` and `numstat` means three lies on
-  every non-commit strategy, and `bounds.rb:247` and `review_view.rb:393,413` both render from
-  them. A1 settles the shape.
 - **`by_commit` is removed, not aliased.** A migration alias would be a special case with no
-  card scheduled to remove it. A2 moves every reader in one commit — the rename is mechanical
-  and the readers are five.
+  card scheduled to remove it. A1's second commit moves every reader in one commit — the
+  rename is mechanical and the reader sites are six, in four files.
+- **The member set is settled here, not delegated to A1's agent.** `Partition`'s core is
+  `label` + `files`, plus an optional per-strategy detail. The scalar `#added`/`#deleted` that
+  `review_view.rb:393,413` renders belong to the presentation ROW (`CommitRow`'s successor),
+  whose core is `#label`/`#files`/`#added`/`#deleted` with the aggregates derived from its
+  files' hunks by default — honest for any strategy, because a partition's files *are* its
+  whole content — and `ByCommit`'s row overriding them from numstat, whose figures are the
+  commit's own and distinct from its files (`marked_changeset.rb:171-185`). This is
+  `review_view.rb:54-62`'s own rule ("the aggregate belongs on the row object that can
+  honestly supply it") applied one tier down. Header rendering stays dispatched per strategy
+  via `SCOPE_RENDERER`/`SCOPE_ROWS`.
+- **A strategy declares which sources it supports.** The port gains `#supports?(source)`,
+  consulted where the source is in hand (`Session#present`, A3): `ByCommit` requires a source
+  answering `#commits` — `ownership` reads `@source.commits` (`changeset.rb:335`) — while
+  `Whole` and `ByDirectory` support any source. An unsupported pairing refuses naming both
+  the strategy and what the source lacks. Settled now because `chunk-survey-corpus.md`'s
+  corpus source answers no `#commits`, and without this `lain survey --scope commits` is a
+  `NoMethodError` from the bowels of the partition walk.
+- **Advice stays measured; the strategy supplies only the sentence.** Today's
+  `cumulative_advice` recommends a narrowing only after checking the narrowing itself fits,
+  else `NO_PRESENTABLE_SCOPE` (`bounds.rb:261-263`, `:124-128` — "advice that sends a human
+  down a path which also refuses is worse than no advice", itself a prior panel fix). That
+  property survives the port: `Bounds` holds the strategy registry, measures a candidate
+  strategy's partitions on the refusal path, and renders the first fitting candidate's
+  `#advice` sentence; no candidate fitting generalizes `NO_PRESENTABLE_SCOPE`. A4 owns the
+  wiring.
+- **The unbounded ceiling moved to `chunk-survey-corpus.md` (B3).** Nothing in this chunk
+  passes it — its only consumer is `lain survey --unbounded` — and it lands there as
+  `Bounds::UNBOUNDED = Float::INFINITY`, a value that answers the whole comparison duck (so
+  the ceiling comparisons stay untouched) and cannot arrive by accident the way `nil`
+  arrives from every missed config lookup.
 
-## Waves
+## Dispatch graph
+
+Cards dispatch **eagerly**: a card starts the moment every entry on its **Blocked on** line
+has MERGED to main — merged, not merely "agent finished", because worktrees fork main. There
+are no wave barriers; the grouping below is a reading aid, not a gate.
 
 ```
-Wave 1: A1                    (no unmet deps)
-Wave 2: A2 (←A1)
-Wave 3: A3 (←A2), A4 (←A2)
+A1  (blocked on: nothing)
+A3  (blocked on: A1)
+A4  (blocked on: A1)
 ```
 
-Critical path: **A1 → A2 → A3** (three deep). A2 is the only card that touches production
-readers, and it is deliberately one card: `cumulative_advice` (`bounds.rb:262`) makes any split
-of it red at the intermediate commit.
+Critical path: **A1 → A3** (two deep), and A3/A4 run concurrently once A1 merges. A1 absorbs
+the former A2: the objects and the wholesale reader move are one review subject now that the
+member set is settled in Open decisions, and splitting them made the first review speculative
+(objects with no consumers) while the seam between the halves was where both cards' escalation
+triggers pointed at each other. A1 still lands as **two commits** — the objects first (green,
+no callers), then the reader move, which `cumulative_advice` (`bounds.rb:262`) forces to be
+atomic.
 
 ## Tasks
 
-### A1 — Give a partition a value and a strategy a port [wave 1] [risk: medium]
+### A1 — Give the partition axis its objects, and move every reader onto them [risk: high]
 
-**Depends on:** none
+**Blocked on:** nothing
 **Files:** create `lib/lain/review/partition.rb`, `lib/lain/review/partition/strategy.rb`,
 `lib/lain/review/partition/whole.rb`, `lib/lain/review/partition/by_directory.rb`,
+`lib/lain/review/partition/by_commit.rb`,
 `spec/lain/review/partition_spec.rb`, `spec/lain/review/partition/whole_spec.rb`,
-`spec/lain/review/partition/by_directory_spec.rb`
+`spec/lain/review/partition/by_directory_spec.rb`,
+`spec/lain/review/partition/by_commit_spec.rb`; modify `lib/lain/review/changeset.rb`,
+`lib/lain/review/session/marked_changeset.rb`, `lib/lain/review/bounds.rb`,
+`lib/lain/review/surface.rb` (doc only), `lib/lain/review/surface/neovim.rb` (doc only),
+`lib/lain/review/surface/text.rb`, `lib/lain/frontend/neovim/review_view.rb`,
+`spec/lain/review/changeset_spec.rb`, `spec/lain/review/session_spec.rb`,
+`spec/lain/review/bounds_spec.rb`, `spec/lain/review/surface/text_spec.rb`,
+`spec/lain/review/surface/neovim_spec.rb`,
+`spec/lain/frontend/neovim/review_view_spec.rb`, `spec/lain/frontend/neovim_spec.rb`,
+`spec/lain/frontend/neovim/changeset_diff_spec.rb`,
+`spec/support/shared_examples/review_surface.rb`
 **Reuse:** `Changeset::CommitScope` (`changeset.rb:118`) for the members that must survive;
 `Review::Surface.check!` and `Surface::MESSAGES` (`surface.rb`) as the precedent for a
 duck-probed port with declared arities — reuse its shape, do not invent a third convention
 (`CLI::CompactionStrategy#live_tier` is the other);
-`MarkedChangeset::CommitRow` (`marked_changeset.rb:186-198`) for what a renderer asks a group
+`MarkedChangeset::CommitRow` (`marked_changeset.rb:186-198`) for what a renderer asks a group;
+`Changeset#scopes`/`#owner_of`/`#ownership` (`changeset.rb:315-340`) move **wholesale** into
+`ByCommit` — the last-writer-wins rule and the `Unattributed` refusal are behaviour to
+preserve, not to redesign; `Surface::Text::SCOPE_RENDERER` (`text.rb:58`) and
+`ReviewView::SCOPE_ROWS` (`review_view.rb:122`) as the dispatch shape
 **Shared-file wiring:** `require_relative "review/partition"` in `lib/lain/review.rb`, **before**
-`review/changeset`(25)
+`review/changeset`(25); `require_relative "review/partition/by_commit"` in
+`lib/lain/review/partition.rb`
 
-Introduces the objects without moving any caller onto them — that is A2's job, and keeping them
-apart is what lets each be reviewed on its own terms.
+One card, two commits — formerly cards A1 and A2, merged because the objects have no consumers
+until the readers move, so reviewing them apart meant reviewing speculation and then a
+mechanical sweep whose real questions had all been asked of the wrong card. **Commit one**
+introduces the objects with their own specs and no callers (green on its own). **Commit two**
+moves every reader — and it is atomic for a mechanical reason: `by_commit` is read from
+`cumulative_advice` (`bounds.rb:262`), which is on the *cumulative* path, so any commit that
+renames it without moving `bounds.rb` in the same breath is red. The six reader sites and the
+five spec doubles move together or not at all.
 
-**The member set is this card's real decision.** `CommitScope`'s five members are honest for
-commits and lies for anything else: a directory has no sha, no body, no numstat. But
-`CommitRow` forwards all five, `review_view.rb:393,413` renders `#added`/`#deleted` as scalars,
-and `bounds.rb:247` interpolates `scope.sha` into a refusal. So a `Partition` needs a **core**
-every strategy can answer honestly — at minimum a `label` (what a heading renders and what a
-refusal names) and `files` — plus whatever a commit strategy additionally carries. Decide the
-shape here; A2 is where it meets its renderers.
+**The member set is settled in Open decisions; this card executes it.** `CommitScope`'s five
+members are honest for commits and lies for anything else: a directory has no sha, no body, no
+numstat. So `Partition`'s core is `label` (what a heading renders and what a refusal names)
+and `files`, plus an optional per-strategy detail. The scalar `#added`/`#deleted` that
+`review_view.rb:393,413` renders belong to the presentation ROW with hunk-derived defaults —
+that wiring is commit two's job, and the shape is fixed above so the move inherits a decision
+rather than a question.
 
-`Partition` must be a `Data` and answer `#with(files:)` — `Bounds#critique_chunks`
-(`bounds.rb:286`) calls exactly that, and `/critique` chunking breaks without it. It must
+`Partition` must answer `#with(files:)` — `Bounds#critique_chunks` (`bounds.rb:287`) calls
+exactly that, and `/critique` chunking breaks without it; a `Data` supplies it free, and the
+spec pins the message rather than the class. It must
 **withhold** `#hunks` and `#base_ref`, for `CommitScope`'s reason (`changeset_spec.rb:661-676`):
 a filtered group must be impossible to hand to `Marks#reconcile`.
 
-A strategy answers `#name`, `#partition(changeset) -> [Partition]` and `#advice` — the last
-being what a `Bounds` refusal recommends at this strategy, which is what lets A4 delete
-`COMMIT_WALK_ADVICE`.
+A strategy answers `#name`, `#partition(changeset) -> [Partition]`, `#advice` — the
+recommendation *sentence* a `Bounds` refusal renders once Bounds has measured that the
+recommendation fits (Open decisions), which is what lets A4 delete `COMMIT_WALK_ADVICE` — and
+`#supports?(source)`, the declaration consulted at presentation so an inapplicable strategy
+refuses by name instead of dying on a missing source message.
 
 `ByDirectory` ships here, not later: a port whose only implementation is `Whole` (degenerate by
 construction) proves nothing, and `ByDirectory` is what makes the member-set decision above
@@ -163,9 +233,14 @@ Scenario: the port refuses an incomplete strategy before it is used
   Then it is refused, naming the missing message
 
 Scenario: the port refuses a strategy whose #partition takes the wrong arity
-  Given an object answering all three messages but whose #partition takes no arguments
+  Given an object answering all four messages but whose #partition takes no arguments
   When it is checked against the strategy port
   Then it is refused, naming the arity
+
+Scenario: a strategy names the sources it can partition
+  Given the whole and directory strategies and a source answering no commit history
+  When each is asked whether it supports the source
+  Then both answer true, and a strategy requiring commits would answer false
 
 Scenario: the whole strategy yields one partition over every file
   Given a changeset of five files
@@ -191,44 +266,18 @@ Scenario: partitioning is deterministic
 `spec/lain/review/partition/whole_spec.rb`, `spec/lain/review/partition/by_directory_spec.rb`
 
 **Escalation triggers:**
-- The core member set cannot satisfy both `review_view.rb:393,413` (scalar `#added`/`#deleted`)
-  and an honest directory partition, and the only way through is a nil or a zero. A rendered
-  zero is a lie a reader cannot tell from a real one — stop and report the shape you reached,
-  because A2 and A4 both build on it.
-- A strategy needs the `Source` rather than the changeset to partition. A strategy takes a
-  changeset; if `ByCommit` looks like it will need a source in A2, say so here — the seam is
-  wrong and A2 will inherit it.
+- Executing the settled shape reveals a renderer read the core cannot satisfy honestly, and
+  the only way through is a nil or a rendered zero a reader cannot tell from a real one. The
+  decision is recorded in Open decisions; revising it is a plan change, not a card
+  improvisation — stop and report the shape you reached.
+- A strategy needs the `Source` rather than the changeset to partition (beyond `ByCommit`'s
+  declared `#supports?` requirement). A strategy takes a changeset; if the seam looks wrong
+  here, stop before commit two inherits it.
 - A third "does this collaborator answer the port" convention appears necessary beyond
   `Surface.check!` and `CompactionStrategy#live_tier`. `surface.rb`'s own doc argues against
   exactly that.
 
----
-
-### A2 — Move every reader from the commit axis to the partition axis [wave 2] [risk: high]
-
-**Depends on:** A1
-**Files:** create `lib/lain/review/partition/by_commit.rb`,
-`spec/lain/review/partition/by_commit_spec.rb`; modify `lib/lain/review/changeset.rb`,
-`lib/lain/review/session/marked_changeset.rb`, `lib/lain/review/bounds.rb`,
-`lib/lain/review/surface/text.rb`, `lib/lain/frontend/neovim/review_view.rb`,
-`spec/lain/review/changeset_spec.rb`, `spec/lain/review/session_spec.rb`,
-`spec/lain/review/bounds_spec.rb`, `spec/lain/review/surface/text_spec.rb`,
-`spec/lain/review/surface/neovim_spec.rb`,
-`spec/lain/frontend/neovim/review_view_spec.rb`, `spec/lain/frontend/neovim_spec.rb`,
-`spec/lain/frontend/neovim/changeset_diff_spec.rb`,
-`spec/support/shared_examples/review_surface.rb`
-**Reuse:** `Changeset#scopes`/`#owner_of`/`#ownership` (`changeset.rb:315-340`) move **wholesale**
-into `ByCommit` — the last-writer-wins rule and the `Unattributed` refusal are behaviour to
-preserve, not to redesign; `Surface::Text::SCOPE_RENDERER` (`text.rb:58`) and
-`ReviewView::SCOPE_ROWS` (`review_view.rb:122`) as the dispatch shape
-**Shared-file wiring:** `require_relative "review/partition/by_commit"` in
-`lib/lain/review/partition.rb`
-
-**Deliberately one card**, and the reason is mechanical rather than stylistic: `by_commit` is
-read from `cumulative_advice` (`bounds.rb:262`), which is on the *cumulative* path, so any
-commit that renames it without moving `bounds.rb` in the same breath is red. The five
-production readers and the five spec doubles move together or not at all.
-
+**Commit two — the move.**
 `Changeset#by_commit` becomes `#partitions(strategy)`; the commit-grouping logic leaves
 `Changeset` for `ByCommit`; `CommitScope` becomes A1's `Partition`; `CommitRow` follows.
 
@@ -239,7 +288,14 @@ scope — a re-render must not be able to show two states for one file.
 Five doubles to update, verified by grep: `surface/neovim_spec.rb:136`,
 `review_view_spec.rb:52`, `frontend/neovim_spec.rb:615`, `surface/text_spec.rb:22`,
 `frontend/neovim/changeset_diff_spec.rb:360`. Also `shared_examples/review_surface.rb:338`,
-which is an **error-message String** naming `#by_commit`, not a double.
+which is an **error-message String** naming `#by_commit`, not a double — and the shared
+example's mechanical `.by_commit` reads at `:354-355`, `:397`, `:407` and `:440`.
+
+**The duck's one documented statement moves with the message.** `surface.rb:34-46` states the
+`#files`/`#by_commit` changeset duck "ONCE here rather than in each adapter's own doc", and
+`surface/neovim.rb:214` restates it. After this card the port doc must describe the partition
+duck, or the single source of truth for the contract lies about the rename it polices. Doc
+edits only; `Surface::MESSAGES` itself is untouched.
 
 ```gherkin
 Scenario: commit grouping behaves exactly as before
@@ -273,10 +329,15 @@ Scenario: the two scopes still differ
   When it is presented whole and then grouped
   Then the whole rendering carries no partition heading
 
-Scenario: a strategy with no renderer fails loudly at load
-  Given a strategy registered with no rendering declared for it
-  When the surface is loaded
-  Then it raises, naming the strategy
+Scenario: a surface refuses a strategy it declares no rendering for
+  Given a strategy the surface's dispatch does not name
+  When its renderer is resolved
+  Then it raises, naming the strategy — a resolvable message, not a load-time event a spec
+  cannot re-trigger
+
+Scenario: every registered strategy renders on every surface
+  When each registered strategy's renderer is resolved on each surface
+  Then all resolve — the completeness law that replaces the literal-equality pins
 
 Scenario: nothing answers the old message
   When a changeset is asked for by_commit
@@ -304,9 +365,10 @@ Scenario: nothing answers the old message
 
 ---
 
-### A3 — Resolve a scope against a strategy registry [wave 3] [risk: high]
+### A3 — Resolve a scope against a strategy registry [risk: high]
 
-**Depends on:** A2
+**Blocked on:** A1 — the registry resolves strategies A1 defines, and every scope literal this
+card moves sits in code A1's reader move rewrites
 **Files:** modify `lib/lain/review/vocabulary.rb`, `lib/lain/review/session.rb`,
 `lib/lain/tools/request_review.rb`, `lib/lain/cli/review.rb`,
 `lib/lain/cli/command/review.rb`, `exe/lain`, `spec/lain/review/vocabulary_spec.rb`,
@@ -315,16 +377,21 @@ Scenario: nothing answers the old message
 **Reuse:** `Session.scope!` (`session.rb:119-124`) as the single validation point both CLI paths
 already converge on; `Review::SCOPES`' declare-once discipline and its stated reason
 (`vocabulary.rb:86-92`)
-**Shared-file wiring:** none — **this card owns `exe/lain:174`'s `--scope` enum as scope**, by
+**Shared-file wiring:** none — **this card owns the `method_option :scope` enum in
+`exe/lain`'s nested `Review < Thor` class (`exe/lain:340` today) as scope**, by
 exception to the orchestrator contract, because no other card can make that line correct and
 leaving it stale silently breaks the feature at the CLI layer
 
 `SCOPES` becomes the registry of available strategies. `Session.scope!` resolves a name to a
 strategy and refuses an unknown one as loudly as today — a typo must not fall through to
 whichever branch a bare `==` left as default, which is the whole reason the vocabulary exists.
+Applicability is a separate, later check: `#supports?(source)` is consulted at `#present`,
+where the source is in hand (`scope!` is a class-level validator with no collaborators, and
+name-validity and applicability are different refusals with different sentences).
 
 **Four sites hardcode a scope name and all four must resolve through the registry**:
-`review.rb:136`, `command/review.rb:54`, `request_review.rb:100`, and `exe/lain:174`. The last
+`review.rb:136`, `command/review.rb:54`, `request_review.rb:100`, and the `--scope` enum in
+`exe/lain`'s `Review < Thor` (`:340` today). The last
 is the one most easily missed: Thor validates its `enum:` *before* dispatch, so a registry that
 knows about `by_directory` while Thor does not means `lain review --scope by_directory` fails
 with a Thor error and no registry involvement.
@@ -354,6 +421,11 @@ Scenario: a typo still fails loudly rather than defaulting
   Given a session presented at "cumulatve"
   When the scope is resolved
   Then it raises rather than rendering the grouped or the flat view
+
+Scenario: a strategy that does not support the source is refused by name
+  Given a session over a source with no commit history
+  When it is presented at a scope whose strategy requires commits
+  Then it refuses, naming the strategy and what the source lacks
 ```
 → spec files: `spec/lain/review/vocabulary_spec.rb`, `spec/lain/review/session_spec.rb`,
 `spec/lain/tools/request_review_spec.rb`, `spec/lain/cli/review_spec.rb`,
@@ -365,38 +437,40 @@ Scenario: a typo still fails loudly rather than defaulting
   rather than falsifiable. Those specs exist so a strategy without a renderer fails loudly;
   report what still fails when one is removed, and if nothing does, the registry has eaten the
   property it was supposed to generalize.
-- Resolution needs to consult a *source* to know which strategies apply. `Session.scope!` is a
-  class-level validator with no collaborators; if applicability is source-dependent the check
-  belongs at `#present` instead. Confirm before moving it — `chunk-survey-corpus.md` depends on
-  where this lands.
+- The `#supports?` check cannot live at `#present` without duplicating resolution work already
+  done at `scope!`, or the two refusals cannot keep distinct sentences. The split (name at
+  `scope!`, applicability at `#present`) is settled in Open decisions — report the friction
+  rather than merging the checks.
 - Changing `request_review.rb` ripples into epic-tier specs. This card's scope is scope
   resolution only; an epic behaviour change means the seam is wider than planned.
 
 ---
 
-### A4 — Let a refusal name the strategy, and a ceiling be absent [wave 3] [risk: medium]
+### A4 — Let a refusal name the strategy [risk: medium]
 
-**Depends on:** A2
+**Blocked on:** A1 — the advice wiring reads the partitions and strategies A1 lands, in the
+`bounds.rb` A1's reader move rewrites
 **Files:** modify `lib/lain/review/bounds.rb`, `spec/lain/review/bounds_spec.rb`
 **Reuse:** `Bounds::Size.lines_in` (`bounds.rb:168`); the short-circuit ordering that decides on
-a file count and measures only on the refusal path (`bounds.rb:236-266`);
-`Agent::Budget` as the precedent for a ceiling that raises rather than returning a readable value
+a file count and measures only on the refusal path (`bounds.rb:236-266`); the measured-advice
+property (`bounds.rb:261-263`) — advice that sends a human down a path which also refuses is
+worse than no advice, and it survives this card
 **Shared-file wiring:** none
 
-Two changes, both small, held apart from A2 so the mechanical rename and the policy change are
-reviewed separately.
-
-First: advice comes from the strategy's `#advice`, replacing `COMMIT_WALK_ADVICE`,
+One change, held apart from A1 so the mechanical rename and the policy change are reviewed
+separately: advice comes from the strategies, measured by `Bounds`. `COMMIT_WALK_ADVICE`,
 `NO_NARROWER` and `NO_PRESENTABLE_SCOPE` (`bounds.rb:120-128`) — three constants that name
-"commit" in prose and would tell a directory reviewer to present per commit.
-
-Second: a ceiling of `nil` means **unbounded**, an explicit opt-out. `nil` must be
-distinguishable from "not configured": a ceiling that silently became unbounded is precisely the
-failure `Bounds` exists to prevent, and the class doc is emphatic that it never truncates,
-samples or elides.
+"commit" in prose and would tell a directory reviewer to present per commit — are replaced by
+the wiring Open decisions records: `Bounds` holds the strategy registry, and on the refusal
+path measures a candidate strategy's partitions before rendering that strategy's `#advice`
+sentence; no candidate fitting generalizes `NO_PRESENTABLE_SCOPE`, strategy-neutrally.
 
 The short-circuit's promise must survive: the *decision* to refuse still reads a file count
-only, and hunks are summed only when composing the message.
+only, and partitions are measured only on the refusal path, composing the message.
+
+(The unbounded-ceiling half of this card's first draft moved to `chunk-survey-corpus.md`'s B3:
+its only consumer is `lain survey --unbounded`, and `Bounds::UNBOUNDED = Float::INFINITY` is
+defined there.)
 
 ```gherkin
 Scenario: a refusal recommends what the strategy offers
@@ -404,15 +478,10 @@ Scenario: a refusal recommends what the strategy offers
   When it is checked
   Then the refusal names the directory partitioning and never the word commit
 
-Scenario: a nil ceiling presents what a number would refuse
-  Given a view of 600 files and a nil file ceiling
+Scenario: advice is measured before it is given
+  Given a view over the ceiling whose every candidate strategy also refuses everywhere
   When it is checked
-  Then it presents
-
-Scenario: an absent ceiling is not silently unbounded
-  Given a Bounds built with no file ceiling argument at all
-  When it is checked against an oversized view
-  Then it refuses, because the default is a number and not nil
+  Then the refusal offers no narrowing, rather than one that would also refuse
 
 Scenario: deciding to refuse still costs no hunk walk
   Given a view whose file count alone exceeds the ceiling
@@ -422,11 +491,12 @@ Scenario: deciding to refuse still costs no hunk walk
 → spec file: `spec/lain/review/bounds_spec.rb`
 
 **Escalation triggers:**
-- Making a ceiling nillable needs a `nil` guard at more than one call site. That is the Null
-  Object smell CLAUDE.md names by example — stop and report rather than repeating the guard.
-- `each_critique_chunk` (`bounds.rb:285`) cannot pack a partition because `#with(files:)` is
-  unavailable. A1 requires a `Data`; if that did not hold, `/critique` chunking is broken and
-  this is where it surfaces.
+- The registry collaborator `Bounds` gains needs more than measure-and-render (it starts
+  making resolution or presentation decisions). That widens `Bounds`' one responsibility —
+  stop and report the shape.
+- `critique_chunks` (`bounds.rb:285-287`) cannot pack a partition because `#with(files:)` is
+  unavailable. A1 requires the message; if that did not hold, `/critique` chunking is broken
+  and this is where it surfaces.
 - The last hunk-walk on the *success* path cannot be removed without changing what `Bounds`
   measures. Note it and move on — **`chunk-survey-corpus.md` owns that problem**
   (`Size.lines_in` is evaluated eagerly as a `guard!` argument at `bounds.rb:235`, so every
@@ -438,11 +508,11 @@ Scenario: deciding to refuse still costs no hunk walk
 - `bundle exec rake pspec` green, with the example **count** compared against the pre-chunk
   baseline.
 - `bundle exec rubocop` clean — bare invocation only; never name a `.toml` on the command line.
-- `pre-commit run --all-files`, including `yard-lint`: A1 and A2 both reopen `Data.define`
+- `pre-commit run --all-files`, including `yard-lint`: A1's two commits both reopen `Data.define`
   classes, and `Documentation/DuplicateNamespaceComment` is what catches a second docstring.
 - `bundle exec rspec --tag core` and `bundle exec rake compile` as regression checks — no Rust
   or daemon code changes here.
-- Grep for surviving `by_commit` references across `lib/`, `exe/` and `spec/` — A2 removes the
+- Grep for surviving `by_commit` references across `lib/`, `exe/` and `spec/` — A1 removes the
   message rather than aliasing it, so any survivor is a miss.
 - **Manual pass owed to Joel:** `lain review --scope by_directory` against a real branch, and
   the same in the cockpit via `/review`, confirming the sidebar groups by directory and that an
