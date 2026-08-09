@@ -74,3 +74,4 @@ end
 require_relative "chunker/paragraphs"
 require_relative "chunker/granularity"
 require_relative "chunker/markdown"
+require_relative "chunker/code"
