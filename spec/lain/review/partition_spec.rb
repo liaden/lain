@@ -148,6 +148,22 @@ RSpec.describe Lain::Review::Partition do
     end
   end
 
+  # What the THREE default sites read instead of each spelling `cumulative`
+  # themselves (`CLI::Review#default_scope`, `CLI::Command::Review#default_scope`,
+  # `Tools::RequestReview::SCOPE`). The point is not the word: it is that the
+  # absent flag names a REGISTERED strategy, so a default nothing serves is a
+  # load-time `KeyError` rather than an `UnknownScope` the first human to omit
+  # the flag discovers.
+  describe "the scope an absent flag means" do
+    it "is a name the registry answers for" do
+      expect(described_class::STRATEGIES).to have_key(described_class::DEFAULT_SCOPE.to_sym)
+    end
+
+    it "is the flat view's own spelling, read off the strategy rather than restated" do
+      expect(described_class::DEFAULT_SCOPE).to eq(described_class::Whole.new.name)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # The port.
   # ---------------------------------------------------------------------------

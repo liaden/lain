@@ -205,8 +205,20 @@ RSpec.describe Lain::CLI::Command::Review do
   end
 
   describe "what it refuses before it opens anything" do
+    # Both sides call the same method, so this says the two AGREE and nothing
+    # about what either contains -- dropping the `format` ships the raw
+    # `[--scope %<scopes>s]` template to a human's chat and still passes. The
+    # example below is what closes that.
     it "answers its own usage when no target was named" do
       expect(command.call("", env)).to eq(command.usage)
+    end
+
+    # What the sentence actually SAYS, against the registry rather than a
+    # literal: every registered strategy is advertised, and the template was
+    # filled in rather than shipped raw.
+    it "advertises every registered scope, with the template resolved" do
+      expect(command.usage).to include(*Lain::Review::Partition::STRATEGIES.keys.map(&:to_s))
+      expect(command.usage).not_to include("%<")
     end
 
     # The one refusal that is about the PROCESS rather than the target, and the
@@ -338,6 +350,23 @@ RSpec.describe Lain::CLI::Command::Review do
 
       expect { command.call("feature --scope everything", env) }
         .to raise_error(Lain::Review::Session::UnknownScope, /everything/)
+    end
+
+    # The cockpit's half of the same claim {Lain::CLI::Review}'s spec makes:
+    # registering a strategy is all it takes to reach it, with no literal to
+    # add on either command path.
+    it "honours a scope that shipped after the vocabulary was written" do
+      attached
+
+      answer = command.call("feature --scope by_directory", env)
+
+      expect(answer).to include("by_directory")
+    end
+
+    it "resolves the absent flag to the registry's own default" do
+      attached
+
+      expect(command.call("feature", env)).to include(Lain::Review::Partition::DEFAULT_SCOPE)
     end
   end
 

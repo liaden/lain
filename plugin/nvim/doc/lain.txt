@@ -316,7 +316,9 @@ so a line number alone names a position in a listing that may already have
 changed. A gesture from a rendering lain no longer holds is refused, and says
 so, rather than opening whatever now sits on that line.
 
-The sidebar has two scopes. Cumulative is one flat file list. The commit walk
+The sidebar has one scope per registered partition strategy, and `--scope`
+offers exactly those. Cumulative is one flat file list. By-directory groups the
+same files under the directory that holds them. The commit walk
 shows each commit's own `+added -deleted` and, beneath it, the files whose
 hunks are reachable at that commit -- which is NOT the same as what that commit
 authored, and the buffer's first line says so. Rows that name no file (the

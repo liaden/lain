@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T14: `lain://review`, the changeset review's navigator -- the two scopes it
+# T14: `lain://review`, the changeset review's navigator -- the scopes it
 # renders, the line -> target map it builds in the same pass, and the gesture it
 # resolves against the rendering the human is actually looking at.
 #
@@ -66,7 +66,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  describe "the two scopes" do
+  describe "the scopes it renders" do
     let(:five_files) do
       %w[lib/a.rb lib/b.rb lib/c.rb lib/d.rb lib/e.rb].map { |path| file_entry(path:) }
     end
@@ -106,12 +106,12 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect(rendered.lines).to include("+9 -0  the side branch's own commit", described_class::NO_HUNKS_HERE)
     end
 
-    it "refuses a scope that is not one of Review::SCOPES" do
+    it "refuses a scope no strategy declares" do
       expect { view.render(changeset, scope: :cumulatve) }.to raise_error(KeyError)
     end
 
     # The completeness law that replaced a literal equality against
-    # `Review::SCOPES`: what has to hold is that every strategy anybody can be
+    # a two-member scope vocabulary: what has to hold is that every strategy anybody can be
     # handed HAS a rendering here, which a two-member equality stopped saying
     # the moment a third strategy shipped.
     it "declares rows for every registered partition strategy" do
@@ -142,7 +142,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect(rendered.lines).not_to include(described_class::WALK_LEGEND)
     end
 
-    it "still heads the commit walk with it, so the two scopes are not one renderer" do
+    it "still heads the commit walk with it, so flat and grouped are not one renderer" do
       groups = [commit_entry(subject: "Add the thing", files: [file_entry(path: "lib/a.rb")])]
 
       expect(view.render(changeset(commits: groups), scope: :commits).lines)

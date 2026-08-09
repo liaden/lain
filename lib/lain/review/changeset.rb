@@ -196,6 +196,20 @@ module Lain
       #   {Partition::ByCommit}, which is the one that can fail this way
       def partitions(strategy) = strategy.partition(self)
 
+      # Whether this changeset's SOURCE can be grouped that way -- asked before
+      # {#partitions}, so a source with no walk refuses by name instead of
+      # dying on a missing message halfway through one.
+      #
+      # The question goes to `@source` and the source stays private, which is
+      # what makes this a message on the changeset rather than a reader. It
+      # cannot be asked of the changeset either: `#commits` above is forwarded
+      # unconditionally, so `ByCommit#supports?(self)` would answer true for a
+      # source that has no walk at all and the refusal would be unreachable.
+      #
+      # @param strategy [Partition::Strategy] anything answering the port
+      # @return [Boolean]
+      def supports?(strategy) = strategy.supports?(@source)
+
       # Every anchorable line of the changeset, on ONE side, in diff order.
       #
       # One side per walk rather than a `both` for context lines: {Review::SIDES}

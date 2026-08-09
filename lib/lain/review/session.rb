@@ -20,11 +20,19 @@ module Lain
     # == The presented SCOPE is view state, and is not held
     #
     # {#present} takes the scope as an argument and forgets it. Which of
-    # {Review::SCOPES} is on screen belongs to whoever is drawing -- "the surface
-    # holds no review state" is right about annotations and marks and wrong
-    # about that. It is still validated here, because this is the one place
-    # every surface is reached through, and a typo'd scope must fail loudly
-    # rather than fall through to whichever branch a bare `==` left as default.
+    # {Partition::STRATEGIES} is on screen belongs to whoever is drawing -- "the
+    # surface holds no review state" is right about annotations and marks and
+    # wrong about that. It is still validated here, because this is the one
+    # place every surface is reached through, and a typo'd scope must fail
+    # loudly rather than fall through to whichever branch a bare `==` left as
+    # default.
+    #
+    # TWO refusals, and keeping them apart is deliberate. {.scope!} says whether
+    # a NAME is a strategy at all; it is a class-level validator with no
+    # collaborators, so it cannot say whether THIS source can be grouped that
+    # way. {#present} asks that second question, where the changeset -- and so
+    # the source -- is in hand. A typo and an inapplicable grouping are
+    # different mistakes and deserve different sentences.
     #
     # == Admissibility is a POLICY, injected
     #
@@ -70,8 +78,16 @@ module Lain
       # refusal, at the key granularity marks are actually recorded.
       class UnknownHunk < Error; end
 
-      # A scope outside {Review::SCOPES}.
+      # A scope no {Partition::STRATEGIES} member declares.
       class UnknownScope < Error; end
+
+      # A scope naming a real strategy that THIS source cannot be grouped by --
+      # the commit walk over a source with no walk. Separate from
+      # {UnknownScope} because the two are different mistakes: one is a typo,
+      # the other is a grouping that exists and does not apply here, and
+      # collapsing them would tell a human to check their spelling when their
+      # spelling was right.
+      class UnsupportedScope < Error; end
 
       # A second verdict over one round. The journal's reader cannot tell which
       # of two judgements stands, and inventing a rule (last wins? first?) is a
@@ -82,9 +98,11 @@ module Lain
       # forgery reason, and this address IS journaled.
       DIGEST_SCHEME = "review-changeset-v1"
 
-      # The Symbol projection of {Review::SCOPES}, which is how a caller spells
-      # one in process. Derived, not restated (`Anchor::SIDES`' rule).
-      SCOPES = Review::SCOPES.map(&:to_sym).freeze
+      # Every scope a caller may name, which is every strategy that registered.
+      # Read off {Partition::STRATEGIES}' keys rather than restated, so
+      # shipping a strategy is the whole of making it reachable -- that is the
+      # property, and a literal list here is exactly what used to break it.
+      SCOPES = Partition::STRATEGIES.keys.freeze
 
       # The changeset's content address, and what {ReviewVerdict} judges.
       #
@@ -113,12 +131,22 @@ module Lain
       end
       private_class_method :digest_parts
 
+      # Resolve a name against the strategy registry.
+      #
+      # It answers the NAME rather than the strategy, and that is the contract
+      # every caller depends on: {Bounds#check_presentation!} and every
+      # {Surface} dispatch on the Symbol, and both CLI paths resolve once and
+      # hand the answer on, so a method that returned a strategy would not
+      # survive being called on its own output.
+      #
       # @param scope [Symbol, String] one of {SCOPES}
       # @return [Symbol]
-      # @raise [UnknownScope] naming what was given
+      # @raise [UnknownScope] naming what was given, beside everything it could
+      #   have been -- a typo is the case this exists for, and the correction
+      #   is usually in that list
       def self.scope!(scope)
         candidate = scope.respond_to?(:to_sym) ? scope.to_sym : scope
-        return candidate if SCOPES.include?(candidate)
+        return candidate if Partition::STRATEGIES.key?(candidate)
 
         raise UnknownScope, "scope must be one of #{SCOPES.inspect}, got #{scope.inspect}"
       end
@@ -247,8 +275,16 @@ module Lain
       # The join, rebuilt on demand rather than memoized: a mark changes it, and
       # a stale view is exactly the defect a marker exists to prevent.
       #
+      # The GROUPING is an argument because a marked changeset carries its
+      # partitions, and a surface picks between the flat table and the grouped
+      # one by the scope it is told. Built at one strategy and drawn at another,
+      # `--scope by_directory` rendered the COMMIT walk under a directory
+      # heading -- the grouping has to be the resolved scope's, which is what
+      # {#present} passes.
+      #
+      # @param strategy [Partition::Strategy] how the files are grouped
       # @return [MarkedChangeset]
-      def marked = MarkedChangeset.of(@changeset, @marks, keys_by_path:)
+      def marked(strategy: MarkedChangeset::WALK) = MarkedChangeset.of(@changeset, @marks, keys_by_path:, strategy:)
 
       # The ceiling is checked on the RESOLVED scope, because `:commits` and
       # `:cumulative` bound differently and the refusal for one recommends the
@@ -266,11 +302,14 @@ module Lain
       # @param scope [Symbol, String] one of {SCOPES}
       # @return [Object] whatever the surface answers
       # @raise [UnknownScope]
+      # @raise [UnsupportedScope] for a grouping this source cannot answer for
       # @raise [Bounds::TooLarge] for a view past a ceiling at that scope
       def present(scope:)
         at = self.class.scope!(scope)
+        strategy = Partition::STRATEGIES.fetch(at)
+        refuse_unsupported!(at, strategy)
         @bounds.check_presentation!(@changeset, scope: at)
-        @surface.present(marked, scope: at)
+        @surface.present(marked(strategy:), scope: at)
       end
 
       # Set one hunk's reviewed state.
@@ -347,6 +386,25 @@ module Lain
       def keys_by_path = @keys_by_path ||= MarkedChangeset.keys_by_path(@changeset)
 
       def hunk_keys = @hunk_keys ||= keys_by_path.values.flatten.to_set
+
+      # BEFORE the ceiling, and the order is the point rather than taste: the
+      # ceiling walks the partitions, and that walk is the thing that would die
+      # on the missing message. Asked of the CHANGESET, which is the only
+      # object holding the source -- a session is opened with the source's
+      # NAME, because that is what the journal carries.
+      # The REMEDY half is what makes this actionable, and it is measured
+      # rather than guessed: the scopes listed are the ones this source is
+      # actually asked about, so the message cannot advertise a second
+      # grouping it would also refuse. {UnknownScope} lists the whole registry
+      # for the same reason -- a refusal naming only what failed leaves the
+      # reader to guess what would not have.
+      def refuse_unsupported!(at, strategy)
+        return if @changeset.supports?(strategy)
+
+        offered = SCOPES.select { |scope| @changeset.supports?(Partition::STRATEGIES.fetch(scope)) }
+        raise UnsupportedScope, "scope #{at.inspect} is not available for the #{source} source -- it does " \
+                                "not answer what that grouping reads. #{offered.inspect} do present this one"
+      end
 
       def refuse_unknown_hunk!(key)
         return if hunk_keys.include?(key)

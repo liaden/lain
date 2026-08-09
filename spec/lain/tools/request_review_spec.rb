@@ -765,6 +765,16 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(surface.presented.first.first.files.map(&:path)).to eq(%w[a.rb b.rb])
     end
 
+    # The scope this tool opens on is RESOLVED rather than restated: a literal
+    # here would go on naming a grouping after the registry stopped shipping
+    # one, and would say so to a model rather than raising.
+    it "reads the scope it opens on out of the strategy registry" do
+      settled_implementation
+
+      expect(surface.presented.map(&:last))
+        .to eq([Lain::Review::Partition::DEFAULT_SCOPE.to_sym])
+    end
+
     # T32a: the epic rail's half of the diff wiring. The view resolves a row to a
     # path, and the diff surface behind it needs the CHANGESET to read that
     # file's old side off -- so a `<CR>` on a row of an epic's implementation

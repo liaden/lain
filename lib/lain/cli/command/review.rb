@@ -46,20 +46,18 @@ module Lain
       # either way -- `cli.rb` requires `cli/review` well before `cli/command` --
       # but it is written in a method for one rule rather than two.
       class Review
-        # `--scope` is not defaulted to a literal here: the absent flag goes
-        # through {Review::Session.scope!} on the same line an explicit one
-        # does, so a vocabulary that stopped declaring `cumulative` refuses
-        # loudly rather than falling through. {Lain::CLI::Review#default_scope}'s
-        # reasoning, and the same word.
-        DEFAULT_SCOPE = "cumulative"
-
         # The flags this command carries, each taking the word after it. Anything
         # else beginning with `--` is refused rather than read as a branch name:
         # `refs/heads/--squash` is not a ref anybody has, so silently resolving
         # it would answer a confusing UnknownRef instead of naming the typo.
         FLAGS = %w[--base --scope].freeze
 
-        USAGE = "/review <pull-request|branch> [--base <ref>] [--scope commits|cumulative] -- " \
+        # A FORMAT rather than the sentence, because the scopes it offers come
+        # off {Review::Partition::STRATEGIES} and this class body cannot name
+        # anything under `Lain::Review` (see the class doc: `lain.rb` loads
+        # `lain/cli` first). {#usage} fills it in from a method body, where the
+        # registry exists.
+        USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] -- " \
                 "open a changeset review in the attached editor"
 
         # The refusal a headless chat gets. It names the flag that attaches an
@@ -107,7 +105,10 @@ module Lain
 
         def name = "review"
 
-        def usage = USAGE
+        # The offered scopes are the registered ones, so a strategy that ships
+        # is advertised without a second list to edit -- and one that stops
+        # shipping stops being advertised.
+        def usage = format(USAGE, scopes: Lain::Review::Partition::STRATEGIES.each_key.to_a.join("|"))
 
         # @param args [String] the target, and this command's two flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
@@ -118,7 +119,7 @@ module Lain
         #   ceiling -- each already worded by whoever owns the refusal
         def call(args, env)
           parsed = parse(args.to_s.split)
-          return USAGE if parsed.target.nil?
+          return usage if parsed.target.nil?
 
           opened(parsed, env)
         end
@@ -158,7 +159,7 @@ module Lain
                        rest.grep(/\A--/)
           return if unreadable.empty?
 
-          raise Error, "#{unreadable.join(", ")} is not a flag /review can read -- #{USAGE}"
+          raise Error, "#{unreadable.join(", ")} is not a flag /review can read -- #{usage}"
         end
 
         # The whole card: resolve, build, open, BIND, HOLD, draw.
@@ -175,7 +176,7 @@ module Lain
         def opened(parsed, env)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           Lain::Review::Surface.check!(surface)
-          scope = Lain::Review::Session.scope!(parsed.scope || DEFAULT_SCOPE)
+          scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
           wired(resolved, session, env)

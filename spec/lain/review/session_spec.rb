@@ -344,10 +344,117 @@ RSpec.describe Lain::Review::Session do
       expect(spy).to have_received(:present).with(anything, scope: :commits).once
     end
 
-    it "refuses a scope outside Review::SCOPES rather than falling through to a default" do
+    it "refuses a scope no strategy declares rather than falling through to a default" do
       session = open_session
 
       expect { session.present(scope: :cumulatve) }.to raise_error(described_class::UnknownScope, /cumulatve/)
+    end
+
+    # The whole of A3 in one example: a strategy that ships is a scope that
+    # resolves, with nothing to edit in between. `by_directory` was registered
+    # by the card before this one and was NOT reachable, because the vocabulary
+    # was a second list of two literals.
+    it "resolves every registered strategy, so shipping one is all it takes to reach it" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      session = open_session(surface: spy)
+
+      Lain::Review::Partition::STRATEGIES.each_key { |scope| session.present(scope:) }
+
+      expect(spy).to have_received(:present)
+        .with(anything, scope: satisfy { |scope| Lain::Review::Partition::STRATEGIES.key?(scope) })
+        .exactly(Lain::Review::Partition::STRATEGIES.size).times
+    end
+
+    it "names the whole registry when it refuses, so a reader learns what they could have said" do
+      session = open_session
+
+      expect { session.present(scope: :by_size) }
+        .to raise_error(described_class::UnknownScope, /by_directory/)
+    end
+
+    # The half of resolution that a name alone does not finish. A marked
+    # changeset CARRIES its partitions, so a view built at one strategy and
+    # drawn at another renders the wrong grouping under the right heading --
+    # `--scope by_directory` drew the COMMIT walk, labels and all, and the
+    # scope word in the headline was the only thing that changed.
+    it "groups the view by the strategy the scope resolved to, not by the walk" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      session = open_session(surface: spy)
+
+      session.present(scope: :by_directory)
+
+      expect(spy).to have_received(:present)
+        .with(having_attributes(partitions: all(having_attributes(label: "."))), scope: :by_directory)
+    end
+  end
+
+  # The SECOND refusal, and it is deliberately not the first one's business:
+  # `scope!` is a class-level validator with no collaborators, so it can say
+  # whether a name is a strategy and cannot say whether THIS source can be
+  # grouped that way. Different questions, different sentences.
+  describe "a strategy the source cannot answer for" do
+    # Exactly `diff`, `base_ref` and `head_ref` -- a Data answers those three
+    # and genuinely does not answer `#commits`, which is what makes this an
+    # honest stand-in for the corpus source rather than a double that merely
+    # says so. An `instance_double` of a real Source would still respond to the
+    # walk and the example would pass against a subject that never checked.
+    def commitless_changeset
+      source = Data.define(:diff, :base_ref, :head_ref)
+                   .new(diff: diff.b, base_ref: base_sha, head_ref: head_sha)
+      Lain::Review::Changeset.new(source:)
+    end
+
+    it "refuses the commit walk, naming the scope and the source" do
+      session = open_session(over: commitless_changeset)
+
+      expect { session.present(scope: :commits) }
+        .to raise_error(described_class::UnsupportedScope, /commits.*local_branch/m)
+    end
+
+    # A refusal that only says no leaves the reader to guess what would have
+    # worked. The alternatives are MEASURED against this very source, so the
+    # message cannot recommend a second grouping it would also refuse -- and
+    # the scope that failed is not among them.
+    it "names the scopes this source DOES support, so the refusal is actionable" do
+      session = open_session(over: commitless_changeset)
+
+      expect { session.present(scope: :commits) }
+        .to raise_error(described_class::UnsupportedScope) { |error|
+          offered = error.message[/\[(.*?)\]/, 1]
+          expect(offered).to include(":cumulative", ":by_directory")
+          expect(offered).not_to include(":commits")
+        }
+    end
+
+    # The reason this refusal exists at all: without it the walk dies on a
+    # missing message somewhere inside the partition, which names neither the
+    # scope the human asked for nor the source that could not serve it. The
+    # class is asserted exactly, so a `NoMethodError` from the walk fails here
+    # rather than reading as "it refused".
+    it "refuses rather than dying on the missing message inside the walk" do
+      session = open_session(over: commitless_changeset)
+
+      raised = begin
+        session.present(scope: :commits)
+      rescue StandardError => e
+        e
+      end
+
+      expect(raised).to be_a(described_class::UnsupportedScope)
+    end
+
+    it "still presents at a scope the source CAN answer for" do
+      session = open_session(over: commitless_changeset)
+
+      expect { session.present(scope: :by_directory) }.not_to raise_error
+    end
+
+    # Applicability is checked BEFORE the ceiling, because the ceiling walks
+    # the partitions and that walk is what would die.
+    it "refuses before the size guard reads a partition" do
+      session = open_session(over: commitless_changeset, bounds: Lain::Review::Bounds.new(max_files: 0))
+
+      expect { session.present(scope: :commits) }.to raise_error(described_class::UnsupportedScope)
     end
   end
 
@@ -429,13 +536,17 @@ RSpec.describe Lain::Review::Session do
       expect { session.present(scope: "commits") }.not_to raise_error
     end
 
+    # The marked view is built AT the scope presented, so the expectation names
+    # the flat grouping rather than reading `#marked`'s default -- a view built
+    # at the walk and drawn at `cumulative` is the defect, not the baseline.
     it "presents whatever fits, so an ordinary changeset reaches the surface untouched" do
       spy = instance_spy(Lain::Review::Surface::Null)
       session = bounded_onto(spy, max_files: 2)
 
       session.present(scope: :cumulative)
 
-      expect(spy).to have_received(:present).with(session.marked, scope: :cumulative)
+      flat = session.marked(strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
+      expect(spy).to have_received(:present).with(flat, scope: :cumulative)
     end
 
     # A resume is where a diff has had time to GROW -- the author went on

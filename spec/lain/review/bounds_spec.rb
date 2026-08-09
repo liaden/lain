@@ -61,7 +61,9 @@ RSpec.describe Lain::Review::Bounds do
     # The walk is empty so the refusal's ADVICE measures nothing: what this
     # probe isolates is the DECISION, which must reach a refusal on the file
     # count alone. (The advice may read hunks -- see `cumulative_advice`.)
-    instance_double(Lain::Review::Changeset, files:, partitions: [])
+    # `supports?` answers true so applicability never short-circuits the
+    # candidate walk -- this probe is about hunk reads, not about grouping.
+    instance_double(Lain::Review::Changeset, files:, partitions: [], supports?: true)
   end
 
   # A changeset described commit by commit, each commit a list of per-file
@@ -205,16 +207,22 @@ RSpec.describe Lain::Review::Bounds do
   end
 
   describe "the scope vocabulary" do
-    it "derives its scopes from Review::SCOPES rather than restating them" do
-      expect(described_class::SCOPE_CHECKS.keys.map(&:to_s)).to eq(Lain::Review::SCOPES)
+    # The registry IS the vocabulary now, so this is a COMPLETENESS law rather
+    # than an equality against a second list: every strategy a human can name
+    # must have a check here, because {Session#present} sends the resolved
+    # scope straight through and a missing one is a KeyError deep in a refusal
+    # path. `include` rather than `eq` so a scope this object can bound but
+    # nobody has registered is not itself a failure.
+    it "derives its scopes from the strategy registry rather than restating them" do
+      expect(described_class::SCOPE_CHECKS.keys).to include(*Lain::Review::Partition::STRATEGIES.keys)
     end
 
-    it "names the commit walk in the vocabulary's own spelling" do
-      expect(Lain::Review::SCOPES).to include(described_class::COMMIT_WALK)
+    it "names the commit walk in the registry's own spelling" do
+      expect(Lain::Review::Partition::STRATEGIES.fetch(:commits).name).to eq(described_class::COMMIT_WALK)
     end
 
     # Deriving a method NAME from a vocabulary is only half a dependency: add a
-    # member to Review::SCOPES and the miss is a NoMethodError at call time,
+    # strategy to the registry and the miss is a NoMethodError at call time,
     # deep in a refusal path, rather than here.
     it "has a real private method behind every derived name" do
       expect(described_class::SCOPE_CHECKS.values)
@@ -322,6 +330,58 @@ RSpec.describe Lain::Review::Bounds do
           expect(error.message).to include("present it per directory (scope: by_directory) instead")
           expect(error.message).not_to match(/commit/i)
         }
+    end
+
+    # The property A3 and A4 each assumed the other owned. A4 defers the
+    # `#supports?` filter to {Session#present} -- but that filters the RESOLVED
+    # scope, and this walk runs on the CUMULATIVE path, where the resolved
+    # scope is `:cumulative` and every candidate is consulted regardless.
+    # {Partition::ByCommit} is first, so a source with no walk died in
+    # `ownership` with a `NoMethodError` naming neither the scope asked for nor
+    # the source that could not serve it.
+    #
+    # `lain survey` is what makes this reachable rather than theoretical: a
+    # corpus source answers no `#commits` and `survey` defaults to `cumulative`.
+    describe "a candidate the source cannot be grouped by" do
+      # `diff`, `base_ref` and `head_ref` and nothing else -- a Data genuinely
+      # does not answer `#commits`, which is what keeps this from being a
+      # double that merely says so.
+      def commitless_changeset(dirs)
+        named = dirs.flat_map { |dir, sizes| dir_files(dir, sizes) }
+        diff = named.map { |path, body| file_section(path, body) }.join
+        source = Data.define(:diff, :base_ref, :head_ref)
+                     .new(diff: diff.b, base_ref: "b" * 40, head_ref: "h" * 40)
+        Lain::Review::Changeset.new(source:)
+      end
+
+      it "refuses with a measured sentence rather than dying inside the walk" do
+        bounds = described_class.new(max_files: 2, max_lines: 100)
+
+        raised = begin
+          bounds.check_presentation!(commitless_changeset("a" => [2, 2], "b" => [2, 2]), scope: :cumulative)
+        rescue StandardError => e
+          e
+        end
+
+        expect(raised).to be_a(described_class::TooLarge)
+      end
+
+      # The candidate is SKIPPED, not merely survived: the directory grouping
+      # sits behind the commit walk in registry order, so it can only be
+      # recommended if the walk was passed over rather than tried.
+      it "falls through to the next candidate the source CAN be grouped by" do
+        bounds = described_class.new(max_files: 2, max_lines: 100)
+
+        expect { bounds.check_presentation!(commitless_changeset("a" => [2, 2], "b" => [2, 2]), scope: :cumulative) }
+          .to raise_error(described_class::TooLarge, /present it per directory \(scope: by_directory\) instead/)
+      end
+
+      it "offers no narrowing when the only candidates left also refuse" do
+        bounds = described_class.new(max_files: 10, max_lines: 12)
+
+        expect { bounds.check_presentation!(commitless_changeset("a" => [20], "b" => [20]), scope: :cumulative) }
+          .to raise_error(described_class::TooLarge, /no scope that presents this changeset whole/)
+      end
     end
 
     # AC 2 (A4): the measured-advice property one level up from a single
@@ -575,8 +635,8 @@ RSpec.describe Lain::Review::Bounds do
                    changeset_of(file_count: 20, commit_count: 4), changeset_with_merge(file_count: 9)]
 
       oversized.each do |changeset|
-        Lain::Review::SCOPES.each do |scope|
-          expect { bounds.check_presentation!(changeset, scope: scope.to_sym) }
+        Lain::Review::Partition::STRATEGIES.each_key do |scope|
+          expect { bounds.check_presentation!(changeset, scope:) }
             .to raise_error(described_class::TooLarge)
         end
       end
@@ -607,8 +667,8 @@ RSpec.describe Lain::Review::Bounds do
       bounds = described_class.new(max_files: 4, max_lines: 12, max_critique_lines: 12)
       changeset = changeset_of(file_count: 4, commit_count: 2)
 
-      Lain::Review::SCOPES.each do |scope|
-        expect { bounds.check_presentation!(changeset, scope: scope.to_sym) }.not_to raise_error
+      Lain::Review::Partition::STRATEGIES.each_key do |scope|
+        expect { bounds.check_presentation!(changeset, scope:) }.not_to raise_error
       end
       expect(bounds.each_critique_chunk(changeset).sum { |chunk| chunk.files.size }).to eq(4)
     end

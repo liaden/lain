@@ -113,8 +113,9 @@ module Lain
 
       # @param target [String] a pull request (a number, `#number` or a URL), or
       #   a local branch
-      # @param scope [String, Symbol, nil] one of `Review::SCOPES`; cumulative
-      #   when the flag is absent
+      # @param scope [String, Symbol, nil] the name of a registered
+      #   {Review::Partition::Strategy}; {Review::Partition::DEFAULT_SCOPE} when
+      #   the flag is absent
       # @param base [String, nil] the ref a BRANCH is reviewed against
       # @return [String] the headline, whatever the source had to report, and
       #   the rendering beneath them
@@ -129,11 +130,11 @@ module Lain
 
       private
 
-      # The flag's absence, not a second declaration of the vocabulary: it goes
-      # through {Review::Session.scope!} on the same line every explicit scope
-      # does, so a `cumulative` this chunk stopped declaring refuses there
-      # rather than falling through to whichever `fetch` met it first.
-      def default_scope = :cumulative
+      # The flag's absence, not a second declaration of the vocabulary: the
+      # word comes off {Review::Partition::DEFAULT_SCOPE}, which is read out of
+      # the registry, and it still goes through {Review::Session.scope!} on the
+      # same line every explicit scope does.
+      def default_scope = Lain::Review::Partition::DEFAULT_SCOPE
 
       def opened(resolved, changeset, scope)
         buffer = StringIO.new

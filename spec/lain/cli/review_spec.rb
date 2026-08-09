@@ -314,6 +314,23 @@ RSpec.describe Lain::CLI::Review, :seam do
       expect { command.present("feature", scope: "cumulatve") }
         .to raise_error(Lain::Review::Session::UnknownScope, /cumulatve/)
     end
+
+    # The card's whole point at the outermost layer a human touches: the
+    # directory grouping shipped registered and was still unreachable from
+    # here, because the scope vocabulary was a second list of two literals.
+    it "presents a strategy that shipped after the vocabulary was written" do
+      rendered = command.present("feature", scope: "by_directory")
+
+      expect(rendered).to include("by_directory", ".")
+      expect(rendered).not_to include("first: touch a")
+    end
+
+    # The absent flag goes through the SAME resolution an explicit one does --
+    # so the default is named by the registry rather than by a literal here,
+    # and a default nothing serves refuses instead of falling through.
+    it "resolves the absent flag to the registry's own default" do
+      expect(command.present("feature")).to include(Lain::Review::Partition::DEFAULT_SCOPE)
+    end
   end
 
   describe "the base a branch is reviewed against" do

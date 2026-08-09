@@ -83,7 +83,7 @@
 #    `-> { sink.string }`, reading the same `StringIO` its `subject` was
 #    built with, so each read reflects whatever has accumulated so far.
 #
-# 4. `#present` RENDERS WHAT IT WAS GIVEN, and the two scopes render
+# 4. `#present` RENDERS WHAT IT WAS GIVEN, and the flat and grouped scopes render
 #    differently -- T19's law, closing the largest hole #3 left: `#present`
 #    had no evidence check at all, so a surface that drew NOTHING, or that
 #    drew the same rows whatever `scope:` it was handed, was fully green.
@@ -397,7 +397,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(presented.partitions.map(&:label)).to all(satisfy { |line| rendered.include?(line) })
   end
 
-  it "renders no partition label at :cumulative scope, so the two scopes differ" do
+  it "renders no partition label at :cumulative scope, so flat and grouped differ" do
     skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
 
     presented = resolve_review_changeset(changeset)

@@ -101,10 +101,11 @@ module Lain
       # tokens, past even a 1M window.
       DEFAULT_MAX_CRITIQUE_LINES = 7_000
 
-      # The Symbol projection of {Review::SCOPES}, derived and not restated --
-      # the standing rule this chunk formed three times. Everything below reads
-      # out of this one Hash, so there is no second place a scope is spelled.
-      SCOPE_NAMES = Review::SCOPES.to_h { |name| [name.to_sym, name] }.freeze
+      # The scope vocabulary, read off {Partition::STRATEGIES} rather than
+      # restated -- the standing rule this chunk formed three times, now with
+      # the registry as its one source. Everything below reads out of this one
+      # Hash, so there is no second place a scope is spelled.
+      SCOPE_NAMES = Partition::STRATEGIES.transform_values(&:name).freeze
 
       # `fetch` is what makes the derivation real: a scope nobody declared
       # raises `KeyError` at the dispatch rather than falling through to
@@ -122,6 +123,14 @@ module Lain
       # still named for the two groupings the vocabulary declares, so naming the
       # commit walk here is the rename and nothing more.
       COMMIT_STRATEGY = Partition::STRATEGIES.fetch(:commits)
+
+      # The directory grouping, read out of the registry for {COMMIT_STRATEGY}'s
+      # reason. Named here because {SCOPE_CHECKS} derives a `check_<name>!` per
+      # REGISTERED strategy, so a strategy shipping without one is a
+      # `NoMethodError` deep in a refusal path -- `bounds_spec.rb` pins a real
+      # private method behind every derived name, which is where that miss
+      # surfaces instead.
+      DIRECTORY_STRATEGY = Partition::STRATEGIES.fetch(:by_directory)
 
       # Every strategy a cumulative refusal may recommend narrowing TO -- every
       # registered strategy except {Whole} itself, since "narrow to the whole
@@ -216,7 +225,7 @@ module Lain
       # @param scope [Symbol] one of {SCOPE_CHECKS}' keys
       # @return [nil] when the whole view can be presented at this scope
       # @raise [TooLarge] naming the measurement, the ceiling and the alternative
-      # @raise [KeyError] for a scope {Review::SCOPES} does not declare
+      # @raise [KeyError] for a scope {Partition::STRATEGIES} does not declare
       def check_presentation!(view, scope:)
         send(SCOPE_CHECKS.fetch(scope), view)
         nil
@@ -274,8 +283,16 @@ module Lain
         end
       end
 
-      def check_commits!(view)
-        view.partitions(COMMIT_STRATEGY).each { |group| check_group!(group) }
+      def check_commits!(view) = check_partitioned!(view, COMMIT_STRATEGY)
+
+      def check_by_directory!(view) = check_partitioned!(view, DIRECTORY_STRATEGY)
+
+      # Every grouping bounds the same way -- each group whole or nothing --
+      # so the two above differ only in which strategy cut the groups. The
+      # cumulative check stays separate because it measures `view.files`
+      # directly and offers a NARROWING rather than {NO_NARROWER}.
+      def check_partitioned!(view, strategy)
+        view.partitions(strategy).each { |group| check_group!(group) }
       end
 
       # The subject is what the group's DETAIL calls it, which is what replaced
@@ -308,8 +325,16 @@ module Lain
       #
       # {NARROWING_CANDIDATES} is tried in registry order and the FIRST fit
       # wins, `#advice` read off that strategy rather than composed here.
+      #
+      # `#supports?` comes FIRST and is what makes the registry as safe as its
+      # safest candidate rather than as safe as its first. {Session#present}
+      # filters the RESOLVED scope, which is `:cumulative` on this path -- so
+      # every candidate is consulted here regardless, and {ByCommit} leading
+      # the order meant a source with no walk died in `ownership` with a
+      # `NoMethodError` naming neither the scope asked for nor the source.
+      # `lain survey` reaches it on the default scope.
       def cumulative_advice(view)
-        candidate = NARROWING_CANDIDATES.find { |strategy| fits?(view, strategy) }
+        candidate = NARROWING_CANDIDATES.find { |strategy| view.supports?(strategy) && fits?(view, strategy) }
         candidate ? candidate.advice : NO_PRESENTABLE_SCOPE
       end
 

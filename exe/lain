@@ -337,8 +337,13 @@ class LainCLI < Thor
 
     default_command :open
 
-    method_option :scope, type: :string, enum: %w[commits cumulative],
-                          desc: "Which scope to open on -- per-commit, or everything at once"
+    # The enum comes off the strategy registry, and that is not tidying: Thor
+    # validates an `enum:` BEFORE it dispatches, so a list written by hand here
+    # rejects a scope the registry serves without the registry ever being
+    # asked. `lain review --scope by_directory` was exactly that failure.
+    method_option :scope, type: :string,
+                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
+                          desc: "Which grouping to open on -- one per registered partition strategy"
     method_option :base, type: :string, desc: "Override the base ref the changeset is cut against"
     desc "open TARGET", "Resolve a pull request or branch, open a round, and present it"
     def open(target)

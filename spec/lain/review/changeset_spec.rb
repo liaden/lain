@@ -669,6 +669,41 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
+  # `#supports?` is asked HERE rather than at the {Session}, and that is forced
+  # rather than chosen: a session is opened with the source's NAME (a String
+  # the journal carries), while the source OBJECT is this changeset's own and
+  # stays private -- everything downstream reads four messages without knowing
+  # which answered them. So the changeset is the only object that can put the
+  # question, and asking it against the CHANGESET instead would be vacuous,
+  # since `#commits` is forwarded here unconditionally and `respond_to?` would
+  # answer true for a source that has no walk at all.
+  describe "#supports?, which is how a source declines a grouping" do
+    def commitless_changeset(diff = one_file_diff)
+      source = Data.define(:diff, :base_ref, :head_ref)
+                   .new(diff: diff.b, base_ref: "b" * 40, head_ref: "h" * 40)
+      described_class.new(source:)
+    end
+
+    it "puts the question to its own SOURCE, not to itself" do
+      expect(commitless_changeset.supports?(walk)).to be(false)
+    end
+
+    it "answers true for a source that does answer the walk" do
+      expect(changeset_over(one_file_diff).supports?(walk)).to be(true)
+    end
+
+    it "answers true for a grouping that reads only paths, whatever the source" do
+      expect(commitless_changeset.supports?(Lain::Review::Partition::ByDirectory.new)).to be(true)
+    end
+
+    # The vacuity guard, stated mechanically: were this asked of the changeset,
+    # the commitless case above would answer true and the whole refusal would
+    # be dead code that no example could reach.
+    it "forwards a walk this changeset itself would answer for" do
+      expect(commitless_changeset).to respond_to(:commits)
+    end
+  end
+
   # The distinction T8's reconciler depends on is made STRUCTURAL here rather
   # than by naming convention: a commit scope is a different class that does not
   # answer the two messages the reconciler reads.

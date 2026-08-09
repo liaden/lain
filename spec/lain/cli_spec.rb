@@ -450,6 +450,23 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
     expect(options["temperature"]).to eq(0.7)
   end
 
+  # Thor validates an `enum:` BEFORE it dispatches, so this list is a scope
+  # vocabulary like any other -- and the one most easily missed, because a
+  # registry that knows about a strategy while Thor does not fails at the flag
+  # with the registry never consulted. `lain review --scope by_directory` was
+  # exactly that failure until A3.
+  describe "the --scope flag of `lain review open`" do
+    def scope_option = LainCLI::Review.commands.fetch("open").options.fetch(:scope)
+
+    it "offers every registered strategy, so shipping one is all it takes to reach it" do
+      expect(scope_option.enum).to match_array(Lain::Review::Partition::STRATEGIES.values.map(&:name))
+    end
+
+    it "offers nothing the registry would then refuse" do
+      expect { scope_option.enum.each { |scope| Lain::Review::Session.scope!(scope) } }.not_to raise_error
+    end
+  end
+
   # The rule this whole seam is drawn on: the environment may say HOW the model
   # answers, never what lain is ALLOWED to do or whether it keeps a record. A
   # stray export must not disable the approval gate for every session started in

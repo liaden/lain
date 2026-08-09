@@ -207,7 +207,7 @@ RSpec.describe Lain::Review::Surface::Text do
   end
 
   # The completeness law that replaced a literal equality against
-  # `Review::SCOPES`: what has to hold is that every strategy anybody can be
+  # a two-member scope vocabulary: what has to hold is that every strategy anybody can be
   # handed HAS a rendering here, which an equality against a two-member
   # vocabulary stopped saying the moment a third strategy shipped.
   describe "SCOPE_RENDERER" do

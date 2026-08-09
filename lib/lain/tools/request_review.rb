@@ -97,7 +97,12 @@ module Lain
       # Everything, in one view. {Review::Bounds} is what decides when a
       # cumulative view is too large to be one, and wiring it is the review
       # CLI's card rather than this one's.
-      SCOPE = :cumulative
+      #
+      # Resolved out of the strategy registry rather than restated, the two CLI
+      # defaults' rule: a literal here would go on naming a grouping after the
+      # registry stopped shipping one, and would say so to a MODEL rather than
+      # raising.
+      SCOPE = Review::Partition::DEFAULT_SCOPE.to_sym
 
       WAITING = "%<path>s is open for review (generation %<generation>d, epic %<slug>s). " \
                 "lain is waiting for it back."

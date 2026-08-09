@@ -144,14 +144,27 @@ module Lain
       # one it does not answer.
       #
       # Declared here rather than in `vocabulary.rb` because THIS is where the
-      # strategies are; `Review::SCOPES` is the scope vocabulary and still names
-      # two of the three, which is the gap the next card closes by deriving one
-      # from the other.
+      # strategies are. It IS the scope vocabulary now -- `vocabulary.rb` used
+      # to hold a `SCOPES` list naming two of the three, and a second
+      # declaration free to disagree is exactly what that file's own doc warns
+      # against.
       STRATEGIES = [Whole, ByCommit, ByDirectory]
                    .map { |strategy| strategy.new.freeze }
                    .each { |strategy| Strategy.check!(strategy) }
                    .to_h { |strategy| [strategy.name.to_sym, strategy] }
                    .freeze
+
+      # What an absent `--scope` means, in ONE place rather than the three that
+      # each spelled `cumulative` themselves ({CLI::Review}, {CLI::Command::Review},
+      # {Tools::RequestReview}). Three literals were three chances for the
+      # default to name a grouping nothing serves; `fetch` makes that a
+      # load-time refusal instead.
+      #
+      # The name comes off the registered strategy rather than off
+      # {Whole::NAME} directly, so the constant cannot outlive the registration
+      # -- a default that is not a resolvable scope is the one default that
+      # must not exist.
+      DEFAULT_SCOPE = STRATEGIES.fetch(Whole::NAME.to_sym).name
     end
   end
 end

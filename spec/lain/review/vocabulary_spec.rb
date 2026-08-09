@@ -11,4 +11,13 @@ RSpec.describe "Lain::Review vocabulary" do
   it "restates every MARK_STATES member inside FILE_STATES, so the two spellings cannot drift apart" do
     expect(Lain::Review::MARK_STATES - Lain::Review::FILE_STATES).to be_empty
   end
+
+  # `event_spec.rb`'s "no Turn constant remains", one namespace over. The scope
+  # axis has a REGISTRY now, and a String list beside it would be the second
+  # declaration this file's own doc calls worse than a duplicate -- free to
+  # disagree, with `SCOPES.include?(scope)` answering false for a strategy that
+  # is registered and resolvable.
+  it "declares no SCOPES of its own, because the strategy registry is that vocabulary" do
+    expect(Lain::Review.const_defined?(:SCOPES, false)).to be(false)
+  end
 end

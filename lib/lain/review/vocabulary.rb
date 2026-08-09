@@ -83,13 +83,16 @@ module Lain
     # journals and sets the vocabulary by accident.
     VERDICTS = %w[approve].freeze
 
-    # The CLI's `--scope commits|cumulative` (T20), and what {Surface::Text}
-    # and {Surface::Neovim} (T19) both render: `cumulative` is one flat table,
-    # `commits` groups rows under their commit subject. Declared here, not
-    # restated as a private literal inside either surface, for the same reason
-    # every other set in this file is -- a typo'd scope (`:cumulatve`) must
-    # fail loudly rather than silently fall through to whichever branch a
-    # bare `==` happened to leave as the default.
-    SCOPES = %w[commits cumulative].freeze
+    # The CLI's `--scope` used to be a sixth set here, `%w[commits cumulative]`.
+    # It is {Partition::STRATEGIES} now, and the move is not tidying: a scope
+    # names a GROUPING, the registry is where the groupings are, and a String
+    # list beside it would be the second declaration this file's own doc calls
+    # worse than a duplicate -- free to disagree, with `SCOPES.include?(scope)`
+    # answering false for a strategy that ships, registers and resolves.
+    #
+    # It could not be derived here either, which is the mechanical half of the
+    # same point: this file loads FIRST, and a strategy needs `Partition` to
+    # exist. So the registry is the vocabulary, and everything that wants the
+    # String spelling reads `strategy.name` off the port.
   end
 end
