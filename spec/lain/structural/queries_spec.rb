@@ -5,7 +5,7 @@ RSpec.describe Lain::Structural::Queries do
   # A query is exercised by compiling it against the pinned grammar and reading
   # back the {role => name} pairs it binds.
   def roles_and_names(language, source)
-    query = described_class.fetch(language)
+    query = described_class.fetch(language, :symbols)
     Lain::Ext::TreeSitter.query(source, language.to_s, query)
                          .map { |capture| [capture.fetch("name"), capture.fetch("text")] }
   end
@@ -31,8 +31,8 @@ RSpec.describe Lain::Structural::Queries do
     end
 
     it "compiles against the grammar without a BadQuery" do
-      expect { described_class.fetch(:ruby) }.not_to raise_error
-      expect { Lain::Ext::TreeSitter.query("x = 1", "ruby", described_class.fetch(:ruby)) }
+      expect { described_class.fetch(:ruby, :symbols) }.not_to raise_error
+      expect { Lain::Ext::TreeSitter.query("x = 1", "ruby", described_class.fetch(:ruby, :symbols)) }
         .not_to raise_error
     end
 
@@ -91,7 +91,7 @@ RSpec.describe Lain::Structural::Queries do
     end
 
     it "compiles against the grammar without a BadQuery" do
-      expect { Lain::Ext::TreeSitter.query("const x = 1;", "typescript", described_class.fetch(:typescript)) }
+      expect { Lain::Ext::TreeSitter.query("const x = 1;", "typescript", described_class.fetch(:typescript, :symbols)) }
         .not_to raise_error
     end
 
@@ -140,7 +140,7 @@ RSpec.describe Lain::Structural::Queries do
     end
 
     it "compiles against the grammar without a BadQuery" do
-      expect { Lain::Ext::TreeSitter.query("fn main() {}", "rust", described_class.fetch(:rust)) }
+      expect { Lain::Ext::TreeSitter.query("fn main() {}", "rust", described_class.fetch(:rust, :symbols)) }
         .not_to raise_error
     end
 
@@ -175,23 +175,108 @@ RSpec.describe Lain::Structural::Queries do
     end
   end
 
+  describe "markdown/sections.scm" do
+    let(:source) do
+      <<~MD
+        # Title
+
+        intro
+
+        ## Sub
+
+        ```rust
+        # not a heading
+        ```
+      MD
+    end
+
+    def captures(name)
+      query = described_class.fetch(:markdown, :sections)
+      Lain::Ext::TreeSitter.query(source, "markdown", query).select { |capture| capture.fetch("name") == name }
+    end
+
+    it "compiles against the grammar without a BadQuery" do
+      expect { Lain::Ext::TreeSitter.query("# T\n", "markdown", described_class.fetch(:markdown, :sections)) }
+        .not_to raise_error
+    end
+
+    it "captures a section per heading, nested by level" do
+      expect(captures("section").size).to eq(2)
+    end
+
+    it "captures each ATX heading, so a section can be labelled by its own text" do
+      expect(captures("heading").map { |capture| capture.fetch("text") }).to eq(["# Title\n", "## Sub\n"])
+    end
+
+    # The whole reason the grammar beats a regex: inside a fence, a `#` line is
+    # code_fence_content and opens nothing.
+    it "opens no section for a hash inside a fenced code block" do
+      expect(captures("heading").map { |capture| capture.fetch("text") }).not_to include(/not a heading/)
+    end
+  end
+
   describe ".fetch" do
-    it "raises a loud, named error for an unsupported language" do
-      expect { described_class.fetch(:python) }
+    it "raises a loud, named error for a language with no authored query" do
+      expect { described_class.fetch(:python, :symbols) }
         .to raise_error(described_class::Unsupported, /python/)
     end
 
     it "raises for an entirely unknown language too" do
-      expect { described_class.fetch(:cobol) }
+      expect { described_class.fetch(:cobol, :symbols) }
         .to raise_error(described_class::Unsupported, /cobol/)
     end
 
-    it "each authored query declares hand-authored-for-lain MIT provenance" do
-      %i[ruby typescript rust].each do |language|
-        header = described_class.fetch(language).lines.first(3).join
-        expect(header).to include("Hand-authored for lain (MIT)")
-        expect(header).to match(/tree-sitter-#{language}/)
+    # The gate is a {language => [query names]} table, not a wider language
+    # list: markdown ships sections only, so asking it for symbols is the same
+    # user error as asking python for them -- never the Missing that reports a
+    # packaging bug.
+    it "raises Unsupported for a language that ships a DIFFERENT query" do
+      expect { described_class.fetch(:markdown, :symbols) }
+        .to raise_error(described_class::Unsupported, /markdown/)
+    end
+
+    it "raises Unsupported for a symbols language asked for sections" do
+      expect { described_class.fetch(:ruby, :sections) }
+        .to raise_error(described_class::Unsupported, /ruby/)
+    end
+
+    # "expected one of []" is a refusal that tells the reader nothing. When the
+    # LANGUAGE is known, the actionable fact is what it does ship.
+    it "names what a known language does ship when asked for a query it has not got" do
+      message = begin
+        described_class.fetch(:ruby, :bogus)
+      rescue described_class::Unsupported => e
+        e.message
       end
+
+      expect(message).to include("ruby")
+      expect(message).to include("symbols")
+      expect(message).not_to include("[]")
+    end
+
+    it "names only the languages that ship the query asked for" do
+      message = begin
+        described_class.fetch(:python, :symbols)
+      rescue described_class::Unsupported => e
+        e.message
+      end
+
+      expect(message).to include("ruby")
+      expect(message).not_to include("markdown")
+    end
+
+    it "each authored query declares hand-authored-for-lain MIT provenance" do
+      # The grammar's own name, which is not always the language moniker:
+      # markdown parses through tree-sitter-md.
+      { ruby: %i[symbols], typescript: %i[symbols], rust: %i[symbols], markdown: %i[sections] }
+        .each do |language, query_names|
+          grammar = language == :markdown ? "tree-sitter-md" : "tree-sitter-#{language}"
+          query_names.each do |query_name|
+            header = described_class.fetch(language, query_name).lines.first(3).join
+            expect(header).to include("Hand-authored for lain (MIT)")
+            expect(header).to include(grammar)
+          end
+        end
     end
   end
 end

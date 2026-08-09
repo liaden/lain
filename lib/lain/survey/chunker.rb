@@ -72,3 +72,5 @@ end
 # The floor FIRST: it is the default collaborator of every chunker below, named
 # in their default arguments, as is `granularity`.
 require_relative "chunker/paragraphs"
+require_relative "chunker/granularity"
+require_relative "chunker/markdown"

@@ -90,6 +90,18 @@ RSpec.describe Lain::Tools::FileSymbols do
     expect(result).to have_attributes(is_error: true, content: /python/)
   end
 
+  # lain ships a markdown query, but a SECTIONS query -- so the symbols tool
+  # must still refuse markdown as a user error naming the language, not as the
+  # packaging bug Missing reports. A flat language allowlist could not say this.
+  it "returns an error Result naming markdown as unsupported, not a packaging bug" do
+    path = write("readme.md", "# Title\n\nbody\n")
+
+    result = tool.call(path:, language: "markdown")
+
+    expect(result).to have_attributes(is_error: true, content: /markdown/)
+    expect(result.content).not_to include("missing")
+  end
+
   it "reports a missing file as an error Result rather than raising" do
     missing = File.join(tmpdir, "nope.rb")
 

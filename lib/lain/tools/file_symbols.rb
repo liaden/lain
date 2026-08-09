@@ -106,7 +106,7 @@ module Lain
       private_constant :Occurrence
 
       def occurrences(source, language)
-        query = Structural::Queries.fetch(language)
+        query = Structural::Queries.fetch(language, :symbols)
         Ext::TreeSitter.query(source, language.to_s, query).map do |capture|
           kind, role = capture.fetch("name").split(".", 2)
           Occurrence.new(line: line_for(source, capture.fetch("start")), kind:, role:, name: capture.fetch("text"))
