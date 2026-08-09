@@ -1,6 +1,6 @@
 # Project root, and the secret boundary
 
-status: in-progress
+status: done (2026-08-09) — 23 cards, 27 commits, suite 12272/0/14
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby — Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -2225,6 +2225,26 @@ ordering two add-only sets cannot express.
   against the same question T11 answered — whether parent and child can resolve different ones.
 
 ## Integration checks
+
+**Run 2026-08-09. 1-5 pass; 6-9 are Joel's and still owed.**
+
+1. **Suite** — 12272 / 0 / 14, confirmed at each landing commit against a stable count.
+2. **Lints** — `rubocop` clean over 1223 files; `Metrics/ClassLength` did NOT fire on `cli/wiring.rb`,
+   and it came within one line twice: T23 paid by extracting `BoardBuild` and by reshaping
+   `#build_agent` to take `resumed:`, never by raising the limit. `yard-lint` clean. All plan docs
+   parse (one pre-existing `Scenario Outline:` in `chunk-survey-corpus.md` was rewritten as four
+   scenarios — the new staged-docs hook only surfaced it under `--all-files`).
+3. **Rust unchanged** — `cargo test` **288/0**, `cargo clippy --all-targets -D warnings` clean.
+4. **`CLAUDE.md`** — done: root/cwd split, the three-place boundary and why the split is forced,
+   the one-classifier property, and six Known-traps entries.
+5. **Journal integrity** — two real `lain chat` runs against ollama in a project holding a
+   credential-shaped `.env`: **30 and 18 lines, 0 unparseable**, carrying `approval_pending`,
+   `approval_decision` and the full `escalation` ladder (triage abstains, rules abstain, surfaces
+   deny fail-closed). The gate fired for real: `approve read_file({"path" => ".env"})? [y/N]`. An
+   abrupt kill wrote `run_interrupted` and left the stream parseable. `read_redacted` was then
+   driven directly with a UTF-8 and an **ASCII-8BIT** path: both lines parse, and the binary one
+   degrades to `journal_error` — **the follow-up ticket above, observed rather than reasoned
+   about**. NDJSON integrity holds; the record's content is what is lost.
 
 After the last wave, before the chunk is called done:
 
