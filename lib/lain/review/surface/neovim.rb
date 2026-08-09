@@ -213,8 +213,9 @@ module Lain
 
         # @param changeset [#files, #partitions] see {Review::Surface}'s class
         #   doc for the one place this duck is stated; {Frontend::Neovim::ReviewView}
-        #   needs two members beyond it (a file's `#hunks`, a group's
-        #   `#added`/`#deleted`) and its own doc says why
+        #   needs five members beyond it (a file's `#hunk_keys`, `#chunked?` and
+        #   `#hunks`; a group's `#counted?` with either its `#added`/`#deleted`
+        #   or its `#rendered_lines`) and its own doc says why
         # @param scope [Symbol] the name of a {Review::Partition} strategy as a
         #   Symbol; anything else raises from the view's own `fetch`
         # @return [String, nil] the editor's refusal, or nothing

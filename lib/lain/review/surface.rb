@@ -46,6 +46,13 @@ module Lain
     # entries (`#label`, `#files` -- same file-entry shape) for every GROUPED
     # scope, whichever {Review::Partition::Strategy} produced them.
     #
+    # A surface that draws more than a path and a glyph needs more than that,
+    # and {Frontend::Neovim::ReviewView} is where the additional members and
+    # their reasons are stated -- including the two a LAZY source makes
+    # necessary (`#chunked?` on a file, `#counted?` on a group), which are how a
+    # surface tells "there is nothing here" from "nobody has looked yet"
+    # WITHOUT reading the corpus it is drawing.
+    #
     # It reads `#partitions` and not `#by_commit`, and the rename is the
     # contract rather than a spelling: grouping-by-commit is one strategy on
     # that axis, so a surface that named it would be a surface that could only

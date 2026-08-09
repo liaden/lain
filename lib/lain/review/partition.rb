@@ -83,19 +83,23 @@ module Lain
         # Said at the top of both because the note under {#binaries} is about
         # {#binaries} alone and was read as covering all three.
         # `Frontend::Neovim::ReviewView#partition_header` renders `+n -m` on
-        # every group heading, in every scope, so `counted` walks the whole
-        # changeset each time the sidebar is drawn.
+        # every group heading, in every scope, so `counted` walks every file it
+        # is given each time the sidebar is drawn.
         #
         # Over a diff source that is arithmetic on hunks already parsed. Over a
         # LAZY source it is not: {Review::LazyFile} chunks on its first `#hunks`,
-        # so drawing a `Source::Corpus` at any scope chunks the entire corpus and
-        # the laziness {Bounds} was taught (`rendered_lines`) buys nothing at the
-        # cockpit. Two neighbouring reads in that same view have the same
-        # property -- `keys_by_path` keys every file, and `first_line` opens the
-        # first hunk. Making the sidebar lazy is a rendering decision (what a
-        # heading shows, and how a marking gesture resolves a key, before its
-        # file has been read) and is a card nobody has written; it is recorded
-        # here rather than left for the next reader to measure again.
+        # so asking this of an unread corpus chunks it. That is now GUARDED
+        # rather than merely recorded -- `Session::MarkedChangeset::PartitionRow`
+        # answers `#counted?` off its files, the view asks that first, and a
+        # group nobody has read is headed by its size instead. So these two are
+        # reached only over files something has already read, and the walk they
+        # do costs nothing extra.
+        #
+        # The guard lives on the ROW and not here on purpose: this module is
+        # handed the files and has no standing to decide what a heading claims,
+        # while the row holds them and the view draws them. Do not add the check
+        # here as well -- two objects deciding one rendering is how they come to
+        # disagree.
         #
         # @param files [Enumerable<#hunks>] the partition's own files
         # @return [Integer] new-side lines this group adds
@@ -112,8 +116,10 @@ module Lain
         # nothing RENDERS **this one**. `MarkedChangeset::PartitionRow` forwards
         # it and neither surface draws it, so an all-binary group still shows
         # `+0 -0` today. That is true of `binaries` and of nothing else here --
-        # see the note on {#added}. This is the honest number for whoever draws
-        # it; making something draw it is a card nobody has written.
+        # see the note on {#added}, where the same disclaimer sat for two panel
+        # reviews while `added` and `deleted` were being drawn on every heading.
+        # This is the honest number for whoever draws it; making something draw
+        # it is a card nobody has written.
         #
         # @return [Integer] files whose lines could not be counted
         def binaries(files) = files.count(&:binary?)

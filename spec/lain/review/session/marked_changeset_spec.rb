@@ -71,15 +71,17 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
   # A REAL {LazyFile} rather than a double, because `#chunked?` is now the fact
   # every example here turns on and a stubbed one would be the fixture asserting
   # about itself.
-  def unread_file(path)
-    Lain::Review::LazyFile.new(old_path: nil, new_path: path, rendered_lines: 2,
+  # `lines:` varies per file wherever a sum is asserted, so a group's size cannot
+  # come out right by every file happening to report the same number.
+  def unread_file(path, lines: 2)
+    Lain::Review::LazyFile.new(old_path: nil, new_path: path, rendered_lines: lines,
                                chunker: -> { raise "#{path} was chunked to answer a question needing no hunk" })
   end
 
   # The same file after something has finally read it: one unit, chunked for
   # real, keyed by the same {Hunk} ladder a diff's hunks are.
-  def read_file(path, units: 1)
-    file = Lain::Review::LazyFile.new(old_path: nil, new_path: path, rendered_lines: 2,
+  def read_file(path, units: 1, lines: 2)
+    file = Lain::Review::LazyFile.new(old_path: nil, new_path: path, rendered_lines: lines,
                                       chunker: -> { Array.new(units) { |n| unit_hunk(path, n) } })
     file.tap(&:hunks)
   end
@@ -257,6 +259,72 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
     end
   end
 
+  # A row is what knows whether its own figures are real, because it is what
+  # holds the files. `+n -m` costs every hunk of every file in the group, so a
+  # heading that asked for it unconditionally chunked the corpus it was drawing
+  # -- and a `+0 -0` over a group nobody has read is a rendered zero meaning
+  # "unknown", which is what the partition chunk's Open decisions already
+  # refused once.
+  describe "what a group's row may claim about files nobody has read" do
+    def group_row(files)
+      changeset = corpus_changeset(files)
+      described_class.of(changeset, marks, keys_by_path: described_class.keys_by_path(changeset),
+                                           strategy: whole).partitions.first
+    end
+
+    it "says its line accounting is not counted while any of its files is unread" do
+      expect(group_row([read_file("a.rb"), unread_file("b.rb")]).counted?).to be(false)
+    end
+
+    it "says it IS counted once every file in it has been read" do
+      expect(group_row([read_file("a.rb"), read_file("b.rb")]).counted?).to be(true)
+    end
+
+    # The claim that keeps the two above from being about a spy: the unread file
+    # raises on `#hunks`, so answering at all is the proof nothing chunked.
+    it "answers both without chunking anything, which is the whole point of asking" do
+      expect { group_row([unread_file("a.rb"), unread_file("b.rb")]).counted? }.not_to raise_error
+    end
+
+    # What a heading may claim INSTEAD: the size the identity pass already
+    # measured. An upper bound over a corpus and exact over a diff, and either
+    # way a number no file has to be parsed to give.
+    it "sizes itself from what its files already reported, chunking none of them" do
+      expect(group_row([unread_file("a.rb", lines: 30), unread_file("b.rb", lines: 4)]).rendered_lines).to eq(34)
+    end
+
+    # Vacuously true, and right rather than an oversight: a group with no files
+    # has no lines, so whatever its detail answers there is a real figure --
+    # a true zero from {Partition::Undetailed}, the commit's own numstat from
+    # {Partition::ByCommit}. Neither is a zero meaning "unknown", which is the
+    # only thing `#counted?` exists to keep off a heading.
+    it "calls a group with no files counted, because a count of nothing is still a count" do
+      expect(group_row([]).counted?).to be(true)
+    end
+
+    it "still counts the real lines of a group everything in which has been read" do
+      row = group_row([read_file("a.rb"), read_file("b.rb")])
+
+      expect([row.added, row.deleted]).to eq([2, 0])
+    end
+  end
+
+  describe "a file's row, forwarding the two facts a heading is decided by" do
+    def rows(files)
+      changeset = corpus_changeset(files)
+      described_class.of(changeset, marks, keys_by_path: described_class.keys_by_path(changeset),
+                                           strategy: whole).files
+    end
+
+    it "forwards whether the file has been read, so nothing has to reach past it" do
+      expect(rows([read_file("a.rb"), unread_file("b.rb")]).map(&:chunked?)).to eq([true, false])
+    end
+
+    it "forwards the size the file reported without being chunked" do
+      expect(rows([unread_file("a.rb", lines: 30)]).map(&:rendered_lines)).to eq([30])
+    end
+  end
+
   describe "a diff review, which must see nothing change" do
     let(:changeset) { Lain::Review::Changeset.new(source: source_double) }
 
@@ -286,6 +354,15 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
       rows = described_class.of(changeset, marks, strategy: whole).files
 
       expect(rows.map(&:state)).to eq(%w[unreviewed unreviewed])
+    end
+
+    # Which is what keeps every heading a diff review draws byte-identical: a
+    # parser produces a file's hunks with it, so there is no group of a diff
+    # whose accounting is anything but counted.
+    it "calls every group counted, so a heading still shows the figures it always did" do
+      row = described_class.of(changeset, marks, strategy: whole).partitions.first
+
+      expect([row.counted?, row.added, row.deleted]).to eq([true, 3, 3])
     end
   end
 end

@@ -227,6 +227,10 @@ module Lain
         # sits under exactly one group and the two derivations cannot differ.
         # Were attribution ever to become per-hunk, this row would have to stop
         # implying a per-group reading.
+        # `#chunked?` and `#rendered_lines` are forwarded so that a renderer
+        # deciding what a heading may claim never has to reach past the row to
+        # the file -- and, more to the point, never has to ask `#hunks` to find
+        # out whether asking `#hunks` is affordable.
         FileRow = Data.define(:file, :state, :hunk_keys) do
           def path = file.path
           def old_path = file.old_path
@@ -234,6 +238,8 @@ module Lain
           def status = file.status
           def binary? = file.binary?
           def hunks = file.hunks
+          def chunked? = file.chunked?
+          def rendered_lines = file.rendered_lines
         end
 
         # One group's row: what heads it, its share of the files as {FileRow}s,
@@ -270,12 +276,43 @@ module Lain
         # "nothing changed", which is the misreading the count exists to
         # prevent. Said out loud rather than left implied by a comment claiming
         # the defect is closed; rendering it is a card nobody has written.
+        #
+        # == What {#counted?} exists for, and the one hazard it leaves
+        #
+        # {Partition::Undetailed} -- the accounting of every strategy that has
+        # none of its own, which is every strategy a survey can be grouped by --
+        # reads EVERY HUNK of every file it is given. Over a diff that is
+        # arithmetic on hunks a parser already produced; over a corpus it chunks
+        # the whole group, which is the cost the survey arm exists to defer. So
+        # the row says whether its figures are real, and a renderer asks that
+        # before it asks for them.
+        #
+        # The question is put to the FILES rather than to the detail, and that
+        # is the conservative direction on purpose: a detail with an accounting
+        # of its own ({Partition::ByCommit}, whose figures are git's numstat)
+        # could answer over unread files, and this declines to. It costs
+        # nothing today -- {Partition::ByCommit} refuses a source with no walk,
+        # so a corpus is never grouped by it, and every file of a diff is read
+        # -- and it means no renderer has to know which details are free.
+        #
+        # The hazard is that `#added` still answers when `#counted?` is false,
+        # by chunking. Nothing in `lib/` asks it that way, and making it raise
+        # would put two meanings on one message for the sake of a caller that
+        # does not exist; the guard is one `#counted?` away and named here.
+        #
+        # {#rendered_lines} is what a heading claims INSTEAD: {Bounds::Size}'
+        # own unit, summed off files that answer it without being chunked. It
+        # is an UPPER BOUND over a corpus ({Source::Corpus}'s own docstring says
+        # why it must over-measure) and exact over a diff, so whatever draws it
+        # must not spell it as a count.
         PartitionRow = Data.define(:partition, :files) do
           def label = partition.label
           def detail = partition.detail
           def added = partition.detail.added(files)
           def deleted = partition.detail.deleted(files)
           def binaries = partition.detail.binaries(files)
+          def counted? = files.all?(&:chunked?)
+          def rendered_lines = files.sum(&:rendered_lines)
         end
       end
     end

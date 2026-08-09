@@ -352,12 +352,14 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       expect(stamped_buffers.keys).to contain_exactly("old", "new")
     end
 
-    # The sidebar's own duck, which is T13's to build: a file row answers the
-    # marks-derived `state` a {Lain::Review::Source::ChangedFile} deliberately
-    # does not. Only enough of it to render one row.
+    # The sidebar's own duck, which is T13's to build -- and it is built here
+    # rather than doubled, because that duck has grown twice since (a row's
+    # `#hunk_keys`, then its `#chunked?`) and a hand-rolled Struct is a fixture
+    # that goes stale without failing until a view finally asks.
     def marked_like(changeset)
-      rows = changeset.files.map { |file| Struct.new(:path, :state, :hunks).new(file.path, "unreviewed", file.hunks) }
-      Struct.new(:files, :partitions).new(rows, [])
+      Lain::Review::Session::MarkedChangeset.of(changeset,
+                                                Lain::Review::Marks.new(base_ref: changeset.base_ref),
+                                                strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
     end
   end
 

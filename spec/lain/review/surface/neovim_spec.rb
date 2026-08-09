@@ -124,12 +124,22 @@ RSpec.describe Lain::Review::Surface::Neovim do
                            lines: [" #{path}:#{new_start}"])
   end
 
+  # `#hunk_keys` and `#chunked?` are {Lain::Review::Session::MarkedChangeset::FileRow}'s,
+  # and the view reads them rather than deriving keys of its own -- so a double
+  # stopping at `#hunks` would resolve every gesture to nothing.
   def file_entry(path:, state:, hunks: nil)
-    Struct.new(:path, :state, :hunks).new(path, state, hunks || [hunk(path:)])
+    hunks ||= [hunk(path:)]
+    Struct.new(:path, :state, :hunks, :hunk_keys, :rendered_lines) do
+      def chunked? = true
+    end.new(path, state, hunks, Lain::Review::Hunk.keys(hunks), hunks.size)
   end
 
+  # `#counted?`: a diff's files are read as they are parsed, so every group of
+  # one is counted and its heading shows the figures it always did.
   def commit_entry(subject:, files:, added: 3, deleted: 1)
-    Struct.new(:label, :files, :added, :deleted).new(subject, files, added, deleted)
+    Struct.new(:label, :files, :added, :deleted, :rendered_lines) do
+      def counted? = true
+    end.new(subject, files, added, deleted, 0)
   end
 
   def changeset(files:, commits: [])

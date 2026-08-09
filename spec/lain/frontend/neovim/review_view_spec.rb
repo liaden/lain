@@ -11,11 +11,13 @@ require "tmpdir"
 # resolves against the rendering the human is actually looking at.
 #
 # The changeset duck is the one `Lain::Review::Surface`'s class doc states
-# (`#files` / `#partitions`), plus the two members that doc does not name and
-# this view needs: a file entry's `#hunks` (for the new-side line an open lands
-# on) and a commit entry's `#numstat`. `Lain::Review::Changeset` (T7) and the
-# session that joins it to `Marks` (T13) are both unlanded, so the doubles here
-# ARE the statement of what they have to answer.
+# (`#files` / `#partitions`), plus the members that doc does not name and this
+# view needs -- a file entry's `#hunks`, `#hunk_keys` and `#chunked?`, a group
+# entry's `#counted?` with its `#added`/`#deleted` or its `#rendered_lines`.
+# `Lain::Review::Session::MarkedChangeset` answers all of them now, and the
+# doubles here stay because they can be parted where a real row's members
+# always agree -- which is what tells a view reading a row from one deriving a
+# second answer of its own.
 RSpec.describe Lain::Frontend::Neovim::ReviewView do
   subject(:view) { described_class.new(changesets: opener) }
 
@@ -31,8 +33,27 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
                            lines: [" x"])
   end
 
-  def file_entry(path:, state: "unreviewed", first: 1)
-    Struct.new(:path, :state, :hunks).new(path, state, [hunk(path:, new_start: first)])
+  # A file the review has READ: `#hunk_keys` is what a mark gesture on its row
+  # names, derived ONCE by the join and carried, and `#chunked?` says the hunks
+  # are already in hand. `keys:` is separable from `hunks:` on purpose -- the
+  # two are equal on every real row, and a fixture that could not part them
+  # could not tell a view reading the row from one re-deriving keys off the
+  # hunks it was handed.
+  def file_entry(path:, state: "unreviewed", first: 1, hunks: nil, keys: nil, lines: 3)
+    hunks ||= [hunk(path:, new_start: first)]
+    Struct.new(:path, :state, :hunks, :hunk_keys, :rendered_lines) do
+      def chunked? = true
+    end.new(path, state, hunks, keys || Lain::Review::Hunk.keys(hunks), lines)
+  end
+
+  # A file a survey has LISTED and nothing has read. `#hunks` raises, which is
+  # the honest way to assert that drawing it read nothing -- a counting spy
+  # passes just as well against a view that walks and discards the answer.
+  def unread_entry(path:, state: "unreviewed", lines: 3)
+    Struct.new(:path, :state, :hunk_keys, :rendered_lines) do
+      def chunked? = false
+      def hunks = raise("#{path} was chunked to draw a row that shows no hunk")
+    end.new(path, state, [].freeze, lines)
   end
 
   # `#added` / `#deleted` as SCALARS on the group entry, and NOT reached
@@ -41,9 +62,13 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
   # aggregate behind that name would read as satisfied while the real object
   # crashed the walk. The `numstat:` member is carried here in its REAL shape so
   # the two facts sit side by side in the fixture.
-  def commit_entry(subject:, files:, added: 1, deleted: 0, stats: [])
-    Struct.new(:label, :files, :numstat, :added, :deleted)
-          .new(subject, files, stats.freeze, added, deleted)
+  #
+  # `#counted?` is the group's own answer to whether `#added`/`#deleted` are
+  # real, and `#rendered_lines` the size it claims when they are not.
+  def commit_entry(subject:, files:, added: 1, deleted: 0, stats: [], counted: true, lines: 0)
+    Struct.new(:label, :files, :numstat, :added, :deleted, :counted, :rendered_lines) do
+      def counted? = counted
+    end.new(subject, files, stats.freeze, added, deleted, counted, lines)
   end
 
   def file_stat(path:, added:, deleted:) = Struct.new(:path, :added, :deleted).new(path, added, deleted)
@@ -164,11 +189,140 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect(rendered.lines).to include("+12 -3  Add the thing")
     end
 
+    # The double answers `#label` and `#counted?` and withholds ONLY `#added`,
+    # so `#added` is the only message that can raise. The first cut left `label`
+    # off too and passed on the left-to-right order of one interpolation it did
+    # not assert -- reordering that string would have made it raise on `label`
+    # and go green for the wrong reason.
     it "never reaches through #numstat, which answers no aggregate at all" do
-      commit = Struct.new(:subject, :files, :numstat).new("Add the thing", [], [].freeze)
+      commit = Struct.new(:label, :files, :numstat) do
+        def counted? = true
+      end.new("Add the thing", [], [].freeze)
 
       expect { view.render(changeset(commits: [commit]), scope: :commits) }
         .to raise_error(NoMethodError, /added/)
+    end
+  end
+
+  # B19. A survey opens over a directory and reads nothing, and drawing it in
+  # the cockpit used to read all of it: the heading's `+n -m`, the key table and
+  # the open line each walked every file's hunks, in BOTH scopes. Every file
+  # here raises when chunked, so each example below asserts work that did not
+  # happen rather than a number a spy reported about itself.
+  describe "drawing a survey nobody has read" do
+    let(:unread) { (1..3).map { |n| unread_entry(path: "docs/#{n}.md", lines: n * 10) } }
+
+    it "draws every row at flat scope without reading a file" do
+      expect(view.render(changeset(files: unread), scope: :cumulative).lines)
+        .to eq(["[ ] docs/1.md", "[ ] docs/2.md", "[ ] docs/3.md"])
+    end
+
+    it "draws every row under a grouping without reading a file either" do
+      groups = [commit_entry(subject: "docs", files: unread, counted: false, lines: 60)]
+
+      expect(view.render(changeset(files: unread, commits: groups), scope: :by_directory).lines.drop(1))
+        .to eq(["  [ ] docs/1.md", "  [ ] docs/2.md", "  [ ] docs/3.md"])
+    end
+
+    # THE rendering decision. A heading cannot count lines it has not read, and
+    # `+0 -0` would be a rendered zero meaning "unknown" -- the reading the
+    # partition chunk's Open decisions refused once already. So it claims the
+    # SIZE the survey's identity pass already measured, in a form that cannot be
+    # read as a diff's accounting.
+    it "heads an unread group with the size already measured, not a count it cannot know" do
+      groups = [commit_entry(subject: "docs", files: unread, counted: false, lines: 60)]
+
+      expect(view.render(changeset(files: unread, commits: groups), scope: :by_directory).lines.first)
+        .to eq("~60 lines  docs")
+    end
+
+    it "renders no plus/minus pair at all there, so nothing reads as a count of zero" do
+      groups = [commit_entry(subject: "docs", files: unread, counted: false, lines: 0, added: 0, deleted: 0)]
+
+      expect(view.render(changeset(commits: groups), scope: :by_directory).lines.first)
+        .not_to match(/[+-]\d/)
+    end
+
+    it "goes back to the real figures for a group everything in which has been read" do
+      read = [file_entry(path: "docs/1.md")]
+      groups = [commit_entry(subject: "docs", files: read, added: 7, deleted: 2, lines: 60)]
+
+      expect(view.render(changeset(files: read, commits: groups), scope: :by_directory).lines.first)
+        .to eq("+7 -2  docs")
+    end
+
+    it "opens an unread row at the top of its file, having no hunk to land on" do
+      rendered = view.render(changeset(files: unread), scope: :cumulative)
+
+      expect(view.open(2, generation: rendered.generation)).to have_attributes(path: "docs/2.md", line: 1)
+    end
+
+    # How a gesture resolves for a file nobody has chunked: it does not. An
+    # unread file has produced no key, so there is nothing a mark could name.
+    it "refuses a mark gesture on an unread row rather than inventing a key for it" do
+      rendered = view.render(changeset(files: unread), scope: :cumulative)
+
+      outcome = view.marks(1, generation: rendered.generation)
+
+      expect(outcome).to have_attributes(marked?: false, hunk_keys: [])
+    end
+
+    # And refuses it in ITS OWN words. {NO_HUNK}'s rule is that "the two
+    # gestures fail for different reasons and the human is owed the one that
+    # happened"; a binary file will never have a hunk, while a surveyed file has
+    # none only until somebody opens it, and a human told "there is nothing
+    # here" stops looking.
+    it "names the file and the remedy, because this refusal is transient where a binary's is not" do
+      rendered = view.render(changeset(files: unread), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation).report).to include("docs/1.md", "<CR>")
+    end
+
+    it "does not hand it the sentence that means there is genuinely nothing on the row" do
+      rendered = view.render(changeset(files: unread), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation).report)
+        .not_to eq(format(described_class::NO_HUNK, 1))
+    end
+
+    # The other side of that distinction, or the claim above holds over one
+    # sentence nothing else uses: a file something HAS read and which has no
+    # hunk keeps the permanent refusal, because that is the true fact about it.
+    it "keeps the permanent sentence for a READ file that has no hunk at all" do
+      rendered = view.render(changeset(files: [file_entry(path: "img.png", hunks: [])]), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation).report)
+        .to eq(format(described_class::NO_HUNK, 1))
+    end
+
+    # `#counted?` is vacuously true for a group with no files, so an empty group
+    # takes the counted branch. Right rather than accidental, and which DETAIL
+    # is answering is what makes it so: {Review::Partition::ByCommit} reports the
+    # commit's own numstat there -- the merge case {NO_HUNKS_HERE} exists for,
+    # where the range attributes the commit no file -- and it is a real figure.
+    it "heads an empty group with its detail's own figures, never a bound" do
+      groups = [commit_entry(subject: "the side branch's own commit", files: [], added: 9, deleted: 0)]
+
+      expect(view.render(changeset(commits: groups), scope: :by_directory).lines)
+        .to eq(["+9 -0  the side branch's own commit", described_class::NO_HUNKS_HERE])
+    end
+
+    # {Review::Partition::Undetailed} sums to a TRUE zero over no files, because
+    # a group with no files has no lines -- a count of nothing, not a zero
+    # meaning unknown. `~0 lines` here would be worse: it would claim a bound
+    # over a diff group whose figure is real.
+    it "lets an empty group read as the zero it truly is rather than as unknown" do
+      groups = [commit_entry(subject: "empty", files: [], added: 0, deleted: 0)]
+
+      expect(view.render(changeset(commits: groups), scope: :by_directory).lines.first).to eq("+0 -0  empty")
+    end
+
+    it "still resolves the gesture on the one file something HAS read, beside unread neighbours" do
+      read = file_entry(path: "docs/2.md", first: 12)
+      rendered = view.render(changeset(files: [unread.first, read, unread.last]), scope: :cumulative)
+
+      expect(view.marks(2, generation: rendered.generation))
+        .to have_attributes(marked?: true, hunk_keys: read.hunk_keys)
     end
   end
 
@@ -409,7 +563,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
                               lines: [" same"])]
     end
 
-    def duplicated_file(hunks) = Struct.new(:path, :state, :hunks).new("lib/dup.rb", "unreviewed", hunks)
+    def duplicated_file(hunks, keys: nil) = file_entry(path: "lib/dup.rb", hunks:, keys:)
 
     it "resolves a file row to exactly the keys Marks would derive for that file" do
       rendered = view.render(changeset(files:), scope: :cumulative)
@@ -419,16 +573,36 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
       expect(outcome).to have_attributes(marked?: true, hunk_keys: Lain::Review::Hunk.keys(files.last.hunks))
     end
 
-    it "keys a nested row from the WHOLE file, never from the subset that commit reached" do
+    # This used to be enforced by re-keying `changeset.files` on every render,
+    # which cost every hunk of every file and died over a survey. The invariant
+    # now lives one layer down, where it cannot be got wrong:
+    # `Session::MarkedChangeset` builds ONE row per file and a partition holds
+    # the very same object (`session_spec.rb`, "carries the same file row object
+    # under a partition as at whole scope"), so a nested row's keys ARE the
+    # whole file's. What this view owes is to read them rather than derive a
+    # second answer.
+    it "keys a nested row off the row, which is the same row the flat scope draws" do
       whole = duplicated_pair
-      cumulative = duplicated_file(whole)
-      commits = [commit_entry(subject: "one", files: [duplicated_file([whole.first])])]
-      rendered = view.render(changeset(files: [cumulative], commits:), scope: :commits)
+      row = duplicated_file(whole)
+      rendered = view.render(changeset(files: [row], commits: [commit_entry(subject: "one", files: [row])]),
+                             scope: :commits)
 
       # 1 legend, 2 commit header, 3 lib/dup.rb
-      outcome = view.marks(3, generation: rendered.generation)
+      expect(view.marks(3, generation: rendered.generation).hunk_keys).to eq(Lain::Review::Hunk.keys(whole))
+    end
 
-      expect(outcome.hunk_keys).to eq(Lain::Review::Hunk.keys(whole))
+    # The mutation that example cannot catch on its own: a view re-deriving keys
+    # from the hunks it was handed would agree with it, because a real row's two
+    # members agree. Here they are parted -- the row carries the whole file's
+    # keys beside a single hunk -- and the example below proves the two answers
+    # genuinely differ.
+    it "never re-derives keys from the hunks on the row it was handed" do
+      whole = duplicated_pair
+      row = duplicated_file([whole.first], keys: Lain::Review::Hunk.keys(whole))
+
+      rendered = view.render(changeset(files: [row]), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation).hunk_keys).to eq(Lain::Review::Hunk.keys(whole))
     end
 
     it "is not merely the subset's keys under another name -- the two genuinely differ" do
@@ -1115,5 +1289,102 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
         expect(outcome["err"]).to include("no review is open in this editor")
       end
     end
+  end
+end
+
+# The measurement the doubles above cannot make: a real fifty-file corpus, a
+# real {Lain::Review::Session}, and B8's `chunker:` seam counting at the
+# CHUNKER's own `#call` -- so "the sidebar read nothing" is an observation about
+# work that did not happen rather than a flag the subject set about itself.
+#
+# It is here rather than in `corpus_spec.rb` because the offender was the
+# SURFACE: `Session.open` and `Session#present` were already lazy, and the view
+# chunked all fifty afterwards.
+RSpec.describe Lain::Frontend::Neovim::ReviewView, "over a real corpus", :seam do
+  subject(:view) { described_class.new }
+
+  # The real dispatch, wrapped so every chunking is logged with its path. The
+  # count is taken inside the chunker rather than at the dispatch, so a view
+  # that resolved chunkers eagerly and chunked lazily still counts zero.
+  def counting(log)
+    lambda do |for_path|
+      chunker = Lain::Survey::Chunker.for(for_path)
+      lambda do |path:, source:|
+        log << path
+        chunker.call(path:, source:)
+      end
+    end
+  end
+
+  def corpus(root, log)
+    sensitivity = Lain::Sensitivity.new(home: "/home/surveyor", cwd: root)
+    Lain::Review::Source::Corpus.new(walk: Lain::Survey::Walk.new(root:, sensitivity:),
+                                     projection: Lain::Survey::Projection.new(ledger:),
+                                     chunker: counting(log))
+  end
+
+  def ledger = @ledger ||= Lain::Sensitivity::Ledger.new
+
+  def section(ordinal) = "## S#{ordinal}\n\nbody #{ordinal} one.\nbody #{ordinal} two.\nbody #{ordinal} three.\n\n"
+
+  # Five directories of ten, so `:by_directory` produces real groups rather than
+  # one heading over everything.
+  def build(root)
+    50.times do |n|
+      dir = File.join(root, "d#{n % 5}")
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "f#{n}.md"), (1..6).map { |i| section(i) }.join)
+    end
+  end
+
+  def session(root, log)
+    changeset = Lain::Review::Changeset.new(source: corpus(root, log))
+    [changeset, Lain::Review::Session.open(changeset:, journal: [], source: "corpus")]
+  end
+
+  def draw(session)
+    %i[cumulative by_directory].map do |scope|
+      view.render(session.marked(strategy: Lain::Review::Partition::STRATEGIES.fetch(scope)), scope:).lines
+    end
+  end
+
+  around do |example|
+    Dir.mktmpdir("lain-review-view-corpus") { |made| @root = File.realpath(made) and example.run }
+  end
+
+  it "draws all fifty files at both scopes having chunked none of them" do
+    log = []
+    build(@root)
+    _changeset, opened = session(@root, log)
+
+    flat, grouped = draw(opened)
+
+    expect(flat.size).to eq(50)
+    expect(grouped.size).to eq(55)
+    expect(log).to be_empty
+  end
+
+  it "heads each group with a size rather than a line count nobody could have read" do
+    log = []
+    build(@root)
+    _changeset, opened = session(@root, log)
+
+    _flat, grouped = draw(opened)
+
+    expect(grouped.grep(/^~/).size).to eq(5)
+    expect(grouped).to all(satisfy { |line| !line.match?(/^\+\d+ -\d+/) })
+  end
+
+  it "chunks exactly the file something has read, and no other, however often it is drawn" do
+    log = []
+    build(@root)
+    changeset, opened = session(@root, log)
+    read = changeset.files.first
+    read.hunks
+
+    draw(opened)
+    draw(opened)
+
+    expect(log.uniq).to eq([read.path])
   end
 end

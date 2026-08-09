@@ -692,15 +692,16 @@ RSpec.describe Lain::Frontend::Neovim do
   # it owns #buffers -- and which nothing could reach before, so no wiring ever
   # drew a changeset in a real editor.
   describe "the changeset review's surface and view" do
-    # `review_view_spec.rb`'s own fixture ducks: a marked changeset is T13's to
-    # build, and nothing here pretends to be one.
-    def hunk(path:)
-      Lain::Review::Hunk.new(path:, old_start: 501, old_count: 1, new_start: 1, new_count: 1, lines: [" x"])
-    end
-
+    # A REAL marked changeset over {#round}, not a Struct: what the sidebar
+    # reads off one has grown twice since this group was written (a row's
+    # `#hunk_keys`, then its `#chunked?`), and a hand-rolled duck goes stale
+    # without failing until a view finally asks. It is also the same round the
+    # `<CR>` below resolves against, which a separate double was free to
+    # contradict.
     def changeset
-      file = Struct.new(:path, :state, :hunks).new("lib/a.rb", "unreviewed", [hunk(path: "lib/a.rb")])
-      Struct.new(:files, :partitions).new([file], [])
+      over = round
+      Lain::Review::Session::MarkedChangeset.of(over, Lain::Review::Marks.new(base_ref: over.base_ref),
+                                                strategy: Lain::Review::Partition::STRATEGIES.fetch(:cumulative))
     end
 
     it "is one pair for the session, so a gesture resolves against what was drawn" do
