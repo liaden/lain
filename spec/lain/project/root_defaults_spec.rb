@@ -106,6 +106,13 @@ module RootDefaultDiscipline
     "lain/cli/isolation_backend.rb" => %w[initialize:root],
     "lain/cli/review.rb" => %w[initialize:repo_root],
     "lain/cli/review_seams.rb" => %w[for:root],
+    # `lain survey` is `lain review`'s shape one source over, and this is the
+    # SAME argument `cli/review.rb`'s entry above makes: a one-shot command has
+    # no resolved Project to be threaded one. It is not a root either -- the
+    # survey's own root is the PATH argument, and this cwd only says which
+    # project's `[sensitivity]` table is in force and what a relative rule in it
+    # resolves against, which is the working directory by definition.
+    "lain/cli/survey.rb" => %w[initialize:cwd],
     "lain/cli/up.rb" => %w[initialize:cwd],
     "lain/config.rb" => %w[self.load:root],
     "lain/dsl_catalog.rb" => %w[self.load:root],

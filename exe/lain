@@ -353,6 +353,38 @@ class LainCLI < Thor
     end
   end
 
+  # The survey subcommand, the review subcommand's shape over a directory:
+  # Lain::CLI::Survey walks the tree, opens the round, and returns a String;
+  # this class parses argv and says it.
+  #
+  # `open` and `default_command` for the reason Review needs them -- Thor owns
+  # the first word, so `lain survey help` is Thor's help screen and a directory
+  # actually NAMED `help` needs a way through. Lain::CLI::Survey treats a target
+  # as a path and nothing else; the reservation is the exe's problem, so the exe
+  # carries the escape.
+  class Survey < Thor
+    include Boundary
+
+    def self.exit_on_failure? = true
+
+    default_command :open
+
+    # The enum comes off the strategy registry, and that is not tidying: Thor
+    # validates an `enum:` BEFORE it dispatches, so a list written by hand here
+    # rejects a scope the registry serves without the registry ever being asked.
+    method_option :scope, type: :string,
+                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
+                          desc: "Which grouping to open on -- one per registered partition strategy"
+    method_option :unbounded, type: :boolean, default: false,
+                              desc: "Present the whole tree however large it is (the /critique ceiling still holds)"
+    desc "open PATH", "Walk a directory, open a round over it as it stands, and present it"
+    def open(path)
+      render do
+        Lain::CLI::Survey.new.present(path, scope: options[:scope]&.to_sym, unbounded: options[:unbounded])
+      end
+    end
+  end
+
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -524,6 +556,10 @@ class LainCLI < Thor
                                "`lain review feature/foo`. Say `open` when the target " \
                                "collides with a command name -- `lain review open help`"
   subcommand "review", Review
+
+  desc "survey [open] PATH", "Review a directory as it stands: `lain survey ./docs`. Say `open` " \
+                             "when the path collides with a command name -- `lain survey open help`"
+  subcommand "survey", Survey
 
   desc "bench SUBCOMMAND ...ARGS",
        "Bench drivers over recorded sessions, and the live arm comparison " \
@@ -799,18 +835,34 @@ class LainCLI < Thor
   method_option :kind, type: :string, desc: "Filter to one kind: knob, bug, missing-feature, or doc"
   def improvements = render { Lain::CLI::Improvements.new.report(project: options[:project], kind: options[:kind]) }
 
+  # The four flags both JOURNAL PASSES share -- {ModelFlags}' rule at the
+  # smaller scale that actually recurs here. `consolidate` and `improve` each
+  # spawn one model over one recorded session, so `provider`, `model` and
+  # `max_tokens` were byte-identical between them and only the two SENTENCES
+  # differed; two copies is how the pair drifts into two providers.
+  #
+  # Not {ModelFlags} itself: that band reads {Lain::CLI::EnvDefaults} and carries
+  # `api_base`/`temperature`/`seed`, none of which a one-shot pass over a journal
+  # takes.
+  module JournalPassFlags
+    # @param thor [Class] the Thor class the flags accumulate onto
+    # @param dry_run [String] what THIS pass would do instead of doing it
+    # @param turn [String] what one turn of this pass is called
+    def self.declare(thor, dry_run:, turn:)
+      thor.method_option :dry_run, type: :boolean, default: false, desc: dry_run
+      thor.method_option :provider, type: :string, default: "anthropic",
+                                    desc: "Model provider: anthropic, ollama, or bedrock"
+      thor.method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
+      thor.method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per #{turn}"
+    end
+  end
+
   desc "consolidate SESSION", "Court-clerk pass: distill a session's completed subagent lineages into memory"
-  method_option :dry_run, type: :boolean, default: false, desc: "Report what would be clerked, no spawn, no API key"
-  method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
-  method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
-  method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per clerk turn"
+  JournalPassFlags.declare(self, dry_run: "Report what would be clerked, no spawn, no API key", turn: "clerk turn")
   def consolidate(selector) = render { journal_pass(Lain::CLI::Consolidate.from_options(options), selector) }
 
   desc "improve SESSION", "Harness-improver pass: record what would make lain itself better, into the dogfood queue"
-  method_option :dry_run, type: :boolean, default: false, desc: "Report what would spawn, no provider, no API key"
-  method_option :provider, type: :string, default: "anthropic", desc: "Model provider: anthropic, ollama, or bedrock"
-  method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
-  method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per improver turn"
+  JournalPassFlags.declare(self, dry_run: "Report what would spawn, no provider, no API key", turn: "improver turn")
   def improve(selector) = render { journal_pass(Lain::CLI::Improve.from_options(options), selector) }
 
   desc "up [PATH] [-- CHAT_FLAGS...]", "Create/attach the lain tmux session in PATH (chat window + status HUD)"
