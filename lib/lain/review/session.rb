@@ -27,12 +27,9 @@ module Lain
     # loudly rather than fall through to whichever branch a bare `==` left as
     # default.
     #
-    # TWO refusals, and keeping them apart is deliberate. {.scope!} says whether
-    # a NAME is a strategy at all; it is a class-level validator with no
-    # collaborators, so it cannot say whether THIS source can be grouped that
-    # way. {#present} asks that second question, where the changeset -- and so
-    # the source -- is in hand. A typo and an inapplicable grouping are
-    # different mistakes and deserve different sentences.
+    # TWO refusals, and keeping them apart is deliberate. Both live on {Scope},
+    # which is where the reasoning for the split is written; {#present} is what
+    # asks them, in the order that matters.
     #
     # == Admissibility is a POLICY, injected
     #
@@ -121,25 +118,15 @@ module Lain
       # @return [String] scheme-prefixed hex digest
       def self.digest(changeset) = changeset.identity.digest
 
-      # Resolve a name against the strategy registry.
-      #
-      # It answers the NAME rather than the strategy, and that is the contract
-      # every caller depends on: {Bounds#check_presentation!} and every
-      # {Surface} dispatch on the Symbol, and both CLI paths resolve once and
-      # hand the answer on, so a method that returned a strategy would not
-      # survive being called on its own output.
+      # The resolved scope's NAME -- {Scope.resolve}, kept reachable here because
+      # this is what every caller outside the review tier already knows it by
+      # (both CLI paths, and the flag enums their specs drive through it), and
+      # because a Symbol is what they hand on.
       #
       # @param scope [Symbol, String] one of {SCOPES}
       # @return [Symbol]
-      # @raise [UnknownScope] naming what was given, beside everything it could
-      #   have been -- a typo is the case this exists for, and the correction
-      #   is usually in that list
-      def self.scope!(scope)
-        candidate = scope.respond_to?(:to_sym) ? scope.to_sym : scope
-        return candidate if Partition::STRATEGIES.key?(candidate)
-
-        raise UnknownScope, "scope must be one of #{SCOPES.inspect}, got #{scope.inspect}"
-      end
+      # @raise [UnknownScope]
+      def self.scope!(scope) = Scope.resolve(scope).name
 
       # Begin a round. The head is journaled BEFORE the session exists --
       # {Epic::Review#open}'s order, and its invariant: nothing is ever held
@@ -229,6 +216,7 @@ module Lain
         @marks = replay.marks(opened.base_ref).reconcile(changeset)
         @annotations = replay.annotations.dup
         @judgement = replay.judgement
+        @recorded_digest = replay.digest(opened)
       end
       private_class_method :new
 
@@ -239,18 +227,65 @@ module Lain
       # @return [String] what produced the changeset
       def source = @opened.source
 
-      # Whether the diff has moved since this round was opened.
+      # Whether the changeset has moved UNDER this round -- which is a different
+      # question from whether it has moved since the round opened, and the
+      # difference is the whole of what accretion needs.
       #
-      # This is what CONSUMES `opened.digest`, which the journal carried and
-      # nothing here read -- a field with no reader is a field that quietly
-      # stops being true. A resume is the case it exists for: the author goes on
-      # working, {.from_journal} reconciles the marks against the changeset as
-      # it stands NOW, and a surface that says nothing about the difference
-      # shows a review of one diff over another. Both sides are content
-      # addresses ({.digest}), so an amend that changed nothing answers false.
+      # This is what CONSUMES the digests the journal carried and nothing here
+      # read -- a field with no reader is a field that quietly stops being true.
+      # A resume is the case it exists for: the author goes on working,
+      # {.from_journal} reconciles the marks against the changeset as it stands
+      # NOW, and a surface that says nothing about the difference shows a review
+      # of one diff over another. Both sides are content addresses ({.digest}),
+      # so an amend that changed nothing answers false.
+      #
+      # It reads the LAST digest put on record rather than the opened one, and
+      # that is {#widen}'s doing: a widening is something the human asked for, so
+      # a survey reporting itself regenerated the moment it grew would say the
+      # ground had shifted when nothing had. For a changeset there are no
+      # extension records at all, so last-recorded IS the opened digest and
+      # `/review` reads exactly as it always did -- which `session_spec.rb`'s own
+      # group pins, untouched.
       #
       # @return [Boolean]
-      def regenerated? = @opened.digest != digest
+      def regenerated? = @recorded_digest != digest
+
+      # Grow this round to span more paths, keeping everything already marked.
+      #
+      # MUTATION, and chosen over rebuilding. {.from_journal} over the wider
+      # corpus would replay through the only sanctioned constructor and could not
+      # miss a field -- but a live review is HELD: {Handover} and
+      # {Frontend::Neovim::ReviewView} hold this object, and a widening that
+      # swapped the instance would strand them holding the round as it was.
+      # Identity for the holders is the requirement; the inventory below is its
+      # price, and it is exactly three -- `@changeset`, `@marks` and the two
+      # digests, of which only `@digest` is a memo. The memos this method used to
+      # have to invalidate are gone: {#keys_by_path} and {#marked} are both
+      # deliberately un-memoized, for the reason this method would need them to
+      # be ("a stale view is exactly the defect a marker exists to prevent").
+      #
+      # {Widening} owns the decision, the record and the ordering that keeps a
+      # refusal off the journal; what is left here is the state only this object
+      # can hold. It re-reconciles, and over a lazily chunked corpus that CHUNKS
+      # -- a mark set cannot name the paths it belongs to, so a surviving mark is
+      # told from a stale one only by walking ({Marks#reconcile} states the limit
+      # and what would close it). A round with nothing marked yet pays nothing.
+      #
+      # @param changeset [Review::Changeset] the whole, unfiltered changeset over
+      #   the wider path set -- built by the caller, since a session holds no
+      #   walk, no projection and no classifier to build one with
+      # @return [CorpusExtended] the record, as journaled
+      # @raise [AlreadySettled] if this round has been judged
+      # @raise [NotWidened] for a changeset that drops a path or adds none
+      # @raise [Marks::BaseMismatch] for a changeset from another base
+      def widen(changeset)
+        refuse_settled_widening!
+        widened = Widening.new(from: @changeset, to: changeset).into(@journal, marks: @marks)
+        @changeset = changeset
+        @marks = widened.marks
+        @digest = @recorded_digest = widened.record.digest
+        widened.record
+      end
 
       # @return [Array<AnnotationPlaced>] this round's notes, oldest first
       def annotations = @annotations.dup.freeze
@@ -276,6 +311,10 @@ module Lain
       # @return [MarkedChangeset]
       def marked(strategy: MarkedChangeset::WALK) = MarkedChangeset.of(@changeset, @marks, keys_by_path:, strategy:)
 
+      # {Scope#support!} runs BEFORE the ceiling, and the order is the point
+      # rather than taste: the ceiling walks the partitions, and that walk is the
+      # thing that would die on the missing message.
+      #
       # The ceiling is checked on the RESOLVED scope, because `:commits` and
       # `:cumulative` bound differently and the refusal for one recommends the
       # other; and BEFORE the surface is told, because a refusal that has
@@ -295,11 +334,10 @@ module Lain
       # @raise [UnsupportedScope] for a grouping this source cannot answer for
       # @raise [Bounds::TooLarge] for a view past a ceiling at that scope
       def present(scope:)
-        at = self.class.scope!(scope)
-        strategy = Partition::STRATEGIES.fetch(at)
-        refuse_unsupported!(at, strategy)
-        @bounds.check_presentation!(@changeset, scope: at)
-        @surface.present(marked(strategy:), scope: at)
+        at = Scope.resolve(scope)
+        at.support!(@changeset, source:)
+        @bounds.check_presentation!(@changeset, scope: at.name)
+        @surface.present(marked(strategy: at.strategy), scope: at.name)
       end
 
       # Set one hunk's reviewed state.
@@ -396,25 +434,6 @@ module Lain
 
       def hunk_keys = keys_by_path.values.flatten.to_set
 
-      # BEFORE the ceiling, and the order is the point rather than taste: the
-      # ceiling walks the partitions, and that walk is the thing that would die
-      # on the missing message. Asked of the CHANGESET, which is the only
-      # object holding the source -- a session is opened with the source's
-      # NAME, because that is what the journal carries.
-      # The REMEDY half is what makes this actionable, and it is measured
-      # rather than guessed: the scopes listed are the ones this source is
-      # actually asked about, so the message cannot advertise a second
-      # grouping it would also refuse. {UnknownScope} lists the whole registry
-      # for the same reason -- a refusal naming only what failed leaves the
-      # reader to guess what would not have.
-      def refuse_unsupported!(at, strategy)
-        return if @changeset.supports?(strategy)
-
-        offered = SCOPES.select { |scope| @changeset.supports?(Partition::STRATEGIES.fetch(scope)) }
-        raise UnsupportedScope, "scope #{at.inspect} is not available for the #{source} source -- it does " \
-                                "not answer what that grouping reads. #{offered.inspect} do present this one"
-      end
-
       def refuse_unknown_hunk!(key)
         return if hunk_keys.include?(key)
 
@@ -428,11 +447,28 @@ module Lain
         raise AlreadySettled, "this round was already judged #{verdict.inspect} -- a second verdict leaves a " \
                               "journal whose reader cannot tell which of the two stands"
       end
+
+      # The verdict is judged ONCE, against the changeset {#judgement} names, and
+      # {#refuse_second_verdict!} means it can never be judged again -- so a
+      # widening here would leave the round reporting that verdict over a file
+      # nobody has looked at, with no way left to correct it. Refusing is the
+      # conservative half of the pair: reopening a settled round is a larger
+      # decision (it has to say what becomes of the judgement already journaled),
+      # and a human who wants one can open a fresh survey today.
+      def refuse_settled_widening!
+        return if verdict.empty?
+
+        raise AlreadySettled, "this round was already judged #{verdict.inspect} -- widening it would put a file " \
+                              "nobody reviewed under a verdict that already stands, and a second verdict is " \
+                              "refused, so nothing could correct it"
+      end
     end
   end
 end
 
-# Both are reached from method bodies only, so this placement is free; it reads
-# in the order a reader meets them.
+# All four are reached from method bodies only, so this placement is free; it
+# reads in the order a reader meets them.
+require_relative "session/scope"
 require_relative "session/marked_changeset"
 require_relative "session/replay"
+require_relative "session/widening"

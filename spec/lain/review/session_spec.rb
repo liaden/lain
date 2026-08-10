@@ -397,6 +397,37 @@ RSpec.describe Lain::Review::Session do
         .to raise_error(described_class::UnknownScope, /by_directory/)
     end
 
+    # A name and the strategy it names are ONE value, and the reason is this
+    # repo's own "one classifier, and disagreement is unrepresentable" rule at
+    # small scale: a pair carried as two arguments can be handed a name from one
+    # scope and a strategy from another, and the refusal then blames the scope it
+    # never tested. {Session::Scope.resolve} derives the second member from the
+    # first and is the only door in, so the disagreeing pair cannot be
+    # constructed rather than being merely untested.
+    it "hands the strategy over WITH the name" do
+      resolved = described_class::Scope.resolve("by_directory")
+
+      expect(resolved.name).to eq(:by_directory)
+      expect(resolved.strategy).to be(Lain::Review::Partition::STRATEGIES.fetch(:by_directory))
+    end
+
+    # The half that makes the sentence above true rather than merely intended.
+    # BOTH doors: `Data.define` mints `.[]` beside `.new`, and privatising one
+    # leaves the other wide open -- verified, not assumed.
+    it "offers no second door through which a disagreeing pair could be built" do
+      commits = Lain::Review::Partition::STRATEGIES.fetch(:commits)
+
+      expect { described_class::Scope.new(name: :by_directory, strategy: commits) }
+        .to raise_error(NoMethodError, /private method/)
+      expect { described_class::Scope[name: :by_directory, strategy: commits] }
+        .to raise_error(NoMethodError, /private method/)
+    end
+
+    it "refuses an unresolvable name at the one door there is" do
+      expect { described_class::Scope.resolve(:by_size) }
+        .to raise_error(described_class::UnknownScope, /by_size/)
+    end
+
     # The half of resolution that a name alone does not finish. A marked
     # changeset CARRIES its partitions, so a view built at one strategy and
     # drawn at another renders the wrong grouping under the right heading --

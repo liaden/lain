@@ -211,3 +211,12 @@ module Lain
     end
   end
 end
+
+# The four above are the records of a review ROUND -- opened, marked, annotated,
+# judged -- and every one of them is written by a gesture the human made about
+# the changeset. {Lain::Review::CorpusExtended} is a record of the changeset
+# ITSELF changing, which is a different subject and the one this module body had
+# no room left for, so it is this file's subtree rather than a fifth stanza here.
+# It is reached from method bodies only, so this placement is free -- and it must
+# precede `session/replay.rb`, whose `TYPES` names it at class-body time.
+require_relative "records/corpus_extended"

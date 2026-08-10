@@ -35,8 +35,11 @@ module Lain
       # {ChangesetOpened} carries a digest; {HunkMarked} and {AnnotationPlaced}
       # deliberately do not. So nothing but ORDER can say which round a mark
       # belongs to, and the round is "everything after the LAST
-      # `changeset_opened`". That gives the three behaviours the card asks for
-      # without a fourth field on two records:
+      # `changeset_opened`". {CorpusExtended} carries one too and is no exception
+      # to this: its digest addresses the WIDENED corpus, which is what
+      # {Session#regenerated?} reads, and says nothing about which round it sits
+      # in. That gives the three behaviours the card asks for without a further
+      # field on two records:
       #
       # - a restart resumes, because reopening was never journaled and the last
       #   round is still the live one;
@@ -50,7 +53,7 @@ module Lain
       # one of these before it builds a session, so a resume cannot double the
       # record it is reading.
       class Replay
-        # The four record types a round is made of.
+        # The five record types a round is made of.
         #
         # This filter is NOT what makes a foreign record harmless -- {#fold}'s
         # three independent type tests already ignore anything that is not one
@@ -61,12 +64,15 @@ module Lain
         # `.to_a` on an unfiltered lazy walk would materialize every Rust
         # tracing span in a long session's journal alongside our four. It is a
         # bound on what is held, not a correctness guard.
-        TYPES = [ChangesetOpened::JOURNAL_TYPE, HunkMarked::JOURNAL_TYPE,
+        TYPES = [ChangesetOpened::JOURNAL_TYPE, CorpusExtended::JOURNAL_TYPE, HunkMarked::JOURNAL_TYPE,
                  AnnotationPlaced::JOURNAL_TYPE, ReviewVerdict::JOURNAL_TYPE].freeze
 
         # @return [ChangesetOpened, nil] the head of the last round, or nil when
         #   the journal opened no review at all
         attr_reader :opened
+
+        # @return [Array<CorpusExtended>] this round's widenings, oldest first
+        attr_reader :extensions
 
         # @return [Array<AnnotationPlaced>] in the order they were journaled,
         #   which is the only order any reader gets
@@ -82,10 +88,32 @@ module Lain
           @opened = round.empty? ? nil : opened_from(round.first)
           @pairs = []
           @annotations = []
+          @extensions = []
           @judgement = Verdict::None
           round.drop(1).each { |record| fold(record) }
           @annotations.freeze
+          @extensions.freeze
         end
+
+        # Every path this round accreted, oldest first -- what a resume walks to
+        # rebuild the corpus as it stood, and the only thing that can say so.
+        # {Marks} cannot: a mark carries a hunk key and nothing else, and a key
+        # is a digest no path reads back out of.
+        #
+        # @return [Array<String>]
+        def paths = extensions.flat_map(&:paths)
+
+        # The address last PUT ON RECORD in this round, which is the opened one
+        # until a widening moves it. {Session#regenerated?} holds the changeset
+        # as it now stands against this rather than against `opened.digest`, so a
+        # deliberate widening does not read afterwards as the ground shifting
+        # underneath the human. A round with no extension records -- every
+        # `/review` of a branch -- answers exactly what it always did.
+        #
+        # @param opened [ChangesetOpened] the head of the round, which the caller
+        #   holds: {Session.open} builds one this fold never saw
+        # @return [String]
+        def digest(opened) = [opened.digest, *extensions.map(&:digest)].last
 
         # Replayed by the SAME sequence of {Marks#mark} calls the live session
         # made, in journal order, so "replay equals live" is true by
@@ -112,11 +140,11 @@ module Lain
                               head_ref: record["head_ref"], digest: record["digest"])
         end
 
-        # Three independent tests rather than a `case`, so there is no branch a
-        # fourth type could fall through into, and any record that is none of
-        # the three is ignored here rather than upstream. The round cannot
-        # contain a second `changeset_opened` -- it begins at the LAST one -- so
-        # no case is unhandled.
+        # Independent tests rather than a `case`, so there is no branch a further
+        # type could fall through into, and any record that is none of them is
+        # ignored here rather than upstream. The round cannot contain a second
+        # `changeset_opened` -- it begins at the LAST one -- so no case is
+        # unhandled.
         #
         # == The FIRST verdict wins, and that is not a preference
         #
@@ -138,6 +166,7 @@ module Lain
         def fold(record)
           type = record["type"].to_s
           @pairs << mark_pair(record) if type == HunkMarked::JOURNAL_TYPE
+          @extensions << extension(record) if type == CorpusExtended::JOURNAL_TYPE
           @annotations << annotation(record) if type == AnnotationPlaced::JOURNAL_TYPE
           keep_first(judgement_of(record)) if type == ReviewVerdict::JOURNAL_TYPE
         end
@@ -151,6 +180,8 @@ module Lain
         def keep_first(judged)
           @judgement = judged if @judgement.verdict.empty?
         end
+
+        def extension(record) = CorpusExtended.new(paths: record["paths"], digest: record["digest"])
 
         def mark_pair(record)
           marked = HunkMarked.new(hunk_key: record["hunk_key"], state: record["state"])
