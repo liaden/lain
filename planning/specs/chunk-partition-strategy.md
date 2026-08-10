@@ -1,6 +1,6 @@
 # The partition axis: how a changeset is grouped becomes a swappable strategy
 
-status: draft
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson

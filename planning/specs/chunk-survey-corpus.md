@@ -1,6 +1,7 @@
 # Survey: reviewing a corpus of files as they stand
 
-status: draft
+status: done, except B12 part two — B20 owns it, and B12 part one is not reachable from
+production until B20 lands
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -1530,6 +1531,258 @@ Scenario: an unrouted verb does not wedge the editor
   than wiring a stub route.
 - The keymap needs a buffer or window API the runtime files do not already use. Note which,
   so the review panel sees the new surface area.
+
+---
+
+### B18 — Let presentation cost only what has been read [risk: high]
+
+**Added 2026-08-09, during execution.** B15 discovered that its own card's premise is false:
+a mark is `(hunk_key, state)` and `hunk_key` is a **one-way blake3 digest**
+(`records.rb`'s `HunkMarked`, `hunk.rb:83-85`), so `Marks` cannot name the paths it holds
+marks for — at any cost. Two of B15's four scenarios therefore had no implementation, and
+B15 shipped the honest subset (laziness while the mark set is empty) with the limit pinned
+by a spec. **B10's "presenting chunks nothing" premise depends on this card, so it lands
+before B10 dispatches.**
+
+**Blocked on:** A3 and B2 — both rewrite `session.rb`, which this card edits; B15, whose
+guard this makes fire
+**Files:** modify `lib/lain/review/lazy_file.rb`, `lib/lain/review/session.rb`,
+`lib/lain/review/marks.rb`, `lib/lain/review/session/marked_changeset.rb`,
+`spec/lain/review/lazy_file_spec.rb`, `spec/lain/review/session_spec.rb`,
+`spec/lain/review/marks_spec.rb`, `spec/lain/review/session/marked_changeset_spec.rb`
+**Reuse:** `HUNKLESS` (`marked_changeset.rb`) — an unchunked file already has an honest
+state; B15's empty-mark-set short circuit in `Marks#reconcile`, which this extends from
+"no marks at all" to "no marks on this path"
+**Shared-file wiring:** none
+
+**The route taken, and the two rejected — corrected after B15's review.** B15 named three,
+and the panel **measured route 3 and found it insufficient on its own**:
+
+1. **Journal the path with the mark** (`records.rb` + `replay.rb` + `session.rb`). Makes
+   B15's mechanism literally true. **Not taken**: `hunk_marked` records are already
+   journaled, so this is a persisted-record-shape change with a migration, and old journals
+   would replay pathless and degrade silently to the eager walk. That is Joel's call, not an
+   execution-time patch. It remains available if the seam below proves harder than it looks.
+2. **Accept that only opening is lazy.** What B15 shipped, and honestly pinned. The panel
+   measured its true reach as narrower than the card claimed: **a resume of a round that
+   marked nothing, and only until the first question is asked** — because `Session.open`
+   composes its digest through `keys_by_path` before `initialize` ever reconciles.
+3. **`LazyFile#chunked?` alone.** ~~Taken~~ **Insufficient, measured.** `MarkedChangeset.of`
+   guards on `keys_by_path.empty?` — *all or nothing*. A **partial** table falls through to
+   `marks.states(changeset)` and walks every hunk of every file. On a 50-file corpus: 0 keys
+   → 0/50 chunked, **1 key → 50/50**, 5 keys → 50/50. A corpus session hands `.of` exactly
+   the partial table that gets zero benefit.
+
+**So this card is route 3 AND the per-path seam** — which is route 1's work minus the
+journal change. It must land:
+
+- **`Marks#state_of(keys)`**, the honest object. B15 identified it and correctly declined to
+  build it unwired; it is what turns the `NO_STATES` ternary into real polymorphism, and
+  without it `.of` cannot consult marks per path at all.
+- **`LazyFile#chunked?`**, so `keys_by_path` can name only what the corpus has read.
+- **`Session#keys_by_path` and `#hunk_keys`**, eager and on no card's Files line in either
+  plan.
+- **`Session.digest_parts`' `keys_by_path` call** (`session.rb:110`), which makes `.open`
+  eager regardless of everything else. **Check B2 first**: B2 replaces `digest_parts`'
+  composition with a source-supplied `#identity`, which may already remove this walk. If it
+  has, say so and drop it from scope rather than re-fixing it.
+- **The two `Marks` doubles** B15 named (`session_spec.rb`, `lazy_file_spec.rb`, both
+  `instance_double(Marks, states: {...})`), which pin `.of` to the whole-changeset walk.
+
+**One hazard this card must not reintroduce.** `.of(cs, fully_marked_marks, keys_by_path: {})`
+already renders a fully-reviewed file as `unreviewed`, silently — unreachable from `lib/`
+today because only `Session#marked` passes the argument and always passes it full. Making the
+table legitimately partial makes that path reachable. The class doc's own warning applies:
+putting both meanings on one message name is how a table renders the wrong glyph with nothing
+failing.
+
+```gherkin
+Scenario: presenting a corpus nobody has read chunks nothing
+  Given a corpus whose files raise if their hunks are read
+  When the session is presented
+  Then it presents and nothing raised
+
+Scenario: one mark does not cost the corpus
+  Given a corpus of fifty files with a mark on one file's unit
+  When the session is presented
+  Then only that file's hunks were read
+
+Scenario: an unread file still has an honest state
+  Given a corpus file nothing has chunked
+  When its row is read
+  Then it is unreviewed, by the same rule a hunkless file already answers
+
+Scenario: a diff review sees nothing change
+  Given a marked changeset over an ordinary branch diff
+  When it is presented before and after this card
+  Then the rendered states are identical
+
+Scenario: the row identity pin still holds
+  Given a partitioned marked changeset
+  When one file's row is read at whole scope and under its partition
+  Then they are the same object
+```
+→ spec files: `spec/lain/review/lazy_file_spec.rb`, `spec/lain/review/session_spec.rb`,
+`spec/lain/review/session/marked_changeset_spec.rb`
+
+**Escalation triggers:**
+- `#chunked?` cannot be answered without forcing the chunk. Then the message is a lie and
+  the route is dead — stop, and route 1 becomes Joel's call.
+- Making `keys_by_path` lazy requires memoizing `#marked`, which `session.rb` documents as
+  forbidden ("a stale view is exactly the defect a marker exists to prevent"). Report the
+  conflict rather than picking a side — B15 hit the same tension and correctly stopped.
+- The two `Marks` doubles B15 named (`session_spec.rb` and `lazy_file_spec.rb`, both
+  `instance_double(Marks, states: {...})`) need more than the one-word edit B15 predicted.
+  That would mean the per-path seam is wider than `#states` was.
+
+---
+
+### B19 — Draw a survey without reading it [risk: high]
+
+**Added 2026-08-09, during execution.** B3's panel found that `review_view.rb` forces every
+file's hunks **at render, in both flat and grouped scopes**, so B3's and B8's laziness dies
+the moment a corpus is drawn in the cockpit. B8 measured the ordering and proposed this split
+rather than widening its own card, which was the right call: the surface is not even the first
+offender.
+
+**Blocked on:** B18 — measured, and this is why the split exists: `Session.open` chunks 0/50
+but `Session#present` chunks **50/50** through `Session#keys_by_path`, **before any surface is
+involved**. Fixing the renderer first fixes nothing.
+**Files:** modify `lib/lain/frontend/neovim/review_view.rb`, `lib/lain/review/partition.rb`,
+`lib/lain/review/session/marked_changeset.rb`, and their specs
+**Reuse:** B3's `#rendered_lines` seam — a file already answers a size without chunking, which
+is the shape a header needs; B8's `Corpus`, whose bound is computed from the identity pass
+**Shared-file wiring:** none
+
+**The three sites, all in `review_view.rb`, all in flat *and* grouped scope:**
+
+- `:428` `partition_header` → `PartitionRow#added`/`#deleted` → `Undetailed.counted` →
+  `file.hunks`
+- `:421` `keys_by_path` → `Hunk.keys(file.hunks)` for **every** file
+- `:439` `first_line` → `file.hunks.first`
+
+All three want real hunks, so this is a **rendering decision**, not a mechanical fix: what may
+a heading claim about a group nobody has read, and how does a gesture resolve a key for a file
+nobody has chunked? A `+N -M` that silently means "unknown" is the rendered-zero the partition
+chunk's Open decisions already refused once.
+
+**`Partition::Undetailed`'s docstring is wrong and must be corrected regardless of what else
+this card does**: its "nothing renders this yet" disclaimer is attached to `binaries`, while
+`added`/`deleted` **are** drawn today. That sentence is how the problem stayed invisible.
+
+```gherkin
+Scenario: drawing a corpus reads only what it shows
+  Given a corpus of fifty files whose hunks raise if read
+  When the review view is drawn at whole scope
+  Then it draws, and nothing raised
+
+Scenario: a group heading is honest about what it has not read
+  Given a partitioned corpus nobody has chunked
+  When a partition heading is drawn
+  Then it does not render a count it cannot know, and does not render a zero that means unknown
+
+Scenario: a gesture still resolves on a file that has been read
+  Given a corpus file the human has opened
+  When a mark gesture resolves its key
+  Then it resolves, and only that file was chunked
+
+Scenario: a diff review draws exactly as before
+  Given an ordinary branch changeset
+  When the view is drawn at both scopes
+  Then the rendering is byte-identical to before this card
+```
+→ spec files: `spec/lain/frontend/neovim/review_view_spec.rb`,
+`spec/lain/review/partition_spec.rb`
+
+**Escalation triggers:**
+- A heading cannot be honest without either chunking or rendering something a reader could
+  mistake for a real count. That is a design question about what a survey heading means —
+  stop and report the shape you reached.
+- Making `keys_by_path` per-file conflicts with B18's shape. B18 owns that seam; inherit it
+  rather than building a second one.
+
+---
+
+### B20 — Add one path to a live survey [risk: high]
+
+**Added 2026-08-09, during execution**, when B12 escalated its own part two with three reasons
+a panel then verified. B12 part one landed the widening — `Session#widen`, `Widening`,
+`CorpusExtended`, the replay fold — and **all of it is unreachable from production**: zero
+`lib/` callers. That is the unwired-features shape, and it is deliberate rather than an
+oversight: the widener the gesture needs does not exist, and building it was outside B12's
+files. **This card is what makes B12's work reachable. Part one is not done until this lands.**
+
+**Blocked on:** B12 part one; B14 (the `/survey` command, landed) — but note **B14 alone does
+not unblock this**: B14 supplies a *holder*, and the missing piece is a *widener*.
+**Files:** modify `lib/lain/survey/walk.rb`, `lib/lain/review/source/corpus.rb`,
+`lib/lain/review/handover.rb`, `lib/lain/cli/human_replies.rb`,
+`lib/lain/frontend/neovim/gestures.rb` and their specs
+**Reuse:** `Survey::Walk`'s private `#decide`/`#admit`/`#linked`/`#verdict_for` — **the whole
+point is to reuse the classifier, not to re-derive it**; `Session#widen` and `Widening` (B12);
+B16's landed `survey_add` emission; `Handover`'s existing rail shape
+**Shared-file wiring:** none
+
+**Why it is a card and not a fix.** `Survey::Walk`'s entire admission policy is private; its
+only public surface is `root:`, `#files`, `#withheld`, `#each`. There is **no seam that yields
+one `Listing` for an arbitrary path under the same verdict**, and a panel checked the three
+candidates: a wider root admits the whole subtree and blows the file ceiling; `Corpus` only
+ever consumes what the walk produced and never mints a `Listing`; B8's `chunker:` seam is
+about how a file divides, not which files are in. Constructing a second `Walk` rooted at the
+added file's directory is duplication with extra steps — and gets the relative path wrong.
+
+**The hole to decide FIRST, before implementing.** `Walk#widened(absolute_path)` returning a
+walk-duck built from the same `#decide` is the right instinct. What it does not answer is
+**what the relative `path` of a file outside `root` is** — and that string is the corpus's
+identity key and the `Reading#path` the chunker dispatches on. `Walk.contains?` refuses such a
+path today. Decide the naming rule explicitly and write it down, or it will be discovered
+mid-implementation. Widening the root instead is not a free answer: it changes every existing
+path's key and would discard every mark, which is the property the fixed base exists to
+protect.
+
+**Do not ship a stopgap route that can only refuse.** B12 declined one and was right to: a
+route that always refuses satisfies two ACs by construction, which is the same vacuity that
+made two of part two's ACs unbuildable in the first place. B16's silent drop of an unrouted
+verb is real (`rpc_thread.rb`'s `@routes[verb]&.call` acks and drops) but closing it deserves
+a **generic** unrouted-verb report in a B16 follow-up, not a `survey_add`-shaped stub.
+
+```gherkin
+Scenario: adding a file widens the survey and keeps every mark
+  Given a survey with every unit marked reviewed
+  When a file beside it is added through the gesture
+  Then no mark is lost, the new file's units are unreviewed, and only that file was chunked
+
+Scenario: adding a denied path is refused with the classifier's own reason
+  Given a survey and an SSH private key beside it
+  When that path is added
+  Then it is refused, naming the same reason the walk would have withheld it for
+
+Scenario: adding a gated file masks rather than refuses
+  Given a survey and a .env beside it
+  When that path is added
+  Then it enters redacted to its released regions, as the walk would have admitted it
+
+Scenario: adding a path already in the survey refuses without journaling
+  Given a survey containing one file
+  When that same file is added again
+  Then it refuses and no extension record is written
+
+Scenario: a refusal never raises out of the rail
+  Given an attached cockpit
+  When any of the above refusals fires
+  Then the editor session survives and the human is told
+```
+→ spec files: `spec/lain/survey/walk_spec.rb`, `spec/lain/review/source/corpus_spec.rb`,
+`spec/lain/review/handover_spec.rb`, `spec/lain/cli/human_replies_spec.rb`
+
+**Escalation triggers:**
+- The relative-path rule cannot be settled without either moving the root (which discards
+  every mark) or admitting a second naming scheme. Stop — that is a plan decision.
+- Reusing `#decide` requires making more of `Walk` public than one message. The classifier
+  staying single is the reason this card exists; widening its surface to five methods trades
+  the reason away.
+- A widening needs to re-run the identity pass over files already in the corpus. It must not —
+  B8's identity is per-file and content-addressed precisely so a widening pays only for what
+  it adds.
 
 ## Integration checks
 
