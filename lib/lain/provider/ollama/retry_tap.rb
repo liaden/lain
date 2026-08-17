@@ -82,11 +82,42 @@ module Lain
         # again (see {Transport}).
         def open_attempt(&on_abandon) = Attempt.new(on_abandon)
 
-        def retry_block
-          lambda do |env:, retry_count:, exception:, will_retry_in:, **|
+        # The block faraday-retry calls on every retry. It does two things that
+        # are NOT of equal rank, and the ordering says so: it ABANDONS the
+        # attempt (a correctness invariant -- T10, the discard that stops two
+        # attempts sharing an assembler) and then it JOURNALS (a record).
+        #
+        # == Why a caller's callback is composed rather than allowed to replace
+        #
+        # {Ollama#journaled_retries} used to wire this with `||=`, which was
+        # right while the block carried only telemetry: a caller who wanted the
+        # callback could have it, and the cost was a missing Journal row. Since
+        # T10 the cost is silent corruption. Measured on a real socket: a config
+        # carrying its own `retry_block` returned a severed attempt's text
+        # concatenated with its replacement's, under a `stop_reason` of
+        # `:end_turn`, with nothing above the Provider able to tell -- the whole
+        # F7b defect, reinstated by a seam documented as merely lowering
+        # telemetry. `ollama_spec.rb` already ships such a config.
+        #
+        # So the discard is not offerable. A caller's callback is threaded
+        # through `then_call:` and runs in addition, never instead.
+        #
+        # `then_call` runs LAST, after the push, because it is the only part of
+        # this lambda that is not ours: an arbitrary callback that raises must
+        # not be able to cost the attempt its discard OR its
+        # {Telemetry::ProviderRetry}. It can still replace the exception
+        # faraday-retry was carrying -- that was equally true when `||=` gave it
+        # the whole block, and swallowing a caller's exception would hide their
+        # bug rather than ours.
+        #
+        # @param then_call [#call, nil] a caller-supplied retry callback, invoked
+        #   with the same keywords faraday-retry passed.
+        def retry_block(then_call: nil)
+          lambda do |env:, retry_count:, exception:, will_retry_in:, **rest|
             attempt_on(env)&.abandon
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
+            then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)
           end
         end
 

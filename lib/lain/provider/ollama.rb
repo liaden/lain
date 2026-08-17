@@ -255,12 +255,23 @@ module Lain
       # Each body path opens its OWN attempt, which is what makes the retry hook
       # reentrant across round trips sharing this Provider -- see {RetryTap}. A
       # sync body is one parsed Hash, so an abandoned attempt leaves nothing
-      # behind and registers no rollback; the streaming path is where a discard
-      # will have work to do (T10/F7b).
+      # behind and registers no rollback; the streaming path below is the one
+      # with something to discard.
       def sync_body(request)
         @transport.sync_post(encode(request), attempt: @retries.open_attempt).body || {}
       end
 
+      # The assembler is built out here while faraday-retry runs INSIDE
+      # `@transport.stream`, so a retried attempt feeds the SAME assembler the
+      # attempt it replaced was feeding. Left alone, that is a splice: a severed
+      # attempt followed by a clean retry returned `ok`, done_reason "stop",
+      # carrying both attempts' text (F7b). Hoisting the assembler inside the
+      # block is not available -- the block is the chunk callback, called once
+      # per chunk -- and NDJSON has no marker to re-sync on, so the discard has
+      # to come from the retry itself. Registering #reset on this round trip's
+      # {RetryTap::Attempt} is that: faraday-retry abandons the attempt, which
+      # runs the reset, before the replacement's first chunk is fed.
+      #
       # A corrupt NDJSON line is a wire-protocol violation, so it raises -- never
       # a silent skip (one torn line means the frame boundaries can no longer be
       # trusted). It is wrapped in APIError rather than escaping as a bare
@@ -268,7 +279,8 @@ module Lain
       # rescue one provider-error family, and the original stays on `#cause`.
       def stream_body(request)
         assembler = StreamAssembler.new
-        @transport.stream(encode(request), attempt: @retries.open_attempt) { |chunk| assembler.feed(chunk) }
+        attempt = @retries.open_attempt { assembler.reset }
+        @transport.stream(encode(request), attempt:) { |chunk| assembler.feed(chunk) }
         assembler.result
       rescue JSON::ParserError => e
         raise APIError, "corrupt NDJSON line in stream: #{e.message}"
@@ -298,15 +310,28 @@ module Lain
       # specs -- and T10 injects configs. `dup` is the same shallow copy
       # {Transport#probe_config} already takes of this object.
       #
-      # `||=`, so a caller who set a callback keeps it. A spec asserting on its
-      # own `retry_block` is testing faraday-retry's loop, not this arm's
-      # telemetry, and silently replacing it would make that spec lie. Note the
-      # two callbacks are independent: keeping a caller's `retry_block` does NOT
-      # suppress the tap's `exhausted_retries_block`, so such a config gets a
-      # mixed pair rather than no tap at all.
+      # The two callbacks are wired DIFFERENTLY, and the asymmetry is the point.
+      #
+      # `retry_block` COMPOSES: a caller's callback is threaded through
+      # `then_call:` and runs in addition to the tap's, never instead of it.
+      # This one carries a correctness invariant -- it is what abandons the
+      # attempt, and so what stops a retried stream splicing onto the one it
+      # replaced -- and a correctness invariant must not hang on a seam a caller
+      # can displace. It did, briefly, and it was measurable: a config carrying
+      # its own `retry_block` (which `ollama_spec.rb` ships) brought the whole
+      # F7b splice back, returned as `:end_turn`. `||=` was the right wiring
+      # while this block was only telemetry; it stopped being right the moment
+      # T10 hung the discard on it.
+      #
+      # `exhausted_retries_block` keeps `||=`, because nothing but telemetry
+      # hangs on it: exhaustion does not abandon -- the round trip raises and
+      # the assembler is discarded with it -- so a caller who owns this callback
+      # costs a Journal row and no correctness. A spec asserting on its own
+      # exhaustion callback is testing faraday-retry's loop, and silently
+      # replacing it would make that spec lie.
       def journaled_retries(config)
         config.dup.tap do |wired|
-          wired.retry_block ||= @retries.retry_block
+          wired.retry_block = @retries.retry_block(then_call: config.retry_block)
           wired.exhausted_retries_block ||= @retries.exhausted_block
         end
       end

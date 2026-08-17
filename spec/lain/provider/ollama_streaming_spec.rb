@@ -66,10 +66,20 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # #transport_sync for the full note, including why the cop's suggested
   # `_attempt:` correction is the one thing that must not be applied.
   # rubocop:disable Lint/UnusedBlockArgument
-  def stream_transport(chunks)
+  # `abandon_after:` makes this double do the one thing faraday-retry does that
+  # matters to T10: abandon the round trip's attempt BETWEEN two chunks. Without
+  # it the wiring that discards an abandoned attempt was pinned only by the
+  # :seam examples at the bottom of this file -- and CLAUDE.md names
+  # `--tag '~seam'` as the inner loop, so deleting the discard from
+  # #stream_body was green across every non-seam example in spec/lain/provider/.
+  # A developer running the loop the project recommends was told nothing.
+  def stream_transport(chunks, abandon_after: nil)
     Class.new do
       define_method(:stream) do |_payload, _headers = {}, attempt: nil, &block|
-        chunks.each { |chunk| block.call(chunk) }
+        chunks.each_with_index do |chunk, index|
+          block.call(chunk)
+          attempt&.abandon if index == abandon_after
+        end
       end
     end.new
   end
@@ -138,6 +148,78 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       corrupt = "#{JSON.generate(stream_lines.first)}\n{not json at all}\n#{JSON.generate(stream_lines.last)}\n"
       expect { assemble([corrupt]) }.to raise_error(JSON::ParserError)
     end
+
+    # T10. #reset is called once per RETRY, not once per round trip, so a
+    # three-retry round trip calls it three times -- and it has to leave the
+    # assembler USABLE each time, not merely emptied once. The seam examples at
+    # the bottom of this file prove that indirectly (a four-connection round
+    # trip cannot record four requests unless the assembler kept accepting
+    # chunks across three discards); these say it directly.
+    describe "#reset, the discard a retry drives" do
+      it "assembles the surviving attempt alone, however many were discarded" do
+        reference = assemble([ndjson(stream_lines)])
+        assembler = described_class.new
+        3.times do
+          assembler.feed(ndjson(stream_lines.first(2)))
+          assembler.reset
+        end
+        assembler.feed(ndjson(stream_lines))
+
+        expect(assembler.result).to eq(reference)
+      end
+
+      it "is harmless before anything has been fed" do
+        assembler = described_class.new
+        3.times { assembler.reset }
+        assembler.feed(ndjson(stream_lines))
+
+        expect(assembler.result).to eq(assemble([ndjson(stream_lines)]))
+      end
+
+      # The subtle half, and the one the buffer's scan cursor is about: a
+      # severed attempt usually dies MID-LINE, so the discard has to take the
+      # partial bytes and `@scanned` with it. A surviving half-line would be
+      # prefixed onto the retry's first line -- still a splice, just one that
+      # fails loudly on JSON::ParserError instead of quietly, which is not a fix.
+      it "discards a half-delivered line rather than prefixing it onto the retry" do
+        whole = ndjson(stream_lines)
+        partial = whole.byteslice(0, 25)
+        # The offset is only interesting if it lands MID-LINE, and nothing else
+        # here holds it there -- the first line is 80 bytes today, so 55 bytes of
+        # slack would disappear silently if #stream_lines ever shortened.
+        expect(partial).not_to include("\n")
+
+        assembler = described_class.new
+        assembler.feed(partial)
+        assembler.reset
+        assembler.feed(whole)
+
+        expect(assembler.result).to eq(assemble([whole]))
+      end
+
+      # Every other example here ends its SURVIVING attempt with a done line,
+      # which overwrites the metadata and hides a reset that clears only the
+      # prose -- measured: dropping @model/@done_reason/@prompt_eval_count/
+      # @eval_count from #reset passed all of them. The uncovered shape is this
+      # card's own corruption one field over: an attempt that reached its `done`
+      # line before the RST, replaced by one that has not finished, reports the
+      # DISCARDED attempt's done_reason and token counts as the survivor's.
+      it "discards the done line's metadata, not only the accumulated prose" do
+        assembler = described_class.new
+        assembler.feed(ndjson(stream_lines))
+        assembler.reset
+        # A line with no `model` key, so a surviving @model cannot be masked by
+        # the replacement setting it again.
+        assembler.feed(ndjson([{ "message" => { "role" => "assistant", "content" => "x" }, "done" => false }]))
+        body = assembler.result
+
+        expect(body["eval_count"]).to be_nil
+        expect(body["prompt_eval_count"]).to be_nil
+        expect(body["done_reason"]).to be_nil
+        expect(body["model"]).to be_nil
+        expect(body["message"]["content"]).to eq("x")
+      end
+    end
   end
 
   describe "#complete on the streaming path" do
@@ -169,6 +251,20 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(shredded.content).to eq(one_shot.content)
       expect(shredded.stop_reason).to eq(one_shot.stop_reason)
       expect(shredded.usage).to eq(one_shot.usage)
+    end
+
+    # The wiring guarantee at the UNIT tier, so the inner loop covers it: the
+    # transport double abandons this round trip's attempt between the two
+    # chunks, exactly as faraday-retry does on a retry, and the first chunk's
+    # content must not survive into the Response. Deleting the `{ assembler.reset }`
+    # block from #stream_body turns this red without a socket.
+    it "discards what was fed before the transport abandoned the attempt" do
+      chunks = [ndjson([stream_lines.first]), ndjson(stream_lines)]
+
+      response = described_class.new(transport: stream_transport(chunks, abandon_after: 0))
+                                .complete(request(stream: true))
+
+      expect(response.text).to eq("Hello, café")
     end
 
     it "derives :tool_use from the streamed tool_call despite done_reason stop" do
@@ -340,6 +436,137 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect { provider.complete(request(stream: true)) }.to raise_error(
         Lain::Provider::Ollama::APIStatusError
       ) { |error| expect(error.message).not_to include("gone-away") }
+    end
+  end
+
+  # T10/F7b -- measured silent corruption of a content-addressed record, not an
+  # inferred one. #stream_body built its assembler OUTSIDE @transport.stream
+  # while faraday-retry lives INSIDE it, so a severed attempt's bytes stayed in
+  # the assembler and the retry appended to them: a completion came back `ok`,
+  # under a done_reason of "stop", carrying BOTH attempts' text spliced
+  # together. Nothing above the Provider could tell.
+  #
+  # This is reachable from exactly one instrument. WebMock hands a stubbed body
+  # over as ONE chunk and, on a connection severed mid-body, loses the bytes
+  # that did arrive inside its own read -- which is the limitation
+  # spec/lain/provider/ollama/streamed_failure_spec.rb:5-9 named years before
+  # anyone chased it, listing "the same handler being replayed by faraday-retry"
+  # as one of two shapes it cannot express. So these drive a real socket through
+  # T1's StreamingUpstream. An assertion here that passed under WebMock would
+  # not be testing this defect.
+  #
+  # NOT tagged :vcr, and never inside VCR.use_cassette: a replaying cassette
+  # makes NetworkAccess.permit_loopback inert and the refusal names neither the
+  # port nor the cassette.
+  #
+  # Ollama's NDJSON carries no `message_start`-equivalent for an assembler to
+  # re-sync on -- which is why the Anthropic path survives the simple case and
+  # this one does not -- so the discard has to be driven by the retry hook.
+  # {RetryTap::Attempt} is that hook, and the invariant it states is the one
+  # under test: a retried attempt must never share a frame with the one it
+  # replaced.
+  describe "a stream the transport retries", :seam do
+    # Immutable, so one instance refines per example without leaking.
+    let(:script) { StreamingUpstream.script }
+    let(:wire) { StreamingUpstream::Wire }
+
+    # The envelope must be shaped BEFORE construction (spec/support/zero_retry.rb):
+    # MiddlewareStack snapshots interval, factor and max when the transport is
+    # built, so pointing an already-built provider at the upstream would retry
+    # on the production schedule and blow the 30s watchdog.
+    def provider_for(upstream)
+      described_class.new(config: zero_retry_config.tap { |config| config.ollama_api_base = upstream.url })
+    end
+
+    # AC 1. The defect itself: attempt one lands two content fragments and dies
+    # on a hard RST (a RST does not destroy what is already in the client's
+    # receive queue -- measured 60/60 in the harness -- so those fragments
+    # really do reach the assembler), then the retry serves a complete stream.
+    # Only the retry's content may survive.
+    it "returns only the retry's content, never the abandoned attempt's" do
+      response = nil
+      connections = nil
+
+      StreamingUpstream.ndjson(
+        script.chunks(wire.ollama_content("PARTIAL-alpha"), wire.ollama_content("PARTIAL-beta")).sever,
+        script.chunks(wire.ollama_content("RETRY-one"), wire.ollama_done(text_response(""))).close
+      ) do |upstream|
+        response = provider_for(upstream).complete(request(stream: true))
+        # `upstream.requests`, never assert_requested: a bypassed request is
+        # invisible to WebMock's bookkeeping by design.
+        connections = upstream.requests.size
+      end
+
+      expect(connections).to eq(2)
+      expect(response.text).to eq("RETRY-one")
+      expect(response).to stop_with(:end_turn)
+    end
+
+    # The discard must not be offerable. `journaled_retries` wired the tap with
+    # `||=`, which was correct policy while the block carried only telemetry --
+    # and `ollama_spec.rb` already ships a config with its own `retry_block`, so
+    # the bypass was not hypothetical. Measured on this exact script before the
+    # composition fix: text came back "PARTIAL-alphaPARTIAL-betaRETRY-one" under
+    # `:end_turn` -- the entire F7b defect, reinstated by a documented seam. The
+    # caller's callback must still fire, or the fix is just a removal.
+    it "still discards the abandoned attempt when the config brings its own retry_block" do
+      response = nil
+      counted = []
+
+      StreamingUpstream.ndjson(
+        script.chunks(wire.ollama_content("PARTIAL-alpha"), wire.ollama_content("PARTIAL-beta")).sever,
+        script.chunks(wire.ollama_content("RETRY-one"), wire.ollama_done(text_response(""))).close
+      ) do |upstream|
+        config = zero_retry_config.tap { |settings| settings.ollama_api_base = upstream.url }
+        config.retry_block = ->(retry_count:, **) { counted << retry_count }
+        response = described_class.new(config:).complete(request(stream: true))
+      end
+
+      expect(response.text).to eq("RETRY-one")
+      expect(response).to stop_with(:end_turn)
+      expect(counted).to eq([0])
+    end
+
+    # AC 2. The control. A reset driven by the retry hook must be dead weight on
+    # the path that never retries -- if this went red, the fix would be
+    # discarding live bytes rather than abandoned ones.
+    it "leaves a stream that is never retried exactly as it was served" do
+      response = nil
+      connections = nil
+
+      StreamingUpstream.ndjson(
+        script.chunks(wire.ollama_content("ONLY-one"), wire.ollama_content("ONLY-two"),
+                      wire.ollama_done(text_response(""))).close
+      ) do |upstream|
+        response = provider_for(upstream).complete(request(stream: true))
+        connections = upstream.requests.size
+      end
+
+      expect(connections).to eq(1)
+      expect(response.text).to eq("ONLY-oneONLY-two")
+      expect(response).to stop_with(:end_turn)
+    end
+
+    # AC 3, and it asserts on the RAISE rather than on a reset, deliberately.
+    # `exhausted_retries_block` journals and does NOT abandon, so the last
+    # attempt's bytes are still in the assembler when the budget runs out; what
+    # makes them unreturnable is that #stream_body never reaches `result`. One
+    # script severs every connection -- the last one repeats forever once the
+    # queue drains, so "severs every attempt" is one script, not four.
+    it "raises rather than returning what the severed attempts accumulated" do
+      connections = nil
+
+      StreamingUpstream.ndjson(
+        script.chunks(wire.ollama_content("PARTIAL-alpha"), wire.ollama_content("PARTIAL-beta")).sever
+      ) do |upstream|
+        provider = provider_for(upstream)
+
+        expect { provider.complete(request(stream: true)) }
+          .to raise_error(Lain::Provider::Ollama::APIError)
+        connections = upstream.requests.size
+      end
+
+      expect(connections).to eq(4)
     end
   end
 end
