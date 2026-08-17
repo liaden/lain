@@ -81,6 +81,26 @@ has no env-var default for `ollama_api_base`; the base is a constructor argument
 (`Provider::Ollama.new(api_base:)`) or the `exe/lain --api-base` flag. The env var
 is a convenience for the specs, nothing more.
 
+## Serving performance
+
+The variables above configure *lain*; they say nothing about how fast the server answers.
+That is measured in `DEBUGGING_OLLAMA.md` (2026-08-14 entry) and it matters more than it
+looks, because **ollama's own defaults are wrong for this workload**:
+
+- **Send `"num_batch": 2048` with every request.** Ollama passes `-b 512` to llama-server,
+  overriding llama.cpp's own default of 2048. There is no server-side setting for it. On the
+  RX 7900 XTX this costs up to **3x decode and 8x prefill**, and the penalty is strongly
+  model-dependent (1.1x to 2.7x on decode across four models). Prefill is what a turn carrying
+  a large `tool_result` pays, so it is the number the harness feels.
+- **KV cache type trades context for speed.** `q8_0` gives ~64k usable context, `f16` ~32k —
+  but at 32k `f16` is 13% *faster*. Pick by the context the task needs, not by habit.
+- **Vulkan, not ROCm**, on this box: ~30% faster decode and it starts reliably, where ROCm
+  cannot bring some models up at all.
+
+`bin/bench-ollama-gpu` re-runs any of those measurements. Read the entry's
+"How these were measured" section first — the prompt cache fabricates prefill rates, and
+"offloaded N/N layers to GPU" does not mean the model is resident.
+
 ## Running the integration specs
 
 The `:ollama` specs (`spec/integration/provider/ollama_spec.rb`) are gated exactly
