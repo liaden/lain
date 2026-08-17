@@ -6,8 +6,9 @@ require "net/http"
 #
 # Mirrors spec/support/tags.rb's :api_integration idiom exactly: :ollama examples
 # hit a REAL Ollama server on localhost, so they are skipped unless LAIN_OLLAMA=1,
-# and they reach the network only through NetworkAccess.permit (which moves BOTH
-# the WebMock and the VCR switch -- see spec/support/network_access.rb). Unlike
+# and they reach the network only through ExampleNetwork (which takes
+# NetworkAccess.permit, moving BOTH the WebMock and the VCR switch -- see
+# spec/support/network_access.rb -- unless a cassette is in play). Unlike
 # :api_integration these cost no money, but they are still nondeterministic and need
 # a running server + a pulled model, so the default posture stays offline.
 #
@@ -57,18 +58,36 @@ module OllamaTestServer
   end
 end
 
+# What is ollama's own about a cassette-backed example: whether it probes for a
+# server first. The PERMISSION question is not ollama's -- :api_integration and
+# :live had the identical silent-cassette-drop bug, so it lives in one place, in
+# ExampleNetwork (spec/support/tags.rb), and this file is one of its callers.
+module OllamaTagPosture
+  # A cassette-backed example does not probe for a server. Replaying one needs
+  # none, so a probe would skip a perfectly good offline example; recording one
+  # does need a server, and a dead server must then fail LOUDLY -- a skipped
+  # recording writes no cassette and is indistinguishable from a successful one.
+  #
+  # The probe could not run here in any case: it is a real `GET /api/tags`, and
+  # by the time a `before` hook runs the cassette is already inserted, so the
+  # request would either be recorded into the cassette or raise against it.
+  def self.unreachable_reason(metadata)
+    OllamaTestServer.unreachable_reason unless ExampleNetwork.cassette_backed?(metadata)
+  end
+end
+
 RSpec.configure do |config|
   # :ollama examples reach localhost for their duration only, then isolation is
-  # restored even on raise -- same NetworkAccess.permit the :api_integration tag uses.
-  # The permit wraps the before(:each) hook too, so the reachability probe below
-  # runs with the network open.
+  # restored even on raise -- the same permission the :api_integration and :live
+  # tags take, through the same object, which is also what makes a cassette-backed
+  # :ollama example keep its cassette. See ExampleNetwork for what that cost.
   config.around(:each, :ollama) do |example|
-    NetworkAccess.permit { example.run }
+    ExampleNetwork.permit(example.metadata) { example.run }
   end
 
   # Skip-not-fail when the server is down or the model is absent (see above).
-  config.before(:each, :ollama) do
-    reason = OllamaTestServer.unreachable_reason
+  config.before(:each, :ollama) do |example|
+    reason = OllamaTagPosture.unreachable_reason(example.metadata)
     skip(reason) if reason
   end
 

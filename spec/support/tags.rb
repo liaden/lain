@@ -23,6 +23,46 @@
 #     LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec
 INTEGRATION_ENABLED = ENV["LAIN_INTEGRATION"] == "1" && !ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
+# Whether ONE example may take the blunt network permission -- which is a
+# different question once a CASSETTE is in play.
+#
+# Three tags reach for `NetworkAccess.permit`: :api_integration and :live here,
+# :ollama in ollama_tag.rb. All three register an `around`, all three are in
+# files that sort before vcr_configuration.rb in `Dir[]` order, and VCR 6.4.0
+# inserts a cassette from a `before(:each, :vcr)` -- NOT an `around`
+# (vcr/test_frameworks/rspec.rb:36). So for a cassette-backed example in any of
+# those tiers the permission ran FIRST, turned VCR off, and the later
+# `insert_cassette` was **silently ignored**: nothing raised, the example
+# passed, and the recording it was meant to make did not exist. Measured for
+# :api_integration + :vcr -- `current_cassette=nil, turned_on?=false`, green.
+#
+# (The same call from INSIDE an inserted cassette raises `CassetteInUseError`
+# and names it. `ignore_cassettes: true` does not mean "ignore the one already
+# in use"; it means "ignore one inserted while VCR is off". Only the hook
+# ordering above produces the silent version, which is why it survived.)
+#
+# This exists as an object rather than a rule because a rule three call sites
+# can each forget is not a fix -- and spec/lain/vcr_ollama_posture_spec.rb
+# asserts mechanically that nothing else under spec/support calls
+# `NetworkAccess.permit` directly.
+module ExampleNetwork
+  # Truthiness, not presence: RSpec's filters and VCR's own
+  # `when_tagged_with_vcr` both test `!!v`, so `vcr: false` is how an example
+  # says "no cassette here" and must still get its permission.
+  def self.cassette_backed?(metadata)
+    !!metadata[:vcr]
+  end
+
+  # A cassette-backed example takes NO permission. It does not need one: inside
+  # a recording cassette `VCR.real_http_connections_allowed?` is already true,
+  # and a replaying one wants no network at all.
+  def self.permit(metadata, &block)
+    return yield if cassette_backed?(metadata)
+
+    NetworkAccess.permit(&block)
+  end
+end
+
 RSpec.configure do |config|
   # Integration examples reach the real network for their duration only, then
   # isolation is restored even if the example raises. NetworkAccess.permit moves
@@ -30,7 +70,7 @@ RSpec.configure do |config|
   # once VCR has taken the hook, and that is exactly the trap NetworkAccess
   # exists to make un-re-breakable (see spec/support/network_access.rb).
   config.around(:each, :api_integration) do |example|
-    NetworkAccess.permit { example.run }
+    ExampleNetwork.permit(example.metadata) { example.run }
   end
 
   unless INTEGRATION_ENABLED
@@ -45,14 +85,24 @@ RSpec.configure do |config|
 
   # :vcr specs replay a committed cassette through VCR/webmock and are free and
   # offline BY DEFAULT -- no exclusion needed to run them; that is the whole
-  # appeal. The one thing that needs guarding is RECORDING: LAIN_RECORD=1
-  # flips vcr_configuration.rb's default from :none to :new_episodes, and
-  # recording without a real key would either fail against the API or, worse,
-  # commit a cassette holding a failed, keyless interaction. Refuse up front
-  # rather than silently doing that.
+  # appeal. The one thing that needs guarding is RECORDING: LAIN_RECORD flips
+  # vcr_configuration.rb's default from :none to :new_episodes, and recording
+  # without a real key would either fail against the API or, worse, commit a
+  # cassette holding a failed, keyless interaction. Refuse up front rather than
+  # silently doing that.
+  #
+  # The requirement is derived from the PROVIDER being recorded, not from the
+  # flag being set: a local ollama recording has no account behind it and no key
+  # to supply, and demanding one blocked a recording it could never help. Which
+  # providers need which credential is VcrRecording's to say, not this file's --
+  # this file only decides that a recording missing one must not start.
+  #
+  # Referenced inside the hook, never at load: support files load in `Dir[]`
+  # order and vcr_configuration.rb sorts AFTER this one, so the constant does
+  # not exist yet when this file is read. It does by the time a suite starts.
   config.before(:suite) do
-    recording_without_credentials = ENV["LAIN_RECORD"] == "1" && ENV["ANTHROPIC_API_KEY"].to_s.empty?
-    raise "LAIN_RECORD=1 requires ANTHROPIC_API_KEY to record real interactions." if recording_without_credentials
+    missing = VcrRecording.missing_credential
+    raise "LAIN_RECORD=#{VcrRecording.requested} requires #{missing} to record real interactions." if missing
   end
 end
 
@@ -198,7 +248,7 @@ end
 
 RSpec.configure do |config|
   config.around(:each, :live) do |example|
-    NetworkAccess.permit { example.run }
+    ExampleNetwork.permit(example.metadata) { example.run }
   end
 
   unless LIVE_ENABLED
