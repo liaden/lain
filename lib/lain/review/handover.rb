@@ -33,6 +33,35 @@ module Lain
     # `Gestures` rescues only NoMethodError -- so {#mark} folds the session's
     # refusals into the answer instead of letting them out.
     #
+    # == A gesture that changed a row draws that row again
+    #
+    # Both ACKED gestures change what a row SAYS -- a mark moves its marker, and
+    # an open is what makes a survey read the file a row names, which is what
+    # gives the row a hunk key to mark. The human's NEXT gesture is resolved
+    # against the rendering they are still looking at, so a gesture that changed
+    # a row and drew nothing left `<CR>` followed by a mark refusing the very row
+    # the `<CR>` had just made markable. {Redraw} is the collaborator that closes
+    # that, and it is injected because the SCOPE it needs is the one fact this
+    # rail cannot ask anybody for.
+    #
+    # KNOWN LIMITATION, and it is a RACE rather than a hole. The redraw is
+    # posted, not applied: it goes inlet -> wake pipe -> RPC thread -> nvim,
+    # measured at roughly 7-20ms at {Bounds::DEFAULT_MAX_FILES}. A mark carrying
+    # the PRE-OPEN stamp -- a human who pressed `x` inside that window -- is
+    # still refused, and refused with the same {Frontend::Neovim::ReviewView::UNREAD}
+    # sentence, over a file that has demonstrably been read. Keyboard autorepeat
+    # (~30ms) clears the window; a deliberate two-key roll may not; pressing `x`
+    # again always works, because by then the row has been redrawn.
+    #
+    # It is left OPEN deliberately. Closing it means letting the view answer a
+    # gesture from the live changeset rather than from the rendering it drew,
+    # which is exactly what `b45553e` bought its way out of -- and it cannot be
+    # done half way, because a held rendering's `Row` carries `read:` frozen at
+    # render time, so the view cannot tell "still unread" from "read since"
+    # without consulting the model. A better sentence for that case would need
+    # the same consultation. Recorded so the closure is not read as stronger
+    # than it is.
+    #
     # == What is NOT on this object, and why
     #
     # Neither the changeset nor the rendering. {Review::Session} is the
@@ -103,6 +132,90 @@ module Lain
         def self.ask(_anchor_id, _question) = Unasked
       end
 
+      # Nothing is drawing this review, so no row of it is on a screen and there
+      # is none to draw again. {Detached}'s reading one collaborator over: an
+      # `open` or a `mark` is something an EDITOR sends, so a review nothing
+      # renders receives neither, and this says so rather than leaving a nil
+      # check at both call sites.
+      module Undrawn
+        def self.present(_session) = nil
+      end
+
+      # The sidebar, drawn again because a gesture changed what one of its rows
+      # says.
+      #
+      # A row's marker moves when a mark lands, and a row nothing had read
+      # carries no hunk key until an open reads the file it names -- so a
+      # gesture that changes either leaves the human looking at a rendering that
+      # no longer describes the review, and their NEXT gesture is resolved
+      # against exactly that rendering ({Frontend::Neovim::ReviewView}'s stamp is
+      # what makes it so). Without this, `<CR>` then a mark refused the row the
+      # `<CR>` had just made markable.
+      #
+      # It holds the SCOPE and not the session, because the scope is the one
+      # thing this rail does not already have: {Review::Session#present} takes it
+      # and forgets it (that class's doc: which grouping is on screen is view
+      # state), so it comes from whoever DREW the round -- the same caller, on
+      # the same line of wiring, that built the handover.
+      #
+      # NOTHING HERE RAISES, and that is the gesture rail's law rather than this
+      # object's caution: {CLI::HumanReplies::Gestures} asks the gesture's own
+      # `#marked?`/`#opened?` and nothing else, so a re-presentation that failed
+      # must not turn a gesture that LANDED into one the human is told failed. A
+      # ceiling ({Bounds::TooLarge}) and a grouping this source cannot answer
+      # ({Session::UnsupportedScope}) are therefore caught and answered as the
+      # sentence they carry.
+      #
+      # BUT NOBODY READS THAT SENTENCE, and saying so is the point of this
+      # paragraph rather than an omission it is confessing. Both call sites in
+      # {Handover} discard it, because this rail has no channel for it: the only
+      # thing a gesture can say to a human is its own `#report`, and a redraw
+      # that failed did not change what the gesture did. So the value is
+      # DEFENCE -- it exists so a raise cannot reach the fiber -- and not a
+      # message. It is also unreachable today: `RenderInlet#set_review` is
+      # refusable, so a dead editor answers a String rather than raising, and
+      # {Session#widen} (the one thing that could move a bounded round past its
+      # ceiling mid-session) has no `lib/` caller. If a redraw failure ever has
+      # to reach a human, the route is the review's own notice rail
+      # (`Surface#refuse` -> `review_refused`), which means giving this object
+      # the surface; that is a change, not a tidy-up.
+      #
+      # IT IS O(CHANGESET), NOT O(ROW). {Session#present} rebuilds the whole
+      # rendering and its `keys_by_path` walks the whole changeset, so the cost
+      # a gesture now pays scales with the SURVEY rather than with the one row
+      # that changed. Measured under perception at {Bounds::DEFAULT_MAX_FILES}
+      # (a mark at 300 files goes 62.5ms -> 80.0ms, of which the pre-existing
+      # `keys_by_path` rebuild is 62.5); the lever if it ever stops being under
+      # perception is that memo, deliberately removed in `c988512f`, and not
+      # this redraw.
+      #
+      # THE SCOPE IS FROZEN AT WIRING TIME, which is correct while a round is
+      # drawn at one grouping for its whole life -- verified: nothing toggles
+      # scope from the editor, and a second `/review` or `/survey` opens a new
+      # round with a new handover. If a scope-toggle gesture ever ships, this is
+      # where it bites: the next gesture after the toggle would silently snap the
+      # sidebar back to the scope wired here.
+      class Redraw
+        # @param scope [Symbol, String] one of {Session::SCOPES}, resolved HERE
+        #   so a scope nobody declared refuses where it was wired rather than at
+        #   the human's first gesture, which is a long way from the typo
+        # @raise [Session::UnknownScope]
+        def initialize(scope:)
+          @scope = Session.scope!(scope)
+          freeze
+        end
+
+        # @param session [Review::Session] the round to draw again
+        # @return [String, nil] a refusal in words, or nothing -- DISCARDED by
+        #   both callers, per the class doc; the value is what makes the rescue
+        #   a value rather than a swallow, not a sentence anyone renders
+        def present(session)
+          session.present(scope: @scope)
+        rescue Lain::Error, ArgumentError => e
+          e.message
+        end
+      end
+
       # A mark that reached the session for some of a row's hunks and was
       # refused for the rest. {Surface::Neovim::PARTLY_MARKED}'s sentence and
       # its reason: "nothing happened" and "half of it happened" need different
@@ -119,11 +232,15 @@ module Lain
       # @param baton [#settle] what a verdict hands back, when anybody is
       #   holding one
       # @param docent [#ask] who answers a question about a hunk
-      def initialize(session:, view: Detached, baton: Unheld, docent: Unattended)
+      # @param redraw [#present] how the sidebar is drawn again once a gesture
+      #   has changed what one of its rows says ({Redraw}), which needs the
+      #   scope the round is being read at and so comes from whoever drew it
+      def initialize(session:, view: Detached, baton: Unheld, docent: Unattended, redraw: Undrawn)
         @session = session
         @view = view
         @baton = baton
         @docent = docent
+        @redraw = redraw
       end
 
       # @return [Review::Session] the aggregate this rail records against
@@ -185,10 +302,20 @@ module Lain
       # stamp is stale, when the row names no file, or when nothing is wired to
       # open one.
       #
+      # The sidebar is drawn again after one that opened, because opening a row
+      # is what makes a survey READ the file it names -- and a row nothing has
+      # read carries no hunk key, so the rendering the human keeps looking at
+      # would go on refusing the mark this gesture just made possible. Nothing
+      # is drawn again for a refusal, which changed no row.
+      #
       # @param line [Integer] 1-based, as nvim's cursor reports it
       # @param generation [Integer, nil] the stamp on the buffer it came from
       # @return [Frontend::Neovim::ReviewView::Opened]
-      def open(line, generation:) = @view.open(line, generation:)
+      def open(line, generation:)
+        opened = @view.open(line, generation:)
+        @redraw.present(@session) if opened.opened?
+        opened
+      end
 
       # The sidebar's mark gesture: which hunks did this row name, and set every
       # one of them. A row IS a file, and its marker already means the whole
@@ -201,13 +328,21 @@ module Lain
       # exception on a rail whose consumer rescues only NoMethodError. The fold
       # below is over raises for that reason.
       #
+      # The sidebar is drawn again for every gesture that REACHED the session,
+      # not only for one that landed whole: a row the session took half of has
+      # moved to partly marked, and a human told "nothing happened" over a
+      # sidebar still reading unreviewed has been told two untrue things rather
+      # than one. A gesture the view refused reached nothing and changed no row.
+      #
       # @param line [Integer] 1-based
       # @param state [String, Symbol] one of `Review::MARK_STATES`
       # @param generation [Integer, nil] the stamp on the buffer it came from
       # @return [Frontend::Neovim::ReviewView::Marked]
       def mark(line, state, generation:)
         resolved = @view.marks(line, generation:)
-        resolved.marked? ? recorded(resolved, state) : resolved
+        return resolved unless resolved.marked?
+
+        recorded(resolved, state).tap { @redraw.present(@session) }
       end
 
       # The docent question: `["review_ask", [anchor_id, question]]`, the one

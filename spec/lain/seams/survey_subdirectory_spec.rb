@@ -264,6 +264,88 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
     end
   end
 
+  # The stamp on the sidebar buffer is what the human's NEXT gesture carries, so
+  # a gesture that changed a row and drew nothing leaves every later gesture
+  # resolved against a rendering taken BEFORE the change -- which is how `<CR>`
+  # then a mark refused the row the `<CR>` had just made readable.
+  #
+  # Driven through {Lain::Review::Handover}, because that is the object the
+  # gesture rail actually reaches (`CLI::HumanReplies::Gestures` sends it
+  # `open`), and asserted against the EDITOR's own variable, because what this
+  # file is about is what nvim ends up holding rather than what was queued for
+  # it. It is therefore also the guard on the WIRING: a handover built without a
+  # redraw draws nothing here and this stays flat.
+  # THE CHUNK'S STATED GOAL, driven end to end: open a survey of a subdirectory
+  # and mark it reviewed. Every object between the keystroke and the buffer is
+  # the shipped one -- a real `/survey`, a real corpus, a real session, the real
+  # sidebar view and diff pair, and a real headless nvim -- and the gestures are
+  # sent to {Lain::Review::Handover}, which is what `CLI::HumanReplies::Gestures`
+  # reaches.
+  #
+  # NOTHING REDRAWS BETWEEN TWO GESTURES HERE. `#drain` is not a redraw: it
+  # delivers what the subject already queued, which is the reactor's own job, and
+  # every rendering after `surveyed` is one the subject asked for. Each gesture
+  # rides in with the stamp read back off nvim's own `b:lain_view_generation`,
+  # which is exactly what `46_sidebar.lua` sends.
+  describe "a row opened and then marked, as a human works one" do
+    # The row as the human is looking at it NOW, and the stamp their next
+    # gesture carries. Re-read before every gesture, because that is what a
+    # keystroke against a redrawn buffer actually does.
+    def marked_row(name)
+      drawn = sidebar
+      line = drawn.fetch("lines").index { |row| row.end_with?(name) }
+      raise "no sidebar row names #{name} in #{drawn.fetch("lines").inspect}" if line.nil?
+
+      [line + 1, drawn.fetch("generation")]
+    end
+
+    def gesture(name)
+      row, generation = marked_row(name)
+      yield(row, generation).tap { inlet.drain(@editor) }
+    end
+
+    # The card's own measurement: the stamp was UNCHANGED across an open, so
+    # every later gesture resolved against a rendering taken before the read.
+    it "draws the sidebar again after the open, so the next gesture sees what it changed" do
+      surveyed("lib")
+      before = sidebar.fetch("generation")
+
+      gesture("greeter.rb") { |row, generation| editor.bound.open(row, generation:) }
+
+      expect(sidebar.fetch("generation")).to be > before
+    end
+
+    it "accepts the mark that follows the open, with nothing redrawing in between" do
+      surveyed("lib")
+      gesture("greeter.rb") { |row, generation| editor.bound.open(row, generation:) }
+
+      marked = gesture("greeter.rb") { |row, generation| editor.bound.mark(row, "reviewed", generation:) }
+
+      expect(marked).to have_attributes(marked?: true, report: include("lib/greeter.rb"))
+    end
+
+    # The other half, in the editor rather than in a spec's own recorder: a mark
+    # that landed used to leave the row drawn `[ ]`, because nothing re-presented
+    # after one either.
+    it "shows the row reviewed in nvim's own buffer once the mark has landed" do
+      surveyed("lib")
+      gesture("greeter.rb") { |row, generation| editor.bound.open(row, generation:) }
+      gesture("greeter.rb") { |row, generation| editor.bound.mark(row, "reviewed", generation:) }
+
+      expect(sidebar.fetch("lines")).to eq(["[x] lib/greeter.rb"])
+    end
+
+    # And the round closes: the strictest verdict policy over a survey worked
+    # entirely with the two gestures a human has.
+    it "admits an approve verdict over the survey worked through the gestures alone" do
+      surveyed("lib")
+      gesture("greeter.rb") { |row, generation| editor.bound.open(row, generation:) }
+      gesture("greeter.rb") { |row, generation| editor.bound.mark(row, "reviewed", generation:) }
+
+      expect(editor.bound.wrote_verdict("approve")).to be_nil
+    end
+  end
+
   # The guard, and it is a REGRESSION guard rather than a formality: a survey of
   # the directory the chat is standing in worked before this card, and the
   # obvious wrong fix -- naming from the project root -- breaks it for every

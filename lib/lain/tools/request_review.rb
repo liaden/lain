@@ -646,10 +646,14 @@ module Lain
         # whoever opened one. Sent on the same line of reasoning as the bind
         # below -- before anything is drawn, because a row the human can see is a
         # row they can press.
+        # The redraw carries {SCOPE}, which is the same scope {#tell} presents at
+        # one line below: a gesture that changed a row has to draw the sidebar
+        # again, and which grouping is on screen is the one thing that rail
+        # cannot ask anybody for -- a session takes it and forgets it.
         def handover(session, token, written)
           view = @seams.view
           view.reviewing(session.changeset)
-          Review::Handover.new(session:, view:,
+          Review::Handover.new(session:, view:, redraw: Review::Handover::Redraw.new(scope: SCOPE),
                                baton: Baton::Held.new(review: @review, token:, written:))
         end
 

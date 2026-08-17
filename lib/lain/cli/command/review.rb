@@ -191,7 +191,7 @@ module Lain
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
-          wired(resolved, session, env)
+          wired(resolved, session, env, scope)
           drawn(resolved, session, scope)
         end
 
@@ -218,8 +218,8 @@ module Lain
         # held at all -- {Review::Submit::Outbox::Nowhere} is what turns that
         # into a refusal naming the branch, and a round that was never held
         # would answer "no changeset review is open" about one that plainly is.
-        def wired(resolved, session, env)
-          env.replies.bind_changeset_review(handover(session, env))
+        def wired(resolved, session, env, scope)
+          env.replies.bind_changeset_review(handover(session, env, scope))
           @outbox.hold(session:, number: resolved.number, label: resolved.label)
         end
 
@@ -247,10 +247,14 @@ module Lain
         # the bind's own reason -- both are wiring that must be complete before
         # the sidebar is drawn, because a human fast enough to press `<CR>`
         # between the two would otherwise be told this review opens nothing.
-        def handover(session, env)
+        # The SCOPE rides along for {Lain::Review::Handover::Redraw}: a gesture
+        # that changed a row has to draw the sidebar again, and which grouping is
+        # on screen is the one thing that rail cannot ask anybody for -- a session
+        # takes it and forgets it. This is the caller that chose it.
+        def handover(session, env, scope)
           view = env.replies.review_view
           view.reviewing(session.changeset)
-          Lain::Review::Handover.new(session:, view:)
+          Lain::Review::Handover.new(session:, view:, redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
         # A String answer is the surface's REFUSAL (`spec/support/shared_examples/

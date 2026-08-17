@@ -252,7 +252,7 @@ module Lain
           scope = Lain::Review::Session.scope!(parsed.scope || default_scope)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: classifier)
           session = round(walk, ceilings_for(parsed), surface, env)
-          bound(session, env)
+          bound(session, env, scope)
           drawn_and_held(walk, session, scope)
         end
 
@@ -315,7 +315,7 @@ module Lain
         def source_name = self.class.source_name
 
         # The gesture rails, complete before a human can touch the sidebar.
-        def bound(session, env) = env.replies.bind_changeset_review(handover(session, env))
+        def bound(session, env, scope) = env.replies.bind_changeset_review(handover(session, env, scope))
 
         # The round, where the rest of the chat can see it -- taken only once
         # something was drawn, per {#opened}.
@@ -331,10 +331,16 @@ module Lain
         # rule: a rendering stamp is only resolvable by the view that issued it,
         # so a gesture resolved against a second view is a silently wrong row
         # rather than an error.
-        def handover(session, env)
+        #
+        # The SCOPE rides along because a gesture that changed a row has to draw
+        # the sidebar again ({Lain::Review::Handover::Redraw}) and the grouping on
+        # screen is the one thing the gesture rail cannot ask anybody for: a
+        # session takes it and forgets it. This is the caller that chose it, on
+        # the same line of wiring as the bind.
+        def handover(session, env, scope)
           view = env.replies.review_view
           view.reviewing(session.changeset)
-          Lain::Review::Handover.new(session:, view:)
+          Lain::Review::Handover.new(session:, view:, redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
         def drawn(walk, session, scope)

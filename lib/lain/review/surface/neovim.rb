@@ -50,11 +50,15 @@ module Lain
       #
       # `mark` and `refuse` and `verdict` -> `review_refused`, the review's ONE
       # notice rail (`runtime/65_review.lua` echoes it into the message area).
-      # `refuse` is what that rail was built for. `mark` is there because the
-      # honest alternative -- redrawing the sidebar so the file's tri-state
-      # marker moves -- needs the CHANGESET, which is exactly the state this
-      # object must not hold; the rail says in words what the sidebar would
-      # have said in a glyph. `verdict` posts the ASK, because on an
+      # `refuse` is what that rail was built for. `mark` is there because
+      # redrawing the sidebar so the file's tri-state marker moves needs the
+      # CHANGESET, which is exactly the state this object must not hold. The
+      # redraw does now happen -- {Review::Handover::Redraw} makes it, from the
+      # gesture rail, which holds both the session and the scope -- so this
+      # notice is no longer the only thing that says a mark landed; it stays
+      # because it is the one that says so in WORDS, at the moment of the
+      # gesture, and it is what a mark reaching this surface from anywhere but
+      # that rail still has. `verdict` posts the ASK, because on an
       # interactive surface asking a human for a decision is a thing you do
       # rather than a thing you wait for.
       #

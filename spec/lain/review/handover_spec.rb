@@ -75,6 +75,33 @@ class RecordingSurveyInlet
   end
 end
 
+# {RecordingSurveyInlet} with the SIDEBAR rail as well, which is the rail a
+# re-presentation rides. One recorder rather than two, because in a live cockpit
+# there is one {Lain::Frontend::Neovim::RenderInlet}: the diff pair a `<CR>`
+# posts and the rows drawn after it go out of the same door, in that order, and
+# a fixture that split them could not show that.
+#
+# The sidebar rail is RECORDED rather than doubled because what the redraw
+# examples assert is that a second rendering was posted at all -- a `present`
+# recorded on a double of the surface would be the assertion standing in for its
+# own subject.
+class RecordingCockpitInlet < RecordingSurveyInlet
+  def initialize
+    super
+    @drawn = []
+  end
+
+  # @return [Array<Array(Array<String>, Integer)>] the lines of every rendering
+  #   posted and the stamp it was posted under, oldest first
+  attr_reader :drawn
+
+  def set_review(lines, generation) = (@drawn << [lines, generation]) && nil
+
+  def review_refused(_message) = nil
+
+  def set_thread(*) = nil
+end
+
 RSpec.describe Lain::Review::Handover do
   # `session_spec.rb`'s fixture, at the size this card needs: one file with two
   # hunks (so a row names more than one key and a partial mark is expressible)
@@ -433,6 +460,52 @@ RSpec.describe Lain::Review::Handover do
     end
   end
 
+  # The two redraw cases a SURVEY cannot express, which is why they are here over
+  # the diff rather than in the group below: a partial mark needs a row naming
+  # two hunks and a session that refuses the second, and a refused gesture needs
+  # a stamp the view can reject. Everything else about redrawing is asserted over
+  # the corpus, where the defect actually bit.
+  describe "the sidebar after a mark that did not land whole" do
+    let(:inlet) { RecordingCockpitInlet.new }
+    let(:view) { Lain::Frontend::Neovim::ReviewView.new }
+    let(:surface) { Lain::Review::Surface::Neovim.new(rpc: inlet, view:) }
+    let(:redraw) { described_class::Redraw.new(scope: :cumulative) }
+
+    def rows = inlet.drawn.last.first
+
+    def stamped = inlet.drawn.last.last
+
+    # The row HAS moved -- to partly marked -- so a human told "nothing
+    # happened" over a sidebar still reading unreviewed has been told two untrue
+    # things rather than one. The redraw is conditioned on the gesture REACHING
+    # the session, not on it landing whole.
+    it "draws the row again for a row the session took only half of" do
+      half = StubReviewView.new(
+        marked: Lain::Frontend::Neovim::ReviewView::Marked.new(
+          hunk_keys: [keys_for("a.rb").first, "not-a-key-this-changeset-produces"].freeze, report: "a.rb"
+        )
+      )
+      session.present(scope: :cumulative)
+
+      handover(view: half, redraw:).mark(1, "reviewed", generation: stamped)
+
+      expect(rows).to include("[~] a.rb")
+    end
+
+    # The counter-example: a gesture the view refused reached nothing and
+    # changed no row, so drawing again would be a rendering nothing asked for --
+    # and every stamp the human holds would age out of {ReviewView::HELD} that
+    # much faster.
+    it "draws nothing again for a gesture that never reached the session" do
+      session.present(scope: :cumulative)
+      drawn = inlet.drawn.size
+
+      handover(view:, redraw:).mark(1, "reviewed", generation: 99)
+
+      expect(inlet.drawn.size).to eq(drawn)
+    end
+  end
+
   # THE CARD'S ACCEPTANCE TEST, and it needs a SURVEY. Every group above opens
   # with `source: "local_branch"`, where a file is chunked the moment the parser
   # produces it, so `#chunked?` is true before any gesture and none of them can
@@ -449,28 +522,30 @@ RSpec.describe Lain::Review::Handover do
   # `chunker:` seam counts at the chunker's own `#call`, so what is asserted is
   # work that happened rather than a flag a subject set about itself.
   #
-  # == THE REDRAW BETWEEN THE GESTURES HAS NO PRODUCTION CALLER
-  #
-  # Read this before reading the examples as a claim that the cockpit works,
-  # because they are green over a sequence the cockpit cannot currently execute.
+  # == WHY THE HELPERS BELOW REDRAW, AND WHY THE NESTED GROUP DOES NOT
   #
   # A row's `hunk_keys` are cut at RENDER time and carried
   # ({Frontend::Neovim::ReviewView}'s own doc says why they are not re-derived),
   # so a rendering drawn before the file was read names no key however read the
-  # file now is. Every helper below therefore redraws before each gesture -- and
-  # NOTHING IN `lib/` DOES THAT. `CLI::HumanReplies::Gestures#open_hunk` and
-  # `#mark_hunk` forward and return; `Surface::Neovim#mark` posts a notice;
-  # `46_sidebar.lua` changes the sidebar only through `set_review`. `present` is
-  # called once, when the round opens.
+  # file now is. Every helper in THIS group therefore redraws before each
+  # gesture, and that is scaffolding rather than a claim: what these examples
+  # prove is the READ REGISTRATION, and the redraw is there so the read is
+  # observable through a mark.
   #
-  # So in a live editor today: `<CR>` reads the file (which is what this card
-  # fixed and what these examples pin), and the `x` after it still resolves
-  # against the pre-open rendering and still answers {ReviewView::UNREAD} -- and
-  # a mark that DOES land still leaves the row drawn `[ ]`, because nothing
-  # re-presents after a mark either. One `present` after each gesture closes the
-  # whole loop, verdict included; it is a filed follow-up card, and every file
-  # that could do it is outside T15's scope. What is proven here is the read
-  # registration, not the cockpit round trip.
+  # When they were written, nothing in `lib/` redrew -- `present` was called once,
+  # when the round opened -- so `<CR>` read the file and the `x` after it still
+  # answered {ReviewView::UNREAD}, and a mark that DID land still left the row
+  # drawn `[ ]`. **That is no longer true.** {Lain::Review::Handover} now
+  # re-presents after both gestures ({Lain::Review::Handover::Redraw}, wired from
+  # the three callers that open a round), and the nested group at the bottom of
+  # this file is the same survey with the scaffolding REMOVED: it presents once
+  # and lets the subject draw everything after that. The cockpit round trip is
+  # proven there, and end to end against a real editor in
+  # `spec/lain/seams/survey_subdirectory_spec.rb`.
+  #
+  # The history is kept because it is the reason the two groups are shaped
+  # differently, and because a reader who finds a redraw-per-gesture helper
+  # should know it is deliberate rather than the code under test.
   describe "a survey opened over a directory", :seam do
     let(:chunked) { [] }
     let(:inlet) { RecordingSurveyInlet.new }
@@ -640,6 +715,116 @@ RSpec.describe Lain::Review::Handover do
     it "draws the whole survey having read nothing, before any gesture" do
       expect(drawn.lines).to eq(["[ ] alpha.md", "[ ] beta.md"])
       expect(chunked).to be_empty
+    end
+
+    # THE SAME SURVEY, WORKED THE WAY THE COCKPIT WORKS IT -- which is the
+    # sequence the group's note above says nothing in `lib/` could execute.
+    # Every helper up to here redraws before each gesture, and an editor does
+    # not: it draws when the round opens and then waits. So the round is
+    # presented ONCE here, at the top of each example, and every rendering after
+    # that line is one the SUBJECT asked for. An example that redraws between
+    # two gestures is green against a handover that redraws nothing, which is
+    # exactly why this gap survived the gesture rail's own specs.
+    #
+    # The session's surface is the real {Lain::Review::Surface::Neovim} over the
+    # same view and the same inlet the diff pair posts to, so the rows a
+    # re-presentation produces are read back off the EDITOR's rail rather than
+    # asked of the view a second time -- and the stamp each gesture rides in
+    # with is the one the human's buffer would now be carrying.
+    context "when nothing redraws between the gestures" do
+      let(:inlet) { RecordingCockpitInlet.new }
+      let(:surface) { Lain::Review::Surface::Neovim.new(rpc: inlet, view: survey_view) }
+      let(:redraw) { described_class::Redraw.new(scope: :cumulative) }
+      let(:gestures) { described_class.new(session: survey_session, view: survey_view, baton:, redraw:) }
+
+      # The round as its command opens it, and the last line in any example that
+      # presents anything.
+      def opened_round = survey_session.present(scope: :cumulative)
+
+      # What the editor is holding NOW: the rows on screen, and the stamp the
+      # human's next gesture rides in with.
+      def rows = inlet.drawn.last.first
+
+      def stamped = inlet.drawn.last.last
+
+      def line_of(path) = rows.index { |line| line.include?(path) } + 1
+
+      def worked_through
+        surveyed.each do |path|
+          gestures.open(line_of(path), generation: stamped)
+          gestures.mark(line_of(path), "reviewed", generation: stamped)
+        end
+      end
+
+      it "makes a row markable from the open gesture alone" do
+        opened_round
+        gestures.open(line_of("alpha.md"), generation: stamped)
+
+        marked = gestures.mark(line_of("alpha.md"), "reviewed", generation: stamped)
+
+        expect(marked).to have_attributes(marked?: true, report: include("alpha.md"))
+      end
+
+      # The other half, and its own defect: a mark that LANDED still left the
+      # row drawn `[ ]`, because nothing re-presented after one either.
+      it "draws the row again with the marker the mark set" do
+        opened_round
+        gestures.open(line_of("alpha.md"), generation: stamped)
+        gestures.mark(line_of("alpha.md"), "reviewed", generation: stamped)
+
+        expect(rows).to eq(["[x] alpha.md", "[ ] beta.md"])
+      end
+
+      it "admits an approve over a survey worked entirely through the gestures" do
+        opened_round
+        worked_through
+
+        expect(gestures.wrote_verdict("approve")).to be_nil
+        expect(records_of("review_verdict").map { |record| record["verdict"] }).to eq(["approve"])
+      end
+
+      # A REDRAW MUST NOT BECOME A READ. `b45553e` made drawing a survey free
+      # and this card draws on every gesture, which is the shape that would undo
+      # it by volume rather than by design. Asserted on the chunker's own log:
+      # the gesture read one file and the rendering that followed read nothing.
+      it "draws again without reading a file no gesture has opened" do
+        opened_round
+        gestures.open(line_of("alpha.md"), generation: stamped)
+
+        expect(chunked).to eq(["alpha.md"])
+      end
+
+      it "chunks each file exactly once across the whole round, redraws and approve included" do
+        opened_round
+        worked_through
+        gestures.wrote_verdict("approve")
+
+        expect(chunked.tally).to eq(surveyed.to_h { |path| [path, 1] })
+      end
+
+      # The gesture rail's law, and why {Redraw} answers rather than raises:
+      # {Lain::CLI::HumanReplies::Gestures} reads the gesture's own outcome and
+      # nothing else, so a re-presentation that refused must not turn a gesture
+      # that LANDED into one the human is told failed.
+      it "answers a grouping this round cannot be drawn at in words, never by raising" do
+        opened_round
+
+        refused = described_class::Redraw.new(scope: :commits).present(survey_session)
+
+        expect(refused).to include("commits").and include("corpus")
+      end
+
+      it "refuses a scope nobody declared where it is WIRED, not at the first gesture" do
+        expect { described_class::Redraw.new(scope: :sideways) }
+          .to raise_error(Lain::Review::Session::UnknownScope, /sideways/)
+      end
+
+      # {Undrawn}'s claim, mechanically: a review nothing is drawing draws
+      # nothing, rather than a nil check at the two call sites.
+      it "draws nothing at all when nothing is drawing this review" do
+        expect(described_class::Undrawn.present(survey_session)).to be_nil
+        expect(inlet.drawn).to be_empty
+      end
     end
   end
 
