@@ -10,12 +10,35 @@ cost real debugging to reach.
 
 ## Toolchain
 
-The shell's default `ruby` is the wrong one (system 3.2.3). This project needs 4.0.6:
+The shell's default `ruby` is the wrong one. This project needs 4.0.6, and it comes from **mise**.
+`.envrc` already exports the lot, so an interactive shell that has `cd`'d into the repo needs
+nothing — direnv activates on entry and restores the previous environment on exit. Non-interactive
+callers (agents, scripts, anything not sourcing the shell rc) either prefix with `direnv exec .` or
+export it themselves:
 
 ```bash
-export PATH="$HOME/.rubies/ruby-4.0.6/bin:$PATH"
+eval "$(mise env -s bash ruby@4.0.6)"
 export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib   # see "OpenSSL" below
+export TMPDIR="$HOME/tmp/lain"                          # see "TMPDIR" below
 ```
+
+**Do NOT use `~/.rubies/ruby-4.0.6`.** It was built against a home-directory prefix that no longer
+exists, so its compiled-in `$LOAD_PATH` is dead and every gem binstub shebang points at nothing:
+`bundle` cannot start, and `rake pspec` cannot spawn a worker. Three separate agents lost hours to
+this in one chunk, and — the part worth recording — **the obvious workaround is worse than the
+breakage**. Forcing it up with `RUBYLIB` puts the stdlib *ahead* of the gems, which shadows the real
+`cgi` gem with Ruby 4.0's stripped one and fails the vendored-SDK specs on `CGI.parse`. Two agents
+then reported that as a Ruby 4.0 incompatibility and a third as a locked-gem problem. It was none of
+those; it was the workaround. If the suite shows failures you did not cause, **check the interpreter
+before believing them**.
+
+**TMPDIR must be on the same filesystem as the repo.** `review/deletability_spec.rb` copies a
+fixture tree with `cp -al`, and a hard link cannot cross a device. The default `/tmp` is tmpfs here
+while `$HOME` is ext4, so all seven of its `BootWithout` examples fail in fixture setup with a bare
+`Command failed with exit 1: cp` — which reads like a defect and is not one.
+
+**`rake compile` needs `clang`** (bindgen wants `libclang`). Switching interpreters invalidates
+`rb-sys`'s build fingerprint and forces a rebuild, which is usually when its absence surfaces.
 
 **4.0.6 is a floor, not a preference.** 4.0.5 crashes the VM intermittently under
 `rake pspec` — [Bug #22072](https://bugs.ruby-lang.org/issues/22072), `[BUG] should have cvar

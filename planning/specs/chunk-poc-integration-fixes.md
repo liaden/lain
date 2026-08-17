@@ -1343,9 +1343,21 @@ re-derived:
   root (`detected_by: :lain_dir`), failing 3 `project/resolver_spec` examples. Moved to
   `~/.lain.bak`. Worth noting on its own: it means any `lain` run from a non-project directory under
   `$HOME` would have inferred the whole home as the project root.
-- **Known flaky under parallel load**, green 3/3 in isolation — recorded by NAME per CLAUDE.md:
-  `Lain::Frontend::Neovim the review thread pane following the cursor does not re-place the diff on
-  every further move once it is back`.
+- **Three real-resource specs are flaky under heavy external load**, each green on repeat in
+  isolation. Recorded by NAME, never by line number, per CLAUDE.md — the four first recorded as
+  `cli/up_spec.rb:115` drifted within days:
+  - `Lain::Frontend::Neovim the review thread pane following the cursor does not re-place the diff
+    on every further move once it is back`
+  - `Lain::Frontend::Neovim user mappings are respected re-attach is idempotent: no duplicate
+    commands, and motions/syntax still work`
+  - `Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim
+    pane and a chat pane sharing one socket and one cwd`
+
+  These drive real `nvim`/`tmux`, so they are timing-sensitive rather than order-sensitive. The
+  trigger is **load, not concurrency within the suite**: at load ~28 with 3G available (several
+  agents running their own suites) the tmux one failed two commits in a row while passing 2/2
+  isolated. The practical rule for an orchestrator landing commits in parallel with agent work is to
+  land in a quiet window, because `pre-commit` runs the whole suite and one flake fails the commit.
 
 The findings below were the diagnosis, and are kept because two of them were wrong turns worth not
 repeating:
@@ -1375,7 +1387,119 @@ working tree is clean of the current one entirely. The pre-existing home-path re
 in tracked files are all in published history (`main == origin/main`, 0 unpushed) and are
 explicitly **out of scope**.
 
-**Open escalation from T8** — the `arm_sweep` linear-arms tie has broken: grade rows still tie, but
+**Landed so far:** T3 (`resume: name the session when a fork dangles`).
+
+**Follow-ups the panels surfaced — each wants its own card, none in scope here:**
+
+1. **`Resume#rebuild` has T3's gap.** The plain `--resume` path (`cli/resume.rb:136-152`) still rescues
+   only `Corrupt`/`CorruptFrame`, so a dangling causal edge on an ordinary resume still leaks a raw
+   `Store::MissingObject`. T3 fixed `--fork` only, which is what its card scoped.
+2. **SIGINT at a `human>` prompt raised outside `respond` is uncovered.** `Conductor#supervise` routes
+   signals only around `respond`'s ask; T1 makes that state reachable for the first time.
+3. **The arms grader scores a file nobody wrote.** A task whose gold is `contains:` + `excludes:` has
+   its `excludes` half pass vacuously against `content_at` returning `""`, so an empty trajectory
+   scores **0.500** on `fix-off-by-one-loop` and the suite floor is 0.0625, not 0. Same family of
+   defect as the vacuous assertions this chunk prunes, but in the measurement instrument.
+4. **`ARCHITECTURE.md:249-252`** claims `Provider::Ollama` is wired unconditionally; already falsified
+   on main by `--summarizer-provider`, and T12 makes the paragraph wronger.
+5. **`Actor`'s settle note (`actor.rb:216`)** is the same class of dangle T2 fixes, outside T2's card.
+6. **No guard on summarizer flag help text** — `exe/lain:709` was free to assert the opposite of the
+   code; only a human reading the card caught it. *(Closed by T12, which added the guard.)*
+7. **`capability_degraded` reaches the live view and nothing renders it.** `Chronicle#record_journal`
+   resolves to the tee under `--journal`/`--nvim`, and the record is the first event on the live nvim
+   Channel — but `grep CapabilityDegraded lib/lain/frontend/**` matches zero files. The run that
+   silently lost `prompt_caching` still tells the operator nothing at the moment they could act,
+   which is what the record type's own docstring ("the degradation is made LOUD here") exists to
+   prevent.
+8. **DualLedger needs a progress detector that can say *complete*.** `DEFAULT_PROGRESS` reads only
+   `response.text`, so a model that has finished and repeats itself and one that is stuck repeating a
+   non-answer hand it byte-identical input. Separating them is the `progress:` seam. Pair it with a
+   `Measurement`/report column for the terminal state, so the disclosure is data-backed rather than
+   prose — `ArmSweep#measure_dual_ledger` still counts only `event == :replan`.
+9. **`UndecodableAnswer` survives structured output, and `--summarizer-max-tokens` is inert on the
+   ollama path.** `format` constrains shape, not length, so a reply cut at the token ceiling is a
+   prefix of grammar-valid JSON and `JsonDecoder` never inspects `stop_reason` — the message blames
+   the model for a ceiling. Separately, `Ollama::Encoding#encode` never puts `num_predict` on the
+   wire, so the flag is silently dead on exactly the path T6 fixes.
+10. **`:structured_output` names two incompatible contracts** — grammar-constrained decoding on
+    ollama, tool-*forcing* on `AnthropicReference` — so `supports?` answers a different question than
+    the caller asks. Wants the marker to become a value object that cannot be half-built.
+11. **`ARCHITECTURE.md`'s absolute counts are stale at HEAD by ~21** (re-derived 74/37 against a
+    documented 53/34), independent of this chunk. Wants a doc audit, not a silent rewrite.
+
+12. **SIGINT at a `human>` prompt raised outside `respond` is uncovered** — `Conductor#supervise`
+    routes signals only around `respond`'s ask, and T1 makes that state reachable for the first time.
+    (Recorded here rather than in an untracked hand-back, which is where it kept living.)
+13. **`Command::Survey` is parked at 110/110 `Metrics/ClassLength`** by joining a line. The binding
+    rule was honoured, but the class did not get simpler and the cop's real signal — an object is
+    missing — now sits at the ceiling, where the next line to land trips it again.
+    `parse`/`opened`/`round`/`drawn`/`held`/`refuse_second_surface!`/`classifier` is more than one
+    responsibility.
+14. **New agent worktrees fork a stale base, not current `main`.** Observed 2026-08-17: T16 and T5
+    were created at the pre-chunk commit, so T5's tree lacked the dependency its card was written
+    against and T16's lacked the guard whose report it consumes — `spec/spec_discipline_spec.rb` did
+    not exist in it at all. Both were fast-forwarded by hand. **An orchestrator must fast-forward
+    each new worktree at spawn and tell the agent to re-measure its baseline count**, or a
+    dependent card silently works against the tree its dependency was supposed to change.
+
+**Migration note owed to a reader of recorded runs (T13):** once `capability_degraded` is emitted, a
+pre-change and post-change ollama run refuse to compare — `cannot compare runs with differing
+degraded sets: [] vs [:prompt_caching]`. The refusal is *correct*: both runs were degraded, only one
+said so. But the message sends a reader hunting an arm difference, so read it as "this recording
+predates capability recording". No committed fixture is affected.
+
+**Review round 1 outcomes** (panel: Torvalds/Evans/Metz/Schneeman/Patterson, depth by risk):
+
+- **T3 — APPROVE**, landed. Panel reproduced red and green independently and traced every path that
+  can reach the widened rescue to confirm it is not over-broad.
+- **T1 — REQUEST-CHANGES**, two BLOCKERs, each a measured pre/post delta. (1) `/inbox` is a registered
+  command so it now runs *inside* `LineScope`, racing `answer_loop` against `drain_at_prompt` on one
+  stdin — peak concurrent reply reads 1 → 2, and the second answer routed to the **wrong digest**.
+  (2) A question arriving during any short command line (`/help`, `/status`) is dequeued, rendered,
+  then destroyed by `serve_question`'s unconditional ensure — off `@questions` *and* `@inbox`, asker
+  parked forever, no error. The underlying ensure is pre-existing; this card newly exposes every
+  command line to it while breaking the recovery path. **Design calls made by the orchestrator:** a
+  line that is itself a reply surface must never have a second surface opened around it; and an item
+  may leave the queues only when answered (re-enqueue, never retire). `human_replies.rb` authorised.
+- **T4 — APPROVE-WITH-FIXES.** AC2 probed across nine catalog-miss shapes, zero model calls in every
+  case. `SystemStackError` escapes both rescues (a recursive `suitable?` is the DSL's likeliest
+  failure) and a non-terminating predicate blocks the tool path ~0.64s per result with no timeout —
+  both newly reachable on *every* tool result rather than only above 4096 bytes. The
+  `tool_runner_spec.rb` scope expansion was adjudicated **necessary and correct**.
+- **T9 — APPROVE-WITH-FIXES.** The upstream claim was verified at ollama source, including that the
+  `numParallel` multiplication never reaches the recorded `contextLength`, so the 8× over-estimate is
+  genuinely closed. Malformed `/api/ps` bodies raise instead of answering nil; the anti-`/api/show`
+  trap asserts nothing (an unused WebMock stub fails nothing); `Integer(..., exception: false)` reads
+  `"0x40000"` as 262144, which is the forbidden direction.
+- **T12 — APPROVE-WITH-FIXES**, no blockers. Both cost guards verified untouched and no false "same
+  provider" is constructible across 25 probed shapes. But a mutant of the one judgment call leaves
+  the **whole suite green** — nine lines of prose defending an untested claim.
+- **T7 — REQUEST-CHANGES**, one BLOCKER: the new default prompt's worked example is `lib/widget.rb` /
+  `def normalize`, which **is the gold for the suite's first task**. An arm echoing the format and
+  doing no work scores 0.500 on it; suite contamination +0.0625. Replaced the bug "arms score 0
+  because nobody told them the rules" with "arms score ≥0.0625 because the rules contain an answer".
+- **T18 — REQUEST-CHANGES**, two BLOCKERs. (1) Precision against the card's intent is **~12%**: most
+  of the 128 are the accepts-half of accept/refuse pairs against `check!`/`admit!`/`ensure_open!`
+  methods, which fail loudly on regression — and the report reads as a delete queue with no warning,
+  so T16 would have deleted good tests while staying green. (2) It shipped `be_between(63, 254)` and
+  `not_to be_empty`, i.e. a ratchet *and* an anti-ratchet, in direct violation of report-only — and
+  it **fails when T16 succeeds**. T16's "allowlisted" AC branch is redefined as "documented in the
+  hand-back with a reason", since T18 correctly refused to build an allowlist.
+
+- **T8 — REQUEST-CHANGES**, two BLOCKERs, both reproduced by probe rather than read off the
+  hand-back. (1) The sweep report's tie disclosure is now false; **scope expansion AUTHORISED** to
+  `lib/lain/bench/arm_sweep/report.rb` + `spec/lain/bench/arm_sweep_spec.rb` (no other card owns
+  either), with the tie to be pinned numerically so prose and data cannot drift again. (2)
+  `settled? = recovering && stalls.positive?` means a healthy run cannot terminate without being
+  journaled as stalled, so the replans metric degenerates to a termination flag — to be fixed via
+  `Agent::LoopMachine`'s wired-but-never-fired `event(:end_turn) { transition awaiting_model: :done }`.
+  Plus: validate `stall_limit >= 2`, guard the load-bearing `K + 2 <= max_steps` relation, correct
+  an elapsed-pin comment that claims more than it pins.
+- **Routed T8 → T7:** `bench/cli.rb:138-139`'s live-cost warning says the dual-ledger arm asks "up
+  to" `DEFAULT_MAX_STEPS` times; post-change it asks ~5 on essentially every task, so the worst case
+  is now the typical case. `bench/cli.rb` is T7's file, so the fix lands with T7.
+
+**Original escalation from T8** — the `arm_sweep` linear-arms tie has broken: grade rows still tie, but
 dual-ledger tokens go 998 → 4990 and replans 0 → 8 over `recordings.yml`, so the report's NOTE that
 the difference is "visible only in the replans/stalls metric" is now false. `arm_sweep_spec:117-121`
 still passes because it asserts static prose, which is why it missed this. Needs an orchestrator
