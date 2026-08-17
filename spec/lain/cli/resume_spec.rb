@@ -711,6 +711,27 @@ RSpec.describe Lain::CLI::Resume do
       expect { resume.fork(selector: "20260101@#{prefix_for(three.to_a[0].digest)}") }
         .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
+
+    # T3: defence in depth alongside T2's turn-record translation. A `message`
+    # record's causal edge is deliberately left untranslated by MessageReplay
+    # (its own class comment: that is the Store's own job, not a Corrupt this
+    # class manufactures) -- so a session whose message record cites a digest
+    # that was never journaled (a crash mid-write, say) reaches the fold as a
+    # bare Store::MissingObject. It must still refuse namedly rather than let
+    # the raw store message -- with no file attached -- escape to the exe.
+    it "refuses a fork over a message record citing a digest never journaled" do
+      payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
+      dangling_digest = "blake3:#{"a" * 64}"
+      cited = Lain::Event.new(kind: :message, carried_payload: payload, from: "human", to: "agent",
+                              causal_parents: [dangling_digest])
+      write_closed("20260101T000000-1.ndjson", three,
+                   extra: [Lain::Telemetry::Message.from_event(cited).to_journal])
+
+      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}") }
+        .to raise_error(described_class::Refusal) do |error|
+          expect(error.message).to include("20260101T000000-1.ndjson", dangling_digest)
+        end
+    end
   end
 
   describe "the model-mismatch notice (LOUD, then continue with the flags)" do

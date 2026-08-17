@@ -104,7 +104,13 @@ module Lain
         forked = recording.timeline.checkout(point.digest)
         refuse_mid_tool!(point.path, forked)
         fork_result(point, recording, forked, model, provider)
-      rescue Bench::Session::Corrupt => e
+      # A message record's causal edge is deliberately the Store's own job to
+      # enforce, not a Corrupt {MessageReplay} manufactures (its class
+      # comment) -- so a session truncated mid-write can still cite a digest
+      # that never landed, and it reaches here as a bare MissingObject
+      # alongside a bad turn's Corrupt. Both name through the same formatter
+      # rather than either escaping raw with no file attached.
+      rescue Bench::Session::Corrupt, Store::MissingObject => e
         raise fork_refusal(point, e.message)
       rescue Errno::ENOENT
         # The TOCTOU between ForkPoint's read and this load (probe 5d): a
