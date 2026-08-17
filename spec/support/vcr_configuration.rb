@@ -252,6 +252,35 @@ VCR.configure do |config|
   # VcrCassetteStack.
   config.before_playback { |interaction, cassette| VcrCassetteStack.note(cassette, interaction.request.uri) }
 
+  # A local PATH must not be recordable, rather than merely detectable after the
+  # fact. `/api/show`'s `modelfile` quotes an absolute path into the recording
+  # box's model blob store, and a cassette is committed forever.
+  #
+  # The grep guard in spec/lain/provider/ollama_recorded_spec.rb is the backstop,
+  # not the gate, and the difference matters: a recording pass driven one group
+  # at a time (`-e`, which is how an ollama cassette has to be recorded -- see
+  # that file's header) filters the guard group out entirely, and
+  # `config.order = :random` otherwise decides whether it reads pre- or
+  # post-recording bytes. This hook runs on the write.
+  #
+  # `filter_sensitive_data` cannot do this job: it substitutes ONE literal string
+  # per declaration (`filter!` -> `gsub!` on a fixed String), and the path
+  # differs per box and may appear more than once in a body. So the substitution
+  # is a regexp, owned by {CassetteHygiene} alongside the shape the guard looks
+  # for -- one definition, so the gate and the backstop cannot disagree.
+  #
+  # Both SIDES get their Content-Length corrected. VCR ships
+  # `update_content_length_header` on Response only, so the request half is
+  # {CassetteHygiene.correct_content_length}; both edit the header solely when it
+  # is already present, so this is a no-op for ollama's chunked responses and
+  # correct for anything that does send a length.
+  config.before_record do |interaction|
+    interaction.request.body = CassetteHygiene.redact(interaction.request.body)
+    CassetteHygiene.correct_content_length(interaction.request.headers, interaction.request.body)
+    interaction.response.body = CassetteHygiene.redact(interaction.response.body)
+    interaction.response.update_content_length_header
+  end
+
   # Copied from RubyLLM's filter list, which is thorough.
   config.filter_sensitive_data("<ANTHROPIC_API_KEY>") { ENV.fetch("ANTHROPIC_API_KEY", nil) }
 
