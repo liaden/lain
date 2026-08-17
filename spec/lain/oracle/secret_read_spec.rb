@@ -200,7 +200,14 @@ RSpec.describe Lain::Oracle::SecretRead do
     end
     let(:journal) { [] }
 
-    before { allow(Lain::Provider::Ollama).to receive(:new).and_return(instance_double(Lain::Provider::Ollama, complete: response)) }
+    # A real Provider::Mock carrying ollama's OWN capability set, rather than a
+    # double stubbed to say yes to everything: Oracle::Model asks #supports?
+    # before it builds a request, and ollama declares three of the nine.
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [response], capabilities: Lain::Provider::Ollama::CAPABILITIES)
+    end
+
+    before { allow(Lain::Provider::Ollama).to receive(:new).and_return(provider) }
 
     it "records the verdict, the model that gave it and the wall clock it took" do
       described_class.tier(journal:).ask(**inputs).await

@@ -30,7 +30,8 @@ module Lain
       #   and validates the decoded reply back into answer attributes -- both ends
       #   of the round trip, so this tier owns neither the prompt nor the schema
       # @param provider [Provider] the one round trip #ask spends; synchronous, so
-      #   the Promise it returns is already resolved
+      #   the Promise it returns is already resolved. Also asked whether it
+      #   supports `:structured_output` -- see #structured_answer_format
       # @param model [String] which model answers, and the identity a journaling
       #   wrapper records off {#model}
       # @param max_tokens [Integer] the reply ceiling on every Request built here
@@ -61,8 +62,26 @@ module Lain
       private
 
       def request_for(inputs)
-        Request.new(model: @model, max_tokens: @max_tokens,
+        Request.new(model: @model, max_tokens: @max_tokens, extra: structured_answer_format,
                     messages: [{ "role" => "user", "content" => @definition.render(inputs) }])
+      end
+
+      # A provider that can constrain its own decoding is handed the answer's
+      # schema; one that cannot is asked plainly, and its request is byte-identical
+      # to what this tier sent before the marker existed -- which is the point of
+      # the capability gate, since #extra reaching an encoder that reads the same
+      # neutral key would move a prompt-cache prefix.
+      #
+      # Only the schema half of the marker is carried: the other half names a tool
+      # for a tool-forcing backend to force, and an oracle sends no tools. The key
+      # itself is neutral -- both encoders define this same String as separate leaf
+      # files (see AnthropicEncoding::STRUCTURED_OUTPUT_KEY), so naming Ollama's is
+      # a choice between two identical constants, not a dependency on ollama.
+      def structured_answer_format
+        return {} unless @provider.supports?(:structured_output)
+
+        { Provider::Ollama::Encoding::STRUCTURED_OUTPUT_KEY =>
+            { "schema" => @definition.schema.to_json_schema } }
       end
 
       # The default decoder: the reply is a JSON object of the answer's fields.

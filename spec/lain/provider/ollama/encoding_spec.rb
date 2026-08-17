@@ -34,10 +34,25 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoded.key?(:format)).to be(false)
     end
 
-    it "omits format when extra is present but carries no structured_output key" do
-      encoded = encoder.encode(request(extra: { temperature: 0 }))
+    # SAMPLER_KEYS are Strings, and so is every key Request#extra holds --
+    # Canonical.normalize stringifies them on the way in, so the Symbol
+    # `temperature:` this used to be written with reached the encoder as
+    # "temperature" and rode the sampler path the example reads as avoiding.
+    # Written as the String it becomes, and asserting where it lands, so the
+    # setup means what it says.
+    it "omits format when extra carries only sampler keys" do
+      encoded = encoder.encode(request(extra: { "temperature" => 0 }))
 
+      expect(encoded[:options]).to eq(temperature: 0)
       expect(encoded.key?(:format)).to be(false)
+    end
+
+    # The case the example above was misread as covering: an extra key this
+    # encoder claims nothing about reaches no wire field at all.
+    it "drops an extra key that is neither a sampler key nor a structured_output marker" do
+      encoded = encoder.encode(request(extra: { "keep_alive" => "5m" }))
+
+      expect(encoded).to eq(model: "qwen3:4b", messages: [{ role: "user", content: "hi" }], stream: false)
     end
 
     # Review SHOULD-FIX: a nil marker (key present, value nil) must no-op

@@ -96,6 +96,18 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
       expect(encoded).to eq(model: "m", max_tokens: 64, messages: [{ "role" => "user", "content" => "hi" }])
     end
 
+    # T6: an Oracle::Model builds the marker from its answer SCHEMA and has no
+    # tool to name, because an oracle sends no tools. A half-built marker must
+    # therefore be treated the same as an absent one -- the mirror of
+    # Ollama::Encoding#structured_format, which already omits `format` when the
+    # marker carries no "schema". Without this, `tool_choice: {type: "tool",
+    # name: nil}` reaches the wire and the API 400s on it.
+    it "omits tool_choice, rather than forcing a nil name, when the marker names no tool" do
+      encoded = encoder.encode(request(extra: { "structured_output" => { "schema" => { "type" => "object" } } }))
+
+      expect(encoded).not_to have_key(:tool_choice)
+    end
+
     # Review escalation trigger: extra can ALREADY carry a raw tool_choice
     # (the pre-existing forwarding path exercised above by "forwards
     # provider-specific params from #extra as symbol keys"). If a

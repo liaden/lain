@@ -58,4 +58,83 @@ RSpec.describe Lain::Oracle::Model do
 
     expect { Sync { model.ask(subject: "x").await } }.to raise_error(Lain::Oracle::UndecodableAnswer)
   end
+
+  # ---- Scenario: an oracle asks a structured-output-capable provider for JSON -
+  #
+  # Driven through the REAL construction site rather than an injected
+  # collaborator: {CLI::Backend::Summarizer} is what builds the summarizer's
+  # Oracle::Model, and ollama is its default provider. The defect these cover
+  # was invisible anywhere shallower -- the tier sent no #extra at all, so
+  # nothing ever asked for grammar-constrained decoding and qwen3-coder answered
+  # the summarizer in markdown, raising UndecodableAnswer and leaving every span
+  # uncollapsed.
+  describe "structured output" do
+    let(:source) { "a long tool result" }
+    let(:max_tokens) { 256 }
+
+    # `model` is a parameter because the provider under test decides what a
+    # plausible model id looks like, and an ollama id sent to Provider::Anthropic
+    # reads as a mistake even where it is inert.
+    def summarizer_oracle(provider, model:)
+      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :journal)
+                      .new(provider, model, max_tokens, Lain::Channel::Null::INSTANCE)
+      Lain::CLI::Backend::Summarizer.new(backend:).oracle
+    end
+
+    def summary_reply(text)
+      Lain::Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
+    end
+
+    it "sends the answer schema as ollama's format field when the provider declares structured_output" do
+      transport = OllamaWire.queue_transport([summary_reply(%({"summary":"three files, one stale"}))])
+      oracle = summarizer_oracle(Lain::Provider::Ollama.new(transport:), model: "qwen3-coder:30b")
+
+      Sync { oracle.ask(source:).await }
+
+      expect(transport.calls.last[:format]).to eq(Lain::Oracle::Summarize::SCHEMA.to_json_schema)
+    end
+
+    # The assertion is on the REQUEST, not the encoded body, and deliberately:
+    # Mock#encode returns Request#cache_payload, which excludes #extra by design,
+    # so a body assertion here could not fail either way. `extra` empty is the
+    # claim that can -- deleting the capability gate turns it red.
+    it "asks a provider without the capability plainly, and still parses its JSON reply" do
+      provider = Lain::Provider::Mock.new(responses: [summary_reply(%({"summary":"three files"}))],
+                                          capabilities: Lain::Provider::CAPABILITIES - [:structured_output])
+
+      answer = Sync { summarizer_oracle(provider, model: "mock-1").ask(source:).await }
+
+      expect(provider.last_request.extra).to be_empty
+      expect(answer.summary).to eq("three files")
+    end
+
+    # This card's escalation guard, made at the level the claim is made: BYTES.
+    # Provider::Anthropic does not declare structured_output, so the marker must
+    # never reach its encoder -- which reads the same neutral key to force
+    # tool_choice, and a changed prefix is a prompt-cache break (CLAUDE.md:
+    # purity and cache-hit are the same constraint).
+    #
+    # Asserting the ABSENCE of a :structured_output key would prove nothing here:
+    # AnthropicEncoding#encode strips that key unconditionally, so it is
+    # unreachable in this payload by construction. Serializing the real wire body
+    # and comparing it against the same question asked with no #extra at all is
+    # what actually catches a leak.
+    it "sends the Anthropic path byte-identical wire bytes to a request carrying no extra" do
+      transport = AnthropicSSE.queue_transport([summary_reply(%({"summary":"three files"}))])
+      provider = Lain::Provider::Anthropic.new(transport:, api_key: "test")
+
+      Sync { summarizer_oracle(provider, model: "claude-opus-4-8").ask(source:).await }
+      sent = JSON.generate(transport.calls.last)
+      provider.complete(plain_request("claude-opus-4-8"))
+
+      expect(sent).to eq(JSON.generate(transport.calls.last))
+    end
+
+    # The same question the summarizer oracle asks, built by hand with no #extra
+    # -- the baseline the bytes above must match.
+    def plain_request(model)
+      question = Lain::Oracle::Summarize.definition.render(source:)
+      Lain::Request.new(model:, max_tokens:, messages: [{ "role" => "user", "content" => question }])
+    end
+  end
 end

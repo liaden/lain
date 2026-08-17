@@ -109,11 +109,19 @@ module Lain
       # existed. When present, Anthropic has no server-side schema-forcing
       # concept (unlike Ollama's `format`), so the schema half is ignored and
       # only the named tool is forced via tool_choice.
+      #
+      # A marker carrying no "tool" is treated as an absent one for the same
+      # reason Ollama::Encoding#structured_format treats a marker with no
+      # "schema" that way: half a marker is what a caller with only the other
+      # half builds, and an {Oracle::Model} is exactly that caller -- it has an
+      # answer schema and no tools at all. `name: nil` is a payload the API
+      # rejects, so it must never be emitted.
       def structured_fields(extra)
         format = extra[STRUCTURED_OUTPUT_KEY]
-        return {} unless format
+        tool = format && format["tool"]
+        return {} unless tool
 
-        { tool_choice: { type: "tool", name: format["tool"] } }
+        { tool_choice: { type: "tool", name: tool } }
       end
 
       def base_params(request)
