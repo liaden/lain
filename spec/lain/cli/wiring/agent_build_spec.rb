@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 # Records what the backend was asked for a provider WITH, because
 # {Lain::CLI::Wiring::AgentBuild.spooled_provider}'s whole content is the pair
 # of keywords it passes -- the spool tee and the channel -- and the object that
@@ -115,6 +117,53 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
       described_class.spooled_provider(backend, chronicle:, channel:)
 
       expect(backend.provider_calls.first[:channel]).to be(channel)
+    end
+  end
+
+  # T13. Driven directly, which is what the `journal:` keyword buys: the method
+  # needs ONE message (`#<<`), so an example hands it a StringIO-backed
+  # {Lain::Journal} and reads the bytes, rather than standing up a Chronicle to
+  # ask it for one. `.backing` and the seam file cover the wiring; these two
+  # cover the policy choice itself, which is the part a flag would later change.
+  describe ".journal_degradation" do
+    let(:io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io:) }
+    let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 64) }
+
+    def degraded_lines
+      io.string.each_line.filter_map { |line| Lain::Journal.parse(line) }
+                         .select { |record| record["type"] == "capability_degraded" }
+    end
+
+    # The real ollama declaration -- `%i[streaming thinking structured_output]`,
+    # no `:prompt_caching` -- against the real {Lain::Context::REQUIRES}. A
+    # double answering `supports?` would be asserting on the double.
+    it "writes one record per capability the provider cannot give the context" do
+      lacking = Lain::Provider::Mock.new(capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+
+      described_class.journal_degradation(context, lacking, journal:)
+
+      expect(Lain::Context::REQUIRES).to include(:prompt_caching)
+      expect(degraded_lines.map { |record| record.values_at("capability", "requirer", "provider") })
+        .to eq([%w[prompt_caching Lain::Context Lain::Provider::Mock]])
+    end
+
+    it "writes nothing when the provider supports everything the context requires" do
+      described_class.journal_degradation(context, Lain::Provider::Mock.new, journal:)
+
+      expect(io.string).to be_empty
+    end
+
+    # The wired policy is `:degrade` and may never be `:strict`:
+    # `Policy::Strict#handle_missing` reuses {Lain::Provider#require!}, so the
+    # missing capability above would raise {Lain::Provider::Unsupported} at turn
+    # one of every ollama chat. Stated as behaviour rather than as a constant
+    # comparison, so it survives the constant being renamed.
+    it "degrades rather than raising, which is the whole of why :strict is not wired" do
+      lacking = Lain::Provider::Mock.new(capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+
+      expect { described_class.journal_degradation(context, lacking, journal:) }.not_to raise_error
+      expect(described_class::DEGRADE).to eq(:degrade)
     end
   end
 

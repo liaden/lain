@@ -19,6 +19,11 @@ module Lain
       # three reading nil, which is the failure this extraction was shaped to
       # avoid.
       module AgentBuild
+        # The capability policy every chat runs under -- see {#negotiate} for why
+        # `:strict`, the only other member of {Capability::Policy::NAMES}, cannot
+        # be the value here.
+        DEGRADE = :degrade
+
         module_function
 
         # Gate and Live share ONE Toolset (the single-map invariant the plan
@@ -89,10 +94,66 @@ module Lain
         # that does not exist is worse than no comment.
         def backing(backend, channel, timeline, chronicle:, board:)
           provider = spooled_provider(backend, chronicle:, channel:)
+          journal_degradation(backend.context, provider, journal: chronicle.record_journal)
           mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
           { provider:,
             instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                                         turn_middleware: chronicle.turn_middleware(timeline)) }
+        end
+
+        # T13: WRITE what this run's Context asks for that its Provider cannot
+        # give -- one `capability_degraded` record per missing capability, once
+        # per session. {Capability::Policy} shipped with a record type, an
+        # emitter and a reader and NO caller: twelve POC journals carried zero
+        # such records while {Context::CacheBreakpoints} required
+        # `:prompt_caching` from an ollama provider that does not declare it, and
+        # {Compare} refuses to compare runs whose degraded sets differ -- so the
+        # gap made incomparable runs look comparable.
+        #
+        # Named for the WRITE, not for the negotiation, because the write is the
+        # whole point: {Capability::Policy#resolve} does hand back a
+        # {Capability::DegradedSet}, and it is dropped here deliberately. Nothing
+        # in a live chat consumes a degraded set -- {Compare} and
+        # {Bench::Session::Loader} both rebuild it from the journal, which is the
+        # durable answer -- so returning it up through {#backing} would be a
+        # contract with no reader, and {#backing} answers "what the Agent is
+        # built FROM", which a journaled side effect is not.
+        #
+        # `:degrade` is the wired policy and the ONLY one that may be wired here.
+        # `Policy::Strict#handle_missing` calls {Provider#require!}, which raises
+        # {Provider::Unsupported} -- so `:strict` would kill every ollama chat at
+        # turn one. Choosing between them is a flag nobody has asked for yet, and
+        # a constant is the honest shape until someone does.
+        #
+        # It lives in THIS module rather than in {Wiring} because the two things
+        # it needs are here: the ONE provider the run talks to, and the Context
+        # it renders through. Wiring sits at its Metrics/ClassLength budget
+        # exactly (110/110, measured), and its class comment's rule is extract
+        # rather than grow -- so a call site up there would have had to buy its
+        # line from an unrelated refactor. Note for whoever hits that budget
+        # next: a NESTED class or module costs the enclosing class only ONE line
+        # toward the cop, which is what makes {Wiring::Askers}' shape the
+        # in-file escape hatch.
+        #
+        # Called from {#backing} and not from {#build} so it reads the provider
+        # already constructed there; asking {Backend#provider} again would build a
+        # second one purely to interrogate a class-level declaration.
+        #
+        # Session-scoped, not per-turn: {#backing} runs once per chat, so a
+        # journal carries one record per missing capability however long the
+        # session runs. {Bench::Session::Loader#degraded} folds these to a set,
+        # so a per-turn emission would flood the record with nothing downstream
+        # ever complaining.
+        #
+        # @param context [#requires] the Context this run renders through
+        # @param provider [#supports?] the ONE provider this run talks to
+        # @param journal [#<<] where each record lands -- the run's own, and a
+        #   Journal rather than the Chronicle that resolves it, so this depends
+        #   on the one message it sends (`Policy.for`'s own `journal:` keyword)
+        #   and a spec can hand it a StringIO-backed {Lain::Journal} without
+        #   constructing a Chronicle
+        def journal_degradation(context, provider, journal:)
+          Lain::Capability::Policy.for(DEGRADE, journal:).resolve(context, provider)
         end
 
         # Both provider construction sites tee their round trips into the

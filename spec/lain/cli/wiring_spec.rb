@@ -240,6 +240,52 @@ RSpec.describe Lain::CLI::Wiring do
       expect(turns.map { |record| record["digest"] }).to eq(agent.timeline.to_a.map(&:digest))
     end
 
+    # T13: the run negotiates its Context's `#requires` against the provider it
+    # actually talks to, under `:degrade`, and journals what it lost. Before
+    # this, `Capability::Policy.for` had ZERO call sites in lib/, exe/ and bin/
+    # -- the record type, the emitter and the {Lain::Bench::Session::Loader}
+    # fold all existed and nothing ever constructed the policy, so twelve POC
+    # journals carried no `capability_degraded` line while
+    # {Lain::Context::CacheBreakpoints} required `:prompt_caching` from a
+    # provider that does not offer it.
+    #
+    # Recorded here as well as in spec/lain/seams/capability_degraded_spec.rb
+    # because THIS file is where #wire_agent's own contract lives: the mock
+    # below declares a capability set that is missing one the real
+    # {Lain::Context::REQUIRES} names, and the assertion reads the journal
+    # bytes rather than a policy object nobody injected.
+    it "journals what the run's provider cannot give its context, once, under :degrade" do
+      io = StringIO.new
+      recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
+      lacking = Lain::Provider::Mock.new(responses: [Lain::Response.new(content: [], stop_reason: :end_turn)],
+                                         capabilities: Lain::Context::REQUIRES - %i[prompt_caching])
+      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recorder, session = recording_wiring.run_state(nil)
+      recording_wiring.wire_agent(channel:, recorder:, session:,
+                                  backend: offline_backend_class.new({ provider: "ollama", model: nil,
+                                                                       max_tokens: 64 }, mock: lacking))
+
+      degraded = io.string.each_line.map { |line| JSON.parse(line) }
+                                    .select { |record| record["type"] == "capability_degraded" }
+      expect(Lain::Context::REQUIRES).to include(:prompt_caching)
+      expect(degraded.map { |record| record.values_at("capability", "provider") })
+        .to eq([["prompt_caching", "Lain::Provider::Mock"]])
+    end
+
+    # The other arm, and the one that says the policy is resolving rather than
+    # emitting unconditionally: the file's default mock declares the whole of
+    # {Lain::Provider::CAPABILITIES}, so nothing its context requires is missing.
+    it "journals no degradation when the provider supports everything the context requires" do
+      io = StringIO.new
+      recording = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "wiring-spec.ndjson")
+      recording_wiring = described_class.new(options: { grace: 5 }, chronicle: recording, status_feed:)
+      recorder, session = recording_wiring.run_state(nil)
+      recording_wiring.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(Lain::Context::REQUIRES.all? { |capability| mock_provider.supports?(capability) }).to be(true)
+      expect(io.string).not_to include("capability_degraded")
+    end
+
     # T12 AC1: no --auto-approve, no third surface -- unchanged wiring.
     it "wires no auto surface without --auto-approve" do
       wire_agent

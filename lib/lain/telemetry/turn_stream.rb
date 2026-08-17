@@ -268,16 +268,27 @@ module Lain
       end
     end
 
-    # A Context combinator declared it `requires` a capability the Provider does
-    # not have, and the run's policy chose to DEGRADE rather than raise: the
-    # tactic silently became a no-op. "Silently" is the whole danger -- a
-    # cross-provider A/B where half the context tactics no-oped on one arm is a
-    # lie -- so the degradation is made LOUD here, as a durable record, and
-    # `Compare` refuses to compare two runs whose degraded sets differ.
+    # Something declared it `requires` a capability the Provider does not have,
+    # and the run's policy chose to DEGRADE rather than raise: the tactic
+    # silently became a no-op. "Silently" is the whole danger -- a cross-provider
+    # A/B where half the context tactics no-oped on one arm is a lie -- so the
+    # degradation is made LOUD here, as a durable record, and `Compare` refuses
+    # to compare two runs whose degraded sets differ.
     #
     # `capability` is the Symbol required-but-unsupported; `requirer` and
     # `provider` are names (Strings), not the objects, so the record is a
     # self-describing value that serializes to one NDJSON line.
+    #
+    # `requirer` names whatever object was handed to {Capability::Policy#resolve},
+    # and in a real chat that is the run's whole {Context} -- so every record a
+    # live run emits reads `"Lain::Context"`, never the combinator that wanted
+    # the capability. That is the best value available rather than a shortcut
+    # taken: `Context#requires` is a UNION over its pipeline while `#resolve`
+    # folds over one requirer, so the combinator is not recoverable at the point
+    # the record is built. A reader wanting to know WHICH stage no-oped reads
+    # the pipeline the session header pins, not this field. An earlier edition
+    # of this comment said "a Context combinator declared it", which no emitted
+    # record has ever borne out.
     CapabilityDegraded = Data.define(:capability, :requirer, :provider) do
       include Journalable
 
