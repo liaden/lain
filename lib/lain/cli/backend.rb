@@ -111,6 +111,26 @@ module Lain
       # never built, and neither check ever ran -- so a typo was accepted in
       # exactly one configuration. An asymmetry a user meets in only one mode is
       # one they misread. Construction is the single path every command takes.
+      #
+      # The keys below are the whole surface this class reads out of Thor's flag
+      # set; `exe/lain` remains the authority on each flag's spelling, default and
+      # help text.
+      #
+      # @param options [Hash] Thor's parsed flag set for the invoked command
+      # @option options [String] :provider name of the chat tier's provider
+      # @option options [String] :model model id for the chat tier
+      # @option options [String] :api_base base URL override, ollama only
+      # @option options [Integer] :max_tokens ceiling on a chat completion
+      # @option options [Float] :temperature sampler temperature, 0 for determinism
+      # @option options [Integer] :seed sampler seed, paired with temperature 0
+      # @option options [Boolean] :compact whether history compaction runs at all
+      # @option options [String] :compact_strategy which strategy collapses a span
+      # @option options [Integer] :compact_bytes head size that triggers a compaction
+      # @option options [Integer] :compact_cap hard ceiling a compaction must reach
+      # @option options [Integer] :compact_keep turns held back from collapsing
+      # @option options [String] :summarizer_provider provider for the summarizer tier
+      # @option options [String] :summarizer_model model id for the summarizer tier
+      # @option options [Integer] :summarizer_max_tokens ceiling on a summarizer answer
       def initialize(options)
         @options = options
         summarizer_name
@@ -166,10 +186,27 @@ module Lain
       # WAL a replay reads back as turns nor the live stream the frontend paints.
       def summarizer_provider = provider(name: summarizer_name)
 
-      # `--summarizer-model`, defaulting to the SUMMARIZER provider's own
-      # default rather than the chat's -- the two tiers are chosen separately,
-      # so `--provider anthropic` must not silently name the local tier's model.
-      def summarizer_model = @options[:summarizer_model] || default_model(summarizer_name)
+      # `--summarizer-model`, defaulting to the CHAT's model when both tiers
+      # name one provider and to the summarizer provider's own default when they
+      # do not.
+      #
+      # What FORCED the rule is local: one GPU holds one resident model, so an
+      # unpinned summarizer on the chat's own provider evicts the chat model at
+      # every compaction and the next turn reloads it -- **84.0s against 7.5s**,
+      # measured. That argument is about residency and only bites on a local
+      # tier. The rule fires for anthropic-on-anthropic and bedrock-on-bedrock
+      # too, where nothing is resident and the reason is plainer: one provider is
+      # one model namespace, so the model the operator chose is the coherent
+      # default for both tiers, and it cannot cost more than the alternative --
+      # each hosted provider's own default is already its top tier, so
+      # inheriting is at worst neutral and is cheaper the moment `--model` names
+      # something smaller.
+      #
+      # Across providers neither argument survives -- no shared residency, no
+      # shared namespace, and a model id that does not even parse on the other
+      # side -- so `--provider anthropic` still must not name the local tier's
+      # model. That is the half of this the tiers were split for.
+      def summarizer_model = @options[:summarizer_model] || tier_default_model
 
       # `--summarizer-max-tokens`. A summary that runs out of ceiling is a
       # truncated summary, and a truncated summary REPLACES the result it
@@ -321,6 +358,19 @@ module Lain
 
         raise UnknownProvider, "unknown #{flag} #{name.inspect}, expected one of #{PROVIDERS.inspect}"
       end
+
+      def tier_default_model = same_provider? ? model : default_model(summarizer_name)
+
+      # The one raw `--provider` read in this class, and it does NOT weaken
+      # {#provider_name}'s seam: equality with an already-validated name IS the
+      # validation. `summarizer_name` is refused at construction if unknown, so
+      # a chat name equal to it is in PROVIDERS too, and a name that is not
+      # equal takes the other branch and is never used here. What that buys is
+      # the summarizer tier still resolving for a Backend assembled from an
+      # option hash naming no chat provider, rather than refusing about a flag
+      # this method does not read -- {#provider}, which does read it, still
+      # refuses loudly, and there is an example for both halves.
+      def same_provider? = summarizer_name == @options[:provider]
 
       def default_model(name)
         case name

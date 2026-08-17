@@ -251,6 +251,32 @@ RSpec.describe "lain chat's flag surface" do
       expect(parse[:summarizer_provider]).to eq(Lain::CLI::Backend::DEFAULT_SUMMARIZER_PROVIDER)
     end
 
+    # Same shape --isolation and --compact-strategy already have: pin the help
+    # text to the AUTHORITY rather than to a sentence someone has to remember to
+    # update.
+    it "names every provider the summarizer tier accepts in its help text" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:summarizer_provider).description
+      expect(help).to include(*Lain::CLI::Backend::PROVIDERS)
+    end
+
+    # `--summarizer-model`'s help had no such guard, and drifted into asserting
+    # the OPPOSITE of the code ("never the chat's --model") with nothing failing
+    # -- the help text is the only description of this rule most operators ever
+    # read. There is no constant to pin a branch to, so the assertion is the
+    # agreement itself: resolve BOTH branches from a real Backend, then require
+    # the text to describe what they did and to not deny it.
+    it "keeps the summarizer-model help text agreeing with what the code resolves" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:summarizer_model).description
+      shared = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"))
+      crossed = Lain::CLI::Backend.new(parse("--provider", "ollama", "--summarizer-provider", "anthropic"))
+
+      expect(shared.summarizer_model).to eq(shared.context.model)
+      expect(crossed.summarizer_model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
+      expect(help).to include("chat's --model")
+      expect(help).not_to include("never the chat's --model")
+      expect(help).to include("summarizer provider's own default")
+    end
+
     it "points the summarizer at a paid provider independently of --provider" do
       # Bedrock is env-configured and reads its region at construction (offline,
       # no request), so a placeholder is enough to build the object -- the same
@@ -269,10 +295,33 @@ RSpec.describe "lain chat's flag surface" do
         .to eq(Lain::Provider::Bedrock::DEFAULT_MODEL)
     end
 
-    it "never lets the chat's --model name the summarizer's" do
-      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3:8b"))
+    # One GPU holds one resident model. An unpinned summarizer falls to the
+    # local tier's own default and EVICTS the chat model on every compaction,
+    # then the next turn reloads it: 84.0s against 7.5s, measured. Sharing the
+    # provider is what makes the chat's model the cheap answer, so it is the
+    # default when the two tiers name the same one.
+    it "lets the chat's --model name the summarizer's when both tiers share a provider" do
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b"))
+      expect(backend.context.model).to eq("qwen3-coder:30b")
+      expect(backend.summarizer_model).to eq("qwen3-coder:30b")
+    end
+
+    # The half of the old "never lets the chat's --model name the summarizer's"
+    # that still holds, and the reason the rule is narrow: a model id is not
+    # portable across providers, so inheriting one over a provider boundary
+    # would name a model the summarizer's backend has never heard of.
+    it "never lets the chat's --model name a summarizer on a different provider" do
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3:8b",
+                                             "--summarizer-provider", "anthropic"))
       expect(backend.context.model).to eq("qwen3:8b")
-      expect(backend.summarizer_model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+      expect(backend.summarizer_model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
+    end
+
+    it "keeps an explicit --summarizer-model above the inherited chat model" do
+      backend = Lain::CLI::Backend.new(parse("--provider", "ollama", "--model", "qwen3-coder:30b",
+                                             "--summarizer-model", "gemma3:12b"))
+      expect(backend.context.model).to eq("qwen3-coder:30b")
+      expect(backend.summarizer_model).to eq("gemma3:12b")
     end
 
     it "coerces the token ceiling to an Integer, and defaults it to the oracle's" do

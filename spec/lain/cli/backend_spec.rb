@@ -598,16 +598,44 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
+  # {Backend#same_provider?} compares the RAW `--provider` value rather than
+  # going through {Backend#provider_name}, and that is the one place in this
+  # class that reads a provider flag outside the validated seam. The reason is
+  # testable rather than merely argued, so it is tested: with no chat provider in
+  # the hash there is nothing for the summarizer tier to be the SAME as, so it
+  # answers its own tier's default instead of refusing about a flag it does not
+  # read. Routing the comparison through `provider_name` -- the alternative --
+  # leaves the rest of the suite green, so without these two examples the choice
+  # is defended by prose alone.
+  describe "#summarizer_model with no chat provider in the option hash" do
+    it "resolves the summarizer tier without raising about --provider" do
+      backend = backend_for(summarizer_provider: "ollama", model: "qwen3-coder:30b")
+
+      expect { backend.summarizer_model }.not_to raise_error
+      expect(backend.summarizer_model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
+    end
+
+    # The other half, and why the first is not a hole: the missing flag is still
+    # refused loudly by the tier that actually reads it.
+    it "still refuses the chat tier itself, so the missing flag is not silently forgiven" do
+      backend = backend_for(summarizer_provider: "ollama", model: "qwen3-coder:30b")
+
+      expect { backend.provider }.to raise_error(Lain::CLI::UnknownProvider, /unknown provider nil/)
+    end
+  end
+
   # A1. The eager summarizer is a SELECTABLE tier now, not a hardcoded local
   # one, and its spend lands on the record. Before this, #summary_oracle built a
   # bare Oracle::Model over Ollama and wrapped nothing, so eager summary Q&A
   # produced no Telemetry::OracleAnswer at all on the live chat path -- pointing
   # it at a paid model would have spent tokens with no trace of the spend.
   #
-  # The default is unchanged (local Ollama, its own default model): what changed
-  # is that the choice is a flag resolved through the SAME validated PROVIDERS
-  # set the chat tier uses, so `--summarizer-provider` cannot mean something
-  # `--provider` does not.
+  # The default PROVIDER is unchanged (local Ollama), resolved through the SAME
+  # validated PROVIDERS set the chat tier uses, so `--summarizer-provider` cannot
+  # mean something `--provider` does not. The default MODEL is no longer fixed to
+  # that provider's own: when both tiers name one provider it follows the chat's
+  # `--model`, so the examples below that pin an Ollama chat read through the
+  # inheritance branch and say so.
   describe "#summary_oracle" do
     let(:journal) { RecordingChannel.new }
 
@@ -630,7 +658,13 @@ RSpec.describe Lain::CLI::Backend do
 
     def answers = journal.events.grep(Lain::Telemetry::OracleAnswer)
 
-    it "defaults to today's local tier -- Provider::Ollama at its own default model" do
+    # The MODEL here arrives by inheritance, not by the tier's own default: an
+    # ollama chat with `--model` unset resolves to Ollama's default, and the
+    # summarizer shares its provider, so the two are the same string by two
+    # different routes. What this example uniquely pins is the PROVIDER; the
+    # tier's own default model is pinned by the cross-provider example below,
+    # where nothing can be inherited.
+    it "defaults to today's local tier -- Provider::Ollama, at the model the chat resolved" do
       tier = tier_of(summarizer_for)
 
       expect(tier.instance_variable_get(:@provider)).to be_a(Lain::Provider::Ollama)
@@ -671,8 +705,22 @@ RSpec.describe Lain::CLI::Backend do
       expect(summary.model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
+    # The other side of that flag, and the case the GPU pays for: one local
+    # provider serving both tiers holds ONE resident model, so a summarizer left
+    # at the provider's default evicts the chat model on every compaction and
+    # the next turn reloads it -- 84.0s against 7.5s, measured. Same provider
+    # means the chat's model is already loaded, which makes it the right default.
+    it "inherits the chat's --model when both tiers name the same provider" do
+      expect(tier_of(summarizer_for(model: "qwen3-coder:30b")).model).to eq("qwen3-coder:30b")
+    end
+
     it "honors an explicit --summarizer-model over the tier provider's default" do
       expect(tier_of(summarizer_for(summarizer_model: "qwen3:8b")).model).to eq("qwen3:8b")
+    end
+
+    it "honors an explicit --summarizer-model over the chat's own model" do
+      expect(tier_of(summarizer_for(model: "qwen3-coder:30b", summarizer_model: "gemma3:12b")).model)
+        .to eq("gemma3:12b")
     end
 
     # Resolved through Backend#provider's own PROVIDERS set, not a second copy,

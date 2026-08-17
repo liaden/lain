@@ -706,8 +706,8 @@ class LainCLI < Thor
       thor.method_option :summarizer_model, type: :string,
                                             default: Lain::CLI::EnvDefaults.string("LAIN_SUMMARIZER_MODEL"),
                                             desc: "Model id for the compaction summarizer; defaults to the " \
-                                                  "summarizer provider's own default, never the chat's --model " \
-                                                  "[$LAIN_SUMMARIZER_MODEL]"
+                                                  "chat's --model when both tiers name one provider, else to " \
+                                                  "the summarizer provider's own default [$LAIN_SUMMARIZER_MODEL]"
     end
 
     def self.summarizer_budget(thor)
