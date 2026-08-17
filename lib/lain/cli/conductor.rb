@@ -139,8 +139,8 @@ module Lain
       # supervised ask), so signals stay routed at the coordinator and the grace
       # clock keeps running: a terminating signal still arms, expires, or promotes
       # exactly as it would with no reply outstanding, and an expiry interrupts the
-      # run through {Agent::Budget} while {Repl#respond}'s ensure stops the replier
-      # fiber parked here -- Reline's own ensure restores the terminal on that
+      # run through {Agent::Budget} while {Repl::LineScope#serve}'s ensure stops the
+      # replier fiber parked here -- Reline's own ensure restores the terminal on that
       # fiber-stop (PTY-probed, see the handback), so no breaker is needed.
       #
       # What DOES change for the span: the countdown ticker is suppressed. It

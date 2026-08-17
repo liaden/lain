@@ -18,9 +18,17 @@ module Lain
       # {#close} owes every one of them a stop on EVERY exit from the
       # conversation -- a clean quit, a raise climbing out of the ask, an
       # interrupt at the prompt -- because a parked fiber holds the Sync that
-      # owns it open forever. That is the same reason {Repl#respond}'s ensure
+      # owns it open forever. That is the same reason {LineScope#serve}'s ensure
       # stops what IT started, and this object exists so the two are told apart
       # by name rather than by reading two ensures.
+      #
+      # The counterpart lifetime is one DISPATCHED LINE, not one ask (T1): a
+      # question can be raised from a command or from a skill spawn's short
+      # circuit, neither of which reaches {Repl#respond}. It still is not THIS
+      # one, and the reason is the terminal: the TTY reply read parks on the
+      # stdin the next `you>` prompt needs back, so a conversation-scoped
+      # answer_loop would race every prompt for it. The editor's rail is scoped
+      # here precisely because it polls a socket and touches no terminal.
       class ConversationScope
         def initialize(supervisor:, replies:)
           @supervisor = supervisor

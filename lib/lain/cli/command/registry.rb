@@ -48,12 +48,40 @@ module Lain
           invocation ? invoke(invocation, env) : yield
         end
 
+        # Whether the command +text+ names is ITSELF a reply surface: one that
+        # opens its own `human> ` read over the pending questions
+        # ({Command::Inbox}). {Repl::LineScope} asks BEFORE the line runs, because
+        # a reply loop started around such a line reads the same stdin the
+        # command is reading -- see that method for what the human's answer then
+        # does.
+        #
+        # Sent as a message a command MAY not understand, rather than required of
+        # all twenty-odd: one command in the set has any use for it, and this
+        # asks whether the object answers a message, not what class it is. A
+        # command that grows its own reply read must declare it;
+        # `spec/lain/cli/command/registry_spec.rb` pins the pair to `/inbox` in
+        # both directions.
+        #
+        # @param text [String] the line as the human typed it
+        # @return [Boolean] false for prose, for a role-bound line, and for every
+        #   command that has never claimed to answer a human
+        def serves_replies?(text)
+          invocation = command_invocation(text)
+          command = invocation && @commands.fetch(invocation.skill)
+          command.respond_to?(:serves_replies?) && command.serves_replies?
+        end
+
         # The registry curried over the session's one {Env} -- what Wiring hands
         # the Repl, so the Repl dispatches with text alone and never holds (or
         # reaches into) the Env; later cards extend the Env by editing Wiring
         # only.
         Bound = Data.define(:registry, :env) do
           def dispatch(text, &fallthrough) = registry.dispatch(text, env, &fallthrough)
+
+          # Env-free, unlike {#dispatch}: whether a line serves replies is a fact
+          # about the COMMAND, decided before anything is called, so nothing here
+          # needs the session's collaborators.
+          def serves_replies?(text) = registry.serves_replies?(text)
         end
 
         def bind(env) = Bound.new(registry: self, env:)

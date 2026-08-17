@@ -139,9 +139,9 @@ module Lain
         @reviews = Reviews.new
         @inbox = Pending.new
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
-        # Readers, never the surfaces: every one of them is bound after this
-        # returns, and {Gestures} resolves each per call so a late bind is seen
-        # without anybody remembering to rebuild anything.
+        # READERS, never the surfaces: every one is bound after this returns, and
+        # {Gestures} resolves each per call so a late bind is seen without
+        # anybody remembering to rebuild anything.
         @gestures = Gestures.new(editor: -> { @editor }, views: -> { @views }, review: -> { @changeset_review },
                                  approvals: -> { @approvals })
       end
@@ -227,12 +227,17 @@ module Lain
       # `/inbox` at `you>` (T13): the SAME TTY drain UX #answer_loop's
       # read_drained_answer calls at `human>`, over whatever has piled up in
       # `@questions` since the last time a fiber was actually watching it.
-      # #answer_loop's fiber only lives DURING a respond() call (Repl#respond
-      # starts it alongside the ask, per {#surfaces}); the OM-6 supervisor's
-      # fleet outlives any one ask, so a subagent's `announce` can enqueue a
-      # question while the human sits idle at `you>` with nothing draining
-      # it. This is that second watcher, run on demand instead of a second
-      # background fiber.
+      # #answer_loop's fiber only lives for one DISPATCHED LINE
+      # ({Repl::LineScope} starts it before the line is routed, per
+      # {#surfaces}); the OM-6 supervisor's fleet outlives every one of them, so
+      # a subagent's `announce` can enqueue a question while the human sits idle
+      # at `you>` with nothing draining it. This is that second watcher, run on
+      # demand instead of a second background fiber.
+      #
+      # It is therefore the one command that must NOT be bracketed in a reply
+      # loop of its own -- {Command::Inbox} declares that, and
+      # {Repl::LineScope#serve} is what reads the declaration. Two readers on one
+      # stdin is what this method exists to avoid, not a state it may run in.
       #
       # Lists every item (gathered non-blockingly first, so a `you>`-time
       # `/inbox` shows the WHOLE backlog, not just the head), reads exactly
@@ -261,15 +266,22 @@ module Lain
         answer
       end
 
-      # The concurrent reply surfaces for one ask: the TTY drain loop, whose
-      # fiber must live exactly as long as the ask and no longer -- the reply
-      # read parks inside it, and the terminal it reads from is the one the
-      # next `you>` prompt needs back. The caller ({Repl#respond}) stops them
-      # in its ensure.
+      # The concurrent reply surfaces for one DISPATCHED LINE: the TTY drain
+      # loop, whose fiber must live exactly as long as that line and no longer --
+      # the reply read parks inside it, and the terminal it reads from is the one
+      # the next `you>` prompt needs back. The caller
+      # ({Repl::LineScope#serve}) stops them in its ensure.
+      #
+      # The line, and not the ask: a question can be raised from a command
+      # running lib-side or from the subagent a `@role[/skill]` line spawns, and
+      # neither reaches {Repl#respond} -- the fiber that parks on one is the
+      # dispatching fiber, so the surface answering it has to be its sibling.
+      # The rest of the sentence above is unchanged and is the reason it goes no
+      # wider than that.
       #
       # The editor's consumer is deliberately NOT here any more, and that
       # split is the point: see {#session_surfaces}.
-      def surfaces(task) = [answer_loop(task)]
+      def surfaces(task) = [answers.spawn(task)]
 
       # The reply surfaces that live for the whole CONVERSATION, started on the
       # repl's own Sync ({Repl#run}) instead of on an ask's -- today just the
@@ -303,6 +315,19 @@ module Lain
 
       private
 
+      # The TTY arrival surface, built at the one call site that needs it rather
+      # than in the constructor: nothing else in this class asks it anything, and
+      # a session with no reply surface ever spawned never builds one. Memoized
+      # because it REMEMBERS -- which arrivals it has already announced -- and
+      # that memory must span the lines it is spawned for, not one of them.
+      #
+      # `resolve:` is a MESSAGE, not this object: what the loop owes an answer is
+      # one call, and handing over `self` would let it reach everything.
+      def answers
+        @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
+                                    resolve: method(:resolve_reply))
+      end
+
       # The editor a changeset is drawn in, with its null resolved HERE and
       # nowhere else -- {Tools::RequestReview#bindings}' shape, and the reason
       # {#bind_review_editor} may take a bare nil. Private because
@@ -312,71 +337,25 @@ module Lain
       # which is what makes the two seams above one line rather than three.
       def review_editor = @review_editor || ReviewSeams::Unattached
 
-      # Parks on dequeue (a real scheduler yield -- woken per arrival, never
-      # polling) and serves them one at a time.
-      def answer_loop(task)
-        task.async { loop { serve_question(@questions.dequeue) } }
-      end
-
-      # One arrival, from the note to the answer. A question ARRIVES as a
-      # one-line note; the reply read stays fiber-parked (the ask cannot
-      # complete without it), but the surface is the drain. `/inbox` at the
-      # reply prompt lists the pending items before answering; any other line
-      # answers directly (the inline path stays the no-inbox fallback), and it
-      # answers THIS item -- the one whose note the human is looking at --
-      # never whichever is at the head of the list.
-      #
-      # A blank line here IS an answer, and deliberately not what the same
-      # keystroke means at `you>`: this prompt exists because a run is PARKED
-      # on this set, so declining to answer still has to reach the model, and
-      # `""` is what carries that (`Tool::Result.ok(nil)` would raise). At
-      # `you>` nothing waits on the drain's read, so Enter there means "I
-      # looked, not now" and resolves nothing. The `/inbox` detour inside the
-      # read does not move the human to that other prompt -- the set is still
-      # parked on this fiber -- so Enter still answers it.
-      #
-      # NOTHING here may kill this fiber, for {#serve_editor_command}'s reason
-      # and a sharper one: this is the TTY answer path, which ruling 7 keeps
-      # live whether or not an editor is attached, and it is ONE fiber for the
-      # whole run. The read reaches Reline and a real terminal; the delivery
-      # reaches the Store and the journal. Either raising un-guarded ended the
-      # loop permanently and silently -- arrivals still landing on `@questions`
-      # with nothing draining them, and a human watching a run that stopped
-      # asking. `StandardError`, so an `Async::Stop` climbing out of a
-      # cancelled read keeps climbing.
-      #
-      # The line is retired on EVERY exit, and unconditionally, because every
-      # exit means it is dead: answered, withdrawn, raised, or unwound. Testing
-      # the read's own unwind instead covered exactly one of those shapes --
-      # and missed the one that matters, a set withdrawn WHILE the human types,
-      # which left a line that lists forever and can only ever refuse. The
-      # digest is this item's own, so this can never retire somebody else's.
-      #
-      # A REFUSED answer is the one exit that does not belong on that list --
-      # the question is still outstanding and the human can retype -- and it
-      # never reaches here: {Reply} refuses and re-reads, so what comes back
-      # is always something the record can carry. Retiring on a refusal parked
-      # the agent forever AND deleted the only line that could unpark it.
-      def serve_question(item)
-        @inbox << item
-        @tty.render_arrival(item.question, from: item.from)
-        answer, answered = @reply.for(item)
-        resolve_reply(answer, answered.digest)
-      rescue StandardError => e
-        @tty.render_error(e.message)
-      ensure
-        @inbox.retire(item.digest)
-      end
-
       # The TTY's answer: the refusal is rendered where the human typed. A
       # digest no asker holds is the live outcome of a stale line (a run
       # stopped between the note and the answer), and the directory's own
       # sentence says the line was stale rather than that the answer was
       # wrong -- so it is passed through, not reworded.
+      # A refusal SETTLES the line, and that half is load-bearing on the
+      # `/inbox` path: `#drain_at_prompt` calls this directly rather than through
+      # {AnswerLoop}, so nothing else here would ever retire the item. Rendering
+      # and returning left the dead question listed, and every later `/inbox`
+      # offered it again -- a line that lists forever and can only ever refuse,
+      # which is exactly what the re-queue rule makes reachable by putting
+      # ghosts where a drain finds them. `NoPendingQuestion` means the set is
+      # gone, so nothing is lost by letting the line go; it is the same
+      # conclusion {AnswerLoop#exchange} already reaches on its own path.
       def resolve_reply(answer, digest)
         deliver(answer, digest)
       rescue Lain::Tools::AskHuman::NoPendingQuestion => e
         @tty.render_error(e.message)
+        settled(digest)
       end
 
       # The ONE answer path both surfaces use. AlreadyResolved: the other
@@ -385,18 +364,20 @@ module Lain
       # the set it named IS answered.
       def deliver(answer, digest)
         @ask_human.reply(answer, digest)
-        answered(digest)
+        settled(digest)
       rescue Lain::Promise::AlreadyResolved
-        answered(digest)
+        settled(digest)
       end
 
-      # What "this set is answered" means to everything that lists it, in ONE
-      # place because there is one delivery path: the line leaves the terminal's
-      # own list, and the editor's views stop offering the set -- whichever
-      # surface actually took the answer. Reported rather than inferred: a row
-      # is retired by the agent's committed turn, a model round trip later, so
-      # until then only this knows.
-      def answered(digest)
+      # What "this set is DONE" means to everything that lists it, in ONE place
+      # because every way of being done ends the same for a reader: the line
+      # leaves the terminal's own list, and the editor's views stop offering the
+      # set -- whichever surface took the answer, and whether the set was
+      # answered, already answered, or withdrawn under the human. Named for
+      # settled rather than answered because a third of its callers is a
+      # refusal. Reported rather than inferred: a row is retired by the agent's
+      # committed turn, a model round trip later, so until then only this knows.
+      def settled(digest)
         @views.answered(digest)
         @inbox.retire(digest)
       end
@@ -525,6 +506,155 @@ module Lain
       # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
       # for the same reason: each collaborator is its own responsibility, and the
       # split keeps each body inside Metrics/ClassLength instead of loosening it.
+
+      # The TTY arrival surface: ONE fiber parked on the queue, serving each
+      # arrival from its note to its answer -- and deciding what becomes of the
+      # LINE when that exchange ends.
+      #
+      # Its own object for this file's recurring reason ({Gestures}, {Reviews},
+      # {Pending} and {Reply} came out the same way): {HumanReplies} was over
+      # Metrics/ClassLength carrying it, and the cop was naming a real seam.
+      # What is left there routes an ANSWER to the asker that asked; this owns
+      # an ITEM's lifetime, from the queue to the list and -- when nobody
+      # answered -- back.
+      #
+      # `resolve:` is a message rather than the owner: what this owes an answer
+      # is one call ({HumanReplies#resolve_reply}), and holding the owner would
+      # let it reach everything else.
+      class AnswerLoop
+        def initialize(questions:, inbox:, tty:, reply:, resolve:)
+          @questions = questions
+          @inbox = inbox
+          @tty = tty
+          @reply = reply
+          @resolve = resolve
+          @announced = Set.new
+        end
+
+        # Parks on dequeue (a real scheduler yield -- woken per arrival, never
+        # polling) and serves them one at a time.
+        def spawn(task) = task.async { loop { serve(@questions.dequeue) } }
+
+        private
+
+        # An item leaves this pair of holdings -- the queue it came off and the
+        # list it was pushed onto -- only when the EXCHANGE ended, and
+        # {#exchange} is what answers that. It ends two ways: the answer reached
+        # the reply seam (or was refused there, which is the same fact about a
+        # stale set said by the object that knows), or something raised and the
+        # human was TOLD. Either way the line is dead and retiring it is right.
+        #
+        # An UNWIND is not on that list, and that is the change (T1).
+        # `Async::Stop` climbing out of a cancelled read is not the question
+        # being answered, it is the SURFACE being stopped -- and the surface is
+        # now stopped at the end of every dispatched LINE
+        # ({Repl::LineScope}), not of every ask. So a subagent's question
+        # arriving while the human runs `/help` was dequeued, announced to a
+        # human who was not looking, and then retired when the line ended: off
+        # the queue and off the list at once, so `HumanReplies#pending?` read
+        # false, no `/inbox` could ever list it, and the asker stayed parked
+        # forever with no error and no journal line. It goes back on the queue
+        # instead, for the next surface -- or the human's `/inbox` -- to reach.
+        #
+        # A set WITHDRAWN under a parked reader (the Ctrl-C shape) is re-queued
+        # too, and that is the priced cost of the rule. The reason is that the
+        # REPLY SEAM does not expose the distinction, not that nobody holds it:
+        # `Directory` routes by name and its `Registration#holds?` answers
+        # whether the NAME is registered, which stays true across a withdrawal --
+        # measured, `holds?` reads true both before and after
+        # `AskHuman#perform`'s unwind, because `Outstanding#abandon` clears the
+        # asker and never touches the registration's map. The object that knows
+        # is {Tools::AskHuman::Outstanding}, one layer under a seam whose whole
+        # public contract is "reply or refuse".
+        #
+        # It is the right default even with that query in hand, because the two
+        # mistakes are not symmetric: re-queueing a dead set costs one refusal
+        # the human is told about, where retiring a live one parks the asker
+        # forever with `#pending?` false and no surface able to reach it. This
+        # one is also self-limiting -- the next surface serves it once, the
+        # directory refuses it as stale, and it is retired, on the drain's path
+        # ({HumanReplies#resolve_reply}) as much as on this one.
+        #
+        # The digest is this item's own, so nothing here can retire or re-queue
+        # somebody else's.
+        def serve(item)
+          settled = exchange(item)
+        ensure
+          settled ? @inbox.retire(item.digest) : requeue(item)
+        end
+
+        # One arrival, from the note to the answer, answering whether the item
+        # is SETTLED. A question ARRIVES as a one-line note; the reply read stays
+        # fiber-parked (the ask cannot complete without it), but the surface is
+        # the drain. `/inbox` at the reply prompt lists the pending items before
+        # answering; any other line answers directly (the inline path stays the
+        # no-inbox fallback), and it answers THIS item -- the one whose note the
+        # human is looking at -- never whichever is at the head of the list.
+        #
+        # Both exits it has of its own are settled; the third, an unwind, does
+        # not return at all and so cannot say so, which is exactly what
+        # {#serve}'s ensure reads.
+        #
+        # A blank line here IS an answer, and deliberately not what the same
+        # keystroke means at `you>`: this prompt exists because a run is PARKED
+        # on this set, so declining to answer still has to reach the model, and
+        # `""` is what carries that (`Tool::Result.ok(nil)` would raise). At
+        # `you>` nothing waits on the drain's read, so Enter there means "I
+        # looked, not now" and resolves nothing. The `/inbox` detour inside the
+        # read does not move the human to that other prompt -- the set is still
+        # parked on this fiber -- so Enter still answers it.
+        #
+        # NOTHING here may kill this fiber, for
+        # {HumanReplies#serve_editor_command}'s reason and a sharper one: this is
+        # the TTY answer path, which ruling 7 keeps live whether or not an editor
+        # is attached, and it is ONE fiber for the whole run. The read reaches
+        # Reline and a real terminal; the delivery reaches the Store and the
+        # journal. Either raising un-guarded ended the loop permanently and
+        # silently -- arrivals still landing on the queue with nothing draining
+        # them, and a human watching a run that stopped asking. `StandardError`,
+        # so an `Async::Stop` climbing out of a cancelled read keeps climbing.
+        #
+        # A REFUSED answer never reaches that rescue: {Reply} refuses and
+        # re-reads, so what comes back is always something the record can carry.
+        # Retiring on a refusal parked the agent forever AND deleted the only
+        # line that could unpark it.
+        def exchange(item)
+          @inbox << item
+          announce(item)
+          answer, answered = @reply.for(item)
+          @resolve.call(answer, answered.digest)
+          true
+        rescue StandardError => e
+          @tty.render_error(e.message)
+          true
+        end
+
+        # An ARRIVAL is announced ONCE, however many lines the question outlives.
+        # A re-queued item is dequeued again by the next line's loop, and the
+        # note says "this just arrived" -- which on the third `/fast` line is
+        # simply false, and is noise the human cannot act on either, because the
+        # read it precedes is torn down before they could type into it. The read
+        # still opens on every serve, so a line they do linger on is answerable;
+        # only the claim about arriving is spent.
+        #
+        # Keyed on the digest, so it is per SET and not per fiber, and bounded by
+        # the questions a session asks -- the same bound {Directory}'s tombstones
+        # already carry.
+        def announce(item)
+          @tty.render_arrival(item.question, from: item.from) if @announced.add?(item.digest)
+        end
+
+        # Back where a later surface can reach it. Off the list FIRST, because
+        # the queue is where it lives again: a copy in both would be listed twice
+        # the moment anything gathered. Deliberately NOT reached after a raise
+        # ({#exchange} answers settled there) -- this loop would dequeue the item
+        # again at once and fail the same way, which is a hot loop rendering one
+        # error forever.
+        def requeue(item)
+          @inbox.retire(item.digest)
+          @questions.enqueue(item)
+        end
+      end
 
       # The approval list nobody wired (T36) -- {NoEditor}, {NoViews} and
       # {NoReview}'s fourth sibling, and a fourth object for {NoReview}'s

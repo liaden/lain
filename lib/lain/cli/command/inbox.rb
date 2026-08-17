@@ -14,6 +14,18 @@ module Lain
 
         def usage = "/inbox -- list and answer pending human questions (same drain as human>)"
 
+        # THIS command reads the human's answer itself, so no second reply
+        # surface may be opened around the line that invokes it
+        # ({Repl::LineScope#serve} is what asks, through
+        # {Registry#serves_replies?}). It is the only command in the set that
+        # says this, and it is the whole reason the message exists: `/inbox` is
+        # the manual watcher for the stretches when no reply loop runs, so a
+        # loop started around it would race the drain for one stdin and the
+        # answer would land on whichever fiber won the dequeue -- against
+        # `Pending#oldest`, which by then is the loop's own item rather than the
+        # one the human just read.
+        def serves_replies? = true
+
         # Nil, always: `#drain_at_prompt` already delivers everything a human
         # needs to see through the SAME TTY calls `human>`'s drain uses (the
         # listing, the empty state, the arrival line) -- returning text here

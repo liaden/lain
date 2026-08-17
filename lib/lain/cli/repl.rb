@@ -2,6 +2,7 @@
 
 require_relative "repl/approval_surfaces"
 require_relative "repl/conversation_scope"
+require_relative "repl/line_scope"
 
 module Lain
   module CLI
@@ -41,15 +42,7 @@ module Lain
         @replies = replies
         @commands = commands
         @goal_driver = goal_driver
-        # The approval-watching surfaces are their own collaborator now (the
-        # TTY prompt, dunst, the opt-in auto surface and -- once #run has
-        # attached one -- the editor's own list, over one queue); Repl asks it
-        # to `watch` and never touches the individual surfaces.
-        @surfaces = ApprovalSurfaces.new(approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
-        # And its counterpart one lifetime up (T33): what the CONVERSATION
-        # holds open -- the fleet's reactor and the editor's gesture consumer --
-        # which is why `supervisor:` is no longer an ivar here.
-        @conversation = ConversationScope.new(supervisor:, replies:)
+        name_lifetimes(replies:, supervisor:, approvals:, notifier:, auto_surface:, secret_surface:, tty:, conductor:)
       end
 
       # No next/break: the loop exit is text's own truthiness, reassigned each
@@ -103,6 +96,25 @@ module Lain
       end
 
       private
+
+      # The three lifetimes a conversation runs, each named by the object that
+      # owns it -- so which fiber belongs to which, and who stops it, is read
+      # off a name rather than off three ensures.
+      #
+      # The approval-watching surfaces are their own collaborator (the TTY
+      # prompt, dunst, the opt-in auto surface and -- once #run has attached one
+      # -- the editor's own list, over one queue); nothing here touches the
+      # individual surfaces. {ConversationScope} is the longest lifetime (T33):
+      # the fleet's reactor and the editor's gesture consumer, which is why
+      # `supervisor:` is no longer an ivar. {LineScope} is the middle one (T1):
+      # every surface a human answers at THIS terminal through, live for one
+      # dispatched line, because a question can be raised from any frame a line
+      # reaches and not only from the ask.
+      def name_lifetimes(replies:, supervisor:, **approval_seams)
+        @surfaces = ApprovalSurfaces.new(**approval_seams)
+        @conversation = ConversationScope.new(supervisor:, replies:)
+        @line = LineScope.new(replies:, surfaces: @surfaces)
+      end
 
       # T18: the bridge over the agent's own override slot, sharing the nvim
       # views' journal so the resend_dispatched marker lands beside the
@@ -170,8 +182,22 @@ module Lain
       # WITHIN EITHER PATH (a malformed invocation from the registry's parse or
       # the skill middleware's alike): render it and return, so `converse`
       # loops to the next prompt instead of dying.
+      #
+      # T1: it is also the frame the human's answer surfaces are bracketed over
+      # ({LineScope}), because a question or a parked approval can now be raised
+      # from EITHER path -- a command running lib-side, or the subagent a
+      # `@role[/skill]` line spawns -- and the fiber that parks on one is this
+      # one. See {LineScope} for why the line, and not the ask or the
+      # conversation, is the right lifetime, and for the invariant that decides
+      # what gets spawned: a line which reads the terminal ITSELF (`/inbox`) must
+      # be the ONLY reader, so it is asked about before it is bracketed. The
+      # command surface answers that from the line alone, without calling
+      # anything, so the question costs no side effect -- and its parse raises
+      # into the same rescue a malformed invocation already does.
       def dispatch(text)
-        settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
+        @line.serve(owns_terminal: @commands.serves_replies?(text)) do
+          settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
+        end
       rescue Lain::Error => e
         @tty.render_error(e.message)
         # Explicit: dispatch's return is #converse's ACTION position, and
@@ -268,21 +294,16 @@ module Lain
 
       # The model turn, returned for {#dispatch} to deliver -- never rendered
       # here, so a short-circuiting middleware's response and this one share the
-      # single boundary renderer. Concurrent surfaces beside the ask: the
-      # {HumanReplies} reply fibers (`ask` parks inside ask_human#perform awaiting
-      # the reply, and the reply comes from this same terminal -- a single-fiber
-      # ask-then-prompt deadlocks, OM-4 depends on OM-0) and the approval
-      # watchers. Every surface `.stop` in the ensure is load-bearing: a parked
-      # one holds Sync open forever otherwise. A torn ask is journaled and
-      # rendered right here (it owns the interrupted record), then returns nil so
-      # dispatch delivers nothing over it.
+      # single boundary renderer. The concurrent surfaces an ask needs (`ask`
+      # parks inside ask_human#perform awaiting the reply, and the reply comes
+      # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
+      # depends on OM-0) are already live: {LineScope} starts them for the whole
+      # dispatched line, and this Sync nests inside that one rather than opening
+      # a second set. A torn ask is journaled and rendered right here (it owns
+      # the interrupted record), then returns nil so dispatch delivers nothing
+      # over it.
       def respond(text)
-        Sync do |task|
-          surfaces = [*@replies.surfaces(task), *@surfaces.watch(task)]
-          @conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response
-        ensure
-          surfaces&.each { |surface| surface&.stop }
-        end
+        Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response }
       rescue Lain::Error => e
         record_interruption
         @tty.render_error(e.message)

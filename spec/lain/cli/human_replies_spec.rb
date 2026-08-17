@@ -391,7 +391,17 @@ RSpec.describe Lain::CLI::HumanReplies do
     # The directory refuses a name nobody holds rather than guessing, and the
     # refusal is written to be read at a reply prompt: it says the LINE was
     # stale, not that the answer was wrong.
-    it "tells the human when an answer names a set nothing is holding, and retires no item" do
+    #
+    # It also RETIRES the line, and that half changed in T1's review. It used to
+    # render and return, which left the dead question listed and offered it to
+    # every later `/inbox` -- "a line that lists forever and can only ever
+    # refuse". Nothing else on this path retires it: a drain calls
+    # `#resolve_reply` directly, never through {AnswerLoop}, whose own ensure is
+    # what settles the `human>` path. The refusal MEANS the set is gone, so
+    # nothing is lost by letting the line go with it -- and the re-queue rule
+    # (see "a surface stopped while it still holds an unanswered question") is
+    # what makes a drain the likely finder of a ghost in the first place.
+    it "tells the human when an answer names a set nothing is holding, and lets the stale line go" do
       Sync do
         questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "gone?", from: "blake3:aaa",
                                                                  digest: "blake3:deadbeef", asked_at: Time.now))
@@ -400,7 +410,7 @@ RSpec.describe Lain::CLI::HumanReplies do
         replies.drain_at_prompt
 
         expect(output.string).to include("blake3:deadbeef").and include("inbox line offering it is stale")
-        expect(replies.pending?).to be(true)
+        expect(replies.pending?).to be(false)
       end
     end
   end
@@ -501,12 +511,75 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # T1 review, BLOCKER 2. A reply surface no longer lives for one ASK -- it lives
+  # for one dispatched LINE ({Lain::CLI::Repl::LineScope}), so it is started and
+  # stopped around `/help`, `/status`, and every other command a human types in
+  # a second. The fleet outlives all of them (OM-6), so a subagent can enqueue
+  # while one is running: the loop dequeues, renders the note, and parks on a
+  # read the human is not looking at, and the line then ends UNDER it.
+  #
+  # An unanswered item must survive that. Retired, it is off `@questions`
+  # (dequeued) AND off `@inbox`, so `pending?` is false, `/inbox` can never list
+  # it, and the asker is parked forever with no error and no journal line. The
+  # surface's stop says nothing about the QUESTION -- only about the surface --
+  # so it goes back on the queue for the next surface (or `/inbox`) to reach.
+  describe "a surface stopped while it still holds an unanswered question" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    it "puts the item back rather than destroying it" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task) { output.string.include?("which db?") }
+        surfaces.each(&:stop) # the LINE ended; the asker is still parked on the answer
+        expect(replies.pending?).to be(true)
+        run.stop
+      end
+    end
+
+    # And the recovery is real, not merely a true `pending?`: the next surface up
+    # dequeues the SAME item and can answer it, which is what "the asker is still
+    # reachable" has to mean.
+    it "lets the next surface serve and answer it" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+      run = nil
+
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task) { output.string.include?("which db?") }
+        surfaces.each(&:stop)
+
+        allow(conductor).to receive(:read_reply).and_return("postgres")
+        later = replies.surfaces(task)
+        pumped_until(task) { !ask_human.pending? }
+        later.each(&:stop)
+      end
+
+      expect(ask_human.last_answer.body["answer"]).to include("postgres")
+    ensure
+      run&.stop
+    end
+  end
+
   # Fix B: a Ctrl-C stops the answer loop mid-question, and the SAME unwind
   # abandons the set inside AskHuman. An item that survives that is a line
   # offering a question nothing is waiting on -- the live way a human answers
   # a ghost.
+  #
+  # T1 REVIEW re-decided which of the two mistakes to make here, and the reason
+  # is that {HumanReplies} cannot tell the two apart: a stopped surface holding
+  # an unanswered item looks identical whether the set was withdrawn under it
+  # (this group) or is still parked waiting for an answer (the group above). It
+  # now KEEPS the item either way, because destroying a live question is silent
+  # and permanent -- the asker waits forever, `pending?` reads false and no
+  # `/inbox` can reach it -- where keeping a dead one costs exactly one further
+  # arrival note and is then refused and retired. The ghost does not list
+  # forever; the second example here is what pins that.
   describe "a run interrupted while a question is outstanding" do
-    it "retires the item it was holding, and refuses a later answer for it with something actionable" do
+    it "keeps the item it was holding, and refuses a later answer for it with something actionable" do
       asked = nil
       allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
 
@@ -518,13 +591,83 @@ RSpec.describe Lain::CLI::HumanReplies do
         pumped_until(task) { output.string.include?("which db?") }
         asked = ask_human.last_question
         run.stop # the sync gate unwinds: the set is withdrawn
-        surfaces.each(&:stop) # and the loop holding its inbox line dies with it
+        surfaces.each(&:stop) # and the loop holding its inbox line is stopped with it
       end
 
       expect(ask_human.pending?).to be(false)
-      expect(replies.pending?).to be(false)
+      expect(replies.pending?).to be(true)
       expect { directory.reply("too late", asked.digest) }
         .to raise_error(Lain::Tools::AskHuman::NoPendingQuestion, /inbox line offering it is stale/)
+    end
+
+    # The other half of that trade, and the reason it is affordable: a ghost is
+    # served ONCE. The next surface takes it off the queue, the human types, the
+    # directory refuses it as stale in words they can act on, and the ensure
+    # retires it -- so nothing lists a question that can only ever refuse for a
+    # second time.
+    #
+    # BOTH paths owe that, and the second one is the one this card is about.
+    # `/inbox` does not go through {AnswerLoop} at all: `#drain_at_prompt` calls
+    # `#resolve_reply` directly, so a refusal that only RENDERS leaves the line
+    # listed and every later `/inbox` offers the dead question again -- which is
+    # verbatim the property the inverted assertion above was traded against, and
+    # the re-queue rule is what puts ghosts where `/inbox` finds them.
+    it "lets a ghost go when it is /inbox that drained it" do
+      strand_a_ghost
+      allow(conductor).to receive(:read_reply).and_return("too late")
+
+      answer = replies.drain_at_prompt
+
+      expect(answer).to include("too late")
+      expect(output.string).to include("inbox line offering it is stale")
+      expect(replies.pending?).to be(false)
+    end
+
+    # The same fact as the human meets it: drain twice, and see whether the dead
+    # question is offered a second time.
+    it "does not offer that dead question to the next /inbox" do
+      strand_a_ghost
+      allow(conductor).to receive(:read_reply).and_return("too late")
+      replies.drain_at_prompt
+      already_printed = output.string.length
+
+      replies.drain_at_prompt
+
+      expect(output.string[already_printed..]).not_to include("which db?")
+    end
+
+    # Withdraw a set under a parked reader -- the Ctrl-C shape the example above
+    # covers -- and leave the re-queued GHOST on the queue for a drain to find.
+    def strand_a_ghost
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+      Sync { |task| withdraw_under_reader(task) }
+    end
+
+    def withdraw_under_reader(task)
+      surfaces = replies.surfaces(task)
+      run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+      pumped_until(task) { output.string.include?("which db?") }
+      run.stop              # the set is withdrawn
+      surfaces.each(&:stop) # and the LINE ends under the parked reader
+    end
+
+    it "serves that ghost once more and then lets it go" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        pumped_until(task) { output.string.include?("which db?") }
+        run.stop
+        surfaces.each(&:stop)
+
+        allow(conductor).to receive(:read_reply).and_return("too late")
+        later = replies.surfaces(task)
+        pumped_until(task) { output.string.include?("inbox line offering it is stale") }
+        later.each(&:stop)
+      end
+
+      expect(replies.pending?).to be(false)
     end
 
     # The panel's probe, promoted: the stop lands while the human is TYPING,

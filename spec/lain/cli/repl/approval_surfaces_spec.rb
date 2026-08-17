@@ -134,6 +134,49 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(3)
   end
 
+  # T1 review round 2, BLOCKER A. Exactly ONE surface here reads stdin, and it
+  # reads the SAME stdin the ask_human drain does -- so a line that reads the
+  # terminal itself (`/inbox`, see {Lain::CLI::Repl::LineScope#serve}) must not
+  # have it spawned over the top, or a keystroke meant for an inbox question can
+  # land as the y/N on a gated `bash`. Everything else here answers the queue by
+  # other means and is untouched, which is what keeps the withheld case bounded
+  # by the queue's own fail-closed timer rather than by a silent grant.
+  describe "a line that reads the terminal itself" do
+    def watched_without_terminal(auto: nil, attached: nil, secret: nil)
+      Sync do |task|
+        watched = surfaces(auto:, attached:, secret:).watch(task, terminal: false)
+        watched
+      ensure
+        watched&.each { |surface| surface&.stop }
+      end
+    end
+
+    it "spawns no stdin-reading surface for it" do
+      watched_without_terminal
+
+      expect(conductor).not_to have_received(:read_reply)
+    end
+
+    it "keeps every other watcher on the queue -- one short, never none" do
+      expect(watched_without_terminal(auto: auto_surface, attached: editor, secret: secret_surface).size)
+        .to eq(4)
+    end
+
+    it "still hands those watchers the SAME queue" do
+      watched_without_terminal(auto: auto_surface)
+
+      expect(auto_surface.queues).to contain_exactly(be(queue))
+      expect(notifier.queues).to contain_exactly(be(queue))
+    end
+
+    # `[*false]` is `[false]` where `[*nil]` is empty, so a Boolean spliced the
+    # way the nil-or-object ivars beside it are would put `false` in the set and
+    # `false.stop` would raise in the scope's ensure.
+    it "leaves no false in the set the caller has to stop" do
+      expect(watched_without_terminal).to all(be_a(Async::Task))
+    end
+  end
+
   # T17. The fifth peer, opt-in behind --secret-oracle: a local model triaging
   # the parked reads that carry sensitive regions, ahead of the human. It is
   # DISJOINT from the auto surface rather than a second opinion on the same

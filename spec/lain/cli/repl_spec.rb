@@ -55,6 +55,19 @@ class ReplChangesetReview
   end
 end
 
+# The ask_human reply seam as {Lain::CLI::HumanReplies} routes an answer through
+# it, with the pair each answer was delivered as recorded. A real object rather
+# than an instance_double because the question these examples ask is whether any
+# fiber was alive to route an answer at all -- a double would answer that by
+# construction.
+class ReplRecordedAnswers
+  def initialize = @answered = []
+
+  attr_reader :answered
+
+  def reply(answer, digest) = @answered << [answer, digest]
+end
+
 # The real {Lain::CLI::HumanReplies} with an editor ALREADY attached. {Repl#run}
 # binds the frontend it builds, and an example with no nvim to build one from
 # would have its rail overwritten by that bind -- so the two binds are refused
@@ -240,11 +253,17 @@ RSpec.describe Lain::CLI::Repl do
     end
 
     def settle(outcome, tty:)
+      # The command surface's duck is two messages now (T1): the Repl asks
+      # whether the LINE is itself a reply surface before it brackets it.
       commands = Struct.new(:outcome) do
         def dispatch(_text) = outcome
+        def serves_replies?(_text) = false
       end.new(outcome)
+      # `surfaces: []` because the reply surfaces are bracketed around the whole
+      # DISPATCHED LINE now (T1), not around the ask -- so a command that never
+      # reaches #respond still asks this collaborator for them.
       Lain::CLI::Repl.new(agent: instance_double(Lain::Agent, timeline: nil), tty:,
-                          replies: instance_double(Lain::CLI::HumanReplies), commands:,
+                          replies: instance_double(Lain::CLI::HumanReplies, surfaces: []), commands:,
                           chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
                      .converse(first_prompt: "/anything")
     end
@@ -316,7 +335,12 @@ RSpec.describe Lain::CLI::Repl do
     let(:review) { ReplChangesetReview.new }
     let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
-    let(:commands) { Struct.new(:nothing) { def dispatch(_text) = nil }.new(nil) }
+    let(:commands) do
+      Struct.new(:nothing) do
+        def dispatch(_text) = nil
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
     let(:mark) { ["review_mark", [3, "reviewed", 7]] }
     # Doubled so these examples are about the GESTURE RAIL alone -- the fleet's
     # reactor is a second lifetime {Repl::ConversationScope} opens beside it.
@@ -461,6 +485,260 @@ RSpec.describe Lain::CLI::Repl do
 
         expect { Timeout.timeout(10) { repl.run(nvim: nil, store: nil, session: nil) } }.not_to raise_error
       end
+    end
+  end
+
+  # T1: the reply surfaces' lifetime is one DISPATCHED LINE, not one ask.
+  # A human question can now be raised from a frame {Repl#respond} never enters
+  # -- a registered command runs lib-side with zero model turns, and a
+  # `@role[/skill]` line folds a whole subagent run into the repl phase's short
+  # circuit -- and the fiber that parks on such a question is the DISPATCHING
+  # one. With the surfaces started inside `#respond`, nothing was draining the
+  # queue while that fiber waited, so the question could only be answered by a
+  # `/inbox` the wedged conversation could no longer read.
+  #
+  # The far edge is what the widening must not cross: {HumanReplies#surfaces}
+  # documents its fiber as one that "must live exactly as long as the ask and no
+  # longer -- the reply read parks inside it, and the terminal it reads from is
+  # the one the next `you>` prompt needs back". `#dispatch` ends before that
+  # read; a conversation-scoped answer_loop would not, and would race every
+  # prompt for stdin.
+  #
+  # Every example drives the REAL {Repl#run} over the REAL {HumanReplies} and
+  # its real fibers -- the queue is a live Async::Queue and the reply comes off
+  # a real terminal read.
+  describe "the reply surfaces' lifetime" do
+    let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
+    let(:agent) { instance_double(Lain::Agent, timeline: nil) }
+    let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
+    let(:questions) { Async::Queue.new }
+    let(:answers) { ReplRecordedAnswers.new }
+    let(:output) { StringIO.new }
+    let(:typed) { "an answer\nsecond answer\n" }
+    let(:tty) do
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new(typed),
+                              history_path: File.join(@dir, "history"))
+    end
+    # THE subject's collaborator, not a double: "was a fiber alive to serve this"
+    # is the question, and a double answers it by construction.
+    let(:replies) { Lain::CLI::HumanReplies.new(tty:, conductor:, questions:, ask_human: answers) }
+    # The queue is REAL, and so is its fail-closed timer: what a suppressed
+    # terminal surface costs is a call that waits, and the worst case is the
+    # queue refusing it -- never a silent grant.
+    let(:approvals) { Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5) }
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @dir = dir
+        example.run
+      end
+    end
+
+    def item(question = "which file", digest: "digest-of-which-file")
+      Lain::CLI::HumanReplies::InboxItem.new(question:, from: "researcher", digest:, asked_at: Time.now)
+    end
+
+    # The command registry's seam, standing in for every frame that can now raise
+    # a question without reaching `#respond`: a lambda, so the body runs in the
+    # example's own scope and can wait on the example's collaborators.
+    def commands_that(serves_replies: false, &body)
+      Struct.new(:body, :serves) do
+        def dispatch(text, &_downstream) = body.call(text)
+        def serves_replies?(_text) = serves
+      end.new(body, serves_replies)
+    end
+
+    # `reading:` is how the terminal behaves at a `human> ` prompt. `:typed` is a
+    # human who answers at once; `:never` is the honest shape of one who is not
+    # looking -- a read that parks and is still parked when the line ends.
+    # `:counted` parks BRIEFLY and then answers, which is the only way two
+    # readers can be caught overlapping: a StringIO returns instantly, so a
+    # second reader would never be observed even where it exists.
+    #
+    # Bounded, because an unstopped surface would hold the session's Sync open
+    # forever and a hung suite says nothing.
+    def converse_over(commands, reading: :typed, approvals: nil, &at_prompt)
+      allow(conductor).to receive(:read_reply, &reply_reader(reading))
+      allow(conductor).to receive(:read_prompt, &at_prompt)
+      Timeout.timeout(10) { repl_over(commands, approvals).run(nvim: nil, store: nil, session: nil) }
+    end
+
+    def repl_over(commands, approvals = nil)
+      described_class.new(agent:, tty:, replies:, commands:, supervisor:, approvals:,
+                          chronicle: Lain::CLI::Chronicle::Null.new, conductor:)
+    end
+
+    # `fetch`, so a typo names itself rather than silently reading the terminal.
+    def reply_reader(reading)
+      {
+        typed: ->(terminal, prompt) { terminal.prompt(prompt) },
+        never: ->(_terminal, _prompt) { Async::Task.current.sleep(60) },
+        counted: method(:counted_read)
+      }.fetch(reading)
+    end
+
+    # How many reply reads are parked on the one terminal at this instant, and
+    # the most there have ever been. Counted rather than inferred from the
+    # rendered prompts: two reads that ran back to back print the same two
+    # prompts as two that overlapped, and only the second is a wedge.
+    def counted_read(terminal, prompt)
+      @in_flight = @in_flight.to_i + 1
+      @peak = [@peak.to_i, @in_flight].max
+      Async::Task.current.sleep(0.05) # the human is typing
+      terminal.prompt(prompt).tap { @in_flight -= 1 }
+    end
+
+    def peak_reply_reads = @peak.to_i
+
+    # THE REGRESSION. Nothing here ever calls `#respond`: the command answers the
+    # line itself, exactly as a skill spawn's short circuit does, and the question
+    # is raised while that call is in flight.
+    it "serves a question raised while a command is dispatched, a frame respond never enters" do
+      lines = ["ask me", "quit"]
+      commands = commands_that do |_text|
+        questions.enqueue(item)
+        wait_until(reason: "the question raised mid-dispatch was answered") { answers.answered.any? }
+        "the command answered"
+      end
+
+      converse_over(commands) { lines.shift }
+
+      expect(answers.answered).to contain_exactly(["an answer", "digest-of-which-file"])
+      expect(output.string).to include("which file", "human> ")
+    end
+
+    # The other edge, asserted as the NEGATIVE it is: at `you>` no reply fiber
+    # may be parked on the terminal, so an arrival there waits for `/inbox` (or
+    # for the next line to be dispatched) rather than stealing the prompt's read.
+    it "leaves nothing parked on the terminal at the you> prompt" do
+      commands = commands_that { |_text| "never dispatched" }
+
+      converse_over(commands) do
+        questions.enqueue(item)
+        sleep(0.2)
+        "quit"
+      end
+
+      expect(answers.answered).to be_empty
+      expect(output.string).not_to include("human> ")
+    end
+
+    # T1 review, BLOCKER 2 (probe 1). The fleet outlives any one ask (OM-6), so a
+    # background subagent can enqueue while the human runs a SHORT command line
+    # -- `/help`, `/status`, `/models`. The reply loop is live for that line: it
+    # dequeues, renders the note, and parks on a read nobody is looking at. The
+    # line ends and the surface is stopped mid-read.
+    #
+    # The item must survive that. Destroyed, it is off `@questions` (dequeued)
+    # AND off `@inbox` (retired), so `pending?` is false, `/inbox` can never list
+    # it, and the asker is parked forever -- with no error and no journal line.
+    # The widening is what exposes every command line to it; the mechanism is
+    # {HumanReplies#serve_question}'s own ensure, pinned one level down in
+    # human_replies_spec.
+    it "keeps a question the human never answered reachable when the line that surfaced it ends" do
+      lines = ["/short-command", "quit"]
+      commands = commands_that do |_text|
+        questions.enqueue(item)
+        Async::Task.current.sleep(0.3) # long enough for the loop to dequeue and park on the read
+        "the command is done"
+      end
+
+      converse_over(commands, reading: :never) { lines.shift }
+
+      expect(answers.answered).to be_empty # nobody typed, so nothing may have been delivered
+      expect(replies.pending?).to be(true)
+    end
+
+    # T1 review round 2. The re-queue keeps it reachable, which is right -- but
+    # every later line re-opens a loop that dequeues it at once. An ARRIVAL note
+    # says "this just arrived", and on the third `/fast` line that is simply
+    # false; worse, the read it opens is torn down before a human could type into
+    # it, so the repetition is noise the human cannot act on. The note is owed
+    # ONCE per item; the read still opens, so a line they linger on is still
+    # answerable.
+    it "announces an outstanding question once, however many lines it outlives" do
+      questions.enqueue(item)
+      lines = ["/fast", "/fast", "/fast", "quit"]
+      commands = commands_that { |_text| "done" }
+
+      converse_over(commands, reading: :never) { lines.shift }
+
+      expect(output.string.scan("which file").size).to eq(1)
+    end
+
+    # T1 review, BLOCKER 1 (probe 2c). `/inbox` is a REGISTERED command, so the
+    # widening puts it inside the bracket -- and `Async::Queue#dequeue` on a
+    # non-empty queue returns WITHOUT suspending, so the reply loop takes the
+    # head item and opens a `human> ` read while `drain_at_prompt` opens a SECOND
+    # one on the same stdin. Whichever fiber wins takes the human's typed line,
+    # and `Reply#at_prompt` answers `@inbox.oldest` -- which the loop has already
+    # pushed its own item onto, so the answer lands on the wrong digest.
+    #
+    # `/inbox` exists BECAUSE no loop runs between asks; a fix that makes it race
+    # the loop it substitutes for has moved the wedge, not removed it. So the
+    # line DECLARES that it serves replies, and no second surface opens over it.
+    # The REAL registry over the REAL `/inbox`, bound over the run's own
+    # {HumanReplies} -- the whole chain the declaration travels, from the
+    # command that makes it to the scope that reads it. A fake command answering
+    # `serves_replies?` would pin the wiring and not the shipped behaviour, and
+    # this defect lived in exactly that gap.
+    describe "a line that is itself a reply surface" do
+      let(:inbox_registry) do
+        Lain::CLI::Command::Registry.new([Lain::CLI::Command::Inbox.new]).bind(build_command_env(replies:))
+      end
+
+      it "opens exactly one reply read over a backlog" do
+        questions.enqueue(item)
+        questions.enqueue(item("which branch", digest: "digest-of-which-branch"))
+        lines = ["/inbox", "quit"]
+
+        converse_over(inbox_registry, reading: :counted) { lines.shift }
+
+        expect(peak_reply_reads).to eq(1)
+      end
+
+      it "gives that line's own drain the answer the human typed" do
+        questions.enqueue(item)
+        lines = ["/inbox", "quit"]
+
+        converse_over(inbox_registry, reading: :counted) { lines.shift }
+
+        expect(answers.answered).to contain_exactly(["an answer", "digest-of-which-file"])
+        expect(output.string).to include("which file")
+      end
+
+      # T1 review round 2, BLOCKER A. The APPROVAL watcher is a different QUEUE
+      # and NOT a different terminal: {Repl::ApprovalSurfaces#approval_surface}
+      # reads through `conductor.read_reply(tty, prompt)`, byte-for-byte the
+      # stdin the drain is parked on. An adopted actor can park a tier-3 call at
+      # any instant, so a `y` typed at an inbox question could land as the
+      # verdict on a gated `bash` -- an approval the human never gave. Before
+      # this card a command line started no watchers at all, so it is the
+      # widening that makes it reachable.
+      #
+      # A real {Approval::Queue} and a real parked call, because the claim is
+      # about which fiber holds the terminal and only real fibers can be counted.
+      it "opens no approval read either, so a keystroke cannot land as a y/N verdict" do
+        questions.enqueue(item)
+        lines = ["/inbox", "quit"]
+
+        Sync do |task|
+          task.async do
+            task.sleep(0.05) # the drain has started and is parked on the read
+            approvals.call(gated_call, nil)
+          rescue StandardError
+            nil
+          end
+          converse_over(inbox_registry, reading: :counted, approvals:) { lines.shift }
+        end
+
+        expect(peak_reply_reads).to eq(1)
+        expect(output.string).not_to include("approve bash")
+      end
+    end
+
+    def gated_call
+      Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "echo hi" })
     end
   end
 end

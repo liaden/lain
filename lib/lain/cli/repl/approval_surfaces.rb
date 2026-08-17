@@ -17,7 +17,7 @@ module Lain
       # some, each by a structural filter of its own.
       #
       # `watch(task)` spawns one fiber per live surface and hands the set back
-      # for {Repl#respond}'s ensure to stop. The queue is nil under --yolo (no
+      # for {Repl::LineScope#serve}'s ensure to stop. The queue is nil under --yolo (no
       # queue was wired), so `watch` spawns NOTHING at all; the notifier is Null
       # with no dunstify, `auto_surface` is nil without --auto-approve,
       # `secret_surface` is nil without --secret-oracle, and the editor's view
@@ -69,6 +69,22 @@ module Lain
         # Spawn a watcher fiber per live surface over the one queue; nil under
         # --yolo, so no fiber spawns at all.
         #
+        # `terminal:` is false for a line that reads the terminal ITSELF
+        # (`/inbox`, see {Repl::LineScope#serve}), and then the ONE surface here
+        # that reads stdin is not spawned. Every other surface is untouched: the
+        # desktop notifier, the editor's list and the two oracles answer the same
+        # queue by other means, and a pending nobody answers is bounded by
+        # {Approval::Queue}'s own fail-closed timer -- so the worst case of
+        # withholding this one is a call REFUSED, never one silently granted.
+        # The alternative is worse than the case it would serve: this surface
+        # reads through the same `conductor.read_reply(tty, ...)` the drain is
+        # parked on, so a keystroke meant for an inbox question could land as the
+        # y/N on a gated `bash`.
+        #
+        # `if terminal` rather than `terminal &&`: `[*false]` is `[false]`, where
+        # `[*nil]` is empty -- the surrounding splats read a nil-or-object ivar
+        # and this one reads a Boolean.
+        #
         # The splat rests on a NEGATIVE fact about a third-party class:
         # `Async::Task` does not respond to `to_a`, so `*task` yields the task
         # itself rather than flattening it. An async release that added `to_a`
@@ -76,8 +92,8 @@ module Lain
         # approval_surfaces_spec pins both the SIZE of this set and the class of
         # every member, so that upgrade fails in a test rather than in a
         # session's shutdown path.
-        def watch(task)
-          @approvals && [task.async { approval_surface.watch(@approvals) },
+        def watch(task, terminal: true)
+          @approvals && [*(task.async { approval_surface.watch(@approvals) } if terminal),
                          task.async { @notifier.watch(@approvals) },
                          *(@auto_surface && task.async { @auto_surface.watch(@approvals) }),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),

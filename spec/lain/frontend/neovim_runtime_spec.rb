@@ -397,8 +397,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
-    # turn, and with it the #respond that spawns every approval surface.
-    let(:commands) { Struct.new(:none) { def dispatch(_text) = yield }.new(nil) }
+    # turn. `serves_replies?` is the second half of the command surface's duck
+    # (T1): the Repl asks whether the LINE is itself a reply surface before it
+    # brackets it in the human's answer and approval surfaces.
+    let(:commands) do
+      Struct.new(:none) do
+        def dispatch(_text) = yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
 
     it "renders it in lain://approval and answers it with y, with nobody having wired the view by hand" do
       queue = Lain::Approval::Queue.new(journal:, timeout: 60)

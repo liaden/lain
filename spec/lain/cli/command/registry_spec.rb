@@ -107,6 +107,45 @@ RSpec.describe Lain::CLI::Command::Registry do
     it "still falls through for an unregistered word" do
       expect(registry.bind(env).dispatch("/nope") { :skill_dispatch }).to eq(:skill_dispatch)
     end
+
+    it "answers whether the line serves replies, so the Repl asks the bound registry and not the raw one" do
+      expect(registry.bind(env).serves_replies?("/help")).to be(false)
+    end
+  end
+
+  # T1 review, BLOCKER 1. {Lain::CLI::Repl::LineScope} brackets every dispatched
+  # line in the human's reply surfaces, so a command that opens its OWN
+  # `human> ` read ({Command::Inbox}) would run with a second reader on the same
+  # stdin -- and the human's typed answer would go to whichever fiber won the
+  # dequeue. The Repl asks this BEFORE the line runs; the command declares it.
+  describe "#serves_replies?" do
+    let(:draining) do
+      Struct.new(:name) do
+        def usage = "/#{name} -- probe"
+        def call(_args, _env) = nil
+        def serves_replies? = true
+      end.new("inbox")
+    end
+
+    it "is false for a command that never says otherwise" do
+      expect(registry.serves_replies?("/help")).to be(false)
+    end
+
+    it "is true for one that declares it" do
+      expect(described_class.new([draining]).serves_replies?("/inbox")).to be(true)
+    end
+
+    it "is false for a line no command claims, so prose and skills are unaffected" do
+      expect(registry.serves_replies?("hello there")).to be(false)
+      expect(registry.serves_replies?("@researcher/help go")).to be(false)
+    end
+
+    # The declaration and the only command making it are pinned to each other:
+    # `/inbox` is the whole reason this message exists, and a rename that lost
+    # the declaration would put two readers back on one terminal in silence.
+    it "is true for the shipped /inbox" do
+      expect(described_class.new([Lain::CLI::Command::Inbox.new]).serves_replies?("/inbox")).to be(true)
+    end
   end
 
   describe "the command interface" do
