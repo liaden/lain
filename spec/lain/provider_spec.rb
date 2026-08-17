@@ -45,6 +45,22 @@ RSpec.describe Lain::Provider do
     end
   end
 
+  # T9 AC 4: a provider with no window knowledge answers nil. Deliberately NOT
+  # a NotImplementedError like #capabilities/#cache_profile: those two are
+  # facts every arm KNOWS and must state, while "how many tokens can this model
+  # take here" is a question most providers genuinely cannot answer -- the
+  # window comes from a book, not from the wire. nil is the honest answer, and
+  # it is what keeps ContextWindow's conservative fallback in play.
+  describe "#context_window_tokens" do
+    it "answers nil from the abstract surface, so the conservative fallback stands" do
+      expect(described_class.new.context_window_tokens("claude-opus-4-8")).to be_nil
+    end
+
+    it "answers nil for a concrete provider that does not implement it" do
+      expect(Lain::Provider::Mock.new.context_window_tokens("m")).to be_nil
+    end
+  end
+
   # to_s is the human-facing capability list; inspect keeps the class-tagged,
   # debug-oriented form -- the DegradedSet convention (see
   # capability/degraded_set_spec.rb). Uses Provider::Mock because the abstract

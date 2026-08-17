@@ -116,7 +116,82 @@ module Lain
         wrapping_errors { build_response(request.stream ? stream_body(request) : sync_body(request)) }
       end
 
+      # The window this server is actually serving `model` with, or nil.
+      #
+      # Ollama publishes two different context numbers and only one of them is
+      # a denominator anything may divide by. `/api/show`'s
+      # `model_info.<arch>.context_length` is the GGUF's TRAINED maximum --
+      # 262,144 for qwen3-coder:30b -- while a loaded runner gets
+      # min(trained, OLLAMA_CONTEXT_LENGTH, per-request num_ctx), which is
+      # 32,768 on this box (DEBUGGING_OLLAMA.md:43). Divide occupancy by the
+      # trained figure and it under-reports 8x, so compaction never fires --
+      # the failure `context_window.rb:74-77` ranks as worse than the crash it
+      # replaces. The trained number is therefore never returned, even though
+      # it is the one that is always available: `/api/ps` states the served
+      # figure or nobody does.
+      #
+      # So nil is the ORDINARY answer, not an error path. Ollama fixes a
+      # runner's context at load time, so before the model is resident there is
+      # genuinely no served window to report, and an unreachable server is the
+      # everyday case on the arm that is also the default summarizer. Both
+      # answer nil and leave {ContextWindow}'s conservative fallback in charge.
+      #
+      # == A CALLER SENDING num_ctx MUST take the min of this and its own
+      #
+      # This reports the window of the runner that is resident *now*, and
+      # ollama reloads a runner whose `NumCtx` differs from the request's
+      # (`sched.go`'s `needsReload`). So a runner left at 32,768 by `ollama
+      # run`, by a sibling session, or by an earlier turn makes this answer
+      # 32,768 while the very next request -- carrying an explicit `num_ctx` of
+      # 8,192 -- is served 8,192. Reading this figure alone would then
+      # over-estimate by 4x, by the exact mechanism the rest of this method
+      # refuses. Any caller that sends `num_ctx` (an operator `--num-ctx`,
+      # `Request#extra`) owns that `min`; this method cannot see the request.
+      #
+      # Measured 2026-08-17 on loopback: ~0.27ms warm, ~0.3ms with the server
+      # down (one attempt, {Transport::PROBE_TIMEOUT_SECONDS}; the completion
+      # path's budget would make that same case 790ms). Cheap enough to ask per
+      # turn, which is what staying correct across a reload requires --
+      # memoizing it is what makes the stale-runner case above permanent rather
+      # than momentary.
+      #
+      # @param model [String]
+      # @return [Integer, nil]
+      def context_window_tokens(model)
+        served_context_length(model, wrapping_errors { @transport.process_status.body })
+      rescue APIError
+        nil
+      end
+
       private
+
+      # Upstream declares this field `ContextLength int` (`api/types.go`), so a
+      # value that is not already an Integer means the body is not ollama's.
+      # `Integer()` is deliberately NOT used to coerce one: it reads "0x40000"
+      # as 262,144 -- the exact 8x over-estimate this method exists to refuse --
+      # and truncates a Float besides. Both are the forbidden direction.
+      def served_context_length(model, body)
+        runner = loaded_runners(body).find { |entry| serves?(entry, model.to_s) }
+        tokens = runner.to_h["context_length"]
+        tokens if tokens.is_a?(Integer) && tokens.positive?
+      end
+
+      # Non-Hash entries are dropped rather than indexed. `api_base:` can point
+      # at a proxy or at the wrong service entirely, and this answers on the
+      # RENDER path -- a `TypeError` out of a denominator lookup would take out
+      # the turn, which is the one thing nil exists to prevent.
+      def loaded_runners(body)
+        body.is_a?(Hash) ? Array(body["models"]).grep(Hash) : []
+      end
+
+      # Only `model`. The `/api/ps` handler assigns `name` and `model` from the
+      # same `DisplayShortest()` value (`routes.go`), so the second key carries
+      # nothing the first does not -- and on a body where they disagree, reading
+      # it would answer with ANOTHER model's window. `:latest` is the tag ollama
+      # appends to an untagged request before printing it back.
+      def serves?(entry, model)
+        [model, "#{model}:latest"].include?(entry["model"])
+      end
 
       def sync_body(request)
         @transport.sync_post(encode(request)).body || {}

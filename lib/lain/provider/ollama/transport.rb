@@ -20,7 +20,25 @@ module Lain
       # without adding a `resolve(:ollama)` entry the vendored code never looks up.
       class Transport < Provider::HTTP::Provider
         COMPLETION_PATH = "api/chat"
+        # The loaded-runner listing. It is the ONLY endpoint that states the
+        # window a model is actually being served with -- `/api/show` reports
+        # the GGUF's trained maximum, which is a different and larger number.
+        # See references/ollama/api-show-and-context.md.
+        PROCESS_PATH = "api/ps"
         DEFAULT_API_BASE = "http://localhost:11434"
+
+        # A metadata probe is not a completion and must not inherit a
+        # completion's patience. `/api/ps` answers in ~0.3ms when ollama is up;
+        # when it is DOWN -- the ordinary state of this arm, which is also the
+        # default summarizer -- `Faraday::ConnectionFailed` and `ServerError`
+        # are both in {Connection::MiddlewareStack#retry_exceptions}, so the
+        # completion budget spends four attempts and ~790ms (measured against a
+        # dead port, 2026-08-17; this budget makes the same case 0.3ms) before
+        # giving up. That is dead wall time on the render path, for a
+        # number every caller already has a fallback for. One attempt, and a
+        # timeout two orders of magnitude under the completion path's 300s: a
+        # probe that cannot answer promptly has answered.
+        PROBE_TIMEOUT_SECONDS = 2
 
         # One non-streaming round trip. `faraday.response :json` has already
         # parsed the body, so `#body` is a Hash.
@@ -51,11 +69,41 @@ module Lain
           failure.reraise(e)
         end
 
+        # The models currently resident, each with the context length its runner
+        # was loaded with. A GET, so it takes no payload and no headers -- Ollama
+        # is local and this transport sends no auth.
+        def process_status
+          probe_connection.get(PROCESS_PATH)
+        end
+
+        # The SAME vendored stack the completion path uses -- same middleware,
+        # same JSON handling, same error mapping, same injected Sink -- rebuilt
+        # from a config that differs only in patience ({PROBE_TIMEOUT_SECONDS}
+        # above). This is not the second Faraday the design forbids: that
+        # prohibition is against a parallel, hand-rolled HTTP client whose error
+        # mapping would drift from this one's. It is {Connection::MiddlewareStack}
+        # again, with the retry and timeout numbers a probe should have instead
+        # of the ones a completion should. Built lazily, so a provider that never
+        # asks for a window never opens it.
+        def probe_connection
+          @probe_connection ||= Provider::HTTP::Connection.new(self, probe_config, sink: @sink)
+        end
+
         def api_base
           @config.ollama_api_base || DEFAULT_API_BASE
         end
 
         private
+
+        # `dup` rather than a fresh Configuration, so an operator's `api_base`,
+        # proxy and adapter still reach the probe; only the two budget numbers
+        # are overwritten.
+        def probe_config
+          @config.dup.tap do |config|
+            config.max_retries = 0
+            config.request_timeout = PROBE_TIMEOUT_SECONDS
+          end
+        end
 
         # Reuses the version-correct `on_data` proc (Faraday 1 vs 2 arity differ)
         # from the vendored FaradayHandlers, feeding raw chunks straight to the

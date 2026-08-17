@@ -56,6 +56,28 @@ module Lain
       raise NotImplementedError, "#{self.class} must declare #cache_profile"
     end
 
+    # How many tokens this model can take HERE -- on the endpoint this provider
+    # is actually pointed at -- or nil when the provider cannot say.
+    #
+    # Deliberately NOT abstract like {#capabilities} and {#cache_profile}. Those
+    # two are facts every arm knows about itself and must state; this one is a
+    # fact about a SERVER, and most providers have no endpoint that reports it.
+    # nil is therefore a real answer rather than a hole, and it is the answer
+    # that leaves {ContextWindow}'s conservative fallback in charge.
+    #
+    # The asymmetry that governs every implementation: under-estimating makes
+    # compaction fire early, over-estimating makes it never fire at all
+    # (`context_window.rb:74-77`). So a provider that can see only a number
+    # LARGER than the served window -- a model's trained maximum, say -- must
+    # answer nil, not that number.
+    #
+    # @param _model [String] the model the answer is about; a served window is
+    #   per-model, not per-endpoint
+    # @return [Integer, nil]
+    def context_window_tokens(_model)
+      nil
+    end
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)

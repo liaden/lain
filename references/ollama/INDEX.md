@@ -20,6 +20,16 @@ only to sharpen the contrast: SSE vs NDJSON, `finish_reason` vs `done_reason`, `
 `eval_count`, `tool_call_id` vs `tool_name`-only correlation. Explains why T15 chose the native
 path.
 
+### [api-show-and-context.md](api-show-and-context.md) ⚠️ LLM-generated
+Added for T9 (`Provider#context_window_tokens`). `POST /api/show`'s full response shape, and the
+finding the whole card turns on: **`/api/show` reports the model's TRAINED context length, never
+the SERVED one**, so `model_info.<arch>.context_length` is an 8x over-estimate on this box
+(262,144 vs 32,768) and using it as an occupancy denominator silently disables compaction. The
+only endpoint that states the served figure is `GET /api/ps`'s `context_length` — undocumented in
+`docs/api.md`, present in `api/types.go`, and only for models currently resident. Also covers
+ollama's VRAM-tier default `num_ctx`, name matching against `DisplayShortest()`/`:latest`, and the
+measured cost of the lookup (0.31 ms warm; **781 ms when ollama is down**, from faraday-retry).
+
 ### [rubyllm-ollama.md](rubyllm-ollama.md) ⚠️ LLM-generated
 Reads `crmne/ruby_llm`'s actual `Ollama < OpenAI` provider source (tag `1.16.0`, the version
 vendored — Anthropic-only — at `lib/lain/provider/http/` in this repo). Headline finding:

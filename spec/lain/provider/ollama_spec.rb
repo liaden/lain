@@ -293,6 +293,276 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # T9. The TRAINED window and the SERVED window are different numbers, and
+  # only the served one is a denominator anything may divide by. `/api/show`
+  # reports the trained maximum out of the GGUF metadata (262,144 for
+  # qwen3-coder:30b); the served figure is min(trained, OLLAMA_CONTEXT_LENGTH,
+  # per-request num_ctx), and `/api/ps`'s `context_length` -- the number
+  # `ollama ps`'s CONTEXT column prints -- is the only place the API states it.
+  # See references/ollama/api-show-and-context.md for the full trace.
+  describe "#context_window_tokens" do
+    # 32,768 is what this box actually serves (DEBUGGING_OLLAMA.md:43,
+    # `OLLAMA_CONTEXT_LENGTH=32768`); 262,144 is qwen3-coder:30b's trained
+    # ceiling. Any answer of 262,144 is an 8x over-estimate of occupancy,
+    # which silently disables compaction.
+    let(:served) { 32_768 }
+    let(:trained) { 262_144 }
+
+    def ps_entry(model, context_length: served)
+      entry = { "name" => model, "model" => model, "size" => 18_000_000_000,
+                "digest" => "abc123", "expires_at" => "2026-08-17T12:00:00Z", "size_vram" => 18_000_000_000 }
+      context_length.nil? ? entry : entry.merge("context_length" => context_length)
+    end
+
+    def show_body(architecture: "qwen3moe", context_length: trained)
+      { "model_info" => { "general.architecture" => architecture,
+                          "#{architecture}.context_length" => context_length },
+        "capabilities" => %w[completion tools] }
+    end
+
+    # Answers /api/ps only, and blows up loudly if an implementation reaches
+    # for the trained number instead -- there is no #show here to call.
+    def transport_ps(*entries)
+      transport_body({ "models" => entries })
+    end
+
+    def transport_body(body)
+      Class.new do
+        define_method(:process_status) { Struct.new(:body).new(body) }
+      end.new
+    end
+
+    it "answers the server's cap, never the trained ceiling above it" do
+      provider = described_class.new(transport: transport_ps(ps_entry("qwen3-coder:30b")))
+
+      expect(provider.context_window_tokens("qwen3-coder:30b")).to eq(served)
+    end
+
+    it "picks the entry for the model asked about, not the first one loaded" do
+      transport = transport_ps(ps_entry("qwen3:4b", context_length: 4_096),
+                               ps_entry("qwen3-coder:30b"))
+
+      expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to eq(served)
+    end
+
+    # An untagged model name resolves to :latest, which is how /api/ps prints it.
+    it "resolves an untagged model against the :latest entry ollama reports" do
+      provider = described_class.new(transport: transport_ps(ps_entry("qwen3:latest", context_length: 8_192)))
+
+      expect(provider.context_window_tokens("qwen3")).to eq(8_192)
+    end
+
+    # The load-bearing refusal: a model that is not loaded has no served cap
+    # yet, and the trained number is NOT a substitute for it.
+    it "answers nil when the model is not loaded, rather than guessing" do
+      expect(described_class.new(transport: transport_ps).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
+    it "answers nil when a server too old to report context_length omits the field" do
+      transport = transport_ps(ps_entry("qwen3-coder:30b", context_length: nil))
+
+      expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
+    it "answers nil on a zero, which is ollama's absent-integer, not a window" do
+      transport = transport_ps(ps_entry("qwen3-coder:30b", context_length: 0))
+
+      expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
+    it "answers nil on a body with no models key at all" do
+      expect(described_class.new(transport: transport_body(nil)).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
+    # `/api/ps` prints both `name` and `model` from the same `displayName`
+    # (`routes.go`'s ps handler), so they cannot legitimately disagree. Where
+    # they do, the body is not ollama's, and matching on the second key would
+    # hand back ANOTHER model's window -- the forbidden direction, arriving
+    # from the field that carries no extra information.
+    it "matches on model alone, so a disagreeing name cannot lend its window to another model" do
+      transport = transport_ps({ "name" => "qwen3-coder:30b", "model" => "tinyllama:1b",
+                                 "context_length" => served })
+
+      expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
+    # A denominator lookup answers on the RENDER path. Every unknown is nil --
+    # including a body that is not shaped like ollama's, which is reachable
+    # whenever `api_base:` points at a proxy or at the wrong service entirely.
+    # Four of these raised TypeError/NoMethodError straight through
+    # `rescue APIError` before the fix.
+    describe "on a body that is not ollama's" do
+      {
+        "a models object instead of an array" => { "models" => { "qwen3-coder:30b" => 32_768 } },
+        "a bare integer where a runner belongs" => { "models" => [42] },
+        "a pair array where a runner belongs" => { "models" => [%w[a b]] },
+        "a null where a runner belongs" => { "models" => [nil] },
+        "a string body" => "not json at all",
+        "an array body" => [],
+        "models as a string" => { "models" => "qwen3-coder:30b" }
+      }.each do |shape, body|
+        it "answers nil rather than raising on #{shape}" do
+          provider = described_class.new(transport: transport_body(body))
+
+          expect(provider.context_window_tokens("qwen3-coder:30b")).to be_nil
+        end
+      end
+
+      it "still finds a well-formed runner sitting behind a junk entry" do
+        transport = transport_ps(nil, 42, ps_entry("qwen3-coder:30b"))
+
+        expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to eq(served)
+      end
+    end
+
+    # Upstream declares `ContextLength int` (`api/types.go`), so anything that
+    # is not already an Integer is a body this code does not understand. Ruby's
+    # Integer() would happily REINTERPRET several of these -- "0x40000" as hex
+    # is 262,144, the exact 8x over-estimate this card exists to prevent -- so
+    # the check is `is_a?`, not a coercion.
+    describe "on a context_length that is not an Integer" do
+      {
+        "a hex string, which Integer() would read as 262144" => "0x40000",
+        "an underscored string" => "262_144",
+        "a padded decimal string" => " 32768 ",
+        "a plain decimal string" => "32768",
+        "a float" => 32_768.9,
+        "a null" => nil,
+        "an array" => [32_768]
+      }.each do |shape, context_length|
+        it "answers nil rather than coercing #{shape}" do
+          transport = transport_ps(ps_entry("qwen3-coder:30b").merge("context_length" => context_length))
+
+          expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
+        end
+      end
+    end
+
+    describe "over the real transport", :webmock do
+      # AC 1, and the discriminating form of it: BOTH endpoints answer, and the
+      # trained number is the one sitting there waiting to be picked up by
+      # mistake. An implementation reading model_info returns 262,144 here.
+      it "answers the served cap while /api/show is loudly offering the trained one" do
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => [ps_entry("qwen3-coder:30b")]))
+        stub_request(:post, "http://localhost:11434/api/show")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate(show_body))
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to eq(served)
+      end
+
+      # The card's whole safety property, pinned MECHANICALLY. An unused
+      # WebMock stub fails nothing, so "we stubbed 262,144 and got 32,768" is
+      # circumstantial: it holds for an implementation that reads /api/show and
+      # then discards it, and it would keep holding if the stub silently
+      # stopped matching. Asserting the request was never MADE is the property.
+      it "never asks /api/show at all, so the trained number cannot reach the caller" do
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => [ps_entry("qwen3-coder:30b")]))
+        show = stub_request(:post, "http://localhost:11434/api/show")
+               .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                          body: JSON.generate(show_body))
+
+        described_class.new.context_window_tokens("qwen3-coder:30b")
+
+        expect(show).not_to have_been_requested
+        expect(a_request(:post, "http://localhost:11434/api/show")).not_to have_been_made
+      end
+
+      # AC 2. The trained length is discoverable; the CAP is not, because
+      # nothing is loaded. nil, so ContextWindow's conservative fallback stands.
+      it "answers nil when only the trained length is discoverable" do
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => []))
+        stub_request(:post, "http://localhost:11434/api/show")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate(show_body))
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      # AC 3, and note the config: the SHIPPED one, not zero_retry_config. A
+      # failure path measured with the retries turned off is not the failure
+      # path anyone runs, and this arm's ordinary state is "ollama is not
+      # running" -- so the budget is part of the behaviour under test.
+      it "answers nil rather than raising when the server is not running" do
+        stub_request(:get, "http://localhost:11434/api/ps").to_raise(Faraday::ConnectionFailed)
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      it "answers nil rather than raising on a non-2xx" do
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 500, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("error" => "server error"))
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      it "answers nil rather than raising on a 404 from a server with no /api/ps" do
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 404, headers: { "Content-Type" => "application/json" }, body: "{}")
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      it "answers nil rather than raising when the probe times out" do
+        stub_request(:get, "http://localhost:11434/api/ps").to_timeout
+
+        expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      # A metadata probe must not inherit the COMPLETION path's retry budget.
+      # `ServerError` and `ConnectionFailed` are both in MiddlewareStack's
+      # retry_exceptions, so under the shipped config each of these costs three
+      # attempts plus backoff -- ~760ms of dead wall time before a denominator
+      # lookup on the render path gives up. One attempt is the whole answer.
+      describe "the probe's own budget" do
+        it "makes exactly one attempt when the server is down, not the completion path's three" do
+          stub_request(:get, "http://localhost:11434/api/ps").to_raise(Faraday::ConnectionFailed)
+
+          described_class.new.context_window_tokens("qwen3-coder:30b")
+
+          expect(a_request(:get, "http://localhost:11434/api/ps")).to have_been_made.once
+        end
+
+        it "makes exactly one attempt when the server is up but 500s" do
+          stub_request(:get, "http://localhost:11434/api/ps")
+            .to_return(status: 500, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("error" => "server error"))
+
+          described_class.new.context_window_tokens("qwen3-coder:30b")
+
+          expect(a_request(:get, "http://localhost:11434/api/ps")).to have_been_made.once
+        end
+
+        it "bounds the probe well under the completion path's 300s request_timeout" do
+          transport = Lain::Provider::Ollama::Transport.new(Lain::Provider::HTTP::Configuration.new)
+
+          expect(transport.probe_connection.connection.options.timeout)
+            .to eq(Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS)
+          expect(Lain::Provider::Ollama::Transport::PROBE_TIMEOUT_SECONDS).to be < 10
+        end
+
+        # The guard the budget change must not break: /api/chat keeps the
+        # vendored three attempts, because a completion is worth waiting for.
+        it "leaves the completion path's retry budget untouched" do
+          stub_request(:post, "http://localhost:11434/api/chat")
+            .to_return(status: 500, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("error" => "boom"))
+
+          expect { described_class.new(config: zero_retry_config).complete(request(stream: false)) }
+            .to raise_error(Lain::Provider::Ollama::APIStatusError)
+          expect(a_request(:post, "http://localhost:11434/api/chat")).to have_been_made.times(4)
+        end
+      end
+    end
+  end
+
   # A transport double that captures the payload it was handed.
   def capturing_transport
     Class.new do
