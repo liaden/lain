@@ -37,6 +37,10 @@ require_relative "review/session"
 # and {Review::Docent} -- both from METHOD bodies only, so neither binds load
 # order the way `annotations` above does.
 require_relative "review/handover"
+# Reads `VERDICTS` from a METHOD body only ({OpenedBanner.call}), so it does
+# not have to sit after `vocabulary` -- placed here anyway, beside `handover`,
+# because both are what a human sees once a review is open and drawn.
+require_relative "review/opened_banner"
 
 # The ONE wiring line the diagnostics capability costs, and it is nested rather
 # than routed through a `projection.rb` index on purpose: an index whose only

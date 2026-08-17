@@ -183,8 +183,13 @@ end, {
 --
 -- ANSWERED, unlike every other gesture in this module: the request's return leg
 -- IS lain's verdict on the write, and a refusal arrives as the request's ERROR.
--- `pcall` is what turns that into the human's answer rather than a traceback --
--- `48_annotate`'s `:LainNoteDone` records the shape.
+-- `pcall` is what turns that ERROR -- which may be a raw table that crossed
+-- msgpack, not a string -- into READABLE TEXT before anything is shown. It
+-- does NOT avoid nvim's own stack traceback: measured (`65_review.lua`'s
+-- `:LainReviewDone` comment records it), any error that escapes a `define`d
+-- callback gets one appended regardless of how it was raised, a `pcall`-then-
+-- reraise here included. `48_annotate`'s `:LainNoteDone` records the same
+-- shape and the same limit.
 define("LainReviewVerdict", function(opts)
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
   if not taken then

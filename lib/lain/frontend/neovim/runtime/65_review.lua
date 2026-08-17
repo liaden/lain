@@ -90,15 +90,37 @@ end)
 -- text has gone missing is SKIPPED, because a nil value drops its key from a
 -- lua table entirely and the Ruby side would read the hole as a malformed
 -- review rather than as a note that was never written.
+--
+-- BOTH refusals below answer through `__lain.review_refused` and RETURN,
+-- rather than `error()`ing: this command is bound by `nvim_create_user_command`
+-- (`define`, `30_commands.lua`), and nvim wraps every such callback in its own
+-- protected call -- an error that escapes THIS function gets a Lua
+-- `stack traceback:` appended underneath it no matter how it was raised
+-- (measured: even `error(msg, 0)` gets one, and re-raising a caught error from
+-- inside a `pcall` does too, because the traceback is nvim's own outer
+-- wrapper's doing, not this function's). That reads as a plugin crash. A
+-- refusal a human can act on is not one, and this is the command's OWN
+-- refusal rather than one the Ruby side sent back over the wire, so it names
+-- the surface itself: a buffer this guard rejects is not open for the EPIC
+-- review `:LainReviewDone` hands back -- it is very likely a changeset review
+-- or a survey, which answer to `:LainReviewVerdict {verdict}` instead
+-- (`46_sidebar.lua:188`). `{verdict}` is a PLACEHOLDER -- see :h lain-runtime-commands
+-- for doc/lain.txt's own spelling of this command's argument -- lua has no
+-- `Lain::Review::VERDICTS` to read an exemplar off, unlike the banner
+-- (`cli/command/survey.rb#drawn`, `cli/command/review.rb#drawn`), which shows
+-- a real one for exactly that reason.
 define("LainReviewDone", function()
   local buf = vim.api.nvim_get_current_buf()
   local generation = vim.b[buf].lain_review_generation
   local epic_slug = vim.b[buf].lain_review_epic_slug
   if generation == nil or epic_slug == nil then
-    error("lain: :LainReviewDone needs an open lain review", 0)
+    _G.__lain.review_refused(":LainReviewDone needs an open EPIC review, and this buffer is not one -- " ..
+      "a changeset review or a survey hands back with :LainReviewVerdict {verdict} instead")
+    return
   end
   if vim.bo[buf].modified then
-    error("lain: save the review before marking it done", 0)
+    _G.__lain.review_refused("save the review before marking it done")
+    return
   end
   local marks = vim.api.nvim_buf_get_extmarks(buf, vim.b[buf].lain_annotation_namespace or -1, 0, -1, {})
   local annotations = review_annotations[buf] or {}

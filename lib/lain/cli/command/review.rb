@@ -79,13 +79,6 @@ module Lain
                       "survey's marks cannot reach. Run `lain review open <target>` for a text rendering " \
                       "outside this chat."
 
-        # What the human is told once the sidebar is up. The headline is
-        # {Lain::CLI::Review::HEADLINE}'s, read from that class rather than
-        # restated, so the two surfaces cannot describe the same review
-        # differently.
-        OPENED = "%<headline>s\nwalk it in lain://review; <CR> opens a row, :LainNote annotates, " \
-                 ":LainReviewDone hands it back"
-
         # @param outbox [Review::Submit::Outbox] the run's ONE open review, so
         #   the round this opens is reachable from `/review-submit` once the
         #   human has finished with it. Required rather than defaulted: an
@@ -272,7 +265,7 @@ module Lain
         # second caller T31c deleted.
         def drawn(resolved, session, scope)
           refusal = session.present(scope:)
-          [format(OPENED, headline: headline(resolved, session, scope)),
+          [Lain::Review::OpenedBanner.call(headline(resolved, session, scope)),
            refusal.is_a?(String) ? refusal : nil].compact.join("\n")
         end
 

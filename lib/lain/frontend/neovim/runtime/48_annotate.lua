@@ -394,11 +394,14 @@ end, {
 --
 -- `review_notes` is an ANSWERED verb, so the request's return leg IS lain's
 -- verdict on the write and a refusal comes back as the request's ERROR, which
--- raises here. `pcall` is what turns that into the human's answer rather than a
--- traceback -- and, far more importantly, it is what keeps `forget` on the far
--- side of it. A refused hand-off must leave every note and every marker exactly
--- where the human left them: a refusal they cannot retype from is worse than no
--- refusal at all. Nothing is cleared until lain says it took them.
+-- raises here. `pcall` is what turns that ERROR into READABLE TEXT rather than
+-- a raw table that crossed msgpack -- it does NOT avoid nvim's own stack
+-- traceback (`46_sidebar.lua`'s `:LainReviewVerdict` comment records the same
+-- measured limit) -- and, far more importantly, it is what keeps `forget` on
+-- the far side of it. A refused hand-off must leave every note and every
+-- marker exactly where the human left them: a refusal they cannot retype from
+-- is worse than no refusal at all. Nothing is cleared until lain says it took
+-- them.
 define("LainNoteDone", function()
   local payload = review_notes.settled()
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_notes", { payload })

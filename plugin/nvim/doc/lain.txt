@@ -604,7 +604,11 @@ it, lain does not write it.
                             is ON DISK, so save first. Your annotations ride
                             along with it.
 
-Both commands refuse outside a review buffer. lain DOES ship an asker -- an
+Both commands refuse outside a review buffer this way opened -- an EPIC
+review, specifically, stamped as above. A changeset review or a survey
+(|lain-runtime-commands|, |lain-review-diff|) is a different surface, with a
+different hand-back: `:LainReviewVerdict {verdict}`, not this command. A
+`:LainReviewDone` refused for THAT reason names it. lain DOES ship an asker -- an
 epic hands the agent a request_review tool -- but the editor it would open a
 review in is deliberately left unwired, so the request is announced and never
 rendered here. The editor half described above is complete and is what that

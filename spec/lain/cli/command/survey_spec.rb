@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "neovim"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # `/survey <path>` (B14): the repl command that puts a human in front of a
@@ -290,6 +292,40 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
 
       expect(command.call(@root, env)).to include("lain://review")
+    end
+
+    # F4: the banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
+    # whose guard (`runtime/65_review.lua:93-98`) requires
+    # `b:lain_review_epic_slug` -- a variable a survey never stamps, so the
+    # guard could never pass. This is the command a survey's own hand-back
+    # actually reaches: `:LainReviewVerdict {verdict}`
+    # (`runtime/46_sidebar.lua:188`, protocol 10). Pinned by NAME and not just
+    # by "does not say LainReviewDone", because a banner that dropped the
+    # hand-back gesture entirely would pass a merely negative assertion.
+    # {Lain::Review::OpenedBanner} owns the wording now (T5 fix round); this
+    # example is what proves {Command::Survey} actually reads it.
+    it "names the command a survey's hand-back actually reaches, not the epic surface's" do
+      attached
+
+      answer = command.call(@root, env)
+
+      expect(answer).to include(":LainReviewVerdict #{Lain::Review::VERDICTS.first}")
+      expect(answer).not_to include("LainReviewDone")
+    end
+
+    # The other half of the same sentence (T5's third clause): ":LainNote
+    # annotates" is unchanged, because `:LainNote` is what a `<CR>` on a survey
+    # row actually opens into -- {Lain::Frontend::Neovim::ChangesetDiff} draws
+    # every corpus file as a diff whose old side is `[]` (an ADDED file, never
+    # `nil`, {Lain::Review::Changeset#old_side}'s documented distinction), so
+    # `open_changeset` still stamps the buffer `:LainNote` reads
+    # (`runtime/47_diff.lua`'s `review_diff.stamp`). Proved end to end against
+    # a real editor in "the survey banner's commands, against a real editor"
+    # below, rather than assumed here.
+    it "still names :LainNote, unlike the hand-back verb beside it" do
+      attached
+
+      expect(command.call(@root, env)).to include(":LainNote annotates")
     end
 
     # The survey is part of the chat's RECORD, not a second journal beside it:
@@ -627,6 +663,94 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(editor.bound).to be_a(Lain::Review::Handover)
       expect(editor.bound).not_to equal(first)
+    end
+  end
+
+  # T5's third clause and its AC5, driven against a REAL editor: the banner's
+  # own claims, checked rather than argued for. `changeset_diff_spec.rb`'s
+  # pattern -- a real {Lain::Frontend::Neovim::RenderInlet}, `.drain` sent over
+  # one connection and read back over the SAME one, so message order is the
+  # only ordering this needs -- rather than the full RPC-thread/async gesture
+  # loop, which is a second object's seam to cover.
+  #
+  # The CHANGESET driven through {Lain::Frontend::Neovim::ChangesetDiff} is the
+  # REAL one this command's own `round` built -- `editor.bound.session.changeset`
+  # -- so what gets opened is exactly what a survey's `<CR>` would resolve to,
+  # not a stand-in.
+  describe "the survey banner's commands, against a real editor", :nvim, :seam do
+    around do |example|
+      two_documents
+      socket = File.join(Dir.tmpdir, "lain-survey-cmd-#{Process.pid}-#{rand(1_000_000)}.sock")
+      # `chdir: @root`, `47_diff.lua`'s ROOT: paths land relative to the
+      # SURVEYED tree, and `Lain::Frontend::Neovim::ChangesetDiff` posts them
+      # exactly as {Lain::Review::Source::Corpus} named them -- repository-
+      # relative to the corpus, never to this process's own cwd.
+      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, chdir: @root,
+                                                                             out: File::NULL, err: File::NULL)
+      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+      @nvim = Neovim.attach_unix(socket)
+      @nvim.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
+                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @nvim.channel_id])
+      example.run
+    ensure
+      @nvim = nil
+      if pid
+        begin
+          Process.kill("TERM", pid)
+          Process.wait(pid)
+        rescue Errno::ESRCH, Errno::ECHILD
+          nil
+        end
+      end
+      FileUtils.rm_f(socket)
+    end
+
+    def messages
+      @nvim.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+    end
+
+    # AC4 and AC5 in one example: opening a survey row is what puts the human
+    # in the buffer the banner's two commands are about, so both are checked
+    # against the ONE buffer a real `<CR>` would have opened.
+    it "reaches :LainNote from a row it opened, and refuses :LainReviewDone with a named surface, not a traceback" do
+      attached
+      command.call(@root, env)
+      changeset = editor.bound.session.changeset
+
+      real_inlet = Lain::Frontend::Neovim::RenderInlet.new(waker: -> {})
+      diff = Lain::Frontend::Neovim::ChangesetDiff.new(rpc: real_inlet)
+      diff.reviewing(changeset)
+      refusal = diff.open("guide.md", 1)
+      real_inlet.drain(@nvim)
+
+      expect(refusal).to be_nil, "opening a survey's own row refused: #{refusal}"
+
+      # THE FIRST HALF OF THE BANNER'S CLAIM: the row `<CR>` opened is a
+      # buffer `:LainNote` accepts, because `open_changeset` stamped it
+      # (`runtime/47_diff.lua`'s `review_diff.stamp`) whether or not the file
+      # has an old side -- an ADDED file's is `[]`, never `nil`
+      # ({Lain::Review::Changeset#old_side}'s documented distinction), so this
+      # never took the {Lain::Frontend::Neovim::ChangesetDiff::NO_OLD_SIDE}
+      # refusal above.
+      note = @nvim.exec_lua(<<~LUA, [])
+        local ok, err = pcall(vim.cmd, "LainNote note a survey note")
+        return { ok = ok, err = tostring(err) }
+      LUA
+      expect(note["ok"]).to be(true), "LainNote refused a survey's own row: #{note["err"]}"
+
+      # THE SECOND HALF: the banner no longer names this command, and the
+      # reason is checkable now -- it refuses THIS buffer (no EPIC generation
+      # or slug was ever stamped on it), and does so as a lain sentence naming
+      # the surface, never as an escaped Lua error.
+      done = @nvim.exec_lua(<<~LUA, [])
+        local ok, err = pcall(vim.cmd, "LainReviewDone")
+        return { ok = ok, err = tostring(err) }
+      LUA
+      expect(done["ok"]).to be(true),
+                            "LainReviewDone escaped this survey's row as a raw error: #{done["err"]}"
+      text = messages
+      expect(text).to include("lain:").and include(":LainReviewVerdict")
+      expect(text).not_to include("stack traceback")
     end
   end
 end

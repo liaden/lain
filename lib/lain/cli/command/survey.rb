@@ -99,12 +99,6 @@ module Lain
         # when what is missing is the word after it.
         NEEDS_VALUE = "%<flags>s takes a value, and the next word is another flag or nothing at all -- %<usage>s"
 
-        # What the human is told once the sidebar is up. The headline is
-        # {Lain::CLI::Survey::HEADLINE}'s, read from that class rather than
-        # restated, so the two surfaces cannot describe one survey differently.
-        OPENED = "%<headline>s\nwalk it in lain://review; <CR> opens a row, :LainNote annotates, " \
-                 ":LainReviewDone hands it back"
-
         # The word this command's rounds are journaled under, and the one
         # {Command::Review} compares against to recognise an open survey.
         # PUBLIC so that comparison reads one derivation rather than a second
@@ -346,9 +340,9 @@ module Lain
         def drawn(walk, session, scope)
           answer = session.present(scope:)
           files = session.changeset.files
-          [format(OPENED, headline: format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:,
-                                                                        count: files.size,
-                                                                        noun: noun(files.size))),
+          headline = format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:, count: files.size,
+                                                         noun: noun(files.size))
+          [Lain::Review::OpenedBanner.call(headline),
            disclosure(walk.withheld),
            answer.is_a?(String) ? answer : nil].compact.join("\n")
         end

@@ -274,6 +274,23 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(answer).to include("branch feature").and include("cumulative")
     end
 
+    # F4: the banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
+    # whose guard (`runtime/65_review.lua:93-98`) requires
+    # `b:lain_review_epic_slug` -- a variable a changeset review never stamps
+    # either, so the guard could never pass here any more than it can from a
+    # survey. `:LainReviewVerdict {verdict}` (`runtime/46_sidebar.lua:188`,
+    # protocol 10) is what a changeset review's hand-back actually reaches, and
+    # {Command::Survey}'s own spec carries the matching example -- the two
+    # banners are one string and this pins both halves of it.
+    it "names the command a changeset review's hand-back actually reaches, not the epic surface's" do
+      attached
+
+      answer = command.call("feature", env)
+
+      expect(answer).to include(":LainReviewVerdict #{Lain::Review::VERDICTS.first}")
+      expect(answer).not_to include("LainReviewDone")
+    end
+
     # The review is part of the chat's RECORD, not a second journal beside it:
     # `/review` inside a cockpit is one session, and a round opened in another
     # file could never be resumed from the session the human was in.

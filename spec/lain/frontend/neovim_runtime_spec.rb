@@ -1019,6 +1019,72 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         end
       end
     end
+
+    # F4/AC5: a buffer this command was never opened on refuses cleanly -- the
+    # guard's own sentence, naming the command a changeset review or a survey
+    # actually reaches, never an escaped Lua error.
+    #
+    # MEASURED, not assumed: any error that escapes a `define`d command's
+    # callback (`30_commands.lua`'s `nvim_create_user_command`) gets nvim's own
+    # "stack traceback:" appended underneath it, regardless of how it was
+    # raised -- `error(msg, 0)` included, and re-raising a caught error from
+    # inside a `pcall` does too, because the traceback is nvim's OWN outer
+    # wrapper's doing and not the callback's. So "clean" here can only mean the
+    # guard never raises at all; it echoes and returns, `review_refused`'s own
+    # pattern one function above it in `65_review.lua`.
+    it "refuses :LainReviewDone on a buffer no review ever opened, without a Lua stack traceback" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        # The freshly attached editor's own buffer 1 -- headless, `--clean`,
+        # never handed to `open_review` -- so it carries neither
+        # `b:lain_review_generation` nor `b:lain_review_epic_slug`.
+        inspector.command("LainReviewDone")
+
+        text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+        expect(text).to include("lain:").and include(":LainReviewVerdict")
+        expect(text).not_to include("stack traceback")
+      end
+    end
+
+    # THE SECOND GUARD, and its own example: `:LainReviewDone`'s "no open
+    # review" guard above and its "unsaved buffer" guard changed mechanism
+    # together (`error()` -> `review_refused` + `return`), and a `return`
+    # where an `error()` used to be is exactly the shape that silently turns a
+    # real refusal into a no-op that still lets the write through -- the risk
+    # is not hypothetical, it is what the mechanism change could have done
+    # wrong. So this is checked on its own: the buffer is genuinely modified
+    # (not saved), the human's own gesture, and the assertion is not just the
+    # message but that NOTHING reached the command inbox for `Reviews#settle`
+    # to act on -- a leaked payload here would be a review settled from bytes
+    # the buffer never actually held.
+    #
+    # The neighbouring, POSITIVE case -- a clean epic buffer still sends
+    # `["review_done", [generation, epic_slug, annotations]]` -- is already
+    # covered above ("sends done as one array of args..." and "settles the
+    # bound review..."), both of which exercise this exact guard's PASS path.
+    it "refuses :LainReviewDone on a modified buffer without a traceback, and leaks nothing to the command inbox" do
+      Dir.mktmpdir("lain-review") do |dir|
+        path = File.join(dir, "epic.md")
+        File.write(path, "## b2 the thing\n")
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          frontend.open_review(path, 7, epic_slug: "alpha")
+          opened_review(path)
+          # Modified, never written: `Reviews#settle` reads FROM DISK, so an
+          # edit that never reached it must never be treated as reviewed.
+          inspector.exec_lua("vim.bo[vim.api.nvim_get_current_buf()].modified = true", [])
+
+          inspector.command("LainReviewDone")
+
+          text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+          expect(text).to include("lain: save the review before marking it done")
+          expect(text).not_to include("stack traceback")
+          expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
+        end
+      end
+    end
   end
 
   # HumanReplies as the Repl builds it, minus nothing that matters here: the
