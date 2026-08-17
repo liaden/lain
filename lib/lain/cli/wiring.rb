@@ -574,7 +574,7 @@ module Lain
       # comment's whole complaint, one layer down.
       def assemble_surface(agent:, library:, tty:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
-                             chronicle: @chronicle, status_feed: @status_feed, root: project.root,
+                             chronicle: @chronicle, status_feed: @status_feed, root: project.root, cwd: project.cwd,
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 

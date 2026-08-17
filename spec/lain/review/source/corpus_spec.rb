@@ -214,6 +214,130 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
+  # A corpus names its files from ONE root and the whole chain below it --
+  # the sidebar row, the diff pair's resolution, the mark, the anchor and the
+  # verdict's refusal -- reads that name. `/survey ./lib` opened a file that
+  # does not exist because the walk named `greeter.rb` and the editor resolved
+  # it against the project the human was standing in.
+  describe "the root every path is named from" do
+    let(:subtree) { File.join(root, "lib") }
+    let(:walk) { Lain::Survey::Walk.new(root: subtree, sensitivity:) }
+
+    def rooted(at) = described_class.new(walk:, projection:, chunker: counter, named_from: at)
+
+    before { write("lib/greeter.rb", document("class Greeter", "  def greet", "    :hello", "  end", "end")) }
+
+    # The default, and what every diff-shaped caller and `lain survey` get: the
+    # survey IS the root, so the name is the walk's own.
+    it "is the walked tree when nobody names one, so a survey of a whole project is unchanged" do
+      expect(corpus.files.map(&:path)).to eq(["greeter.rb"])
+    end
+
+    it "names a subdirectory survey's files from the root it was given" do
+      expect(rooted(root).files.map(&:path)).to eq(["lib/greeter.rb"])
+    end
+
+    # A survey may point anywhere -- {Lain::CLI::Command::Survey} says so of the
+    # tree it walks -- so one BESIDE the naming root still has to answer a name
+    # that resolves from it. An absolute one cannot: `47_diff.lua` refuses one
+    # by name, because the old side's buffer embeds it verbatim.
+    it "climbs out of a root the surveyed tree merely sits beside" do
+      expect(rooted(File.join(root, "docs")).files.map(&:path)).to eq(["../lib/greeter.rb"])
+      expect(rooted(root).files.map(&:path)).to all(satisfy { |path| !path.start_with?("/") })
+    end
+
+    # The file is still OPENED by the name it really has: the walk carries the
+    # filesystem's own bytes on `absolute`, and renaming a corpus's paths must
+    # not put a byte of the reading through the name a human reads.
+    it "reads the file itself through the walk, whatever the corpus calls it" do
+      source = rooted(root)
+
+      expect(source.file_at(source.head_ref, "lib/greeter.rb")).to include("class Greeter")
+      expect(source.files.first.hunks.flat_map(&:lines)).to include("+class Greeter")
+    end
+
+    # The address is composed from the paths, so naming them from a second root
+    # moves it -- which is honest and is the price of the fix. What must NOT
+    # happen is two derivations over one root disagreeing.
+    it "addresses one root's corpus identically twice, and a second root's differently" do
+      expect(rooted(root).head_ref).to eq(rooted(root).head_ref)
+      expect(rooted(root).head_ref).not_to eq(corpus.head_ref)
+    end
+  end
+
+  # The arithmetic on its own, because the answers are adversarial and each one
+  # costs a tree, a walk and a corpus to reach through {Corpus} itself. Every
+  # shape here is one call.
+  describe Lain::Review::Source::Corpus::Prefix do
+    def between(root, directory) = described_class.between(root, directory)
+
+    it "is empty for a directory named from itself, however it is spelled" do
+      expect(between("/p", "/p")).to eq("")
+      expect(between("/p/", "/p")).to eq("")
+      expect(between("/p", "/p/./lib/..")).to eq("")
+    end
+
+    it "descends by segments" do
+      expect(between("/p", "/p/lib")).to eq("lib")
+      expect(between("/p", "/p/lib/review/source")).to eq("lib/review/source")
+      expect(between("/", "/p/lib")).to eq("p/lib")
+    end
+
+    # SEGMENT-wise, never `start_with?`: `/p/library` shares five characters
+    # with `/p/lib` and is no relation of it. A prefix test would name the file
+    # `rary/x.rb`, which resolves to nothing anywhere.
+    it "refuses a shared string that is not a shared segment" do
+      expect(between("/p/lib", "/p/library")).to eq("../library")
+      expect(between("/p/library", "/p/lib")).to eq("../lib")
+    end
+
+    it "climbs out of a root the directory only sits beside" do
+      expect(between("/p/docs", "/p/lib")).to eq("../lib")
+      expect(between("/p/a/b/c", "/p/lib")).to eq("../../../lib")
+      expect(between("/p", "/elsewhere")).to eq("../elsewhere")
+      expect(between("/p/lib", "/p")).to eq("..")
+    end
+
+    it "never answers an absolute name, which the editor refuses outright" do
+      [["/p/docs", "/p/lib"], ["/", "/p"], ["/p", "/"], ["/p/lib", "/p/lib"]].each do |root, directory|
+        expect(between(root, directory)).not_to start_with("/")
+      end
+    end
+
+    # LEXICAL, and the pin for it: `realpath` would raise here, because nothing
+    # named `/p/link` exists. That is the whole decision -- the editor joins
+    # `<cwd>/<name>` and follows whatever links are in it, so a prefix resolved
+    # HERE would name a directory that is not under the editor's cwd at all.
+    # Prose defended this and prose is not a test.
+    it "does not resolve what it is given, so a name may pass through a link" do
+      expect(between("/p", "/p/link")).to eq("link")
+      expect(between("/p/link", "/p/link/lib")).to eq("lib")
+    end
+
+    # A relative argument is resolved against the process, so a caller that
+    # hands over `Dir.pwd`-relative words gets the same answer as one that
+    # expanded them first.
+    it "expands a relative argument rather than comparing it as typed" do
+      expect(between(Dir.pwd, File.join(Dir.pwd, "lib"))).to eq("lib")
+      expect(between(".", "lib")).to eq("lib")
+    end
+
+    # The `café.tex` trap, one directory up: `String#split` raises on a name
+    # that is not valid UTF-8, and Pathname's own arithmetic runs through
+    # regexes that raise identically. The bytes must survive the arithmetic.
+    it "computes over bytes, so a name that does not decode does not raise" do
+      latin = "/p/caf\xE9".b
+
+      expect { between("/p", latin) }.not_to raise_error
+      expect(between("/p", latin).b).to eq("caf\xE9".b)
+      expect(between(latin, "/p/lib").b).to eq("../lib".b)
+    end
+
+    it "answers a frozen String, since it is joined onto every path in a corpus" do
+      expect(between("/p", "/p/lib")).to be_frozen
+    end
+  end
+
   # Joel's ruling, met at the SOURCE: a gated file enters the corpus redacted to
   # its released regions, so no unreleased byte exists above the object that
   # remembers them -- not in a unit, not in a key, not in the address.

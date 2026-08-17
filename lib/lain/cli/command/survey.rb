@@ -141,10 +141,19 @@ module Lain
         #   wiring looking wrong.
         # @param sensitivity [Lain::Sensitivity, nil] the run's path classifier;
         #   nil builds one from `root` and this project's own rules
-        def initialize(outbox:, ledger:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+        # @param cwd [String] where this chat is STANDING, which is a different
+        #   question from `root` ({Lain::Project} splits the two: root is the
+        #   authority boundary, cwd is where a relative path resolves). It is
+        #   what the corpus names its files from, because it is the directory
+        #   the attached editor was started in -- `lain up` pins both panes to
+        #   one `-c`, and `47_diff.lua` freezes `getcwd(-1, -1)` at attach --
+        #   and naming from `root` instead breaks `/survey .` for every chat
+        #   opened below the repository top.
+        def initialize(outbox:, ledger:, root: Dir.pwd, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new,
                        paths: Paths.new, sensitivity: nil)
           @outbox = outbox
           @root = root
+          @cwd = cwd
           @bounds = bounds
           @paths = paths
           @sensitivity = sensitivity
@@ -289,8 +298,15 @@ module Lain
                                                 rules: Config.sensitivity(root: @root))
         end
 
+        # `named_from:` is the chat's CWD and never the surveyed tree, because
+        # a name minted here is resolved somewhere else: the editor opens a row
+        # against the directory it was started in (`47_diff.lua`'s frozen ROOT),
+        # and a verdict's refusal is read by a human standing in this one. It is
+        # not `@root` either -- that is the authority boundary, which sits at the
+        # repository top while a monorepo chat stands in a subtree, and naming
+        # from it would break the `/survey .` that works today.
         def round(walk, ceilings, surface, env)
-          source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings)
+          source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
                                      journal: env.chronicle.record_journal, source: source_name, surface:,
                                      bounds: ceilings)

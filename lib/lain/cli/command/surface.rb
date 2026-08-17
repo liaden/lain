@@ -43,6 +43,14 @@ module Lain
         # `root:` survives the library, on its own business: {Meta} reads the
         # project's `.lain/` config from it. It no longer feeds a snapshot load.
         #
+        # `cwd:` is the OTHER half of {Lain::Project} and a different question --
+        # root is the authority boundary, cwd is where a relative path resolves,
+        # and a monorepo chat stands in a subtree while its root sits at the
+        # repository top. {Survey} names every file of a survey from it, because
+        # the attached editor resolves a row against the directory it was started
+        # in and `lain up` gives both panes one `-c`. Threaded rather than left
+        # to each command's own default so the run answers ONE directory.
+        #
         # `ledger:` is required on exactly the same terms and for the sharpest
         # version of the reason: {Lain::Sensitivity::Ledger} states no-default as
         # a rule of its own, because a defaulted one lets a forgotten injection
@@ -51,10 +59,11 @@ module Lain
         # present and nothing about the wiring looking wrong.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
                        model_switch:, mode_switch:, library:, ledger:, approvals: nil, root: Dir.pwd,
-                       approval_prompt: nil, goal_driver: GoalDriver::Null)
+                       cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
           @goal_driver = goal_driver
           @root = root
+          @cwd = cwd
           @library = library
           @ledger = ledger
           # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
@@ -139,7 +148,7 @@ module Lain
         # the same pressure saying the same thing.
         def review_commands
           [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:),
-           Survey.new(root: @root, outbox:, ledger: @ledger)]
+           Survey.new(root: @root, cwd: @cwd, outbox:, ledger: @ledger)]
         end
       end
     end

@@ -74,7 +74,14 @@ class SurveyCommandEditor
 end
 
 RSpec.describe Lain::CLI::Command::Survey do
-  let(:command) { described_class.new(root: @root, outbox:, paths:, ledger:) }
+  # `cwd:` is stated rather than defaulted, and it is the corpus tree because
+  # THIS chat is standing in the tree it surveys. It is a separate question from
+  # `root:` ({Lain::Project} splits them) and it decides what a surveyed file is
+  # NAMED -- the editor resolves a row against the directory it was started in,
+  # so a name is only openable if it is relative to where the chat stands. Left
+  # to its `Dir.pwd` default the fixture would name every file by a `..` climb
+  # out of the repository and into a tmpdir, which is correct and unreadable.
+  let(:command) { described_class.new(root: @root, cwd: @root, outbox:, paths:, ledger:) }
 
   # The run's ONE region ledger, injected because {Lain::Sensitivity::Ledger}'s
   # own class doc makes that rule 1 of three and "a raise rather than a note": a
@@ -303,6 +310,24 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(editor.bound).to be_a(Lain::Review::Handover)
       expect(editor.bound.session.changeset.files.map { |file| file.path.to_s }).to include("notes.md")
+    end
+
+    # The DEFAULTED `cwd:`, which every other example here states and which a
+    # caller building this command by hand gets. It has to be the working
+    # directory and not `root:`, because it decides what a surveyed file is
+    # NAMED and the editor resolves that name against the directory it was
+    # started in. Built inside the `chdir` because the default is evaluated at
+    # construction ({Lain::CLI::EpicMount}'s spec drives its own the same way),
+    # and `root:` deliberately points somewhere else so the two cannot be
+    # confused: defaulted to the root, every name here would begin `corpus/`.
+    it "names files from the working directory when nobody says where the chat stands" do
+      two_documents
+      attached
+      defaulted = Dir.chdir(@root) { described_class.new(root: @tmp, outbox:, paths:, ledger:) }
+
+      defaulted.call(@root, env)
+
+      expect(editor.bound.session.changeset.files.map { |file| file.path.to_s }).to eq(%w[guide.md notes.md])
     end
 
     # THE ORDERING AC. The bind must be complete before the surface is told

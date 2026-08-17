@@ -135,7 +135,7 @@ module DeletionMap
       consumers: ["lib/lain/forge/gh.rb", "lib/lain/forge/gh/recorded.rb", "lib/lain/forge/intent.rb",
                   "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
-                  "spec/lain/cli/command/survey_spec.rb",
+                  "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],

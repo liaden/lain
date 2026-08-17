@@ -51,7 +51,8 @@ local review_diff = {
   -- 'autochdir' and every rooter plugin move it, and after a `:cd docs` the path
   -- `docs/guide.txt` resolves to `docs/docs/guide.txt` -- a buffer for a file
   -- that does not exist, empty, and still `buftype = ""`, so the human's `:w`
-  -- CREATES it. Freezing the root at attach makes every one of those a no-op.
+  -- CREATES it. Freezing the root at attach makes every one of those a no-op,
+  -- and `new_side` closes the `:w` half for whatever still resolves to no file.
   --
   -- `getcwd(-1, -1)` is the GLOBAL cwd specifically, the same call and the same
   -- reasoning as `plugin/nvim/lua/lain/init.lua`'s `project_cwd`: a `:lcd` in
@@ -148,10 +149,43 @@ end
 -- `buflisted` because `bufadd` answers an UNLISTED buffer while `:edit` answers
 -- a listed one: unlisted would hide the file the human is reviewing from `:ls`,
 -- `:bnext` and every buffer picker they own.
+--
+-- WHERE THERE IS NO FILE THERE IS NO WAY TO WRITE ONE. `buftype = ""` is what
+-- makes the language server attach AND what makes a `:w` here CREATE the path
+-- the buffer names, and two ordinary things arrive with no file behind them: a
+-- review of a DELETED file, whose new side is a working copy that no longer
+-- exists, and any path this editor resolves differently than the sender meant
+-- (the hazard the frozen ROOT above is written against). Either way the human
+-- gets an empty writable buffer, and one absent-minded `:w` turns a review into
+-- a write -- resurrecting a deletion as an empty file, or scattering files
+-- under whatever directory the resolution landed in.
+--
+-- `nowrite` answers `:w` AND `:w!` with the editor's own E382 (measured), which
+-- is the same refusal the old side's `nofile` already gives. Set on BOTH
+-- branches, as the buffer's resting state rather than as a one-way flip: a
+-- buffer is found by name and reused, so one built for a file that has since
+-- appeared must stop refusing, and one for a file that has since gone must
+-- start. `:saveas` is the exit neither option closes; `withdraw` below does.
+--
+-- `filereadable` is a READ test and not an existence one, so a mode-000 file
+-- and a directory both take the refusing branch. That is the safe direction --
+-- neither is a file this review can write -- but the human sees an empty
+-- buffer where the truth is "there and unreadable", and nothing here says so.
+--
+-- `nofile` was weighed and NOT taken, though it stops one more thing: measured,
+-- it also refuses `:saveas`, where `nowrite` exports. Two reasons for the
+-- narrower option. `nowrite` leaves the buffer a real file buffer, and every
+-- plugin that branches on `buftype == "nofile"` treats one as scratch -- a
+-- claim that is false of a file which is merely absent. And `:saveas <target>`
+-- is a human naming a destination on purpose, which is a reasonable way to
+-- start the file a review says is missing; the half that CORRUPTS a review is
+-- the stamp surviving the rename, and `withdraw` below closes that instead.
 function review_diff.new_side(path)
-  local buf = vim.fn.bufadd(review_diff.absolute(path))
+  local absolute = review_diff.absolute(path)
+  local buf = vim.fn.bufadd(absolute)
   vim.fn.bufload(buf)
   vim.bo[buf].buflisted = true
+  vim.bo[buf].buftype = vim.fn.filereadable(absolute) == 1 and "" or "nowrite"
   return buf
 end
 
@@ -282,13 +316,38 @@ end
 -- to go stale.
 function review_diff.unstamp(old_buf, new_buf)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if buf ~= old_buf and buf ~= new_buf and vim.b[buf].lain_review_side ~= nil then
-      vim.b[buf].lain_review_side = nil
-      vim.b[buf].lain_review_revision = nil
-      vim.b[buf].lain_review_path = nil
+    if buf ~= old_buf and buf ~= new_buf then
+      review_diff.withdraw(buf)
     end
   end
 end
+
+-- The three stamps, dropped together. One expression, because a stamp read
+-- without its revision is a note anchored to no diff -- the same reason
+-- `open_changeset` refuses a missing revision before it builds anything.
+function review_diff.withdraw(buf)
+  if vim.b[buf].lain_review_side ~= nil then
+    vim.b[buf].lain_review_side = nil
+    vim.b[buf].lain_review_revision = nil
+    vim.b[buf].lain_review_path = nil
+  end
+end
+
+-- The OTHER way a buffer leaves the review, and the one `unstamp` cannot see:
+-- `:saveas` renames a buffer in place. It succeeds even here -- measured, with
+-- 'buftype' nowrite AND nomodifiable, both of which stop `:w` and neither of
+-- which stops a rename -- so the buffer would go on carrying
+-- `lain_review_path` while naming a different file, and T16 would anchor a note
+-- into it. Withdrawing the stamp says what is true: this is no longer the file
+-- under review.
+--
+-- `BufFilePost` fires after the rename, on the main loop (no `vim.schedule`
+-- needed -- see this module's header on E5560), in a CLEARED augroup, which is
+-- every lain autocmd's convention and what makes a re-attach idempotent.
+vim.api.nvim_create_autocmd("BufFilePost", {
+  group = vim.api.nvim_create_augroup("lain_review_diff", { clear = true }),
+  callback = function(event) review_diff.withdraw(event.buf) end,
+})
 
 -- The old side is per-FILE, so the previous file's buffer is wiped rather than
 -- left hidden -- otherwise a review of a real changeset ends with one dead

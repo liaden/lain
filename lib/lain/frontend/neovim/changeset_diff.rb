@@ -51,8 +51,10 @@ module Lain
       #
       # == It cannot post an argument `47_diff.lua` refuses
       #
-      # That module refuses, by name, a path that is not repository-relative, a
-      # missing revision, and an `old_lines` entry carrying a newline. None is
+      # That module refuses, by name, an ABSOLUTE path (its old side's buffer
+      # name embeds the path verbatim, so one would fall outside
+      # `lain://review/OLD/`), a missing revision, and an `old_lines` entry
+      # carrying a newline. None is
       # reachable from here, and not by checking for them: the path posted is the
       # one the CHANGESET carries (an argument that is not one of those finds no
       # file and never gets that far), the revisions are the source's own
@@ -103,8 +105,14 @@ module Lain
           nil
         end
 
-        # @param path [String] the file the row names, repository-relative, as
-        #   {ReviewView} read it off the changeset it drew
+        # @param path [String] the file the row names, as {ReviewView} read it
+        #   off the changeset it drew: RELATIVE, and to the root the editor
+        #   resolves against ({ROOT} in `47_diff.lua`, the directory nvim was
+        #   started in). A diff source spells that repository-relative because
+        #   git does; {Review::Source::Corpus} spells the same thing by naming
+        #   its files from the project it was surveyed in, which is why a survey
+        #   of a subdirectory does not open `greeter.rb` at the project root.
+        #   The contract is the ROOT, not the vocabulary of any one source.
         # @param line [Integer] the new-side line to land the cursor on
         # @return [String, nil] the reason nothing opened, or nothing
         def open(path, line)

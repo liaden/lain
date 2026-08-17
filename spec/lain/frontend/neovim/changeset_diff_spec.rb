@@ -38,6 +38,12 @@ module ChangesetDiffFixture
 
   File.write(File.join(PROJECT, "guide.rb"), "alpha\nBETA\ngamma\n")
 
+  # One directory DOWN, for the survey half: a row from a survey of `sub` names
+  # a file the editor has to find from the project it was started in, which is
+  # the only place the two roots can disagree.
+  FileUtils.mkdir_p(File.join(PROJECT, "sub"))
+  File.write(File.join(PROJECT, "sub", "nested.rb"), "class Nested\n  def call = 1\nend\n")
+
   at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
 end
 
@@ -350,6 +356,130 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
 
       expect(opened).to have_attributes(opened?: true, path: "guide.rb")
       expect(stamped_buffers.keys).to contain_exactly("old", "new")
+    end
+
+    # A SURVEY of a subdirectory, through the same object: the corpus names its
+    # files from the project it was surveyed in, so the path this posts is one
+    # the editor's own root resolves. Named from the corpus rather than written
+    # here, because a literal would pass against the very defect this pins --
+    # a corpus that named the file `sub.rb` posts `sub.rb`, and the buffer is
+    # then an empty one at the project root.
+    it "opens the real file for a row a subdirectory survey named" do
+      diff.reviewing(Lain::Review::Changeset.new(source: corpus_over_sub))
+      diff.open("sub/nested.rb", 1)
+      real_inlet.drain(@editor)
+
+      expect(new_side).to include("name" => File.join(ChangesetDiffFixture::PROJECT, "sub/nested.rb"),
+                                  "lines" => ["class Nested", "  def call = 1", "end"])
+    end
+
+    # The latent hazard beside the resolution, and the one that WRITES: a new
+    # side with no file behind it -- a deletion under review, or a path this
+    # editor resolves differently than the sender meant -- is an empty buffer
+    # that a `:w` turns into a file. `nowrite` is the editor's own E382.
+    describe "a new side with no file behind it" do
+      let(:blobs) { { [base, "gone.rb"] => "alpha\nbeta\n".b } }
+
+      it "refuses to write it, rather than creating the file the review says is gone" do
+        diff.reviewing(changeset_over(deleted_diff, ["gone.rb"]))
+        diff.open("gone.rb", 1)
+        real_inlet.drain(@editor)
+
+        expect(new_side.fetch("buftype")).to eq("nowrite")
+        expect(written("gone.rb")).to include("E382")
+        expect(File.exist?(File.join(ChangesetDiffFixture::PROJECT, "gone.rb"))).to be(false)
+      end
+    end
+
+    # The OTHER way out of a review, and the one no buffer option closes:
+    # `:saveas` succeeds under both `nowrite` and `nomodifiable` (measured) and
+    # renames the buffer in place. A stamp left on it says the review is still
+    # looking at a file it no longer names, which is a wrong answer rather than
+    # a missing one -- the rule this module already states for `unstamp`.
+    it "withdraws the review stamp from a buffer :saveas renamed out from under it" do
+      diff.reviewing(changeset_over)
+      diff.open("guide.rb", 2)
+      real_inlet.drain(@editor)
+
+      renamed_new_side("elsewhere.rb")
+
+      expect(stamped_buffers).not_to have_key("new")
+      expect(stamped_buffers.keys).to contain_exactly("old")
+    end
+
+    def renamed_new_side(name)
+      @editor.exec_lua(<<~LUA, [File.join(ChangesetDiffFixture::PROJECT, name)])
+        local wanted = ...
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.b[b].lain_review_side == "new" then
+            vim.api.nvim_buf_call(b, function() vim.cmd("saveas! " .. wanted) end)
+            return true
+          end
+        end
+        return false
+      LUA
+    end
+
+    it "leaves a new side that DOES name a file writable, which is half of why it is the real file" do
+      diff.reviewing(changeset_over)
+      diff.open("guide.rb", 2)
+      real_inlet.drain(@editor)
+
+      expect(new_side.fetch("buftype")).to eq("")
+    end
+
+    # The new side as nvim holds it, at the two facts this group is about: the
+    # name it resolved to, and whether writing it would create that path.
+    def new_side
+      @editor.exec_lua(<<~LUA, [])
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.b[b].lain_review_side == "new" then
+            return { name = vim.api.nvim_buf_get_name(b), buftype = vim.bo[b].buftype,
+                     lines = vim.api.nvim_buf_get_lines(b, 0, -1, false) }
+          end
+        end
+        return nil
+      LUA
+    end
+
+    # What `:w` in that buffer answers. `pcall`, because the refusal is an error
+    # the editor raises and an uncaught one would take the RPC call down instead
+    # of reporting the refusal this example is about.
+    def written(name)
+      @editor.exec_lua(<<~LUA, [name])
+        local wanted = ...
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.b[b].lain_review_path == wanted and vim.b[b].lain_review_side == "new" then
+            local ok, err = pcall(function() vim.api.nvim_buf_call(b, function() vim.cmd("write") end) end)
+            return ok and "written" or tostring(err)
+          end
+        end
+        return "no such buffer"
+      LUA
+    end
+
+    # A real {Lain::Review::Source::Corpus} over a subdirectory, named from the
+    # directory THIS editor was started in -- which is the wiring
+    # {Lain::CLI::Command::Survey} does and the whole of what the row carries.
+    def corpus_over_sub
+      here = ChangesetDiffFixture::PROJECT
+      sub = File.join(here, "sub")
+      Lain::Review::Source::Corpus.new(
+        walk: Lain::Survey::Walk.new(root: sub, sensitivity: Lain::Sensitivity.new(home: "/home/nobody", cwd: here)),
+        projection: Lain::Survey::Projection.new(ledger: Lain::Sensitivity::Ledger.new), named_from: here
+      )
+    end
+
+    def deleted_diff
+      <<~DIFF
+        diff --git a/gone.rb b/gone.rb
+        deleted file mode 100644
+        --- a/gone.rb
+        +++ /dev/null
+        @@ -1,2 +0,0 @@
+        -alpha
+        -beta
+      DIFF
     end
 
     # The sidebar's own duck, which is T13's to build -- and it is built here

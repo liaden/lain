@@ -60,6 +60,40 @@ module Lain
       # nothing. A deliberate carry, not an oversight -- `old_start`/`old_count`
       # are fixed at `0,0` and {UnitHunk} marks every line.
       #
+      # == Every path is named from ONE root, and it is the READER's
+      #
+      # A walk names what it found beneath the tree it was pointed at, which is
+      # the only root it has. Everything downstream reads those names somewhere
+      # ELSE: the sidebar row a `<CR>` resolves, the buffer `47_diff.lua` opens
+      # against `getcwd(-1, -1)` -- the directory the editor was STARTED in --
+      # and the path a verdict's refusal sends a human to go and look at. So
+      # `/survey ./lib` labelled a row `greeter.rb` and opened an empty buffer
+      # for a file that does not exist, and every object on that path had a
+      # passing spec, because each was tested against a double standing where
+      # the next one's root would have been.
+      #
+      # `named_from:` is that reader's root, and it is a CWD rather than a
+      # project root. {Lain::Project} splits the two on purpose -- root is the
+      # authority boundary, cwd is where a relative path RESOLVES -- and a
+      # monorepo chat runs with cwd deep in a subtree while root sits at the
+      # repository top, so naming from the root breaks `/survey .`, which works
+      # today. {Lain::CLI::Survey}'s class doc states the same rule one file
+      # over, about the classifier. nil names from the surveyed tree itself,
+      # which is the same answer whenever the two coincide.
+      #
+      # LEXICAL, and never resolved. The prefix is joined the way the EDITOR
+      # joins it: `Dir.pwd` and nvim's `getcwd` are both physical, and a survey
+      # root is `File.expand_path` of what a human typed -- so a symlinked
+      # subdirectory names `lib/x`, the editor opens `<cwd>/lib/x`, and both
+      # follow the same link to the same file. `realpath` here would mint a
+      # prefix that no longer sits under the editor's cwd at all.
+      #
+      # It moves the ADDRESS, since {#identity} is composed from the paths: one
+      # tree surveyed from two roots is two corpora, and a mark made under one
+      # does not carry to the other. That is the price, and it is the right way
+      # round -- a name a reader cannot resolve is worse than a mark set that
+      # belongs to the directory it was made in.
+      #
       # == Collaborators are injected, all four
       #
       # The walk decides which paths enter, the projection which bytes of them
@@ -144,7 +178,49 @@ module Lain
           def full_span_key = unit.span_key
         end
 
-        Reading = Data.define(:listing, :projection)
+        # Where one directory sits under another, as the prefix a name carries.
+        #
+        # `between("/p", "/p/lib")` is `lib`, a directory and itself is `""`,
+        # and a tree the root merely sits BESIDE climbs -- `../notes` -- because
+        # a survey may point anywhere and an absolute name is no answer
+        # (`47_diff.lua` refuses one; the old side's buffer embeds it verbatim).
+        # The comparison is SEGMENT-wise, so `/p/library` is not under `/p/lib`.
+        #
+        # Its own namespace because "where does this directory sit under that
+        # one" is a question with adversarial answers -- a climb, a shared
+        # prefix that is not a shared segment, the filesystem root, a name that
+        # does not decode -- and pinning them through a real tree, a real walk
+        # and a real corpus costs a fixture each. Here they are one call each.
+        #
+        # BYTES throughout: `String#split` raises `ArgumentError` on a name that
+        # is not valid UTF-8 ({Survey::Walk#skipped?} carries the same note and
+        # the `café.tex` that taught it), and Pathname's own arithmetic runs
+        # through regexes with the identical failure. The answer is forced back
+        # to the encoding the walk's names carry so the two concatenate; it is
+        # NOT a claim that an undecodable name survives display, which
+        # {Reading#path} scrubs like any other.
+        module Prefix
+          module_function
+
+          # @param root [String] the directory a name is read from
+          # @param directory [String] the directory that is being named
+          # @return [String] frozen, possibly empty
+          def between(root, directory)
+            named = segments(root)
+            walked = segments(directory)
+            shared = named.zip(walked).take_while { |from, to| from == to }.size
+
+            -[*Array.new(named.size - shared, ".."), *walked.drop(shared)]
+              .join(File::SEPARATOR).force_encoding(Survey::Walk::FILESYSTEM)
+          end
+
+          # `File.expand_path` and not `realpath`: see the class doc's LEXICAL
+          # paragraph. Empty segments are dropped so `/` and a trailing
+          # separator answer the same list.
+          def segments(directory) = File.expand_path(directory).b.split(File::SEPARATOR).reject(&:empty?)
+        end
+
+        Reading = Data.define(:listing, :projection, :prefix)
 
         # One listed file, as the corpus is allowed to see it: its whole bytes,
         # with every region nobody has released masked.
@@ -156,6 +232,10 @@ module Lain
         # by the file object, and a chunker that compared unequal after a
         # rebuild would raise a `KeyError` a long way from its cause.
         class Reading
+          # What the whole review calls this file: the walk's own name for it,
+          # under `prefix` -- the surveyed tree's position beneath the root the
+          # corpus names from, empty whenever the two are the same directory.
+          #
           # UTF-8 and scrubbed, {Source::Parser#path_text}'s rule and its
           # reason: a path is journalled as JSON into an NDJSON record that one
           # unencodable line breaks. Unlike the parser's, this scrub costs
@@ -167,7 +247,15 @@ module Lain
           # the corpus is keyed by this, so one of them would be dropped in
           # silence. The same residual {Source::Parser} carries, in a tree where
           # it is rarer still -- a survey lists what a human pointed at.
-          def path = -listing.path.dup.force_encoding(Encoding::UTF_8).scrub
+          #
+          # The scrub runs over the JOINED name, so an ANCESTOR directory that
+          # does not decode is replaced here too and an editor is then sent a
+          # name it cannot resolve. Nothing above can do better -- a path that
+          # must survive JSON and a path that must open a file are two different
+          # requirements over the same bytes -- and the new side of such a name
+          # is a buffer `47_diff.lua` refuses to write, which is the failure
+          # closed rather than hidden.
+          def path = -named.dup.force_encoding(Encoding::UTF_8).scrub
 
           # Raw bytes, never decoded: an anchor's evidence is compared byte for
           # byte against the line the file now holds, and substituting U+FFFD
@@ -192,6 +280,12 @@ module Lain
           # moments, and nothing here pretends otherwise. Freezing them together
           # means holding every file's bytes for the session; see the class doc.
           def content = projection.project(listing.absolute, File.binread(listing.absolute))
+
+          private
+
+          # `File.join` and not interpolation, so a prefix is joined by one rule
+          # rather than by one that has to be remembered per caller.
+          def named = prefix.empty? ? listing.path : File.join(prefix, listing.path)
         end
 
         Chunking = Data.define(:reading, :dispatch)
@@ -219,11 +313,18 @@ module Lain
         #   over chunkers that keep {Chunker::Granularity}'s floor. A wrapper
         #   around the real dispatch keeps it; a chunker that emits a unit per
         #   paragraph does not, and a ceiling then under-measures.
+        # @param named_from [String, nil] the directory every path in this
+        #   corpus is NAMED from, which must be the one whoever reads a name
+        #   resolves it against -- the CWD of the chat, which is the directory
+        #   the attached editor was started in, and not the project root. See
+        #   the class doc; nil names them from the surveyed tree itself.
         # @raise [Bounds::TooLarge] for a tree over the file ceiling
-        def initialize(walk:, projection:, bounds: Bounds.new, chunker: Survey::Chunker.method(:for))
+        def initialize(walk:, projection:, bounds: Bounds.new, chunker: Survey::Chunker.method(:for),
+                       named_from: nil)
           @walk = walk
           @projection = projection
           @chunker = chunker
+          @prefix = Prefix.between(named_from || walk.root, walk.root)
           refuse_oversized!(bounds)
         end
 
@@ -305,7 +406,7 @@ module Lain
 
         def readings
           @readings ||= @walk.files.to_h do |listing|
-            reading = Reading.new(listing:, projection: @projection)
+            reading = Reading.new(listing:, projection: @projection, prefix: @prefix)
             [reading.path, reading]
           end.freeze
         end
