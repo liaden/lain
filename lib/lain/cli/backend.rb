@@ -3,6 +3,7 @@
 require_relative "backend/ceiling"
 require_relative "backend/summarizer"
 require_relative "backend/span_summarizer"
+require_relative "backend/window_book"
 
 module Lain
   module CLI
@@ -137,6 +138,7 @@ module Lain
         @options = options
         summarizer_name
         summarizer_max_tokens
+        num_ctx
       end
 
       # Anthropic reads its key from the environment; Ollama is local and takes an
@@ -241,6 +243,45 @@ module Lain
         Context.new(model:, max_tokens:, extra: sampler_extra,
                     system: system_override || slots.render)
       end
+
+      # The ONE window book this run measures occupancy against, resolved by
+      # {WindowBook} out of the window the provider says it is actually SERVING
+      # (see there for why the shipped table cannot answer). Read by three
+      # places that must agree -- the {StatusFeed} publishing `.lain/state.json`
+      # ({ChatLaunch} threads it), {Compaction::Source}'s per-turn threshold
+      # ({#compaction_source}), and {Agent#occupancy}, which is the `ctx` figure
+      # in the REPL prompt line. MEMOIZED for the same reason {#pipeline_source}
+      # is: three readers dividing by three different numbers is the failure
+      # this exists to prevent, and the probe is one live round trip whose
+      # answer can move under a runner reload.
+      #
+      # @return [ContextWindow, WindowBook::Served]
+      def context_window = @context_window ||= WindowBook.new(backend: self).book
+
+      # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
+      # through, and OPTIONAL: unset means "serve the model's own", which is a
+      # real answer rather than the omission {Ceiling} refuses for a ceiling
+      # every turn needs. What is NOT a real answer is a non-positive one, and
+      # `0` is where this bit -- truthy, so no `||` falls back for it; sent
+      # verbatim by {#sampler_extra}; and then adopted as a DENOMINATOR, where
+      # it took the chat out mid-turn with `ArgumentError: window_tokens must be
+      # a positive Integer, got 0` from inside {Compaction::Need}. `--num-ctx`
+      # is `type: :numeric` with no range check and `EnvDefaults.numeric` only
+      # rejects non-numbers, so `LAIN_NUM_CTX=0` in an `.envrc` was that crash
+      # for every session in the directory.
+      #
+      # Refused at CONSTRUCTION, with both summarizer flags and for their
+      # reason: it is the one path every command takes, so the refusal cannot
+      # depend on which collaborator a given run happens to build.
+      def num_ctx = @options[:num_ctx] && Ceiling.new(flag: "--num-ctx", value: @options[:num_ctx]).tokens
+
+      # `--model` resolved once, so {#context}, {WindowBook} and the compaction
+      # book agree about which model this run is. PUBLIC alongside
+      # {#summarizer_model}, which always was: both are this class's answer to
+      # "which model", and {WindowBook} asks for it LAZILY -- it must not be
+      # resolved before that object can rescue what {#provider_name} raises for
+      # an option hash naming no provider at all.
+      def model = @options[:model] || default_model(provider_name)
 
       # Which Context THIS turn renders through -- the live compaction source
       # by DEFAULT, since `lain chat` compacts unless `--no-compact` says
@@ -382,20 +423,19 @@ module Lain
         end
       end
 
-      # `--model` resolved once, so {#context} and the compaction book agree
-      # about which model this run is.
-      def model = @options[:model] || default_model(provider_name)
-
       # `--max-tokens`, through the same {Ceiling} the summarizer tier's flag goes
       # through. Unlike {#model} there is NO default to fall back to here: every
       # command that renders a Context declares the flag with a Thor default, so a
       # nil means a caller assembled this Backend by hand and left it out.
       def max_tokens = Ceiling.new(flag: "--max-tokens", value: @options[:max_tokens]).tokens
 
-      # The context window is NOT resolved here: the Source derives it from the
-      # live Context every turn, so a `/model` switch mid-session moves the
-      # threshold with it (see {Compaction::Source#window_for}). What this
-      # method still owns is the byte threshold and the priced model.
+      # The context window is not resolved PER TURN here: the Source asks
+      # {#context_window} about the live Context every turn, so a `/model`
+      # switch mid-session moves the threshold with it (see
+      # {Compaction::Source#window_for}). What this method owns is which BOOK
+      # answers -- the run's one provider-derived book, so the threshold a
+      # journal reader sees fired and the occupancy a human reads are the same
+      # division.
       #
       # `--compact-strategy` is resolved ONCE, HERE, and injected -- never
       # fetched per turn. This method runs from the memoized {#pipeline_source},
@@ -408,7 +448,7 @@ module Lain
           need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
-          eager:, journal:, model:, price_book: COMPACTION_PRICES,
+          eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:,
           strategy: SpanSummarizer.new(backend: self, name: @options[:compact_strategy], sink:).strategy
         )
       end
@@ -463,8 +503,10 @@ module Lain
       end
 
       # Only the sampler flags the caller actually set, String-keyed to match
-      # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`
-      # (not `if value`) so `--temperature 0` -- the determinism recipe -- is kept.
+      # Request's normalized `extra` and Ollama's `options`. `Hash#compact`
+      # (never `select(&:itself)` or a truthiness filter) so `--temperature 0`
+      # -- the determinism recipe -- and a `--seed 0` are KEPT: an unset flag
+      # arrives as nil, and nil is the only absence there is here.
       #
       # The opt-in half is load-bearing for the two throughput knobs, which is
       # why they are resolved HERE and not defaulted inside
@@ -472,12 +514,7 @@ module Lain
       # `options` object on every ollama request in the process, where a flag
       # the operator did not set leaves the payload byte-identical to before
       # this method knew the key existed.
-      def sampler_extra
-        %i[temperature seed num_batch num_ctx].each_with_object({}) do |key, extra|
-          value = @options[key]
-          extra[key.to_s] = value unless value.nil?
-        end
-      end
+      def sampler_extra = %i[temperature seed num_batch num_ctx].to_h { |key| [key.to_s, @options[key]] }.compact
     end
   end
 end

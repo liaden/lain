@@ -36,6 +36,17 @@ RSpec.describe Lain::CLI::CompactionMount do
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "mount-spec-fake-session.ndjson") }
   let(:provider) { Lain::Provider::Mock.new }
 
+  # T10: the Backend's own `--provider ollama` asks its server which window it
+  # is serving before the Source is built ({Backend#context_window}) -- the
+  # mount's `provider:` above is the CHAT's, and a metadata probe is not a
+  # completion. "Nothing resident" leaves the conservative fallback in charge,
+  # which is what this file measured before there was anything to ask.
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   def backend_for(**overrides)
     Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, **overrides })
   end

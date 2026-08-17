@@ -799,11 +799,13 @@ RSpec.describe Lain::CLI::Up do
       expect(render(warm_state("occupancy" => 0.0))).to eq("🔥 fleet:2 inbox:3 ctx:0%")
     end
 
-    # StatusFeed publishes used/window, and ContextWindow.default answers an
-    # unmatched model (every Ollama id, most Bedrock ids) with its 8,192-token
-    # conservative fallback rather than raising -- so a ratio above 1.0 is a
-    # normal published value, and "ctx:244%" is what an unclamped filter would
-    # put on a status bar.
+    # StatusFeed publishes used/window, and a ratio above 1.0 is a NORMAL
+    # published value rather than a defect. Since T10 a live chat divides by the
+    # window its provider says it is serving ({CLI::Backend#context_window}), so
+    # this is rarer than it was -- but a model no book carries and no server
+    # reports on still falls to {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192,
+    # which is deliberately small so compaction fires early rather than never.
+    # "ctx:244%" is what an unclamped filter would then put on a status bar.
     it "clamps a ratio above 1.0 rather than rendering a nonsense percentage" do
       expect(render(warm_state("occupancy" => 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100%")
     end

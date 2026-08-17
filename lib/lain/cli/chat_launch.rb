@@ -28,7 +28,11 @@ module Lain
       # @param project_factory [#call] resolves the run's {Project}; called
       #   ONCE, before the chronicle opens, so nothing downstream reads a cwd
       #   the project has not already settled
-      # @param status_feed_factory [#call] the HUD's feed
+      # @param status_feed_factory [#call] the HUD's feed. Takes the run's
+      #   `context_window:` as well as its `run_clock:`, so the occupancy
+      #   published to `.lain/state.json` divides by the window the provider
+      #   says it is serving rather than by {ContextWindow}'s conservative
+      #   fallback -- see {Backend#context_window}.
       # @option options [Boolean] :journal whether the run records one
       # @option options [Boolean] :btw whether asides join the record
       # @option options [Boolean] :nvim whether the editor views open
@@ -43,7 +47,9 @@ module Lain
                      wiring_factory: Wiring.public_method(:new),
                      run_clock_factory: -> { Lain::RunClock.new },
                      project_factory: Lain::Project::Resolver.public_method(:default_project),
-                     status_feed_factory: ->(run_clock:) { Lain::StatusFeed.new(run_clock:) })
+                     status_feed_factory: lambda { |run_clock:, context_window:|
+                       Lain::StatusFeed.new(run_clock:, context_window:)
+                     })
         @options = options
         @resume_factory = resume_factory
         @chronicle_factory = chronicle_factory
@@ -64,7 +70,6 @@ module Lain
       # new session).
       def call(&notice)
         refuse_windows_without_journal!
-        backend = Backend.new(@options)
         resumed = resumed_run(backend)
         resolve_project!
         open_chronicle
@@ -101,7 +106,17 @@ module Lain
       # unchanged into Wiring's Command::Env -- so /status reads the same live
       # instance the tee feeds. Exists even for a headless run (--no-journal
       # --no-nvim builds no tee), so /status still answers its honest zeros.
-      def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:)
+      def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window)
+
+      # The ONE {Backend} for the run (T10), resolved on first read and shared
+      # exactly as {#run_clock} and {#project} are. It was a local in {#call}
+      # until the window book made it a THIRD thing two halves of the launch
+      # need: the feed built in {#open_chronicle} divides occupancy by
+      # {Backend#context_window}, and the wiring built in {#converse} hangs the
+      # Agent and the compaction source off the same instance -- and that book
+      # is memoized per Backend, so two Backends would be two probes and
+      # possibly two answers across an ollama runner reload.
+      def backend = @backend ||= Backend.new(@options)
 
       # The ONE RunClock for the run (T7). Its three measures are WRITTEN in
       # two places and READ in a third: the Conductor records a user prompt on

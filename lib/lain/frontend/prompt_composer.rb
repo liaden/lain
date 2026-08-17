@@ -348,10 +348,13 @@ module Lain
         MINUTE = 60
         HOUR = 3600
 
-        # Past this a reading says nothing a human wants at a prompt.
-        # {ContextWindow}'s CONSERVATIVE_FALLBACK divides by 8192 for every
-        # model no book carries -- every Ollama id, most Bedrock ones -- so a
-        # ratio well past 1.0 is ordinary, not a bug, and "412%" is noise.
+        # Past this a reading says nothing a human wants at a prompt. A ratio
+        # over 1.0 is rarer since T10 -- a live chat's Agent carries the book
+        # {CLI::Backend#context_window} built from the window the provider says
+        # it is serving -- but it is still ORDINARY rather than a bug: a model
+        # no book carries and no server reports on still divides by
+        # {ContextWindow::CONSERVATIVE_FALLBACK}, which is deliberately small so
+        # compaction fires early. "412%" is noise either way, and
         # {CLI::Up::Hud} clamps for exactly the same reason.
         FULL = 1.0
 
@@ -382,6 +385,13 @@ module Lain
 
         private
 
+        # NO keyword, deliberately: the book is the AGENT's, set once when the
+        # chat was wired ({CLI::Backend#context_window}, the same instance the
+        # {StatusFeed} and {Compaction::Source} divide by), so this segment and
+        # `.lain/state.json` report one occupancy for one turn. Passing a book
+        # here would be this class deciding a denominator it has no way to
+        # resolve, which is how the two surfaces came to disagree.
+        #
         # The book is loud about a blank model slot and {Lain::Agent#occupancy}
         # lets it raise. A prompt is not the place to answer for a wiring bug:
         # absence is the only honest reading left, and the missing segment is

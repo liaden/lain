@@ -13,6 +13,16 @@ RSpec.describe LainCLI do
   let(:toolset) { Lain::Toolset.new }
   let(:channel) { Lain::Channel.new }
 
+  # T10: `--provider ollama` asks its server which window it is serving before
+  # the run's book is built ({Lain::CLI::Backend#context_window}). Nothing here
+  # is about that number, and "nothing resident" leaves
+  # {Lain::ContextWindow::CONSERVATIVE_FALLBACK} in charge exactly as before.
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   # The provider/model choice lives in Backend, a plain object over the flags,
   # so it is exercised directly -- no Thor instance, no network.
   def backend(**options) = LainCLI::Backend.new(options)

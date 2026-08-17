@@ -12,6 +12,20 @@ RSpec.describe Lain::CLI::Backend do
 
   let(:options) { {} }
 
+  # T10: a Backend on `--provider ollama` asks its server which window it is
+  # SERVING before it builds the run's book ({Backend#context_window}), so
+  # every ollama example here now makes one GET. The default answer is "nothing
+  # resident", which is both the ordinary state of a fresh box and the answer
+  # that leaves {ContextWindow::CONSERVATIVE_FALLBACK} in charge -- so an
+  # example that is not about the window measures exactly what it did before.
+  # An example that IS about it declares its own stub, which WebMock prefers
+  # (the most recently registered match wins).
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   def backend_for(**options) = described_class.new(options)
 
   describe "#provider" do
@@ -129,6 +143,250 @@ RSpec.describe Lain::CLI::Backend do
         backend_for(provider: "anthropic").provider
       end
       expect(provider.instance_variable_get(:@channel)).to be(Lain::Channel::Null.instance)
+    end
+  end
+
+  # T10: the ONE denominator this run divides by. The POC published 86.4%
+  # occupancy at 2.7% of the real capacity -- the numerator was exact and only
+  # the window was wrong -- because every reader defaulted to
+  # {ContextWindow.default}'s 8,192 conservative fallback for an ollama model
+  # id no Anthropic-shaped table carries. The book is built HERE, once, out of
+  # the window T9's {Provider#context_window_tokens} says the server is
+  # actually serving, and the status feed, the compaction source and the Agent
+  # all read this one instance -- so `state.json`, the journal and the REPL
+  # prompt cannot tell a human three different stories.
+  #
+  # {Backend::WindowBook} does the resolving and is exercised HERE rather than
+  # in a file of its own, as {Backend::Ceiling} and {Backend::Summarizer} are:
+  # what it resolves is three of Backend's own flags against Backend's own
+  # provider, so every example below would have to build a Backend anyway, and
+  # the memoization these readers depend on is Backend's.
+  describe "#context_window" do
+    let(:model) { "qwen3-coder:30b" }
+
+    def ps_entry(name, context_length)
+      { "name" => name, "model" => name, "size" => 18_000_000_000,
+        "digest" => "abc123", "context_length" => context_length }
+    end
+
+    def serving(*entries)
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => entries))
+    end
+
+    def ollama_backend(**overrides) = backend_for(provider: "ollama", model:, max_tokens: 64, **overrides)
+
+    # AC1, with the POC's own numerator. 7,079 tokens is 86.4% of 8,192 and
+    # 21.6% of the window actually being served -- the whole defect, as one
+    # number.
+    it "measures a turn against the window the server says it is serving" do
+      serving(ps_entry(model, 32_768))
+
+      expect(ollama_backend.context_window.occupancy(7_079, model:).ratio).to eq(7_079.fdiv(32_768))
+    end
+
+    # AC2. nil is the ORDINARY answer here (nothing resident yet, or no server
+    # at all), so the fallback has to stand rather than degrade further.
+    it "keeps the conservative fallback when the provider reports no window" do
+      serving
+
+      expect(ollama_backend.context_window.occupancy(7_079, model:).ratio)
+        .to eq(7_079.fdiv(Lain::ContextWindow::CONSERVATIVE_FALLBACK))
+    end
+
+    # The served window is the run's MODEL's, and every other name falls back to
+    # what that model's own book says rather than inheriting a window measured
+    # for a different runner.
+    it "leaves every other model on the shipped table" do
+      serving(ps_entry(model, 32_768))
+      book = ollama_backend.context_window
+
+      expect(book.window_tokens("claude-opus-4-8")).to eq(1_000_000)
+      expect(book.window_tokens("some-other-local:7b")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+    end
+
+    # The SUBSTRING trap, which a merged-key book fails silently and 4-8x in the
+    # forbidden direction. `ContextWindow#matched` falls back to
+    # `name.include?(token)` over every key, so a served window merged into the
+    # table becomes a prefix rule for every LATER model name -- and untagged
+    # ollama names that are prefixes of tagged ones are the ordinary case, not a
+    # contrived one: ollama prints the resident runner as `qwen3:latest` and
+    # `Ollama#serves?` matches the untagged `qwen3` an operator typed. A
+    # mid-session `/model qwen3-coder:30b` then measured 32,768 against a real
+    # 8,192. Exact identity is the only rule a served window can carry, because
+    # the server answered about one runner.
+    it "never lends the run's served window to a model that merely contains its name" do
+      serving(ps_entry("qwen3:latest", 32_768))
+      book = backend_for(provider: "ollama", model: "qwen3", max_tokens: 64).context_window
+
+      expect(book.window_tokens("qwen3")).to eq(32_768)
+      expect(book.window_tokens("qwen3-coder:30b")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect(book.window_tokens("qwen3:4b")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect(book.window_tokens("qwen3-tiny:0.5b")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+    end
+
+    # The other half of that rule, and the asymmetry it has to avoid: the book is
+    # GRANTED through `Ollama#serves?`, which matches an untagged `--model qwen3`
+    # against the `qwen3:latest` a server prints back -- so a window can exist
+    # BECAUSE of a name a narrower spending rule then refuses to answer for.
+    # That splits the two surfaces by one tag, because Agent#occupancy divides
+    # using the operator's string while StatusFeed divides using the model the
+    # response echoed. One set grants and spends.
+    it "spends the window by the same names Ollama#serves? granted it by" do
+      serving(ps_entry("qwen3:latest", 32_768))
+      book = backend_for(provider: "ollama", model: "qwen3", max_tokens: 64).context_window
+
+      expect(book.window_tokens("qwen3")).to eq(32_768)
+      expect(book.window_tokens("qwen3:latest")).to eq(32_768)
+    end
+
+    # A blank `--model` is a WIRING bug and ContextWindow is loud about one.
+    # `--num-ctx` resolves a window with NO server involved, so a blank model
+    # otherwise reached the book with a real number beside it and the loudness
+    # was swallowed -- the one path on which a served book must refuse to answer
+    # for its own model.
+    it "still refuses a blank --model loudly, even when --num-ctx resolved a window alone" do
+      serving
+      book = backend_for(provider: "ollama", model: "  ", max_tokens: 64, num_ctx: 16_384).context_window
+
+      expect { book.window_tokens("  ") }.to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
+    end
+
+    # One book, one probe: the three readers must divide by the same number,
+    # and asking three times could answer three different ones across a reload.
+    it "answers the same book to every reader, off a single probe" do
+      serving(ps_entry(model, 32_768))
+      backend = ollama_backend
+
+      expect(backend.context_window).to be(backend.context_window)
+      expect(a_request(:get, "http://localhost:11434/api/ps")).to have_been_made.once
+    end
+
+    # T9's docstring makes this constraint the CALLER's, and T11 made it live:
+    # a runner left at 32,768 by `ollama run` or by a sibling session answers
+    # 32,768 while the very next request -- carrying --num-ctx -- reloads it at
+    # the smaller size.
+    describe "--num-ctx" do
+      it "outranks a larger served window" do
+        serving(ps_entry(model, 32_768))
+
+        expect(ollama_backend(num_ctx: 16_384).context_window.window_tokens(model)).to eq(16_384)
+      end
+
+      # The forbidden direction, refused: answering the LARGER of the two
+      # over-estimates the window, and an over-estimate means
+      # `approaching_window` never fires at all -- worse than the crash the
+      # conservative fallback replaces.
+      it "never lifts the window above what the server reports" do
+        serving(ps_entry(model, 32_768))
+
+        expect(ollama_backend(num_ctx: 65_536).context_window.window_tokens(model)).to eq(32_768)
+      end
+
+      it "stands alone when the provider reports nothing" do
+        serving
+
+        expect(ollama_backend(num_ctx: 16_384).context_window.window_tokens(model)).to eq(16_384)
+      end
+
+      # `0` is TRUTHY, so nothing downstream fell back for it: it was sent
+      # verbatim as the request's `num_ctx` AND adopted as the run's
+      # denominator, where it killed the chat mid-turn with `ArgumentError:
+      # window_tokens must be a positive Integer, got 0` out of
+      # Compaction::Need. `--num-ctx` is `type: :numeric` with no range check
+      # and EnvDefaults.numeric only rejects non-numbers, so `LAIN_NUM_CTX=0`
+      # in an .envrc was that crash for every session in the directory.
+      #
+      # Refused, never filtered: a silently-ignored `--num-ctx 0` would be the
+      # other half of the same failure, and the operator would never learn the
+      # flag did nothing.
+      it "refuses a zero at CONSTRUCTION, in the flag's own name" do
+        expect { ollama_backend(num_ctx: 0) }
+          .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx must be positive, got 0/)
+      end
+
+      it "refuses a negative the same way" do
+        expect { ollama_backend(num_ctx: -1) }
+          .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx must be positive/)
+      end
+
+      # Construction is the one path every command takes, so the refusal cannot
+      # depend on which collaborator a given run happens to build -- `bench
+      # record` never asks for a window book at all and still sends the flag.
+      it "refuses before anything asks for a window or a payload" do
+        expect { ollama_backend(num_ctx: 0) }.to raise_error(Lain::CLI::Backend::InvalidCeiling)
+        expect(a_request(:get, %r{/api/ps})).not_to have_been_made
+      end
+
+      # UNSET is a real answer -- "serve the model's own" -- and must not trip
+      # the ceiling {Ceiling} refuses for an omitted `--max-tokens`.
+      it "accepts being unset, which is not the omission a ceiling refuses" do
+        serving(ps_entry(model, 32_768))
+
+        expect(ollama_backend.context_window.window_tokens(model)).to eq(32_768)
+      end
+
+      it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
+        expect(Lain::CLI::Backend::InvalidCeiling).to be < Lain::Error
+      end
+    end
+
+    # A provider with no endpoint that reports a served window answers nil from
+    # {Provider#context_window_tokens} without asking anything, so the book is
+    # the shipped one and no probe is paid for.
+    it "leaves a provider that cannot report a served window on the shipped book" do
+      book = with_env("ANTHROPIC_API_KEY" => "sk-test") do
+        backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64).context_window
+      end
+
+      expect(book.window_tokens("claude-opus-4-8")).to eq(1_000_000)
+      expect(book.window_tokens("qwen3:4b")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+    end
+
+    # A denominator lookup is not where a bad `--provider` or a missing key is
+    # discovered. Both refusals belong to #provider's real callers, and raising
+    # here would move them ahead of the chronicle open -- which is precisely
+    # the ordering ChatLaunch keeps so a refusal never orphans a fresh journal.
+    it "does not turn an unknown --provider into a refusal of its own" do
+      backend = backend_for(provider: "gemini", model: "x", max_tokens: 64)
+
+      expect(backend.context_window.window_tokens("x")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect { backend.provider }.to raise_error(Lain::CLI::UnknownProvider)
+    end
+
+    # The same deferral with NO `--model` and a `--num-ctx` set, which is the
+    # combination that reaches it: `#model` defaults THROUGH `#provider_name`,
+    # so it raises `UnknownProvider` too, and a `--num-ctx` alone resolves a
+    # window -- so the model name is asked for on the answering path, outside
+    # any rescue, unless it is resolved once inside one. Both examples above
+    # pin the provider message and neither could reach this.
+    it "does not raise for a model resolved through an unknown --provider either" do
+      backend = backend_for(provider: "gemini", max_tokens: 64, num_ctx: 16_384)
+
+      expect(backend.context_window.window_tokens("x")).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect { backend.model }.to raise_error(Lain::CLI::UnknownProvider)
+    end
+
+    # The third deferral, and the one that fails at provider CONSTRUCTION rather
+    # than on the request: `--api-base "not a url"` raises URI::InvalidURIError
+    # while the Faraday stack is built, so it escapes before any probe is sent
+    # and Provider::Ollama's own rescues never see it. A denominator lookup must
+    # not be where an operator's typo becomes a launch backtrace -- but the
+    # chat genuinely cannot run, so #provider still refuses.
+    it "does not turn an unusable --api-base into a refusal of its own" do
+      backend = backend_for(provider: "ollama", model:, max_tokens: 64, api_base: "not a url")
+
+      expect(backend.context_window.window_tokens(model)).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect { backend.provider }.to raise_error(URI::InvalidURIError)
+    end
+
+    it "does not turn a missing ANTHROPIC_API_KEY into a refusal of its own" do
+      backend = with_env("ANTHROPIC_API_KEY" => "") do
+        backend_for(provider: "anthropic", model: "claude-opus-4-8", max_tokens: 64).tap(&:context_window)
+      end
+
+      expect(backend.context_window.window_tokens("claude-opus-4-8")).to eq(1_000_000)
     end
   end
 
@@ -488,7 +746,15 @@ RSpec.describe Lain::CLI::Backend do
     # Proven behaviorally: 7_500 used tokens is under 0.9 of every real entry
     # and over 0.9 of the 8_192 fallback, so only the fallback makes the signal
     # fire here.
+    #
+    # T10 made the fallback the SECOND answer rather than the only one, so the
+    # silent server is now stated rather than assumed: /api/ps answers with
+    # nothing resident, which is exactly when the conservative fallback is
+    # still what a run measures against.
     it "builds against the conservative fallback window for a model in no table, and chat starts" do
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => []))
       backend = backend_for(provider: "ollama", model: "qwen3:4b", max_tokens: 64,
                             compact_keep: 1, compact_bytes: 10_000_000)
       source = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
@@ -497,6 +763,26 @@ RSpec.describe Lain::CLI::Backend do
 
       expect(decisions.last.signals).to eq([:approaching_window])
       expect(decisions.last.compacted).to be(true)
+      expect(decisions.last.window_tokens).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+    end
+
+    # The same 7,500 tokens, against a server that says it is serving 32,768:
+    # 22.9% full, so nothing fires. The signal is what MOVED, which is the
+    # whole card -- the numerator never changed.
+    it "measures the same turn against a served window, and does not fire" do
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => [{ "name" => "qwen3:4b", "model" => "qwen3:4b",
+                                                      "context_length" => 32_768 }]))
+      backend = backend_for(provider: "ollama", model: "qwen3:4b", max_tokens: 64,
+                            compact_keep: 1, compact_bytes: 10_000_000)
+      source = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
+
+      source.context_for(base: backend.context, timeline: history(6), usage: 7_500, session:)
+
+      expect(decisions.last.signals).to be_empty
+      expect(decisions.last.window_tokens).to eq(32_768)
+      expect(decisions.last.used_tokens).to eq(7_500)
     end
 
     # A nil or blank --model is a WIRING bug, not an unsupported provider, and
@@ -508,6 +794,9 @@ RSpec.describe Lain::CLI::Backend do
     # which is the ruling. The Source is built here without incident; the turn
     # is what refuses.
     it "refuses a blank --model loudly on the first turn rather than falling back" do
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => []))
       backend = backend_for(provider: "ollama", model: "  ", max_tokens: 64)
       source = backend.pipeline_source(cache_profile: profile, journal:)
 

@@ -102,6 +102,21 @@ RSpec.describe Lain::CLI::Wiring do
                              ])
   end
   let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
+
+  # A provider that answers BOTH questions the T10 pin below needs of one: what
+  # window it is serving (`Provider#context_window_tokens`, which the base class
+  # answers nil for) and a turn whose usage gives `#occupancy` a numerator.
+  # 7,079 tokens is the POC's own figure -- 21.6% of a served 32,768 and 86.4%
+  # of the conservative fallback, so the two candidate denominators cannot be
+  # confused for one another.
+  let(:serving_provider) do
+    Class.new(Lain::Provider::Mock) do
+      def context_window_tokens(_model) = 32_768
+    end.new(responses: [
+              Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                                 usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))
+            ])
+  end
   let(:channel) { Lain::Channel.new }
   let(:chronicle) { Lain::CLI::Chronicle::Null.new }
   # status_feed: is required, not defaulted (the Null placeholder is gone); the
@@ -177,6 +192,30 @@ RSpec.describe Lain::CLI::Wiring do
       agent = wire_agent
       expect(wiring.ask_human.send(:parent_timeline)).to equal(agent.timeline)
       expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
+    end
+
+    # T10, at the construction site the card calls "the third, the one a human
+    # actually reads". `Agent#occupancy` is asked with NO KEYWORD by
+    # Frontend::PromptComposer::RunState, so the book has to have arrived when
+    # the Agent was BUILT -- and this is the only place that happens.
+    #
+    # It is pinned here rather than by handing the same book to two objects and
+    # comparing their arithmetic: that proves the division agrees and nothing
+    # about the wiring. Deleting `context_window:` from AgentBuild#backing left
+    # the whole suite green while a running chat printed 86% at the prompt and
+    # published 0.216 to state.json -- the two-surfaces-disagreeing state the
+    # card calls worse than being uniformly wrong. No book is injected here; the
+    # provider is asked, exactly as production asks it.
+    it "hands the built Agent the run's own book, so #occupancy needs no keyword" do
+      recorder, session = wiring.run_state(nil)
+      backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                          mock: serving_provider)
+
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+      agent.ask("ping")
+
+      expect(agent.occupancy).to eq(7_079.fdiv(32_768))
+      expect(agent.occupancy).not_to eq(7_079.fdiv(Lain::ContextWindow::CONSERVATIVE_FALLBACK))
     end
 
     it "exposes the reply seam and fleet supervisor it wired, as its own accessors" do

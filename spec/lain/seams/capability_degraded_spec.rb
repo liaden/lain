@@ -29,11 +29,25 @@ RSpec.describe "capability degradation on the chat path", :seam do
     ]
   end
 
-  def canned_transport
-    ndjson = "#{stream_lines.map { |line| JSON.generate(line) }.join("\n")}\n"
+  def canned_transport = transport_answering(ndjson_stream)
+
+  def ndjson_stream = "#{stream_lines.map { |line| JSON.generate(line) }.join("\n")}\n"
+
+  # The three questions a live chat asks its ollama transport. `process_status`
+  # is T10's: a wired chat asks `/api/ps` which window this server is SERVING
+  # before it builds the run's {Lain::ContextWindow} book, and a real ollama
+  # answers it -- so a canned transport standing in for one has to as well.
+  # Nothing resident is what leaves {Lain::ContextWindow::CONSERVATIVE_FALLBACK}
+  # in charge, which keeps every measurement in this file where it was.
+  #
+  # Split off `canned_transport` because building the NDJSON and declaring the
+  # transport are two things, and the third `define_method` is what pushed the
+  # single method past Metrics/AbcSize (CLAUDE.md: extract, never loosen).
+  def transport_answering(ndjson)
     Class.new do
       define_method(:stream) { |_payload, _headers = {}, &block| block.call(ndjson) }
       define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(JSON.parse(ndjson.lines.last)) }
+      define_method(:process_status) { Struct.new(:body).new({ "models" => [] }) }
     end.new
   end
 

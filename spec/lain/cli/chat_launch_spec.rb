@@ -234,9 +234,9 @@ RSpec.describe Lain::CLI::ChatLaunch do
       given_to_feed = nil
       given_to_wiring = nil
       instance = launch({ journal: false },
-                        status_feed_factory: lambda { |run_clock:|
+                        status_feed_factory: lambda { |run_clock:, context_window:|
                           given_to_feed = run_clock
-                          Lain::StatusFeed.new(run_clock:)
+                          Lain::StatusFeed.new(run_clock:, context_window:)
                         },
                         wiring_factory: lambda { |run_clock:, **|
                           given_to_wiring = run_clock
@@ -249,6 +249,78 @@ RSpec.describe Lain::CLI::ChatLaunch do
       instance.call { |_notice| nil }
 
       expect(given_to_feed).to be_a(Lain::RunClock).and be(given_to_wiring)
+    end
+  end
+
+  # T10: the run's ONE window book, built from what the provider says it is
+  # SERVING rather than from {ContextWindow}'s conservative fallback. The
+  # launcher is where the capability becomes live -- a book nothing constructs
+  # on the real path is a capability that stayed dormant, which is what the POC
+  # measured: 86.4% occupancy published at 2.7% of the true capacity.
+  describe "the run's one ContextWindow book" do
+    def serving(context_length, model: "qwen3-coder:30b")
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => [{ "name" => model, "model" => model,
+                                                      "context_length" => context_length }]))
+    end
+
+    def ollama_options(**overrides)
+      { journal: false, provider: "ollama", model: "qwen3-coder:30b", max_tokens: 64, **overrides }
+    end
+
+    def recording_launch(options, seen)
+      launch(options, status_feed_factory: lambda { |run_clock:, context_window:|
+        seen << context_window
+        Lain::StatusFeed.new(run_clock:, context_window:)
+      })
+    end
+
+    it "hands the status feed a book measuring against the served window" do
+      serving(32_768)
+      seen = []
+
+      recording_launch(ollama_options, seen).status_feed
+
+      expect(seen.last.window_tokens("qwen3-coder:30b")).to eq(32_768)
+    end
+
+    # One book, not two: the compaction source's denominator and the status
+    # line's have to be the same object or a journal reader and a human read
+    # two different stories off one turn.
+    it "hands the feed the SAME book the compaction source is built from" do
+      serving(32_768)
+      seen = []
+      instance = recording_launch(ollama_options, seen)
+
+      instance.status_feed
+
+      expect(seen.last).to be(instance.backend.context_window)
+    end
+
+    # T11's flag, and T9's `min` constraint, met on the real launch path: the
+    # runner resident at 32,768 is reloaded at 16,384 by the very next request.
+    it "lets an explicit --num-ctx outrank the window the server currently reports" do
+      serving(32_768)
+      seen = []
+
+      recording_launch(ollama_options(num_ctx: 16_384), seen).status_feed
+
+      expect(seen.last.window_tokens("qwen3-coder:30b")).to eq(16_384)
+    end
+
+    # A silent server is the ORDINARY case (nothing resident yet, or ollama not
+    # running), and the conservative fallback is what still has to stand.
+    it "keeps the conservative fallback when the server reports no window" do
+      stub_request(:get, "http://localhost:11434/api/ps")
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("models" => []))
+      seen = []
+
+      recording_launch(ollama_options, seen).status_feed
+
+      expect(seen.last.window_tokens("qwen3-coder:30b"))
+        .to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
     end
   end
 
@@ -329,6 +401,14 @@ RSpec.describe Lain::CLI::ChatLaunch do
 end
 
 RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
+  # T10: a launch on `--provider ollama` asks its server which window it is
+  # serving before the status feed is built. Nothing here is about that number.
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   # --fork routes through Resume#fork (read-only parent, T3) and, like
   # --resume, must refuse BEFORE any journal opens; --btw threads to
   # Chronicle.for so the journal is born ephemeral.

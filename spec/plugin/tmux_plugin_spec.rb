@@ -90,9 +90,11 @@ RSpec.describe "plugin/tmux" do
       expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0")
     end
 
-    # The clamp ships in the script too, or an Ollama chat's status bar reads
-    # "ctx:244%" -- ContextWindow.default measures an unmatched model against
-    # its 8,192-token fallback, so a ratio above 1.0 reaches this renderer.
+    # The clamp ships in the script too, or a status bar reads "ctx:244%". A
+    # live chat now divides by the window its provider reports serving (T10,
+    # Lain::CLI::Backend#context_window), but a model no book carries and no
+    # server reports on still measures against ContextWindow's 8,192-token
+    # conservative fallback -- so a ratio above 1.0 still reaches this renderer.
     it "clamps the occupancy percentage at 100, exactly as Up::Hud does" do
       skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 2.44)

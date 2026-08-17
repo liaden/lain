@@ -472,6 +472,65 @@ RSpec.describe Lain::StatusFeed do
       expect(published["occupancy"]).to eq(0.5)
     end
 
+    # T10's half-fix guard. Two surfaces read this number -- `.lain/state.json`
+    # (this sink) and the `ctx` segment of the REPL prompt line
+    # ({Frontend::PromptComposer::RunState}, which asks the live {Agent}) -- and
+    # they divide by whatever book each was handed. Wiring one and not the other
+    # is WORSE than leaving both wrong, because a human then has two numbers
+    # that disagree and no way to tell which is the lie. One book, both readers.
+    it "publishes the same occupancy the REPL prompt line renders, off one shared book" do
+      book = Lain::ContextWindow.new(windows: { "qwen3-coder:30b" => 32_768 },
+                                     fallback: Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      agent = Lain::Agent.new(
+        provider: Lain::Provider::Mock.new(
+          responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
+                                         usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))]
+        ),
+        toolset: Lain::Toolset.new([]),
+        context: Lain::Context.new(model: "qwen3-coder:30b", max_tokens: 64),
+        context_window: book
+      )
+      agent.ask("hi")
+      feed = described_class.new(path:, context_window: book)
+
+      feed << sized_turn_usage(input_tokens: 7_079, model: "qwen3-coder:30b")
+      prompt = Lain::Frontend::PromptComposer::RunState.new(agent:, clock: Lain::RunClock.new, status_feed: feed)
+
+      expect(published["occupancy"]).to eq(7_079.fdiv(32_768))
+      expect(prompt.to_h["occupancy"]).to eq("#{(published["occupancy"] * 100).round}%")
+    end
+
+    # The same guard where the two readers do NOT hold the same model string,
+    # which is the case the example above structurally cannot see. Agent
+    # #occupancy divides using `context.model` -- the operator's `--model qwen3`
+    # -- while this sink divides using `event.model`, whatever the provider
+    # ECHOED on the turn. Ollama prints an untagged request back tagged, so one
+    # book is asked about `qwen3` by the prompt and `qwen3:latest` by the feed.
+    #
+    # A window GRANTED through `Ollama#serves?`'s `:latest` branch and then
+    # refused to the `:latest` name splits the two surfaces by exactly one tag,
+    # in the untagged-model case the served book was written for.
+    it "agrees when the turn echoes the tagged name the run was started untagged with" do
+      book = Lain::CLI::Backend::WindowBook::Served.new(model: "qwen3", window_tokens: 32_768)
+      agent = Lain::Agent.new(
+        provider: Lain::Provider::Mock.new(
+          responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn,
+                                         usage: Lain::Usage.new(input_tokens: 7_079, output_tokens: 1))]
+        ),
+        toolset: Lain::Toolset.new([]),
+        context: Lain::Context.new(model: "qwen3", max_tokens: 64),
+        context_window: book
+      )
+      agent.ask("hi")
+      feed = described_class.new(path:, context_window: book)
+
+      feed << sized_turn_usage(input_tokens: 7_079, model: "qwen3:latest")
+      prompt = Lain::Frontend::PromptComposer::RunState.new(agent:, clock: Lain::RunClock.new, status_feed: feed)
+
+      expect(published["occupancy"]).to eq(7_079.fdiv(32_768))
+      expect(prompt.to_h["occupancy"]).to eq("#{(published["occupancy"] * 100).round}%")
+    end
+
     # INPUT_TOKEN_FIELDS restates Usage#total_input_tokens against the JOURNALED
     # hash. They agree today and nothing structural holds them together, so this
     # is the pin: both the field NAMES (fetch, not [], so a rename fails loudly)

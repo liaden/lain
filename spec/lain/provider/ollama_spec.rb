@@ -386,6 +386,32 @@ RSpec.describe Lain::Provider::Ollama do
       expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
     end
 
+    # T10 put this on the LAUNCH path (CLI::Backend::WindowBook), where an
+    # escape is a backtrace instead of a chat. A malformed `--api-base` fails
+    # while Faraday BUILDS the request, above its own error middleware, so
+    # `wrapping_errors` -- which catches Provider::HTTP::Error and
+    # Faraday::Error -- never sees it and `rescue APIError` did not either.
+    describe "on an --api-base that is not a usable URL" do
+      # The ordinary typo: a host:port with the scheme left off parses, so the
+      # provider CONSTRUCTS, and then Faraday's build_exclusive_url calls
+      # `end_with?` on the nil host while building the request -- above its own
+      # error middleware, so `wrapping_errors` never sees it.
+      it "answers nil rather than raising NoMethodError on a base with no scheme" do
+        expect(described_class.new(api_base: "localhost:11434").context_window_tokens("qwen3-coder:30b")).to be_nil
+      end
+
+      # The failure the NoMethodError arm must NOT swallow. A transport that
+      # cannot answer /api/ps at all is a wiring bug, and a silent nil hides it
+      # -- which it did, for a canned transport in a seam spec. Told apart by
+      # the error's RECEIVER, not by its message.
+      it "still raises for a transport that cannot answer at all, rather than reading as an unknown" do
+        mute = Class.new { def sync_post(*) = nil }.new
+
+        expect { described_class.new(transport: mute).context_window_tokens("qwen3-coder:30b") }
+          .to raise_error(NoMethodError, /process_status/)
+      end
+    end
+
     # A denominator lookup answers on the RENDER path. Every unknown is nil --
     # including a body that is not shaped like ollama's, which is reachable
     # whenever `api_base:` points at a proxy or at the wrong service entirely.

@@ -134,6 +134,15 @@ module Lain
     # @param request_override [RequestOverride] the one-shot slot a frontend
     #   resend queues an edited Request into (T18); the next dispatch sends it
     #   byte-identically and the slot empties itself.
+    # @param context_window [#occupancy] the book {#occupancy} measures
+    #   against. Constructor state rather than a per-call default because the
+    #   one caller that renders the figure to a human --
+    #   {Frontend::PromptComposer::RunState} -- calls `#occupancy` with no
+    #   keyword; a per-call default left the REPL prompt dividing by
+    #   {ContextWindow::CONSERVATIVE_FALLBACK} while `.lain/state.json` divided
+    #   by the served window, and two surfaces disagreeing about one turn is
+    #   worse than both being uniformly wrong. A wired chat is handed
+    #   {CLI::Backend#context_window}; the default degrades as it always did.
     # @param snapshot_writer [Workspace::Snapshot] captures which files a
     #   turn's tools wrote, as a causal-only Store event; a read-only turn
     #   lands nothing.
@@ -148,17 +157,18 @@ module Lain
                    accounting: Collaborators::OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.new, request_override: RequestOverride::None,
-                   snapshot_writer: Workspace::Snapshot.new, **instrumented)
+                   snapshot_writer: Workspace::Snapshot.new, context_window: ContextWindow.default,
+                   **instrumented)
       super() # state_machines sets the initial state through the super chain.
       @toolset = toolset
       @context = context
       @timeline = timeline || Timeline.empty(store: Store.new)
       @workspace = workspace
       @mailbox = mailbox
-      @budget = budget
+      @context_window = context_window
       wire_callers(request_override:, instrumentation:, instrumented:,
                    model_caller:, tool_runner:, accounting:, provider:, handler:)
-      seed_run_state(session, snapshot_writer)
+      seed_run_state(session, snapshot_writer, budget)
     end
 
     # Append a user turn and run until the loop settles.
@@ -225,16 +235,15 @@ module Lain
     # `/model` switch ({Context::ModelSwitch}) moves the denominator with it.
     #
     # The one story holds only while this reader and {Compaction::Source} ask
-    # the SAME book: Source resolves `base.model` through its own INJECTED
-    # `context_window`, this resolves `context.model` through a defaulted one,
-    # and both default to {ContextWindow.default} -- so they agree out of the
-    # box and disagree the moment a wiring hands Source a custom book and not
-    # this. A wiring that swaps one must swap both.
+    # the SAME book. Both take one at CONSTRUCTION now, and a live chat hands
+    # both the same instance ({CLI::Backend#context_window}, memoized for the
+    # run), so they cannot come apart -- which they could while this defaulted
+    # per call and a wiring swapped only the Source's.
     #
-    # @param context_window [#occupancy] the window book. The default degrades
-    #   to a conservative fallback for a model no Anthropic-shaped table carries
-    #   (ollama, bedrock); a bench arm measuring against a known local window
-    #   passes its own, as {Compaction::Source} takes one.
+    # @param context_window [#occupancy] the window book, defaulting to the one
+    #   this Agent was CONSTRUCTED with. Written explicitly only by a caller
+    #   measuring a run against a window that is not the run's own -- a bench
+    #   arm sweeping candidate windows.
     # @return [Float, nil] nil before any turn -- absence, not an empty context
     # @raise [ContextWindow::UnknownModel] if the live model slot is nil or
     #   blank (a wiring bug, and the book stays loud about one), or if the model
@@ -244,7 +253,7 @@ module Lain
     # @raise [ArgumentError] if the book answers a non-positive window, which
     #   measures as Infinity or NaN rather than as a reading. Unreachable
     #   through {ContextWindow.default}; a caller passing its own book owns it.
-    def occupancy(context_window: ContextWindow.default)
+    def occupancy(context_window: @context_window)
       context_window.occupancy(@accounting.last_turn_usage, model: context.model).ratio
     end
 
@@ -320,10 +329,17 @@ module Lain
     # decided. It is the one member copied to an ivar, because {LoopMachine}
     # announces through it from a mixin; the turn stack and the per-turn Context
     # source are asked of the value at their single use sites instead.
-    def seed_run_state(session, snapshot_writer)
+    # The {Budget} is seeded HERE rather than beside the collaborators, with the
+    # counter it bounds: `#step` reads `@budget.check_iterations!(@iterations)`
+    # and increments `@iterations` on the next line, and a ceiling separated
+    # from the count it governs is a pair a reader has to reassemble. The value
+    # itself is immutable; what makes it belong here is that only run state
+    # gives it meaning.
+    def seed_run_state(session, snapshot_writer, budget)
       @transition_listener = @instrumentation.transition_listener
       @session = session
       @snapshot_writer = snapshot_writer
+      @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new
     end

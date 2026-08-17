@@ -155,11 +155,44 @@ module Lain
       # memoizing it is what makes the stale-runner case above permanent rather
       # than momentary.
       #
+      # == The second rescue arm, and why it re-raises
+      #
+      # `wrapping_errors` catches {Provider::HTTP::Error} and {Faraday::Error},
+      # so `rescue APIError` alone was narrower than the "nil is the ORDINARY
+      # answer" contract above -- and it matters more since
+      # {CLI::Backend::WindowBook} began calling this on the LAUNCH path, where
+      # an escape is a backtrace instead of a chat. An `--api-base` with the
+      # SCHEME left off (`localhost:11434`, an ordinary typo) parses, so
+      # construction succeeds, and then Faraday's `build_exclusive_url` calls
+      # `end_with?` on the nil host -- a `NoMethodError` raised while BUILDING
+      # the request, above Faraday's own error middleware, so neither arm of
+      # `wrapping_errors` is reached. (An `--api-base` that is not a URI at all
+      # never gets here: it raises `URI::InvalidURIError` when the provider is
+      # CONSTRUCTED, which is {WindowBook}'s to absorb, not this method's.)
+      #
+      # A bare `NoMethodError` arm would also swallow the one failure that must
+      # stay loud: a transport that cannot answer `#process_status` at all is a
+      # wiring bug, not an unreachable server, and a silent nil would hide it
+      # (it did, for a canned transport in a seam spec). `#receiver` is what
+      # tells the two apart -- the transport itself for the duck violation,
+      # something deep inside Faraday for the typo -- so the wiring bug
+      # re-raises and the operator's flag mistake answers nil, as every other
+      # unknown here does.
+      #
+      # A black-holed host is the one case the budget, not the rescue, has to
+      # answer for: `--api-base http://10.255.255.1:11434` costs the full
+      # {Transport::PROBE_TIMEOUT_SECONDS} -- measured **2002 ms**, once, at
+      # launch. That is the ceiling on what this method can cost a chat.
+      #
       # @param model [String]
       # @return [Integer, nil]
       def context_window_tokens(model)
         served_context_length(model, wrapping_errors { @transport.process_status.body })
       rescue APIError
+        nil
+      rescue NoMethodError => e
+        raise if e.receiver.equal?(@transport)
+
         nil
       end
 

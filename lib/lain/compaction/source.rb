@@ -61,8 +61,22 @@ module Lain
       # {#shrinks?} asks for a strict saving -- a byte-NEUTRAL rewrite is
       # declined too, and calling that inflation would be a claim the
       # measurement never made.
+      # `window_tokens`/`used_tokens` are the two halves of the occupancy
+      # `:approaching_window` fired (or did not) on -- the DENOMINATOR and the
+      # numerator, both of which a reader previously had to guess. The signal
+      # list said which detectors fired; nothing said what they measured
+      # against, so a journal from an ollama run reading `approaching_window`
+      # on every turn was indistinguishable from a genuinely full context and a
+      # window resolved through {ContextWindow::CONSERVATIVE_FALLBACK} instead
+      # of through the window the server was serving. That is precisely the
+      # defect T10 fixed, and it was invisible in the record.
+      #
+      # `used_tokens` is nil before any turn carries usage, which is absence and
+      # not zero -- {ContextWindow::Occupancy::None}'s reading, since that is
+      # the value both fields are lifted off.
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
-                                       :summary_hits, :summary_misses, :cold, :would_not_shrink) do
+                                       :summary_hits, :summary_misses, :cold, :would_not_shrink,
+                                       :window_tokens, :used_tokens) do
         include Telemetry::Journalable
       end
 
@@ -149,6 +163,11 @@ module Lain
       #   fallback for a model no Anthropic-shaped table carries (`ollama`,
       #   `bedrock`), because an unsupported provider must still run; a blank
       #   model still raises there, which is a wiring bug rather than a provider.
+      #   A live chat is handed {CLI::Backend#context_window} instead -- the
+      #   run's one book, built from the window the provider says it is serving
+      #   -- and it is the SAME instance {Agent#occupancy} and the {StatusFeed}
+      #   divide by, so this record's threshold and the figure a human reads
+      #   are one calculation.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
                      clock: -> { Time.now }, context_window: ContextWindow.default)
@@ -245,13 +264,22 @@ module Lain
       # droppable turn is PINNED declines here rather than reaching Compact's
       # empty-summarizable path and paying a cache break for
       # {SummarySnapshot::NOTHING}.
+      # The occupancy is built AFTER {Need#check}, off the same two numbers,
+      # rather than being the thing handed to it: `check` keeps its own
+      # `window!` guard and its own message about the parameter it names, and
+      # building the value first would put {ContextWindow::Occupancy.window!}'s
+      # wording in front of it for the same wiring bug. One reading either way
+      # -- {Need::ApproachingWindow} measures this exact value internally -- so
+      # what travels on to {#record} is what the signal was decided on.
       def decide(base:, timeline:, walk:, usage:, session:, pins:)
         head = Head.new(messages: walk.messages, keep_last: @derived.keep_last, pins:)
-        need = @need.check(head_bytes: head.bytesize, used_tokens: usage, window_tokens: window_for(base),
+        window_tokens = window_for(base)
+        need = @need.check(head_bytes: head.bytesize, used_tokens: usage, window_tokens:,
                            plan_step_completed: session.plan_step_completed?)
-        return defer(base:, need:, head:) if head.empty? || !need.needed?
+        occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens:)
+        return defer(base:, need:, head:, occupancy:) if head.empty? || !need.needed?
 
-        weigh(base:, timeline:, walk:, head:, need:, pins:)
+        weigh(base:, timeline:, walk:, head:, need:, pins:, occupancy:)
       end
 
       # Off the LIVE Context, every turn, never captured at construction:
@@ -293,18 +321,18 @@ module Lain
       # default. It asks the real question rather than a proxy for it, at the
       # price of two `Canonical.dump`s -- paid once now, and only on a turn the
       # scheduler has already committed to.
-      def weigh(base:, timeline:, walk:, head:, need:, pins:)
-        return defer(base:, need:, head:) unless timely?(need, head)
+      def weigh(base:, timeline:, walk:, head:, need:, pins:, occupancy:)
+        return defer(base:, need:, head:, occupancy:) unless timely?(need, head)
 
         snapshot = SummarySnapshot.take(messages: head.messages, eager: @eager)
         outcome = @derived.over(timeline, walk:, pins:, snapshot:)
-        return defer(base:, need:, head:, outcome:) if outcome.refused?
+        return defer(base:, need:, head:, occupancy:, outcome:) if outcome.refused?
 
         scheduler = scheduler_for(outcome.replay)
         rewrite = scheduler.measure(walk.messages)
-        return defer(base:, need:, head:, outcome:, would_not_shrink: true) unless rewrite.shrinks?
+        return defer(base:, need:, head:, occupancy:, outcome:, would_not_shrink: true) unless rewrite.shrinks?
 
-        commit(base:, head:, need:, outcome:, scheduler:, rewrite:)
+        commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:)
       end
 
       # {Scheduler#evaluate} is the PURE half of the policy and never reads the
@@ -323,8 +351,8 @@ module Lain
                                                   history_size: head.bytesize).compact?
       end
 
-      def defer(base:, need:, head:, outcome: Derived::Outcome::NOTHING, would_not_shrink: false)
-        record(need:, head:, compacted: false, outcome:, would_not_shrink:)
+      def defer(base:, need:, head:, occupancy:, outcome: Derived::Outcome::NOTHING, would_not_shrink: false)
+        record(need:, head:, compacted: false, outcome:, occupancy:, would_not_shrink:)
         base
       end
 
@@ -345,12 +373,12 @@ module Lain
       # scheduler is priced for `@model` at CONSTRUCTION, so naming what is
       # actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
-      def commit(base:, head:, need:, outcome:, scheduler:, rewrite:)
+      def commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
                                       base: provider, rewrite:, ran_under: base.model)
         compacted = !pipeline.equal?(provider)
-        record(need:, head:, compacted:, outcome:)
+        record(need:, head:, compacted:, outcome:, occupancy:)
         compacted ? base.with_pipeline(pipeline) : base
       end
 
@@ -376,10 +404,12 @@ module Lain
       # model-backed strategy reports its OWN content-address hit rate, which is
       # the count a mis-keyed address is invisible in except as a number that
       # never rises. A policy holding nothing reports honest zeros.
-      def record(need:, head:, compacted:, outcome:, would_not_shrink: false)
+      def record(need:, head:, compacted:, outcome:, occupancy:, would_not_shrink: false)
         @journal << CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
                                            summary_hits: outcome.hits, summary_misses: outcome.misses,
-                                           cold: @cold.cold?, would_not_shrink:)
+                                           cold: @cold.cold?, would_not_shrink:,
+                                           window_tokens: occupancy.window_tokens,
+                                           used_tokens: occupancy.used_tokens)
       end
 
       # A fresh Scheduler per turn, because the combinator it is frozen around

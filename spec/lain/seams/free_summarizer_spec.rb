@@ -62,6 +62,18 @@ RSpec.describe "Free summarizer tier seam", :seam do
     Lain::Provider::Mock.new(responses: [reply])
   end
 
+  # T10: the CHAT provider here is `ollama`, and a run now asks its server which
+  # window it is serving before the compaction source is built
+  # ({Lain::CLI::Backend#context_window}). Only `summarizer_provider` is swapped
+  # below, so that probe reaches a real transport -- stubbed rather than let
+  # out, which is what keeps this a :seam. "Nothing resident" is the answer
+  # every example here already measured against.
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   # A real project tree with a real declaration file, entered so that
   # {Lain::Summarizer::Catalog.load}'s `Dir.pwd` root finds it.
   def in_project(declaration = FreeSummarizerSeam::DECLARATION, &block)

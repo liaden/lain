@@ -96,7 +96,12 @@ module Lain
           provider = spooled_provider(backend, chronicle:, channel:)
           journal_degradation(backend.context, provider, journal: chronicle.record_journal)
           mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
-          { provider:,
+          # T10: the run's ONE window book, the same instance the compaction
+          # source above and the StatusFeed below the launcher divide by. It is
+          # what {Agent#occupancy} answers with no keyword, which is the `ctx`
+          # segment of the REPL prompt -- so the prompt and `.lain/state.json`
+          # cannot report two occupancies for one turn.
+          { provider:, context_window: backend.context_window,
             instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                                         turn_middleware: chronicle.turn_middleware(timeline)) }
         end

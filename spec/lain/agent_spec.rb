@@ -447,11 +447,37 @@ RSpec.describe Lain::Agent do
     context "with a model the default book does not carry" do
       let(:context) { Lain::Context.new(model: "qwen3:4b", max_tokens: 1024) }
 
+      # An Agent built with no book of its own. `ContextWindow.default`'s
+      # conservative fallback is the honest answer for a caller that named no
+      # window -- a wired chat is handed the provider-derived book instead
+      # (T10, {CLI::Backend#context_window}), which is the example below.
       it "measures against the conservative fallback window" do
         a = agent(spent(4096))
         a.ask("hi")
 
         expect(a.occupancy).to eq(0.5)
+      end
+
+      # T10: the book is CONSTRUCTOR state, not a per-call default, because the
+      # one caller that renders this figure to a human --
+      # {Frontend::PromptComposer::RunState#occupancy} -- calls it with no
+      # keyword at all. Left as a per-call default, the REPL prompt divided by
+      # 8,192 while `.lain/state.json` divided by the served window, and the two
+      # surfaces disagreed about the same turn.
+      it "measures against the book it was CONSTRUCTED with, for a caller that passes none" do
+        a = agent(spent(4096), context_window: Lain::ContextWindow.new(windows: { "qwen3" => 32_768 }))
+        a.ask("hi")
+
+        expect(a.occupancy).to eq(4096.fdiv(32_768))
+      end
+
+      # The keyword stays, and still wins: a bench arm measuring one run against
+      # several candidate windows asks the same Agent more than once.
+      it "still lets an explicit book override the one it was constructed with" do
+        a = agent(spent(4096), context_window: Lain::ContextWindow.new(windows: { "qwen3" => 32_768 }))
+        a.ask("hi")
+
+        expect(a.occupancy(context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }))).to eq(0.5)
       end
     end
 

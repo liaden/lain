@@ -42,6 +42,17 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
      { "role" => "assistant", "content" => [{ "type" => "text", "text" => "it tokenizes, then folds" }] }]
   end
 
+  # T10: a Backend on `--provider ollama` asks its server which window it is
+  # serving before it builds the run's book ({Backend#context_window}), so
+  # wiring a source here now makes one GET. Nothing in this file is about that
+  # number -- "nothing resident" is the answer that leaves the conservative
+  # fallback in charge, which is what every example here measured before.
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                 body: JSON.generate("models" => []))
+  end
+
   # A local reply the summarizer schema accepts, so the model tier resolves
   # rather than dying on the wire -- and so "the model answered" is legible in
   # the collapsed block itself rather than only in the journal.
