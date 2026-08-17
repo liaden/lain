@@ -1,6 +1,6 @@
 # POC integration fixes: the cockpit wedge, the compaction tiers, the arm bench, and a spec prune
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -1343,9 +1343,14 @@ re-derived:
   root (`detected_by: :lain_dir`), failing 3 `project/resolver_spec` examples. Moved to
   `~/.lain.bak`. Worth noting on its own: it means any `lain` run from a non-project directory under
   `$HOME` would have inferred the whole home as the project root.
-- **Three real-resource specs are flaky under heavy external load**, each green on repeat in
-  isolation. Recorded by NAME, never by line number, per CLAUDE.md — the four first recorded as
-  `cli/up_spec.rb:115` drifted within days:
+- **Five specs are flaky under load**, each green on repeat in isolation. Recorded by NAME, never by
+  line number, per CLAUDE.md — the four first recorded as `cli/up_spec.rb:115` drifted within days.
+  Two more surfaced late in the chunk and are listed after the original three:
+  - `Lain::Isolation::Worktree::Handback a conflicted path git would otherwise quote names …
+    as it is on disk, and can conclude it` — the whole group; seen for both the `"we\nird.txt"` and
+    `"föö.txt"` examples
+  - `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
+    gathers every result into ONE user message in tool_use order, however the children finish`
   - `Lain::Frontend::Neovim the review thread pane following the cursor does not re-place the diff
     on every further move once it is back`
   - `Lain::Frontend::Neovim user mappings are respected re-attach is idempotent: no duplicate
@@ -1435,12 +1440,59 @@ explicitly **out of scope**.
     missing — now sits at the ceiling, where the next line to land trips it again.
     `parse`/`opened`/`round`/`drawn`/`held`/`refuse_second_surface!`/`classifier` is more than one
     responsibility.
+14b. **A worktree can also go stale MID-CARD, and that is the harder half.** T19 fast-forwarded
+    correctly at spawn, and its dependency (T15) landed *while it was working* — so it built and
+    measured against a tree missing the very thing its card was written on top of, and its red
+    evidence proved the wrong proposition ("nothing reads" rather than "nothing re-presents"). It
+    caught this by measuring its own premise rather than trusting the brief. **Re-check dependencies
+    before REPORTING, not only before starting**, and expect the merge: T15 and T19 both edited
+    `handover_spec.rb`, and overwriting rather than merging would have silently deleted a 233-line
+    group **while leaving the suite green**, because those examples pass either way.
+
 14. **New agent worktrees fork a stale base, not current `main`.** Observed 2026-08-17: T16 and T5
     were created at the pre-chunk commit, so T5's tree lacked the dependency its card was written
     against and T16's lacked the guard whose report it consumes — `spec/spec_discipline_spec.rb` did
     not exist in it at all. Both were fast-forwarded by hand. **An orchestrator must fast-forward
     each new worktree at spawn and tell the agent to re-measure its baseline count**, or a
     dependent card silently works against the tree its dependency was supposed to change.
+
+15. **The arms bench cannot tell total worker collapse from success.** Found while verifying T16's
+    widened driver seam: `OrchestratorWorker#settle` rescues `StandardError`, so a wrong-arity seam
+    still renders a full report — and the **grade row reads 1.000** even when every worker died,
+    because the grade is computed on the orchestrator's own timeline, which carries the synthesis
+    assistant turn whether or not a worker ever ran, against a real `Grader::Fixture` rather than a
+    pass-stub. Only the spend row collapses. The arm should surface a worker-failure count, or the
+    grade should be unreachable when every worker failed. **The most valuable thing T16 surfaced.**
+16. **`spec/lain/bench/sweep_fixture_spec.rb` regenerates a committed fixture mid-suite.** Two guards
+    keep it inert today (the `:ollama` tag and an embed-model skip), but `LAIN_OLLAMA=1 bundle exec
+    rspec` — which is how the ollama docs tell you to run — writes into `lib/lain/bench/corpus/`,
+    dirtying the tree and rewriting a file `sweep_spec`'s siblings read in the same run. Rename it
+    out of `_spec.rb` and move it under a task or bin path; the one-spec-per-code-file rule cannot
+    see it because it mirrors no code file.
+
+**Orchestration lessons from this execution, for whoever runs the next chunk:**
+
+- **Never point a review agent at a worktree whose implementer is still live.** Done here, and the
+  reviewer's `exe/lain` apply-then-revert cycle landed on top of the implementer's own correction —
+  the implementer then reported the file "came back" and misattributed it to the orchestrator. Give
+  a reviewer its own checkout, or confirm the implementer has finished for good first.
+- **A card's shared-file diff may not be one file.** T11's two `method_option` lines turned out to be
+  a three-file atomic change: giving the flags `EnvDefaults` defaults broke two drift guards that
+  re-derive the `LAIN_*` list from `exe/lain`, and `up_spec`'s `match_array` fails in **both**
+  directions, so a partial application is as red as none. Only the full suite caught it. The panel
+  refined it further: the two guards differ, `up_spec`'s `match_array` being bidirectional while
+  `endpoint_env.rb`'s `include` is one-directional, so `endpoint_env` must land with-or-before
+  `exe/lain` and never after.
+- **Waves are a dependency statement, not a work queue — track cards, not waves.** T15 sat unblocked
+  and unlaunched for a long stretch: its only dependency (T14) had landed, but attention had moved
+  to the wave-3/4 cards on the critical path and nothing was re-checking the wave-2 list. The fix is
+  mechanical: after every landing, re-derive the ready set from `Depends on:` against what is on
+  `main`, rather than working down the wave list once. A card whose dependency lands early becomes
+  ready early, and the wave number stops meaning anything at that point.
+- **Reduce the hook's own worker count when landing on a busy box.** `pre-commit` runs the whole
+  suite, and the real-resource specs are contention-sensitive: two commits failed twice each on
+  nvim/tmux specs that were green 4/4 in isolation, with no orphaned processes and the desktop
+  carrying ~10-12 baseline load. `LAIN_SPEC_WORKERS=4` cleared it first try.
 
 **Migration note owed to a reader of recorded runs (T13):** once `capability_degraded` is emitted, a
 pre-change and post-change ollama run refuse to compare — `cannot compare runs with differing
@@ -1505,7 +1557,78 @@ the difference is "visible only in the replans/stalls metric" is now false. `arm
 still passes because it asserts static prose, which is why it missed this. Needs an orchestrator
 decision before T8 lands; `report.rb` is not T8's file.
 
-## Integration checks
+### T19 — Re-present a review row after a gesture changes it   [added mid-execution] [risk: medium]
+
+**Depends on:** T14, T15 (both landed)
+**Files:** `lib/lain/frontend/neovim/review_view.rb`, `lib/lain/review/handover.rb`, and whichever of
+`lib/lain/cli/human_replies.rb` / `lib/lain/review/surface/neovim.rb` the gesture path actually needs
+— establish that first rather than assuming.
+**Reachable from:** the `<CR>` and `x` gestures in the live cockpit.
+
+**Why this card exists.** T15 made a row *markable*; nothing makes the human's next gesture *see*
+that. Row `hunk_keys` are cut at render and carried, and no production path re-presents, so in a real
+editor `<CR>` then `x` still refuses with `"… which nothing has read -- open it with <CR> first"`.
+Measured in a live headless nvim against the shipped stack (T15's review): the buffer's
+`b:lain_view_generation` stamp is **unchanged** across an open, and a single hand-rolled
+`session.present(scope: :cumulative)` between the gestures takes `marked?` from false to true and
+makes `approve` return `nil` — admitted. **The gap is purely re-presentation and there is no second
+defect behind it.**
+
+It is **two** re-presentations, not one: nothing re-presents after a **mark** either, so the sidebar
+still reads `[ ] lib/greeter.rb` after a successful mark.
+
+Without this card the chunk does not meet its own Intent — "open a survey of a subdirectory **and
+mark it reviewed**" — and manual checkpoint 6 fails at the keyboard.
+
+**Acceptance criteria:**
+
+```gherkin
+Scenario: opening a row then marking it, with no redraw in between   [pin]
+  Given a survey of a subdirectory with an unread file
+  When the operator opens the row with <CR> and then marks it with x
+  Then the mark is accepted with no unread refusal
+
+Scenario: the sidebar shows the mark that was just made   [pin]
+  Given the same survey after a successful mark
+  Then the row renders as reviewed without any further gesture
+
+Scenario: a full pass admits an approve verdict
+  Given every file opened and marked through the gestures alone
+  When an approve verdict is submitted
+  Then it is admitted
+
+Scenario: rendering still reads nothing
+  Given a survey that has been presented
+  Then no file has been chunked
+```
+
+**Escalation triggers:**
+- **`b45553e` must stand.** `spec/lain/frontend/neovim/review_view_spec.rb` uses an `unread_entry`
+  double whose `#hunks` raises, proving the view does not read at render. A re-present must not
+  become a re-read: the fourth AC is the guard, and if satisfying the first three forces a read at
+  render, STOP — that trade undoes the commit this whole area was built on.
+- Re-presenting on every gesture may redraw a large survey often. T15 measured a mark at **+0**
+  chunkings and approve at 1.27-2.08 ms, so the read cost is already paid; confirm the *render* cost
+  does not become the new problem, and measure rather than assume.
+- If the natural place to re-present turns out to be a file no card has owned and the change is
+  larger than one call on the gesture path, report it rather than widening quietly.
+
+## Integration checks — RUN 2026-08-17, all green
+
+| check | result |
+|---|---|
+| `rake pspec` | **13402 examples, 1 failure** — the failure is `Lain::Frontend::Neovim … re-attach is idempotent`, first on the flake list, green 32/32 isolated |
+| example count vs serial | `rspec --dry-run` = **13402**, exact match, so nothing was truncated (CLAUDE.md: an OOM kill and a truncated run both report "0 failures") |
+| `rubocop` (bare) | 1285 files, no offenses |
+| `cargo test` | 227 + 50 + 1 + 1 + 9 passed, 0 failed |
+| `cargo clippy --all-targets -- -D warnings` | clean |
+| `rake core:build` + `rspec --tag core` | 41 examples, 0 failures |
+| `pre-commit run --all-files` | every hook passes **except `shellcheck`, whose binary is not installed** — not a code failure, and the only thing blocking `bin/bench-ollama-gpu` from being committed |
+
+Nineteen cards landed across 24 commits. Worktrees and branches returned to their pre-chunk state,
+verified by `git worktree list` (main only) and `git branch --list`.
+
+## Original integration checks (as planned)
 
 After the last wave:
 

@@ -535,6 +535,18 @@ Structures that plausibly qualify, and what they buy:
   than by any test. And **never park the harness in `spec/support/`**: `spec_helper.rb` globs
   `support/**/*.rb`, so it loads in every worker of every run — one defined `Object#run` globally
   and called `Dir.chdir` at load.
+- **A generic filename in a shared scratchpad is shared mutable state between concurrent agents.**
+  One agent's `run.sh` toolchain wrapper was overwritten by another and silently repointed at a
+  *different worktree*; commands kept running and kept passing, against someone else's checkout.
+  The measurement it produced — four mutants all "caught" — was taken against unedited files and
+  proved nothing, and it surfaced only when a substring replacement failed on a file that had just
+  been read. Name scratch files uniquely, and have a runner refuse to start unless a file it owns is
+  present (`test -f .handback-T<id>.md || exit 1`). The failure mode is not a crash; it is a
+  confident green from the wrong tree.
+- **Do not read the tree while a suite run is in flight.** Under `rake pspec` a read can return
+  content without edits that are already on disk. Twice in one task this looked exactly like the
+  live-mutant signature above; `git status` and a re-read after the run exited confirmed disk was
+  correct both times. Re-check after the run, not during.
 - **`ls-files` truncates against the PROCESS directory**, so a home-repo surface read from a
   subdirectory is both short and rejoins to the wrong file. `-C <dir>` is the fix; `--full-name`
   is not sufficient.
