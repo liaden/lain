@@ -175,6 +175,52 @@ module Lain
         BLOCK = /FILE (.+?)\n(.*?)\nEND$/m
         private_constant :BLOCK
 
+        # What a live arm must be TOLD before {parse} can read anything out of
+        # its answer. It lives HERE, beside the regex rather than beside the
+        # `bench arms` command that sends it, because the instruction and the
+        # pattern are ONE contract: a reworded prompt that stopped satisfying
+        # this regex would not fail, it would score near-zero in every column,
+        # which is the failure this constant exists to have already fixed. The
+        # offline sweep needs no such prompt -- its recordings are authored in
+        # this shape already -- so `bench arms` shipped without one and every
+        # live arm scored near zero.
+        #
+        # Deliberately says nothing about HOW to solve a task: the arms differ
+        # by orchestration topology, and a prompt that coached strategy would
+        # make the comparison measure the prompt. For the same reason it does
+        # not tell an arm it is being evaluated -- that is a documented
+        # behavioural modifier, and the orchestrator arm's workers would each
+        # receive it N times per task while the control receives it once.
+        #
+        # The format is TAUGHT BY EXAMPLE and never spelled out in prose, so the
+        # worked block below is itself parseable -- which is what lets a spec
+        # feed this prompt to {parse} and get the example file back, rather than
+        # asserting on wording no reader is bound by.
+        #
+        # THE EXAMPLE'S PATH AND BODY MUST COLLIDE WITH NO TASK'S GOLD. This
+        # prompt is sent INTO the suite it is graded against, so an arm holds
+        # its example before it reads the task: name a graded path here and an
+        # arm that echoes the format and does no work at all collects part of a
+        # gold. The first draft used `lib/widget.rb` / `def normalize`, which is
+        # verbatim `rename-method-and-callsite`'s gold, and put a +0.500 floor
+        # under that task -- and a floor reads as work done, where a zero reads
+        # as a broken run. `spec/lain/bench/arms_report_spec.rb` scores this
+        # example against every task and demands no advantage over an empty
+        # answer.
+        CONTRACT = <<~PROMPT
+          Answer with the complete new contents of every file the task asks you to write
+          or change, and nothing else -- no commentary, no diffs, no fenced code blocks.
+          Write each file as a block in exactly this shape, one per file, in any order:
+
+          FILE lib/example.rb
+          def greet = "hello"
+          END
+
+          The markers are upper-case and the closing one sits alone on its own line. Text
+          outside a block is ignored, and a line reading exactly END inside a file body
+          would close that block early.
+        PROMPT
+
         def self.parse(text) = text.scan(BLOCK).to_h { |path, body| [path, body] }
       end
     end

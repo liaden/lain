@@ -135,8 +135,11 @@ module Lain
       # names an Arm, a Grader, or a Provider itself (its boundary rule).
       #
       # THIS SPENDS REAL API MONEY per run: every arm asks a real provider once
-      # per task, and the dual-ledger arm asks up to {Arm::DualLedger::DEFAULT_MAX_STEPS}
-      # times.
+      # per task, and the dual-ledger arm asks about
+      # {Arm::DualLedger::DEFAULT_MAX_STEPS} times on essentially every task --
+      # its ceiling is the typical case, not the worst one, so budget a live
+      # `bench arms` at roughly five times the control arm's cost rather than at
+      # one ask per task.
       #
       # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none" --
       # see {#arm_report} for what that distinction buys and {#lease_options} for
@@ -154,7 +157,10 @@ module Lain
       #   {LiveArms::DEFAULT_DECOMPOSE} for why the arm's own default is wrong here
       # @param price_book [Lain::PriceBook] prices every arm's journal
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam} (`provider:`,
-      #   `system:`, `toolset:`); ITS signature owns those defaults
+      #   `system:`, `toolset:`); ITS signature owns those defaults, including the
+      #   unset `system:` that teaches the arms the FILE/END trajectory format the
+      #   gold graders parse -- untaught, every arm scores near zero (floored only
+      #   by one task's vacuously-passing `excludes:`)
       # @return [String] the Driver's report; never printed here
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt

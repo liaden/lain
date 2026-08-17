@@ -163,16 +163,6 @@ RSpec.describe Lain::Bench::SpawnSeam do
           .to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY/)
       end
     end
-
-    # The limit of the refusal above, pinned rather than described: an injected
-    # provider AND an explicit model reach neither Backend#provider nor its
-    # model default, so the name is never validated. Production never injects,
-    # so this is the specs' own case -- but it is a real hole in "resolution
-    # happens at construction", and a silent one, so it is written down.
-    it "is NOT validated when a provider object and a model are both given" do
-      expect { described_class.new(backend: backend(provider: "haiku", model: "qwen3"), provider:) }
-        .not_to raise_error
-    end
   end
 
   # The Context is the flags' other half: one Context for the whole seam, so
@@ -203,6 +193,37 @@ RSpec.describe Lain::Bench::SpawnSeam do
       expect(seam.call(journal:).context.system).to eq("you are an arm under comparison")
     end
 
+    # The defect this card fixes: every arm scored exactly 0.000 live, because the
+    # gold graders parse FILE...END out of assistant text and nothing told the
+    # model that contract. So the assertion is not "the prompt mentions FILE" --
+    # it is that the GRADER'S OWN PARSER reads the taught example back out of the
+    # prompt an arm is sent, which is what a reworded prompt still has to satisfy.
+    it "teaches the FILE/END trajectory contract when no system prompt is given" do
+      rendered = described_class.new(backend:, provider:).call(journal:).context.system
+
+      expect(Lain::Bench::ArmSweep::FileBlocks.parse(rendered)).to include("lib/example.rb")
+    end
+
+    # exe/lain reads `--system` off an options hash, so an UNSET flag arrives here
+    # as an explicit nil rather than an omitted keyword -- a default that only
+    # fired on omission would leave the live path exactly as broken as it was.
+    it "teaches the same contract when the unset flag arrives as an explicit nil" do
+      rendered = described_class.new(backend:, provider:, system: nil).call(journal:).context.system
+
+      expect(Lain::Bench::ArmSweep::FileBlocks.parse(rendered)).to include("lib/example.rb")
+    end
+
+    # `--system ''` is the spelling most operators read as "no system prompt",
+    # and it is truthy, so a plain `||` leaves the arm untaught -- this card's
+    # own defect, reached through the flag that is supposed to be the way out of
+    # it. Blank means unset here, which is the reading that keeps a paid run's
+    # score column comparable with every other run's.
+    it "treats a blank system prompt as unset rather than as a prompt" do
+      rendered = described_class.new(backend:, provider:, system: "  ").call(journal:).context.system
+
+      expect(Lain::Bench::ArmSweep::FileBlocks.parse(rendered)).to include("lib/example.rb")
+    end
+
     # The ceiling arrives INSIDE the backend, so this is what the seam is still
     # answerable for: whatever the backend carries is what every agent renders.
     it "renders the ceiling the backend carries" do
@@ -216,7 +237,6 @@ RSpec.describe Lain::Bench::SpawnSeam do
     # it). What is still worth asserting is WHY it exists: an arm task answers
     # with whole file bodies, so its ceiling is not record's one-line echo.
     it "declares a ceiling sized for a whole file body, larger than record's" do
-      expect(described_class::DEFAULT_MAX_TOKENS).to eq(4096)
       expect(described_class::DEFAULT_MAX_TOKENS).to be > Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens)
     end
   end

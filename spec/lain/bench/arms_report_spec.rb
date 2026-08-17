@@ -69,6 +69,15 @@ RSpec.describe Lain::Bench::CLI do
   # The arms that actually reached the Driver -- its one positional argument.
   def built_arms = driver_args.last.first
 
+  # What an arm was actually TOLD. Context#render puts the system prompt into
+  # Anthropic's block form, so the text has to be read back out of the blocks
+  # rather than off the Request as a String. Read off EVERY recorded request,
+  # not `last_request`: "every arm" is the claim, and the last request belongs
+  # to whichever arm happened to finish last.
+  def rendered_systems
+    provider.requests.map { |request| request.system.map { |block| block.fetch("text") }.join("\n") }
+  end
+
   def orchestrator_decompose
     built_arms.find { |arm| arm.name == "orchestrator-worker" }.instance_variable_get(:@decompose)
   end
@@ -96,6 +105,32 @@ RSpec.describe Lain::Bench::CLI do
     # would score every task alike and could not produce both numbers.
     it "grades each task against ITS OWN gold rather than one blanket grader" do
       expect(score_section(arms_report)).to include("1.000").and include("0.000")
+    end
+
+    # Without this the live path scores every arm near zero: the gold graders
+    # read FILE...END out of assistant text, and an arm told nothing about that
+    # contract answers in prose. Asserted on the Requests the provider was
+    # HANDED, through the real assembly, because the offline sweep's fixture is
+    # hand-authored to satisfy the parser and hid this completely.
+    #
+    # `system: nil` EXPLICITLY, because that is production's shape: exe/lain
+    # reads the flag off an options hash, so an unset `--system` arrives here as
+    # a nil value rather than as an absent keyword. Omitting the keyword would
+    # pass against a default that only fires on omission -- the counterfactual
+    # this card exists to rule out.
+    it "teaches every arm the trajectory contract when no system prompt is given" do
+      arms_report(system: nil)
+
+      taught = rendered_systems.map { |rendered| Lain::Bench::ArmSweep::FileBlocks.parse(rendered).keys }
+      expect(taught).not_to be_empty
+      expect(taught).to all(include("lib/example.rb"))
+    end
+
+    it "renders an explicit system prompt instead of the taught contract" do
+      arms_report(system: "be terse")
+
+      expect(rendered_systems).not_to be_empty
+      expect(rendered_systems).to all(eq("be terse"))
     end
 
     # Scenario: an unset isolation name passes no keyword at all.
@@ -217,6 +252,34 @@ RSpec.describe Lain::Bench::CLI do
       # own would pass on an arm that prices nothing.
       instruments = built_arms.map { |arm| arm.instance_variable_get(:@instrument) }
       expect(instruments.map(&:price_book)).to all(be(book))
+    end
+  end
+
+  # The prompt that teaches the format is sent INTO the suite it is graded
+  # against, so its worked example is a string every arm has in hand before it
+  # reads the task. If that example names a graded path, an arm that echoes the
+  # format and does no work at all collects part of a gold -- and a floor under
+  # every score reads as work done, where a zero reads as a broken run.
+  describe "the taught contract's worked example" do
+    let(:suite) { Lain::Bench::ArmTasks.new(fixture_path:) }
+
+    def trajectory(files) = Lain::Bench::ArmTasks::Trajectory.new(files:)
+
+    # The DELTA against an empty answer, not the score itself: one task's
+    # `excludes:` check passes vacuously against a file nobody wrote, so an
+    # empty trajectory already scores above zero there and an absolute
+    # assertion would be measuring that instead of this.
+    it "scores no better than an empty answer on every task in the suite" do
+      taught = trajectory(Lain::Bench::ArmSweep::FileBlocks.parse(Lain::Bench::ArmSweep::FileBlocks::CONTRACT))
+      contamination = suite.to_h do |task|
+        [task.id, task.grader.grade(taught).score - task.grader.grade(trajectory({})).score]
+      end
+
+      # `all` passes on an empty collection, so the delta alone is satisfied by
+      # a CONTRACT that teaches nothing and by a suite with no tasks in it.
+      expect(taught.files).not_to be_empty
+      expect(contamination).not_to be_empty
+      expect(contamination).to all(satisfy { |_id, delta| delta.zero? })
     end
   end
 

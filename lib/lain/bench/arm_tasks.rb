@@ -15,6 +15,15 @@ module Lain
     # {Trajectory}: the files an arm's run produced, `path => content`. B0
     # only builds and grades the suite; B12 wires a real arm's produced files
     # into this same shape.
+    #
+    # WRITING YOUR OWN SUITE: `bench arms` takes any fixture path, and the
+    # default arms system prompt ({ArmSweep::FileBlocks::CONTRACT}) teaches the
+    # answer format BY EXAMPLE -- so every arm holds that example's path and
+    # body before it reads your task. A `gold_files` entry that collides with it
+    # scores an arm which echoes the format and does no work at all, putting a
+    # floor under the column, and a floor reads as work done where a zero reads
+    # as a broken run. The committed suite is guarded by a spec that scores the
+    # taught example against every task; a suite of your own is not.
     class ArmTasks
       include Enumerable
 

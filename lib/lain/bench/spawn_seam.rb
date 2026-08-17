@@ -39,8 +39,22 @@ module Lain
     # always runs"; this is the first caller for which that premise is false,
     # since an injected `provider` short-circuits `#provider` and an explicit
     # `--model` short-circuits the model default that would otherwise validate
-    # it. Inject both and a nonsense `--provider` is simply unused. A spec pins
-    # that hole rather than describing it.
+    # it. Inject both and a nonsense `--provider` is simply unused. Nothing
+    # pins that hole -- the spec which did asserted only that nothing was
+    # raised on a shape production never builds -- so it is recorded here.
+    #
+    # AN UNSET `--system` TEACHES THE TRAJECTORY CONTRACT, it does not fall back
+    # to the project's prompt slots. The gold graders score a trajectory parsed
+    # out of assistant text by {ArmSweep::FileBlocks}, so an arm never told that
+    # format answers in prose and scores near zero on every task -- a report
+    # reading as a suite nobody could do rather than as a suite nobody was told
+    # the rules of. Near, not exactly: an untaught arm still scores 0.500 on
+    # `fix-off-by-one-loop`, because that task's `excludes:` check passes
+    # vacuously against a file nobody wrote, which is the grader's own hole and
+    # not this seam's. The default is coalesced HERE rather than declared as the
+    # keyword's value because `exe/lain` reads the flag off an options hash: an
+    # unset `--system` arrives as an explicit nil, which a keyword default never
+    # sees. An explicit prompt still wins outright.
     #
     # Two names in this namespace do not mean what they look like: `CLI` alone
     # is {Bench::CLI} and `Session` alone is {Bench::Session}, so the agent
@@ -66,12 +80,14 @@ module Lain
       # @param toolset [Lain::Toolset] the capabilities every spawned agent gets
       # @param system [String, nil] `--system`, rendered INSTEAD of the project's
       #   prompt slots -- the one thing the backend does not read from its own
-      #   options ({Lain::CLI::Backend#context} takes it as an override)
+      #   options ({Lain::CLI::Backend#context} takes it as an override). Unset,
+      #   the arms are taught {ArmSweep::FileBlocks::CONTRACT} instead of the
+      #   project's slots, for the reason below.
       # @raise [Lain::CLI::UnknownProvider] on a name outside the advertised set
       # @raise [Lain::CLI::Backend::MissingAPIKey] resolving anthropic keyless
       def initialize(backend:, provider: nil, toolset: Toolset.new([]), system: nil)
         @provider = provider || backend.provider
-        @context = backend.context(system_override: system)
+        @context = backend.context(system_override: taught(system))
         @toolset = toolset
       end
 
@@ -110,6 +126,19 @@ module Lain
       end
 
       private
+
+      # BLANK IS UNSET, not "no system prompt". `--system ''` is truthy, so a
+      # plain `||` would ship an empty prompt and leave that arm untaught --
+      # this class's own defect, reached through the flag that is meant to be
+      # the way out of it, and spelled the way most operators read as "unset".
+      # {Blankness} rather than `strip` for the reason written there: a lone
+      # U+00A0 is not an instruction either.
+      #
+      # So NOTHING currently asks for an UNTAUGHT arm, and "does teaching the
+      # format matter?" is a fair question to put to a study bench. It wants a
+      # flag of its own (`--no-system`) rather than a blank string, which reads
+      # as a slip rather than as an experiment.
+      def taught(system) = Blankness.blank?(system) ? ArmSweep::FileBlocks::CONTRACT : system
 
       # An unleased call lands on the process environment -- {WorkerEnv.default},
       # restated here rather than branched around, because {Lain::Session}'s own

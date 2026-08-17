@@ -460,7 +460,10 @@ class LainCLI < Thor
     method_option :max_tokens, type: :numeric, default: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
                                desc: "max_tokens per model turn; higher than record's, because an arm task " \
                                      "answers with whole file bodies and a ceiling hit ends the run"
-    method_option :system, type: :string, desc: "system prompt"
+    method_option :system, type: :string,
+                           desc: "System prompt for every arm. Unset teaches the FILE/END " \
+                                 "trajectory format the grader parses; a blank value counts as " \
+                                 "unset, since an untaught arm scores near zero"
     method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
     method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
     # NO Thor `default:`, deliberately, and NOT chat's declaration copied over
