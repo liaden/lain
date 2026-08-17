@@ -127,6 +127,68 @@ module Lain
         refuse: [%i[req message]]
       }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
 
+      # How much of a `Hunk` key {Surface::Neovim#mark} and {Surface::Text#mark}
+      # show a human, and the one place that decision is made -- see F5's
+      # grounding in `planning/qa-findings-research-2026-08.md`. A hunk key is
+      # a 64-hex-character content digest behind a SCHEME prefix
+      # (`Hunk::CONTENT_SCHEME`/`Hunk::SPAN_SCHEME`, `review/hunk.rb`), and no
+      # path reaches either adapter's `#mark` to show a file name instead --
+      # `Session#mark` (`review/session.rb`) forwards only the key and the
+      # state.
+      #
+      # {preview} lives HERE, at the port, rather than once per adapter,
+      # because "how much of a key a human is shown" is a property of the
+      # SEAM both adapters implement -- the same argument {MESSAGES} makes
+      # for the port's shape -- and because two independent copies is
+      # exactly what let them silently disagree once: a review-panel
+      # mutation probe on an earlier draft of this card set the two
+      # adapters' preview lengths apart and nothing failed.
+      #
+      # {DIGEST_PREVIEW_LENGTH} follows the house convention for a
+      # shortened content digest in a human-readable message --
+      # `cli/command/pin.rb`: `"pinned #{digest[0, 19]}..."`, and
+      # `Event#to_s`'s `"#{digest[0, 19]}..."`, both 12 hex digits behind a
+      # 7-character `"blake3:"` prefix. Ours has no fixed-width prefix (the
+      # scheme name varies, see the SPLIT paragraph below), so the number
+      # that carries over is the 12 hex digits, not the 19. The trailing
+      # `...` carries over unchanged: it is what tells a reader they are
+      # looking at a prefix and not the whole thing -- an earlier draft of
+      # this constant showed 8 digits with no ellipsis, which gave neither
+      # signal. (`Isolation::Worktree::Handback#fingerprint` and
+      # `Review::Delta::...#fingerprint` also cut to 12 hex digits, but for
+      # a git REFNAME, not a human message, so they drop the ellipsis --
+      # a different consumer, not a second convention to reconcile with.)
+      #
+      # 12 digits is 48 bits. `Bounds::DEFAULT_MAX_FILES` (300) and
+      # `DEFAULT_MAX_LINES` (30,000) cap what a survey admits at all, and
+      # even at 10,000 hunks -- a couple of orders of magnitude past
+      # `DEFAULT_MAX_FILES`, and the size a review-panel probe actually
+      # measured against -- a birthday collision on an 8-digit (32-bit)
+      # prefix runs about 1.2%; on 12 digits it is about 2e-7. The four
+      # extra digits cost four characters, and the longest rendered message
+      # (`hunk-content-v1:` plus 12 hex digits plus `...` plus
+      # ` is now unreviewed`) is still 49, under AC1's 60-character bar.
+      #
+      # SPLIT on the scheme boundary, never a flat slice off the front of
+      # the whole key: a flat cut hands the CONSTANT scheme prefix
+      # priority over the digest, so a longer scheme name (`hunk-span-v1:`,
+      # or some future `hunk-content-v2:`) would silently shrink the
+      # entropy budget with nothing failing. Splitting means every scheme
+      # keeps exactly {DIGEST_PREVIEW_LENGTH} hex digits of digest,
+      # whatever its own name's length.
+      DIGEST_PREVIEW_LENGTH = 12
+
+      # @param hunk_key [String] `Review::Hunk`'s content or span key
+      # @return [String] `hunk_key` unchanged if its digest is already no
+      #   longer than {DIGEST_PREVIEW_LENGTH} (every fixture key in this
+      #   suite is), or `<scheme>:<DIGEST_PREVIEW_LENGTH hex digits>...`
+      def self.preview(hunk_key)
+        scheme, digest = hunk_key.split(":", 2)
+        return hunk_key if digest.nil? || digest.length <= DIGEST_PREVIEW_LENGTH
+
+        "#{scheme}:#{digest[0, DIGEST_PREVIEW_LENGTH]}..."
+      end
+
       # @param candidate [#present, #annotate, #mark, #thread, #verdict, #refuse]
       # @return [void]
       # @raise [Incomplete] naming what is wrong -- a message not answered at

@@ -97,9 +97,17 @@ module Lain
           write("annotation [#{kind}] at #{describe(anchor)}: #{text}\n")
         end
 
+        # `hunk_key` is truncated through {Surface.preview} -- the SAME
+        # call {Surface::Neovim#mark} makes, not a second copy of its
+        # length -- so a mark names "the same unit and state" on both
+        # surfaces rather than one staying long. This surface has no
+        # pane-width constraint of its own to force it, but T6 asks for
+        # the two to stay consistent, and a shared operation at the port
+        # is what makes disagreement unconstructible rather than merely
+        # untested (see {Surface.preview}'s own doc).
         # @return [Integer] see {#present}
         def mark(hunk_key, state)
-          write("marked #{hunk_key} #{state}\n")
+          write("marked #{Surface.preview(hunk_key)} #{state}\n")
         end
 
         # Announces that the position now has focus. Nothing here can print a

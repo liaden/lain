@@ -166,6 +166,31 @@ module Lain
         # The state goes LAST and unadorned so `reviewed` and `unreviewed` are
         # told apart by a word boundary rather than by a substring -- the trap
         # `spec/support/shared_examples/review_surface.rb` names explicitly.
+        #
+        # `hunk_key` here is already TRUNCATED by {#mark}, through
+        # {Surface.preview} -- see that method's doc for how much of the
+        # key survives and why. A real `Hunk` key is a 64-hex-character
+        # content digest behind `Hunk::CONTENT_SCHEME` ("hunk-content-v1:"),
+        # and the untruncated message runs past 90 characters.
+        #
+        # `65_review.lua:37` echoes this notice with `nvim_echo`, which
+        # writes the MESSAGE AREA -- `&columns` wide, the whole editor over
+        # `&cmdheight` lines -- NOT the review WINDOW a three-way
+        # cockpit split narrows to 40 columns. (An earlier draft of this
+        # comment named the review pane's own width as the constraint;
+        # verified against a real embedded UI that it is not --
+        # `nvim_echo` never reads the window.) Measured at `columns=40/80/
+        # 120`: the untruncated message (96 characters, 102 once
+        # `65_review.lua:37`'s `"lain: "` prefix is added) fits one message
+        # line only at 120; this surface's own truncated message fits at
+        # 80 and 120, not 40. A message that does not fit one line is what
+        # F5 traces the `Press ENTER or type command to continue` prompt
+        # to -- and that prompt blocks RPC on every mark -- so shorter is
+        # what keeps the ordinary case out of it, at ordinary terminal
+        # widths. No file name reaches this surface (`Session#mark` sends
+        # only the key and the state -- see `review/session.rb`), so a
+        # prefix of the key is the only identifying substance a human can
+        # be shown here.
         MARKED = "%<hunk_key>s is now %<state>s"
 
         # A session that took some of a row's hunks and refused the rest. The
@@ -247,7 +272,7 @@ module Lain
         end
 
         # @return [String, nil]
-        def mark(hunk_key, state) = @rpc.review_refused(format(MARKED, hunk_key:, state:))
+        def mark(hunk_key, state) = @rpc.review_refused(format(MARKED, hunk_key: Surface.preview(hunk_key), state:))
 
         # @return [String, nil]
         def thread(anchor) = @thread_view.show(anchor)

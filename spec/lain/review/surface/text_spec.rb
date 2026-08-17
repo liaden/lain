@@ -245,6 +245,42 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("hunk-content-v1:deadbeef")
       expect(sink.string).to include("reviewed")
     end
+
+    # AC3: T6's Grounding reads this as "names the same unit and state" as
+    # the neovim surface, not the same file (no path reaches either
+    # surface's #mark) -- so a real 64-hex-character digest key is shown
+    # the same way here: a truncated, ellipsis-marked prefix of the
+    # DIGEST, not the whole digest and not just the constant scheme name.
+    it "truncates a real 64-hex-character digest key to a marked digest prefix" do
+      key = "hunk-content-v1:#{"c" * 64}"
+
+      surface.mark(key, :reviewed)
+
+      expect(sink.string).to include("hunk-content-v1:#{"c" * 12}...")
+      expect(sink.string).not_to include("c" * 13)
+      expect(sink.string).to include("reviewed")
+    end
+
+    # AC3's actual claim, made an example rather than left to a shared
+    # constant: a review-panel mutation probe on an earlier draft found
+    # that the two surfaces could silently disagree on how much of a key
+    # they show (one truncating at a different length than the other) with
+    # nothing failing. Both now call {Lain::Review::Surface.preview}
+    # directly, which makes that unconstructible -- this example documents
+    # the intent regardless, since the shared call is an implementation
+    # choice and the port's promise is the outward one: the same key reads
+    # the same way on both surfaces.
+    it "shows the same truncated key Surface::Neovim would, for the same real 64-hex-character key" do
+      key = "hunk-content-v1:#{"e" * 64}"
+      neovim_inlet = Struct.new(:message) { def review_refused(message) = (self.message = message) }.new
+      Lain::Review::Surface::Neovim.new(rpc: neovim_inlet).mark(key, :reviewed)
+
+      surface.mark(key, :reviewed)
+
+      preview = Lain::Review::Surface.preview(key)
+      expect(sink.string).to include(preview)
+      expect(neovim_inlet.message).to include(preview)
+    end
   end
 
   describe "#thread" do

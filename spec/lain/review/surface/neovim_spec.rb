@@ -322,6 +322,57 @@ RSpec.describe Lain::Review::Surface::Neovim do
 
       expect(inlet.posted.dig(0, 1)).to match(/\bunreviewed\z/)
     end
+
+    # F5: a REAL hunk key is a 64-hex-character content digest behind
+    # `Hunk::CONTENT_SCHEME`, not the eight-character stand-in the rest of
+    # this file uses. The untruncated message is long enough that it does
+    # not fit one `nvim_echo` message line at an ordinary terminal width
+    # (measured against a real embedded UI: not at 40 or 80 columns, only
+    # at 120), which is what stalls nvim on `Press ENTER or type command to
+    # continue` and blocks RPC on every mark -- see {Surface.preview}'s own
+    # doc for the mechanism and `Surface::Neovim::MARKED`'s doc for the
+    # measurement. This is the AC1 scenario.
+    it "fits comfortably inside a narrow pane, even for a real 64-hex-character digest key" do
+      key = "hunk-content-v1:#{"a" * 64}"
+
+      surface.mark(key, :reviewed)
+
+      expect(inlet.posted.dig(0, 1).length).to be < 60
+    end
+
+    # AC2: the truncated message still lets a human confirm it names the
+    # row they just marked (the digest PREFIX, not just the constant scheme
+    # boilerplate every key shares -- {Surface.preview}'s own SPLIT
+    # reasoning), still marks that it is a prefix, and still keeps the
+    # state at a word boundary.
+    it "still leads with a prefix of the key's digest and carries the state, even truncated" do
+      key = "hunk-content-v1:#{"c" * 64}"
+
+      surface.mark(key, :reviewed)
+
+      message = inlet.posted.dig(0, 1)
+      expect(message).to start_with("hunk-content-v1:#{"c" * 12}...")
+      expect(message).to match(/\breviewed\z/)
+    end
+
+    # F5's finding #5: a flat slice off the front of the whole key gives
+    # the CONSTANT scheme name priority over the digest, so a longer scheme
+    # (`hunk-span-v1:`, 13 characters, one more than `hunk-content-v1:`'s
+    # 16) would show FEWER hex digits for exactly the keys that already
+    # needed a span-qualified key to stay unique (`Hunk.keys`' own
+    # tie-break). {Surface.preview} splits on the scheme boundary instead,
+    # so both schemes keep the same digest entropy.
+    it "keeps the same digest entropy for a span key as for a content key" do
+      content_key = "hunk-content-v1:#{"d" * 64}"
+      span_key = "hunk-span-v1:#{"d" * 64}"
+
+      surface.mark(content_key, :reviewed)
+      surface.mark(span_key, :reviewed)
+
+      content_message, span_message = inlet.posted.map { |entry| entry[1] }
+      expect(content_message).to include("d" * 12)
+      expect(span_message).to include("d" * 12)
+    end
   end
 
   describe "#thread" do
