@@ -298,3 +298,68 @@ distinction (2,141 vs 2,123) is not.
 `batch-sweep` (interleaved), `kv-ceiling`, `thermals`, `summarize`. Raw NDJSON from this run is not
 committed; the tables above are the record. Run `bin/bench-ollama-gpu --help` for usage. The
 recommended serving config, with its reasoning, is in `/mnt/nvme/opt/ollama-env.sh`.
+
+## 2026-08-17 — the num_batch prefill gap is unreconciled, and the arm bench methodology changed
+
+Two records for anyone about to trust a number from this file or from a recorded arm sweep.
+
+### The `num_batch` prefill claim: 6.5x above, 1.31x in the POC — both real, not reconciled
+
+The § *headline* table above measured `qwen3-coder:30b` prefill at **340 → 2,222 tok/s (6.5x)**
+going from `num_batch=512` to `2048` — Vulkan, `num_ctx=32768`, KV `q8_0`, a fixed 7,496-token
+prompt, medians of 3+ interleaved reps (§ *How these were measured*).
+
+The 2026-08-15 manual integration POC measured the same model on the same axis, on the same box
+and the same ollama build, and got **1,201/1,194 → 1,578/1,562 tok/s (1.31x)** — two reps with
+distinct random-nonce prompts (trap 1 above: a repeated prompt hits the prompt cache and fakes
+the rate), both replicating each other.
+
+| source | num_batch=512 | num_batch=2048 | ratio |
+|---|---|---|---|
+| this file, 2026-08-14 (`bin/bench-ollama-gpu prefill`) | 340 tok/s | 2,222 tok/s | 6.5x |
+| 2026-08-15 integration POC (2 reps, distinct prompts) | 1,201 / 1,194 tok/s | 1,578 / 1,562 tok/s | 1.31x |
+
+Same model, same axis, same box, same build — and even the *baselines* disagree by ~3.5x before
+either ratio is taken. **This is an open discrepancy, not a correction of either number.** Neither
+run is known to be wrong, so neither is overwritten and the two are not averaged. Candidates
+nobody has checked yet: prompt length/shape (this file's harness pins a fixed 7,496-token prompt;
+the POC's prompts were not built by that harness), a `num_ctx` difference at request time, KV
+cache state left over from a prior run on the same server process, or genuine drift in `ollama
+serve`'s behavior between the two sessions. Whoever picks this up next should re-run both
+harnesses back to back, interleaved, against the same warm server, before trusting either figure
+for a decision.
+
+### Arm bench methodology changed: `DualLedger` now settles on its own ledger, not the grader
+
+`Arm::DualLedger` used to run its outer loop until the grader passed, which handed that one arm
+an oracle its controls (`SingleThread`, `OrchestratorWorker`) never got — a cross-arm score
+comparison then measured protocol rather than strategy, and an ungradeable task burned the whole
+step ceiling in model calls (measured pre-change: **18x the controls' tokens** on one ungradeable
+task, 2,546 vs 141/162). As of this chunk it settles on its **own ledger's progress reading**
+instead — the outer loop stops when the ledger stalls out with its rewrite already spent, or
+`max_steps` binds — and the grader is asked **exactly once**, at the end, for the `Run`'s grade,
+same as the other two arms. The run's terminal state is now journaled rather than inferred:
+`:stalled` (the ledger dried up for good) vs `:done` (the step ceiling bound first — which is NOT
+the same claim as "finished healthy").
+
+Three consequences for anyone reading numbers recorded before this date against numbers recorded
+after it — **they are not the same measurement:**
+
+- **Grader calls per dual-ledger run:** every outer step under the old protocol (up to
+  `DEFAULT_MAX_STEPS`, 6) → exactly 1 now.
+- **Token cost per run drops accordingly** — no more oracle-chasing on tasks the grader never
+  passes — but the arm still spends more than its controls: `bench/cli.rb`'s live-cost warning
+  now says the dual-ledger arm asks the provider roughly `DEFAULT_MAX_STEPS` (6) times on
+  essentially every task (its ceiling is the typical case now, not the worst one), so a live
+  `bench arms` run should be budgeted at roughly 5x a control arm's cost.
+- **The sweep report's disclosure changed.** `Bench::ArmSweep::Report` used to say single-thread
+  and dual-ledger produce identical grade *and token* rows under the offline mock replay, with
+  the difference visible only in the replans/stalls metric. That is now false: the grade rows
+  still tie (an artifact of prompt-keyed replay, not a finding — see the report's own `NOTE:`
+  text), but the **token rows separate by about 5x** (`recordings.yml`: single-thread 998 vs
+  dual-ledger 4,990). Read the current `NOTE:` block at the top of any `arm sweep` report, or
+  `lib/lain/bench/arm_sweep/report.rb`'s `NOTES` constant, for the live wording rather than
+  trusting a copy made before this entry.
+
+Any arm-sweep table recorded before 2026-08-17 should be treated as pre-methodology-change and
+re-run, not compared directly against new output.

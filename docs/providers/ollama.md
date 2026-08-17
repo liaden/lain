@@ -87,11 +87,20 @@ The variables above configure *lain*; they say nothing about how fast the server
 That is measured in `DEBUGGING_OLLAMA.md` (2026-08-14 entry) and it matters more than it
 looks, because **ollama's own defaults are wrong for this workload**:
 
-- **Send `"num_batch": 2048` with every request.** Ollama passes `-b 512` to llama-server,
-  overriding llama.cpp's own default of 2048. There is no server-side setting for it. On the
-  RX 7900 XTX this costs up to **3x decode and 8x prefill**, and the penalty is strongly
-  model-dependent (1.1x to 2.7x on decode across four models). Prefill is what a turn carrying
-  a large `tool_result` pays, so it is the number the harness feels.
+- **Pass `num_batch` explicitly.** Ollama passes `-b 512` to llama-server, overriding
+  llama.cpp's own default of 2048; there is no
+  server-side setting for it. `exe/lain`'s `--num-batch` flag (`$LAIN_NUM_BATCH`) threads it into
+  the request, alongside `--num-ctx` (`$LAIN_NUM_CTX`) for context length — both strictly
+  opt-in: leave either unset and the payload carries no `options` key at all. On the RX 7900
+  XTX, `DEBUGGING_OLLAMA.md`'s 2026-08-14 entry measured this costing up to **3x decode and 8x
+  prefill** (`qwen3-coder:30b` prefill: 340 → 2,222 tok/s, 6.5x, going from `num_batch=512` to
+  `2048`), strongly model-dependent (1.1x–2.7x on decode across four models). The 2026-08-15
+  integration POC measured the *same* model on the *same* axis, on the *same* box and build, at
+  **1,201/1,194 → 1,578/1,562 tok/s (1.31x)**, replicated with distinct prompts. Both are real
+  measurements and **the gap between 6.5x and 1.31x is currently unreconciled** — see
+  `DEBUGGING_OLLAMA.md`'s 2026-08-17 entry before quoting either figure as *the* number. Prefill
+  is what a turn carrying a large `tool_result` pays, so it is the number the harness feels
+  either way.
 - **KV cache type trades context for speed.** `q8_0` gives ~64k usable context, `f16` ~32k —
   but at 32k `f16` is 13% *faster*. Pick by the context the task needs, not by habit.
 - **Vulkan, not ROCm**, on this box: ~30% faster decode and it starts reliably, where ROCm
