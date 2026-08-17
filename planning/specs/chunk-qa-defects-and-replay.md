@@ -1,6 +1,6 @@
 # QA defects, and a replay harness that would have caught them
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -420,6 +420,20 @@ spec rather than by assertion:
 4. `NetworkAccess.permit` disables recording via `VCR.turned_off(ignore_cassettes: true)` — a
    recording path needs network *and* an inserted cassette, which `permit` currently makes
    mutually exclusive.
+
+   > **CORRECTED 2026-08-17 by T0's review — read this before starting.** This card's implied fix
+   > is wrong. **`permit_loopback` is a NO-OP on the recording path and buys T3 nothing.** Measured:
+   > a `record: :all` cassette records real bytes from a socket with **no permission held at all**,
+   > because a recording-mode cassette already sets `VCR.real_http_connections_allowed?` true for
+   > **every host**. T3's real work is *removing the call to `.permit`* — whose
+   > `VCR.turned_off(ignore_cassettes: true)` was destroying the cassette — not adding a call to
+   > `permit_loopback`. Adding it anyway narrows nothing: inside a recording cassette the egress
+   > authority is the cassette, and the cassette is unbounded by host. If T3 wants a narrow window
+   > it must scope the cassette, not the permission.
+   >
+   > Two constraints either way: `permit_loopback` covers a **loopback** `OLLAMA_API_BASE` only —
+   > the default `http://localhost:11434` qualifies, a remote base does not — and the port must be
+   > derived from the base (`URI(OLLAMA_API_BASE).port`), never hardcoded to `11434`.
 5. Keep `:ollama` gating where it lives; do not merge `ollama_tag.rb` into `tags.rb` as a
    drive-by.
 6. **`vcr_configuration.rb:18` — `allow_http_connections_when_no_cassette = false`.** This, not
@@ -1305,3 +1319,129 @@ Run after the last wave lands:
   human could not complete it — a green suite is not evidence the gesture works.
 - **Confirm F7 is actually dead:** re-run the severing-proxy repro from the research pass against
   the fixed tree. Expect a fast, named error and no spliced content, in place of >400 s of silence.
+
+## Execution log
+
+Baseline on `main` at start (cc6449ec): **13402 examples, 0 failures, 14 pendings**, 25 s under
+`LAIN_SPEC_WORKERS=12`. No worktrees; 25 pre-existing branches.
+
+**Staleness check, 2026-08-17.** All 32 wave-1 line citations re-verified against the tree. No card
+invalidated. Three notes folded into the implementer briefs:
+
+- `WindowBook#book` is at `window_book.rb:129`, not `:128` (cosmetic; T9).
+- `spec/support/shared_examples/provider_parity.rb` asserts **nothing** about constructor arity,
+  `channel:` or telemetry, so T2's first escalation trigger is moot — its parity coverage is
+  net-new, not a reversal of a deliberate assertion.
+- **T6's third escalation trigger is answered and needs no investigation.**
+  `lib/lain/review/surface/message.rb` is not a surface: it is a ~30-line
+  `Message = Data.define(:speaker, :text)` port value object with no `#mark`. The surfaces carrying
+  `#mark` are `neovim.rb`, `text.rb` and `null.rb`.
+
+**Harness anomaly: six of eight wave-1 worktrees forked from `ef57db69`, 30 commits behind
+`main` (cc6449ec)** — 136 files, ~12.9k insertions of drift. Not a plan defect; the worktree
+bases diverged at creation. Correctly based: T2, T9. Stale: T0, T4, T5, T6, T7, T8.
+
+Assessed rather than assumed:
+
+- **T0, T4, T7, T8 touch files that are byte-identical across the gap.** Their edits apply to
+  `main` unchanged; the only deficit is that their own suite run missed ~281 newer examples.
+- **T5 and T6 touch files that moved** (`survey.rb`, `review.rb`, `survey_spec.rb`,
+  `neovim_runtime_spec.rb`, `surface/neovim.rb`). The drift is small and the constants each card
+  targets are present at the old base with identical content — `OPENED` byte-identical,
+  `MARKED` at `:165` vs `:169`, `#mark` at `:246` vs `:250` — so offsets, not conflicts.
+- **Two new discipline specs land in the gap** (`spec/spec_discipline_spec.rb` +806,
+  `spec/reply_surface_discipline_spec.rb` +168) and will judge every new spec file this chunk
+  writes. No stale agent can see them.
+
+Consequent merge procedure, applied per card: three-way apply of the card's diff onto `main`,
+then **the full suite on `main`** before the commit lands. That is the gate the git protocol
+already requires after any rebase, and it is what surfaces a discipline-spec violation loudly
+instead of silently. Review agents are spawned **without** their own worktree — they only ever
+read the card's tree, so a second copy is waste and a second base is confusion.
+
+**What the execution's review panel found that the planning panel did not.** Six-for-six on cards
+reviewed, and the recurring shape is that the *tests* were the blind spot rather than the code:
+
+- **T2** — deleting the attempt-threading T10 depends on leaves **578 examples green**. The seam
+  whose failure mode is silent corruption of content-addressed history had no coverage at either
+  end. Its AC3 also passed against the instance-state design the card explicitly forbids.
+- **T0** — host+port matching is correct but **unasserted**: a port-only mutant leaves the posture
+  spec at 14 examples, 0 failures, which would make `evil.example.com:<held port>` reachable.
+- **T9** — the card's central safety claim ("every Anthropic and Bedrock run resolves through
+  `DEFAULTS`") is **false**: `claude-fable-5` and `claude-mythos-5` are current 1M-context families
+  that fall through to the 8,192 guess. Verified against the authoritative model catalogue before
+  acting, because the fix writes numbers into the published-window table and a wrong entry there is
+  the same defect class the card exists to prevent. The hosted-arm tripwire spec omitted both.
+- **T6** — a mutation harness showed the two surfaces can silently **disagree** (text=30,
+  neovim=24) with zero failures — the one property the deliberate duplication could break.
+- **T7** — a mutant collapsing the singular/plural ternary survives the entire suite; and F6 was
+  reproduced one branch over, where a torn-header row makes a *positive false claim*.
+- **T8** — the sentinel spec asserted `not_to eq([])`, true of every non-Array object in Ruby; and
+  `equal?` **is** overridable, so the identity check dispatched on the untrusted value.
+- **T4** — the card's own hazard (a PNG decoding to `‰PNG`) is reachable through an **absent**
+  `Content-Type`, and the CP1252 rung reinterprets a whole body the server declared UTF-8.
+
+### Carry-forward (out of scope here, real)
+
+- **The window table goes stale at every model launch** — this is the second time it has bitten
+  (T9). The Models API exposes `max_input_tokens` per model as a live lookup.
+- **`Provider::RetryTap` extraction.** `bedrock.rb:17-20` wrote down that *"a third such arm is what
+  would earn that move"*; Ollama is the third, and ~16 of 24 executable lines are copy-paste.
+  Deferred deliberately — T10/T11 are high-risk critical-path cards building on this code — with
+  `bedrock.rb`'s sentence corrected so the file stops lying.
+- **A tally object beside `Journal.records`** answering `records` and `skipped` together, so none of
+  the six other readers of that contract has to know subtraction is how you find out (T7).
+- **`Tools::WebFetch#fetch` returns `[status, headers, cap]` whose first two elements have two
+  sources** — one fact, two providers, the shape "disagreement is unrepresentable" exists to prevent.
+- **`Review::Handover` duplicates `PARTLY_MARKED`** and emits one acknowledgement *per hunk* on a
+  row, so a multi-hunk row produces N near-identical messages (found while reviewing T6).
+- **The flake list in `planning/remaining-work.md` records `neovim/buffers_spec.rb:291`, which has
+  drifted to `:329`** — CLAUDE.md is explicit that flakes are recorded by NAME, never line number,
+  precisely because a stale number reads as "not a known flake".
+
+### The flake population, recorded BY NAME
+
+CLAUDE.md requires flakes be recorded by name, never line number. `planning/remaining-work.md`
+records one as `neovim/buffers_spec.rb:291`, which has since drifted to `:329` — the exact failure
+the rule exists to prevent, since a stale number reads as "not a known flake". Four independent
+agents converged on this list during the chunk:
+
+- `Lain::Frontend::Neovim user mappings are respected re-attach is idempotent: no duplicate
+  commands, and motions/syntax still work`
+- `Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim pane
+  and a chat pane sharing one socket and one cwd`
+- `Lain::CLI::Up against a real tmux server threads -- chat args into the spawned window's command,
+  each argument shell-escaped`
+- `Lain::Frontend::Neovim the review thread pane following the cursor does not re-place the diff on
+  every further move once it is back`
+
+All pass in isolation. The mechanism is visible in the run log — `no server running on
+/tmp/tmux-1000/lain-spec-<pid>-<n>` — a real tmux server dying under contention. **They fail far
+more often when other agents are running**, which makes the pre-commit hook (which runs the whole
+suite) unreliable during a parallel chunk: four consecutive commit attempts for T9 were blocked by
+these alone while its own 1069 subject examples were green.
+
+### Toolchain trap found during execution
+
+**`pre-commit` runs without the mise environment.** Both Ruby hooks fail with
+`Executable 'bundle' not found` unless the toolchain is exported in the same shell as `git commit`:
+
+```bash
+eval "$(mise env -s bash ruby@4.0.6)" && export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib && \
+  export TMPDIR="$HOME/tmp/lain" && git commit -m "..."
+```
+
+The message names `bundle`, not the environment, so it reads as a broken hook. Worth adding to
+CLAUDE.md's Toolchain section.
+
+### Wave status
+
+- [x] Wave 1 — **6 of 8 landed**: T6 `9e4b5c4`, T4 `37bc22e`, T7 `d8078ad`, T0 `92564ba`,
+      T8 `6c3fffe`, T2 `ec33e7b`. T9 approved + staged (blocked only by the flakes above);
+      T5 approved, fix round complete, awaiting merge.
+- [ ] Wave 2 — T1, T3 *(in flight)*
+- [ ] Wave 3 — T10, T11, T12, T13
+- [ ] Wave 4 — T14
+
+Every wave-1 card reached **APPROVE** — five of eight only after a REQUEST-CHANGES or a substantive
+fix round. The panel found a real defect in every card it reviewed.
