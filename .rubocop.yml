@@ -246,9 +246,20 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/tool/input.rb"
     - "spec/support/algebra_generators.rb"
 
-# The five deliberate threads: the neovim RPC drain/resend pair and its rpc_thread,
-# the TTY reader, the notifier, and prompt_breaker's watchdog. Each is a supervised
-# reader owned by the frontend, which is the one layer allowed to own the terminal.
+# The six deliberate threads, and they now have two legitimate owners.
+#
+# Five are the frontend's: the neovim RPC drain/resend pair and its rpc_thread, the
+# TTY reader, the notifier, and prompt_breaker's watchdog -- each a supervised reader
+# owned by the one layer allowed to own the terminal.
+#
+# The sixth is the provider transport's stall clock, and it is the first thread in lib/
+# outside frontend/ and cli/. It is there because a stalled stream is observable only by
+# ABSENCE: no chunk arrives, so no callback fires, and the request thread that would
+# notice is the very thing blocked in the socket read. A timer thread is the only
+# observer left. It is owned end to end -- started on the first body byte, joined in the
+# clock's own ensure, touching no state outside its instance mutex -- and it is named per
+# request, so a survivor in a watchdog dump says which request it was watching.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -258,6 +269,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/neovim/rpc_thread.rb"
     - "lib/lain/frontend/tty.rb"
     - "lib/lain/notify.rb"
+    - "lib/lain/provider/http/streaming/faraday_handlers.rb"
     - "spec/**/*"
 
 # `rake pspec` forks one process per core (parallel_tests), so a spec's Dir.chdir is

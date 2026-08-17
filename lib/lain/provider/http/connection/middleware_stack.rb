@@ -20,6 +20,21 @@ module Lain
         # Built once -- Faraday's builder is `StackLocked` after the first
         # request -- by {Connection#initialize}.
         class MiddlewareStack
+          # Gives one request's {Streaming::StallClock} its LIFETIME, which is
+          # the half of stalled-stream protection that is knowable here.
+          #
+          # The other half is not: a middleware never sees a body chunk, so it
+          # cannot tell silence from work, and the `on_data` handler that does
+          # see them gets no end-of-stream signal to stop a clock with. So the
+          # split falls exactly there -- this owns the scope, the handler owns
+          # the ticks, and the clock arms itself on the first byte so that a
+          # long prompt evaluation is still bounded only by `request_timeout`.
+          class StallProtection < Faraday::Middleware
+            def call(env)
+              Streaming::StallClock.watching(options[:grace]) { @app.call(env) }
+            end
+          end
+
           def initialize(provider, config, sink:, log_level:)
             @provider = provider
             @config = config
@@ -32,6 +47,7 @@ module Lain
               setup_timeout(faraday)
               setup_logging(faraday)
               setup_retry(faraday)
+              setup_stall_protection(faraday)
               setup_middleware(faraday)
               setup_http_proxy(faraday)
             end
@@ -64,6 +80,24 @@ module Lain
 
           def setup_retry(faraday)
             faraday.request :retry, retry_options
+          end
+
+          # Registered AFTER the retry middleware, so it sits inside it and each
+          # attempt is clocked from its own first byte rather than the run's.
+          # The error it raises is deliberately absent from {#retry_exceptions}
+          # -- see {Streaming::StalledStreamError} for what a retryable one
+          # would have cost.
+          def setup_stall_protection(faraday)
+            return if stall_grace.nil?
+
+            faraday.use StallProtection, grace: stall_grace
+          end
+
+          # `respond_to?` for the same reason `setup_middleware` asks it of
+          # `faraday_adapter`: a Configuration-alike handed in by a caller
+          # outside this slice should not have to know the option exists.
+          def stall_grace
+            @config.respond_to?(:stream_stall_timeout) ? @config.stream_stall_timeout : nil
           end
 
           def retry_options

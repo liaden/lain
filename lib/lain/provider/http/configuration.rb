@@ -46,6 +46,15 @@ module Lain
 
           # Lets a provider register its own `<slug>_api_key` / `<slug>_api_base`
           # (and anything else it needs) without this class enumerating providers.
+          #
+          # The parameter is a list of option NAMES, not an options hash --
+          # `Array()` is there so a provider declaring a single one may pass it
+          # bare. Saying that in the type is also what stands `yard-lint`'s
+          # `Tags/OptionTags` down: it keys on the parameter's NAME, and per-key
+          # `option` tags would be the wrong instrument for a list of keys.
+          #
+          # @param options [Array<Symbol>, Symbol] the option keys to declare
+          # @return [void] the keys back, which no caller reads
           def register_provider_options(options)
             Array(options).each { |key| option(key, nil) }
           end
@@ -62,6 +71,27 @@ module Lain
         end
 
         option :request_timeout, 300
+        # The INTER-CHUNK grace: the longest silence tolerated between body
+        # chunks once a stream has started emitting. nil disables the check.
+        #
+        # A separate number from `request_timeout` because the two measure
+        # different things, and conflating them is what made a stalled ollama
+        # wait over 400 seconds printing nothing. `request_timeout` is
+        # per-read, so it also bounds the wait for the FIRST byte -- which on
+        # a local arm is prompt evaluation, legitimately minutes of silence
+        # (provider/ollama.rb: "a local model that thinks for six minutes is a
+        # real shape"), and is why 300 stands here untouched. Once tokens are
+        # flowing, a 30s gap from a token-streaming server means the stream is
+        # dead rather than slow. AWS's stalled-stream detector uses a 5s grace,
+        # which is right for bulk transfer and far too tight for generation.
+        #
+        # `LAIN_STREAM_STALL_TIMEOUT` is the off switch an operator can reach --
+        # nothing else constructs a Configuration outside `lib/`, and unlike
+        # `request_timeout` (which only fires when the server never answered)
+        # this knob can end a WORKING generation, so it needs one. `=0` disables;
+        # a positive number sets the grace. Same shape as `log_stream_debug`
+        # below, which is this file's pattern for a knob with no CLI flag.
+        option :stream_stall_timeout, -> { ENV.fetch("LAIN_STREAM_STALL_TIMEOUT", 30) }
         option :max_retries, 3
         option :retry_interval, 0.1
         option :retry_backoff_factor, 2
@@ -86,6 +116,30 @@ module Lain
           end
         end
 
+        # The one option with a hand-written setter, because BOTH natural
+        # operator mistakes are silently catastrophic under the generated one.
+        #
+        # `0` is the universal "no timeout" idiom -- curl, Faraday's own
+        # `timeout`, AWS -- but a zero grace makes `idle > grace` true on the
+        # monitor's first sweep, so every stream would die at its first byte.
+        # An operator reaching for the OFF switch would get the maximally
+        # destructive setting. Non-positive therefore means nil, which is off.
+        #
+        # And a non-numeric would be accepted here, then raise a bare
+        # `ArgumentError` from inside the Faraday stack on the first chunk --
+        # where `wrapping_errors` rescues only `HTTP::Error` and
+        # `Faraday::Error`, so it would escape every `rescue` in the codebase.
+        # That is the exact failure {Streaming::StalledStreamError}'s own
+        # ancestry was chosen to avoid, so it is refused here, at the one moment
+        # a human is looking at the value. A String that parses is taken (the
+        # env var arrives as one); anything else is a mistake, said out loud.
+        #
+        # A Numeric is kept AS WRITTEN rather than coerced, so the grace the
+        # stall message prints is the one the operator set and can grep for.
+        def stream_stall_timeout=(value)
+          @stream_stall_timeout = stall_seconds(value)
+        end
+
         # Redacted `#inspect`/`#pretty_print` support: never echo a key, secret,
         # or token back into a log line or a crashed spec's failure output.
         def instance_variables
@@ -98,6 +152,20 @@ module Lain
         def inspect
           fields = instance_variables.map { |ivar| "#{ivar}=#{instance_variable_get(ivar).inspect}" }
           "#<#{self.class.name} #{fields.join(", ")}>"
+        end
+
+        private
+
+        def stall_seconds(value)
+          return nil if value.nil? || (value.is_a?(String) && value.strip.empty?)
+
+          seconds = value.is_a?(Numeric) ? value : Float(value, exception: false)
+          if seconds.nil?
+            raise ArgumentError, "stream_stall_timeout wants seconds or nil, got #{value.inspect} " \
+                                 "(LAIN_STREAM_STALL_TIMEOUT=0 disables stall protection)"
+          end
+
+          seconds.positive? ? seconds : nil
         end
       end
     end
