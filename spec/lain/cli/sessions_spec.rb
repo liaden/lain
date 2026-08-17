@@ -167,5 +167,87 @@ RSpec.describe Lain::CLI::Sessions do
       expect(sessions.listing).to match(/20260103T000000-1\.ndjson.*changeset_opened/)
       expect(sessions.listing).not_to match(/20260103T000000-1\.ndjson.*unreadable/)
     end
+
+    # F6/T7: Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
+    # is sound -- the fd can be shared with Rust tracing spans -- but applied to
+    # lain's OWN torn record it left a damaged session looking intact: the same
+    # header, the same "open"/"closed" status, just one turn short under an
+    # unmoved head digest. These three examples are T7's Gherkin ACs verbatim.
+    # "unparsed", not "torn": the row states exactly what was measured (a line
+    # that did not parse), not a cause it cannot know -- a single blank line
+    # in an otherwise-perfect session is unparsed, not corruption.
+    it "reports how many lines a torn turn record cost, among otherwise-valid records" do
+      turn_records = chain("one", "two").to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+      lines = [
+        JSON.generate(header(started_at: "2026-01-01T00:00:00.000000Z")),
+        JSON.generate(turn_records[0]),
+        "not json at all",
+        JSON.generate(turn_records[1]),
+        "{torn"
+      ]
+      File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), "#{lines.join("\n")}\n")
+
+      expect(sessions.listing).to match(/20260101T000000-1\.ndjson.*2 lines unparsed/)
+    end
+
+    # Pins the FULL row, not just the absence of a word -- a weak
+    # `not_to include("unparsed")` would still pass a mutant that always
+    # appended damage text under a different word. Only an exact match on the
+    # intact row rules that out.
+    it "carries no damage indication when every line parses" do
+      intact = chain("one")
+      write_session("20260101T000000-1.ndjson",
+                    [header(started_at: "2026-01-01T00:00:00.000000Z")] +
+                    intact.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
+
+      expect(sessions.listing)
+        .to eq("20260101T000000-1.ndjson  2026-01-01T00:00:00  1 turns  open  #{intact.head_digest[0, 19]}")
+    end
+
+    # Exactly one unparseable line -- the singular arm of the pluralisation.
+    # Without this, a mutant collapsing `@skipped == 1 ? "line" : "lines"` to
+    # always answer "lines" survives the whole suite.
+    it "still lists a damaged session, by name and status, and pluralises singular damage correctly" do
+      turn_records = chain("one").to_a.map { |turn| Lain::SessionRecord.turn(turn) }
+      lines = [
+        JSON.generate(header(started_at: "2026-01-01T00:00:00.000000Z")),
+        JSON.generate(turn_records[0]),
+        "garbage"
+      ]
+      File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), "#{lines.join("\n")}\n")
+
+      expect(sessions.listing).to include("20260101T000000-1.ndjson", "open", "1 line unparsed")
+    end
+
+    # The headerless branch (`unloadable`) returns early, BEFORE the normal
+    # render line -- so damage on that path used to be invisible, and worse:
+    # a session whose header itself is torn, but whose first surviving record
+    # happens to be a `turn`, was mislabelled "turn, not a chat" -- a POSITIVE
+    # false claim that sends a reader away from real damage, the exact
+    # opposite of what `unloadable`'s own third-case comment exists to avoid.
+    it "still names its damage when the header itself failed to parse" do
+      turn = Lain::SessionRecord.turn(chain("one").to_a.first)
+      File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"),
+                 "{\"type\":\"sessio\n#{JSON.generate(turn)}\nalso torn\n{{{\n")
+
+      expect(sessions.listing).to match(/20260101T000000-1\.ndjson.*3 lines unparsed/)
+    end
+  end
+
+  # F6/T7 review fix: LineCount is a public constant with a public
+  # attr_reader, and `include Enumerable` promises `#each` is safe to drive
+  # more than once -- so `lines_read` must describe only the MOST RECENT walk,
+  # never an accumulation across walks. Not reachable through `Row.for` today
+  # (which walks its LineCount exactly once), but nothing about the public
+  # shape says a future caller may not re-enumerate it.
+  describe Lain::CLI::Sessions::LineCount do
+    it "reports only the most recent walk's count, not an accumulation across repeated enumeration" do
+      counter = described_class.new([1, 2, 3])
+
+      counter.to_a
+      counter.to_a
+
+      expect(counter.lines_read).to eq(3)
+    end
   end
 end
