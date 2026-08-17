@@ -116,6 +116,16 @@ Per act, with literal spellings, because the premise of the section is reproduci
 - **`ollama ps`** — residency is a precondition for Act 1's whole reading and is not recoverable
   after the fact.
 
+### Check the machine is quiet, at Act 0 and again before Act 5
+
+`uptime` and `ps -eo pcpu,etime,args --sort=-pcpu | head`. Any timing in this plan is a claim about
+a machine, so a busy one invalidates it silently rather than loudly.
+
+The 2026-08-17 run found **six orphaned `while :; do :; done` spinners at ~98% CPU, 4.5 hours old**,
+left behind by a sub-agent from the *previous* chunk; load was 10-12 and fell to 7.16 once they were
+killed. They were invisible in every pane the plan says to capture. Orphans from agent work are the
+expected contaminant here, not other people's jobs.
+
 ---
 
 ## Driving the cockpit
@@ -136,6 +146,24 @@ The whole run goes through tmux and nvim, so these mechanics are part of the pla
     command in that pane, a literal character in the other.
 - **Read back** with `capture-pane -p`. **Readiness is polling that output for the `you>` prompt,
   never a fixed sleep.**
+- **One `Enter` is not reliably one submit.** Observed repeatedly in the 2026-08-17 run: the text
+  lands on the input line, the status bar stays `idle`, and the turn does not start until Enter is
+  sent a second or third time. So **send, capture, and retry until the status leaves `idle`** —
+  never assume a submit took. Related and reassuring: a prompt queued this way is not lost. One
+  submitted while the model was busy elsewhere ran correctly as soon as the model freed up.
+
+Two harness defects cost most of that run's setup time. Both are in the recipe now, and both look
+like lain bugs from the pane:
+
+- **Launch by ABSOLUTE path, through a shim.** `bundle exec ./exe/lain up` leaves `$PROGRAM_NAME`
+  relative, and `PaneCommand.call` interpolates it straight into the pane's command — so the chat
+  pane exits **127** the moment the cwd differs. The fix is a two-line shim on `PATH` that execs an
+  absolute `exe/lain`; it also carries `LD_LIBRARY_PATH` and the mise `bin`, neither of which
+  survives `PANE_ENV`'s eleven-name `LAIN_*` allowlist.
+- **Size the server before the panes exist.** At the tmux default 80x24 nvim hits its
+  hit-enter prompt and the RPC attach **deadlocks**. `new-session -x 220 -y 50` *and*
+  `set-option -g default-size 220x50` — the option is what later panes inherit. A 40-column pane
+  also blocks nvim outright on a long mark message (F5).
 
 ---
 
@@ -305,8 +333,17 @@ produce something not worth having**, and only this act can tell.
 
 Held to the end so a broken machine cannot contaminate the main pass:
 
-- Kill the model server mid-turn.
-- `--api-base` at a black hole (expect the ~2 s probe timeout, then a clean refusal).
+- **Kill the model server mid-turn — via a severing proxy, not by killing the real server.** Put a
+  small TCP forwarder in front of the model endpoint and have it `SO_LINGER 0`-close (a hard RST)
+  after N bytes of response, then point `--api-base` at it. This is deterministic where killing a
+  service is a timing race, and it leaves the user's model server untouched — which matters on a
+  shared machine. `lain bench record <taskfile> -n 1 --out <dir>` is the non-interactive vehicle;
+  always take a **control run against the real endpoint in the same session**, because the whole
+  finding is the gap between them. This is how F7 was found (control 1.9 s vs >400 s hung), and a
+  bare "kill the server" almost certainly would not have.
+- `--api-base` at a black hole (expect the ~2 s probe timeout, then a clean refusal). Use an
+  unroutable address such as `http://10.255.255.1:11434`, and also try the scheme-less typo
+  (`localhost:11434`), which is the mistake a human actually makes.
 - **Ctrl-C during a parked `ask_human`** — known uncovered; signals are routed to a null handler
   outside an ordinary turn's ask, so either the process dies outright or the ask stays parked. Both
   are the documented gap; **the actual check is that the session journal still parses afterwards.**
@@ -315,7 +352,13 @@ Held to the end so a broken machine cannot contaminate the main pass:
   `lain chat --fork <session>`: expect a refusal naming the session *and* the missing digest, exit
   non-zero, no backtrace. Then `--resume` the same session and expect the **raw** `Store::MissingObject`
   — follow-up #1, fixed for `--fork` only. Confirming it here means it is not later mistaken for new.
-- A corrupted journal line.
+- **A corrupted journal line — tear a `turn` record specifically.** Skipping unparseable lines is
+  `Journal.records`' documented contract (the fd can be shared with Rust tracing spans), so tearing
+  an arbitrary line proves nothing: it is invisible by design. Halve an actual `turn` record and the
+  loss becomes legible — `lain sessions` reports one fewer turn while still advertising the *same*
+  head digest (F6). Then fork the damaged session at that advertised head: expect a refusal naming
+  the record index, its role, and both the recorded and recomputed digests. Corruption is meant to
+  be **invisible at rest but unforgeable on use**; check both halves of that, not just the first.
 
 ---
 
