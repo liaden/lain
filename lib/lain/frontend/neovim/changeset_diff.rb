@@ -49,6 +49,25 @@ module Lain
       # ADDED, which renders perfectly and is a review of a changeset nobody
       # wrote.
       #
+      # == Opening a row is what READS the file, and this is where that happens
+      #
+      # A survey is chunked lazily -- {Review::LazyFile} parses a file the first
+      # time somebody asks it for hunks, and `#chunked?` is what every later
+      # question about markability keys on. Nothing else on this path asks: every
+      # file of a {Review::Source::Corpus} is `added`, so
+      # {Review::Changeset#old_side} answers `[]` off `old_path` alone, and the
+      # gesture that put the file on the human's screen used to leave it
+      # reporting that nobody had read it. Its row then carried no hunk key, and
+      # `x`, `:LainReviewMark` and every verdict refused a file the human was
+      # looking at -- not because it has no hunk, but because nobody asked.
+      #
+      # So this object sends {Review::Changeset#read}. Not {ReviewView}, and the
+      # distinction is load-bearing rather than tidy: B19 (`b45553e`) removed the
+      # view's accidental forcing of every file at RENDER time, which is what
+      # made drawing a fifty-file survey free, and `review_view_spec.rb` pins it
+      # with an entry whose `#hunks` raises. The read belongs to the gesture that
+      # opens ONE file, which is this one.
+      #
       # == It cannot post an argument `47_diff.lua` refuses
       #
       # That module refuses, by name, an ABSOLUTE path (its old side's buffer
@@ -96,7 +115,7 @@ module Lain
         # one editor opens rows of the second changeset, and a gesture against
         # the first one's rendering is refused by name above.
         #
-        # @param changeset [#file, #old_side, #base_ref, #head_ref] the
+        # @param changeset [#file, #old_side, #read, #base_ref, #head_ref] the
         #   {Review::Changeset} the round was opened on -- never the session,
         #   which would put a mutable aggregate behind a keystroke
         # @return [void]
@@ -128,11 +147,51 @@ module Lain
 
         private
 
+        # The read is registered by an open the inlet ACCEPTED, and nowhere
+        # else. Its refusal -- a detached editor, a full queue -- means the pair
+        # was never even enqueued, and a file credited as read that never
+        # appeared is a row the human may mark without having seen anything.
+        #
+        # Accepted is not DRAWN, and the gap is real rather than pedantic:
+        # {RenderInlet} queues and something drains later, so a detach between
+        # the two leaves a read registered for a pair no editor ever showed. The
+        # exposure is the rail's own and predates this line -- every gesture on
+        # it reports success at acceptance -- and post-then-read is still the
+        # right order, because the alternative is reading the file before
+        # knowing whether anything will draw it.
+        #
         def drawn(changeset, file, line)
           old_lines = changeset.old_side(file)
           return format(NO_OLD_SIDE, path: file.path, base: changeset.base_ref) if old_lines.nil?
 
-          @rpc.open_changeset(file.path, old_lines, line, revisions(changeset))
+          refusal = @rpc.open_changeset(file.path, old_lines, line, revisions(changeset))
+          registered(changeset, file) if refusal.nil?
+          refusal
+        end
+
+        # Registering the read reaches the DISK, which this path never did for a
+        # survey: {Review::Source::Corpus::Reading#content} is a deliberately
+        # un-memoized `File.binread`, so a file deleted or made unreadable
+        # between the walk and the `<CR>` raises here -- measured, `Errno::ENOENT`
+        # straight out of {#open}.
+        #
+        # That would end the editor session over one keystroke, which is the one
+        # thing this class's own contract forbids ({ReviewView#offer} reads any
+        # non-String as "it opened", and `CLI::HumanReplies::Gestures` rescues
+        # only NoMethodError). So the failure is absorbed and the file stays
+        # UNREAD -- the pair still draws, and its row goes on saying "open it
+        # with <CR> first", which is the honest state for a file that is no
+        # longer there.
+        #
+        # It cannot become a fifth refusal sentence: the pair is already
+        # enqueued, so answering a String would report "nothing opened" while
+        # the editor draws it. `SystemCallError` and not a blanket rescue --
+        # every `Errno::*` is one, and a NoMethodError from a bad chunker is a
+        # defect that must still be loud.
+        def registered(changeset, file)
+          changeset.read(file)
+        rescue SystemCallError
+          nil
         end
 
         # A map rather than two positionals, because the pair is two commit-ish

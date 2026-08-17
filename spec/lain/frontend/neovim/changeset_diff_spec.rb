@@ -47,6 +47,58 @@ module ChangesetDiffFixture
   at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
 end
 
+# A corpus-shaped source, reduced to the four messages a {Lain::Review::Changeset}
+# asks of one on this object's path: real {Lain::Review::LazyFile}s, every one of
+# them `added` (which is what a survey's files ARE), over a chunker that counts.
+#
+# The count is why this is not a double. "The open gesture read the file" is a
+# claim about work that happened, and a stubbed `#chunked?` would answer it
+# without any having been done -- which is precisely the shape that let the
+# defect sit behind passing specs.
+class SurveyedSource
+  # One file's chunking, tallied. A class rather than a lambda because
+  # {Lain::Review::LazyFile} takes its chunker into value equality, so a chunker
+  # rebuilt per call would make two derivations of one corpus compare unequal.
+  class Counting
+    def initialize(path, tally)
+      @path = path
+      @tally = tally
+    end
+
+    def call
+      @tally[@path] += 1
+      [Lain::Review::Hunk.new(path: @path, old_start: 0, old_count: 0, new_start: 1, new_count: 1,
+                              heading: "", lines: ["+#{@path}"].freeze)]
+    end
+  end
+
+  # {Lain::Review::Source::Corpus}' own pair, borrowed rather than invented: the
+  # base is a constant and the head is a content address worn as a revision.
+  BASE = Lain::Review::Source::Corpus::BASE_REF
+  HEAD = "0" * 64
+
+  def initialize(*paths)
+    @tally = Hash.new(0)
+    @files = paths.map do |path|
+      Lain::Review::LazyFile.new(old_path: nil, new_path: path, rendered_lines: 1,
+                                 chunker: Counting.new(path, @tally))
+    end.freeze
+  end
+
+  attr_reader :files
+
+  def base_ref = BASE
+
+  def head_ref = HEAD
+
+  # The base holds nothing, which is the same statement as every file being
+  # added -- so an old side is never resolvable here.
+  def file_at(_revision, _path) = nil
+
+  # @return [Integer] how many times that path has actually been chunked
+  def chunkings(path) = @tally[path]
+end
+
 # A changeset built from a hand-written diff over a doubled source, because the
 # subject's whole job is what it reads OFF a changeset and what it posts: a real
 # repository would put the assertions two objects away from the bytes they are
@@ -196,6 +248,83 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
 
       expect(posted.first[:path]).to eq("to.rb")
       expect(posted.first[:old_lines]).to eq(%w[keep old])
+    end
+  end
+
+  # THE DEFECT THIS CARD CLOSES. Every file of a survey is `added`, so
+  # {Lain::Review::Changeset#old_side} answers `[]` off `old_path` alone and
+  # nothing on this path ever asks the file for a hunk. `#chunked?` therefore
+  # stayed false forever, `MarkedChangeset.row` handed the row no key, and `x`
+  # refused a file the human was looking at -- not because the file has no hunk,
+  # but because nobody asked.
+  #
+  # It cannot be seen from a diff source: a {Lain::Review::Source::ChangedFile}
+  # answers `#chunked?` true the moment the parser produces it, so every example
+  # above is blind to it.
+  #
+  # TWO of these went red against the unfixed tree and the other four did not,
+  # which is said out loud because "six new examples" reads as six units of
+  # evidence and is not. The four are BOUNDING guards: they were satisfied by
+  # doing nothing at all, and they exist to kill a fix that is too broad --
+  # chunking the whole survey, chunking on a refusal, or crediting a read the
+  # editor never drew. Each is marked below.
+  describe "a row of a survey nobody has read" do
+    let(:source) { SurveyedSource.new("notes.md", "other.md") }
+    let(:survey) { Lain::Review::Changeset.new(source:) }
+
+    before { diff.reviewing(survey) }
+
+    def file(path) = survey.file(path)
+
+    it "reads the file the row names, which is what makes its hunks markable" do
+      expect { diff.open("notes.md", 1) }.to change { file("notes.md").chunked? }.from(false).to(true)
+    end
+
+    # BOUNDING GUARD, green against the unfixed tree. Per FILE, never per
+    # survey: the whole point of the lazy arm is that a fifty-file corpus costs
+    # what has been looked at, and a fix that chunked the changeset to answer
+    # one gesture would undo it at the gesture instead of at the render.
+    it "reads that file and no other, so opening one row does not chunk the survey" do
+      diff.open("notes.md", 1)
+
+      expect(file("other.md").chunked?).to be(false)
+    end
+
+    it "reads it once however often the row is opened" do
+      3.times { diff.open("notes.md", 1) }
+
+      expect(source.chunkings("notes.md")).to eq(1)
+    end
+
+    # BOUNDING GUARD, green against the unfixed tree.
+    it "reads nothing for a row it refuses, since nothing was opened" do
+      diff.open("elsewhere.md", 1)
+
+      expect([file("notes.md").chunked?, file("other.md").chunked?]).to eq([false, false])
+    end
+
+    # BOUNDING GUARD, green against the unfixed tree. A read is registered by an
+    # open the inlet ACCEPTED: a refusal -- detached, or a full queue -- means
+    # the pair was never even enqueued, and crediting a read there would tell
+    # the human they had looked at a file that never appeared. Acceptance is not
+    # the same as drawing, and the gap is disclosed on
+    # {Lain::Frontend::Neovim::ChangesetDiff#drawn} rather than papered over here.
+    it "reads nothing when the editor refused the pair" do
+      refusing = described_class.new(rpc: RecordingChangesetInlet.new(refusal: "no editor is attached"))
+      refusing.reviewing(survey)
+
+      expect(refusing.open("notes.md", 1)).to eq("no editor is attached")
+      expect(file("notes.md").chunked?).to be(false)
+    end
+
+    # The other half, unchanged: a survey's old side is genuinely empty, so the
+    # whole file draws as new. Registering the read must not turn that into the
+    # {Lain::Frontend::Neovim::ChangesetDiff::NO_OLD_SIDE} refusal.
+    it "still posts the empty old side a survey has" do
+      diff.open("notes.md", 1)
+
+      expect(posted).to eq([{ path: "notes.md", old_lines: [], line: 1,
+                              revisions: { "old" => SurveyedSource::BASE, "new" => SurveyedSource::HEAD } }])
     end
   end
 

@@ -128,6 +128,33 @@ module Lain
         lines(bytes) unless bytes.nil?
       end
 
+      # Register that this file has now been READ, on somebody's behalf, and
+      # answer what reading it produced.
+      #
+      # A review asks two questions about a file and only one of them is a
+      # question about the diff: what it says, and whether anybody has looked at
+      # it. {LazyFile#chunked?} answers the second, and it flips only when
+      # {LazyFile#hunks} is finally asked -- so a caller that puts a file in
+      # front of a human WITHOUT asking leaves a file that has been read
+      # reporting that it has not. {Session::MarkedChangeset.row} then hands its
+      # row no key and every marking gesture on it is refused, which is the
+      # defect this message exists to make impossible to reintroduce silently.
+      #
+      # A message here rather than `file.hunks` at the caller, because a call
+      # whose return value nobody wants reads as dead code and is deleted by the
+      # next person through; this one says what it is for. Over a diff source it
+      # costs nothing -- a {Source::ChangedFile} is chunked the moment the parser
+      # produces it, and answers `#chunked?` true from birth.
+      #
+      # {#old_side} deliberately does NOT call it. That is a query, and the
+      # callers that size or hash an old side have read the file on nobody's
+      # behalf; welding the two would make every such caller mark the corpus
+      # read, which is the same defect pointing the other way.
+      #
+      # @param file [Source::ChangedFile, LazyFile] one of {#files}
+      # @return [Array<Hunk>] that file's hunks, now in hand
+      def read(file) = file.hunks
+
       # @return [Enumerator] over {#files}, which is what makes this Enumerable.
       #   Blockless, it parses nothing -- the same promise {#each_anchor} makes,
       #   and worth making twice: a caller holding an `Enumerable` cannot tell

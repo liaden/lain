@@ -2,6 +2,7 @@
 
 require "async"
 require "stringio"
+require "tmpdir"
 
 # The baton, recorded: what an epic hands a changeset review, reduced to the one
 # message {Lain::Review::Handover} sends it. `verdict_at_settle` is what makes
@@ -49,6 +50,28 @@ class StubReviewView
 
   def refused_marks(generation)
     Lain::Frontend::Neovim::ReviewView::Marked.new(hunk_keys: [].freeze, report: "no rendering #{generation}")
+  end
+end
+
+# The editor's render inlet, reduced to the one message a
+# {Lain::Frontend::Neovim::ChangesetDiff} sends it, and answering nothing --
+# which is what says the pair was accepted.
+#
+# `changeset_diff_spec.rb` carries the same recorder for its single-subject
+# pins. Duplicated rather than shared through `spec/support/`, which
+# `spec_helper` globs into every worker of every run: two files needing one
+# recorder is not yet a reason to load it into all of them.
+class RecordingSurveyInlet
+  def initialize
+    @opened = []
+  end
+
+  # @return [Array<String>] the path of every pair posted, in order
+  attr_reader :opened
+
+  def open_changeset(path, _old_lines, _line, _revisions)
+    @opened << path
+    nil
   end
 end
 
@@ -407,6 +430,216 @@ RSpec.describe Lain::Review::Handover do
       marked = handover.mark(2, "reviewed", generation: 1)
 
       expect([marked.marked?, marked.report]).to eq([false, Lain::Review::Handover::Detached::NO_EDITOR])
+    end
+  end
+
+  # THE CARD'S ACCEPTANCE TEST, and it needs a SURVEY. Every group above opens
+  # with `source: "local_branch"`, where a file is chunked the moment the parser
+  # produces it, so `#chunked?` is true before any gesture and none of them can
+  # see the defect: over a corpus every file is `added`,
+  # {Lain::Review::Changeset#old_side} short-circuits on `old_path`, and the
+  # `<CR>` that draws the diff pair never asked the file for a hunk. The row then
+  # carried no key, and marking it was refused for a file the human was reading.
+  #
+  # A real {Lain::Review::Source::Corpus} over a real directory, a real
+  # {Lain::Review::Changeset}, a real {Lain::Review::Session}, a real
+  # {Lain::Frontend::Neovim::ReviewView} and a real
+  # {Lain::Frontend::Neovim::ChangesetDiff} -- no double between any two of them,
+  # because the defect lived in the join rather than in any one of them. B8's
+  # `chunker:` seam counts at the chunker's own `#call`, so what is asserted is
+  # work that happened rather than a flag a subject set about itself.
+  #
+  # == THE REDRAW BETWEEN THE GESTURES HAS NO PRODUCTION CALLER
+  #
+  # Read this before reading the examples as a claim that the cockpit works,
+  # because they are green over a sequence the cockpit cannot currently execute.
+  #
+  # A row's `hunk_keys` are cut at RENDER time and carried
+  # ({Frontend::Neovim::ReviewView}'s own doc says why they are not re-derived),
+  # so a rendering drawn before the file was read names no key however read the
+  # file now is. Every helper below therefore redraws before each gesture -- and
+  # NOTHING IN `lib/` DOES THAT. `CLI::HumanReplies::Gestures#open_hunk` and
+  # `#mark_hunk` forward and return; `Surface::Neovim#mark` posts a notice;
+  # `46_sidebar.lua` changes the sidebar only through `set_review`. `present` is
+  # called once, when the round opens.
+  #
+  # So in a live editor today: `<CR>` reads the file (which is what this card
+  # fixed and what these examples pin), and the `x` after it still resolves
+  # against the pre-open rendering and still answers {ReviewView::UNREAD} -- and
+  # a mark that DOES land still leaves the row drawn `[ ]`, because nothing
+  # re-presents after a mark either. One `present` after each gesture closes the
+  # whole loop, verdict included; it is a filed follow-up card, and every file
+  # that could do it is outside T15's scope. What is proven here is the read
+  # registration, not the cockpit round trip.
+  describe "a survey opened over a directory", :seam do
+    let(:chunked) { [] }
+    let(:inlet) { RecordingSurveyInlet.new }
+    let(:opener) { Lain::Frontend::Neovim::ChangesetDiff.new(rpc: inlet) }
+    let(:survey_view) { Lain::Frontend::Neovim::ReviewView.new(changesets: opener) }
+    let(:survey) { Lain::Review::Changeset.new(source: corpus) }
+    let(:baton) { RecordingBaton.new(session: survey_session) }
+    let(:survey_session) do
+      Lain::Review::Session.open(changeset: survey, journal:, source: "corpus", surface:,
+                                 policy: Lain::Review::Verdict::Policy.default)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-handover-survey") do |made|
+        @root = File.realpath(made)
+        surveyed.each { |name| File.binwrite(File.join(@root, name), document(name)) }
+        example.run
+      end
+    end
+
+    before { survey_view.reviewing(survey) }
+
+    # Two files, so "opening one row read one file" is distinguishable from
+    # "opening one row read the survey", and so an approve can be refused over
+    # the one nobody opened.
+    def surveyed = %w[alpha.md beta.md]
+
+    # Sections rather than a paragraph, because the chunker's granularity floor
+    # merges a runt backwards -- a two-line file chunks to one unit and hides
+    # every difference between a partial mark and a full one.
+    def document(name) = (1..4).map { |n| "## #{name} #{n}\n\nbody #{n} one.\nbody #{n} two.\n\n" }.join
+
+    # The real dispatch, wrapped so every chunking is logged with its path --
+    # `review_view_spec.rb`'s counter and its reason: counting at the DISPATCH
+    # would call a corpus that resolves eagerly and chunks lazily eager.
+    def counting(log)
+      lambda do |for_path|
+        chunker = Lain::Survey::Chunker.for(for_path)
+        lambda do |path:, source:|
+          log << path
+          chunker.call(path:, source:)
+        end
+      end
+    end
+
+    def corpus
+      sensitivity = Lain::Sensitivity.new(home: "/home/surveyor", cwd: @root)
+      Lain::Review::Source::Corpus.new(walk: Lain::Survey::Walk.new(root: @root, sensitivity:),
+                                       projection: Lain::Survey::Projection.new(ledger:),
+                                       chunker: counting(chunked))
+    end
+
+    def ledger = @ledger ||= Lain::Sensitivity::Ledger.new
+
+    # A corpus answers no commit walk, so the flat scope is the only one it can
+    # be grouped by -- `MarkedChangeset::WALK` would be refused by the strategy
+    # rather than by anything this card is about.
+    def cumulative = Lain::Review::Partition::STRATEGIES.fetch(:cumulative)
+
+    def drawn = survey_view.render(survey_session.marked(strategy: cumulative), scope: :cumulative)
+
+    def row_of(rendering, path) = rendering.lines.index { |line| line.include?(path) } + 1
+
+    def gestures = described_class.new(session: survey_session, view: survey_view, baton:)
+
+    # Each gesture resolves against the rendering the human is looking at, which
+    # is the one drawn immediately before it -- the stamp is what makes that
+    # true rather than a comment.
+    def open_row(path)
+      rendering = drawn
+      gestures.open(row_of(rendering, path), generation: rendering.generation)
+    end
+
+    def mark_row(path, state = "reviewed")
+      rendering = drawn
+      gestures.mark(row_of(rendering, path), state, generation: rendering.generation)
+    end
+
+    # The whole survey, worked the way a human works one: open a row, mark it,
+    # move on. Each gesture redraws first, so every one of them resolves against
+    # the rendering it came from.
+    def worked_through
+      surveyed.each do |path|
+        open_row(path)
+        mark_row(path)
+      end
+    end
+
+    it "opens the real file the row names, through the diff surface the view was wired with" do
+      opened = open_row("alpha.md")
+
+      expect([opened.opened?, opened.path]).to eq([true, "alpha.md"])
+      expect(inlet.opened).to eq(["alpha.md"])
+    end
+
+    it "makes a row markable once the open gesture has read it" do
+      open_row("alpha.md")
+
+      marked = mark_row("alpha.md")
+
+      expect(marked.marked?).to be(true)
+      expect(drawn.lines).to include("[x] alpha.md")
+    end
+
+    # The counter-example, and the guard on the sentence: a row nobody opened
+    # still refuses, and the refusal names the file and the keystroke that would
+    # read it rather than claiming there is nothing there.
+    it "refuses a row nothing has read, naming the file and the gesture that reads it" do
+      marked = mark_row("beta.md")
+
+      expect(marked.marked?).to be(false)
+      expect(marked.report).to include("beta.md").and include("<CR>")
+    end
+
+    it "admits an approve over a survey whose every file has been opened and marked" do
+      worked_through
+
+      expect(gestures.wrote_verdict("approve")).to be_nil
+      expect(records_of("review_verdict").map { |record| record["verdict"] }).to eq(["approve"])
+    end
+
+    # BOUNDING GUARD, green against the unfixed tree -- it was satisfied by a
+    # survey nothing could read at all. It is here so the scenario above cannot
+    # be passed by a fix that credits every file as read on the first gesture.
+    it "still refuses an approve while a file of the survey is unread" do
+      open_row("alpha.md")
+      mark_row("alpha.md")
+
+      expect(gestures.wrote_verdict("approve")).to include("beta.md")
+      expect(records_of("review_verdict")).to be_empty
+    end
+
+    # Registering the read reaches the disk, which the open gesture never did
+    # for a survey before this card -- so a file gone by the time the `<CR>`
+    # arrives is a NEW raise site on the fiber that serves the editor's
+    # commands, where an exception ends the session over one keystroke.
+    #
+    # Driven rather than simulated: the file is really unlinked and the real
+    # un-memoized `Corpus::Reading#content` really fails. The survey is drawn
+    # first, because the identity pass reads every file and this example is
+    # about the SECOND read, not the first.
+    it "survives a file deleted between the survey and the gesture, leaving it unread" do
+      drawn
+      File.unlink(File.join(@root, "alpha.md"))
+
+      opened = open_row("alpha.md")
+
+      expect(opened.opened?).to be(true)
+      expect(mark_row("alpha.md").report).to include("nothing has read")
+    end
+
+    # The latency question the card raises: reads now register EARLIER, and
+    # `Verdict::Policy::EveryHunk#admit!` walks `changeset.hunks` whole. If the
+    # open gesture's read were a second derivation rather than the same memo,
+    # approving a survey would chunk every file twice.
+    it "chunks each file exactly once across the whole round, approve included" do
+      worked_through
+      gestures.wrote_verdict("approve")
+
+      expect(chunked.tally).to eq(surveyed.to_h { |path| [path, 1] })
+    end
+
+    # Drawing is still free. The read belongs to the OPEN gesture, and a fix
+    # that put it on the render would undo b45553e -- which is what
+    # `review_view_spec.rb`'s raising `unread_entry` double pins from the other
+    # side.
+    it "draws the whole survey having read nothing, before any gesture" do
+      expect(drawn.lines).to eq(["[ ] alpha.md", "[ ] beta.md"])
+      expect(chunked).to be_empty
     end
   end
 
