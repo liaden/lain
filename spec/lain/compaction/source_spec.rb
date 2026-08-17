@@ -236,10 +236,21 @@ RSpec.describe Lain::Compaction::Source do
     Lain::Compaction::Need.new(byte_threshold:, approaching_ratio:)
   end
 
-  # A book that answers ONE window whatever the model, for the examples that are
-  # about the ratio rather than about model resolution. A blank model still
-  # raises through it, which is the point of the fallback form.
-  def window_book(tokens) = Lain::ContextWindow.new(windows: {}, fallback: tokens)
+  # A book that answers ONE window for every model these examples name, for the
+  # ones that are about the ratio rather than about model resolution. A blank
+  # model still raises through it.
+  #
+  # A PUBLISHED book, keyed by the family token every model in this file
+  # carries, and NOT the `fallback:` form it used to be: since T9 a fallback is
+  # by construction a GUESS, and a guessed window never fires
+  # `:approaching_window` -- so the fallback form would make every ratio
+  # example here pass vacuously. {#guessed_window_book} is the other side, and
+  # is used only where the guess itself is the subject.
+  def window_book(tokens) = Lain::ContextWindow.new(windows: { "claude" => tokens })
+
+  # The F3 shape: nothing in the table matched, so the number is a floor
+  # somebody picked rather than anything known about the model.
+  def guessed_window_book(tokens) = Lain::ContextWindow.new(windows: {}, fallback: tokens)
 
   def context_naming(model) = Lain::Context.new(model:, max_tokens: 1024, system: "a system prompt")
 
@@ -509,13 +520,21 @@ RSpec.describe Lain::Compaction::Source do
 
     # An ollama/bedrock id no Anthropic-shaped table carries. 7_500 is under 0.9
     # of every real entry and over 0.9 of the 8_192 conservative fallback, so
-    # only the fallback makes this fire -- and nothing raises.
-    it "falls back conservatively for a model absent from the table, rather than raising" do
+    # the fallback is what is being measured against -- and it still degrades
+    # rather than raising.
+    #
+    # F3: it does NOT fire. This example asserted the opposite until T9, which
+    # is the defect written down as a test: a 32,768-token qwen3 runner read as
+    # 300% full against the guess, and lain rewrote history three times. The
+    # DENOMINATOR is still journaled, because a reader has to be able to see
+    # which number the silence was about.
+    it "does not authorise a rewrite off a window it guessed" do
       built = source
 
-      expect { context_for(built, timeline, base: context_naming("qwen3:4b"), usage: 7_500) }
-        .not_to raise_error
-      expect(decisions.first["signals"]).to eq(%w[approaching_window])
+      context_for(built, timeline, base: context_naming("qwen3:4b"), usage: 7_500)
+
+      expect(decisions.first["signals"]).to eq([])
+      expect(decisions.first["window_tokens"]).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
     end
 
     # Ruling of 2026-07-25: a nil or BLANK model is a wiring bug, not an
@@ -534,6 +553,134 @@ RSpec.describe Lain::Compaction::Source do
       context_for(built, timeline, base: context_naming("qwen3:4b"), usage: nil)
 
       expect(decisions.first["signals"]).to eq(%w[token_threshold])
+    end
+  end
+
+  # T9 / F3. `:approaching_window` is the one signal that spends a number the
+  # bench may have INVENTED, and what it buys is an irreversible lossy rewrite.
+  # The `context_window.rb` comment this card amends argued the early firing
+  # was "self-correcting, not a one-shot latch" -- true about FREQUENCY, and
+  # silent about damage: QA watched three separate rewrites at 75-78% of a real
+  # 32,768-token window that the book had guessed at 8,192.
+  #
+  # Provenance is THREE-valued, and only the guess is denied. A shipped-table
+  # hit is a real published number, and it is what a hosted run is measured
+  # against -- suppressing THAT would switch compaction off for every
+  # Anthropic and Bedrock arm.
+  describe "only an authoritative window may authorise a rewrite" do
+    # 7_500 is over 0.9 of 8_192 and under 0.9 of any real entry, so the ratio
+    # is crossed on every book below and provenance is the only variable.
+    def crossing(book) = source(need: build_need(approaching_ratio: 0.9), context_window: book)
+
+    it "does not fire the approaching-window trigger on a guessed window" do
+      context_for(crossing(guessed_window_book(8_192)), timeline, usage: 7_500)
+
+      expect(decisions.first["signals"]).not_to include("approaching_window")
+    end
+
+    it "fires it on a published table window" do
+      context_for(crossing(Lain::ContextWindow.new(windows: { "claude-opus-4-8" => 8_192 })),
+                  timeline, usage: 7_500)
+
+      expect(decisions.first["signals"]).to include("approaching_window")
+    end
+
+    # The shipped book, through the id an Anthropic arm actually runs under --
+    # the regression the panel caught, asserted rather than argued.
+    it "fires it on the bench's own default book for a hosted model" do
+      context_for(source(need: build_need(approaching_ratio: 0.9)), timeline,
+                  base: context_naming("claude-opus-4-5"), usage: 190_000)
+
+      expect(decisions.first["signals"]).to eq(%w[approaching_window])
+    end
+
+    # {CLI::Backend::WindowBook::Served} is the only PROBED window there is:
+    # ollama's `/api/ps` naming the runner that is resident right now.
+    it "fires it on a window probed from the provider" do
+      served = Lain::CLI::Backend::WindowBook::Served.new(model: "claude-opus-4-8", window_tokens: 8_192)
+
+      context_for(crossing(served), timeline, usage: 7_500)
+
+      expect(decisions.first["signals"]).to include("approaching_window")
+    end
+
+    # A Served book answering for a model it did NOT probe is published (or
+    # guessed) by whatever `shipped` says, never probed -- getting that
+    # backwards would re-create F3 in the opposite direction, handing a
+    # rewrite the authority of a runner that was never asked about this model.
+    it "does not fire it for a model a Served book merely delegated" do
+      served = Lain::CLI::Backend::WindowBook::Served.new(
+        model: "qwen3", window_tokens: 32_768, shipped: guessed_window_book(8_192)
+      )
+
+      context_for(crossing(served), timeline, base: context_naming("qwen3:4b"), usage: 7_500)
+
+      expect(decisions.first["signals"]).not_to include("approaching_window")
+    end
+
+    # A withdrawn signal must leave a trace. `signals: []` from a denial and
+    # `signals: []` from a turn nowhere near the threshold are the same bytes
+    # and opposite facts, and this class's own docstring is that "an
+    # unrecorded decision is a missing measurement". The denominator alone is
+    # not enough: it names the number, not that a decision was taken about it.
+    describe "the decision records which kind of window it was taken against" do
+      it "names the guess on a denied turn" do
+        context_for(crossing(guessed_window_book(8_192)), timeline, usage: 7_500)
+
+        expect(decisions.first).to include("provenance" => "guessed", "window_tokens" => 8_192,
+                                           "used_tokens" => 7_500, "signals" => [])
+      end
+
+      it "names the table on a published turn" do
+        context_for(crossing(Lain::ContextWindow.new(windows: { "claude-opus-4-8" => 8_192 })),
+                    timeline, usage: 7_500)
+
+        expect(decisions.first).to include("provenance" => "published")
+      end
+
+      it "names the probe on a served turn" do
+        served = Lain::CLI::Backend::WindowBook::Served.new(model: "claude-opus-4-8", window_tokens: 8_192)
+
+        context_for(crossing(served), timeline, usage: 7_500)
+
+        expect(decisions.first).to include("provenance" => "probed")
+      end
+
+      # The two records the reviewer measured as indistinguishable. They still
+      # share a signal list; provenance is the only thing telling them apart,
+      # so it is asserted as the DIFFERENCE rather than as two constants.
+      it "tells a denied trigger from a turn that was simply not full" do
+        context_for(crossing(guessed_window_book(8_192)), timeline, usage: 7_500)
+        context_for(crossing(Lain::ContextWindow.new(windows: { "claude" => 1_000_000 })),
+                    timeline, usage: 7_500)
+
+        expect(decisions.map { |record| record["signals"] }).to eq([[], []])
+        expect(decisions.map { |record| record["provenance"] }).to eq(%w[guessed published])
+      end
+
+      # It rides every decision, not just the interesting ones -- a compacting
+      # turn goes through a different journal path (`#commit`, not `#defer`).
+      it "records it on a compacting turn too" do
+        built = source(need: build_need(byte_threshold: 100), hard_cap: 100,
+                       context_window: guessed_window_book(8_192))
+
+        context_for(built, timeline, usage: 7_500)
+
+        expect(decisions.first).to include("compacted" => true, "provenance" => "guessed")
+      end
+    end
+
+    # Provenance suppresses ONE trigger. The hard cap is a history-size
+    # question with no window in it at all, and a guess must not buy it a
+    # reprieve either.
+    it "leaves the hard cap firing under a guessed window" do
+      built = source(need: build_need(byte_threshold: 100, approaching_ratio: 0.9),
+                     hard_cap: 100, context_window: guessed_window_book(8_192))
+
+      context_for(built, timeline, usage: 7_500)
+
+      expect(decisions.first["signals"]).to eq(%w[token_threshold])
+      expect(decisions.first["compacted"]).to be(true)
     end
   end
 

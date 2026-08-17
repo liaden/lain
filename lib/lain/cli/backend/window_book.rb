@@ -46,7 +46,7 @@ module Lain
         # {#initialize}). A window granted through one rule and refused by a
         # narrower one is the same two-surface split in miniature.
         #
-        # Two messages, which is the whole duck its three readers send
+        # Three messages, which is the whole duck its three readers send
         # ({StatusFeed}, {Compaction::Source}, {Agent#occupancy}).
         class Served
           # @param model [String] the model the window was reported FOR
@@ -83,8 +83,30 @@ module Lain
           # @return [Integer]
           # @raise [ContextWindow::UnknownModel] for a blank name, or an
           #   unmatched one in a `shipped` book with no fallback
-          def window_tokens(model)
-            mine?(model) ? @window_tokens : @shipped.window_tokens(model)
+          def window_tokens(model) = resolve(model).window_tokens
+
+          # The ONE window in this system anybody measured: ollama's `/api/ps`
+          # naming the runner resident right now. That is what
+          # {ContextWindow::PROBED} means, and it is why this book exists.
+          #
+          # A name this book did NOT probe delegates, provenance and all -- so a
+          # delegated answer comes back {ContextWindow::PUBLISHED} or
+          # {ContextWindow::GUESSED} by whatever the shipped book knows, never
+          # probed. Tagging the delegated case probed would be the same defect
+          # T9 fixes, pointed the other way: a rewrite authorised by a runner
+          # nobody asked about that model. The `#window_tokens` half of this
+          # already delegates for exactly the reason spelled out above -- the
+          # server answered about ONE runner -- and the authority has to travel
+          # with the number or the two halves of one answer disagree.
+          #
+          # @return [ContextWindow::WindowResolution]
+          # @raise [ContextWindow::UnknownModel] for a blank name, or an
+          #   unmatched one in a `shipped` book with no fallback
+          def resolve(model)
+            return @shipped.resolve(model) unless mine?(model)
+
+            ContextWindow::WindowResolution.new(window_tokens: @window_tokens,
+                                                provenance: ContextWindow::PROBED)
           end
 
           # @return [ContextWindow::Occupancy, ContextWindow::Occupancy::None]

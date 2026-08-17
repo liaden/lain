@@ -771,9 +771,15 @@ RSpec.describe Lain::CLI::Backend do
     # AC4. `--provider ollama` and `--provider bedrock` name models no
     # Anthropic-shaped window table can carry, so ContextWindow.default falls
     # back rather than raising -- an unsupported provider must still START.
-    # Proven behaviorally: 7_500 used tokens is under 0.9 of every real entry
-    # and over 0.9 of the 8_192 fallback, so only the fallback makes the signal
-    # fire here.
+    # 7_500 used tokens is under 0.9 of every real entry and over 0.9 of the
+    # 8_192 fallback, so this turn DOES cross the trigger ratio -- and the
+    # trigger is withheld anyway, because a fallback is a guess and a guess may
+    # not authorise an irreversible rewrite. That is the whole of F3: the QA run
+    # compacted three times at 75-78% of a real 32_768 window.
+    #
+    # The denominator and the provenance are both asserted rather than inferred
+    # from the absent signal, because empty signals alone would also be
+    # satisfied by any window >= 8_334.
     #
     # T10 made the fallback the SECOND answer rather than the only one, so the
     # silent server is now stated rather than assumed: /api/ps answers with
@@ -789,9 +795,10 @@ RSpec.describe Lain::CLI::Backend do
 
       source.context_for(base: backend.context, timeline: history(6), usage: 7_500, session:)
 
-      expect(decisions.last.signals).to eq([:approaching_window])
-      expect(decisions.last.compacted).to be(true)
+      expect(decisions.last.signals).to eq([])
+      expect(decisions.last.compacted).to be(false)
       expect(decisions.last.window_tokens).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
+      expect(decisions.last.provenance).to eq(Lain::ContextWindow::GUESSED)
     end
 
     # The same 7,500 tokens, against a server that says it is serving 32,768:

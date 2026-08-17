@@ -247,4 +247,45 @@ RSpec.describe Lain::Compaction::Need do
       expect(detectors).to all(be_deeply_frozen.and(be_deeply_frozen))
     end
   end
+
+  # T9. A caller can know something no detector does -- {Compaction::Source}
+  # holds the window BOOK, so it knows whether the number
+  # {Need::ApproachingWindow} compared against was measured, published or
+  # guessed, while the detector sees only the integer. Withdrawing a signal is
+  # how that knowledge is applied without giving every detector a second field
+  # to read.
+  describe Lain::Compaction::Need::Result do
+    subject(:result) { described_class.new(signals: %i[token_threshold approaching_window manual]) }
+
+    it "withdraws the named signal and keeps the rest, in order" do
+      expect(result.without(:approaching_window).signals).to eq(%i[token_threshold manual])
+    end
+
+    it "answers a new value and leaves the original untouched" do
+      withdrawn = result.without(:approaching_window)
+
+      expect(withdrawn).not_to equal(result)
+      expect(result.signals).to eq(%i[token_threshold approaching_window manual])
+    end
+
+    # Withdrawing a signal that did not fire is the ordinary case, not an
+    # error: the caller checks provenance without first checking the signal.
+    it "passes an absent signal through unchanged" do
+      expect(result.without(:plan_step_completion).signals).to eq(result.signals)
+    end
+
+    it "stops being needed when the last signal is withdrawn" do
+      single = described_class.new(signals: [:approaching_window])
+
+      expect(single).to be_needed
+      expect(single.without(:approaching_window)).not_to be_needed
+    end
+
+    # The reason this is a message and not `Result.new(signals: r.signals - [k])`
+    # at the call site: reconstruction from outside re-runs the invariant by
+    # luck. Here the frozen-collection contract is the type's own.
+    it "keeps the result deeply frozen and Ractor-shareable" do
+      expect(result.without(:approaching_window)).to be_deeply_frozen
+    end
+  end
 end

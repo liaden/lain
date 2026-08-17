@@ -41,6 +41,24 @@ module Lain
 
         # @return [Boolean]
         def needed? = !signals.empty?
+
+        # This result with one detector's signal withdrawn, for a caller that
+        # knows something the detector bank cannot: {Compaction::Source} holds
+        # the window BOOK and so knows whether the number
+        # {ApproachingWindow} compared against was measured, published, or
+        # guessed, while the detector sees only the integer.
+        #
+        # A message rather than `Result.new(signals: r.signals - [kind])` at
+        # the call site: that reconstructs a frozen value object from outside,
+        # which re-runs its invariant by luck rather than by contract and
+        # spreads the shape of this type into its callers.
+        #
+        # Absent kinds pass through unchanged -- withdrawing a signal that did
+        # not fire is not an error, it is the ordinary case.
+        #
+        # @param kind [Symbol] a detector's KIND
+        # @return [Result]
+        def without(kind) = with(signals: signals - [kind])
       end
 
       # Crosses {Context::Compact}'s own proxy: the canonical byte length of

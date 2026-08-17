@@ -43,9 +43,25 @@ module Lain
     # that shorter token would incorrectly outrank "sonnet" for Sonnet 4.6
     # too. Sonnet 4's dated id is used verbatim instead -- there is no
     # substring that names "Sonnet 4" without also naming "Sonnet 4.6".
+    #
+    # "fable" and "mythos" are the families that carry no tier word at all,
+    # which is exactly how they went missing: every other current id contains
+    # "opus", "sonnet" or "haiku", so `claude-fable-5` and `claude-mythos-5`
+    # were the only shipping first-party models falling to the fallback --
+    # 1,000,000-token models measured against a 8,192 guess. Both are 1M at
+    # standard pricing. "mythos" covers `claude-mythos-preview` by the same
+    # substring rule, and both cover their `anthropic.`-prefixed Bedrock forms.
+    #
+    # This table is a SNAPSHOT of a moving catalogue and has now gone stale
+    # twice. The durable fix is the Models API's per-model `max_input_tokens`,
+    # read live rather than transcribed; it is a future card, not this one.
+    # Until then, `context_window_spec.rb`'s "the hosted arms keep their
+    # authority" table is the tripwire, and a new family means a new row there.
     DEFAULTS = {
       "opus" => 1_000_000,
       "sonnet" => 1_000_000,
+      "fable" => 1_000_000,
+      "mythos" => 1_000_000,
       "haiku" => 200_000,
       "claude-opus-4-5" => 200_000,
       "claude-opus-4-1" => 200_000,
@@ -67,15 +83,63 @@ module Lain
     # ~2,984 tokens. `Need::ApproachingWindow` fires at `window * ratio`, so
     # at the default 0.9 ratio the fallback fires once used_tokens crosses
     # ~7,372 -- comfortably above that baseline, so a fresh session under the
-    # fallback does not compact on turn one. This is self-correcting, not a
-    # one-shot latch: `ApproachingWindow#fired?` is stateless
-    # (`need.rb:66-68`) and A6 feeds it A2's LAST-TURN usage, not the
-    # cumulative run total, so once a compaction drops the head, the next
-    # turn's occupancy falls back under the line and the signal clears on its
-    # own. A deployment that knows its real local window (e.g. a specific
-    # Ollama model's num_ctx) should construct its own book with an explicit
-    # `fallback:` rather than rely on this one.
+    # fallback does not compact on turn one.
+    #
+    # AMENDED (T9). This paragraph used to end "this is self-correcting, not a
+    # one-shot latch", and that argument is still TRUE and still insufficient.
+    # It is about FREQUENCY: `ApproachingWindow#fired?` is stateless and is fed
+    # A2's LAST-TURN usage rather than the cumulative run total, so once a
+    # compaction drops the head the next turn's occupancy falls back under the
+    # line and the signal clears on its own. What it never covered is DAMAGE.
+    # Each firing is an irreversible lossy rewrite of the run's own history, so
+    # "it stops after a few" is not a defence -- QA watched a real 32,768-token
+    # qwen3 runner read as ~300% full against this 8,192 guess and lain rewrite
+    # its history three separate times, at 75-78% of the window it actually had.
+    #
+    # So the guess still degrades gracefully, it just no longer AUTHORISES
+    # anything: this number is now tagged {GUESSED} when it is reached, and
+    # {Compaction::Source} declines to spend `:approaching_window` on it. The
+    # number itself is unchanged and must stay so -- an over-estimated fallback
+    # means compaction never fires at all for the provider it exists to protect,
+    # which is the worse of the two failures (see the paragraph above).
+    #
+    # A deployment that knows its real local window should say so where it can
+    # be tied to a MODEL -- an entry in `windows:`, or the served window
+    # {CLI::Backend::WindowBook} probes out of ollama's `/api/ps`. An explicit
+    # `fallback:` is not that: it answers for every name that matched nothing,
+    # so it cannot be evidence about any of them, and it is tagged {GUESSED}
+    # like this one.
     CONSERVATIVE_FALLBACK = 8_192
+
+    # Where a resolved window came from, and therefore what it may authorise.
+    #
+    # THREE values, and the split is NOT "measured" against "not measured".
+    # {Provider#context_window_tokens} answers nil for every provider but ollama
+    # (`provider.rb:77-79`, overridden only at `ollama.rb:189`), so a hosted run
+    # is measured against whatever {DEFAULTS} says -- a two-valued reading would
+    # file every Anthropic and Bedrock arm under "unmeasured" and switch its
+    # `:approaching_window` compaction off in silence. {Compaction::Scheduler}
+    # reads the same signal to decide a FORCED compaction, so the forcing
+    # behaviour would have gone with it.
+    #
+    # "Hosted therefore PUBLISHED" holds only as far as the table does. A
+    # first-party id the table does not carry is {GUESSED} like any other, which
+    # is a real state and not a hypothetical: `claude-fable-5` and
+    # `claude-mythos-5` sat in it until the review that found them. The
+    # suppression is still right there -- an 8,192 guess must not authorise a
+    # rewrite for a 1M-token model -- but the DENOMINATOR is wrong, and that is
+    # a missing table row, fixed in {DEFAULTS} rather than here.
+    #
+    # - {PROBED} -- the server said so, about the runner resident right now
+    #   ({CLI::Backend::WindowBook::Served}). The only measured window there is.
+    # - {PUBLISHED} -- a {DEFAULTS} entry or a family-token match: a real
+    #   published number, for the model actually named.
+    # - {GUESSED} -- the `fallback` branch. Nothing about this model was known;
+    #   the number is a floor chosen so a wrong guess errs EARLY.
+    PROBED = :probed
+    PUBLISHED = :published
+    GUESSED = :guessed
+    PROVENANCES = [PROBED, PUBLISHED, GUESSED].freeze
 
     # How full a context is: tokens used over the window they are measured
     # against. {Compaction::Need::ApproachingWindow} computed this ratio inside
@@ -179,6 +243,41 @@ module Lain
       def at_least?(fraction) = used_tokens >= window_tokens * fraction
     end
 
+    # A window, and where the number came from -- the pair, because provenance
+    # cannot ride inside the number and must not be fetched separately.
+    #
+    # Not inside it: {Compaction::Need#window!} does
+    # `Integer(window_tokens, exception: false)`, which flattens any wrapper, and
+    # a spec pins that `check(window_tokens: "1000")` coerces a String. So the
+    # parameter's type is fixed, and provenance travels ALONGSIDE it.
+    #
+    # Not separately: two lookups are two chances to disagree about one model,
+    # and "the number and what it is worth" is one answer to one question.
+    #
+    # The window is NOT coerced here. {Occupancy.window!} and
+    # {Compaction::Need#window!} each refuse a bad denominator where it arrives,
+    # with their own message about their own parameter, and a third guard in
+    # front of both would only get in the way of theirs.
+    WindowResolution = Data.define(:window_tokens, :provenance) do
+      def initialize(window_tokens:, provenance:)
+        unless PROVENANCES.include?(provenance)
+          raise ArgumentError, "unknown provenance #{provenance.inspect} -- one of #{PROVENANCES.inspect}"
+        end
+
+        super
+      end
+
+      # May this window authorise an irreversible rewrite?
+      #
+      # Phrased as "not a guess" rather than as a list of the two that pass, so
+      # a provenance added later is authoritative unless it says otherwise --
+      # the safe default is that a real number keeps working, since the failure
+      # of the other direction is silent (compaction stops, nothing reports it).
+      #
+      # @return [Boolean]
+      def authoritative? = provenance != GUESSED
+    end
+
     # @return [ContextWindow] the bench's default book, degrading gracefully
     def self.default = DEFAULT
 
@@ -203,14 +302,36 @@ module Lain
     # @param model [String, Symbol]
     # @return [Integer]
     # @raise [UnknownModel] if nil/blank, or unmatched with no fallback configured
-    def window_tokens(model)
+    def window_tokens(model) = resolve(model).window_tokens
+
+    # The same lookup, keeping what it learned on the way: an exact hit and a
+    # family-token match are both {PUBLISHED}, the `fallback` branch is
+    # {GUESSED}, and only a {CLI::Backend::WindowBook::Served} book can answer
+    # {PROBED}. Those are the three branches `#window_tokens` always had --
+    # nothing new is decided here, it just stops being thrown away.
+    #
+    # @param model [String, Symbol]
+    # @return [WindowResolution]
+    # @raise [UnknownModel] if nil/blank, or unmatched with no fallback configured
+    def resolve(model)
       if blank?(model)
         raise UnknownModel, "no context window for model #{model.inspect} -- " \
                             "a nil or blank --model is a wiring bug, not an unsupported provider"
       end
 
+      # PRESENCE, never truthiness. `fetch`'s block does not run for a key that
+      # is present, so a malformed entry (a nil or false window someone put in
+      # `windows:`) used to be answered verbatim and refused loudly downstream
+      # by {Occupancy.window!} / {Compaction::Need#window!}. Deciding "did we
+      # find one?" on the VALUE would instead demote it to the fallback and
+      # call it a guess -- an invalid table degrading in silence, which is the
+      # inversion CLAUDE.md rejects. So the key is what is tested, and a bad
+      # value keeps failing where it always failed.
       name = model.to_s
-      @windows.fetch(name) { matched(name) || @fallback || unknown!(model) }
+      key = @windows.key?(name) ? name : matched_key(name)
+      return WindowResolution.new(window_tokens: @windows.fetch(key), provenance: PUBLISHED) if key
+
+      WindowResolution.new(window_tokens: @fallback || unknown!(model), provenance: GUESSED)
     end
 
     # How full a model's context is, given what the last turn was billed for.
@@ -238,11 +359,18 @@ module Lain
 
     private
 
-    # Longest family token the name contains, mirroring {PriceBook#matched}
-    # so a more specific key wins over a more general one were both present.
-    def matched(name)
-      key = @windows.keys.select { |token| name.include?(token) }.max_by(&:length)
-      key && @windows.fetch(key)
+    # Longest family token the name contains, mirroring {PriceBook#matched}'s
+    # resolution order so a more specific key wins over a more general one were
+    # both present.
+    #
+    # It answers the KEY, where PriceBook's answers the value -- the one
+    # deliberate divergence. A key is present or it is nil; a VALUE can be nil
+    # or false while the key exists, and a caller deciding "matched?" on that
+    # would silently reroute a malformed table entry to the fallback (see
+    # {#resolve}). Returning the key keeps the found/not-found question
+    # unambiguous, and lets the value stay whatever the table said.
+    def matched_key(name)
+      @windows.keys.select { |token| name.include?(token) }.max_by(&:length)
     end
 
     # nil first (never coerce a nil to check it), then whitespace-only --

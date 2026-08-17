@@ -113,6 +113,177 @@ RSpec.describe Lain::ContextWindow do
     end
   end
 
+  # F3. A window is a denominator, and `:approaching_window` spends it on an
+  # IRREVERSIBLE lossy rewrite -- so a caller has to be able to ask where the
+  # number came from, not just what it is.
+  #
+  # THREE values. The two-valued reading ("measured" against "not measured")
+  # is the latent regression the review panel caught:
+  # {Lain::Provider#context_window_tokens} answers nil for every provider but
+  # ollama, so a hosted run is measured against whatever the shipped table
+  # says -- filing every table hit under "not measured" would switch
+  # compaction off for every Anthropic and Bedrock arm in silence.
+  #
+  # "Hosted therefore published" holds only as far as the table does, which is
+  # why the authority table below is enumerated by model id rather than
+  # asserted as a rule: `claude-fable-5` and `claude-mythos-5` carry no tier
+  # word, matched nothing, and were being measured against the 8,192 guess.
+  describe "#resolve" do
+    it "calls an exact table hit published" do
+      book = described_class.new(windows: { "claude-opus-4-8" => 1_000_000 })
+      resolution = book.resolve("claude-opus-4-8")
+
+      expect(resolution.window_tokens).to eq(1_000_000)
+      expect(resolution.provenance).to eq(described_class::PUBLISHED)
+    end
+
+    # A family-token match is still a real published number for a real model
+    # id -- the dated snapshot resolving through "sonnet" is the ordinary
+    # Anthropic case, not a degradation.
+    it "calls a family-token match published too" do
+      book = described_class.new(windows: { "sonnet" => 1_000_000 })
+
+      expect(book.resolve("claude-3-5-sonnet-20241022").provenance).to eq(described_class::PUBLISHED)
+    end
+
+    it "calls the fallback branch guessed" do
+      book = described_class.new(windows: {}, fallback: 8_192)
+      resolution = book.resolve("qwen3:4b")
+
+      expect(resolution.window_tokens).to eq(8_192)
+      expect(resolution.provenance).to eq(described_class::GUESSED)
+    end
+
+    # The number is unchanged whichever way it was reached: this card
+    # suppresses a trigger, it never raises the fallback (`context_window.rb`
+    # ranks an over-estimate as worse than the crash it replaces).
+    it "answers the same number #window_tokens does, on both branches" do
+      book = described_class.new(windows: { "opus" => 500_000 }, fallback: 8_192)
+
+      expect(book.resolve("claude-opus-4-8").window_tokens).to eq(book.window_tokens("claude-opus-4-8"))
+      expect(book.resolve("qwen3:4b").window_tokens).to eq(book.window_tokens("qwen3:4b"))
+    end
+
+    # A malformed `windows:` entry must keep failing where it always failed --
+    # loudly, at the guard that owns the denominator. Answering the fallback
+    # and calling it a guess would turn an invalid table into a silent
+    # degradation, and the number a reader then sees (8,192) is not the number
+    # the table holds. `false` as well as `nil`, because the hazard is a
+    # truthiness test rather than a nil test.
+    describe "a table entry that is present but malformed" do
+      [nil, false].each do |value|
+        it "answers the entry verbatim as published rather than degrading, for #{value.inspect}" do
+          book = described_class.new(windows: { "weird" => value }, fallback: 8_192)
+          resolution = book.resolve("weird")
+
+          expect(resolution.window_tokens).to be(value)
+          expect(resolution.provenance).to eq(described_class::PUBLISHED)
+        end
+
+        it "still refuses loudly at the occupancy guard, for #{value.inspect}" do
+          book = described_class.new(windows: { "weird" => value }, fallback: 8_192)
+
+          expect { book.occupancy(1, model: "weird") }.to raise_error(ArgumentError, /window_tokens/)
+        end
+      end
+
+      # The same for a family-token match, which resolves through the other
+      # branch and so could regress independently.
+      it "does not degrade a malformed entry reached by family token" do
+        book = described_class.new(windows: { "sonnet" => nil }, fallback: 8_192)
+
+        expect(book.resolve("claude-sonnet-4-6").window_tokens).to be_nil
+      end
+    end
+
+    it "raises on a blank model rather than guessing, fallback or not" do
+      expect { described_class.default.resolve("  ") }
+        .to raise_error(described_class::UnknownModel, /wiring bug/)
+    end
+
+    it "raises on an unmatched model when no fallback is configured" do
+      expect { described_class.new(windows: described_class::DEFAULTS).resolve("gpt-4") }
+        .to raise_error(described_class::UnknownModel, /gpt-4/)
+    end
+
+    # The regression the panel caught, pinned by model id rather than argued
+    # about: every id an Anthropic or a Bedrock arm actually runs under has to
+    # come back authoritative, or `:approaching_window` stops firing for it.
+    #
+    # THE TRIPWIRE, and it only works if it is complete. Reviewed against the
+    # current published catalogue: `claude-fable-5` and `claude-mythos-5` are
+    # shipping first-party families that carry none of the opus/sonnet/haiku
+    # tier words, so they matched nothing and were silently demoted to the
+    # 8,192 guess -- a 1,000,000-token model measured against a floor. A table
+    # missing the two ids already demoted is worse than no table, because it
+    # reads as coverage. A new model family means a new row here.
+    describe "the hosted arms keep their authority" do
+      subject(:book) { described_class.default }
+
+      %w[
+        claude-opus-5
+        claude-opus-4-8
+        claude-sonnet-5
+        claude-sonnet-4-6
+        claude-haiku-4-5
+        claude-opus-4-5
+        claude-sonnet-4-20250514
+        claude-fable-5
+        claude-mythos-5
+        claude-mythos-preview
+        anthropic.claude-opus-4-8
+        anthropic.claude-fable-5
+        us.anthropic.claude-sonnet-4-6-v1:0
+      ].each do |model|
+        it "resolves #{model} as published, and so as authoritative" do
+          expect(book.resolve(model).provenance).to eq(described_class::PUBLISHED)
+          expect(book.resolve(model)).to be_authoritative
+        end
+      end
+
+      # Authority alone is not enough: a published-but-wrong denominator is the
+      # same defect wearing a better label, and the whole reason the two
+      # missing families mattered is that their real window is 1M rather than
+      # 8,192. Pinned as numbers so a wrong table row fails here, not in a
+      # journal nobody reads.
+      {
+        "claude-fable-5" => 1_000_000,
+        "claude-mythos-5" => 1_000_000,
+        "claude-mythos-preview" => 1_000_000,
+        "anthropic.claude-fable-5" => 1_000_000
+      }.each do |model, window|
+        it "measures #{model} against its real #{window}-token window" do
+          expect(book.window_tokens(model)).to eq(window)
+        end
+      end
+    end
+
+    # The whole point of the value: only the guess is denied.
+    it "is authoritative when probed or published, and not when guessed" do
+      probed = described_class::WindowResolution.new(window_tokens: 32_768,
+                                                     provenance: described_class::PROBED)
+      published = described_class::WindowResolution.new(window_tokens: 200_000,
+                                                        provenance: described_class::PUBLISHED)
+      guessed = described_class::WindowResolution.new(window_tokens: 8_192,
+                                                      provenance: described_class::GUESSED)
+
+      expect([probed, published].map(&:authoritative?)).to eq([true, true])
+      expect(guessed).not_to be_authoritative
+    end
+
+    # CLAUDE.md's premise throughout: an unknown value fails loudly rather
+    # than degrading. A typo'd provenance that merely read as "not guessed"
+    # would silently re-authorise the rewrite this card exists to deny.
+    it "refuses a provenance it does not know" do
+      expect { described_class::WindowResolution.new(window_tokens: 8_192, provenance: :measured) }
+        .to raise_error(ArgumentError, /provenance/)
+    end
+
+    it "is frozen and Ractor-shareable" do
+      expect(described_class.default.resolve("claude-opus-4-8")).to be_deeply_frozen
+    end
+  end
+
   describe ".default" do
     subject(:book) { described_class.default }
 
