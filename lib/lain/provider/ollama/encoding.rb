@@ -28,8 +28,22 @@ module Lain
 
         # The `Request#extra` keys the sampler honors, matching Ollama's
         # `options` object. Requests normalize extra to String keys; T18 is what
-        # threads temperature/seed through here from the CLI.
-        SAMPLER_KEYS = %w[temperature seed num_ctx].freeze
+        # threads temperature/seed through here from the CLI, and T11 the two
+        # throughput knobs below.
+        #
+        # `num_batch` is the one with a measured cost behind it: ollama starts
+        # llama-server with `-b 512`, overriding llama.cpp's own default of
+        # 2048, and exposes no server-side setting to undo it -- the request is
+        # the ONLY place it can be corrected. Measured on this box at 1.31x
+        # prefill (docs/providers/ollama.md, "Serving performance").
+        #
+        # Every key here is strictly opt-in: #encode_options copies one only
+        # when Request#extra already holds it, so a request nobody tuned still
+        # renders with no `options` object at all. The encoder is deliberately
+        # not the place to default one on -- that would be a wire change for
+        # every caller that never asked for it. Resolution lives at the CLI
+        # ({CLI::Backend#sampler_extra}), which is where an operator's flag is.
+        SAMPLER_KEYS = %w[temperature seed num_batch num_ctx].freeze
 
         # `think` requests the reasoning trace onto `message.thinking` (qwen3
         # emits it only when this is set -- references/ollama/api-chat.md). It

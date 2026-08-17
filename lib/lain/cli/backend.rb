@@ -123,6 +123,8 @@ module Lain
       # @option options [Integer] :max_tokens ceiling on a chat completion
       # @option options [Float] :temperature sampler temperature, 0 for determinism
       # @option options [Integer] :seed sampler seed, paired with temperature 0
+      # @option options [Integer] :num_batch prompt batch size, ollama only
+      # @option options [Integer] :num_ctx context length for the request, ollama only
       # @option options [Boolean] :compact whether history compaction runs at all
       # @option options [String] :compact_strategy which strategy collapses a span
       # @option options [Integer] :compact_bytes head size that triggers a compaction
@@ -463,8 +465,15 @@ module Lain
       # Only the sampler flags the caller actually set, String-keyed to match
       # Request's normalized `extra` and Ollama's `options`. `unless value.nil?`
       # (not `if value`) so `--temperature 0` -- the determinism recipe -- is kept.
+      #
+      # The opt-in half is load-bearing for the two throughput knobs, which is
+      # why they are resolved HERE and not defaulted inside
+      # {Provider::Ollama::Encoding}: an encoder-side default would put an
+      # `options` object on every ollama request in the process, where a flag
+      # the operator did not set leaves the payload byte-identical to before
+      # this method knew the key existed.
       def sampler_extra
-        %i[temperature seed].each_with_object({}) do |key, extra|
+        %i[temperature seed num_batch num_ctx].each_with_object({}) do |key, extra|
           value = @options[key]
           extra[key.to_s] = value unless value.nil?
         end

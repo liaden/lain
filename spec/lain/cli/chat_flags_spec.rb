@@ -67,7 +67,8 @@ module ChatFlags
   # quietly widening the blind spot.
   DYNAMIC = {
     "lib/lain/cli/backend.rb" =>
-      "the %i[temperature seed] sampler pair, read by key so one loop covers both; both are declared on chat"
+      "the %i[temperature seed num_batch num_ctx] sampler set, read by key so one loop covers all four; " \
+      "every one of them is declared on chat"
   }.freeze
 
   # One resolved option read. A nil `key` means the index was not a literal.
@@ -338,6 +339,37 @@ RSpec.describe "lain chat's flag surface" do
     it "refuses a non-positive ceiling at construction, not at the first summary" do
       expect { Lain::CLI::Backend.new(parse("--summarizer-max-tokens", "0")) }
         .to raise_error(Lain::CLI::Backend::InvalidCeiling, /must be positive/)
+    end
+  end
+
+  # T11. The sampler set is read DYNAMICALLY (see DYNAMIC above), so this
+  # file's read-implies-declared guard is blind to these two by construction --
+  # it can only see literal keys. That blind spot is exactly why the wiring
+  # needs an assertion of its own: without these declarations `--num-batch` is
+  # a Thor parse error and no operator can reach the knob, while every unit
+  # spec that hand-builds an option Hash stays green.
+  describe "the throughput sampler flags" do
+    it "declares --num-batch and --num-ctx on chat" do
+      expect(declared).to include(:num_batch, :num_ctx)
+    end
+
+    # The property, which is about what the default RESOLVES TO and not about
+    # whether one is declared: an unset flag must parse to nil.
+    # {Backend#sampler_extra} keeps a key only when its value is non-nil, so nil
+    # is what keeps `options` off a request nobody tuned. Both flags do declare
+    # a `default:`, reading the environment through {Lain::CLI::EnvDefaults},
+    # which answers nil for an unset variable -- exactly that absence. A LITERAL
+    # default would materialize the key instead and put `options` on every
+    # ollama request, the shape backend_spec pins as absent; this example is
+    # what fails if one is ever added.
+    it "parses to nil when unset, so an unset knob emits no option at all" do
+      expect(parse[:num_batch]).to be_nil
+      expect(parse[:num_ctx]).to be_nil
+    end
+
+    it "carries operator-set values through as numbers" do
+      expect(parse("--num-batch", "2048")[:num_batch]).to eq(2048)
+      expect(parse("--num-ctx", "8192")[:num_ctx]).to eq(8192)
     end
   end
 

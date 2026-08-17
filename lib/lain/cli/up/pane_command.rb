@@ -27,7 +27,8 @@ module Lain
         # `up_spec` re-derives this list from exe/lain and fails on drift -- a
         # new env-backed flag that never reached a pane would be invisible.
         PANE_ENV = %w[
-          LAIN_API_BASE LAIN_MAX_TOKENS LAIN_MODEL LAIN_PROVIDER LAIN_SEED
+          LAIN_API_BASE LAIN_MAX_TOKENS LAIN_MODEL LAIN_NUM_BATCH LAIN_NUM_CTX
+          LAIN_PROVIDER LAIN_SEED
           LAIN_SUMMARIZER_MAX_TOKENS LAIN_SUMMARIZER_MODEL LAIN_SUMMARIZER_PROVIDER
           LAIN_TEMPERATURE
         ].freeze

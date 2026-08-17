@@ -867,4 +867,47 @@ RSpec.describe Lain::CLI::Backend do
       expect(payload[:options]).to eq(temperature: 0)
     end
   end
+
+  # T11 AC: the two throughput knobs reach the wire the same way temperature
+  # and seed do -- through #sampler_extra, so an UNSET flag leaves the options
+  # hash untouched. Defaulting num_batch inside the encoder instead would put
+  # an `options` key on every ollama request in the suite; the third example is
+  # what pins that it did not happen.
+  describe "num_batch and num_ctx threading" do
+    let(:store) { Lain::Store.new }
+    let(:timeline) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    end
+
+    def payload_for(**options)
+      request = backend_for(max_tokens: 1024, provider: "ollama", model: nil, **options)
+                .context.render(timeline:, toolset: Lain::Toolset.new)
+      Lain::Provider::Ollama.new.encode(request)
+    end
+
+    it "carries an operator-set batch size into the encoded request options" do
+      expect(payload_for(num_batch: 2048)[:options]).to eq(num_batch: 2048)
+    end
+
+    it "carries an operator-set context length into the encoded request options" do
+      expect(payload_for(num_ctx: 8192)[:options]).to eq(num_ctx: 8192)
+    end
+
+    it "emits no options key at all when no sampler flag was given" do
+      expect(payload_for.key?(:options)).to be(false)
+    end
+
+    # A sampler knob is not a prompt: the same cache-identity claim temperature
+    # and seed already carry, restated for the two keys that are new here.
+    it "renders a Request whose cache_payload is identical to the flagless render" do
+      tuned = backend_for(max_tokens: 1024, provider: "ollama", model: nil, num_batch: 2048, num_ctx: 8192)
+              .context.render(timeline:, toolset: Lain::Toolset.new)
+      plain = backend_for(max_tokens: 1024, provider: "ollama", model: nil)
+              .context.render(timeline:, toolset: Lain::Toolset.new)
+
+      expect(tuned.cache_payload).to eq(plain.cache_payload)
+      expect(tuned).to have_same_digest_as(plain)
+    end
+  end
 end

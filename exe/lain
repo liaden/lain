@@ -592,6 +592,7 @@ class LainCLI < Thor
     def self.declare(thor)
       endpoint(thor)
       sampling(thor)
+      throughput(thor)
     end
 
     # Every default here reads {Lain::CLI::EnvDefaults} first, so a project can
@@ -617,6 +618,30 @@ class LainCLI < Thor
                                              "[$LAIN_TEMPERATURE]"
       thor.method_option :seed, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_SEED"),
                                 desc: "Sampler seed, threaded into Request#extra (ollama honors it) [$LAIN_SEED]"
+    end
+
+    # The two ollama runner knobs that are not sampling behaviour -- a third
+    # method on the same rule that split {declare} in two, and by the same cop's
+    # insistence (`sampling` reached Metrics/MethodLength at five flags;
+    # extract, never loosen).
+    #
+    # The property both defaults must hold: they RESOLVE TO nil when the
+    # variable is unset. {Lain::CLI::Backend}'s sampler loop keeps a key only
+    # when its value is non-nil, so an unset knob contributes nothing and the
+    # payload stays byte-identical to before this method existed.
+    # {Lain::CLI::EnvDefaults.numeric} answers nil for an unset variable, which
+    # is exactly that absence -- so reading the environment is safe here in a
+    # way a LITERAL default would not be: a literal materializes the key and
+    # puts an `options` object on every ollama request in the process, a wire
+    # change for callers that never asked for one. `backend_spec.rb`'s
+    # no-options example is what fails if this stops holding.
+    def self.throughput(thor)
+      thor.method_option :num_batch, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH"),
+                                     desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
+                                           "prefill on this box, 2048 is the measured setting [$LAIN_NUM_BATCH]"
+      thor.method_option :num_ctx, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
+                                   desc: "Ollama context length for the request; unset serves the model's own " \
+                                         "[$LAIN_NUM_CTX]"
     end
   end
 

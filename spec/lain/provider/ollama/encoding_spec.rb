@@ -74,4 +74,32 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
       expect(encoded.key?(:format)).to be(false)
     end
   end
+
+  # T11: the two throughput knobs. `num_batch` is the one with a measured cost
+  # -- ollama passes llama-server `-b 512`, overriding llama.cpp's own 2048, and
+  # there is no server-side setting to undo it, so the only place it can be
+  # fixed is the request (docs/providers/ollama.md, "Serving performance").
+  # `num_ctx` was already a SAMPLER_KEY with no caller putting it in extra.
+  describe "the throughput sampler keys" do
+    it "carries num_batch from Request#extra into options" do
+      encoded = encoder.encode(request(extra: { "num_batch" => 2048 }))
+
+      expect(encoded[:options]).to eq(num_batch: 2048)
+    end
+
+    it "carries num_ctx from Request#extra into options" do
+      encoded = encoder.encode(request(extra: { "num_ctx" => 8192 }))
+
+      expect(encoded[:options]).to eq(num_ctx: 8192)
+    end
+
+    # Strictly opt-in, like every other sampler key: an encoder that defaulted
+    # num_batch on would put an `options` key on every request that has none
+    # today, which is the shape the guard below and Ollama's own spec pin.
+    it "emits no options key at all when no sampler key is present" do
+      encoded = encoder.encode(request)
+
+      expect(encoded.key?(:options)).to be(false)
+    end
+  end
 end
