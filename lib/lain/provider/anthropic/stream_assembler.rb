@@ -45,13 +45,12 @@ module Lain
           "input_json_delta" => :append_input_json
         }.freeze
 
+        # Six ivars: the envelope identity here, and the four an attempt
+        # accumulates in {#discard_attempt}, which a retry throws away.
         def initialize
-          @blocks = {}
-          @input_buffers = {}
           @id = nil
           @model = nil
-          @stop_reason = nil
-          @usage = {}
+          discard_attempt
         end
 
         # @param data [Hash] one parsed Anthropic SSE event
@@ -69,11 +68,56 @@ module Lain
 
         private
 
+        # For the request shapes Lain sends today, a stream carries exactly ONE
+        # `message_start` per transport-level attempt -- so a SECOND one on the
+        # same assembler means a retry: faraday-retry abandoned the attempt this
+        # object was assembling and is now replaying the request through the same
+        # block. One assembler serves a whole round trip
+        # ({Anthropic#stream_dispatch} builds it per `#complete`, not per
+        # attempt), which is why the abandoned attempt's blocks are still here.
+        #
+        # Nothing it accumulated may survive that boundary. Replacing
+        # `@blocks[index]` in {#on_block_start} covered only the indices a retry
+        # happened to REOPEN, so a retry that opened FEWER blocks left the
+        # remainder in place: spliced prose at the end of the turn, or -- when the
+        # abandoned attempt had reached a `tool_use` -- a phantom tool call in the
+        # assistant message, under a clean `stop_reason` and clean usage (F7c).
+        #
+        # ⚠️ **"Per attempt" is scoped to what {AnthropicWire#wire_payload} sends,
+        # and it is not a property of the protocol.** Anthropic's server-side
+        # refusal fallback (beta `server-side-fallback-2026-06-01`; `fallbacks`
+        # under `-2026-07-01`) puts two model attempts inside ONE streaming
+        # response, and on its pre-output variant `message_start` is the event
+        # that names the serving model -- the protocol already uses this marker to
+        # announce a switch. Whether a mid-stream switch re-emits it is not
+        # something to assume in either direction. Lain cannot reach it today:
+        # `wire_payload` sends no `betas` and no `fallbacks`, and nothing in
+        # `lib/` mentions either. The day it does -- or the day any resumable /
+        # continued-stream feature lands -- this reset must move to an explicit
+        # attempt boundary, because here it would silently delete the FIRST half
+        # of a response: the exact mirror of the bug it fixes, and green.
+        #
+        # Within that scope the marker is why the rule lives in the assembler here
+        # and on a retry hook in {Ollama::RetryTap}: NDJSON carries no equivalent
+        # of it. Reading the boundary off the wire also means it reaches
+        # {Provider::Bedrock}, which builds this same assembler over a transport
+        # that threads no retry context at all.
         def on_message_start(data)
           message = data["message"] || {}
+          discard_attempt
           @id = message["id"]
           @model = message["model"]
           merge_usage(message["usage"])
+        end
+
+        # Everything one attempt builds up, and therefore everything a retry
+        # throws away. `@id` and `@model` are absent because the message_start
+        # that triggers this overwrites them unconditionally.
+        def discard_attempt
+          @blocks = {}
+          @input_buffers = {}
+          @stop_reason = nil
+          @usage = {}
         end
 
         # Seed the block from its skeleton so ordering and identity are fixed the

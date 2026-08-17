@@ -111,4 +111,121 @@ RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
     expect(result.model).to eq("claude-opus-4-8")
     expect(result.usage).to include("input_tokens" => 100, "cache_read_input_tokens" => 40, "output_tokens" => 25)
   end
+
+  # T11 / F7c. One assembler serves a whole round trip, not one attempt: the
+  # Provider builds it once and faraday-retry replays through the same block, so
+  # a retry's events land on top of whatever the abandoned attempt left behind.
+  # `message_start` is the marker that says a new message began -- Anthropic
+  # opens every one with exactly one, which is the re-sync Ollama's NDJSON has no
+  # equivalent of (see Ollama::RetryTap).
+  describe "a second message_start, which is a retry" do
+    def retried(second_attempt) = feed(described_class.new, abandoned_events + second_attempt)
+
+    # What faraday-retry threw away: a text block it closed, and a tool_use it
+    # had opened and begun filling when the connection died. Index 1 is the one
+    # the retry never reopens, so nothing overwrites it.
+    let(:abandoned_events) do
+      [message_start,
+       { "type" => "content_block_start", "index" => 0,
+         "content_block" => { "type" => "text", "text" => "" } },
+       { "type" => "content_block_delta", "index" => 0,
+         "delta" => { "type" => "text_delta", "text" => "partial prose" } },
+       { "type" => "content_block_stop", "index" => 0 },
+       { "type" => "content_block_start", "index" => 1,
+         "content_block" => { "type" => "tool_use", "id" => "toolu_orphan", "name" => "echo", "input" => {} } },
+       { "type" => "content_block_delta", "index" => 1,
+         "delta" => { "type" => "input_json_delta", "partial_json" => '{"text":"hi"}' } }]
+    end
+
+    let(:retry_events) do
+      [message_start(usage: { "input_tokens" => 10, "output_tokens" => 0 }),
+       { "type" => "content_block_start", "index" => 0,
+         "content_block" => { "type" => "text", "text" => "" } },
+       { "type" => "content_block_delta", "index" => 0,
+         "delta" => { "type" => "text_delta", "text" => "the retry" } },
+       { "type" => "content_block_stop", "index" => 0 },
+       { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" },
+         "usage" => { "output_tokens" => 3 } }]
+    end
+
+    it "drops a block index the retry never reopens" do
+      result = retried(retry_events)
+
+      expect(result.content.map { |block| block["type"] }).to eq(%w[text])
+      expect(result.content.first["text"]).to eq("the retry")
+    end
+
+    # The form that matters: the abandoned attempt had reached a tool_use, so
+    # what survived was a call the model never finished asking for -- reported
+    # under a clean `end_turn`.
+    it "drops a half-built tool_use rather than leaving a phantom call" do
+      result = retried(retry_events)
+
+      expect(result.content.map { |block| block["id"] }).not_to include("toolu_orphan")
+      expect(result).to stop_with("end_turn")
+    end
+
+    # The input buffer goes with the block. A stop for an index the reset
+    # discarded must be inert, not a NoMethodError on a block that is gone.
+    it "discards the abandoned attempt's input buffer with its block" do
+      result = retried(retry_events + [{ "type" => "content_block_stop", "index" => 1 }])
+
+      expect(result.content.size).to eq(1)
+    end
+
+    # The envelope is re-read from the new message_start, so a retry that came
+    # back on a different model or message id is described by its own numbers.
+    it "re-seeds id, model, and usage from the message that replaced it" do
+      result = retried([{ "type" => "message_start",
+                          "message" => { "id" => "msg_2", "model" => "claude-opus-4-9",
+                                         "usage" => { "input_tokens" => 7 } } }])
+
+      expect([result.id, result.model]).to eq(["msg_2", "claude-opus-4-9"])
+      expect(result.usage).to eq("input_tokens" => 7)
+    end
+
+    # `@stop_reason` is the discarded field with no other witness, and it is not
+    # decorative: {#on_message_delta} reads `... || @stop_reason`, so a reason the
+    # ABANDONED attempt reported survives whenever the replacement ends WITHOUT a
+    # message_delta of its own -- the retry's content under the dead attempt's
+    # envelope, which is this card's own defect one layer up. Mutation-checked
+    # during review: dropping that one line from #discard_attempt failed nothing
+    # else in the suite.
+    it "clears a stop_reason the abandoned attempt had already reported" do
+      reported = { "type" => "message_delta", "delta" => { "stop_reason" => "tool_use" },
+                   "usage" => { "output_tokens" => 9 } }
+      # The replacement delivers content and closes cleanly, but never sends a
+      # message_delta -- so nothing overwrites what `reported` left behind.
+      truncated = [message_start,
+                   { "type" => "content_block_start", "index" => 0,
+                     "content_block" => { "type" => "text", "text" => "" } },
+                   { "type" => "content_block_delta", "index" => 0,
+                     "delta" => { "type" => "text_delta", "text" => "the retry" } },
+                   { "type" => "content_block_stop", "index" => 0 }]
+
+      result = retried([reported] + truncated)
+
+      expect(result.stop_reason).to be_nil
+      expect(result.content.map { |block| block["type"] }).to eq(%w[text])
+    end
+  end
+
+  # The reset must not be mistaken for "flush on every event": within ONE attempt
+  # a block accumulates across arbitrarily many `add` calls, which is the
+  # streaming invariant the transport depends on.
+  it "keeps appending to an open block across arbitrarily many add calls" do
+    fragments = Array.new(64) { |n| n.to_s(16) }
+    deltas = fragments.map do |text|
+      { "type" => "content_block_delta", "index" => 0, "delta" => { "type" => "text_delta", "text" => text } }
+    end
+    opening = [message_start,
+               { "type" => "content_block_start", "index" => 0,
+                 "content_block" => { "type" => "text", "text" => "" } }]
+    closing = [{ "type" => "content_block_stop", "index" => 0 },
+               { "type" => "message_delta", "delta" => { "stop_reason" => "end_turn" }, "usage" => {} }]
+
+    result = feed(described_class.new, opening + deltas + closing)
+
+    expect(result.content.first["text"]).to eq(fragments.join)
+  end
 end
