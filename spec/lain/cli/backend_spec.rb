@@ -144,6 +144,34 @@ RSpec.describe Lain::CLI::Backend do
       end
       expect(provider.instance_variable_get(:@channel)).to be(Lain::Channel::Null.instance)
     end
+
+    # T2/F7, and the assertion the other two in this group cannot make: those
+    # read an ivar, which stays green whether or not the keyword was ever
+    # threaded HERE. This drives the whole production chain instead -- Backend
+    # -> Provider::Ollama -> #build_config's retry_block -> faraday-retry ->
+    # the run's channel -- because a keyword accepted with a safe default and
+    # never wired ships nothing, greenly. Ollama used to be the one arm whose
+    # retries reached no Journal at all; the QA run's >400s silent hang is what
+    # that cost.
+    it "threads the live channel into ollama, so a retried ollama request is journaled" do
+      stub_request(:post, "http://localhost:11434/api/chat")
+        .to_raise(Faraday::ConnectionFailed).then
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                       "message" => { "role" => "assistant", "content" => "pong" }))
+      channel = RecordingChannel.new
+      # The SHIPPED retry envelope, sleeps included (~0.1s for the one retry):
+      # this example is about the wiring Backend performs, and shaping the
+      # envelope would mean handing in a config, which is exactly the bypass
+      # that would stop it proving anything.
+      provider = backend_for(provider: "ollama").provider(channel:)
+
+      response = provider.complete(Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
+                                                     messages: [{ role: "user", content: "hi" }]))
+
+      expect(response.text).to eq("pong")
+      expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1])
+    end
   end
 
   # T10: the ONE denominator this run divides by. The POC published 86.4%

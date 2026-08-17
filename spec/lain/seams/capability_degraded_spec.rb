@@ -45,8 +45,14 @@ RSpec.describe "capability degradation on the chat path", :seam do
   # single method past Metrics/AbcSize (CLAUDE.md: extract, never loosen).
   def transport_answering(ndjson)
     Class.new do
-      define_method(:stream) { |_payload, _headers = {}, &block| block.call(ndjson) }
-      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(JSON.parse(ndjson.lines.last)) }
+      # `attempt:` declared, not swallowed -- see ollama_spec.rb's
+      # #transport_sync, including why `_attempt:` would undo the point.
+      # rubocop:disable Lint/UnusedBlockArgument
+      define_method(:stream) { |_payload, _headers = {}, attempt: nil, &block| block.call(ndjson) }
+      define_method(:sync_post) do |_payload, _headers = {}, attempt: nil|
+        Struct.new(:body).new(JSON.parse(ndjson.lines.last))
+      end
+      # rubocop:enable Lint/UnusedBlockArgument
       define_method(:process_status) { Struct.new(:body).new({ "models" => [] }) }
     end.new
   end

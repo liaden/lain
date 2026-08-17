@@ -174,11 +174,15 @@ module Lain
       #   stream_started events land -- chat's live TTY Channel, so a stream
       #   start actually reaches the frontend. Like spool it defaults to the
       #   Null instance (headless/bench pass nothing, so their events land
-      #   nowhere). Ollama does not accept it; Bedrock does, and gets it, so
-      #   its retries are as visible as the Anthropic arm's.
+      #   nowhere). Every arm gets it now: Bedrock and -- since T2/F7 -- Ollama
+      #   too, whose retries used to reach no Journal at all. That makes a retry
+      #   storm READABLE AFTERWARDS, not visible live: {Frontend::Decorators}
+      #   renders only ToolOutput and leaves ProviderRetry deliberately
+      #   unpainted, so the 400-second hang still shows the operator a blank
+      #   screen until T12 bounds it.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
         case name
-        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base])
+        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:)
         when "bedrock" then Provider::Bedrock.new(channel:)
         else anthropic_provider(spool, channel)
         end

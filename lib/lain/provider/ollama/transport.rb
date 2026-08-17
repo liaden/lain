@@ -42,9 +42,17 @@ module Lain
 
         # One non-streaming round trip. `faraday.response :json` has already
         # parsed the body, so `#body` is a Hash.
-        def sync_post(payload, headers = {})
+        #
+        # `attempt` is the round trip's own {RetryTap::Attempt}, put on the
+        # Faraday request context so {RetryTap#retry_block} reaches THIS
+        # request's attempt off the retried env rather than instance state --
+        # the transport stays retry-blind and never learns what abandoning one
+        # means. It defaults to an attempt with nothing to discard, so a caller
+        # with no tap (the embedder, a spec) is unaffected.
+        def sync_post(payload, headers = {}, attempt: RetryTap::Attempt.new)
           connection.post(COMPLETION_PATH, payload) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
+            req.options.context = (req.options.context || {}).merge(retry_attempt: attempt)
           end
         end
 
@@ -59,10 +67,13 @@ module Lain
         # because the middleware that raises it sits INSIDE this call and by then
         # the body it would quote has already streamed past into
         # {StreamedFailure}. See that class for what the body loss costs a human.
-        def stream(payload, headers = {}, &on_chunk)
+        def stream(payload, headers = {}, attempt: RetryTap::Attempt.new, &on_chunk)
           failure = StreamedFailure.new(self)
           connection.post(COMPLETION_PATH, payload) do |req|
             req.headers = headers.merge(req.headers) unless headers.empty?
+            # On the context so RetryTap#retry_block reaches THIS request's
+            # attempt off the retried env, exactly as #sync_post does.
+            req.options.context = (req.options.context || {}).merge(retry_attempt: attempt)
             install_on_data(req, failure, &on_chunk)
           end
         rescue Provider::HTTP::Error => e

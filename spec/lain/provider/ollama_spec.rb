@@ -11,9 +11,24 @@ RSpec.describe Lain::Provider::Ollama do
   end
 
   # A transport double returning a scripted body, for decode-focused examples.
+  #
+  # `attempt:` is DECLARED, not swallowed. Ruby 3 hands a keyword to a method
+  # that accepts none back as a positional Hash, so a double written
+  # `|_payload, _headers = {}|` takes the Provider's `attempt:` as its HEADERS
+  # and says nothing -- and would go on saying nothing if the keyword were ever
+  # renamed or mistyped. Naming it is what makes that a loud ArgumentError, and
+  # it is what the Anthropic doubles already do for `frame:`
+  # (`error_wrapping_spec.rb:149`).
+  #
+  # The cop's suggested correction is the one thing that must not be done here:
+  # `_attempt:` is a DIFFERENT KEYWORD, so it would stop matching and restore
+  # exactly the silence the declaration exists to end. Same at every other
+  # ollama transport double.
   def transport_sync(body)
     Class.new do
-      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(body) }
+      # rubocop:disable Lint/UnusedBlockArgument
+      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil| Struct.new(:body).new(body) }
+      # rubocop:enable Lint/UnusedBlockArgument
     end.new
   end
 
@@ -290,6 +305,142 @@ RSpec.describe Lain::Provider::Ollama do
 
       expect { described_class.new(config: zero_retry_config).complete(request(stream: true)) }
         .to raise_error(Lain::Error)
+    end
+  end
+
+  # T2/F7. Retries on this arm used to be invisible on purpose -- see the
+  # reversed "deliberately absent" note in ollama.rb. The QA run priced that
+  # silence: four attempts at the 300s `request_timeout` is a >400s hang that
+  # prints NOTHING, indistinguishable from one slow local model.
+  #
+  # These drive `zero_retry_config`, which is NOT a bypass of the wiring under
+  # test: #journaled_retries wires the tap onto whatever config the transport
+  # is built from, an injected one included, so what an injected config buys is
+  # a shaped retry ENVELOPE and nothing else. It has to be injected -- the
+  # envelope is snapshotted into the Faraday middleware at construction, so
+  # there is no other moment to shape it in (see {ZeroRetry#zero_retry_config}).
+  #
+  # The one thing that would bypass the tap is handing in a config that already
+  # carries its OWN `retry_block`; the group above does exactly that, on
+  # purpose, to count faraday-retry's loop.
+  describe "retry journaling", :webmock do
+    # The retry envelope MUST be shaped before construction -- see the measured
+    # note on {ZeroRetry#zero_retry_config}. The tap's callbacks still reach an
+    # injected config (Ollama#journaled_retries), so this is the shipped wiring
+    # with the shipped sleeps removed, not a bypass of it.
+    def unwaiting_provider(channel: Lain::Channel::Null.instance, retries: nil, max_retries: nil)
+      described_class.new(channel:, retries:, config: zero_retry_config(max_retries:))
+    end
+
+    def stub_chat = stub_request(:post, "http://localhost:11434/api/chat")
+
+    def ok_body
+      { status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                            "message" => { "role" => "assistant", "content" => "pong" }) }
+    end
+
+    def ok_ndjson
+      { status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+        body: "#{JSON.generate("model" => "qwen3:4b", "done" => false,
+                               "message" => { "role" => "assistant", "content" => "pong" })}\n" \
+              "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                               "message" => { "role" => "assistant", "content" => "" })}\n" }
+    end
+
+    it "journals a retried attempt onto the channel, naming the attempt number" do
+      stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(ok_body)
+      channel = RecordingChannel.new
+
+      response = unwaiting_provider(channel:).complete(request(stream: false))
+
+      expect(response.text).to eq("pong")
+      retries = channel.events.grep(Lain::Telemetry::ProviderRetry)
+      expect(retries.map(&:attempt)).to eq([1])
+      expect(retries.first.reason).to eq("Faraday::ConnectionFailed")
+    end
+
+    # The Null channel is the default, so nothing above the Provider ever
+    # writes `if channel` -- and bench, which passes none, keeps recording
+    # exactly what it recorded before this card.
+    it "completes over the default Null channel with no channel given" do
+      stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(ok_body)
+
+      response = unwaiting_provider.complete(request(stream: false))
+
+      expect(response.text).to eq("pong")
+      expect(response).to stop_with(:end_turn)
+    end
+
+    # Renamed from a claim it could not support. faraday-retry's `retry_count`
+    # is its own per-request local and was already per-request before this card,
+    # so this pins the TELEMETRY -- that a second completion restarts the
+    # numbering a reader joins spend on -- and nothing about where the attempt
+    # lives. The reentrancy claim is proved by the two examples below, which is
+    # the only shape that fails against instance state.
+    it "restarts the journaled attempt numbering at each completion" do
+      stub_chat.to_raise(Faraday::ConnectionFailed).to_raise(Faraday::ConnectionFailed).then.to_return(ok_body)
+      channel = RecordingChannel.new
+      provider = unwaiting_provider(channel:)
+
+      provider.complete(request(stream: false))
+      first = channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)
+      stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(ok_body)
+      provider.complete(request(stream: false))
+
+      expect(first).to eq([1, 2])
+      expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1, 2, 1])
+    end
+
+    # THE LINK T10 STANDS ON, and nothing else in the suite touches it: the body
+    # path must open the attempt, {Transport} must put it on the request
+    # context, and #retry_block must find it THERE. Nothing in lib/ registers a
+    # rollback yet -- T10 is what will -- so a tracing tap registers one, and
+    # each of those three lines can be deleted independently to see this go red.
+    # A dropped attempt is a reset that never runs, which is F7b returning
+    # spliced content under `done_reason: "stop"`.
+    %i[sync stream].each do |path|
+      it "abandons the #{path} path's own attempt, threaded from the Provider onto the retried request" do
+        stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(path == :sync ? ok_body : ok_ndjson)
+        retries = TracingRetryTap.new
+
+        response = unwaiting_provider(retries:).complete(request(stream: path == :stream))
+
+        expect(response.text).to eq("pong")
+        expect(retries.opened.size).to eq(1)
+        expect(retries.abandoned.size).to eq(1)
+      end
+    end
+
+    # The reentrancy contract T10 builds on, and the ONLY shape here that
+    # distinguishes a per-round-trip attempt from instance state: two round
+    # trips overlap through ONE Provider, each retries, and each must abandon
+    # its OWN attempt. `@live = Attempt.new(...)` held on the tap would have the
+    # first round trip's retry abandon whichever sibling opened last -- which
+    # for T10 means discarding a healthy stream's bytes and splicing the broken
+    # one anyway. {TracingRetryTap::Latch} is what makes the overlap
+    # deterministic; over the loopback socket T0 will open, the same shape needs
+    # no latch.
+    it "abandons only its own attempt when two round trips overlap in one provider" do
+      %w[alpha beta].each do |marker|
+        stub_chat.with { |r| JSON.parse(r.body)["model"] == marker }
+                 .to_raise(Faraday::ConnectionFailed).then
+                 .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                            body: JSON.generate("model" => marker, "done" => true, "done_reason" => "stop",
+                                                "message" => { "role" => "assistant", "content" => "ok-#{marker}" }))
+      end
+      retries = TracingRetryTap.new(arrivals: 2)
+      provider = described_class.new(retries:, config: zero_retry_config)
+
+      texts = %w[alpha beta].map do |marker|
+        Thread.new do
+          Thread.current[:lain_spec_round_trip] = marker
+          provider.complete(request(stream: false, model: marker)).text
+        end
+      end.map(&:value)
+
+      expect(texts.sort).to eq(%w[ok-alpha ok-beta])
+      expect(retries.abandoned.tally).to eq({ "alpha" => 1, "beta" => 1 })
     end
   end
 
@@ -594,10 +745,12 @@ RSpec.describe Lain::Provider::Ollama do
     Class.new do
       attr_reader :payload
 
-      def sync_post(payload, _headers = {})
+      # rubocop:disable Lint/UnusedMethodArgument -- see #transport_sync
+      def sync_post(payload, _headers = {}, attempt: nil)
         @payload = payload
         Struct.new(:body).new({ "message" => { "role" => "assistant", "content" => "ok" }, "done_reason" => "stop" })
       end
+      # rubocop:enable Lint/UnusedMethodArgument
     end.new
   end
 end

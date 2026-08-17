@@ -3,6 +3,7 @@
 require "json"
 
 require_relative "ollama/encoding"
+require_relative "ollama/retry_tap"
 require_relative "ollama/stream_assembler"
 require_relative "ollama/streamed_failure"
 require_relative "ollama/transport"
@@ -40,11 +41,26 @@ module Lain
     # silent divergence between providers is how a bench arm stops being
     # comparable:
     #
-    # deliberately absent: a `channel:` -- so retries are NOT journaled on this
-    # arm. faraday-retry still runs (HTTP::Configuration's vendored 3), but no
-    # {Telemetry::ProviderRetry} reaches the Journal, so a run's record shows
-    # one request where three attempts happened. Free/local spend is why that
-    # was tolerable; comparing latency across arms is why it will not stay so.
+    # NO LONGER absent: a `channel:`. This arm used to take none, so retries
+    # were not journaled: faraday-retry still ran (HTTP::Configuration's
+    # vendored 3) but no {Telemetry::ProviderRetry} reached the Journal, and a
+    # run's record showed one request where four attempts happened. The note
+    # here said free/local spend made that tolerable and that comparing latency
+    # across arms would not let it stay so. What ended it was neither: the
+    # 2026-08-17 QA run hit a stalled server and waited **over 400 seconds
+    # printing nothing at all** (F7a), which on the one arm whose honest shape
+    # is a model thinking for six minutes is unreadable. {RetryTap} now journals
+    # every attempt boundary, and -- the part T10 needs -- gives a retry
+    # somewhere to DISCARD what the attempt it replaced accumulated.
+    #
+    # What that does NOT fix, so nobody reads this as more than it is: the
+    # OPERATOR still sees nothing. {Frontend::Decorators.for} renders only
+    # {Telemetry::ToolOutput}, and `decorators.rb:18-26` names ProviderRetry as
+    # deliberately unrendered -- Journal material, not something to paint
+    # mid-stream. So a human watching F7a's hang still watches a blank screen;
+    # what changed is that the RECORD can now be read afterwards. Bounding the
+    # hang itself is T12's stall detection, and making it visible live would be
+    # a second decorator, which is nobody's card yet.
     #
     # deliberately absent: a timeout/retry envelope of its own -- unlike
     # {Anthropic#build_config}, this leaves the vendored ruby_llm defaults
@@ -83,12 +99,22 @@ module Lain
       # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
       #   {#build_config}, which sets only `ollama_api_base` -- no api key option, since Ollama
       #   is local.
+      # @param channel [Lain::Channel] where {RetryTap}'s retry events land. The
+      #   Null instance by default, so bench (which passes none) records exactly
+      #   what it recorded before this arm learned to journal retries.
+      # @param retries [RetryTap, nil] injected in specs; a real {RetryTap} over
+      #   `channel:` otherwise. It has to be injectable rather than patched on
+      #   afterwards: the Faraday middleware stack -- `retry_block` included --
+      #   is snapshotted when the transport is built, so a tap swapped in after
+      #   construction is never the one faraday-retry calls.
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
       #   http://localhost:11434); no api key -- Ollama is local.
-      def initialize(transport: nil, config: nil, sink: Sink::Null.new, api_base: nil)
+      def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
+                     sink: Sink::Null.new, api_base: nil)
         super()
-        @config = config || build_config(api_base:)
+        @retries = retries || RetryTap.new(channel:)
+        @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
       end
 
@@ -226,8 +252,13 @@ module Lain
         [model, "#{model}:latest"].include?(entry["model"])
       end
 
+      # Each body path opens its OWN attempt, which is what makes the retry hook
+      # reentrant across round trips sharing this Provider -- see {RetryTap}. A
+      # sync body is one parsed Hash, so an abandoned attempt leaves nothing
+      # behind and registers no rollback; the streaming path is where a discard
+      # will have work to do (T10/F7b).
       def sync_body(request)
-        @transport.sync_post(encode(request)).body || {}
+        @transport.sync_post(encode(request), attempt: @retries.open_attempt).body || {}
       end
 
       # A corrupt NDJSON line is a wire-protocol violation, so it raises -- never
@@ -237,7 +268,7 @@ module Lain
       # rescue one provider-error family, and the original stays on `#cause`.
       def stream_body(request)
         assembler = StreamAssembler.new
-        @transport.stream(encode(request)) { |chunk| assembler.feed(chunk) }
+        @transport.stream(encode(request), attempt: @retries.open_attempt) { |chunk| assembler.feed(chunk) }
         assembler.result
       rescue JSON::ParserError => e
         raise APIError, "corrupt NDJSON line in stream: #{e.message}"
@@ -247,6 +278,37 @@ module Lain
         config = Provider::HTTP::Configuration.new
         config.ollama_api_base = api_base unless api_base.nil?
         config
+      end
+
+      # Wires the tap onto whatever config the transport will be built from --
+      # an INJECTED one included. That is deliberate and it is what makes the
+      # seam testable at all: the retry ENVELOPE (interval, backoff, budget) is
+      # snapshotted into the Faraday middleware when the transport is built, so
+      # a caller who wants a different envelope has to hand one in BEFORE
+      # construction, and journaling must not evaporate because they did. The
+      # vendored 300s/3 envelope is otherwise left alone on purpose (see the
+      # class docstring).
+      #
+      # It COPIES rather than wiring in place, so the caller's object is never
+      # bound to this provider's tap. Wiring in place made a config single-use
+      # without saying so: two providers built from ONE config both journal to
+      # the FIRST one's channel, because `||=` finds the first tap's block
+      # already there. Nothing in production injects a config
+      # (`cli/backend.rb`, `oracle/secret_read.rb`), so that was a trap laid for
+      # specs -- and T10 injects configs. `dup` is the same shallow copy
+      # {Transport#probe_config} already takes of this object.
+      #
+      # `||=`, so a caller who set a callback keeps it. A spec asserting on its
+      # own `retry_block` is testing faraday-retry's loop, not this arm's
+      # telemetry, and silently replacing it would make that spec lie. Note the
+      # two callbacks are independent: keeping a caller's `retry_block` does NOT
+      # suppress the tap's `exhausted_retries_block`, so such a config gets a
+      # mixed pair rather than no tap at all.
+      def journaled_retries(config)
+        config.dup.tap do |wired|
+          wired.retry_block ||= @retries.retry_block
+          wired.exhausted_retries_block ||= @retries.exhausted_block
+        end
       end
 
       def build_response(body)

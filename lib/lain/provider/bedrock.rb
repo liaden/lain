@@ -15,9 +15,16 @@ module Lain
     # Mantle speaks the plain Anthropic Messages API over SSE, so the streaming
     # parse is Anthropic-shaped: this reuses {Anthropic::StreamAssembler} and
     # {Anthropic::RetryTap} by explicit reference rather than promoting them to a
-    # shared namespace (a third such arm is what would earn that move, not the
-    # second). What it does NOT share is {Anthropic::Transport}, which is bound
-    # by inheritance to the direct-Anthropic backend; see {Transport}.
+    # shared namespace. The threshold that line named -- "a third such arm is
+    # what would earn that move, not the second" -- HAS NOW BEEN CROSSED:
+    # {Provider::Ollama::RetryTap} (T2/F7) is a third retry tap and is largely
+    # this one's shape, differing only in having no spool to rotate. The
+    # extraction is therefore OWED, and is deliberately deferred rather than
+    # forgotten: T10 and T11 both build on retry and assembler behaviour, and
+    # relocating the class while they are in flight buys a merge conflict on the
+    # critical path for no behaviour change. What it does NOT share is
+    # {Anthropic::Transport}, which is bound by inheritance to the
+    # direct-Anthropic backend; see {Transport}.
     #
     # == What Bedrock deliberately does not have
     #

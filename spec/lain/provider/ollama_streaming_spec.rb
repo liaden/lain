@@ -58,9 +58,19 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   end
 
   # A transport double that replays scripted byte chunks through the on-chunk block.
+  #
+  # `attempt:` is DECLARED so a Provider that stopped threading it -- or threaded
+  # it under a mistyped name -- fails loudly here. Ruby 3 hands a keyword to a
+  # method accepting none back as a positional Hash, so an undeclared double
+  # silently takes T2's `attempt:` as its HEADERS. See `ollama_spec.rb`'s
+  # #transport_sync for the full note, including why the cop's suggested
+  # `_attempt:` correction is the one thing that must not be applied.
+  # rubocop:disable Lint/UnusedBlockArgument
   def stream_transport(chunks)
     Class.new do
-      define_method(:stream) { |_payload, _headers = {}, &block| chunks.each { |chunk| block.call(chunk) } }
+      define_method(:stream) do |_payload, _headers = {}, attempt: nil, &block|
+        chunks.each { |chunk| block.call(chunk) }
+      end
     end.new
   end
 
@@ -71,7 +81,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     Class.new do
       attr_reader :payload
 
-      define_method(:stream) do |payload, _headers = {}, &block|
+      define_method(:stream) do |payload, _headers = {}, attempt: nil, &block|
         @payload = payload
         chunks.each { |chunk| block.call(chunk) }
       end
@@ -81,9 +91,10 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # A transport double returning a scripted single body (the non-streaming path).
   def transport_sync(body)
     Class.new do
-      define_method(:sync_post) { |_payload, _headers = {}| Struct.new(:body).new(body) }
+      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil| Struct.new(:body).new(body) }
     end.new
   end
+  # rubocop:enable Lint/UnusedBlockArgument
 
   describe Lain::Provider::Ollama::StreamAssembler do
     def assemble(chunks)
