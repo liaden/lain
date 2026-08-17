@@ -568,24 +568,20 @@ RSpec.describe Lain::Agent::ToolRunner do
         expect(observing("x" * 5000, is_error: true)).to be_empty
       end
 
-      # Strictly OVER: the threshold names the size a result must exceed.
-      it "declines content of exactly the threshold and fires at one byte more" do
-        expect(observing("x" * Lain::Effect::Handler::Summarizing::DEFAULT_THRESHOLD_BYTES)).to be_empty
-        expect(observing("x" * (Lain::Effect::Handler::Summarizing::DEFAULT_THRESHOLD_BYTES + 1))).not_to be_empty
-      end
-
-      it "declines content well below the threshold" do
-        expect(observing("small")).to be_empty
+      # T4: this seam holds no SIZE policy. It once declined below 4096 bytes,
+      # which gated the project's own declared (free, token-less) summarizers
+      # behind the MODEL tier's cost threshold and made them dead for every
+      # ordinary tool result. The byte rule still exists, one layer down at
+      # {Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}, where the tier
+      # that pays for a fallthrough can apply it to the fallthrough alone.
+      it "fires a small result, so the free tier is consulted for it" do
+        expect(observing("small")).to eq([fired_for("small")])
       end
 
       # Array content is structured blocks, not free text: there is nothing for
       # a prose summarizer to compress.
       it "declines structured block (Array) content" do
         expect(observing([{ "type" => "text", "text" => "x" * 5000 }])).to be_empty
-      end
-
-      it "honours an injected threshold_bytes" do
-        expect(observing("small", threshold_bytes: 2)).to eq([fired_for("small")])
       end
     end
   end

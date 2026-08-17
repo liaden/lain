@@ -71,7 +71,11 @@ lain --provider ollama --summarizer-provider anthropic \
 ```
 
 Ahead of both sits a third tier that takes no flag: the deterministic summarizers you declare in
-`.lain/summarizers.rb`, consulted before any model call. See
+`.lain/summarizers.rb`, consulted before any model call — for **every** tool result, not just the
+large ones, since a declaration you wrote costs no tokens and no latency and so has no threshold to
+clear. Two consequences worth knowing before you write one: a declaration that *raises* falls
+through to the flagged tiers above and costs you nothing, but a predicate that never *returns*
+blocks the turn that observed the result, with no timeout. See
 [Compaction and summarizer tiers](../README.md#compaction-and-summarizer-tiers).
 
 #### Collapse strategies

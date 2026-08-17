@@ -74,17 +74,25 @@ module Lain
         @fired << digest
         task.async(transient: true) do
           @held[digest] = @oracle.ask({ @slot => text }).await
-        rescue ScriptError, StandardError
+        rescue ScriptError, StandardError, SystemStackError
           # The task boundary is the containment: a failed fire holds nothing and
           # journals nothing. Async::Stop is not a StandardError, so a stop still
           # flows past this rescue and cancels the task quietly rather than raising
           # out at the reactor.
           #
-          # ScriptError is named too, because NotImplementedError is one and NOT a
-          # StandardError: {Summarizer::Base} raises exactly that for a declaration
-          # a user has not finished writing, and it reaches here through the tier.
-          # Containment that covered only StandardError would let a half-written
-          # `.lain/summarizers.rb` kill the turn that fired the summary.
+          # The two families beside StandardError are both a half-written
+          # `.lain/summarizers.rb` reaching here through the tier -- the state
+          # the DSL is in while a user is authoring it, and since every tool
+          # result is offered to the catalog, a state reached often.
+          # NotImplementedError is a ScriptError, which {Summarizer::Base}
+          # raises for a method not written yet; a predicate that calls itself
+          # raises SystemStackError, which descends straight from Exception.
+          # Containment that covered only StandardError would let either kill
+          # the turn that fired the summary.
+          #
+          # A predicate that never RETURNS is the mode no rescue reaches: the
+          # spawn runs eagerly to its first yield point and a CPU loop has none,
+          # so it blocks the observing turn. See {Summarizer}'s docs.
         end
       end
 

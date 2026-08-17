@@ -177,16 +177,26 @@ A `Summarizer::Result` carries `tool_name` and `text`, because some kinds are di
 tool and some only by content (a coverage report and a build log are both `bash`). Declaration order
 decides between two suitable summarizers — the first declared wins, which is a lever you can see in
 your own file. A typo'd verb, a duplicate name, and a bodyless declaration are each refused by name
-at load. A summarizer that raises falls through to tier 1 rather than losing the summary, and one
-returning blank is refused loudly. An absent file is an empty catalog, never an error.
+at load. A summarizer that raises falls through to tier 1 rather than losing the summary — including
+the half-written states, a `NotImplementedError` from a method you have not got to yet or a
+`SystemStackError` from a predicate that calls itself — and one returning blank is refused loudly. An
+absent file is an empty catalog, never an error.
+
+The one failure nothing contains is a predicate that never **returns**: your `suitable?` runs on the
+fiber that observed the tool result, so a loop there blocks that turn, with no timeout, once per tool
+result. Keep predicates finite and cheap — they are consulted for *every* result, not just the large
+ones. `Lain::Summarizer`'s own docstring has the mechanism.
 
 `/meta summarizer <prompt>` will draft one for you into `.lain/summarizers/` for review. Nothing
 loads that directory — copy the declaration into `.lain/summarizers.rb` yourself once you have read
 it.
 
-**Tier 1, eager and model-backed.** When a large tool result lands and no tier-0 summarizer claimed
-it, `Oracle::Eager` fires a summary on its own `Async` task and holds the answer against the
-result's content address. It fires once per large result, off the turn's critical path. The
+**Tier 1, eager and model-backed.** When a tool result lands and no tier-0 summarizer claimed it,
+`Oracle::Eager` fires a summary on its own `Async` task and holds the answer against the result's
+content address. It fires once per distinct result, off the turn's critical path — but it only
+**asks a model** above 4 KiB, because that gate is a cost policy and tier 0 has no cost to gate. A
+smaller unclaimed result is simply left unsummarized, and renders as the same attested elision a
+summary still in flight does. The
 summarizer is a **tier chosen independently of the chat**: `--summarizer-provider`,
 `--summarizer-model`, `--summarizer-max-tokens`, defaulting to a local Ollama `qwen3:4b`, because
 paying frontier-model tokens to compress a tool result usually costs more than resending the result.

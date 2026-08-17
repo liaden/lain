@@ -59,6 +59,17 @@ module RoutedSummarizerSpecSupport
         def suitable?(result) = true
       end
     RUBY
+    # Unbounded recursion in a predicate. SystemStackError descends straight
+    # from Exception -- it is neither a ScriptError nor a StandardError -- and a
+    # half-written `suitable?` that calls itself is the same authoring state the
+    # NotImplementedError cases cover. Every tool result runs these predicates
+    # since T4, so the containment has to name it.
+    recursive_suitable: <<~RUBY,
+      summarizer "recursive" do
+        def suitable?(result) = suitable?(result)
+        def compact(result) = "never reached"
+      end
+    RUBY
     # The same hole one method earlier: `suitable?` itself is the unwritten one,
     # and {Catalog#for} is what calls it.
     half_written_suitable: <<~RUBY,
@@ -104,9 +115,14 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
 
   let(:definition) { Lain::Oracle::Summarize.definition }
   let(:tier) { RoutedSummarizerSpecSupport::RecordingTier.new(definition) }
-  let(:coverage_text) { "Coverage report\n#{"line covered\n" * 200}" }
+  # Both fixtures are over {described_class::MODEL_THRESHOLD_BYTES}, so a
+  # catalog MISS is still worth a model call: the examples that follow are
+  # about ROUTING, and the cost gate has its own group at the foot of this file
+  # (where a below-threshold miss is asserted to spend nothing at all).
+  let(:coverage_text) { "Coverage report\n#{"line covered\n" * 400}" }
   let(:coverage) { Lain::Summarizer::Result.new(tool_name: "bash", text: coverage_text) }
-  let(:unrelated) { Lain::Summarizer::Result.new(tool_name: "read_file", text: "module Lain; end") }
+  let(:unrelated_text) { "module Lain; end\n" * 300 }
+  let(:unrelated) { Lain::Summarizer::Result.new(tool_name: "read_file", text: unrelated_text) }
 
   def catalog(kind)
     source = RoutedSummarizerSpecSupport::DECLARATIONS.fetch(kind)
@@ -136,7 +152,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
   it "hands the model tier the source TEXT, never the Result wrapper" do
     ask(routed, unrelated)
 
-    expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => "module Lain; end" }])
+    expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => unrelated_text }])
   end
 
   it "falls through when a suitable summarizer raises on compact, rather than losing the summary" do
@@ -163,6 +179,16 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
   # TURN is not.
   it "falls through when a declaration has not implemented compact yet" do
     oracle = described_class.new(inner: tier, catalog: catalog(:half_written))
+
+    expect(ask(oracle, coverage).summary).to eq("the model's summary")
+    expect(tier).to be_called
+  end
+
+  # SystemStackError is neither a ScriptError nor a StandardError, so the rescue
+  # that contains every other broken declaration misses it -- and T4 widened the
+  # exposure from "results over 4096 bytes" to every tool result.
+  it "falls through when a declaration recurses without bound" do
+    oracle = described_class.new(inner: tier, catalog: catalog(:recursive_suitable))
 
     expect(ask(oracle, coverage).summary).to eq("the model's summary")
     expect(tier).to be_called
@@ -197,7 +223,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
 
   it "routes on the tool name: identical text from another tool falls through" do
     oracle = described_class.new(inner: tier, catalog: catalog(:by_tool))
-    text = "the very same bytes"
+    text = "the very same bytes\n" * 250
 
     from_bash = ask(oracle, Lain::Summarizer::Result.new(tool_name: "bash", text:))
     from_read = ask(oracle, Lain::Summarizer::Result.new(tool_name: "read_file", text:))
@@ -213,6 +239,80 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
   it "sends a bare String source straight to the model tier" do
     expect(ask(routed, "a bare tool result").summary).to eq("the model's summary")
     expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => "a bare tool result" }])
+  end
+
+  # T4: the size gate is a COST policy, and this is the object that knows which
+  # tier pays. The catalog above it is free -- no tokens, no latency, no
+  # network -- so it is consulted for EVERY result; only the fallthrough to the
+  # model tier has to clear the threshold. Gating both together is what made a
+  # project's own declarations dead for every ordinary tool result.
+  describe "the model tier's cost threshold" do
+    let(:threshold) { described_class::MODEL_THRESHOLD_BYTES }
+    let(:oracle) { described_class.new(inner: tier, catalog: catalog(:by_tool)) }
+
+    def routed_result(text) = Lain::Summarizer::Result.new(tool_name: "read_file", text:)
+
+    it "consults the catalog for a routed result far below the threshold" do
+      small = Lain::Summarizer::Result.new(tool_name: "bash", text: "ok\n")
+
+      expect(ask(oracle, small).summary).to eq("a bash result")
+      expect(tier).not_to be_called
+    end
+
+    it "spends no model call on an unhandled routed result below the threshold" do
+      expect(ask(oracle, routed_result("x" * (threshold - 1)))).to be_nil
+      expect(tier).not_to be_called
+    end
+
+    # Strictly OVER, the rule the byte gate always had.
+    it "declines at exactly the threshold and asks the model one byte later" do
+      at = described_class.new(inner: tier, catalog: catalog(:by_tool))
+      over = described_class.new(inner: RoutedSummarizerSpecSupport::RecordingTier.new(definition),
+                                 catalog: catalog(:by_tool))
+
+      expect(ask(at, routed_result("x" * threshold))).to be_nil
+      expect(ask(over, routed_result("x" * (threshold + 1))).summary).to eq("the model's summary")
+      expect(tier).not_to be_called
+    end
+
+    # A length check would let 1366 multibyte characters -- 4098 bytes -- read
+    # as under the gate.
+    it "measures the threshold in bytes, not characters" do
+      multibyte = routed_result("あ" * ((threshold / 3) + 1))
+
+      expect(ask(oracle, multibyte).summary).to eq("the model's summary")
+    end
+
+    # An injected policy, so a bench arm can move the gate without editing the
+    # class that states the default.
+    it "honours an injected threshold" do
+      lowered = described_class.new(inner: tier, catalog: catalog(:by_tool), threshold_bytes: 2)
+
+      expect(ask(lowered, routed_result("xxx")).summary).to eq("the model's summary")
+    end
+
+    # The gate guards results fired UNBIDDEN, one per tool call, into
+    # {Lain::Oracle::Eager}, whose `#held` already means "no summary" by nil. A
+    # bare-text caller is a different contract: it reads `.summary` off the
+    # answer, where nil is a NoMethodError rather than a graceful miss. Its
+    # question must also stay byte-identical to what it was before this tier
+    # existed, since a journal replay keys on it.
+    it "never gates a bare String source, however small" do
+      expect(ask(routed, "tiny").summary).to eq("the model's summary")
+      expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => "tiny" }])
+    end
+
+    # A source that ROUTES but carries no text has no bytes to weigh, and the
+    # gate must not be what decides its fate: `bytesize` on it would die as a
+    # bare NoMethodError from inside this object, where passing it on reaches
+    # {Lain::Oracle::Definition#render} and its named slot refusal. Latent --
+    # only {Lain::Summarizer::Result} satisfies the routing duck today.
+    it "passes a routed source carrying no text to the model tier rather than dying in the gate" do
+      textless = Struct.new(:tool_name).new("bash")
+
+      expect { ask(routed, textless) }.not_to raise_error
+      expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => textless }])
+    end
   end
 
   describe "journalling, with the Journaling wrap INSIDE this one" do

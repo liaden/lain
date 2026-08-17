@@ -20,20 +20,23 @@ module Lain
       # The summary is keyed by the result's SOURCE DIGEST -- the content address
       # of the bytes the tool returned -- so identical output fires exactly once
       # and the key can never go stale. Only a SUCCESSFUL, String-content result
-      # over the byte threshold is summarized: an error result is not worth
-      # compressing, and block (Array) content is structured, not free text.
+      # is summarized: an error result is not worth compressing, and block
+      # (Array) content is structured, not free text.
       #
       # The result is returned UNCHANGED. A summary is a side value a later seam
       # reads via {Oracle::Eager#held}, never a rewrite of what the tool returned.
       class Summarizing < Handler
-        # Tool results below this many bytes are not worth an oracle call. A
-        # starting policy, injectable; the eager tier is local-only, so a low
-        # threshold spends local compute, not tokens.
-        DEFAULT_THRESHOLD_BYTES = 4096
-
-        # The same policy at the OTHER mount point: the duck
-        # {Agent::ToolRunner}'s post-dispatch observation seam takes, holding
-        # the rule this decorator also asks for so the two cannot drift.
+        # The duck {Agent::ToolRunner}'s post-dispatch observation seam takes,
+        # holding the rule this decorator also asks for so the two cannot drift.
+        #
+        # Neither mount holds a SIZE policy any more. This one once refused to
+        # fire below 4096 bytes, which reads as "a small result is not worth an
+        # oracle call" -- true of the MODEL tier and false of the free one,
+        # since a declared summarizer costs no tokens and no latency. Gating
+        # here made a project's own `.lain/summarizers.rb` dead for every
+        # ordinary tool result, so every result is offered to the oracle now and
+        # the cost gate sits with the object that knows which tier pays,
+        # {Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}.
         #
         # **This is the mount production should use, and exactly one of the two
         # may be mounted against a given {Oracle::Eager}.** The decorator fires
@@ -48,9 +51,8 @@ module Lain
           # that sharing can be checked rather than assumed.
           attr_reader :eager
 
-          def initialize(eager:, threshold_bytes: DEFAULT_THRESHOLD_BYTES)
+          def initialize(eager:)
             @eager = eager
-            @threshold_bytes = threshold_bytes
           end
 
           # The seam's message: one completed tool_result wire block, plus the
@@ -67,28 +69,27 @@ module Lain
             summarize(block["content"], tool_name) unless block["is_error"]
           end
 
-          # THE rule, in one place for both mounts: String content over the
-          # threshold earns a summary, keyed by its content address. Block
-          # (Array) content is structured, not free text, so there is nothing
-          # for a prose summarizer to compress.
+          # THE rule, in one place for both mounts: String content earns a
+          # consult, keyed by its content address. Block (Array) content is
+          # structured, not free text, so there is nothing for a prose
+          # summarizer to compress.
           #
           # The KEY stays the digest of the tool's own bytes -- that is what
           # {Compaction::SummarySnapshot} looks a summary up by -- while the
           # fired VALUE is a {Summarizer::Result}, which carries the tool name
           # {Oracle::RoutedSummarizer} routes suitability on.
           def summarize(content, tool_name)
-            return unless content.is_a?(String) && content.bytesize > @threshold_bytes
+            return unless content.is_a?(String)
 
             @eager.fire(Canonical.digest(content), Summarizer::Result.new(tool_name:, text: content))
           end
         end
 
         # @param eager [Oracle::Eager] the summary store this fires into
-        # @param threshold_bytes [Integer] the size a result must exceed to fire
         # @param inner [Effect::Handler, nil] performs the effect this only observes
-        def initialize(eager:, threshold_bytes: DEFAULT_THRESHOLD_BYTES, inner: nil)
+        def initialize(eager:, inner: nil)
           super(inner:)
-          @observer = Observer.new(eager:, threshold_bytes:)
+          @observer = Observer.new(eager:)
         end
 
         # Perform through the chain, then fire a summary of the outcome if it earns

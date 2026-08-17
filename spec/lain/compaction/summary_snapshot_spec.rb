@@ -29,8 +29,8 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
   let(:definition) do
     Lain::Oracle::Definition.new(template: %(Summarize:\n<%= render("source") %>), schema:, tier: :heuristic)
   end
-  # A tool result big enough for Handler::Summarizing to bother with
-  # (DEFAULT_THRESHOLD_BYTES is 4096).
+  # A tool result big enough to be worth even a MODEL summary
+  # (Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES is 4096).
   let(:source) { "the bytes a tool returned. " * 400 }
   let(:source_digest) { Lain::Canonical.digest(source) }
 

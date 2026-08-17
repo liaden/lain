@@ -213,7 +213,7 @@ RSpec.describe Lain::Oracle::Eager do
 
     it "returns the tool result unchanged while firing the summary" do
       Sync do
-        handler = described_class.new(eager:, threshold_bytes: 8, inner: with_inner(big))
+        handler = described_class.new(eager:, inner: with_inner(big))
         result = handler.call(tool_call, nil)
 
         expect(result).to be_ok
@@ -225,7 +225,7 @@ RSpec.describe Lain::Oracle::Eager do
 
     it "fires once for repeated result content, keyed by its source digest" do
       Sync do
-        handler = described_class.new(eager:, threshold_bytes: 8, inner: with_inner(big))
+        handler = described_class.new(eager:, inner: with_inner(big))
         handler.call(tool_call(id: "tu_1"), nil)
         handler.call(tool_call(id: "tu_2"), nil) # same content, different call id
 
@@ -237,7 +237,7 @@ RSpec.describe Lain::Oracle::Eager do
       # The 5-0.2 invariant: the handler chain stays runnable as plain synchronous
       # Ruby. With no ambient reactor the fire degrades to a miss; the dispatch
       # still returns the tool result untouched.
-      handler = described_class.new(eager:, threshold_bytes: 8, inner: with_inner(big))
+      handler = described_class.new(eager:, inner: with_inner(big))
       result = handler.call(tool_call, nil)
 
       expect(result).to be_ok
@@ -246,41 +246,103 @@ RSpec.describe Lain::Oracle::Eager do
       expect(eager.held(digest)).to be_nil
     end
 
-    it "leaves a below-threshold result alone" do
+    # T4: the decorator holds no size policy any more, so a SMALL result is
+    # offered to the oracle instead of being skipped -- that offer is the only
+    # way a declared, free summarizer ever sees an ordinary tool result. The
+    # byte rule itself did not disappear; it moved down to
+    # {Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}, where the
+    # at-threshold and multibyte cases are pinned, because that is the object
+    # that knows which tier pays.
+    it "fires a small result too, so the free tier is consulted for it" do
       Sync do
-        handler = described_class.new(eager:, threshold_bytes: 1024, inner: with_inner(small))
+        handler = described_class.new(eager:, inner: with_inner(small))
         handler.call(tool_call, nil)
 
-        expect(pending_oracle.calls).to eq(0)
+        expect(pending_oracle.calls).to eq(1)
       end
     end
 
-    it "keys firing on the byte threshold: at-threshold never fires, one byte over fires" do
-      Sync do
-        at = Lain::Oracle::Eager.new(oracle: (at_oracle = pending_oracle_class.new))
-        over = Lain::Oracle::Eager.new(oracle: (over_oracle = pending_oracle_class.new))
-        described_class.new(eager: at, threshold_bytes: 10, inner: with_inner("x" * 10)).call(tool_call, nil)
-        described_class.new(eager: over, threshold_bytes: 10, inner: with_inner("x" * 11)).call(tool_call, nil)
+    # WHICH tier the fire lands on, through the real routing tier over a real
+    # declared catalog -- no double between the decorator and the decision.
+    # That gap is where the dead free tier hid: every unit was individually
+    # right and the composition consulted the catalog for nothing an ordinary
+    # session produced.
+    describe "the tier a fired result actually reaches" do
+      let(:model_tier) { model_tier_class.new(Lain::Oracle::Summarize.definition(tier: :heuristic)) }
 
-        expect(at_oracle.calls).to eq(0)
-        expect(over_oracle.calls).to eq(1)
+      # The model-backed tier, reduced to what {RoutedSummarizer} asks of it,
+      # plus a count of the calls these examples exist to prove did not happen.
+      let(:model_tier_class) do
+        Class.new do
+          attr_reader :calls
+
+          def initialize(definition)
+            @definition = definition
+            @calls = 0
+          end
+
+          def ask(_inputs)
+            @calls += 1
+            @definition.answer(summary: "the model's summary")
+          end
+
+          def model = "test-summarizer-model"
+          def usage = {}
+        end
+      end
+
+      def declaration
+        <<~RUBY
+          summarizer "bash-only" do
+            def suitable?(result) = result.tool_name == "bash"
+            def compact(result) = "a bash result"
+          end
+        RUBY
+      end
+
+      def routed
+        Lain::Oracle::RoutedSummarizer.new(
+          inner: model_tier,
+          catalog: Lain::Summarizer::Catalog.new(Lain::Summarizer::Builder.build(declaration, ".lain/summarizers.rb"))
+        )
+      end
+
+      def fire(content, tool_name)
+        eager = Lain::Oracle::Eager.new(oracle: routed)
+        described_class.new(eager:, inner: with_inner(content)).call(tool_call(name: tool_name), nil)
+        eager.held(Lain::Canonical.digest(content))
+      end
+
+      it "answers a small declared result from the free tier, with no model call" do
+        Sync do
+          expect(fire(small, "bash").summary).to eq("a bash result")
+          expect(model_tier.calls).to eq(0)
+        end
+      end
+
+      it "spends no model call on a small result no declaration handles" do
+        Sync do
+          expect(fire(small, "read_file")).to be_nil
+          expect(model_tier.calls).to eq(0)
+        end
+      end
+
+      # The half of the policy that survives: over the cost threshold an
+      # unhandled result is still worth asking a model about.
+      it "still spends a model call on an unhandled result over the cost threshold" do
+        Sync do
+          bulky = "x" * (Lain::Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES + 1)
+
+          expect(fire(bulky, "read_file").summary).to eq("the model's summary")
+          expect(model_tier.calls).to eq(1)
+        end
       end
     end
 
-    it "keys the threshold on bytesize, not character length (multibyte)" do
-      Sync do
-        # 4 * "あ" == 12 bytes but 4 characters; a length check would miss it.
-        multibyte = Lain::Oracle::Eager.new(oracle: (o = pending_oracle_class.new))
-        described_class.new(eager: multibyte, threshold_bytes: 10, inner: with_inner("あ" * 4)).call(tool_call, nil)
-
-        expect(o.calls).to eq(1)
-      end
-    end
-
-    it "does not summarize (or crash on) structured Array content over the byte count" do
+    it "does not summarize (or crash on) structured Array content, however large" do
       Sync do
         blocks = [{ "type" => "text", "text" => "x" * 5000 }]
-        handler = described_class.new(eager:, threshold_bytes: 10, inner: with_inner(blocks))
+        handler = described_class.new(eager:, inner: with_inner(blocks))
         result = handler.call(tool_call, nil)
 
         expect(result.content).to eq(blocks)
@@ -291,7 +353,7 @@ RSpec.describe Lain::Oracle::Eager do
     it "does not summarize a failed tool result" do
       Sync do
         errored = Lain::Effect::Handler::Mock.new(default: Lain::Tool::Result.error(big))
-        handler = described_class.new(eager:, threshold_bytes: 8, inner: errored)
+        handler = described_class.new(eager:, inner: errored)
         handler.call(tool_call, nil)
 
         expect(pending_oracle.calls).to eq(0)
@@ -316,6 +378,26 @@ RSpec.describe Lain::Oracle::Eager do
       end
     end
 
+    # SystemStackError descends straight from Exception, so it is neither of the
+    # two the rescue above names. A user `suitable?` that recurses without bound
+    # raises it, and since T4 every tool result runs those predicates -- so the
+    # task boundary has to cover this one too, or an ordinary `bash` result can
+    # kill the turn that produced it.
+    it "contains a fire that overflows the stack, holding nothing and killing no turn" do
+      recursing = Class.new do
+        def ask(_inputs) = spin
+        def spin = spin
+        def model = nil
+        def usage = {}
+      end.new
+
+      Sync do
+        eager = Lain::Oracle::Eager.new(oracle: recursing)
+        expect { eager.fire(digest, big).wait }.not_to raise_error
+        expect(eager.held(digest)).to be_nil
+      end
+    end
+
     it "does not break the dispatch when its fire will fail" do
       raising = Class.new do
         def ask(_inputs) = raise "oracle unavailable"
@@ -324,8 +406,7 @@ RSpec.describe Lain::Oracle::Eager do
       end.new
 
       Sync do
-        handler = described_class.new(eager: Lain::Oracle::Eager.new(oracle: raising),
-                                      threshold_bytes: 8, inner: with_inner(big))
+        handler = described_class.new(eager: Lain::Oracle::Eager.new(oracle: raising), inner: with_inner(big))
         result = handler.call(tool_call, nil)
 
         expect(result.content).to eq(big)

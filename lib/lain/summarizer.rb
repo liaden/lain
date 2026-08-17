@@ -7,6 +7,28 @@ module Lain
   # result and returns shorter text -- no provider, no model, no IO -- so it
   # costs neither tokens nor latency, which is exactly why it is tried before
   # any model-backed summarization.
+  #
+  # == One uncontained failure mode: a predicate that does not TERMINATE
+  #
+  # A declaration that RAISES is contained twice over -- {Oracle::RoutedSummarizer}
+  # rescues the scan and the compaction, and {Oracle::Eager}'s task boundary
+  # rescues the fire -- and both name `ScriptError` and `SystemStackError`
+  # beside `StandardError`, because a half-written file is the state this DSL
+  # spends its authoring life in.
+  #
+  # A declaration that SPINS is not contained by anything, and cannot be by a
+  # rescue. {Oracle::Eager#fire} spawns onto an async task, which runs eagerly
+  # until its first yield point; a CPU loop has none, so `suitable?` runs to
+  # completion INSIDE the observing call. Measured: an `observe` of a 17-byte
+  # result returned after 0.637s against a predicate that spun, and
+  # {Agent::ToolRunner#observe_all} pays that per block. There is no timeout on
+  # the path.
+  #
+  # It is worth stating plainly because the exposure WIDENED: the catalog is
+  # consulted for every tool result now, where it was once reached only above
+  # {Oracle::RoutedSummarizer::MODEL_THRESHOLD_BYTES}. Bounding it means moving
+  # the call off the observing fiber (or onto a deadline), which is a change to
+  # {Oracle::Eager}, not to a rescue list -- and is not this card's.
   module Summarizer
     # The loaded summarizers, in declaration order. {DslCatalog} owns everything
     # a `.lain/*.rb` loader shares -- the exist-guard, the empty-is-not-an-error
