@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "stringio"
 require "tmpdir"
 require "timeout"
 
@@ -883,7 +884,12 @@ RSpec.describe Lain::Tools::Subagent do
   # builds -- an observer nobody can wire from the exe is silent record loss
   # one level up.
   describe "the injectable observer" do
-    it "sees the :spawn and :message events a spawn writes, with @log still receiving them" do
+    # T2 widened what this seam carries: the child's own turns ride it too,
+    # between the :spawn and the :message, because the session record cannot
+    # reach them any other way -- a Timeline walk sees ONE chain, and the
+    # scribe's is the parent's. `@log` is unmoved: it is {Lineage}'s
+    # append-only read side, and a child turn is not lineage.
+    it "sees the :spawn, the child's own turns, and the :message, with @log still receiving the two" do
       seen = []
       log = Lain::Tools::Subagent::Log.new
       tool = described_class.new(
@@ -895,7 +901,7 @@ RSpec.describe Lain::Tools::Subagent do
       result = tool.call({ "prompt" => "go" }, invocation)
 
       expect(result).to be_ok
-      expect(seen).to eq([tool.last_spawn, tool.last_message])
+      expect(seen).to eq([tool.last_spawn, *tool.last_child.ancestors.to_a.reverse, tool.last_message])
       expect(log.to_a).to eq([tool.last_spawn, tool.last_message])
     end
 
@@ -1012,6 +1018,57 @@ RSpec.describe Lain::Tools::Subagent do
         end
       end
       [dispatched, item]
+    end
+
+    # T2: the session such a run RECORDS. A child's question cites the head the
+    # CHILD stood at when it asked, and the lineage `"final"` edge cites the
+    # child's last turn -- neither of which any `turn` record carried, because
+    # the scribe walks one chain and it is the parent's. Rebuilding such a file
+    # raised Store::MissingObject, which is not even the Corrupt the resume path
+    # knows how to refuse, so every session with a subagent question in it was
+    # unforkable.
+    describe "the session record it leaves behind" do
+      let(:journal_io) { StringIO.new }
+      let(:journal) { Lain::Journal.new(io: journal_io) }
+      let(:session_context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+      let(:scribe) do
+        Lain::SessionRecord::Scribe.new(journal:, context: session_context, toolset: union,
+                                        workspace: Lain::Workspace.empty)
+      end
+      let(:observer) { ->(event) { scribe.call(event) } }
+      # The chronicle's own wiring: ONE scribe observes the whole funnel, the
+      # askers' Q/A included.
+      let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer:) }
+
+      def recorded_tool
+        described_class.new(
+          seam: Lain::Tools::Subagent::Seam.new(provider: mock(asks, text_response("done")),
+                                                context_factory: -> { child_context }, parent:, askers:, observer:),
+          toolset: union, policy: spawn_policy(only: []), max_depth: 1
+        )
+      end
+
+      def recorded_session
+        answered(recorded_tool)
+        scribe.catch_up(parent)
+        scribe.close(reason: :exit)
+        Lain::Bench::Session.load(journal_io.string.each_line)
+      end
+
+      it "reloads, and the fork point checks out, with no dangling causal parent" do
+        recording = nil
+
+        expect { recording = recorded_session }.not_to raise_error
+        expect(recording.timeline.checkout(recording.timeline.head_digest).head_digest)
+          .to eq(parent.head_digest)
+      end
+
+      it "carries every digest its message records cite" do
+        recording = recorded_session
+        cited = recording.messages.flat_map(&:causal_parents).uniq
+
+        expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+      end
     end
 
     it "offers ask_human to a spawned child, though the union it attenuates from holds none" do

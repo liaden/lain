@@ -18,6 +18,13 @@ module Lain
     #   them. They arrive here by observation instead, one at a time, as
     #   {Telemetry::Message} records -- a shape the turn-chain loader skips, since
     #   a :message can never survive {Timeline#commit}'s digest re-derivation.
+    #   A SPAWNED chain's turns come through this same door, for the same reason
+    #   (this record's Timeline walk cannot reach another chain) and land as
+    #   {Telemetry::ChildTurn}; the turn-chain loader skips those too. Nothing
+    #   about the render chain moves: {#catch_up} still writes exactly the turns
+    #   above the append point, and only those are `turn` records. And like
+    #   every turn record they stay on the journal rather than the tee -- see
+    #   `message_journal:` on {#initialize}.
     #
     # A graceful {#close} anchors the final head; {#interrupted} marks a run that
     # a stop beat. Neither is written on a hard kill, which is precisely what
@@ -42,8 +49,9 @@ module Lain
       # allows mirrors a record that has already landed.
       #
       # Membership is a linear scan. That is deliberate -- ordered IS the point
-      # here, and the only caller ({Scribe#written_target!}) runs once per
-      # human-driven rewind, not per turn.
+      # here. {Scribe#written_target!} asks once per human-driven rewind;
+      # {Scribe#recorded_turn?} asks once per observed off-chain turn, which is
+      # a spawn's transcript rather than a per-turn cost on the render path.
       class WrittenChain
         def initialize(digests = [])
           @digests = digests.dup
@@ -131,24 +139,29 @@ module Lain
       #   holds. ROUTED, not duplicated: the tee's journal leg IS `journal`,
       #   so the file still gets each record exactly once. Defaults to the
       #   journal itself; turn records never route -- they are record data,
-      #   not live-view telemetry.
+      #   not live-view telemetry -- and that holds for the {Telemetry::ChildTurn}
+      #   records {#call} promotes as much as for {#catch_up}'s own.
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
                      message_journal: nil)
         @journal = journal
         @message_journal = message_journal || journal
         @written = WrittenChain.new(written)
+        # The digests {#child_turn} has already recorded. A Set, and membership
+        # is the only question asked of it -- unlike {WrittenChain}, where the
+        # ORDER is the claim.
+        @spawned = Set.new
         @journal << SessionRecord.header(context:, toolset:, workspace:, head: nil, resumed_from:)
       end
 
-      # The {Event::ChainWriter} observer duck: journal a :message/:spawn event
-      # as its own {Telemetry::Message} record. A raise here propagates back
-      # through the ChainWriter AFTER the Store write has landed (the seam's
-      # pinned contract), so a scribe failure is loud, never silent record loss.
+      # The {Event::ChainWriter} observer duck: journal an off-render-chain
+      # event as its own flat record. A raise here propagates back through the
+      # ChainWriter AFTER the Store write has landed (the seam's pinned
+      # contract), so a scribe failure is loud, never silent record loss.
       #
       # @param event [Lain::Event]
       # @return [self]
       def call(event)
-        @message_journal << Telemetry::Message.from_event(event)
+        event.kind == :turn ? child_turn(event) : message(event)
         self
       end
 
@@ -233,6 +246,45 @@ module Lain
       end
 
       private
+
+      # A :message or :spawn, onto the message journal -- the tee under --nvim,
+      # so the live inbox surfaces fold the same Q/A records the file holds.
+      def message(event)
+        @message_journal << Telemetry::Message.from_event(event)
+      end
+
+      # A SPAWNED chain's turn, and the two things that are not obvious about it.
+      #
+      # It lands on `@journal`, never the tee. Turn records are RECORD DATA, not
+      # live-view telemetry -- the invariant #initialize's `message_journal:`
+      # note states -- and it is what keeps a {StatusFeed}, whose observe is
+      # duck-typed on `#kind`, from retiring an inbox question because a
+      # subagent committed a turn. Changing that live surface is a decision for
+      # whoever owns the gap `status_feed.rb` records, not a side effect here.
+      #
+      # And it is written ONCE per digest. Content addressing means equal turns
+      # are ONE event, not two, so a record already holding this digest holds
+      # this turn: a `:fresh` child seeded with the text the human opened with
+      # commits literally the parent's root turn, and a fan-out of siblings on
+      # one prompt at temperature 0 commits identical transcripts -- which would
+      # otherwise write the whole child transcript once per sibling, multiplying
+      # the term that already dominates a spawn-heavy file. Nothing is lost by
+      # skipping: {Bench::Session::ChainFold} or an earlier record lands the turn
+      # either way, and every citation of the digest resolves.
+      #
+      # REFUSING a repeat instead was considered and is wrong. There are not two
+      # events to tell apart, so no predicate could separate "a spawn collided"
+      # from "the observer is mis-wired" -- and since `@written` is empty at the
+      # first iteration, such a raise could only ever fire on a LATER spawn,
+      # making it contingent on which iteration the model chose to delegate on.
+      def child_turn(event)
+        return if recorded_turn?(event.digest)
+
+        @journal << Telemetry::ChildTurn.from_event(event)
+        @spawned << event.digest
+      end
+
+      def recorded_turn?(digest) = @written.include?(digest) || @spawned.include?(digest)
 
       # The turns above the append point, root-to-head: {Timeline#ancestors}
       # walked head-first and stopped AT the append point, so a catch_up reads

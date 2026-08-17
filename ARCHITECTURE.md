@@ -655,8 +655,11 @@ with a self-describing `journal_error` record rather than tearing a line or drop
 
 `SessionRecord` (`lib/lain/session_record.rb`) defines the on-disk shape written *through* that
 journal: a `session` header written first with `head: nil` (open), then one `turn` record per
-committed `Event`, plus live-only record types (`Telemetry::Message`, `SessionClosed`,
-`RunInterrupted`) that an older reader skips by construction.
+committed `Event`, plus live-only record types (`Telemetry::Message`, `Telemetry::ChildTurn`,
+`SessionClosed`, `RunInterrupted`) that an older reader skips by construction. `ChildTurn` is a
+*spawned* chain's turn: a child's `ask_human` question and the subagent lineage's `final` edge
+both cite one, and no render-chain `turn` record can carry it (the fold re-commits every one of
+those onto a single chain), so it gets its own type and its own `render_parent` field.
 
 `SessionRecord::Scribe` (`lib/lain/session_record/scribe.rb`) is the live writer attached to an
 already-open `Journal`. `SessionRecord::Replay` reloads a session. `SessionRecord::Salvage`
@@ -1096,6 +1099,13 @@ and is the one a grep for `include` misses). That is **53** classes, each with a
 `Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate` records. Re-derive with
 `ObjectSpace.each_object(Class).select { |k| k < Lain::Telemetry::Journalable }` after
 `require "lain"`.
+
+> ⚠️ **Those three figures are stale, and re-deriving is the point of the recipe above.** Run as
+> written on 2026-08-17 the tree answers **75 / 38 / 37**, not 53 / 34 / 19 — the enumerated list
+> is short by around eighteen classes that later cards added without re-counting. They are left as
+> found deliberately: incrementing a number known to be wrong by 21 would signal "verified" where
+> the truth is "inherited", and a full correction is a documentation audit rather than a line in
+> whichever card happens to add the next record type. Trust the recipe, not the digits.
 
 *Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
 `session` / `turn` / `rewound` (`session_record.rb:31-33`, and `bench/session.rb:73-74` writes the

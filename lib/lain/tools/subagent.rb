@@ -753,11 +753,28 @@ module Lain
         # the factory's system (a stripped caller mark) can say so in the
         # record.
         def spawn_agent(parent, union, allowed, worker_env)
-          Agent.new(
+          agent = nil
+          base = @policy.prefix.base_timeline(parent:, store: parent.store)
+          agent = Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
-            timeline: @policy.prefix.base_timeline(parent:, store: parent.store),
+            timeline: base, turn_middleware: recorded_turns(base.head_digest) { agent.timeline },
             session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
+          )
+        end
+
+        # The child's turns, into the session record. Per ITERATION, through the
+        # same {Middleware::JournalTurns} a chat wraps its own loop in, and that
+        # granularity is the point: a child's `ask_human` question is written
+        # DURING an iteration and cites the head that iteration committed, so a
+        # feed that waited for the child to settle would record the turn after
+        # the question that names it. `agent.timeline` is read through a thunk
+        # for {Middleware::JournalTurns}' own reason -- the turn env carries the
+        # PRE-step snapshot -- and late-bound because the middleware must exist
+        # before the Agent that runs it, the same shape {#build} uses.
+        def recorded_turns(base, &timeline)
+          Middleware::Stack.new(
+            [Middleware::JournalTurns.new(scribe: TurnFeed.new(observer: @seam.observer, base:), timeline:)]
           )
         end
 
@@ -840,6 +857,7 @@ end
 # convention. Log leads: Lineage's `log:` default names Log::Null.
 require_relative "subagent/log"
 require_relative "subagent/lineage"
+require_relative "subagent/turn_feed"
 require_relative "subagent/refusing_handler"
 require_relative "subagent/actor"
 require_relative "subagent/stagger"

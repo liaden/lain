@@ -104,7 +104,11 @@ RSpec.describe Lain::Skill::RoleSpawn do
     provider = mock(text_response("done"))
     seam(provider:, observer: seen.method(:push)).call(:dev, :fresh, "go")
 
-    expect(seen.map(&:kind)).to eq(%i[spawn message])
+    # T2 widened the funnel: the child's OWN turns ride it between the two
+    # lineage events, because the session record cannot reach them any other
+    # way (a Timeline walk sees one chain, and the scribe's is the parent's).
+    # Here that is the seeded user turn and the child's single reply.
+    expect(seen.map(&:kind)).to eq(%i[spawn turn turn message])
   end
 
   # ---- AC4: an unknown role fails loudly, before any spawn -------------------
@@ -156,7 +160,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
       expect(provider.last_request.tools.map { |tool| tool["name"] })
         .to match_array(%w[read_file list_files bash ask_human])
       expect(dev_tools.size).to eq(9)
-      expect(seen.map(&:kind)).to eq(%i[spawn message spawn message])
+      expect(seen.map(&:kind)).to eq(%i[spawn turn turn message spawn turn turn message])
     end
 
     it "refuses a seam and its loose members together, naming the member" do

@@ -4,9 +4,10 @@ module Lain
   # The on-disk session format, promoted out of {Bench::Session} so a LIVE chat
   # can write a loadable session the same bytes a recorded bench run does. The
   # TURN and HEADER field names stay byte-compatible with {Bench::Session}, so
-  # one Loader reads both; the live scribe adds three additive record types
-  # ({Telemetry::Message}, {Telemetry::SessionClosed}, {Telemetry::RunInterrupted})
-  # that an older reader's `of_type` narrowing skips by construction.
+  # one Loader reads both; the live scribe adds four additive record types
+  # ({Telemetry::Message}, {Telemetry::ChildTurn}, {Telemetry::SessionClosed},
+  # {Telemetry::RunInterrupted}) that an older reader's `of_type` narrowing skips
+  # by construction.
   #
   # The header is written FIRST, with `head: nil` meaning OPEN -- a session in
   # progress has no final anchor yet. A graceful close writes a
@@ -31,6 +32,11 @@ module Lain
     HEADER_TYPE = "session"
     TURN_TYPE = "turn"
     REWOUND_TYPE = "rewound"
+    # {Telemetry::ChildTurn}'s own discriminator, named here beside the types it
+    # is deliberately NOT: a spawned chain's turn is neither a render-chain
+    # `turn` (the fold would re-derive it against the wrong parent) nor a
+    # `message` (a :turn's render edge is part of its address).
+    CHILD_TURN_TYPE = "child_turn"
 
     module_function
 

@@ -45,6 +45,11 @@ module Lain
         NO_RECORDS = [].freeze
         private_constant :NO_RECORDS
 
+        # The record types {MessageReplay} rebuilds: events that no render chain
+        # carries, so they are reconstructed from their own flat records.
+        FLAT_EVENT_TYPES = ["message", SessionRecord::CHILD_TURN_TYPE].freeze
+        private_constant :FLAT_EVENT_TYPES
+
         # @param entries [Enumerable<Hash, String>] the {Journal.parse} duck;
         #   entries it answers nil for are somebody else's records and skipped
         # @param context_factory [#call] builds the Context from the recorded
@@ -60,6 +65,11 @@ module Lain
           # that type, so a collaborator that mutated one would corrupt the
           # others' view -- it says so loudly instead.
           @by_type = @records.group_by { |record| record["type"].to_s }.each_value(&:freeze).freeze
+          # The one group a type key cannot answer, taken in the same
+          # constructor rather than as a re-scan per call: {MessageReplay}
+          # reads TWO types and needs file order ACROSS them, which is exactly
+          # what a per-type partition throws away.
+          @flat_events = @records.select { |record| FLAT_EVENT_TYPES.include?(record["type"].to_s) }.freeze
           @context_factory = context_factory
           @resolve = resolve
         end
@@ -123,11 +133,36 @@ module Lain
         # supplies the file-order `prior` -- a resume chain's PRIOR file's own
         # messages, verified before this file's own so a later `message`
         # naming an earlier one as a causal_parent finds it already landed.
+        #
+        # The log comes back in FILE order, which is the order a consumer folds
+        # ({Event::Projection}'s views are log-order folds). It is no longer the
+        # order the Store was written in, and file position is no longer an
+        # integrity check -- {MessageReplay}'s class note says what that costs
+        # and why a cycle across the spawn boundary forced it.
         def messages
-          MessageReplay.new(records: of_type("message"), store:, prior: resume_chain.prior_messages).messages
+          # A spawned chain's turns land in the SAME replay -- they and the
+          # messages cite each other across the spawn boundary -- but they are
+          # not mailbox traffic and do not belong in a {Recording}. Folding them
+          # in would put :turn events into every {Event::Projection} built over
+          # it, where the turn count is load-bearing ({Event::Projection#workspace_at}).
+          replayed.reject { |event| event.kind == :turn }
         end
 
         private
+
+        # Every flat event record this file carries, rebuilt into the shared
+        # Store. `message` records are :message/:spawn, which no render chain
+        # can hold; {SessionRecord::CHILD_TURN_TYPE} records are a spawned
+        # chain's turns, which THIS file's chain cannot hold either -- a child's
+        # `ask_human` question cites the head it asked from, and
+        # {Tools::Subagent::Lineage#message} cites the child's final turn, so a
+        # session that spawned anything was unloadable while they were missing.
+        # `@flat_events` rather than the type partition, because file order
+        # across the two types is what {MessageReplay} preserves.
+        def replayed
+          @replayed ||= MessageReplay.new(records: @flat_events, store:,
+                                          prior: resume_chain.prior_messages).messages
+        end
 
         def of_type(type) = @by_type.fetch(type.to_s, NO_RECORDS)
 
