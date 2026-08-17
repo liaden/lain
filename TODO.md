@@ -1,5 +1,12 @@
 Ideas/Todos:
 
+* A `mise` isolation backend, beside compose/pg/redis. mise already resolves a
+  per-directory environment, so a worktree could get its own `DATABASE_URL`
+  pointing at a fresh `createdb` instance without lain hand-rolling the env
+  plumbing. `Isolation::Compose` is the shape to copy: a DECORATOR over a whole
+  Lease, so it composes with either inner backend and owns a release that runs
+  alongside the inner one. Worth checking whether `mise env` can be read per
+  worktree without activating a shell, since the harness has no shell to hook.
 * Need to be able to resume a session if we have crashed.
 * If the session is idle for too long we should consider an autocompact or
   summarization to manage costs proactively, or the ability to summarize/compact
