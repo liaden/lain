@@ -43,10 +43,9 @@ RSpec.describe Lain::Arm::SingleThread do
       expect(run.grade).to be_pass
     end
 
-    it "records a non-negative wall-clock elapsed" do
-      expect(run.elapsed).to be_a(Float).and be >= 0
-    end
-
+    # No "records a non-negative elapsed" example: elapsed is a delta off a
+    # monotonic clock, so `Float` and `>= 0` are both true by construction and
+    # neither can fail. "the injected instrument" below pins the number itself.
     it "produces a Run scored by Compare::Run.from_timeline" do
       allow(Lain::Compare::Run).to receive(:from_timeline).and_call_original
 

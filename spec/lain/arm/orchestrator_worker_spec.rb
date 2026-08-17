@@ -118,10 +118,10 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
       expect(run.grade).to be_pass
     end
 
-    it "records a non-negative wall-clock elapsed" do
-      expect(run.elapsed).to be_a(Float).and be >= 0
-    end
-
+    # No "records a non-negative elapsed" example: elapsed is a delta off a
+    # monotonic clock, so `Float` and `>= 0` are both true by construction. The
+    # injected-clock example below pins the number instead.
+    #
     # T24: the fan-out is timed by the SAME injected instrument every other arm
     # measures with, and its return pair carries the workers' results back --
     # so the fan-out's value needs no mutable capture to escape the clock.
@@ -289,6 +289,29 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
       expect(handoff.surrenders.map(&:worker_id)).to eq(["ow-worker-0"])
       expect(handoff.surrenders.map(&:live)).to all(be(true))
       expect(backend.released.size).to eq(1)
+    end
+  end
+
+  # DEFAULT_DECOMPOSE splits on LINES, and the fixture task above is three of
+  # them -- so every example that uses it fans out three ways and none of them
+  # can show what the default does to the shape a real prompt actually has. A
+  # committed {Bench::ArmTasks} prompt is a FOLDED YAML scalar: one line,
+  # however many sentences. Under this default that is one worker, i.e. an
+  # orchestrator arm that never orchestrates and a report column that is a
+  # second copy of the control -- which is exactly why both production callers
+  # (`bench/live_arms.rb`, `arm_sweep.rb`) inject their own decomposition.
+  describe "the default decomposition splits on lines, not on sentences" do
+    let(:folded) { "Rename the widget in lib/widget.rb. Then update config/a.yml. Then run the suite." }
+
+    it "fans a single-line task out to exactly ONE worker, whatever it says" do
+      run = described_class.new.run(folded, spawn_seam: worker_seam, grader:)
+
+      expect(run.timeline.head.causal_parents.size).to eq(1)
+      expect(run.total_tokens).to eq(40)
+    end
+
+    it "hands that one worker the whole task, unsplit" do
+      expect(described_class::DEFAULT_DECOMPOSE.call(folded)).to eq([folded])
     end
   end
 

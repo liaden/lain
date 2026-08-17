@@ -40,12 +40,10 @@ RSpec.describe Lain::Bench::Sweep do
       expect(means).to eq(means.sort.reverse)
     end
 
-    it "runs entirely offline -- the vector arm reads committed fixture embeddings, not the network" do
-      # Any outbound HTTP would raise under the suite's webmock posture; a clean
-      # report is the proof there was none.
-      expect { described_class.new(k: 5).report }.not_to raise_error
-    end
-
+    # "Runs entirely offline" needs no example of its own: every sibling here
+    # builds the same report under the suite's webmock posture, so an outbound
+    # request from the vector arm fails all of them at once. A bare
+    # `not_to raise_error` beside them could only fail where they already had.
     it "carries a tokens-on-recall column, one non-negative value per arm" do
       tokens = arm_rows(report).map { |row| Float(row.last) }
       expect(tokens).to all(be >= 0)

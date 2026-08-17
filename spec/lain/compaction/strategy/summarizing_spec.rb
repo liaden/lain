@@ -199,9 +199,13 @@ RSpec.describe Lain::Compaction::Strategy::Summarizing do
     # so the span question is already a different oracle from the tool-result
     # one at the SAME tier -- which is why this reuses `:model` rather than
     # minting a symbol that would move every existing recorded address.
+    # "The same tier" is taken FROM {TIER} rather than asserted to equal :model
+    # beside it: a literal echo of the constant pins a retune without adding a
+    # case, while sourcing the comparison from it keeps the claim true whatever
+    # tier this strategy moves to.
     it "is a different oracle from the eager tool-result summarizer at the same tier" do
-      expect(described_class::TIER).to eq(:model)
-      expect(fixtures.definition.digest).not_to eq(Lain::Oracle::Summarize.definition(tier: :model).digest)
+      expect(fixtures.definition.digest)
+        .not_to eq(Lain::Oracle::Summarize.definition(tier: described_class::TIER).digest)
     end
 
     it "validates its answers through the shape SummarySnapshot already reads" do

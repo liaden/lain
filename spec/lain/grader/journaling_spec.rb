@@ -71,10 +71,13 @@ RSpec.describe Lain::Grader::Journaling do
       expect(journal.first.criteria_digest).to be_nil
     end
 
+    # The grade is asserted through, not merely the absence of a raise: the Null
+    # journal has to swallow the RECORD without swallowing the grading, and only
+    # the returned grade tells those two apart.
     it "defaults to the Null journal, so no caller has to guard `if journal`" do
       grade = Lain::Grader::Grade.new(score: 1.0, why: "all good")
 
-      expect { described_class.new(inner: stub_grader(grade)).grade("subject") }.not_to raise_error
+      expect(described_class.new(inner: stub_grader(grade)).grade("subject")).to equal(grade)
     end
 
     describe "subject digest resolution" do

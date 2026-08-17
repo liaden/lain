@@ -167,8 +167,17 @@ RSpec.describe Lain::Compaction::Cold do
   end
 
   describe "the default journal" do
+    # A TTL-less profile confirms cold off the zero read ALONE, so the unwired
+    # instance has a record to push and genuinely exercises `@journal <<`.
+    # Asserting the state change too is what tells "the Null swallowed it" from
+    # "nothing was written at all" -- `not_to raise_error` cannot.
     it "is the Null channel, so a caller never has to guard `if journal`" do
-      expect { described_class.new(cache_profile: {}).observe(usage(cache_read: 0)) }.not_to raise_error
+      unwired = described_class.new(cache_profile: {})
+
+      unwired.observe(usage(cache_read: 0))
+
+      expect(unwired.cold?).to be(true)
+      expect(unwired.pending?).to be(false)
     end
   end
 end

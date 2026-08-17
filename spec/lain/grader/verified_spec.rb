@@ -71,11 +71,17 @@ RSpec.describe Lain::Grader::Verified do
       expect(journal.map(&:digest)).to eq([Lain::Canonical.digest("keep"), Lain::Canonical.digest("drop")])
     end
 
+    # The survivor is asserted, not merely the absence of a raise: the Null
+    # journal has to swallow the Verdict WITHOUT swallowing the grading, and
+    # only the returned finding tells those two apart.
     it "defaults to the Null journal, so no caller has to guard `if journal`" do
       inner = finding_grader(["one finding"])
       provider = judge('{"score": 0.9, "why": "kept"}')
 
-      expect { described_class.new(inner:, refuter: refuter(provider)).grade("subject") }.not_to raise_error
+      survivors = described_class.new(inner:, refuter: refuter(provider)).grade("subject")
+
+      expect(survivors.map(&:finding)).to eq(["one finding"])
+      expect(survivors.map { |s| s.grade.why }).to eq(["kept"])
     end
   end
 

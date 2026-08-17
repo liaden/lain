@@ -331,17 +331,20 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                      .run { wait_until { bufnr("lain://timeline") != -1 } }
       second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
-      expect do
-        second.run do
-          wait_until { bufnr("lain://timeline") != -1 }
-          commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
-          expect(commands.count("LainReply")).to eq(1)
+      # No `expect { }.not_to raise_error` around the block: `aggregate_failures`
+      # is on for every example, so a failing inner expect never rises into such
+      # a wrapper -- it is collected and reported at its own line. The wrapper
+      # only ever hid which check was guarding what, and a raise out of `run`
+      # fails the example on its own.
+      second.run do
+        wait_until { bufnr("lain://timeline") != -1 }
+        commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
+        expect(commands.count("LainReply")).to eq(1)
 
-          set_view("lain://timeline", ["user: a", "assistant: b"])
-          expect(feed("lain://timeline", "]]", cursor: [1, 0])).to eq([2, 0])
-          expect(syntax_name_at("lain://timeline", 1, 1)).to eq("lainRole")
-        end
-      end.not_to raise_error
+        set_view("lain://timeline", ["user: a", "assistant: b"])
+        expect(feed("lain://timeline", "]]", cursor: [1, 0])).to eq([2, 0])
+        expect(syntax_name_at("lain://timeline", 1, 1)).to eq("lainRole")
+      end
     end
   end
 

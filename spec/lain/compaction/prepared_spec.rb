@@ -229,8 +229,19 @@ RSpec.describe Lain::Compaction::Prepared do
   end
 
   describe "the default journal" do
+    # Built with NO journal keyword, which is the only way this reaches the
+    # production default: `#prepared` above passes Channel::Null in EXPLICITLY,
+    # so the previous version of this example proved the fixture's default
+    # rather than the constructor's. And it asserts the compaction actually
+    # happened -- an unwired journal that silently swallowed the work would
+    # satisfy "does not raise".
     it "is the Null channel, so a caller never has to guard `if journal`" do
-      expect { prepared.idle(head_digest: "digest-a", messages: history) }.not_to raise_error
+      unwired = described_class.new(compact:)
+
+      result = unwired.idle(head_digest: "digest-a", messages: history)
+
+      expect(result.size).to be < history.size
+      expect(summarizer.calls).to eq(1)
     end
   end
 end

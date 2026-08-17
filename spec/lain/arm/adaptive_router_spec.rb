@@ -59,12 +59,10 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
       expect(run.grade).to be_pass
     end
 
-    it "records a non-negative wall-clock elapsed" do
-      run = arm.run("fix the typo", spawn_seam:, grader:)
-
-      expect(run.elapsed).to be_a(Float).and be >= 0
-    end
-
+    # No "records a non-negative elapsed" example: elapsed is a delta off a
+    # monotonic clock, so `Float` and `>= 0` are both true by construction. The
+    # injected-clock example below pins the number instead.
+    #
     # T24: the same injected instrument every other arm measures with -- one
     # substrate, so wall-time means the same thing across topologies.
     it "takes elapsed off the injected instrument's clock" do

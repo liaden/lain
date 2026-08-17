@@ -121,7 +121,7 @@ RSpec.describe Lain::Frontend::Neovim::RequestBuffer do
       # A malformed edit must not raise on the resend-worker thread: that
       # thread's death would strand the resend inbox entirely.
       it "answers nil for a malformed edit rather than raising, and journals nothing" do
-        expect { expect(buffer.resend(["{ not json"])).to be_nil }.not_to raise_error
+        expect(buffer.resend(["{ not json"])).to be_nil
         expect(journal).to be_empty
       end
 

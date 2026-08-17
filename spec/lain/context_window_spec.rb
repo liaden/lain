@@ -28,9 +28,15 @@ RSpec.describe Lain::ContextWindow do
     # Folded from .probe-TA3-adversarial.rb's "two family tokens" case: a
     # name containing BOTH "opus" and "sonnet" still resolves deterministically
     # via longest-token-wins rather than raising or drifting with Hash order.
+    # Both orderings of the same table are asserted, because "deterministic" is
+    # exactly the claim a single Hash literal cannot make -- and the answer is
+    # pinned to the LONGER token ("sonnet"), not merely to some answer.
     it "resolves deterministically when a name contains two unrelated family tokens" do
-      book = described_class.new(windows: { "opus" => 500_000, "sonnet" => 1_000_000 })
-      expect { book.window_tokens("claude-opus-sonnet-mix") }.not_to raise_error
+      windows = { "opus" => 500_000, "sonnet" => 1_000_000 }
+
+      expect(described_class.new(windows:).window_tokens("claude-opus-sonnet-mix")).to eq(1_000_000)
+      expect(described_class.new(windows: windows.to_a.reverse.to_h).window_tokens("claude-opus-sonnet-mix"))
+        .to eq(1_000_000)
     end
 
     # Folded from the adversarial probe: matching is case-sensitive, same as
@@ -110,10 +116,10 @@ RSpec.describe Lain::ContextWindow do
   describe ".default" do
     subject(:book) { described_class.default }
 
-    it "answers a conservative window for an unknown, ollama-style model id" do
-      expect { expect(book.window_tokens("qwen3:4b")).to be_a(Integer) }.not_to raise_error
-    end
-
+    # The unknown ollama-style id ("qwen3:4b") is pinned to the actual
+    # CONSERVATIVE_FALLBACK by "measures a model the book does not carry against
+    # the conservative fallback" under #occupancy below, which resolves the
+    # window through this same path and names the number rather than its class.
     it "is deeply frozen and Ractor-shareable" do
       expect(book).to be_deeply_frozen
     end

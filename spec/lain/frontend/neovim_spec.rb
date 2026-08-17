@@ -325,13 +325,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       described_class.new(channel: Lain::Channel.new, socket_path: @socket).run { nil }
       second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
-      expect do
-        second.run do
-          commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
-          expect(commands).to include("LainResend", "LainSend", "LainContext", "LainVersion")
-          expect(inspector.get_var("lain_rpc_version")).to eq(described_class::PROTOCOL)
-        end
-      end.not_to raise_error
+      # No `expect { }.not_to raise_error` around the block: `aggregate_failures`
+      # is on for every example, so a failing inner expect never rises into such
+      # a wrapper. It only hid which check guarded what; a raise out of `run`
+      # fails the example on its own.
+      second.run do
+        commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
+        expect(commands).to include("LainResend", "LainSend", "LainContext", "LainVersion")
+        expect(inspector.get_var("lain_rpc_version")).to eq(described_class::PROTOCOL)
+      end
     end
 
     it "surfaces the gem version through :LainVersion" do

@@ -157,21 +157,60 @@ RSpec.describe Lain::Review::Bounds do
   end
 
   describe "the defaults, and the evidence for each" do
+    # The one literal kept as a literal, because the number is not ours to
+    # retune: GitHub stops SERVING a combined diff past 300 files (research
+    # S3.7), so for {Source::GithubPr} it is an API fact, and tuicr#475
+    # independently settled on the same ceiling (S4.2). A pin against an
+    # external constant is what a pin is for.
     it "sets the file ceiling where two independent sources put it" do
       expect(described_class::DEFAULT_MAX_FILES).to eq(300)
     end
 
+    # DERIVED, so the derivation is what gets asserted rather than the digits:
+    # S3.7 measured 80,800 rendered lines over 800 files -- 101 lines per file --
+    # and the invariant the doc states is that both ceilings fire at the same
+    # changeset SIZE (a line ceiling far above the implied one is dead code, one
+    # far below makes the file ceiling unreachable).
+    #
+    # The tolerance is 2%, not a comfortable 10%. With DEFAULT_MAX_FILES pinned
+    # as a literal four lines up, this relation has one fixed end, so a loose
+    # band degenerates into a WEAKER version of the `eq(30_000)` it replaced --
+    # measured: at 10% both 28_000 and 32_500 pass where the literal failed. 2%
+    # admits [29_694, 30_906], which the rounding from 30,300 needs and nothing
+    # else does, so any retune has to be deliberate.
     it "sets the rendered-line ceiling consistently with the file one at work-scale density" do
-      # 300 files x the 101 rendered lines/file research S3.7 measured.
-      expect(described_class::DEFAULT_MAX_LINES).to eq(30_000)
+      implied = described_class::DEFAULT_MAX_FILES * 101
+
+      expect(described_class::DEFAULT_MAX_LINES).to be_within(0.02 * implied).of(implied)
     end
 
     # Anchored on the constraint the doc names -- a context window -- and NOT
     # on S3.7's 2,727, which is the mean of a synthetic uniform generator
     # (`bigdiff_stacked` emits identical commits) and so has no tail to sit
     # above. A ceiling at mean + 47% refuses the tail of every real changeset.
+    #
+    # The literal comes FIRST and stays: the derivation below is a range, and a
+    # range wide enough to survive the doc's own 3.0-4.0 bytes/token estimate is
+    # too wide to pin the number. Measured: on the derivation alone, 6_000 and
+    # 7_700 both pass -- a 14% cut and a 10% rise invisible to the whole suite,
+    # where `eq(7_000)` catches both. So they are two assertions, not one: the
+    # literal says WHICH number, the derivation says WHY that number and fails
+    # if the window it was derived from moves out from under it.
+    #
+    # The POLICY is "at most half the smallest window a bench arm might run",
+    # and the smallest window is read from {ContextWindow} rather than copied
+    # here, so the two cannot drift silently apart. ~45 bytes per rendered line
+    # at ~3.5 bytes/token is the doc's own estimate; the lower bound is what
+    # keeps the upper one honest, since a ceiling small enough to clear it
+    # trivially is a ceiling that stopped being derived from a window at all.
     it "sets the critique ceiling from the smallest window a bench arm might run" do
       expect(described_class::DEFAULT_MAX_CRITIQUE_LINES).to eq(7_000)
+
+      smallest_window = Lain::ContextWindow.default.window_tokens("claude-haiku-4-5")
+      tokens = described_class::DEFAULT_MAX_CRITIQUE_LINES * 45 / 3.5
+
+      expect(tokens).to be < (smallest_window / 2.0)
+      expect(tokens).to be > (smallest_window / 4.0)
     end
 
     it "leaves the measured per-commit view far inside the critique ceiling" do
