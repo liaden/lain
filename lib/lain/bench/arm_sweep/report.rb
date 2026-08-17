@@ -41,10 +41,14 @@ module Lain
           "single-thread control counts as one lost-context event (documented reduced fidelity). It " \
           "UNDER-counts: ONLY same-path content divergence is counted; a file the arm omitted or added " \
           "versus the control is not.",
-          "NOTE: single-thread and dual-ledger produce IDENTICAL grade and token rows here -- under " \
-          "prompt-keyed replay both are linear over the same task prompt, so this tie is an artifact of the " \
-          "offline harness, NOT a finding. Dual-ledger's cost is coordination overhead, visible only in the " \
-          "replans/stalls metric."
+          "NOTE: single-thread and dual-ledger produce IDENTICAL GRADE rows here -- under prompt-keyed " \
+          "replay both are linear over the same task prompt, so that tie is an artifact of the offline " \
+          "harness, NOT a finding. Their TOKEN rows do NOT tie, and that gap is an artifact too: a " \
+          "prompt-keyed replay repeats itself, the dual-ledger's outer loop reads a repeated answer as a " \
+          "ledger that stopped advancing (correctly, for what a structural detector can see), and so every " \
+          "replayed task costs it its stall_limit + 2 steps and one replan -- whether or not the task was " \
+          "actually finished. Read the multiple as this harness's shape, not as measured coordination " \
+          "overhead; the replans/stalls row here is likewise a property of the replay."
         ].freeze
         private_constant :NOTES
 

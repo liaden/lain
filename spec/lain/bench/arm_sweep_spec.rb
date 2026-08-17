@@ -59,6 +59,19 @@ RSpec.describe Lain::Bench::ArmSweep do
       orchestrator = grouped.fetch("orchestrator-worker").select { |m| m.category == :procedural }
       expect(orchestrator.map(&:context_loss).max).to be >= 1
     end
+
+    # The report DISCLOSES the linear-arms relationship in prose, and prose
+    # beside an unpinned number is how a disclosure goes stale without failing:
+    # the NOTE claimed an identical TOKEN row for a full chunk after the
+    # dual-ledger arm stopped producing one. These two pin both halves, so the
+    # data has to move before the prose can be wrong.
+    it "ties the arms on GRADE: under prompt-keyed replay both are linear over the same prompt" do
+      expect(grouped.fetch("dual-ledger").map(&:score)).to eq(grouped.fetch("single-thread").map(&:score))
+    end
+
+    it "does NOT tie them on TOKENS -- the dual-ledger's outer loop pays for its own steps" do
+      expect(grouped.fetch("dual-ledger").sum(&:tokens)).to be > grouped.fetch("single-thread").sum(&:tokens)
+    end
   end
 
   # The report's titled metric tables, in rendered order. A section is
@@ -114,10 +127,16 @@ RSpec.describe Lain::Bench::ArmSweep do
       expect(report).to include("== parallel ==")
     end
 
-    it "discloses the linear-arms tie so a reader does not mistake it for a finding" do
-      expect(report).to include("single-thread and dual-ledger produce IDENTICAL")
+    it "discloses the linear-arms GRADE tie so a reader does not mistake it for a finding" do
+      expect(report).to include("single-thread and dual-ledger produce IDENTICAL GRADE rows")
       expect(report).to match(/artifact of the offline harness/i)
-      expect(report).to match(/coordination overhead, visible only in the replans/i)
+    end
+
+    # The other half of the same disclosure: the token rows separate, and a
+    # reader told to dismiss the tie must not also dismiss the separation.
+    it "discloses that the TOKEN rows do NOT tie, and why the replay produces that gap" do
+      expect(report).to include("TOKEN rows do NOT tie")
+      expect(report).to match(/repeats itself/i)
     end
 
     it "discloses that context-loss UNDER-counts -- omitted/added files versus the control are not counted" do
