@@ -44,7 +44,8 @@ module AlgebraGenerators
       [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
       [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks,
       [Lain::Compaction::Strategy::ElideToolObservations, :blocks] => Strategies.elide_on_tools_blocks,
-      [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks }
+      [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks,
+      [Lain::Compaction::Strategy::SummarizeConversation, :blocks] => Strategies.summarize_conversation_blocks }
   end
 
   # Middleware's monoid claim, kept apart from `registered` for the same
@@ -598,6 +599,26 @@ module AlgebraGenerators
       elide_on_tools = Lain::Compaction::Strategy::ElideToolObservations.new
       { instance: -> { elide_on_tools },
         population: -> { spans } }
+    end
+
+    # {Lain::Compaction::Strategy::SummarizeConversation} restates its parent's
+    # purity REFUTATION and not its elementwise one, for the mirror of the reason
+    # {ElideToolObservations} restates the parent's claim: the registry is keyed
+    # on the EXACT subject and scans it sign-agnostically, so a refutation is
+    # dropped by a subclass exactly as a claim is, while elementwise is
+    # classified structurally by `is_a?` and needs no restatement. Losing it cost
+    # {Lain::Compaction::DerivationAudit} the `:incomplete_replay` and
+    # `:window_or_replay` diagnoses on the one strategy in the pair that can
+    # drift for oracle reasons.
+    #
+    # `refutes:` is a LAW NAME, not prose -- algebra_laws_spec asserts
+    # `outcomes[refutes] == :fails`, so it matches the Pure battery byte for byte.
+    def summarize_conversation_blocks
+      strategy = Lain::Compaction::Strategy::SummarizeConversation.new(oracle: summarizer)
+      { instance: -> { strategy },
+        population: -> { spans },
+        refutes: "reaches no mutable state",
+        exhibits: { "holds an oracle, so it is not Ractor.shareable?" => -> { !Ractor.shareable?(strategy) } } }
     end
 
     # {Lain::Compaction::Strategy::Summarizing} refutes TWO structures on ONE
