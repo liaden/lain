@@ -51,12 +51,26 @@ module Lain
 
       input_model Input
 
+      class << self
+        # A pure function of the pattern and base. Public and class-level so
+        # {Middleware::WithholdSecretPaths} can recognize this exact
+        # sentinel STRUCTURALLY -- by rebuilding it from this one definition
+        # and comparing -- rather than by matching words inside it, which is
+        # what let a no-match result under a gated directory get misread as
+        # a withheld path (T7's own regression). See {Tools::WebSearch}'s
+        # no_results_message for the template this follows.
+        def no_matches_message(pattern, base)
+          "glob: no matches for #{pattern.inspect} under #{base}"
+        end
+      end
+
       def name = "glob"
 
       def description
         "Finds paths matching a glob pattern (e.g. \"**/*.rb\") relative to " \
           "an optional base directory, returned one per line in sorted " \
-          "order. No matches is not an error -- the result is simply empty."
+          "order. No matches is not an error -- the result names the " \
+          "pattern and says there were no matches, not an empty string."
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation)
@@ -72,7 +86,8 @@ module Lain
         # under the default, so `Dir.glob(base: Dir.pwd)` returns the same
         # base-relative paths as the pre-WorkerEnv `base: "."` did.
         base = File.expand_path(input.path || ".", session_of(invocation).worker_env.cwd)
-        Tool::Result.ok(matches(base, input.pattern).join("\n"))
+        found = matches(base, input.pattern)
+        Tool::Result.ok(found.empty? ? self.class.no_matches_message(input.pattern, base) : found.join("\n"))
       end
 
       private

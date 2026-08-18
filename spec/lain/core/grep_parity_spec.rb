@@ -137,18 +137,23 @@ RSpec.describe Lain::Tools::Grep, :core do
 
       expect_identical(off_ruby, off_core)
       expect_identical(on_ruby, on_core)
-      expect(off_core.content).to eq("")
+      expect(off_core.content).to eq(%(grep: no matches for "needle" in #{tmpdir}))
       expect(on_core.content).to eq("shout.txt:1:NEEDLE")
     end
 
-    it "agrees that no match is an ok, empty result -- not an error" do
+    # T7: no matches is still an ok Result, but no longer a blank one -- see
+    # {Lain::Tools::Grep#no_matches_message}. That formatting runs client-side
+    # in #format_matches, downstream of BOTH search arms (the daemon reply
+    # carries no message of its own, just `{matches: [], capped: false}`), so
+    # this is still a parity fact and not two independently-chosen strings.
+    it "agrees that no match is an ok result naming the pattern -- not an error, and not blank" do
       write("quiet.txt", "nothing interesting here\n")
 
       ruby, core = differential("zzz")
 
       expect_identical(ruby, core)
       expect(core).to be_ok
-      expect(core.content).to eq("")
+      expect(core.content).to eq(%(grep: no matches for "zzz" in #{tmpdir}))
     end
 
     # Deliberately capped INSIDE one file: that keeps the walk order (which
@@ -309,7 +314,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       ruby, core = differential("needle")
 
       expect(ruby.content).to eq("nul.txt:1:needle before nul\nnul.txt:3:needle after nul")
-      expect(core.content).to eq("")
+      expect(core.content).to eq(%(grep: no matches for "needle" in #{tmpdir}))
     end
 
     # The mirror image of the case above, and the correction to T12's struck

@@ -19,13 +19,27 @@ module Lain
       # directory the glob walks, so a literal there allocates once per entry.
       DOTS = %w[. ..].freeze
 
+      class << self
+        # A pure function of the resolved path. Public and class-level so
+        # {Middleware::WithholdSecretPaths} can recognize this exact sentinel
+        # STRUCTURALLY -- by rebuilding it from this one definition and
+        # comparing -- rather than by matching words inside it, which is
+        # what let an empty listing under a gated directory get misread as a
+        # withheld path (T7's own regression). See {Tools::WebSearch}'s
+        # not_configured_message for the template this follows.
+        def empty_message(path)
+          "list_files: #{path.inspect} is empty -- no entries."
+        end
+      end
+
       def name = "list_files"
 
       def description
         "Lists the entries of a directory at the given path, one per line, " \
           "sorted. Set recursive: true to descend into subdirectories. " \
           "Returns an error result if the path does not exist, is not a " \
-          "directory, or cannot be read."
+          "directory, or cannot be read. An empty directory is not an error " \
+          "-- the result names it as empty rather than returning blank content."
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
@@ -45,7 +59,8 @@ module Lain
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
-        Tool::Result.ok(entries(path, input.recursive).join("\n"))
+        listing = entries(path, input.recursive)
+        Tool::Result.ok(listing.empty? ? self.class.empty_message(path) : listing.join("\n"))
       rescue SystemCallError => e
         Tool::Result.error("could not list #{path}: #{e.message}")
       end

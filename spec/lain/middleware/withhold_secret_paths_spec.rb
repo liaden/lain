@@ -167,6 +167,75 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # BLOCKER from the T7 review: an empty `list_files`/`glob` result is no
+  # longer `content == ""` (T7 gave each a named sentence instead), and this
+  # middleware re-reads a guarded tool's WHOLE content as listing rows. A
+  # single-row sentence is exactly one row, {Listing#paths_in} reads the
+  # whole sentence as a candidate path, and joining it onto a base that is
+  # itself under a gated home directory (`~/Downloads` and friends) matches
+  # the gated rule on the BASE alone -- the sentence's own words never
+  # mattered. The result: an ORDINARY, EMPTY subdirectory of `~/Downloads`
+  # comes back "1 path withheld (out_of_scope)", asserting hidden content
+  # exists where there is none -- a false statement about the security
+  # boundary, worse than the ok("") T7 replaced.
+  describe "an empty result under a gated (but ordinary) directory" do
+    def mkdir(name) = File.join(dir, name).tap { |path| FileUtils.mkdir_p(path) }
+
+    it "list_files: says the directory is empty, never that a path was withheld" do
+      empty_dir = mkdir("home/Downloads/empty_subdir")
+
+      shown = content(list(empty_dir))
+
+      expect(shown).not_to include("withheld")
+      expect(shown).to match(/empty/i)
+    end
+
+    it "glob: says nothing matched, never that a path was withheld" do
+      empty_dir = mkdir("home/Downloads/empty_subdir")
+
+      shown = content(glob("*", path: empty_dir))
+
+      expect(shown).not_to include("withheld")
+      expect(shown).to match(/no match/i)
+    end
+
+    # grep's no-match sentence ALSO happens to carry exactly one colon
+    # (`Matches#paths_in` finds no line-number-shaped field to extract from
+    # it), so this alone would pass even with `no_rows?` deleted -- it is a
+    # basic correctness check, not proof the guard is doing the work.
+    it "grep: says nothing matched, never that a path was withheld" do
+      empty_dir = mkdir("home/Downloads/empty_subdir")
+
+      shown = content(grep("needle", path: empty_dir))
+
+      expect(shown).not_to include("withheld")
+      expect(shown).to match(/no match/i)
+    end
+
+    # The property the review's mutation check actually demanded: a directory
+    # whose NAME manufactures extra colons defeats the "exactly one colon"
+    # coincidence above. "oops:42:here" makes grep's sentinel
+    # (`grep: no matches for "needle" in .../Downloads/oops:42:here`) split
+    # into a "42" field followed by a text field, so WITHOUT `Matches#no_rows?`
+    # short-circuiting first, {Matches#paths_in} WOULD extract a reading
+    # (everything up to that "42") and {#reading} WOULD join it onto the
+    # gated `base`, withholding it. Colons are ordinary bytes in a POSIX
+    # filename, so this is not a contrived string -- it is a real directory
+    # name. Verified (2026-08-18): forcing `Matches#no_rows?` to always
+    # return `false` turns this example red with "1 match withheld
+    # (out_of_scope)", where the example above stays green -- so this one,
+    # not that one, is what pins `no_rows?` doing the work rather than the
+    # colon-count coincidence.
+    it "grep: is not fooled by a directory name that manufactures a false line-number field" do
+      empty_dir = mkdir("home/Downloads/oops:42:here")
+
+      shown = content(grep("needle", path: empty_dir))
+
+      expect(shown).not_to include("withheld")
+      expect(shown).to match(/no match/i)
+    end
+  end
+
   describe "a recursive listing of a personal directory" do
     # `list_files` is guarded on the same terms as `glob`, and this is the one
     # listing that withholds for two different reasons at once -- so the report

@@ -191,6 +191,20 @@ module Lain
         end
       end
 
+      class << self
+        # A pure function of the pattern and the model's own path spelling.
+        # Public and class-level so {Middleware::WithholdSecretPaths} can
+        # recognize this exact sentinel STRUCTURALLY -- by rebuilding it
+        # from this one definition and comparing -- rather than by matching
+        # words inside it. `path` is the model's own spelling (never the
+        # WorkerEnv-resolved locator), matching {RubySearch#matching}'s
+        # label rule and the exact argument {#format_matches} passes. See
+        # {Tools::WebSearch}'s no_results_message for the template.
+        def no_matches_message(pattern, path)
+          "grep: no matches for #{pattern.inspect} in #{path}"
+        end
+      end
+
       input_model Input
 
       # Wire a started {Core::Client} to run the search out of process. Nil by
@@ -213,7 +227,8 @@ module Lain
           "searches recursively, skipping .git and any file that cannot be " \
           "read as text. Output is capped at #{MAX_MATCHES} matches; a capped " \
           "result says so explicitly rather than truncating silently. No " \
-          "matches is an ok, empty result, not an error."
+          "matches is an ok result naming the pattern, not an error -- and " \
+          "not an empty string."
       end
 
       # Audited on BOTH paths: reads Session#worker_env.cwd to resolve `path`,
@@ -229,7 +244,7 @@ module Lain
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
 
-        Tool::Result.ok(format_matches(@search.call(path, input)))
+        Tool::Result.ok(format_matches(@search.call(path, input), input))
       rescue RegexpError => e
         Tool::Result.error("invalid pattern #{input.pattern.inspect}: #{e.message}")
       rescue Core::Client::Refused => e
@@ -271,8 +286,8 @@ module Lain
         Tool::Result.error(error.message)
       end
 
-      def format_matches(found)
-        return "" if found.rows.empty?
+      def format_matches(found, input)
+        return self.class.no_matches_message(input.pattern, input.path) if found.rows.empty?
 
         lines = found.rows.map { |file, line_no, line| "#{file}:#{line_no}:#{line}" }
         lines << "... capped at #{MAX_MATCHES} matches" if found.capped

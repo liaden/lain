@@ -32,11 +32,19 @@ RSpec.describe Lain::Tools::Glob do
     expect(result.content.split("\n")).to eq(%w[a.rb b.rb sub/c.rb])
   end
 
-  it "returns an empty, non-error result when nothing matches" do
+  it "says a pattern matched nothing, rather than returning an empty string" do
     touch("a.rb")
 
     result = tool.call(pattern: "*.nope", path: tmpdir)
-    expect(result).to have_attributes(is_error: false, content: "")
+
+    expect(result.is_error).to be(false)
+    expect(result.content).not_to eq("")
+    expect(result.content).to include('"*.nope"')
+    expect(result.content).to match(/no match/i)
+  end
+
+  it "describes no-matches as a named, non-error outcome" do
+    expect(tool.description).to match(/no match/i)
   end
 
   it "defaults the base path to the current directory" do

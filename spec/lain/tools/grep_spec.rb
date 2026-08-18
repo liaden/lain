@@ -60,13 +60,15 @@ RSpec.describe Lain::Tools::Grep do
     expect(result.content).to eq("README.md:1:hello world")
   end
 
-  it "returns an ok, empty result when nothing matches -- not an error" do
+  it "says a pattern matched nothing, rather than returning an empty string -- not an error" do
     write("foo.rb", "nothing interesting here\n")
 
     result = tool.call(pattern: "zzz", path: tmpdir)
 
     expect(result.ok?).to be(true)
-    expect(result.content).to eq("")
+    expect(result.content).not_to eq("")
+    expect(result.content).to include('"zzz"')
+    expect(result.content).to match(/no match/i)
   end
 
   it "matches case-insensitively when asked" do
@@ -154,6 +156,10 @@ RSpec.describe Lain::Tools::Grep do
     expect(tool.description).to include("Backreferences", "lookaround")
     expect(tool.description).not_to include("Ruby")
     expect(tool.input_schema.to_s).not_to include("Ruby")
+  end
+
+  it "describes no-matches as a named, non-error outcome" do
+    expect(tool.description).to match(/no match/i)
   end
 
   # The transport swap, without a daemon: everything about the core path that

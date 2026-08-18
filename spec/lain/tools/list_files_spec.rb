@@ -53,6 +53,26 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(result).to have_attributes(is_error: true, content: "no such directory: #{missing}")
   end
 
+  it "says an empty directory is empty, not silently returning blank content" do
+    result = tool.call(path: tmpdir)
+
+    expect(result.is_error).to be(false)
+    expect(result.content).not_to eq("")
+    expect(result.content).to include(tmpdir)
+    expect(result.content).to match(/empty/i)
+  end
+
+  it "distinguishes an empty listing from a missing directory" do
+    missing = File.join(tmpdir, "nope")
+
+    empty_result = tool.call(path: tmpdir)
+    missing_result = tool.call(path: missing)
+
+    expect(empty_result.is_error).to be(false)
+    expect(missing_result).to have_attributes(is_error: true, content: "no such directory: #{missing}")
+    expect(missing_result.content).not_to match(/empty/i)
+  end
+
   it "reports a file (not a directory) as an error Result rather than raising" do
     path = touch("a_file.txt")
     result = tool.call(path:)
@@ -67,6 +87,10 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(result).to have_attributes(is_error: true, content: "directory is not readable: #{sub}")
   ensure
     File.chmod(0o700, sub) if sub && File.exist?(sub)
+  end
+
+  it "describes an empty directory as a possible, non-error outcome" do
+    expect(tool.description).to match(/empty/i)
   end
 
   describe "resolving paths against the session WorkerEnv" do

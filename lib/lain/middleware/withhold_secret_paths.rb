@@ -48,10 +48,68 @@ module Lain
     # also leak by subtraction -- a cap that quietly slid to include one more
     # file says a withheld one was there.
     class WithholdSecretPaths < Base
-      # How a row of one tool's output names paths, and what one withheld row is
-      # called when it is counted.
+      # How a row of one tool's output names paths, what one withheld row is
+      # called when it is counted, and how to tell a NO-ROWS sentinel from a
+      # real row before either one is ever split apart.
+      #
+      # == `no_rows?` is identity, not vocabulary
+      #
+      # T7 gave `list_files`, `glob` and `grep` a named sentence for "found
+      # nothing" instead of `content == ""`. That sentence is exactly one row,
+      # and this class used to read it as one -- so an EMPTY, ORDINARY
+      # subdirectory of `~/Downloads` came back "1 path withheld
+      # (out_of_scope)", which asserts hidden content exists where there is
+      # none. Recognizing the sentinel by matching WORDS in it (`/empty/`,
+      # `/no match/`) would only relocate the trap to the next prose edit, so
+      # `no_rows?` instead rebuilds the exact string the SAME tool method
+      # would have produced for these SAME inputs (`Tools::ListFiles
+      # .empty_message`, `Tools::Glob.no_matches_message`, `Tools::Grep
+      # .no_matches_message`) and compares by equality -- one definition,
+      # read from both ends, so a wording change to the sentinel cannot
+      # silently rearm this check.
+      #
+      # == A new coupling direction, and where it can still fail quietly
+      #
+      # This is the first place under `lib/lain/middleware/` that calls into a
+      # `Tools::` class in running code rather than in a comment. The
+      # direction is right: this file already owns `GUARDED_TOOLS` and the
+      # row-format knowledge for exactly these three tools, so reading the
+      # sentinel FROM the tool that builds it is less coupling than
+      # reconstructing the same string here a second time. A shared fourth
+      # "empty result" object was considered and rejected -- the three
+      # sentinels take HETEROGENEOUS argument shapes (`empty_message(path)`
+      # vs `no_matches_message(pattern, base)` vs `no_matches_message(pattern,
+      # path)`), so one common interface would either drop an argument or
+      # grow a case split uglier than three small `no_rows?` overrides.
+      #
+      # The cost that trade buys: `no_rows?`'s `==` degrades SILENTLY, not
+      # loudly, if one of those three signatures drifts. Change what
+      # `Tools::Grep.no_matches_message` echoes, or add a keyword argument to
+      # it, and `Matches#no_rows?` still calls it -- `content` simply stops
+      # matching, `no_rows?` quietly starts answering `false` for every real
+      # no-match sentinel, and the row falls through to the ordinary
+      # (fail-open, mostly-safe-but-no-longer-INTENDED) {Matches#paths_in}
+      # path instead of raising anywhere. Nothing here checks arity or
+      # asserts the two sides still agree beyond that one `==`. Touching any
+      # of the three tools' sentinel-builder signatures means re-running
+      # `spec/lain/middleware/withhold_secret_paths_spec.rb`'s "an empty
+      # result under a gated (but ordinary) directory" block by hand -- it is
+      # the one place this drift would show up, and it would show up as a
+      # subtler symptom (a listing that quietly stops reading as empty) than
+      # an error.
       class Rows
         def noun(count) = count == 1 ? self.class::ONE : self.class::MANY
+
+        private
+
+        # Both spellings, {Sensitivity::Policy#at}'s rule: a parsed provider
+        # payload arrives with String keys while an in-process caller writes
+        # Symbols, and reading only one of them misses the field entirely.
+        def field(input, name)
+          return nil unless input.is_a?(Hash)
+
+          input[name] || input[name.to_sym]
+        end
       end
 
       # `glob` and `list_files`: the row IS the path, so it has exactly one
@@ -63,6 +121,21 @@ module Lain
         def paths_in(row) = [row]
       end
 
+      # `base` is already resolved exactly as {Tools::ListFiles#perform}
+      # resolves `path` -- {WithholdSecretPaths#base} and the tool compute it
+      # the same way, from the same {Sensitivity::Policy::PATH_FIELDS} entry.
+      class ListFilesRows < Listing
+        def no_rows?(_effect, content, base) = content == Tools::ListFiles.empty_message(base)
+      end
+
+      # Same resolved `base` as {ListFilesRows}; the pattern is read straight
+      # off the effect's own input, the one place it lives.
+      class GlobRows < Listing
+        def no_rows?(effect, content, base)
+          content == Tools::Glob.no_matches_message(field(effect.input, "pattern"), base)
+        end
+      end
+
       # `grep`: `path:lineno:text`. A colon is legal in a path AND in the
       # matched text, so there is no split that is right in every case -- every
       # split whose middle field is a line number is a reading, and
@@ -70,7 +143,9 @@ module Lain
       #
       # A row with no such split is not a match row at all: grep's own
       # `... capped at 200 matches` trailer is the only one, and it names no
-      # file, so it is left alone.
+      # file, so it is left alone. The no-match sentinel used to fall into
+      # this same fail-open case BY COINCIDENCE (it happens to carry exactly
+      # one colon); `no_rows?` below makes that survival a designed property.
       class Matches < Rows
         ONE = "match"
         MANY = "matches"
@@ -85,6 +160,15 @@ module Lain
           splits(fields).map { |at| fields.take(at).join(SEPARATOR) }
         end
 
+        # Grep's sentinel echoes the model's OWN path spelling, never the
+        # resolved `base` -- {Tools::Grep#format_matches} passes `input.path`
+        # verbatim, matching {Tools::Grep::RubySearch#matching}'s label rule.
+        # So this reads the raw field rather than taking the resolved `base`
+        # {ListFilesRows}/{GlobRows} share.
+        def no_rows?(effect, content, _base)
+          content == Tools::Grep.no_matches_message(field(effect.input, "pattern"), field(effect.input, "path"))
+        end
+
         private
 
         # Every index whose field is a line number and which has a text field
@@ -92,7 +176,8 @@ module Lain
         def splits(fields) = (1...(fields.length - 1)).select { fields[_1].match?(LINE_NUMBER) }
       end
 
-      LISTING = Listing.new.freeze
+      LIST_FILES = ListFilesRows.new.freeze
+      GLOB = GlobRows.new.freeze
       MATCHES = Matches.new.freeze
 
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
@@ -100,7 +185,7 @@ module Lain
       # until it earns a place here. `bash` listing a directory with `ls` is
       # deliberately NOT in this set -- that is the path boundary's job and a
       # different card's.
-      GUARDED_TOOLS = { "glob" => LISTING, "list_files" => LISTING, "grep" => MATCHES }.freeze
+      GUARDED_TOOLS = { "glob" => GLOB, "list_files" => LIST_FILES, "grep" => MATCHES }.freeze
 
       ROW = "\n"
       WITHHELD = "%<count>d %<noun>s withheld (%<reasons>s)"
@@ -177,8 +262,17 @@ module Lain
       # rebuilt one, so an ordinary listing is byte-identical to the tool's own
       # -- a split-and-join would silently normalize a trailing newline a tool
       # someday emits.
+      #
+      # The no-rows check runs BEFORE the content is ever split into rows: a
+      # tool's own "found nothing" sentence is not a row to sift at all, and
+      # asking `no_rows?` first is what keeps this class from manufacturing a
+      # path reading out of a sentence that merely happens to be one line
+      # long (see the class comment on {Rows}).
       def reported(carried, effect, shape, content)
-        sifted = sift(carried, effect, shape, content)
+        target = base(effect, carried.fetch(:context) || Session::Null.instance)
+        return carried if shape.no_rows?(effect, content, target)
+
+        sifted = sift(shape, content, target)
         return carried unless sifted.any?
 
         carried.merge(result: Tool::Result.ok([*sifted.kept, line(sifted, shape)].join(ROW)))
@@ -189,8 +283,7 @@ module Lain
                          reasons: sifted.reasons.join(REASONS))
       end
 
-      def sift(carried, effect, shape, content)
-        base = base(effect, carried.fetch(:context) || Session::Null.instance)
+      def sift(shape, content, base)
         @filter.sift(content.split(ROW)) { |row| shape.paths_in(row).map { reading(_1, base) } }
       end
 
