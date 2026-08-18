@@ -238,6 +238,41 @@ RSpec.describe "stalled-stream protection", :seam do
     end
   end
 
+  # Where a fired clock sends its error is decided once, on the request's own
+  # fiber, and by CAPABILITY rather than by class: `fiber_interrupt` and
+  # `kernel_sleep` are optional `Fiber::Scheduler` hooks, so "a scheduler is
+  # installed" and "this scheduler can take a deferred interrupt" are different
+  # questions and only the second one decides anything.
+  describe "where a fired clock delivers" do
+    let(:delivery) { clock_class::Delivery }
+    # Verified against the real scheduler, so the example also pins that Async
+    # still answers the two hooks this branch is built on.
+    let(:deferring) { instance_double(Async::Scheduler, fiber_interrupt: nil, kernel_sleep: nil) }
+
+    it "sends to the fiber when the scheduler can defer an interrupt" do
+      expect(delivery.here(Thread.current, scheduler: deferring)).to be_a(delivery::ToFiber)
+    end
+
+    # Not silently OFF, which is the failure this whole class is written against:
+    # a scheduler without the hook keeps the delivery that shipped before F10 was
+    # fixed. It lands badly on a reactor, but it still BOUNDS the stall, and an
+    # unbounded stall is the worse of the two.
+    it "falls back to the thread when the scheduler cannot" do
+      expect(delivery.here(Thread.current, scheduler: Object.new)).to be_a(delivery::ToThread)
+    end
+
+    it "reads no scheduler at all as the same answer" do
+      expect(delivery.here(Thread.current, scheduler: nil)).to be_a(delivery::ToThread)
+    end
+
+    # The two-phase constructor closed: between `new` and `watch` a clock has a
+    # delivery that goes nowhere, rather than a nil for the monitor thread to
+    # call `interrupt` on.
+    it "goes nowhere at all before a watch has claimed the clock" do
+      expect([delivery::Null.interrupt(stall_error.new("x")), delivery::Null.collect]).to eq([nil, nil])
+    end
+  end
+
   describe "the exception type" do
     # The structural half of "not retried": `retry_exceptions` holds
     # Faraday::TimeoutError and Timeout::Error, and `retry_options` retries
@@ -318,11 +353,15 @@ RSpec.describe "stalled-stream protection", :seam do
     end
   end
 
-  # `Thread#raise` is asynchronous, so the monitor can fire in the instant
-  # between the block returning and `#stop` taking the mutex. Both examples
-  # drive that window deterministically through the injected `clock:` seam: the
-  # lambda answers by THREAD, and parks the monitor's first reading -- which is
-  # taken inside `sweep`, holding the same mutex `#stop` wants.
+  # Delivery is asynchronous whichever way it goes, so the monitor can fire in
+  # the instant between the block returning and `#stop` taking the mutex. Both
+  # examples drive that window deterministically through the injected `clock:`
+  # seam: the lambda answers by THREAD, and parks the monitor's first reading --
+  # which is taken inside `sweep`, holding the same mutex `#stop` wants.
+  #
+  # No scheduler is installed here, so this is the `Thread#raise` half of the
+  # race. Its reactor twin -- where the interrupt is queued rather than raised,
+  # and cannot be recalled -- is spec/lain/seams/stall_under_reactor_spec.rb.
   describe "the teardown race" do
     # Reading by thread rather than by call count, because the monitor's first
     # sweep can land either side of `#receiving`'s resume and a counted gate
@@ -343,13 +382,13 @@ RSpec.describe "stalled-stream protection", :seam do
       release.pop
     end
 
-    # Returns [what #watch answered, what the thread variable holds afterwards].
+    # Returns [what #watch answered, what the fiber's storage holds afterwards].
     def race_outcome
       parked = Queue.new
       release = Queue.new
       clock = clock_class.new(1.0, clock: gated_clock(parked, release))
       answer = capture_value(clock, parked, release)
-      [answer, Thread.current.thread_variable_get(clock_class::VARIABLE)]
+      [answer, Fiber[clock_class::KEY]]
     end
 
     def capture_value(clock, parked, release)
@@ -378,10 +417,10 @@ RSpec.describe "stalled-stream protection", :seam do
 
     # The mechanical half, and the one that must not regress: #stop raising
     # would otherwise abort #watch's ensure before the restore, leaking this
-    # clock into the thread variable for the life of the thread -- and
+    # clock into fiber storage for the life of the fiber -- and
     # Streaming#flush_stream calls on_data AFTER connection.post returns, so it
     # would tick a finished request's clock.
-    it "restores the thread variable even when the teardown is what raised" do
+    it "restores the fiber's storage even when the teardown is what raised" do
       leaked = race_outcome.last
       unprotected = clock_class.watching(nil) { clock_class.current }
 
@@ -448,12 +487,20 @@ RSpec.describe "stalled-stream protection", :seam do
       end
     end
 
-    # Both halves matter. The request thread's id is what attributes a survivor
-    # to a request; the clock's own is what keeps two SEQUENTIAL requests on one
-    # thread apart -- and under `rake pspec` a worker is one process with one
-    # main thread, so without it every clock thread in the worker collides.
+    # All three halves matter. The request thread's id is what attributes a
+    # survivor to a request; the clock's own is what keeps two SEQUENTIAL
+    # requests on one thread apart -- and under `rake pspec` a worker is one
+    # process with one main thread, so without it every clock thread in the
+    # worker collides.
     it "names itself after the request thread it is watching" do
       expect(monitor_name).to start_with("#{clock_class::THREAD_PREFIX} #{Thread.current.object_id}.")
+    end
+
+    # And the FIBER, because that is what the thread stopped discriminating: two
+    # sibling streams on one reactor share a thread, so a watchdog dump naming
+    # only the thread cannot say which of them is the survivor.
+    it "names the fiber it is watching, which the thread alone no longer identifies" do
+      expect(monitor_name).to include(".#{Fiber.current.object_id}.")
     end
 
     it "gives two streams on the same thread different names" do
