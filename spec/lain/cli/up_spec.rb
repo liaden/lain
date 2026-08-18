@@ -78,6 +78,21 @@ RSpec.describe Lain::CLI::Up do
       Open3.capture2("tmux", "-L", socket, "list-sessions").first.lines.size
     end
 
+    # tmux reaps an exited pane on its OWN event loop, so this waits for the
+    # fact instead of sleeping a guessed interval -- and answers false rather
+    # than hanging when the window (or the whole server) is gone, which is
+    # exactly the regression it guards. The deadline is only ever paid on
+    # failure.
+    def dead_chat_pane?
+      # `#{pane_dead}` is tmux's own format syntax, not Ruby interpolation.
+      # rubocop:disable Lint/InterpolationCheck
+      probe = -> { tmux("list-panes", "-t", "#{session}:chat", "-F", '#{pane_dead}') == "1" }
+      # rubocop:enable Lint/InterpolationCheck
+      deadline = Time.now + 5
+      sleep(0.01) until probe.call || Time.now > deadline
+      probe.call
+    end
+
     it "creates the session with a session-scoped status-right derived from state.json" do
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3)
 
@@ -138,6 +153,76 @@ RSpec.describe Lain::CLI::Up do
         .to eq("remain-on-exit failed")
     end
 
+    # The example above pins the option's VALUE; this one pins WHEN it lands,
+    # which is the half that was broken. tmux reads remain-on-exit at
+    # pane-DEATH time, and `keep_failed_pane` used to be the last thing
+    # #configure_session did -- four tmux invocations after the pane was
+    # already running chat -- so a chat that refused instantly died into a
+    # window with no option yet and took window, session and the whole SERVER
+    # with it, and #call itself then raised TmuxUnavailable ("no server
+    # running") instead of leaving a corpse.
+    #
+    # Forced with `exit 1` rather than waited for. The race is load-sensitive,
+    # so the wild version of this only reddens on a busy box (it is the
+    # `-- chat args` example's recorded flake); an instant failing exit makes
+    # it deterministic -- 9 losses in 20 repeats against the old ordering, 0 in
+    # 20 against this one, measured with tmux alone.
+    it "survives a chat that dies INSTANTLY, keeping the corpse rather than the server" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+
+      report = described_class.new(session:, socket:, state_path:, chat_command: "exit 1").call
+
+      expect(report.created).to be true
+      expect(dead_chat_pane?).to be(true)
+      expect(tmux("show-window-options", "-t", "#{session}:chat", "remain-on-exit"))
+        .to eq("remain-on-exit failed")
+    end
+
+    # Opening the window before putting the command in it costs the property
+    # HEAD had for free: `new-session` carried the command, so it either
+    # produced a session already running chat or produced nothing at all, and a
+    # failed `lain up` was always safe to retry. Split the two and a failure
+    # between them strands a session called `lain` whose `chat` window is a
+    # bare login shell -- and because `configure_session` never ran, the retry
+    # reports `created=false`, says "reattaching to 'lain'", carries NO
+    # warnings, and drops the operator at a shell prompt. So creation stays
+    # all-or-nothing on purpose.
+    #
+    # Real tmux for every call except the one under test: sabotaging
+    # `respawn-pane` alone is what makes the half-built state reachable, and
+    # nothing else about the run is faked.
+    it "leaves NO session behind when the pane command cannot be spawned" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      sabotage = lambda do |*args|
+        real = Mixlib::ShellOut.new(*args)
+        args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
+      end
+
+      expect { described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage).call }
+        .to raise_error(described_class::TmuxUnavailable, /respawn-pane/)
+
+      expect(tmux("list-sessions")).not_to include(session)
+    end
+
+    # The other half of the same property, and the one the operator actually
+    # feels: the retry after a failed `up` must CREATE, never report itself as
+    # reattaching to the wreck.
+    it "lets the retry after a failed spawn create cleanly, rather than reattaching to a bare shell" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      sabotage = lambda do |*args|
+        real = Mixlib::ShellOut.new(*args)
+        args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
+      end
+      expect { described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage).call }
+        .to raise_error(described_class::TmuxUnavailable)
+
+      retried = described_class.new(session:, socket:, state_path:, chat_command: "sleep 30").call
+
+      expect(retried.created).to be true
+      expect(retried.warnings).to be_empty
+      expect(session_count).to eq(1)
+    end
+
     it "threads -- chat args into the spawned window's command, each argument shell-escaped" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       chat_args = ["--model", "claude-fable-5", "--no-journal"]
@@ -168,7 +253,20 @@ RSpec.describe Lain::CLI::Up do
       # A control session started on the SAME server, never touched by Up, is
       # the honest baseline: if global options had changed, this sibling
       # would inherit the change too.
-      system("tmux", "-L", socket, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+      #
+      # `-f File::NULL`, and it has to be THIS command: a scratch `-L` server
+      # sources the developer's own tmux.conf, and this box's ends in
+      # `run -b '.../tpm/tpm'` -- BACKGROUND. Measured on a fresh scratch
+      # server, global `status-right` is rewritten twice while nobody is
+      # looking: tmux-continuum prepends its save job at ~300ms and the theme
+      # plugin blanks it at ~500ms. `up.call` sits between this example's two
+      # samples, so either write lands inside the comparison and reddens it
+      # for a reason that has nothing to do with `lain up`. `-f` is read when
+      # the SERVER is created, and the control session is what creates it --
+      # `start-server` cannot do the job, because a tmux server holding no
+      # sessions exits immediately.
+      system("tmux", "-L", socket, "-f", File::NULL,
+             "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
       before_status_right = tmux("show-options", "-g", "status-right")
       before_bell = tmux("show-window-options", "-g", "monitor-bell")
 
@@ -177,7 +275,13 @@ RSpec.describe Lain::CLI::Up do
       expect(tmux("show-options", "-g", "status-right")).to eq(before_status_right)
       expect(tmux("show-window-options", "-g", "monitor-bell")).to eq(before_bell)
       expect(tmux("show-options", "-v", "-t", "control", "status-right")).to eq("")
-      expect(tmux("show-window-options", "-t", "control:1", "monitor-bell")).to eq("")
+      # `control:^` (tmux's "first window"), never `control:1`: the developer's
+      # conf sets `base-index 1`, the `-f File::NULL` above reverts it to 0, and
+      # `show-window-options -t control:1` then exits 1 with `no such window` on
+      # STDERR -- which capture2 discards, so `eq("")` would pass because the
+      # window is ABSENT rather than because the option is unset. Verified by
+      # swapping in `control:99`, which cannot exist and still passed.
+      expect(tmux("show-window-options", "-t", "control:^", "monitor-bell")).to eq("")
       expect(tmux("show-options", "-v", "-t", session, "status-right")).not_to eq("")
     end
 
@@ -501,7 +605,10 @@ RSpec.describe Lain::CLI::Up do
   describe "-- chat args pass-through" do
     let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
 
-    def capture_new_session_command(chat_args:)
+    # `respawn-pane`, not `new-session`: the window is opened bare so
+    # remain-on-exit can be pinned before any command runs, and the chat
+    # command lands in the pane a beat later. See Up#create_session.
+    def capture_chat_pane_command(chat_args:)
       calls = []
       spy = lambda do |*args|
         calls << args
@@ -510,11 +617,11 @@ RSpec.describe Lain::CLI::Up do
 
       described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call
 
-      calls.find { |args| args.include?("new-session") }.last
+      calls.find { |args| args.include?("respawn-pane") }.last
     end
 
     it "shell-escapes every chat arg onto the default chat command" do
-      command = capture_new_session_command(chat_args: ["--model", "claude-fable-5", "--no-journal"])
+      command = capture_chat_pane_command(chat_args: ["--model", "claude-fable-5", "--no-journal"])
 
       # The env preamble is {.pane_command}'s own subject (it has its own
       # examples above, which pin every export); what THIS pair is about is the
@@ -525,7 +632,7 @@ RSpec.describe Lain::CLI::Up do
     end
 
     it "leaves the chat command untouched when no chat args are given" do
-      command = capture_new_session_command(chat_args: [])
+      command = capture_chat_pane_command(chat_args: [])
 
       expect(command).to eq("#{pane_command_class.gem_exports}exec #{$PROGRAM_NAME} chat")
     end
@@ -534,7 +641,7 @@ RSpec.describe Lain::CLI::Up do
       Dir.mktmpdir do |marker|
         hostile = "; touch #{marker}/pwned $(touch #{marker}/pwned2)"
 
-        command = capture_new_session_command(chat_args: [hostile])
+        command = capture_chat_pane_command(chat_args: [hostile])
         Open3.capture3("sh", "-c", command)
 
         expect(Dir.children(marker)).to be_empty
@@ -544,7 +651,7 @@ RSpec.describe Lain::CLI::Up do
     it "shell-escapes a hostile arg as a single Shellwords-escaped token" do
       hostile = "; rm -rf /"
 
-      command = capture_new_session_command(chat_args: [hostile])
+      command = capture_chat_pane_command(chat_args: [hostile])
 
       expect(command).to end_with(Shellwords.escape(hostile))
     end
@@ -575,6 +682,12 @@ RSpec.describe Lain::CLI::Up do
     def new_session_call(calls) = calls.find { |args| args.include?("new-session") }
     def split_call(calls) = calls.find { |args| args.include?("split-window") }
 
+    # `new-session` opens the window BARE so remain-on-exit can be pinned
+    # before anything runs in it (Up#create_session), so the first pane's
+    # real command -- nvim's, or chat's when the cockpit degrades -- arrives on
+    # the respawn. That is where every command assertion below reads it.
+    def first_pane_call(calls) = calls.find { |args| args.include?("respawn-pane") }
+
     it "derives the plugin's deterministic socket and threads it into both panes" do
       Dir.mktmpdir do |runtime|
         calls = []
@@ -588,7 +701,7 @@ RSpec.describe Lain::CLI::Up do
         # (which swallows a real failure inside :LainStart -- how a layout that
         # never opened went unnoticed). Both were measured; see
         # `Up::Cockpit::LAIN_START`.
-        expect(new_session_call(calls).last)
+        expect(first_pane_call(calls).last)
           .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
                                   "-c", Lain::CLI::Up::Cockpit::SCRATCH_BUFFER,
                                   "-c", Lain::CLI::Up::Cockpit::LAIN_START]))
@@ -607,7 +720,7 @@ RSpec.describe Lain::CLI::Up do
 
         cockpit_up(calls, nvim: "", paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })).call
 
-        expect(new_session_call(calls).last)
+        expect(first_pane_call(calls).last)
           .to include("-c #{Shellwords.escape(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER)}")
       end
     end
@@ -638,7 +751,7 @@ RSpec.describe Lain::CLI::Up do
 
       cockpit_up(calls, nvim: "/x/explicit.sock").call
 
-      expect(new_session_call(calls).last)
+      expect(first_pane_call(calls).last)
         .to include("--cmd #{Shellwords.escape("set rtp+=#{Lain::Paths::NVIM_PLUGIN_ROOT}")} --listen")
     end
 
@@ -654,8 +767,8 @@ RSpec.describe Lain::CLI::Up do
 
       report = cockpit_up(calls, nvim: "", paths:).call
 
-      expect(new_session_call(calls).last).not_to include("--cmd")
-      expect(new_session_call(calls).last).to include("--listen")
+      expect(first_pane_call(calls).last).not_to include("--cmd")
+      expect(first_pane_call(calls).last).to include("--listen")
       expect(split_call(calls)).not_to be_nil
       expect(report.warnings.join).to include(missing_root)
     end
@@ -678,7 +791,7 @@ RSpec.describe Lain::CLI::Up do
 
       cockpit_up(calls, nvim: "/x/explicit.sock").call
 
-      expect(new_session_call(calls).last).to include("--listen /x/explicit.sock")
+      expect(first_pane_call(calls).last).to include("--listen /x/explicit.sock")
       expect(split_call(calls).last).to include("chat --nvim /x/explicit.sock")
     end
 
@@ -698,7 +811,11 @@ RSpec.describe Lain::CLI::Up do
 
       cockpit_up(calls, nvim: "/x/explicit.sock").call
 
+      # Three calls now carry the directory, not two: the window is opened
+      # bare and then respawned into, so the -c has to survive BOTH halves of
+      # the first pane's creation or the pane lands in the server's cwd.
       expect(new_session_call(calls).each_cons(2)).to include(["-c", cwd])
+      expect(first_pane_call(calls).each_cons(2)).to include(["-c", cwd])
       expect(split_call(calls).each_cons(2)).to include(["-c", cwd])
     end
 
@@ -708,8 +825,8 @@ RSpec.describe Lain::CLI::Up do
       report = cockpit_up(calls, nvim: "", binaries: { "nvim" => false }).call
 
       expect(split_call(calls)).to be_nil
-      expect(new_session_call(calls).last).not_to include("--nvim")
-      expect(new_session_call(calls).last).to include("chat")
+      expect(first_pane_call(calls).last).not_to include("--nvim")
+      expect(first_pane_call(calls).last).to include("chat")
       expect(report.warnings.join).to include("nvim not found on PATH")
     end
 
@@ -736,6 +853,7 @@ RSpec.describe Lain::CLI::Up do
 
       expect(report.created).to be(false)
       expect(new_session_call(calls)).to be_nil
+      expect(first_pane_call(calls)).to be_nil
       expect(split_call(calls)).to be_nil
       expect(report.warnings.join).to include("already exists without the nvim pane")
     end
@@ -920,6 +1038,11 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
   def split_call(calls) = calls.find { |args| args.include?("split-window") }
   def status_right_call(calls) = calls.find { |args| args.include?("status-right") }
 
+  # The first pane's COMMAND arrives on the respawn, not on the new-session
+  # that opens the window bare -- see Up#create_session. Its `-c` is asserted
+  # through #new_session_call above, which still carries the window's own.
+  def first_pane_call(calls) = calls.find { |args| args.include?("respawn-pane") }
+
   # `-c DIR` reaches tmux as two ADJACENT argv elements, so the pair is what
   # gets asserted -- `include("-c").and include(dir)` would pass on an argv
   # that carried the directory somewhere else entirely.
@@ -978,7 +1101,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
       scratch_dir do |one|
         scratch_dir do |two|
           sockets = with_env("XDG_RUNTIME_DIR" => runtime) do
-            [one, two].map { |dir| new_session_call(tmux_calls(path: dir)).last[/--listen (\S+)/, 1] }
+            [one, two].map { |dir| first_pane_call(tmux_calls(path: dir)).last[/--listen (\S+)/, 1] }
           end
 
           expect(sockets).to all(start_with(runtime))
@@ -995,7 +1118,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
     scratch_dir do |dir|
       calls = tmux_calls(path: dir, nvim_socket: "/x/explicit.sock")
 
-      expect(new_session_call(calls).last).to include("--listen /x/explicit.sock")
+      expect(first_pane_call(calls).last).to include("--listen /x/explicit.sock")
       expect(split_call(calls).last).to include("chat --nvim /x/explicit.sock")
       expect(pinned_dirs(split_call(calls))).to eq([dir])
     end
@@ -1004,7 +1127,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
   it "keeps two --nvim-socket launches on the sockets they named, not on one derived pair" do
     scratch_dir do |dir|
       sockets = %w[/x/one.sock /x/two.sock].map do |sock|
-        new_session_call(tmux_calls(path: dir, nvim_socket: sock)).last[/--listen (\S+)/, 1]
+        first_pane_call(tmux_calls(path: dir, nvim_socket: sock)).last[/--listen (\S+)/, 1]
       end
 
       expect(sockets).to eq(%w[/x/one.sock /x/two.sock])
@@ -1018,7 +1141,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
     scratch_dir do |runtime|
       scratch_dir do |dir|
         socket = with_env("XDG_RUNTIME_DIR" => runtime) do
-          new_session_call(tmux_calls(path: dir, nvim_socket: ""))
+          first_pane_call(tmux_calls(path: dir, nvim_socket: ""))
         end.last[/--listen (\S+)/, 1]
 
         expect(socket).to start_with(runtime)

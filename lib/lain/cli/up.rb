@@ -144,6 +144,51 @@ module Lain
         end
       end
 
+      # Every tmux invocation `lain up` makes, on the socket it was told to
+      # use, turning a real tmux failure into a named Lain error. Its own
+      # object because "speak to a tmux server" and "decide what the cockpit
+      # should look like" are different jobs -- and this is the seam
+      # `shell_out_factory` was always injected for.
+      #
+      # NOT the only such layer in the codebase: {TmuxSurface} carries a
+      # private `act`/`run`/`socket_flag` trio that this one duplicates almost
+      # exactly (`socket_flag` byte-for-byte), and already spells the
+      # relationship out with `TmuxUnavailable = Up::TmuxUnavailable`. Sharing
+      # the two is the real cleanup here; this extraction only bought {Up} the
+      # ten lines the ClassLength cop wanted.
+      class Tmux
+        # @param socket [String, nil] tmux's `-L`; the default socket when nil
+        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        def initialize(socket:, shell_out_factory:)
+          @socket = socket
+          @shell_out_factory = shell_out_factory
+        end
+
+        # Exposed because {Up#attach_command} composes an argv for
+        # `Kernel.exec` rather than running it through here.
+        def socket_flag = @socket ? ["-L", @socket] : []
+
+        # TOLERATES a nonzero exit, which two callers need: `has-session`'s
+        # "no such session" is an expected answer rather than a failure, and
+        # {Up#keep_failed_pane} is deliberately best-effort.
+        def run(*)
+          @shell_out_factory.call("tmux", *socket_flag, *).tap(&:run_command)
+        rescue Errno::ENOENT
+          raise TmuxUnavailable, "tmux not found on PATH -- install it (or fix PATH) before `lain up`"
+        end
+
+        # Every MUTATING call goes through here so a real failure -- a broken
+        # or sandboxed tmux that cannot spawn a server at all, not just "no
+        # session yet" -- fails loudly instead of leaving a half-configured
+        # session with no error anywhere.
+        def act(*args)
+          shell_out = run(*args)
+          return shell_out if shell_out.exitstatus.zero?
+
+          raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}"
+        end
+      end
+
       # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
       # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
       # @param path [String, nil] the PATH argument: the project directory to open
@@ -178,7 +223,7 @@ module Lain
                      nvim: nil, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @session = session
-        @socket = socket
+        @tmux = Tmux.new(socket:, shell_out_factory:)
         @cwd = cwd
         @hud = Hud.new(state_path:)
         @chat_args = chat_args
@@ -194,7 +239,7 @@ module Lain
       #   never a bare Errno/Mixlib exception past this boundary.
       def call
         created = !session_exists?
-        created ? create_session : warn_unsplit_reattach
+        created ? create_session : reattach_session
         configure_session
         Report.new(session: @session, created:, warnings: @warnings.dup)
       end
@@ -239,14 +284,14 @@ module Lain
       # @return [Array<String>] argv for Kernel.exec
       def attach_command(nested:)
         verb = nested ? "switch-client" : "attach"
-        ["tmux", *socket_flag, verb, "-t", @session]
+        ["tmux", *@tmux.socket_flag, verb, "-t", @session]
       end
 
       private
 
       # The one query that TOLERATES a nonzero exit: "no such session" is the
       # expected, non-error answer that drives #call into #create_session.
-      def session_exists? = run("has-session", "-t", @session).exitstatus.zero?
+      def session_exists? = @tmux.run("has-session", "-t", @session).exitstatus.zero?
 
       # {.pane_command} over the `chat` subcommand. `@chat_args` is the exe's
       # `-- ARGS` trailing capture -- already `chat`'s own flags to validate,
@@ -256,17 +301,55 @@ module Lain
       # names.
       def default_chat_command = self.class.pane_command("chat", *@chat_args)
 
-      def create_session
-        cockpit_wanted? ? create_cockpit_session : act(*new_session_args)
-      end
-
+      # The ordering here IS the fix, and each step is load-bearing.
+      #
+      # `cockpit_wanted?` FIRST, because it spawns `nvim --version` and touches
+      # no tmux. Computing it before anything exists keeps the missing-nvim
+      # warning where HEAD had it, and keeps its cost out of the window below.
+      #
+      # Then the window is opened EMPTY -- carrying tmux's own default shell,
+      # which is not going anywhere -- so {#keep_failed_pane} has somewhere to
+      # land BEFORE any pane runs a command that can die. Only then does the
+      # real command arrive. {#keep_failed_pane} explains the bug that closes.
+      #
       # `-c` on the plain window too, not only on the cockpit's two panes: a
       # `--no-nvim` session that inherited tmux's default-path would run its
       # chat wherever the tmux SERVER was started, which is a different project
       # from the one `lain up PATH` names and from the one the HUD reads.
-      def new_session_args
-        args = ["new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd]
-        @chat_command ? args + [@chat_command] : args
+      def create_session
+        cockpit = cockpit_wanted?
+        @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd)
+        keep_failed_pane
+        build_panes(cockpit)
+      end
+
+      # `lain up` builds a WORKING session or none at all. HEAD had that for
+      # free -- `new-session` carried the command, so it either produced a
+      # session already running chat or produced nothing -- and splitting the
+      # two is what makes it something to keep on purpose: a failure in
+      # between would otherwise strand a session called `lain` whose `chat`
+      # window is a bare login shell, and since #configure_session never ran,
+      # the retry finds it, reports "reattaching to 'lain'" with NO warnings,
+      # and drops the operator at a shell prompt.
+      #
+      # Scoped to AFTER the window exists, deliberately: a `new-session` that
+      # failed because another `lain up` just took the name must never be
+      # answered by killing THEIR session.
+      def build_panes(cockpit)
+        cockpit ? spawn_cockpit_panes : spawn_chat_pane
+      rescue StandardError
+        @tmux.run("kill-session", "-t", @session)
+        raise
+      end
+
+      def spawn_chat_pane = @tmux.act("respawn-pane", "-k", "-t", chat_target, "-c", @cwd, @chat_command)
+
+      # Reattaching rebuilds nothing, so all it owes is the un-split warning
+      # and a re-assert of {#keep_failed_pane}: a session `lain up` did not
+      # create -- or created before this option did -- still earns its corpse.
+      def reattach_session
+        warn_unsplit_reattach
+        keep_failed_pane
       end
 
       # T19's degrade AC: the cockpit without an nvim binary is TODAY's single
@@ -301,17 +384,17 @@ module Lain
 
       # list-panes answers one line per live pane; the cockpit means two.
       def chat_window_unsplit?
-        run("list-panes", "-t", "#{@session}:#{CHAT_WINDOW}").stdout.lines.size < 2
+        @tmux.run("list-panes", "-t", chat_target).stdout.lines.size < 2
       end
 
       # The cockpit split, per {Cockpit}'s plan: both panes pinned to ONE cwd
       # (tmux -c) and handed ONE socket, so the convention cannot silently
       # diverge between the editor and the chat that attaches to it.
-      def create_cockpit_session
+      def spawn_cockpit_panes
         warn_missing_plugin
-        act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd, @cockpit.nvim_pane_command)
-        act("split-window", "-h", "-t", "#{@session}:#{CHAT_WINDOW}", "-c", @cwd,
-            self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
+        @tmux.act("respawn-pane", "-k", "-t", chat_target, "-c", @cwd, @cockpit.nvim_pane_command)
+        @tmux.act("split-window", "-h", "-t", chat_target, "-c", @cwd,
+                  self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
       end
 
       # T2 degrade AC: probed only on the create path (mirrors
@@ -330,17 +413,39 @@ module Lain
         @warnings << warning if warning
         set_option("status-right", status_right)
         set_option("status-interval", @status_interval.to_s)
-        act("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "monitor-bell", "on")
-        keep_failed_pane
+        @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
       end
 
       # A chat pane that dies takes its error message with it, and when it is
-      # the session's only pane it takes the whole tmux SERVER too -- so a
-      # refusal that printed a perfectly clear line (a missing API key, an
-      # unknown provider) reaches the operator as a terminal that blinks once
-      # and returns to the shell. That is how the 2026-08-06 report ("starts
-      # and immediately crashes") looked from the outside, with the actual
-      # cause legible only from a probe socket with remain-on-exit forced on.
+      # the session's only pane it takes the window, the session and the whole
+      # tmux SERVER too -- so a refusal that printed a perfectly clear line (a
+      # missing API key, an unknown provider) reaches the operator as a
+      # terminal that blinks once and returns to the shell. That is how the
+      # 2026-08-06 report ("starts and immediately crashes") looked from the
+      # outside, with the actual cause legible only from a probe socket with
+      # remain-on-exit forced on.
+      #
+      # WHEN this is written is the whole of it, because tmux reads the option
+      # at pane-DEATH time. It used to be the LAST thing #configure_session
+      # did, four tmux invocations after the pane was already running chat --
+      # so the fastest crashes, exactly the ones it was written for, died into
+      # a window that had no option yet, and `up` then failed on its next tmux
+      # call with "no server running" rather than leaving a corpse to read.
+      # Measured 9 losses in 20 forced repeats. tmux offers no creation-time
+      # flag for a window option and, since 2.9, no scope between the window
+      # and the user's GLOBALS -- which `lain up` does not write -- so the
+      # window is opened bare and the command respawned into it instead
+      # ({#create_session}).
+      #
+      # That does not narrow the race so much as replace the party running it:
+      # chat cannot start until after this option is written, so the crash
+      # this exists for can no longer land early. What DOES sit in the pane
+      # for the ~17-26ms in between is the user's LOGIN SHELL, and a
+      # pathological `default-command` or `$SHELL` that exits there still
+      # takes pane -> window -> session -> server, because the option has not
+      # landed yet either. That exposure is unchanged by this reordering and
+      # is measured 3-4x larger than an earlier note assumed -- small, real,
+      # and not retired by the fix.
       #
       # `failed` and not `on`: a clean exit should still close the pane, so
       # this costs nothing in the ordinary case and only holds the screen when
@@ -348,31 +453,21 @@ module Lain
       #
       # #run, not #act -- best-effort ON PURPOSE. `failed` needs tmux >= 3.2,
       # and failing `lain up` outright on an older tmux would trade a working
-      # cockpit for a diagnostic nicety. A tmux too old simply keeps today's
-      # behaviour.
-      def keep_failed_pane = run("set-window-option", "-t", "#{@session}:#{CHAT_WINDOW}", "remain-on-exit", "failed")
+      # cockpit for a diagnostic nicety. On `2.6 <= v < 3.2` that degrade is
+      # exact: the option write is skipped and everything else still works.
+      # Below 2.6 it is NOT -- {#spawn_chat_pane}'s `respawn-pane -c` did not
+      # exist yet and goes through #act, so `lain up` raises rather than
+      # degrading. Academic (2.6 is 2017, well under the 3.2 this targets),
+      # but the honest bound. That is also why this stays its OWN invocation
+      # instead of being chained onto #create_session's with tmux's `;`,
+      # which would otherwise close the race just as tightly: tmux aborts a
+      # command list at the first failure, so an older tmux would be left with
+      # a half-created session AND a raise out of #act.
+      def keep_failed_pane = @tmux.run("set-window-option", "-t", chat_target, "remain-on-exit", "failed")
 
-      def set_option(name, value) = act("set-option", "-t", @session, name, value)
+      def chat_target = "#{@session}:#{CHAT_WINDOW}"
 
-      # Every MUTATING tmux call (as opposed to #session_exists?'s query)
-      # goes through here so a real failure -- a broken or sandboxed tmux
-      # that cannot spawn a server at all, not just "no session yet" -- fails
-      # this method loudly instead of leaving a half-configured session with
-      # no error anywhere.
-      def act(*args)
-        shell_out = run(*args)
-        raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}" unless shell_out.exitstatus.zero?
-
-        shell_out
-      end
-
-      def run(*)
-        @shell_out_factory.call("tmux", *socket_flag, *).tap(&:run_command)
-      rescue Errno::ENOENT
-        raise TmuxUnavailable, "tmux not found on PATH -- install it (or fix PATH) before `lain up`"
-      end
-
-      def socket_flag = @socket ? ["-L", @socket] : []
+      def set_option(name, value) = @tmux.act("set-option", "-t", @session, name, value)
 
       def binary_present?(binary)
         @shell_out_factory.call(binary, "--version").tap(&:run_command).exitstatus.zero?

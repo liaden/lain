@@ -587,12 +587,29 @@ Structures that plausibly qualify, and what they buy:
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
-  `Lain::CLI::Up ... threads -- chat args into the spawned window's command, each argument
-  shell-escaped` (this one witnesses a real production defect, see `up.rb`'s `keep_failed_pane`
-  ordering); `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
+  `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
   motions/syntax still work`; `Lain::Frontend::Neovim the review thread pane following the cursor
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
+
+  **The `up_spec` entries are RETIRED as of 2026-08-18 -- both had real causes and both are fixed.**
+  Recording that here because a stale "known flake" is worse than none: it reads "not a regression"
+  to the next person who sees them red. `threads -- chat args ...` and `leaves the global theme
+  untouched ...` were **independent witnesses** of one production defect -- `keep_failed_pane` wrote
+  `remain-on-exit` as the LAST thing `configure_session` did, four tmux calls after the pane was
+  already running chat, so the fastest crashes died into a window with no option yet and took the
+  server with them (9 losses in 20 forced repeats; 0 after). They failed as a RAISE with
+  distinguishable messages, `no server running` and `no such session: lain`, which is how the two
+  were told apart. `--nvim cockpit splits ...` was a *different* defect: a lossy `split` that made a
+  dead pane's cwd read back as the pane's own command string. `leaves the global theme untouched`
+  additionally had a second cause -- a scratch `-L` server still sources the user's `tmux.conf`,
+  whose background `tpm` rewrites global `status-right` at 300-500ms -- now pinned with
+  `-f File::NULL`.
+
+  A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
+  recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
+  by adding 88 lines above it.
+
 - **Record a flaky spec by NAME, never by line number.** The four first recorded as
   `cli/up_spec.rb:115`/`:175` drifted within days — one chunk grew that file by 454 lines and the
   live failure moved to `:166`. A stale line number is worse than no list: it reads as "not a
