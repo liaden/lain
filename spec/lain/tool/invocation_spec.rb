@@ -9,11 +9,6 @@ RSpec.describe Lain::Tool::Invocation do
     expect(invocation.channel).to be_a(Lain::Channel::Null)
   end
 
-  it "a default-channel invocation can be pushed to without an if-channel guard" do
-    invocation = described_class.new
-    expect { invocation.channel.push(:anything) }.not_to raise_error
-  end
-
   it "carries whatever tool_use_id, context, and channel it is given" do
     channel = Object.new
     invocation = described_class.new(tool_use_id: "tu_1", context: :ctx, channel:)

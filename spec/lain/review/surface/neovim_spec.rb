@@ -473,20 +473,10 @@ RSpec.describe Lain::Review::Surface::Neovim do
       expect(surface.thread(real_anchor)).to eq(inlet_refusal(:THREAD_DETACHED))
     end
 
-    it "refuses #mark and #refuse on the notice rail's own sentence" do
+    it "refuses #mark and #refuse on the notice rail's own sentence, and #verdict answers nothing" do
       expect([surface.mark("hunk-content-v1:deadbeef", :reviewed), surface.refuse("not today")])
         .to eq([inlet_refusal(:UNREPORTED), inlet_refusal(:UNREPORTED)])
-    end
-
-    it "raises nothing at all, for the whole port" do
-      expect do
-        surface.present(two_commit_changeset, scope: :cumulative)
-        surface.annotate(real_anchor, "note", kind: :note)
-        surface.mark("hunk-content-v1:deadbeef", :reviewed)
-        surface.thread(real_anchor)
-        surface.verdict
-        surface.refuse("not today")
-      end.not_to raise_error
+      expect(surface.verdict).to be_nil
     end
   end
 

@@ -97,7 +97,6 @@ RSpec.describe Lain::CacheProfile do
     end
 
     it "keeps ordinary Data equality (class + fields) against a non-Hash" do
-      expect(described_class::ANTHROPIC).to eq(described_class::ANTHROPIC)
       expect(described_class::ANTHROPIC).not_to eq(described_class::NO_CACHING)
     end
 

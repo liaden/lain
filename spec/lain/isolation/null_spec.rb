@@ -24,10 +24,6 @@ RSpec.describe Lain::Isolation::Null do
   describe "the lease" do
     subject(:lease) { backend.acquire("worker-1") }
 
-    it "releases as a no-op that does not raise" do
-      expect { lease.release }.not_to raise_error
-    end
-
     it "is idempotent-loud: first release is observable-true, later releases false" do
       expect(lease.release).to be(true)
       expect(lease.release).to be(false)
