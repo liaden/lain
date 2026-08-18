@@ -37,6 +37,36 @@ fixture tree with `cp -al`, and a hard link cannot cross a device. The default `
 while `$HOME` is ext4, so all seven of its `BootWithout` examples fail in fixture setup with a bare
 `Command failed with exit 1: cp` — which reads like a defect and is not one.
 
+That one fixed path is also **shared mutable state between concurrent agents**, which is a newer
+hazard now that an orchestrated chunk routinely has several worktrees running at once. The
+isolation, forge, review and frontend specs drive real `git` and real `tmux` against fixture trees
+under `$TMPDIR`, so two concurrent full-suite runs collide by construction. The shape is a
+`.git/objects/maintenance.lock` ENOENT, a tmux cwd `realpath` miss, **a different example failing
+each run**, and green the moment the other process exits. So: **a red `pspec` is not evidence until no other
+`parallel_rspec` is live.** Same lesson as the two traps below about scratch filenames and reading
+the tree mid-run — check the conditions before believing the failure.
+
+**Ask that question with `pgrep`, not with `ps | grep`.** The obvious spelling over-counts and, worse,
+never reaches zero when several agents poll at once: `ps aux | grep '[p]arallel_rspec'` also matches
+the *shell command lines* of sibling agents running the same check, so two waiters block each other
+forever. Measured: it reported 2 against 1 real run, the extra being a `zsh -c` wrapper. Match the
+binary instead, which no wrapper's argv contains:
+
+```bash
+pgrep -cf 'mise/installs/ruby/[0-9.]*/bin/parallel_rspec'   # 0 means genuinely quiet
+```
+
+Note a live `nvim`/`ollama` cockpit contends for the same fixtures without being a `parallel_rspec`
+process at all, so a zero here is necessary and not sufficient.
+
+**Wait on `pre-commit` too, and for a sharper reason than contention.** The hook **autostashes**
+unstaged tracked changes before running the suite against the staged tree, and that stash is
+repo-wide: a concurrent reader in another worktree sees its own unstaged edits vanish and reappear,
+`git status` disagree with what it just wrote, and untracked-file visibility change under it. Two
+agents hit this as a bare `NameError` on a constant they had just added. It is the "do not read the
+tree while a suite run is in flight" trap one layer deeper -- it reaches `git status`, not only file
+reads. `pgrep -f '[p]re-commit'` before believing a tree that looks wrong, and re-check once quiet.
+
 **`rake compile` needs `clang`** (bindgen wants `libclang`). Switching interpreters invalidates
 `rb-sys`'s build fingerprint and forces a rebuild, which is usually when its absence surfaces.
 
@@ -555,6 +585,14 @@ Structures that plausibly qualify, and what they buy:
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
   point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
+- **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
+  `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
+  `Lain::CLI::Up ... threads -- chat args into the spawned window's command, each argument
+  shell-escaped` (this one witnesses a real production defect, see `up.rb`'s `keep_failed_pane`
+  ordering); `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
+  motions/syntax still work`; `Lain::Frontend::Neovim the review thread pane following the cursor
+  does not re-place the diff on every further move once it is back`; and
+  `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
 - **Record a flaky spec by NAME, never by line number.** The four first recorded as
   `cli/up_spec.rb:115`/`:175` drifted within days — one chunk grew that file by 454 lines and the
   live failure moved to `:166`. A stale line number is worse than no list: it reads as "not a
