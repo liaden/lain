@@ -1148,6 +1148,10 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
   end
 
+  # A refusal `__lain.review_refused` echoed, waited for: the command returns
+  # before nvim has necessarily flushed the echo, so a bare read races it.
+  def refusal_shown = wait_until { messages[/lain: .+/] }
+
   # The real review model behind the verdict rail, for the one example that
   # asserts what the human SEES. Hand-written diff bytes over a verifying
   # double ({DiffSource}) rather than a repository -- `handover_spec.rb`'s own
@@ -1299,15 +1303,21 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     # The vocabulary is `Review::VERDICTS` and lua does not restate it, so this
     # is the example that says so from both sides: nothing reaches the review,
     # and the sentence the human gets is the one the ONE declaration produced.
+    #
+    # READ OFF THE MESSAGE RAIL SINCE T16, not off `pcall`'s `ok`. The command
+    # used to re-raise the refusal that crossed the wire, so the human met a
+    # `stack traceback:` under lain's own sentence; it
+    # now answers through `__lain.review_refused` and returns, so the command
+    # COMPLETES and the sentence is echoed. What is asserted about the sentence
+    # and about the review is unchanged -- only where the sentence is read from.
     it "refuses a word the vocabulary does not hold, and tells the human which words it does" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
         frontend.bind_changeset_review(review)
-        outcome = run("LainReviewVerdict looks-fine")
 
-        expect(outcome["ok"]).to be(false)
-        expect(outcome["err"]).to include(*Lain::Review::VERDICTS).and include("looks-fine")
+        expect(run("LainReviewVerdict looks-fine")).to include("ok" => true)
+        expect(refusal_shown).to include(*Lain::Review::VERDICTS).and include("looks-fine")
         expect(review.verdicts).to be_empty
       end
     end
@@ -1320,10 +1330,9 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
 
       frontend.run do
         frontend.bind_changeset_review(review)
-        outcome = run("LainReviewVerdict")
 
-        expect(outcome["ok"]).to be(false)
-        expect(outcome["err"]).to include(*Lain::Review::VERDICTS)
+        expect(run("LainReviewVerdict")).to include("ok" => true)
+        expect(refusal_shown).to include(*Lain::Review::VERDICTS)
         expect(review.verdicts).to be_empty
       end
     end
@@ -1352,16 +1361,39 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     end
 
     # ANSWERED, and the editor with no review open is the ordinary state of
-    # every session: the command fails with {NoReviewWrites}'s own sentence
+    # every session: the command refuses with {NoReviewWrites}'s own sentence
     # rather than acking a verdict nothing recorded.
-    it "fails with the unopened-review sentence when no review is bound" do
+    it "refuses with the unopened-review sentence when no review is bound" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        outcome = run("LainReviewVerdict approve")
+        expect(run("LainReviewVerdict approve")).to include("ok" => true)
+        expect(refusal_shown).to include("no review is open in this editor")
+      end
+    end
 
-        expect(outcome["ok"]).to be(false)
-        expect(outcome["err"]).to include("no review is open in this editor")
+    # THE OTHER HALF OF EVERY REFUSAL ABOVE, asserted once rather than three
+    # times: none of them may cost the human a traceback. It is a separate
+    # example because the three above are about WHAT lain said and this is about
+    # how it arrived, which no assertion on the sentence can state.
+    #
+    # ANCHORED ON `refusal_shown` FIRST, and that is not ceremony. A bare
+    # negative passes vacuously if either command silently no-ops, and worse, it
+    # RACES the echo it is looking past -- `refusal_shown` exists in this file
+    # precisely because the command returns before nvim has necessarily flushed.
+    # Waiting for the refusal to land is what makes the absence of a traceback
+    # beside it mean anything.
+    it "shows no Lua stack traceback for any of those refusals" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        frontend.bind_changeset_review(review)
+
+        expect(run("LainReviewVerdict looks-fine")).to include("ok" => true)
+        expect(refusal_shown).to include(*Lain::Review::VERDICTS)
+        expect(run("LainReviewVerdict")).to include("ok" => true)
+
+        expect(messages).not_to include("stack traceback")
       end
     end
   end

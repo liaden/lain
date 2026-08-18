@@ -184,16 +184,36 @@ end, {
 -- ANSWERED, unlike every other gesture in this module: the request's return leg
 -- IS lain's verdict on the write, and a refusal arrives as the request's ERROR.
 -- `pcall` is what turns that ERROR -- which may be a raw table that crossed
--- msgpack, not a string -- into READABLE TEXT before anything is shown. It
--- does NOT avoid nvim's own stack traceback: measured (`65_review.lua`'s
--- `:LainReviewDone` comment records it), any error that escapes a `define`d
--- callback gets one appended regardless of how it was raised, a `pcall`-then-
--- reraise here included. `48_annotate`'s `:LainNoteDone` records the same
--- shape and the same limit.
+-- msgpack, not a string -- into READABLE TEXT before anything is shown.
+--
+-- IT IS THEN ANSWERED AND NOT RE-RAISED, and the correction is worth stating
+-- because the comment here used to draw the opposite conclusion from the same
+-- true measurement. The measurement stands: any error escaping a `define`d
+-- callback gets nvim's own `stack traceback:` appended however it was raised --
+-- `error(msg, 0)` included, and re-raising a caught error from inside a `pcall`
+-- included -- because the traceback is nvim's outer wrapper's doing and not
+-- this function's. What the old comment got wrong was reading that as a limit
+-- on the REFUSAL rather than on RAISING. A refusal does not have to raise. So
+-- it goes out on `__lain.review_refused` (`65_review.lua`), which is where
+-- `:LainReviewMark`'s refusals above already land and what `:LainReviewDone`
+-- switched to for exactly this reason -- and the human gets lain's sentence
+-- with no traceback under it. `48_annotate`'s `:LainNoteDone` is the third
+-- site and keeps the same shape.
+--
+-- BE EXACT ABOUT WHAT THAT BUYS, because the first draft of this comment
+-- overclaimed and a doc sentence went out with it. The TRACEBACK is gone; the
+-- hit-enter prompt is not always. `nvim_echo` of a message longer than the
+-- window still pages -- measured with a UI attached at 80 columns,
+-- `NoReviewWrites::UNOPENED` (134 chars with the `lain: ` prefix) leaves
+-- `nvim_get_mode` reading `{mode = "r", blocking = true}`, while the same
+-- message at width 200, and a short one at width 80, do not. So this trades a
+-- CRASH for a long MESSAGE, which is the whole of the claim: the traceback and
+-- the raise are gone, and a narrow window can still ask for a keypress to read
+-- lain's own sentence.
 define("LainReviewVerdict", function(opts)
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
   if not taken then
-    error(tostring(refusal), 0)
+    _G.__lain.review_refused(refusal)
   end
 end, { nargs = "*" })
 

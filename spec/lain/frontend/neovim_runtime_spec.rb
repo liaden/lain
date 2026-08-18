@@ -1085,6 +1085,44 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         end
       end
     end
+
+    # THE SAME RULE, ON THE COMMAND THAT DID NOT GET IT (T16). The two examples
+    # above cover refusals this runtime raises LOCALLY; this one covers a
+    # refusal that crossed the WIRE -- `review_verdict` is an ANSWERED verb, so
+    # lain's sentence comes back as the rpcrequest's error and `46_sidebar.lua`
+    # caught it in a `pcall` and then re-raised it with `error(tostring(refusal),
+    # 0)`. Re-raising is what buys the traceback: the callback is bound by
+    # `nvim_create_user_command` and nvim appends `stack traceback:` to anything
+    # that escapes one HOWEVER it was raised. `pcall` never avoided that and was
+    # never going to -- the way out is not to raise, which is what
+    # `:LainReviewDone` above already does. (What this does NOT buy is freedom
+    # from the hit-enter prompt: `nvim_echo` of a message longer than the window
+    # still pages -- `46_sidebar.lua`'s comment carries the measurement.)
+    #
+    # NO REVIEW IS OPEN, which is the cheapest true refusal on this rail and the
+    # ordinary state of every session that has not started one:
+    # {Neovim::NoReviewWrites::UNOPENED} is what comes back, so the sentence is
+    # lain's own and nothing here fabricates it. `review_view_spec.rb` covers
+    # the richer refusals (an unknown verdict, an empty one) against a bound
+    # review; the rule is the same at all three and is stated once, here, beside
+    # the command that already keeps it.
+    it "refuses :LainReviewVerdict without a traceback when the refusal crossed the wire" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        outcome = inspector.exec_lua(<<~LUA, [])
+          local ok, err = pcall(vim.cmd, "LainReviewVerdict approve")
+          return { ok = ok, err = tostring(err) }
+        LUA
+
+        # The command COMPLETED -- a refusal is a refusal, not a crash.
+        expect(outcome).to include("ok" => true)
+
+        text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+        expect(text).to include("lain:").and include("no review is open in this editor")
+        expect(text).not_to include("stack traceback")
+      end
+    end
   end
 
   # HumanReplies as the Repl builds it, minus nothing that matters here: the

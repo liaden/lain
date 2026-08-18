@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "repl/approval_surfaces"
+require_relative "repl/ask"
 require_relative "repl/conversation_scope"
 require_relative "repl/line_scope"
 
@@ -299,15 +300,35 @@ module Lain
       # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
       # depends on OM-0) are already live: {LineScope} starts them for the whole
       # dispatched line, and this Sync nests inside that one rather than opening
-      # a second set. A torn ask is journaled and rendered right here (it owns
-      # the interrupted record), then returns nil so dispatch delivers nothing
-      # over it.
+      # a second set.
+      #
+      # A TORN ASK IS {Ask}'S, not this method's -- it owns the interrupted
+      # record and the one line the human reads, and it returns nil so dispatch
+      # delivers nothing over the top of it. It also runs the ask, so that a
+      # refusal comes back as a VALUE rather than killing the `Async::Task`
+      # {Conductor#supervise} ran it in; read its class doc for why, because the
+      # reason is measured and is not visible from here.
+      #
+      # The rescue is not redundant beside that. A {Lain::Error} raised OUTSIDE
+      # the task -- by the supervisor itself -- lands here and is owed the same
+      # one line, so both paths hand the same collaborator the same question.
+      # `ask` is assigned before anything can raise, so the rescue always has
+      # one; it is built PER ASK rather than memoized because that is what its
+      # own name claims to be, and three ivar writes are not worth making the
+      # name a lie.
+      #
+      # {Conductor#supervise} now reaches its `settle` and returns an {Outcome}
+      # on a refused ask, where the raise used to leave through its ensure. That
+      # is the normal end-of-ask path -- retire the parked coordinator, no
+      # signal -- so a bust is settled exactly as a completed ask is, which is
+      # the more correct of the two. Recorded because it is a real change to the
+      # supervisor's behaviour that nothing in supervise itself says.
       def respond(text)
-        Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { @agent.ask(text) }.response }
+        ask = Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle)
+        outcome = Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { ask.attempt(text) } }
+        ask.settle(outcome.response)
       rescue Lain::Error => e
-        record_interruption
-        @tty.render_error(e.message)
-        nil
+        ask.settle(e)
       end
 
       # Turns durable before the reply renders: the belt over the chronicle's
@@ -316,14 +337,6 @@ module Lain
       def deliver(response)
         @chronicle.catch_up(@agent.timeline)
         @tty.render_response(response) if response
-      end
-
-      # B5 (panel amendment): catch_up FIRST -- a raise can land AFTER commits
-      # (the ask tore mid-loop), so the committed turns are journaled before the
-      # stop is recorded, and interrupted then names the true last commit.
-      def record_interruption
-        @chronicle.catch_up(@agent.timeline)
-        @chronicle.interrupted(head: @agent.timeline.head_digest)
       end
 
       # Endless, like {#continue?} which is its only caller: one expression, and

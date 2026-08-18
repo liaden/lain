@@ -372,8 +372,12 @@ Its argument is required and completes with <Tab>.
                             The vocabulary belongs to lain, which is why it is
                             not listed here: a verdict lain does not have is
                             refused by name, and the refusal names the ones it
-                            does. The command fails with that sentence, so a
-                            typo costs you a retype and nothing else.
+                            does. The command echoes that sentence and returns
+                            -- no error and no stack traceback -- so a typo
+                            costs you a retype and nothing else. A refusal
+                            longer than your window is still echoed in full, so
+                            a narrow window may ask you to press <CR> to see the
+                            rest of it.
 
                             A verdict CLOSES the round; it does not post it.
                             Everything you left on the diff lives in lain's own

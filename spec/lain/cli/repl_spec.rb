@@ -5,6 +5,7 @@ require "delegate"
 require "json"
 require "pastel"
 require "stringio"
+require "tempfile"
 require "timeout"
 require "tmpdir"
 
@@ -75,6 +76,14 @@ end
 class AttachedReplies < SimpleDelegator
   def bind_editor(*, **) = nil
   def bind_review_editor(_editor) = nil
+end
+
+# A provider with a BUG in it, for T16's "a crash is not a refusal" example. Not
+# a tool that raises: `Effect::Handler::Live#dispatch` contains those as
+# `Tool::Result.error` (correctness gate 3), so a tool cannot crash an ask by
+# design. The provider is the nearest thing to a real bug that reaches one.
+class ExplodingProvider < Lain::Provider::Mock
+  def complete(_request) = raise(TypeError, "genuinely broken")
 end
 
 RSpec.describe Lain::CLI::Repl do
@@ -484,6 +493,165 @@ RSpec.describe Lain::CLI::Repl do
         allow(conductor).to receive(:read_prompt).and_return("quit")
 
         expect { Timeout.timeout(10) { repl.run(nvim: nil, store: nil, session: nil) } }.not_to raise_error
+      end
+    end
+  end
+
+  # T16, manual-QA round 4's F22. A budget ceiling is the HARNESS deciding to
+  # halt ({Agent::Budget}'s class doc), and {Repl#respond} already renders it as
+  # the one line a human needs: `error: loop ran 2 iterations, ceiling is 2`.
+  # What the human actually met was that line preceded by
+  # `Task may have ended with unhandled exception.` and the whole backtrace --
+  # measured at ~2.6KB of stderr per refusal, against 226 bytes for a clean ask.
+  #
+  # THE MECHANISM, measured rather than guessed. `Async::Task#run` rescues its
+  # block and logs `unless @promise.waiting?` (async-2.42.0/lib/async/task.rb:
+  # 224-228), and `Conductor#supervise` spawns the run with `task.async(&block)`
+  # -- which resumes the fiber EAGERLY -- then builds the shutdown, spawns the
+  # coordinator and the ticker, and only THEN reaches `run.wait`. So a raise the
+  # ask makes before the parent parks is a task that "ended with an unhandled
+  # exception" as far as Async can tell, and it says so. It is not a race:
+  # measured 5/5 identical, and on all four bust shapes tried (ceilings of 0, 2
+  # and 4, and the token ceiling) the warning fires exactly once per refusal.
+  #
+  # THE FIX IS NOT TO SILENCE THE LOGGER, which would hide real crashes too: the
+  # ask's refusal is carried OUT of the task as a value, so the task completes
+  # and there is no unhandled exception to report. Anything that is not a
+  # {Lain::Error} still raises inside the task and still gets Async's warning,
+  # which is the behaviour we want to keep -- covered by the second example.
+  #
+  # STDERR IS CAPTURED BY REOPENING THE FD, not by assigning `$stderr`.
+  # `Console` binds its output when its logger is first built, so a StringIO
+  # assigned later is never consulted and the example would pass while the
+  # warning still printed -- a false green, and one that only appears in a
+  # whole-suite run where some earlier example built the logger first.
+  describe "a budget refusal reaches the human as one line" do
+    let(:looping) { tool_response(["tu_1", "echo", { "text" => "loop" }]) }
+    let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
+    let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+
+    # The ceiling that stops one ask driven into a tool loop -- the
+    # reproduction T14 left standing, since the ceiling now bounds one ask.
+    let(:ceiling) { Lain::Agent::Budget.new(max_iterations: 2) }
+    let(:looping_thrice) { [looping] * 3 }
+
+    # A whole conversation over ONE typed line, through the real {Repl#run} and
+    # so through the real {Conductor#supervise} and its real `Async::Task`. That
+    # task is the subject: nothing below the Repl is doubled.
+    def converse_once(dir, responses, budget:, out: StringIO.new, provider: nil)
+      agent = Lain::Agent.new(provider: provider || Lain::Provider::Mock.new(responses:), toolset:, context:, budget:)
+      tty = tty_over(dir, out)
+      described_class.new(agent:, tty:, replies: replies_over(tty, one_line_conductor(tty)),
+                          commands: passthrough_commands, chronicle: Lain::CLI::Chronicle::Null.new,
+                          conductor: one_line_conductor(tty))
+                     .run(nvim: nil, store: nil, session: nil)
+      out.string
+    end
+
+    def tty_over(dir, out)
+      Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, input: StringIO.new,
+                              history_path: File.join(dir, "history"))
+    end
+
+    # A real Conductor -- `supervise` is the subject -- that answers one prompt
+    # and then EOF, so the conversation is exactly one ask long.
+    def one_line_conductor(tty)
+      @one_line_conductor ||= Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
+                                                       signals: Lain::CLI::Signals.new, grace: 5).tap do |conductor|
+        asks = ["tell me"]
+        conductor.define_singleton_method(:read_prompt) { |*| asks.shift }
+      end
+    end
+
+    def replies_over(tty, conductor)
+      Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                  ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+    end
+
+    # {Command::Registry}'s duck for a line no command claims: it YIELDS, and
+    # the block is the model turn. A fake returning nil instead swallows the ask
+    # entirely and renders nothing -- which looks exactly like the defect and is
+    # not it, as one draft of this spec found out.
+    def passthrough_commands
+      Struct.new(:nothing) do
+        def dispatch(_text) = yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    # Reopens the FD rather than assigning `$stderr` -- see this group's doc.
+    def stderr_during(&)
+      saved = $stderr.dup
+      Tempfile.create("lain-repl-stderr") { |file| capture_into(file, saved, &) }
+    ensure
+      saved&.close
+    end
+
+    # THE RESTORE IS IN AN `ensure`, and the block below is EXPECTED to raise --
+    # the crash example lets a TypeError out on purpose. Restoring on the
+    # success path only would leave fd 2 pointing at a tempfile that
+    # `Tempfile.create` then deletes, for the rest of the process: in a `pspec`
+    # worker that silently swallows every later stderr write, including the very
+    # Async warnings this group exists to detect. That is this group's own
+    # false-green class, one method further down.
+    def capture_into(file, saved)
+      $stderr.reopen(file)
+      yield
+      $stderr.flush
+      File.read(file.path)
+    ensure
+      $stderr.reopen(saved)
+    end
+
+    it "renders the ceiling and the count on the terminal" do
+      Dir.mktmpdir do |dir|
+        rendered = nil
+        stderr_during { rendered = converse_once(dir, looping_thrice, budget: ceiling) }
+
+        expect(rendered).to include("error: loop ran 2 iterations, ceiling is 2")
+      end
+    end
+
+    it "announces no unhandled exception, and prints no backtrace, for that refusal" do
+      Dir.mktmpdir do |dir|
+        noise = stderr_during { converse_once(dir, looping_thrice, budget: ceiling) }
+
+        expect(noise).not_to include("Task may have ended with unhandled exception")
+        expect(noise).not_to include("Budget::Exceeded")
+        expect(noise).not_to include("lib/lain/agent.rb")
+      end
+    end
+
+    # The wedge {Agent::Budget} guards is the harness halting; a BUG is not, and
+    # telling them apart is the whole reason the fix carries the refusal out as
+    # a value instead of silencing Async. So this drives the SAME path as the
+    # two examples above -- real Repl, real {Conductor#supervise}, real
+    # `Async::Task` -- and changes only what the ask raises.
+    #
+    # THE PROVIDER IS WHAT EXPLODES, and picking it took a correction. An
+    # earlier draft raised from a TOOL and claimed a `RuntimeError`; it got a
+    # `Budget::Exceeded` instead and proved nothing, because
+    # `Effect::Handler::Live#dispatch` contains every tool raise as
+    # `Tool::Result.error` (correctness gate 3) and `Provider::Mock` repeats its
+    # LAST response forever (`mock.rb:67`) -- so the loop merely ran to the
+    # default 25-iteration ceiling. A tool cannot crash an ask by design. The
+    # provider is the nearest thing to a real bug that reaches one.
+    #
+    # BOTH HALVES ARE ASSERTED, and the second is the one with teeth: the
+    # exception still ESCAPES the whole conversation. A rescue widened to
+    # `StandardError` satisfies neither -- it would swallow the TypeError into a
+    # rendered line, and the Async warning would never be logged at all.
+    it "still lets a genuine crash terminate its task loudly" do
+      Dir.mktmpdir do |dir|
+        escaped = nil
+        noise = stderr_during do
+          converse_once(dir, [], budget: Lain::Agent::Budget.new, provider: ExplodingProvider.new(responses: []))
+        rescue TypeError => e
+          escaped = e
+        end
+
+        expect(escaped).to be_a(TypeError).and have_attributes(message: "genuinely broken")
+        expect(noise).to include("Task may have ended with unhandled exception")
       end
     end
   end

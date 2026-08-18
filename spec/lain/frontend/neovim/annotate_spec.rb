@@ -163,6 +163,11 @@ RSpec.describe "the review annotation runtime", :nvim do
   # the notes" example reaches the one branch that matters.
   def settle(refuse: nil) = lua(AnnotateFixture::CAPTURE, [refuse])
 
+  # nvim's own message history, which is where `__lain.review_refused` echoes a
+  # refusal AND where a `stack traceback:` would land -- so one read answers
+  # both halves of "a refusal is not a crash" (T16).
+  def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
   # The notes as they crossed the wire, in wire order.
   def settled(refuse: nil)
     answer = settle(refuse:)
@@ -620,20 +625,46 @@ RSpec.describe "the review annotation runtime", :nvim do
     end
 
     # ...and only when it really was handed over. `review_notes` is an ANSWERED
-    # verb, so lain's refusal comes back as the request's error and raises here
-    # -- which is exactly why `forget` sits on the far side of a `pcall`. A
-    # refused write must leave every note AND every marker where the human left
-    # them: a refusal they cannot retype from is worse than no refusal at all.
+    # verb, so lain's refusal comes back as the request's error -- which is
+    # exactly why `forget` sits on the far side of a `pcall`. A refused write
+    # must leave every note AND every marker where the human left them: a
+    # refusal they cannot retype from is worse than no refusal at all.
+    #
+    # T16 CHANGED THE MECHANISM AND NOT THE RULE. The caught refusal used to be
+    # re-raised with `error(tostring(refusal), 0)`, so `ok` read false here --
+    # and in the editor it read as nvim's `stack traceback:` under lain's own
+    # sentence, because a `define`d callback's escape gets one HOWEVER it was
+    # raised. It now answers through `__lain.review_refused` and
+    # RETURNS, `:LainReviewDone`'s shape. So the command COMPLETES (`ok` true)
+    # and the refusal is read off the message rail instead. What is asserted
+    # about the notes is untouched, which is the point: the human's words and
+    # markers survive a refusal exactly as they did before.
     it "keeps the notes and the markers when the write is refused, and says why" do
       open_changeset("docs/guide.txt", guide_old_lines)
       note("new", 12, "note", "off by one here")
 
       answer = settle(refuse: "no review is open in this editor")
 
-      expect(answer["ok"]).to be(false)
-      expect(answer["err"]).to include("no review is open in this editor")
+      expect(answer["ok"]).to be(true)
+      expect(messages).to include("no review is open in this editor")
       expect(marks_on(buf_in(slots.fetch("new"))).size).to eq(1)
       expect(settled.size).to eq(1)
+    end
+
+    # THE HALF THE ASSERTION ABOVE CANNOT STATE. `ok` being true says the
+    # callback returned; it does not say what the human was shown. nvim appends
+    # `stack traceback:` to anything escaping a `define`d callback, and a
+    # refusal wearing a traceback reads as a plugin crash rather than as
+    # something to act on. Read off nvim's own message history, which is where
+    # a traceback would land.
+    it "refuses a settled batch without a Lua stack traceback" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 12, "note", "off by one here")
+
+      settle(refuse: "no review is open in this editor")
+
+      expect(messages).to include("lain:").and include("no review is open in this editor")
+      expect(messages).not_to include("stack traceback")
     end
   end
 end

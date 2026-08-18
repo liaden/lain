@@ -393,20 +393,31 @@ end, {
 -- `Neovim::ReviewWrite` refuses both spellings of that mistake by name.
 --
 -- `review_notes` is an ANSWERED verb, so the request's return leg IS lain's
--- verdict on the write and a refusal comes back as the request's ERROR, which
--- raises here. `pcall` is what turns that ERROR into READABLE TEXT rather than
--- a raw table that crossed msgpack -- it does NOT avoid nvim's own stack
--- traceback (`46_sidebar.lua`'s `:LainReviewVerdict` comment records the same
--- measured limit) -- and, far more importantly, it is what keeps `forget` on
--- the far side of it. A refused hand-off must leave every note and every
--- marker exactly where the human left them: a refusal they cannot retype from
--- is worse than no refusal at all. Nothing is cleared until lain says it took
--- them.
+-- verdict on the write and a refusal comes back as the request's ERROR.
+-- `pcall` does two things here, and the second is the load-bearing one: it
+-- turns that ERROR into READABLE TEXT rather than a raw table that crossed
+-- msgpack, and it keeps `forget` on the far side of it. A refused hand-off must
+-- leave every note and every marker exactly where the human left them -- a
+-- refusal they cannot retype from is worse than no refusal at all -- so nothing
+-- is cleared until lain says it took them, which is what the early RETURN
+-- below preserves.
+--
+-- THE REFUSAL IS ANSWERED, NOT RE-RAISED, and this comment used to say the
+-- opposite for a true reason wrongly applied. It is true that nvim appends its
+-- own `stack traceback:` to anything escaping a `define`d callback however it
+-- was raised, `error(msg, 0)` and a `pcall`-then-reraise alike; the traceback
+-- is nvim's outer wrapper's doing. That is a limit on RAISING, not on
+-- refusing. Sending it out on `__lain.review_refused` instead costs the human
+-- no traceback, which is what `65_review.lua`'s `:LainReviewDone` already does
+-- and what `46_sidebar.lua`'s `:LainReviewVerdict` now does too. It does NOT
+-- promise no hit-enter prompt -- a message longer than the window still pages;
+-- `46_sidebar.lua`'s comment carries the measurement.
 define("LainNoteDone", function()
   local payload = review_notes.settled()
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_notes", { payload })
   if not taken then
-    error(tostring(refusal), 0)
+    _G.__lain.review_refused(refusal)
+    return
   end
   review_notes.forget()
 end)
