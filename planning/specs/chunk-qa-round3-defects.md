@@ -38,6 +38,26 @@ and the two `content: ""` locks; `handover.rb:266-272`, `session.rb:355`/`:401-4
 `prompt_composer.rb:381-384`/`:399-410`/`:420-424`, `run_clock.rb:82`. Every line cited by a wave-1
 card is where the plan says it is; no card was invalidated.
 
+**T11's fifth deletion is STRUCK — the card was wrong, proven by mutation (2026-08-18).**
+
+T11 ordered five deletions. Four were correct. The fifth, `spec/lain/provider/anthropic_wire_spec.rb`,
+must NOT be deleted, and the card's justification for it is false. Shadowing `RATE_LIMIT_RESET_HEADER`
+on `Provider::Anthropic` and running the whole suite yields `13791 examples, 1 failure` -- and that one
+failure IS the example the card ordered deleted. The siblings the card cited as covering it (`:32`,
+`:36`, `:51-53`) all stay green. It is the only example in the suite that catches a class-level
+constant shadow. Both the implementer and the reviewer reached this independently, by mutation.
+
+A related card correction: for `cache_profile_spec.rb` only the tautological `X eq X` line was removed,
+not the example. Coverage survives at `:54`/`:58`, NOT from sibling `:101` as the card assumed --
+verified by mutation (`:101` stays green under `#==` non-Hash `super` -> `false`).
+
+**A blind spot T14 and T12 inherit.** `spec_discipline_spec.rb` flags only `sole_raise_error` (127) and
+`nested_expect` (13). **Neither category can see this chunk's recurring defect shape**: an `include`
+assertion against prose the same change authored, which matches by construction and keeps matching for
+unrelated reasons. Four such assertions were found this chunk, all in code written or edited DURING it,
+two of them created BY fix rounds. Every one was caught by MUTATION; none by reading. A discipline
+report that cannot see the shape will report the suite as clean of it.
+
 **Wave 1 progress (2026-08-18).**
 
 | card | implemented | review verdict | landed |
