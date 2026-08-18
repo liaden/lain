@@ -300,9 +300,14 @@ end
 # after these three, and a permanent repository rule should not be reached
 # through a module named for a plan card that will be archived.
 RSpec.describe "the committed ollama cassettes" do
-  it "exist, all three of them" do
+  # T14's run-loop cassette is named here as well as this card's three, because
+  # this list is the only place a reader can check that it IS swept -- the glob
+  # above is what does the sweeping, and a name absent from here reads as a file
+  # the guard does not know about.
+  it "exist, all four of them" do
     expect(T13RecordedOllama.cassettes.map { |path| File.basename(path) })
-      .to include("ollama_chat_streaming.yml", "ollama_process_status.yml", "ollama_show.yml")
+      .to include("ollama_chat_streaming.yml", "ollama_process_status.yml", "ollama_show.yml",
+                  "ollama_run_tool_loop.yml")
   end
 
   # `.to_s` rather than the Findings themselves: the failure message has to name
