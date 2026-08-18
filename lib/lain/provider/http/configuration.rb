@@ -71,6 +71,44 @@ module Lain
         end
 
         option :request_timeout, 300
+        # The budget for GETTING CONNECTED -- not for the round trip. A separate
+        # number from `request_timeout` because Faraday derives `open_timeout`
+        # from `timeout` when only one is set
+        # (`Faraday::Adapter#request_timeout`), so a single knob priced "nothing
+        # answered the SYN" the same as "the server is still thinking": 300s per
+        # attempt, four attempts deep, since `:post` is retryable and
+        # `Faraday::ConnectionFailed` is in
+        # {Connection::MiddlewareStack#retry_exceptions}. Twenty minutes for an
+        # address nothing answers on, and the stall clock cannot shorten it -- it
+        # arms on the first body chunk and there is never one.
+        #
+        # Read the scope of the fix precisely, because the shapes are close and
+        # only one of them moved. This bounds the case where the connection never
+        # OPENS. A server that ACCEPTS and then sends nothing still costs
+        # 4 x `request_timeout`, for the same reason and deliberately: the stall
+        # clock has no first chunk to arm on, and pre-first-byte silence is a
+        # local model evaluating a prompt.
+        #
+        # Nor is it only the SYN. `Net::HTTP` spends `@open_timeout` on the TCP
+        # connect, on a direct TLS handshake, and again on a proxied CONNECT
+        # tunnel's handshake -- so the same number bounds each handshake
+        # separately, and an HTTPS-through-proxy attempt can spend it twice.
+        # A hosted arm's TLS handshake is therefore held to 5s where it used to
+        # be held to 600.
+        #
+        # 300 stays where it is, for the reason the grace below states. A local
+        # model that thinks for six minutes is a real shape; a TCP or TLS
+        # handshake that takes six minutes is not one. Five seconds is two orders
+        # of magnitude under the completion budget and an order above the worst
+        # plausible handshake -- sub-millisecond on loopback, one RTT plus TLS to
+        # a hosted arm, and Linux's first two SYN retransmits land at 1s and 4s,
+        # inside one attempt -- and it sits above
+        # {Ollama::Transport::PROBE_TIMEOUT_SECONDS}, which is the same argument
+        # made for a metadata lookup.
+        #
+        # `LAIN_CONNECT_TIMEOUT=0` is the off switch, and it restores exactly the
+        # old behaviour: no separate number, so Faraday derives one again.
+        option :connect_timeout, -> { ENV.fetch("LAIN_CONNECT_TIMEOUT", 5) }
         # The INTER-CHUNK grace: the longest silence tolerated between body
         # chunks once a stream has started emitting. nil disables the check.
         #
@@ -137,7 +175,21 @@ module Lain
         # A Numeric is kept AS WRITTEN rather than coerced, so the grace the
         # stall message prints is the one the operator set and can grep for.
         def stream_stall_timeout=(value)
-          @stream_stall_timeout = stall_seconds(value)
+          @stream_stall_timeout = positive_seconds(value, "stream_stall_timeout",
+                                                   "LAIN_STREAM_STALL_TIMEOUT=0 disables stall protection")
+        end
+
+        # The second knob with the same two mistakes to refuse, for the same
+        # reason: `0` is the universal "no timeout" idiom, and a zero connect
+        # budget would fail every attempt before the SYN left the box; a
+        # non-numeric would raise from inside the Faraday stack, past every
+        # `rescue` in the codebase, on the first request rather than here where a
+        # human is still looking. Non-positive therefore means nil, which folds
+        # connect back under `request_timeout` -- the behaviour that shipped
+        # before this option existed.
+        def connect_timeout=(value)
+          @connect_timeout = positive_seconds(value, "connect_timeout",
+                                              "LAIN_CONNECT_TIMEOUT=0 folds connect back into request_timeout")
         end
 
         # Redacted `#inspect`/`#pretty_print` support: never echo a key, secret,
@@ -156,14 +208,11 @@ module Lain
 
         private
 
-        def stall_seconds(value)
+        def positive_seconds(value, knob, off_switch)
           return nil if value.nil? || (value.is_a?(String) && value.strip.empty?)
 
           seconds = value.is_a?(Numeric) ? value : Float(value, exception: false)
-          if seconds.nil?
-            raise ArgumentError, "stream_stall_timeout wants seconds or nil, got #{value.inspect} " \
-                                 "(LAIN_STREAM_STALL_TIMEOUT=0 disables stall protection)"
-          end
+          raise ArgumentError, "#{knob} wants seconds or nil, got #{value.inspect} (#{off_switch})" if seconds.nil?
 
           seconds.positive? ? seconds : nil
         end

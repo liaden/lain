@@ -57,6 +57,37 @@ module Lain
 
           def setup_timeout(faraday)
             faraday.options.timeout = @config.request_timeout
+            budget = connect_budget
+            faraday.options.open_timeout = budget unless budget.nil?
+          end
+
+          # `Faraday::Adapter#request_timeout` reads `options[:open_timeout] ||
+          # options[:timeout]`, so setting only the one above is what let an
+          # address that swallows the SYN hold `connect()` for the whole
+          # `request_timeout` -- four times, since `:post` is in
+          # `retry_options[:methods]` and `Faraday::ConnectionFailed` is in
+          # {#retry_exceptions}. Writing the number explicitly is the whole fix;
+          # leaving it nil restores the derivation, which is the off switch.
+          #
+          # Capped at `request_timeout` because a caller that shortens the whole
+          # round trip means it: {Provider::Ollama::Transport}'s `/api/ps` probe
+          # asks for 2s on the render path, and a 5s connect budget would hand
+          # back the wait that budget exists to avoid.
+          #
+          # One stance about what a config must answer, and it is the stance
+          # {#stall_grace} already holds: the VENDORED options are assumed --
+          # `request_timeout` is read unguarded a line above, and `retry_options`
+          # reads four more the same way -- while an option this slice added
+          # AFTER vendoring is asked for, because a Configuration-alike handed in
+          # from outside cannot be expected to have grown it. Not theatre: drop
+          # the `respond_to?` and connection_logging_spec's Configuration double
+          # dies on an unexpected `:connect_timeout`. So `request_timeout` needs
+          # no `compact` here; the same method just assumed it.
+          def connect_budget
+            budget = @config.respond_to?(:connect_timeout) ? @config.connect_timeout : nil
+            return nil if budget.nil?
+
+            [budget, @config.request_timeout].min
           end
 
           def setup_logging(faraday)
