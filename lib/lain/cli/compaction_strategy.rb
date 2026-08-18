@@ -3,17 +3,52 @@
 module Lain
   module CLI
     # Turns `--compact-strategy <name>` into the {Compaction::Strategy::Base}
-    # subclass a compacting derivation collapses spans with: which policy, and
-    # -- when the policy is model-backed -- which recorded oracle it answers
-    # through. {IsolationBackend} (cli/isolation_backend.rb:78) is this class's
-    # exact precedent: {STRATEGIES} is the single authority both the
-    # resolution and the flag's help text read, {DEFAULT} is what an unset
-    # flag falls through to, and an unknown name is refused loudly, naming the
-    # flag and the valid set.
+    # a compacting derivation collapses spans with: which policy, and -- when
+    # the policy is model-backed -- which recorded oracle it answers through.
+    # {IsolationBackend} (cli/isolation_backend.rb:78) is this class's exact
+    # precedent: {STRATEGIES} is the single authority both the resolution and
+    # the flag's help text read, and an unknown name is refused loudly, naming
+    # the flag and the valid set. What it does NOT share with that precedent is
+    # {DEFAULT}, which is a fallback for a nil ARGUMENT and emphatically not
+    # for an unset FLAG -- read the constant's own doc before using it.
     #
     # A STANDALONE class, not a {Backend} method: {Backend} sits at 108 of 110
     # on `Metrics/ClassLength` (CLAUDE.md's "extract, never loosen"), so a
     # resolver method there would cross the cop.
+    #
+    # == A NAME MAY BE A COMPOSITION, SPELLED WITH `+`
+    #
+    # `elide-tools+summarize-conversation` resolves each part and folds them
+    # with {Compaction::Strategy::Base#|}, which builds {Compaction::Strategy::
+    # Composed}. That operation is a declared COMMUTATIVE MONOID
+    # (`strategy/base.rb:235`), so the order the parts are written in is not a
+    # semantic, and a one-part name folds to the leaf itself rather than to a
+    # composition of one.
+    #
+    # `+` and not `|` or `,`: `|` is a pipe to every shell an operator would
+    # type this into, and `,` reads as "a list of alternatives" where this is a
+    # single strategy made of two. Thor treats `+` as an ordinary value
+    # character in both `--flag value` and `--flag=value` forms (probed), so
+    # nothing here is escaped -- and the day a separator DOES collide, change
+    # this constant rather than teaching the flag to escape.
+    #
+    # THE COMPOSITION IS ONLY AS DISJOINT AS ITS PARTS. {Composed} raises
+    # `Overlap` from `#propose_ranges`, which needs the messages and the span,
+    # and this resolver has neither -- so `elide+summarizing`, two whole-span
+    # strategies, CONSTRUCTS here and refuses at the first compacting turn. The
+    # pair that is disjoint by construction is `elide-tools` and
+    # `summarize-conversation`: both route their selection through
+    # {Compaction::ToolMessages}, so they are exact complements rather than two
+    # spellings that happen to agree, and that pair is the recommended
+    # composition. Refusing a whole-span pair HERE would need a static "claims
+    # the whole span" declaration on {Compaction::Strategy::Base}, which is a
+    # design decision for its own card and not a tidy-up.
+    #
+    # ONE `tier:` CALL PER RESOLUTION, however many oracle-backed parts the
+    # name has. {Compaction::Strategy::SummarizeConversation}'s own doc states
+    # the invariant -- "Two strategies, one oracle, one journal" -- and it is
+    # what keeps a resumed session reconciling one recorded address per span
+    # question instead of one per leaf.
     #
     # THE TIER IS INJECTED AS A FACTORY, NEVER A PRE-BUILT ONE, AND NEVER
     # FETCHED. Two separate reasons force the factory shape, not one:
@@ -112,26 +147,51 @@ module Lain
       class IncompleteTier < Error; end
 
       # The strategies `--compact-strategy` selects between, in the order help
-      # text lists them: the model-backed policy first, since it is the
-      # default.
-      STRATEGIES = %w[summarizing elide].freeze
+      # text lists them: the two whole-span policies first -- model-backed
+      # ahead of deterministic -- then the two narrowed ones in the same order,
+      # since those are the pair a reader is meant to see as complements.
+      #
+      # A name may also be several of these joined by {SEPARATOR}, which is not
+      # listed here: this is the set of LEAVES, and the compositions over it
+      # are not enumerable.
+      STRATEGIES = %w[summarizing elide summarize-conversation elide-tools].freeze
 
-      # An unset flag arrives as nil, and this constant -- not a Thor default
-      # -- is what it falls through to, so one authority answers "what does no
-      # `--compact-strategy` mean?"
+      # What joins two strategy names into one composition. See the class doc
+      # for why `+` rather than `|` or `,`, and for what a composition means.
+      SEPARATOR = "+"
+
+      # What a nil NAME means to this resolver, and nothing beyond that.
+      #
+      # IT IS NOT WHAT AN UNSET `--compact-strategy` MEANS. An unset flag means
+      # the run's own EAGER tool-result tier -- the control arm every flagged
+      # run is measured against -- and {Backend::SpanSummarizer#strategy}
+      # (`backend/span_summarizer.rb:19-48, 76-80`) short-circuits on nil and
+      # never reaches this class at all, which is the only reason the two have
+      # not yet been confused in a shipped run. They differ in what the chat
+      # actually pays: the eager tier's summaries were already fired off the
+      # critical path per tool result, while `summarizing` is a fresh model
+      # call per span AT compaction time.
+      #
+      # So a future caller writing
+      # `CompactionStrategy.resolve(options[:compact_strategy])` silently gets
+      # `summarizing` where the shipped path gets the eager tier. Route an
+      # unset flag through {Backend::SpanSummarizer}; reach for this constant
+      # only when "no name given" genuinely means "the default policy".
       DEFAULT = "summarizing"
 
       # @return [Compaction::Strategy::Base] the resolved strategy
       def self.resolve(...) = new(...).strategy
 
-      # @param name [String, nil] the `--compact-strategy` value; nil means
-      #   {DEFAULT}
+      # @param name [String, nil] the `--compact-strategy` value -- one name
+      #   from {STRATEGIES}, or several joined by {SEPARATOR}. nil means
+      #   {DEFAULT}, which is NOT what an unset flag means; see that constant.
       # @param tier [#call, nil] a FACTORY, `->(definition) { live tier }`,
       #   that MUST build its tier over the exact `definition` it is handed
       #   -- never a pre-built tier, never a tier built against a definition
-      #   of the factory's own. Called at most once, with
+      #   of the factory's own. Called at most once PER RESOLUTION -- once for
+      #   a whole composition, never once per oracle-backed part -- with
       #   {Compaction::Strategy::Summarizing}'s own {Oracle::Definition}, only
-      #   when the resolved strategy is not `elide`, and must answer the full
+      #   when the resolved name has a model-backed part, and must answer the full
       #   live-tier duck (`#ask`, `#model`, `#usage` -- {Oracle::Model}'s);
       #   see the class doc for why a factory rather than a value, why the
       #   caller (not this class) is what keeps the one-definition rule, and
@@ -143,36 +203,100 @@ module Lain
       #   records land; the Null channel (the default) means nothing is
       #   journalled
       def initialize(name = nil, tier: nil, sink: Sink::Null.new, journal: Channel::Null.instance)
-        @name = name || DEFAULT
+        @name = string_name(name || DEFAULT)
         @tier = tier
         @sink = sink
         @journal = journal
       end
 
+      # One strategy for a plain name, a {Compaction::Strategy::Composed} for a
+      # name joined by {SEPARATOR}. `inject(:|)` and not `inject(Identity.new,
+      # :|)`: the unit would wrap every single-name resolution in a composition
+      # nobody asked for, and the empty case cannot reach here because
+      # {#strategy_names} refuses it first.
+      #
       # @return [Compaction::Strategy::Base] the resolved strategy
-      # @raise [Unknown] on a name outside {STRATEGIES}
+      # @raise [Unknown] on any part outside {STRATEGIES}, including an empty
+      #   one
       # @raise [Unbuilt] a name in {STRATEGIES} with no matching branch below
       #   (a bug in this class, not a bad flag)
-      # @raise [MissingTier] resolving `summarizing` with no `tier:` given
+      # @raise [MissingTier] resolving an oracle-backed part with no `tier:`
+      #   given
       # @raise [IncompleteTier] `tier:` built something that does not answer
       #   the full live-tier duck
-      def strategy
-        name = strategy_name
-        case name
-        when "summarizing" then Compaction::Strategy::Summarizing.new(oracle: recorded_oracle, sink: @sink)
-        when "elide" then Compaction::Strategy::Elide.new
-        else raise Unbuilt, "#{name.inspect} is in STRATEGIES but no branch here builds it"
-        end
-      end
+      def strategy = strategy_names.map { |name| built(name) }.inject(:|)
 
       private
 
-      # Validated once, so the mapping above only ever sees a name already
-      # known to be in {STRATEGIES} -- {Backend#provider_name}'s shape.
-      def strategy_name
-        return @name if STRATEGIES.include?(@name)
+      # AT THE DOOR, so no path below can hold a non-String `@name`.
+      #
+      # `String()` would COERCE rather than refuse, and both directions of that
+      # are wrong here: `String(:elide)` answers `"elide"` and resolves
+      # cleanly, which blesses a caller's type confusion in silence, while
+      # `String([1])` answers `"[1]"` and then refuses under a garbled name
+      # that says nothing about the real mistake. This class refuses a wrong
+      # shape before construction and names it -- {MissingTier} and
+      # {IncompleteTier} are the same doctrine.
+      #
+      # NOT reachable from Thor, which parses a String or nothing. It IS
+      # reachable from {Backend}, which reads `@options[:compact_strategy]` out
+      # of a Hash a caller may have assembled by hand -- and `Symbol#empty?`
+      # EXISTS, so a Symbol used to pass every guard below and die on
+      # `Symbol#split` with an uncontained `NoMethodError`. {Unknown} is a
+      # {Lain::Error} and `exe/lain:51` renders it as a clean one-liner; a
+      # `NoMethodError` escapes as a backtrace.
+      def string_name(name)
+        return name if name.is_a?(String)
 
-        raise Unknown, "unknown --compact-strategy #{@name.inspect}, expected one of #{STRATEGIES.inspect}"
+        raise Unknown, "--compact-strategy takes a String, got #{name.class}: #{name.inspect}; " \
+                       "expected one of #{STRATEGIES.inspect}, or several joined by #{SEPARATOR.inspect}"
+      end
+
+      def strategy_names = split_name.map { |part| validated(part) }
+
+      # Split with a NEGATIVE limit, so the empty parts survive: plain
+      # `"elide+".split("+")` drops the trailing one and would resolve a typo
+      # to a bare `elide`, while `"+elide"` refuses -- the same mistake
+      # answered two ways depending on which end it was made at. Both refuse
+      # now, as {Unknown} naming the empty part.
+      #
+      # The empty string is Ruby's one exception to that: `"".split("+", -1)`
+      # answers `[]` and not `[""]`, whatever the limit, so an empty flag would
+      # fold through `inject` to nil and resolve to NO strategy at all --
+      # silently, and downstream of every refusal here. Named as the empty part
+      # it is instead.
+      def split_name = @name.empty? ? [@name] : @name.split(SEPARATOR, -1)
+
+      # Validated once per part, so the mapping below only ever sees a name
+      # already known to be in {STRATEGIES} -- {Backend#provider_name}'s shape.
+      #
+      # Names the PART and the VALUE IT CAME FROM, always, and the two differ
+      # exactly when the mistake is a separator one. `--compact-strategy
+      # elide-tools+` refuses on the empty trailing part, and reporting that as
+      # `unknown --compact-strategy ""` is loud and FALSE about what was typed
+      # -- nobody passed an empty flag, and the next reader goes hunting a
+      # shell-quoting bug. `++`, `+elide` and `elide++summarizing` all had the
+      # same problem. For a plain single name the two halves coincide, which
+      # costs a few redundant characters and keeps one message shape.
+      def validated(part)
+        return part if STRATEGIES.include?(part)
+
+        raise Unknown, "unknown part #{part.inspect} in --compact-strategy #{@name.inspect}, expected one of " \
+                       "#{STRATEGIES.inspect}, or several joined by #{SEPARATOR.inspect}"
+      end
+
+      # The leaves. Both oracle-backed branches share {#recorded_oracle}'s one
+      # wrap, which is what makes "two strategies, one oracle, one journal"
+      # structural rather than a rule a composition has to remember.
+      def built(name)
+        case name
+        when "summarizing" then Compaction::Strategy::Summarizing.new(oracle: recorded_oracle(name), sink: @sink)
+        when "elide" then Compaction::Strategy::Elide.new
+        when "summarize-conversation"
+          Compaction::Strategy::SummarizeConversation.new(oracle: recorded_oracle(name), sink: @sink)
+        when "elide-tools" then Compaction::Strategy::ElideToolObservations.new
+        else raise Unbuilt, "#{name.inspect} is in STRATEGIES but no branch here builds it"
+        end
       end
 
       # What {Oracle::Recorded::Journaling#ask} reads off its `inner`
@@ -189,10 +313,29 @@ module Lain
       # re-derives the same chain from {Oracle::Recorded.from_journal}
       # instead of re-asking a live model (the plan's "journal the edge,
       # re-derive" ruling).
-      def recorded_oracle
-        raise MissingTier, "CompactionStrategy.resolve needs tier: to build the summarizing strategy" if @tier.nil?
+      #
+      # MEMOIZED, so a composition naming two oracle-backed leaves calls
+      # `tier:` once and both answer through ONE wrap -- which is what the
+      # `tier:` doc promises ("called at most once") and what
+      # {Compaction::Strategy::SummarizeConversation}'s doc means by "two
+      # strategies, one oracle, one journal". Two wraps would put one span's
+      # answer on the journal under two oracles and give a resume two
+      # addresses to reconcile for one question. It never answers nil, so `||=`
+      # cannot memoize a failure.
+      #
+      # @param part [String] the strategy name that wanted the tier. Named in
+      #   the refusal, because there is now more than one oracle-backed name
+      #   and a message hard-coding `summarizing` is wrong for three of the
+      #   four things that can reach here (`summarize-conversation`, and either
+      #   of them inside a composition). The same drift `STRATEGIES.inspect`
+      #   in {#validated}'s message exists to prevent, one error class over.
+      def recorded_oracle(part)
+        raise MissingTier, "CompactionStrategy.resolve needs tier: to build #{part.inspect}" if @tier.nil?
 
-        definition = Compaction::Strategy::Summarizing.definition
+        @recorded_oracle ||= journaling(Compaction::Strategy::Summarizing.definition)
+      end
+
+      def journaling(definition)
         Oracle::Recorded::Journaling.new(inner: live_tier(definition), definition:, journal: @journal)
       end
 

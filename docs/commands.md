@@ -55,7 +55,7 @@ tiers work.
 | `--compact-bytes` | `262144` | Droppable-head bytes above which a compaction is warranted. Roughly 64k tokens. |
 | `--compact-cap` | `1048576` | History bytes that force a compaction even while the prompt cache is warm. |
 | `--compact-keep` | `20` | Trailing messages a compaction leaves verbatim. About the last 10 exchanges. |
-| `--compact-strategy` | **none** | `summarizing` or `elide`. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for either. |
+| `--compact-strategy` | **none** | `summarizing`, `elide`, `summarize-conversation`, `elide-tools`, or a `+`-joined composition of them. Which policy collapses a span — see [Collapse strategies](#collapse-strategies). Unset is not a synonym for any of them. |
 | `--summarizer-provider` | `ollama` | `anthropic`, `ollama`, or `bedrock`. The summarizer is a **tier**, chosen independently of `--provider`. |
 | `--summarizer-model` | the summarizer provider's own | Never inherits the chat's `--model`. |
 | `--summarizer-max-tokens` | `1024` | Ceiling per summary. A truncated summary *replaces* the result it compressed, so this is sized for a paragraph, not a turn. |
@@ -90,6 +90,16 @@ inside that derivation. The background is
 | *unset* — the default | The run's own **eager tool-result tier**, read back through the turn's `SummarySnapshot`. This is the control arm, and it is what every un-flagged chat has always rendered. | Nothing extra. The summaries were already fired off the critical path by tier 1; the compacting turn only reads them. A result with no held summary becomes an elision line. |
 | `summarizing` | One model call per span, answered through the `--summarizer-*` tier and wrapped in a recorded oracle, so every answer lands on the journal as an `oracle_answer` that a later re-derivation *could* read back instead of re-asking. Nothing in the CLI does that yet — a resumed chat re-asks. | Tokens and latency **on the compacting turn's critical path**, where the eager tier's are not. An unreachable tier leaves the span **uncollapsed** and writes a line to `stderr` attributed to `lain:compaction`; it costs the span, never the turn. |
 | `elide` | A deterministic per-message attestation — role, digest, byte count, one line each — and no model call at all. | Nothing but its own bytes, and those are not always a saving: over short messages an attested span can be no smaller than what it replaced. That case is caught and declined as `would_not_shrink` rather than shipped. |
+| `elide-tools` | `elide`'s attestation, narrowed to the contiguous runs of **tool-carrying** messages. Every conversational turn is left for the derivation to retain verbatim, in place. | Nothing — no model call. The same `would_not_shrink` caveat as `elide`, and it bites *harder*: the span it claims is exactly the tool observations, so over short tool results the attestation is the whole of what it wrote. |
+| `summarize-conversation` | `summarizing`, cut to the **conversational** stretches of more than one message. The model is never asked about a tool observation, and a lone turn between two tool rounds is retained rather than costing a call to summarize one message into a message. | One model call **per claimed run**, not per span — so the per-turn multiplier is N, not 1. Otherwise `summarizing`'s costs exactly: critical-path tokens and latency, and an unreachable tier leaves that one run uncollapsed while its neighbours still collapse. |
+
+**Two strategies compose with `+`, and `elide-tools+summarize-conversation` is the pair to reach
+for.** Those two are exact complements by construction — both ask one predicate which messages
+carry a tool block — so together they partition a span rather than fighting over it. Any *other*
+pairing may not: `summarizing` and `elide` each claim the whole span, so `elide+summarizing`
+resolves happily and then refuses at the first compacting turn, naming both operands and the
+overlapping indices. The union is commutative; the order you write the two names in is not a
+setting.
 
 **Unset carries no Thor default, on purpose.** A default would materialize the key, so the code that
 reads the flag could never tell "no strategy was named" from "someone named the default" — and the
@@ -100,6 +110,8 @@ unrecognized name is refused by name, listing the valid ones.
 lain --compact-strategy elide          # no model call at compaction time, attestations instead
 lain --compact-strategy summarizing \
      --summarizer-provider ollama      # a fresh local summary per span, on the critical path
+lain --compact-strategy elide-tools+summarize-conversation \
+     --summarizer-provider ollama      # attest the tool rounds, summarize the talk — one derivation
 ```
 
 #### Isolation flag

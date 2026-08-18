@@ -218,10 +218,11 @@ RSpec.describe "lain chat's flag surface" do
 
     # And separately: DEFAULT is what an explicit, empty RESOLUTION falls
     # through to. That is the resolver's own question and the constant is its
-    # answer -- the flag never restates it.
+    # answer -- the flag never restates it. `strategy_names` (plural) since a
+    # name may be a composition; a nil one is still the single DEFAULT.
     it "leaves DEFAULT as the resolver's fallback, not the executable's" do
-      expect(Lain::CLI::CompactionStrategy.new(nil).send(:strategy_name))
-        .to eq(Lain::CLI::CompactionStrategy::DEFAULT)
+      expect(Lain::CLI::CompactionStrategy.new(nil).send(:strategy_names))
+        .to eq([Lain::CLI::CompactionStrategy::DEFAULT])
     end
 
     it "names every strategy the resolver accepts in its help text" do
