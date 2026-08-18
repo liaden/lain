@@ -207,13 +207,20 @@ module Lain
     # Drive the machine from its current Timeline. Separated from {#ask} so a
     # rewound or forked Timeline can be resumed without inventing a user turn.
     # The turn phase's env is deliberately minimal: `iteration` is the count of
-    # turns already committed (0 for the very first), and `timeline` is the
-    # Timeline as of the START of this turn -- the node a future speculative-
-    # fork middleware would fork from, before this turn's own commit lands. The
-    # block adds `:response`/`:settled` on the way back out, the same in/out
-    # shape #call_model uses for `:request`/`:response`. This is the seam for
-    # the future budget/iteration-ceiling/interrupt-hook/speculative-fork point
-    # -- placing it, not building those features yet.
+    # turns already committed IN THIS RUN. It restarts at 0 on every #run,
+    # because the counter it reads bounds ONE autonomous loop and not a
+    # conversation (F21; see #run_loop) -- so a middleware watching two asks of
+    # two turns each sees 0, 1, 0, 1 and not 0, 1, 2, 3, and 0 means "the first
+    # turn of this loop", never "the first turn of this session". Anything keyed
+    # on it therefore fires per LOOP: a compaction or interrupt trigger wanting
+    # a per-conversation reading has to count for itself, off the Timeline.
+    # `timeline` is the Timeline as of the START of this turn -- the node a
+    # future speculative-fork middleware would fork from, before this turn's own
+    # commit lands. The block adds `:response`/`:settled` on the way back out,
+    # the same in/out shape #call_model uses for `:request`/`:response`. This is
+    # the seam for the future interrupt-hook/speculative-fork point -- placing
+    # it, not building those features yet; the iteration ceiling has since
+    # landed on the counter above.
     #
     # The Sync bridge: the loop always executes inside a fiber reactor, so its
     # IO (the provider round trip, a `bash` shellout) yields to the scheduler
@@ -297,8 +304,23 @@ module Lain
     # The loop itself, hosted inside the reactor {#run} establishes. Kept apart
     # from #run so the bridge (`Sync`) and the iteration (`loop`) read as the two
     # separate concerns they are.
+    #
+    # These two lines are the state ONE loop owns, and this is where a loop
+    # begins, so this is where they are seeded -- #ask is a commit plus a run,
+    # and the bridge's resend ({CLI::ResendBridge#over_wire}) is a run with no
+    # commit, so both start counting from zero. The iteration count belongs here
+    # and not with the conversation because that is what the ceiling has always
+    # claimed to bound: {Budget} says "an autonomous loop" and repeats it in the
+    # refusal, "loop ran N iterations". Seeded once per Agent it was a
+    # whole-session budget instead -- manual-QA round 4 measured 25 turns spread
+    # over nine separate prompts exhausting it, after which every prompt was
+    # committed as a user turn and raised on before the provider was asked: a
+    # session still taking input and no longer able to answer any of it. A
+    # conversation-wide ceiling is a different policy and would need its own
+    # name, number and refusal ({CLI::GoalDriver::Run} is what one looks like).
     def run_loop(on_stream_started)
       @failure_reason = nil
+      @iterations = 0
 
       loop do
         env = @instrumentation.turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|
@@ -361,7 +383,9 @@ module Lain
     # and increments `@iterations` on the next line, and a ceiling separated
     # from the count it governs is a pair a reader has to reassemble. The value
     # itself is immutable; what makes it belong here is that only run state
-    # gives it meaning.
+    # gives it meaning. The zero here is the count an Agent that has never run
+    # reports; #run_loop re-seeds it per run, which is the scope the ceiling
+    # actually bounds.
     def seed_run_state(session, snapshot_writer, budget)
       @transition_listener = @instrumentation.transition_listener
       @session = session

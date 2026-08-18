@@ -315,6 +315,52 @@ RSpec.describe Lain::Agent do
       expect { a.ask("hi") }.not_to raise_error
       expect(a).to be_failed
     end
+
+    # F21 (manual-QA round 4). The counter was seeded once per Agent and never
+    # reset, so the ceiling that names itself "loop ran N iterations" was in
+    # fact a whole-session budget: 25 model calls spread over nine prompts
+    # exhausted it, and every prompt after that was committed as a user turn and
+    # then raised on before the provider was ever asked -- a session that keeps
+    # accepting input and can no longer answer any of it.
+    describe "the ceiling bounds ONE ask, not the session" do
+      # Two iterations per ask: the tool call, then the text that settles it.
+      def settling_pair(text) = [tool_response(["tu_1", "echo", { "text" => "loop" }]), text_response(text)]
+
+      it "starts a fresh count on an ask that follows one which ran to the ceiling" do
+        a = agent(settling_pair("first") + settling_pair("second"),
+                  budget: Lain::Agent::Budget.new(max_iterations: 2))
+
+        expect(a.ask("one").text).to eq("first")
+        expect(a.ask("two").text).to eq("second")
+        expect(a.iterations).to eq(2)
+      end
+
+      # The reset is not a reprieve: the ceiling still bounds the ask it belongs
+      # to, whatever ran before it.
+      it "still stops a single ask at the ceiling, however many asks preceded it" do
+        a = agent(settling_pair("first") + [tool_response(["tu_2", "echo", { "text" => "forever" }])],
+                  budget: Lain::Agent::Budget.new(max_iterations: 2))
+        a.ask("one")
+
+        expect { a.ask("two") }
+          .to raise_error(described_class::BudgetExceeded, "loop ran 2 iterations, ceiling is 2")
+      end
+
+      # The silent-swallow half. A refused ask says which ceiling stopped it
+      # (the message {CLI::Repl#respond} renders), and the NEXT prompt reaches
+      # the provider instead of dying on arrival.
+      it "names the ceiling that stopped the run, then answers the next prompt" do
+        looping = tool_response(["tu_1", "echo", { "text" => "loop" }])
+        provider = Lain::Provider::Mock.new(responses: [looping, looping, looping, text_response("recovered")])
+        a = described_class.new(provider:, toolset:, context:,
+                                budget: Lain::Agent::Budget.new(max_iterations: 2))
+
+        expect { a.ask("one") }
+          .to raise_error(described_class::BudgetExceeded, "loop ran 2 iterations, ceiling is 2")
+        expect(a.ask("two").text).to eq("recovered")
+        expect(provider.call_count).to eq(4)
+      end
+    end
   end
 
   describe "turn usage accounting" do
