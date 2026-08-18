@@ -136,10 +136,27 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # T23: the six collaborators BOTH child seams attenuate over are one value,
     # built once. The identity is what makes "adding a seam member is a one-place
     # change" checkable -- two seams cannot drift when there is only one object.
-    it "hands the subagent tool and the role_spawn seam the very same spawn seam" do
+    #
+    # T9 made the chat's own subagent a `with` COPY differing in exactly one
+    # member: its gate policy names the actor a human is TOLD is asking, and the
+    # researcher is not every role. The no-drift property the object identity
+    # stood in for is unharmed -- `with` copies rather than constructs, so a new
+    # member added to the one `#spawn_seam` still reaches both -- so the claim is
+    # stated per member instead, which is what a second Seam.new would fail.
+    it "hands the subagent tool and the role_spawn seam one spawn seam, bar the actor its gate names" do
       full = toolset_build.build(recorder, ask_human:)
+      child = full.fetch("subagent").seam
+      role = toolset_build.role_spawn.seam
+      shared = Lain::Tools::Subagent::Seam.members - [:gate_policy]
 
-      expect(full.fetch("subagent").seam).to be(toolset_build.role_spawn.seam)
+      expect(shared.reject { |member| child.public_send(member).equal?(role.public_send(member)) }).to be_empty
+      expect(child.gate_policy.board).to be(role.gate_policy.board)
+      expect(child.gate_policy.requester).to eq("researcher")
+      # The SEPARATION half, and the reason it is asserted rather than assumed:
+      # an edit that rebound the one `@seam` in place instead of copying would
+      # label every role spawn "researcher", and the line above would still be
+      # green. This is the line that catches it.
+      expect(role.gate_policy.requester).to eq(described_class::SPAWN_REQUESTER)
     end
 
     it "fills that seam from the run's provider, parent handle, journal, supervisor and chronicle observer" do

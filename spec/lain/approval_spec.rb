@@ -253,6 +253,55 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
+  # T9: who is asking is a property of the CALL, not of the queue. ONE queue
+  # serves the whole fleet -- the parent and every child park in it -- so a
+  # queue-level constant journals and renders every pending identically, and in
+  # QA a researcher subagent's `bash` approval was indistinguishable from the
+  # human's own agent's until the spawn's `only`-set was read out of the
+  # journal. `ask_human` has named its actor since T10; this is the same
+  # identity one rail over.
+  #
+  # It rides the `context` the policy seam already threads untouched
+  # ({Approval::PolicySwitch::Requested}), which is why nothing between a
+  # child's gate and this queue had to widen its `call(effect, context)` duck.
+  # That value's OWN behaviour -- its delegation, and the names it refuses --
+  # is spec'd at its mirrored path, `spec/lain/approval/policy_switch_spec.rb`;
+  # what belongs here is what the QUEUE does with it.
+  describe "who a parked call is asked on behalf of" do
+    def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
+
+    def parked(context)
+      Sync do |task|
+        run = task.async { queue.call(tool_call, context) }
+        queue.dequeue.approve(surface: "spec")
+        run.wait
+      end
+    end
+
+    it "names the role a spawn announces as, on both halves of the record" do
+      parked(asked_by("researcher"))
+
+      expect(pending_records).to contain_exactly(a_hash_including("requester" => "researcher"))
+      expect(decision_records).to contain_exactly(a_hash_including("requester" => "researcher"))
+    end
+
+    # The separation, in one session and one queue: a parent's own turn parks
+    # against a context that names nobody, so it cannot be mistaken for the
+    # child that parked a moment earlier.
+    it "does not name the child when the parent's own turn parks in the same queue" do
+      parked(asked_by("researcher"))
+      parked(nil)
+
+      expect(pending_records.map { |record| record.fetch("requester") }).to eq(%w[researcher agent])
+    end
+
+    it "carries the queue's default requester when the context names nobody" do
+      parked(nil)
+
+      expect(pending_records).to contain_exactly(a_hash_including("requester" => "agent"))
+    end
+  end
+
   # gate.rb's doctrine, applied to the queue's OWN writes: an unattended gate
   # refuses, it never wedges. Journalling is evidence about the turn and must
   # never be able to cost the turn -- Gate sits above Handler::Live, so an

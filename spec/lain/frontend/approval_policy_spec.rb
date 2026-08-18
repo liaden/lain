@@ -18,10 +18,36 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     described_class.new(output:, input: StringIO.new(answer))
   end
 
+  def pending_from(requester)
+    Lain::Approval::Queue::Pending.new(effect:, requester:, clock: -> { 0.0 })
+  end
+
   it "asks the question, naming the tool and its input" do
     policy_for("y\n").decide(pending)
 
     expect(output.string).to include("bash").and include("rm -rf /tmp/x")
+  end
+
+  # T9: with a fleet running, tool-and-input alone cannot say whether the
+  # parent or a researcher subagent is the one asking -- the editor's row has
+  # led with the requester since T36, and in QA reading the spawn's `only`-set
+  # out of the journal was the only way to answer it at the terminal.
+  it "names who is asking, alongside the tool and its input" do
+    policy_for("y\n").decide(pending_from("researcher"))
+
+    expect(output.string).to include("researcher").and include("bash").and include("rm -rf /tmp/x")
+  end
+
+  it "separates a fleet: two requesters ask two different questions" do
+    parent = StringIO.new
+    described_class.new(output: parent, input: StringIO.new("n\n")).decide(pending_from("agent"))
+    policy_for("n\n").decide(pending_from("researcher"))
+
+    # Each names its OWN actor and not the other's -- a bare inequality would be
+    # satisfied by any difference at all, including one that named neither.
+    expect(parent.string).to include("agent")
+    expect(parent.string).not_to include("researcher")
+    expect(output.string).to include("researcher")
   end
 
   %w[y yes Y YES Yes].each do |answer|
@@ -155,8 +181,12 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(rendered(disclosing)).not_to include(secret)
     end
 
+    # T9 changed these bytes deliberately: the question now leads with WHO is
+    # asking, the same word the editor's row leads with. What is unchanged is
+    # the half this example exists for -- with nothing outstanding, no preamble
+    # reaches the human at all.
     it "renders the ordinary prompt, byte for byte, when the pending discloses nothing" do
-      expect(rendered(pending)).to eq("approve bash(#{effect.input.inspect})? [y/N] ")
+      expect(rendered(pending)).to eq("agent asks: approve bash(#{effect.input.inspect})? [y/N] ")
     end
 
     it "still asks the ordinary y/N question, so the verdict path is untouched" do

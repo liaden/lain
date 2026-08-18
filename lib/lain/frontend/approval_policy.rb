@@ -83,8 +83,18 @@ module Lain
       # which is where its rulings (the path is escaped, the bytes and the
       # detector's reason are withheld) are argued -- it is shared with the
       # editor's list so the two human surfaces cannot say different things.
+      #
+      # WHO is asking opens the question itself, as it opens the editor's row
+      # ({Frontend::Neovim::ApprovalView#row_for}): with a fleet running, the
+      # tool and its input alone cannot say whether the parent or a subagent
+      # wants this. It is NOT `inspect`ed where the path and the input are,
+      # because it is not model-influenced -- it is a wired name
+      # ({Tools::Subagent}'s `announces_as:`) or a {Role::Catalog} key, never a
+      # string a turn produced. The real question still ENDS the rendering,
+      # which is the property the escaped path above relies on.
       def prompt_for(pending)
-        "#{pending.outstanding.preamble}approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
+        "#{pending.outstanding.preamble}#{pending.requester} asks: " \
+          "approve #{pending.tool}(#{pending.input.inspect})? [y/N] "
       end
 
       def prompt_and_read(prompt)

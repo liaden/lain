@@ -77,13 +77,33 @@ module Lain
           def include?(tool_name) = board.call.mode_switch.posture.permits.include?(tool_name)
         end
 
+        # What a child announces itself as at the approval gate when the spawn
+        # bound no more specific name. The tool's own default `name`, so a park
+        # is at least separable from the human's own agent
+        # ({Approval::Queue}'s `requester:`) without claiming an identity the
+        # spawn never took.
+        SPAWN_REQUESTER = "subagent"
+
         # The gate half of the same late binding: {Effect::Handler::Gate}'s
         # policy duck, answering through whichever policy the board's ONE
         # {Approval::PolicySwitch} currently holds -- so `/yolo` and a posture
         # flip both reach a child's next tier-3 call, exactly as they reach the
         # parent's.
-        LivePolicy = Data.define(:board) do
-          def call(effect, context) = board.call.policy_switch.call(effect, context)
+        #
+        # It is also the one object on a child's gate path that knows WHICH
+        # child it is gating, so it is where the requester is bound (T9): the
+        # board, the switch and the ladder are all session-wide and cannot tell
+        # a fleet apart. The name rides the context
+        # ({Approval::PolicySwitch::Requested}) rather than a new parameter,
+        # because the parent's gate and the child's must keep resolving the
+        # SAME policy through the SAME two-argument duck -- that identity is
+        # what makes the privilege inversion unrepresentable.
+        LivePolicy = Data.define(:board, :requester) do
+          def initialize(board:, requester: SPAWN_REQUESTER) = super
+
+          def call(effect, context)
+            board.call.policy_switch.call(effect, Lain::Approval::PolicySwitch::Requested.new(context, requester))
+          end
         end
 
         # The PATH half of the same gate, over the same thunk. Not folded into
@@ -327,9 +347,18 @@ module Lain
         # child is announced as the role it IS, so an arrival note and a
         # desktop notification say "researcher" rather than the tool's name.
         def research_subagent(base)
-          Lain::Tools::Subagent.new(seam:, toolset: base, policy: backend.spawn_policy(RESEARCHER),
+          Lain::Tools::Subagent.new(seam: announcing(RESEARCHER.to_s), toolset: base,
+                                    policy: backend.spawn_policy(RESEARCHER),
                                     max_depth: 1, announces_as: RESEARCHER.to_s)
         end
+
+        # The same name one rail over (T9). `announces_as:` already says what a
+        # human is TOLD is asking when this child puts a QUESTION to them; an
+        # approval is the same question, so both halves are read off the one
+        # word rather than from two literals that could drift. Only the gate
+        # policy is rebound -- every other member of the run's ONE seam is
+        # shared, which is the identity the privilege-inversion guard rests on.
+        def announcing(requester) = seam.with(gate_policy: seam.gate_policy.with(requester:))
       end
     end
   end

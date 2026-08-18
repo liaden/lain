@@ -218,7 +218,9 @@ module Lain
       # @param journal [#record] where decisions land as evidence; required, not
       #   defaulted, for the same reason build_agent's `session:` is -- silently
       #   unjournaled approvals would be a quiet hole in the experiment record
-      # @param requester [String] who these gated calls are asked on behalf of
+      # @param requester [String] who a gated call is asked on behalf of when
+      #   the call itself names nobody -- the SESSION's default, not the fleet's
+      #   answer; see {#requester_for}
       # @param timeout [Numeric] seconds an unanswered pending waits before the
       #   fail-closed denial
       # @param clock [#call] monotonic seconds, injectable so specs pin latency
@@ -260,8 +262,12 @@ module Lain
       # surfaces what a yes would release ({Outstanding}). Defaulted, because
       # every other gated call releases nothing -- and answering the settled
       # {Pending} is what lets that caller write the ledger itself.
-      def adjudicate(effect, _context, outstanding: Outstanding::NONE)
-        pending = admit(effect, outstanding)
+      #
+      # `context` is READ now, where this method used to discard it: it is the
+      # one thing a gated call carries that can say which actor made it
+      # ({#requester_for}).
+      def adjudicate(effect, context, outstanding: Outstanding::NONE)
+        pending = admit(effect, context, outstanding)
         settle(pending)
         pending
       end
@@ -289,12 +295,27 @@ module Lain
       # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
       # yield point between them (see #initialize). Announcing first keeps that
       # claim exactly as it was.
-      def admit(effect, outstanding)
-        pending = Pending.new(effect:, requester: @requester, clock: @clock, outstanding:)
+      def admit(effect, context, outstanding)
+        pending = Pending.new(effect:, requester: requester_for(context), clock: @clock, outstanding:)
         record_evidence(Telemetry::ApprovalPending) { Telemetry::ApprovalPending.from(pending) }
         @parked << pending
         @arrivals.enqueue(pending)
         pending
+      end
+
+      # Who this CALL is asked on behalf of. ONE queue serves the whole fleet --
+      # the parent and every child park here -- so a queue-level constant
+      # journals and renders every pending identically, which is how a
+      # researcher subagent's `bash` prompt came to be indistinguishable from
+      # the human's own agent's. The call says so instead, through the context
+      # the gate's policy seam already threads
+      # ({Approval::PolicySwitch::Requested}).
+      #
+      # `requester:` stays as the SESSION's answer for the contexts that name
+      # nobody, which is the parent's own turn -- so this queue still has one
+      # word for "the agent the human is talking to" and never journals a blank.
+      def requester_for(context)
+        context.respond_to?(:requester) ? context.requester : @requester
       end
 
       # `ensure`, because the requester can be STOPPED while parked (the

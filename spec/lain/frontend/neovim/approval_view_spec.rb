@@ -64,10 +64,20 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # `with_timeout` bounds the whole thing, so a view that resolves nothing
   # fails in words instead of hanging: under parallel_rspec a hung worker
   # reports as "fewer examples, zero failures".
-  def gated(timeout: 0.4, calls: [effect], outstanding: Lain::Approval::Queue::Outstanding::NONE, &block)
+  # Who a call is asked on behalf of, riding the context the gate's policy seam
+  # threads (T9) -- one per call, because separating a fleet's rows is exactly
+  # the claim, and a fixture that could only name them all at once could not
+  # state it.
+  def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
+
+  def gated(timeout: 0.4, calls: [effect], requesters: nil,
+            outstanding: Lain::Approval::Queue::Outstanding::NONE, &block)
     Sync do |task|
       queue = Lain::Approval::Queue.new(journal:, timeout:)
-      parked = calls.map { |call| task.async { queue.adjudicate(call, nil, outstanding:).approved? } }
+      asking = requesters || calls.map { "agent" }
+      parked = calls.zip(asking).map do |call, requester|
+        task.async { queue.adjudicate(call, asked_by(requester), outstanding:).approved? }
+      end
       task.with_timeout(10) { answered(queue, parked, &block) }
     ensure
       parked&.each(&:stop)
@@ -298,10 +308,17 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:lines].first).to include("bash", { "command" => "pwd" }.inspect)
     end
 
+    # T9: the literal this example used to assert -- "agent" for every row --
+    # was the defect, not the contract. What the row has to carry is the ACTOR,
+    # so two calls parked by two actors render two distinguishable rows.
     it "names who is asking, so a fleet's rows are separable" do
-      gated(timeout: window) { |_queue| nil }
+      gated(timeout: window,
+            calls: [effect("bash", { "command" => "one" }, "tu_1"),
+                    effect("bash", { "command" => "two" }, "tu_2")],
+            requesters: %w[agent researcher]) { |_queue| nil }
 
-      expect(rpc.last[:lines].first).to include("agent")
+      expect(rpc.last[:lines].first(2))
+        .to contain_exactly(a_string_starting_with("agent  "), a_string_starting_with("researcher  "))
     end
 
     # T16. `y` on a row is a FULL approval signing surface "nvim", so a row that
@@ -313,8 +330,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       let(:regions) { Lain::Sensitivity::Regions.detect("API_KEY=#{secret}\n") }
       let(:outstanding) { Lain::Approval::Queue::Outstanding.new(path: "/repo/.env", regions:) }
 
-      def row
-        gated(timeout: window, outstanding:) { |_queue| nil }
+      def row(requester: "researcher")
+        gated(timeout: window, outstanding:, requesters: [requester]) { |_queue| nil }
         rpc.last[:lines].first
       end
 
@@ -326,18 +343,22 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         expect(row.index("sensitive region")).to be < row.index("bash(")
       end
 
+      # T9: the ACTOR leads, whichever one it is -- asserted against a requester
+      # that is not the queue's default, so the example cannot pass on a row
+      # that names everybody the same.
       it "still leads with the requester, so a fleet's rows stay separable" do
-        expect(row).to start_with("agent  ")
+        expect(row).to start_with("researcher  ")
+        expect(row(requester: "agent")).to start_with("agent  ")
       end
 
       it "puts none of the regions' bytes in the editor" do
         expect(row).not_to include(secret)
       end
 
-      it "leaves an ordinary row exactly as it was" do
-        gated(timeout: window) { |_queue| nil }
+      it "leaves an ordinary row exactly as it was, bar the actor it now names" do
+        gated(timeout: window, requesters: %w[researcher]) { |_queue| nil }
 
-        expect(rpc.last[:lines].first).to eq("agent  bash(#{{ "command" => "pwd" }.inspect})")
+        expect(rpc.last[:lines].first).to eq("researcher  bash(#{{ "command" => "pwd" }.inspect})")
       end
     end
 
