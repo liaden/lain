@@ -550,6 +550,477 @@ module SpecDisciplineCuratedNotes
   TEXT
 end
 
+# Mechanical, REPORT-ONLY guard against a SECOND shape, added by T12: a public
+# method in `lib/` that no other `lib/` code ever names, and that `spec/` does.
+#
+# CLAUDE.md says a spec drives design and that a tripped `Metrics/*` cop means
+# an object is missing. It does not yet say that a method made public SO A TEST
+# CAN REACH IT is a design smell rather than a testing convenience, and most of
+# this suite is LLM-written -- the circumstance that produces that shape at
+# scale.
+#
+# == What this shape is, and the one it is NOT
+#
+# FLAGGED: `lib/` names it nowhere, `spec/` names it somewhere. That is a fact
+# about REACH and it is all this scan measures.
+#
+# NOT FLAGGED, and this is the important half: a method with a real `lib/`
+# caller INSIDE ITS OWN CLASS, public only so the spec can reach it directly.
+# That is the likeliest spelling of "public only for a test" -- and it is
+# invisible here, because a caller in `lib/` is a `lib/` reference whatever
+# object it sits on. Measured on this tree at the time of writing: 145 whole-
+# tree / 7 under `lib/lain/review/**` carry that shape, against 70 / 9 for the
+# shape below. Reading "0 lib_public_spec_only" as "no methods are public only
+# for a test" is therefore wrong, and T14's `repo_as_fixture_spec.rb` paid for
+# that lesson first (its first cut missed the likeliest spelling of its own
+# motivating case). Seeing that second shape needs class-scoped name
+# resolution, not the flat file-scoped index below; it is deliberately left
+# unbuilt rather than approximated, because the file-scoped approximation was
+# measured at 4 false positives in 7 (`Delta#identical`/`#changed` and
+# `Docent#conversation` resolve to a Hash-value symbol and a keyword-argument
+# label, `GithubPr#refs` to a second class living in the same file).
+#
+# == Why report-only, and why the finding is never "make it private"
+#
+# T12's own audit of `lib/lain/review/**` narrowed NOTHING, and the reason is
+# structural rather than local: a method with zero `lib/` callers that is made
+# private becomes unreachable, so `private` here is a deletion wearing a
+# smaller word. What the shape actually finds is four different things with
+# four different fixes -- an unwired capability landed ahead of its consumer
+# (`Review::Prefill`, whose CLASS has no `lib/` consumer either), a documented
+# convenience nobody took up (`Marks#state_for`), API answered by a duck the
+# scan cannot see, and genuine dead code. Only the last is a deletion, and
+# CLAUDE.md puts that call with whoever owns the capability. So this prints a
+# reading list, the way the shapes above it do.
+#
+# `unwired_owner` is the one cheap discriminator worth carrying: when the
+# owning constant itself is named nowhere else in `lib/`, every flag on it is
+# ONE fact about the class rather than N facts about its methods.
+#
+# == Known blind spots, demonstrated rather than assumed
+#
+#   * Dynamic dispatch. `public_send(key)` (`cache_profile.rb:51`,
+#     `compare.rb:121`) reaches a method this scan will swear nothing calls.
+#     A name that arrives from a Hash, a constant or the wire is not visible
+#     to any static index.
+#   * Non-Ruby callers. The nvim plugin and `crates/lain-core` speak over RPC;
+#     a method they call is spelled in Lua or Rust, not here. Verified for
+#     T12's nine review-subtree flags (none is), NOT in general.
+#   * A method NAME is the key, so two methods sharing a name share their
+#     references: any reference to either suppresses the flag on both. That is
+#     deliberate -- it under-reports, and T14's rule states the same
+#     preference, since a false positive is a permanent tax on every
+#     contributor while a miss costs one line of a report.
+#   * {IMPLICIT} is a hand-written list of names Ruby, RSpec or a gem invokes
+#     without ever spelling them. It is certainly incomplete.
+#   * `attr_reader`/`Data.define` members are not `def`s and are not scanned.
+#   * String-spelled references (`define_method("foo")`) are not counted.
+#   * Visibility is read per statement list, with `private :sym` overrides
+#     applied per FILE. A `send(:private, ...)`, or a visibility change made
+#     from another file, is not seen.
+module LibReach
+  REPO_ROOT = Pathname(__dir__).join("..").expand_path
+  LIB_ROOT = REPO_ROOT.join("lib")
+  SPEC_ROOT = REPO_ROOT.join("spec")
+
+  # @return [Pathname] where {LibReachReport} writes the full listing.
+  REPORT_PATH = REPO_ROOT.join("tmp/lib_reach_report.txt")
+
+  # Names whose caller never spells them: Ruby's own conversion and comparison
+  # protocols, the hooks `Enumerable`/`Comparable` reach through, the ones a
+  # gem calls by convention (`call`, `perform`, `to_journal`), and `initialize`
+  # -- `.new` is what a caller writes. Without these, every `to_s` in `lib/`
+  # reads as public-only-for-a-test the moment a spec asserts on one.
+  IMPLICIT = %i[
+    initialize initialize_copy inspect to_s to_str to_sym to_a to_h to_i to_f to_proc to_json
+    coerce hash eql? == != <=> < <= > >= === =~ + - * / % ** << >> [] []= ! ~ & | ^ each
+    method_missing respond_to_missing? included extended inherited prepended
+  ].freeze
+
+  # Owners that exist BECAUSE the specs needed them, and that CLAUDE.md names
+  # approvingly: `Sink::Null`, `Provider::Mock`, `Effect::Handler::Mock`,
+  # `Surface::Null`. An inspection method on one of these is reached from
+  # `spec/` and nowhere else BY DESIGN, so a flag on it would be this rule's
+  # error rather than a finding -- T12's card says exactly that, and
+  # `Provider::Mock#last_request`/`#call_count` were the two it caught.
+  # Matched on the owner's last constant segment, which is a convention this
+  # codebase keeps rather than a path allowlist. The cost is not hypothetical
+  # and is worth writing down: measured on this tree, this shields 105 public
+  # defs across 29 owners -- 26 named `Null`, 3 named `Mock`, and none at all
+  # for `Fake`/`Stub`/`Double`, which are here for the convention rather than
+  # for anything they match today. A real class someone names `Null` is skipped
+  # in silence, and 105 is how much room that hole has.
+  DOUBLE_OWNERS = %w[Mock Null Fake Stub Double].freeze
+
+  # One public `def` in `lib/`, with the lexical constant it was written under.
+  Definition = Struct.new(:path, :line, :name, :owner, :singleton) do
+    def to_s = "#{owner}#{singleton ? "." : "#"}#{name}"
+  end
+
+  # One flagged definition, with the spec sites that reach it.
+  Violation = Struct.new(:definition, :spec_sites, :unwired_owner) do
+    def path = definition.path
+    def line = definition.line
+    def to_s = "#{path}:#{line} #{definition} <- #{spec_sites.first(3).join(", ")}"
+  end
+
+  # Depth-first over a Prism tree. Its own module because three objects below
+  # walk one and none of them is about walking.
+  module Walk
+    module_function
+
+    def each_node(node, &block)
+      return to_enum(:each_node, node) unless block_given?
+      return unless node.is_a?(Prism::Node)
+
+      yield node
+      node.compact_child_nodes.each { |child| each_node(child, &block) }
+    end
+  end
+
+  # ONE question, asked of one file: which `def`s in it are PUBLIC?
+  #
+  # Visibility in Ruby is per statement list and mutable at runtime, so this is
+  # a reading of the common written forms and not an evaluation: a bare
+  # `private`/`protected`/`public` sets the default for the statements after it
+  # in the SAME list, `private def x` and `private :x` name one method, and
+  # `private_class_method` does the same for a singleton. `module_function`
+  # counts as PUBLIC -- the instance copy goes private but `Mod.name` stays
+  # reachable, which is the reach this scan is about.
+  class Visibility
+    # Receiverless calls that change what the REST of a statement list means.
+    BARE = %i[public private protected module_function].freeze
+
+    # The two facts a statement list carries forward to the next `def` in it.
+    # `singleton` is not redundant with `def self.x`: a `class << self` body and
+    # a bare `module_function` both move a plainly-spelled `def` onto the
+    # singleton, and without tracking it the report renders `Owner#name` for a
+    # method every caller writes as `Owner.name` -- 3 of 70 entries, one of them
+    # `Review::Prefill::Sidecar.beside`.
+    State = Struct.new(:visibility, :singleton)
+
+    def self.public_defs(path, source)
+      new(path).run(Prism.parse(source).value)
+    end
+
+    def initialize(path)
+      @path = path
+      @defs = []
+      @overrides = {}
+    end
+
+    # @return [Array<Definition>]
+    def run(root)
+      scope(root, "", false)
+      @defs.select { |defn, vis| (@overrides[defn.name] || vis) == :public }.map(&:first)
+    end
+
+    private
+
+    # Walks ONE statement list under `owner`. Every list starts public --
+    # visibility does not inherit -- while `singleton` is a property of the list
+    # its caller opened.
+    def scope(node, owner, singleton)
+      state = State.new(:public, singleton)
+      statements(node).each { |stmt| state = statement(stmt, owner, state) }
+    end
+
+    # A `ProgramNode` keeps its list under `statements`; every other node that
+    # opens one -- class, module, `class << self`, a block -- keeps it under
+    # `body`. Anything else has no list of its own and is walked by {#descend}.
+    def statements(node)
+      body = node.is_a?(Prism::ProgramNode) ? node.statements : node.body
+      body.is_a?(Prism::StatementsNode) ? body.body : []
+    end
+
+    def statement(stmt, owner, state)
+      case stmt
+      when Prism::DefNode then record(stmt, owner, state)
+      when Prism::ClassNode, Prism::ModuleNode then scope(stmt, join(owner, const_name(stmt.constant_path)), false)
+      when Prism::SingletonClassNode then scope(stmt, owner, true)
+      when Prism::CallNode then return call(stmt, owner, state)
+      when Prism::ConstantWriteNode then constant(stmt, owner, state)
+      else descend(stmt, owner, state)
+      end
+      state
+    end
+
+    # `Widget = Data.define(...) do ... end` is how this codebase writes a value
+    # object: the block IS Widget's class body, and the constant on the left is
+    # the name a reader looks the method up under.
+    def constant(stmt, owner, state)
+      statement(stmt.value, join(owner, stmt.name.to_s), state)
+    end
+
+    # An `if`/`begin`/`case` does not open a visibility scope, so its branches
+    # keep reading the list they are written in.
+    def descend(stmt, owner, state)
+      Walk.each_node(stmt) do |node|
+        case node
+        when Prism::DefNode then record(node, owner, state)
+        when Prism::ClassNode, Prism::ModuleNode then scope(node, join(owner, const_name(node.constant_path)), false)
+        end
+      end
+    end
+
+    # `Data.define(...) do ... end` and `Struct.new do ... end` open a class
+    # body written as a block, and this codebase's value objects all take that
+    # shape -- so a block body is walked as its own statement list.
+    def call(stmt, owner, state)
+      return bare(stmt, owner, state) if stmt.receiver.nil? && BARE.include?(stmt.name)
+
+      class_methods(stmt, owner) if stmt.receiver.nil? && stmt.name == :private_class_method
+      scope(stmt.block, owner, state.singleton) if stmt.block.is_a?(Prism::BlockNode)
+      state
+    end
+
+    # `private`/`protected`/`public` with no argument set the list's visibility;
+    # a bare `module_function` moves the rest of the list onto the singleton,
+    # where `Mod.name` is the reach this scan is about. With arguments, all four
+    # name specific methods instead and the list's own state is unchanged --
+    # `module_function :x` is deliberately not followed, since the instance copy
+    # it also makes private is not what a `spec/` caller reaches.
+    def bare(stmt, owner, state)
+      args = stmt.arguments&.arguments || []
+      return named(stmt, owner, state, args) unless args.empty?
+
+      stmt.name == :module_function ? State.new(state.visibility, true) : State.new(stmt.name, state.singleton)
+    end
+
+    def named(stmt, owner, state, args)
+      args.each { |arg| name(arg, owner, stmt.name) } unless stmt.name == :module_function
+      state
+    end
+
+    def class_methods(stmt, owner)
+      (stmt.arguments&.arguments || []).each { |arg| name(arg, owner, :private) }
+    end
+
+    # An override is keyed by NAME alone, so `private_class_method :x` also
+    # silences an instance method spelled `x` in the same file. Harmless here
+    # (it can only under-report, which is this rule's chosen direction) and
+    # cheaper than a second key nothing else needs.
+    def name(arg, owner, visibility)
+      case arg
+      when Prism::DefNode then record(arg, owner, State.new(visibility, false))
+      when Prism::SymbolNode then @overrides[arg.unescaped.to_sym] = visibility
+      end
+    end
+
+    def record(defn, owner, state)
+      return if IMPLICIT.include?(defn.name)
+
+      singleton = state.singleton || !defn.receiver.nil?
+      @defs << [Definition.new(@path, defn.location.start_line, defn.name, owner, singleton), state.visibility]
+    end
+
+    def join(outer, inner) = outer.empty? ? inner : "#{outer}::#{inner}"
+
+    def const_name(node)
+      case node
+      when Prism::ConstantReadNode then node.name.to_s
+      when Prism::ConstantPathNode then [const_name(node.parent), node.name].compact.join("::")
+      else "?"
+      end
+    end
+  end
+
+  # Every NAME one tree spells, and where. A method name is spelled by a call
+  # (`foo`, `x.foo`) or by a Symbol (`send(:foo)`, `def_delegators ... :foo`,
+  # `method(:foo)`) -- both count, generously, because an over-counted
+  # reference costs a missing report line while an under-counted one costs a
+  # false positive, and T14's rule made the same trade.
+  class Index
+    METHOD_NAME = /\A[A-Za-z_][A-Za-z0-9_]*[?!=]?\z/
+
+    def self.build(sources)
+      sources.each_with_object(new) { |(path, source), index| index.add(path, source) }
+    end
+
+    def initialize
+      @methods = Hash.new { |hash, key| hash[key] = [] }
+      @constants = Hash.new { |hash, key| hash[key] = [] }
+      @homes = Hash.new { |hash, key| hash[key] = [] }
+    end
+
+    attr_reader :methods, :constants, :homes
+
+    def add(path, source)
+      Walk.each_node(Prism.parse(source).value) do |node|
+        named(node, "#{path}:#{node.location.start_line}")
+        home(node, path)
+      end
+    end
+
+    private
+
+    # What this node SPELLS, which is the question the flag is about.
+    def named(node, site)
+      case node
+      when Prism::CallNode then @methods[node.name] << site
+      when Prism::SymbolNode then symbol(node, site)
+      when Prism::ConstantReadNode then @constants[node.name] << site
+      when Prism::ConstantPathNode then @constants[node.name] << site if node.name
+      end
+    end
+
+    def symbol(node, site)
+      value = node.unescaped
+      @methods[value.to_sym] << site if value.match?(METHOD_NAME)
+    end
+
+    # Where a constant is OPENED, as opposed to merely named. A namespace with
+    # its own directory is opened in every file under it (`Review::Prefill` in
+    # `prefill.rb`, `prefill/finding.rb`, `prefill/sidecar.rb`), and counting
+    # only the file that happens to define a flagged method left every such
+    # class reading as wired.
+    def home(node, path)
+      case node
+      when Prism::ClassNode, Prism::ModuleNode then @homes[node.constant_path.name] << path
+      when Prism::ConstantWriteNode then @homes[node.name] << path
+      end
+    end
+  end
+
+  # Combines the three indexes into the verdict. Its own object so the rule can
+  # be exercised against in-memory fixtures -- reading the real tree is what
+  # {LibReach.violations} does, and it is not a precondition for testing this.
+  class Scanner
+    def initialize(lib_sources, spec_sources)
+      @definitions = lib_sources.flat_map { |path, source| Visibility.public_defs(path, source) }
+      @lib = Index.build(lib_sources)
+      @spec = Index.build(spec_sources)
+    end
+
+    # @return [Array<Violation>]
+    def violations
+      @definitions.reject { |defn| @lib.methods.key?(defn.name) || double?(defn) }
+                  .filter_map { |defn| violation(defn) if @spec.methods.key?(defn.name) }
+                  .sort_by { |flagged| [flagged.path, flagged.line] }
+    end
+
+    private
+
+    def violation(defn)
+      Violation.new(defn, @spec.methods.fetch(defn.name), unwired?(defn))
+    end
+
+    def double?(defn) = DOUBLE_OWNERS.include?(defn.owner.split("::").last)
+
+    # The owning constant's own last segment, named nowhere in `lib/` outside
+    # the files that OPEN it. `Review::Prefill` is the motivating case: the
+    # class has no `lib/` consumer at all, so each of its flagged methods is
+    # one consequence of that and not an independent finding.
+    #
+    # File-granular, so a nested helper used only by the class it is written
+    # under (`Timeline::Dominators`) reads as unwired too -- true as stated,
+    # and still the wrong word for what it is. Asking this per CLASS rather
+    # than per file needs the scoped resolution LibReach's doc declines to
+    # approximate.
+    def unwired?(defn)
+      owner = defn.owner.split("::").last
+      return false if owner.nil? || owner.empty?
+
+      homes = @lib.homes.fetch(owner.to_sym, [])
+      @lib.constants.fetch(owner.to_sym, []).all? { |site| homes.include?(site.split(":").first) }
+    end
+  end
+
+  module_function
+
+  def sources(root)
+    root.glob("**/*.rb").sort.to_h { |file| [file.relative_path_from(REPO_ROOT).to_s, file.read] }
+  end
+
+  # @return [Array<Violation>] every flagged definition across the real tree.
+  # Not memoized, for the reason {SpecDiscipline.violations} is not.
+  def violations
+    Scanner.new(sources(LIB_ROOT), sources(SPEC_ROOT)).violations
+  end
+end
+
+# Turns a {LibReach} violation list into the reading list a follow-up consumes.
+# Separate from the scan for the reason {SpecDisciplineReport} is separate from
+# {SpecDiscipline}: detection and formatting are different responsibilities,
+# and folding the second into the first is what pushes either over
+# `Metrics/ModuleLength`.
+module LibReachReport
+  BANNER = <<~TEXT
+    LIB REACH REPORT -- generated by spec/spec_discipline_spec.rb
+    Regenerate: bundle exec rspec spec/spec_discipline_spec.rb -e "lib reach"
+
+    ======================================================================
+    THIS IS A READING LIST, NOT A DELETE LIST, AND NOT A `private` LIST.
+    A flagged method has NO caller in lib/ at all, so making it private makes
+    it unreachable -- `private` here is a deletion wearing a smaller word.
+    T12's audit of lib/lain/review/** applied ZERO narrowings for that reason;
+    see LibReach's own doc for the four different things this shape finds and
+    the four different fixes they need.
+
+    It also CANNOT see the likeliest spelling of "public only for a test" --
+    a method with a real caller inside its own class. Read "0 flagged" as
+    "nothing has zero lib callers", never as "nothing is public only for a
+    test".
+
+    THREE FAMILIES BELOW ARE LEGITIMATE AND DOMINATE THE LIST. Narrowing any
+    of them is a defect, not a cleanup (T12's card names all three):
+      * property-test law counterexamples -- `Algebra::Monoid#not_a_monoid`,
+        `Algebra::Pure#not_pure` and their siblings exist to be called by a
+        spec; that is their whole job.
+      * alternative constructors -- `Question::Answer.from_body`,
+        `Approval::Gate.from_journal`, `CLI::Up.from_options`: public API by
+        intent even when only a spec exercises them today.
+      * documented algebra predicates -- `Timeline#ancestor_of?`,
+        `Timeline::Dominators#dominates?` are the DAG's public vocabulary.
+    Injected collaborators and Null Objects are EXCLUDED rather than listed,
+    since a flag on one is the rule's error -- see LibReach::DOUBLE_OWNERS.
+
+    MEASURED PRECISION, stated the way the sibling shape states its own:
+    T12 read all 9 flags under lib/lain/review/** and narrowed ZERO. Against
+    the card's intent -- "a method public only for a test, which should be
+    private" -- that is 0/9. The flags were not noise: each named a real fact
+    (an unwired class, a convenience nobody took up, editor-facing API), but
+    ONE FLAG CAN STAND FOR SEVERAL DIFFERENT FINDINGS with different fixes,
+    which is the same conflation the sole_raise_error report carries at ~12%.
+    Read a flag as "go look", never as "narrow this".
+    ======================================================================
+  TEXT
+
+  module_function
+
+  def write(list)
+    LibReach::REPORT_PATH.dirname.mkpath
+    LibReach::REPORT_PATH.write(text(list))
+    LibReach::REPORT_PATH
+  end
+
+  def text(list)
+    unwired, standalone = list.partition(&:unwired_owner)
+    ([BANNER, counts(list, unwired, standalone)] + sections(unwired, standalone)).join("\n")
+  end
+
+  def counts(list, unwired, standalone)
+    <<~TEXT
+      Counts:
+        total flagged: #{list.size}
+        owner has no lib/ consumer either (ONE fact about the class): #{unwired.size}
+        owner IS used from lib/, this method is not:                  #{standalone.size}
+    TEXT
+  end
+
+  def sections(unwired, standalone)
+    [
+      section("owner IS wired into lib/, but this method has no lib/ caller: READ THESE FIRST", standalone),
+      section("owner has no lib/ consumer either -- read the CLASS, not the method", unwired)
+    ]
+  end
+
+  def section(title, list)
+    body = list.map { |flagged| "  #{flagged}" }.join("\n")
+    "--- #{title} (#{list.size}) ---\n#{body}\n\n"
+  end
+end
+
 RSpec.describe "spec discipline" do
   describe SpecDiscipline::Scanner do
     def scan(source) = described_class.new("fixture_spec.rb").scan(source)
@@ -800,6 +1271,159 @@ RSpec.describe "spec discipline" do
       # (a `partition` bug, a section never rendered) even though the
       # violations themselves are unaffected -- the one place THIS spec
       # checks its own output rather than just producing it.
+      expect(listed).to eq(violations.size)
+    end
+  end
+
+  describe LibReach::Scanner do
+    def scan(lib, spec = {}) = described_class.new(lib, spec).violations
+
+    let(:consumer) { { "lib/consumer.rb" => "class Consumer\n  def run = Widget.new.total\nend\n" } }
+
+    it "flags a public lib method that only spec names" do
+      found = scan({ "lib/widget.rb" => "class Widget\n  def total = 1\nend\n" },
+                   { "spec/widget_spec.rb" => "it('x') { expect(Widget.new.total).to eq(1) }\n" })
+
+      expect(found.map { |v| v.definition.to_s }).to eq(["Widget#total"])
+      expect(found.first.line).to eq(2)
+    end
+
+    it "does not flag a method another lib file calls" do
+      lib = { "lib/widget.rb" => "class Widget\n  def total = 1\nend\n" }.merge(consumer)
+
+      expect(scan(lib, { "spec/widget_spec.rb" => "expect(Widget.new.total).to eq(1)\n" })).to be_empty
+    end
+
+    it "does not flag a method nothing names at all -- unreached is a different finding" do
+      expect(scan({ "lib/widget.rb" => "class Widget\n  def total = 1\nend\n" })).to be_empty
+    end
+
+    it "counts a Symbol in lib as a reference, so send/delegation does not read as spec-only" do
+      lib = { "lib/widget.rb" => "class Widget\n  def total = 1\nend\n",
+              "lib/proxy.rb" => "class Proxy\n  def call(w) = w.public_send(:total)\nend\n" }
+
+      expect(scan(lib, { "spec/widget_spec.rb" => "expect(Widget.new.total).to eq(1)\n" })).to be_empty
+    end
+
+    it "does not flag a method the file already made private" do
+      source = "class Widget\n  private\n\n  def total = 1\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "subject.send(:total)\n" })).to be_empty
+    end
+
+    it "does not flag `private def`" do
+      source = "class Widget\n  private def total = 1\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "subject.send(:total)\n" })).to be_empty
+    end
+
+    it "does not flag a name listed by private_class_method" do
+      source = "class Widget\n  def self.total = 1\n  private_class_method :total\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "described_class.total\n" })).to be_empty
+    end
+
+    it "reads `public` as reopening the default after a `private` section" do
+      source = "class Widget\n  private\n\n  def hidden = 1\n\n  public\n\n  def total = 2\nend\n"
+      found = scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "subject.total\nsubject.hidden\n" })
+
+      expect(found.map { |v| v.definition.name }).to eq([:total])
+    end
+
+    it "reads a Data.define block as a class body, so its `private` section is honoured" do
+      source = "Widget = Data.define(:n) do\n  def total = 1\n\n  private\n\n  def hidden = 2\nend\n"
+      found = scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "subject.total\nsubject.hidden\n" })
+
+      expect(found.map { |v| v.definition.name }).to eq([:total])
+    end
+
+    it "does not flag a name Ruby invokes without spelling it" do
+      source = "class Widget\n  def to_s = 'w'\n  def each = nil\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "expect(subject.to_s).to eq('w')\n" }))
+        .to be_empty
+    end
+
+    it "shares references between two methods of the same name, so either reference clears both" do
+      lib = { "lib/widget.rb" => "class Widget\n  def total = 1\nend\n",
+              "lib/gadget.rb" => "class Gadget\n  def total = 2\nend\n",
+              "lib/consumer.rb" => "class Consumer\n  def run = Gadget.new.total\nend\n" }
+
+      expect(scan(lib, { "spec/widget_spec.rb" => "expect(Widget.new.total).to eq(1)\n" })).to be_empty
+    end
+
+    it "renders a `class << self` def as a singleton, the way a caller spells it" do
+      source = "class Widget\n  class << self\n    def total = 1\n  end\nend\n"
+      found = scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "described_class.total\n" })
+
+      expect(found.map { |v| v.definition.to_s }).to eq(["Widget.total"])
+    end
+
+    it "honours a `private` section inside `class << self`" do
+      source = "class Widget\n  class << self\n    private\n\n    def total = 1\n  end\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "described_class.send(:total)\n" }))
+        .to be_empty
+    end
+
+    it "renders a def after a bare `module_function` as a singleton" do
+      source = "module Widget\n  module_function\n\n  def total = 1\nend\n"
+      found = scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "Widget.total\n" })
+
+      expect(found.map { |v| v.definition.to_s }).to eq(["Widget.total"])
+    end
+
+    it "does not flag a protected method -- it is not part of the public interface either" do
+      source = "class Widget\n  protected\n\n  def total = 1\nend\n"
+
+      expect(scan({ "lib/widget.rb" => source }, { "spec/widget_spec.rb" => "subject.send(:total)\n" })).to be_empty
+    end
+
+    it "does not flag an inspection method on a test double, which the specs are why it exists" do
+      source = "module Provider\n  class Mock\n    def call_count = 1\n  end\nend\n"
+
+      expect(scan({ "lib/mock.rb" => source }, { "spec/mock_spec.rb" => "expect(subject.call_count).to eq(1)\n" }))
+        .to be_empty
+    end
+
+    it "tags unwired_owner when the owning constant has no lib consumer either" do
+      found = scan({ "lib/widget.rb" => "class Widget\n  def total = 1\nend\n" },
+                   { "spec/widget_spec.rb" => "expect(Widget.new.total).to eq(1)\n" })
+
+      expect(found.first.unwired_owner).to be(true)
+    end
+
+    it "does not tag unwired_owner when lib names the class somewhere else" do
+      lib = { "lib/widget.rb" => "class Widget\n  def total = 1\nend\n",
+              "lib/consumer.rb" => "class Consumer\n  def run = Widget.new\nend\n" }
+      found = scan(lib, { "spec/widget_spec.rb" => "expect(Widget.new.total).to eq(1)\n" })
+
+      expect(found.first.unwired_owner).to be(false)
+    end
+
+    it "names the spec sites that reach it, so the reading list needs no second search" do
+      found = scan({ "lib/widget.rb" => "class Widget\n  def total = 1\nend\n" },
+                   { "spec/widget_spec.rb" => "\n\nexpect(Widget.new.total).to eq(1)\n" })
+
+      expect(found.first.spec_sites).to include("spec/widget_spec.rb:3")
+    end
+  end
+
+  describe "lib reach across the whole tree" do
+    # REPORT-ONLY, and genuinely so -- no assertion here can fail on the COUNT,
+    # for the reason the sibling example above states. What IS asserted is that
+    # the report renders every violation it was handed, which fails if the
+    # `partition` into wired/unwired ever drops one.
+    it "prints the lib-reach counts and writes the full report to a file" do
+      violations = LibReach.violations
+      unwired = violations.count(&:unwired_owner)
+      RSpec.configuration.reporter.message(
+        "lib reach: #{violations.size} public lib method(s) named only from spec/ " \
+        "(#{unwired} on a class lib/ never names either -- full listing: #{LibReach::REPORT_PATH})"
+      )
+
+      listed = File.readlines(LibReachReport.write(violations)).grep(%r{^  lib/.*:\d+ }).size
+
       expect(listed).to eq(violations.size)
     end
   end
