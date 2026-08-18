@@ -24,8 +24,16 @@ AllCops:
   # shaped to be *matched* by a structural-search experiment rather than to read
   # well. Linting it fails commits over code nobody intends to keep, and `.rspec`
   # already fences the same directory off with its `spike: true` tag filter.
+  #
+  # `planning/` is the chunk-planning surface: prose specs, plus hand-run oracle
+  # scripts that exist to be read against a MANUAL test pass rather than shipped.
+  # Nothing under `lib/` or `spec/` loads them. The exclusion is not cosmetic --
+  # this hook lints the whole TREE, not the staged files, so one unlinted scratch
+  # script there fails every commit in the repo, including commits that do not
+  # touch it. Blocking unrelated work is a worse outcome than an unlinted oracle.
   Exclude:
     - "spike/**/*"
+    - "planning/**/*.rb"
 
 # Our docstrings read `@param name [Type] description`, so the name comes BEFORE the
 # type. AutoCorrect is off deliberately: the cop's fix for an undocumented argument
