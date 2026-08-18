@@ -236,6 +236,11 @@ function M.start()
         pending = false
         if open_layout(attached_buffers() or {}) then
           pcall(vim.api.nvim_del_augroup_by_id, group)
+          -- Supersede the "not attached yet" notice below: without this, the
+          -- message line sits on the stale line for the whole session,
+          -- contradicting the live lain:// buffers now open beside it (UX1 --
+          -- nothing ever cleared or replaced it once attach succeeded).
+          vim.notify("lain: attached -- layout opened", vim.log.levels.INFO)
         end
       end)
     end,

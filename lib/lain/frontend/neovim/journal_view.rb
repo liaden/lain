@@ -15,13 +15,20 @@ module Lain
       class JournalView
         NAME = "lain://journal"
 
-        # The at-rest projection (see {Surfaces#prime}): the journal exists
-        # from attach in the SAME one-empty-line state a fresh buffer holds, so
-        # the runtime's first-append-replaces check (40_journal.lua) still sees a fresh buffer
-        # and the journal never leads with a blank.
+        # An idle journal that shows nothing reads as "broken" -- the same
+        # principle {Surfaces#prime}'s own docstring states for every sibling
+        # view (`(no reminders)`, `(no questions pending)`, `(no approvals
+        # pending)`, `(no requests yet)` -- buffers.rb:260-269). This was the
+        # one view with no placeholder.
+        #
+        # `40_journal.lua`'s append entry point (`_G.__lain.render`) decides
+        # replace-vs-append off a STRUCTURAL flag (`b:lain_journal_rendered`),
+        # not off the buffer's literal text, precisely so this placeholder
+        # (unlike the old bare `[""]`) does not get stuck as a permanent
+        # header once real output starts appending below it.
         # @return [Hash{String=>Array<String>}]
         def initial
-          { NAME => [""] }
+          { NAME => ["(no streamed tool output yet)"] }
         end
 
         # @param event [Object] one Channel event

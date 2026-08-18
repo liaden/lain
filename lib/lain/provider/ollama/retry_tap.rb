@@ -121,9 +121,13 @@ module Lain
           end
         end
 
+        # `options.max` is the RETRY count, not the ordinal of the attempt
+        # that just failed -- an original try plus `max` retries is `max + 1`
+        # attempts. F16: a counting TCP listener saw 4 real attempts rendered
+        # as "1, 2, 3, 3" because this pushed the retry count unchanged.
         def exhausted_block
           lambda do |env:, exception:, options:|
-            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
+            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max + 1, will_retry_in: nil,
                                                        status: env[:status], reason: exception.class.name))
           end
         end

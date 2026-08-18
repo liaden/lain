@@ -71,14 +71,31 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
   end
 
   describe "#exhausted_block" do
-    it "journals the exhausted run at the configured max, with no next backoff" do
+    it "journals the exhausted run at the ordinal of the attempt that actually failed" do
       options = Data.define(:max).new(max: 3)
       tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
 
       event = channel.events.grep(Lain::Telemetry::ProviderRetry).fetch(0)
-      expect(event.attempt).to eq(3)
+      # max retries means max+1 real attempts (the original try plus each
+      # retry) -- F16: a counting TCP listener saw 4 real attempts rendered
+      # as "1, 2, 3, 3" because this used to push the retry COUNT.
+      expect(event.attempt).to eq(4)
       expect(event.will_retry_in).to be_nil
       expect(event.reason).to eq("Faraday::ConnectionFailed")
+    end
+
+    # AC: the give-up line names a higher attempt number than the last
+    # retrying notice did. Stated as a relation, not a literal, so the test
+    # cannot pass by coincidence if both numbers are wrong by the same amount.
+    it "names a higher attempt number than the last retrying notice did" do
+      options = Data.define(:max).new(max: 3)
+      fire_retry(env_for(tap.open_attempt), retry_count: options.max - 1)
+      last_retrying = channel.events.grep(Lain::Telemetry::ProviderRetry).last.attempt
+
+      tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
+      gave_up_at = channel.events.grep(Lain::Telemetry::ProviderRetry).last.attempt
+
+      expect(gave_up_at).to be > last_retrying
     end
   end
 

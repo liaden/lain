@@ -3,12 +3,22 @@
 # The journal's presentation, extracted from {Frontend::Neovim} as the third
 # projection sibling of {Buffers} and {RequestBuffer}. Pure: events in, plain
 # lines out -- the nvim-facing behavior stays covered by the :nvim specs.
+#
+# Was `spec/lain/frontend/neovim_journal_view_spec.rb` (a flat, non-mirrored
+# path -- every other subject in this directory follows `lib/`'s tree, e.g.
+# `buffers.rb` -> `neovim/buffers_spec.rb`) with a literal `eq("lain://journal"
+# => [""])` that pinned the very defect this file's #initial spec now fixes.
+# Consolidated here rather than left as two describe blocks for one class.
 RSpec.describe Lain::Frontend::Neovim::JournalView do
   subject(:view) { described_class.new }
 
   describe "#initial" do
-    it "primes the journal to the one-empty-line state a fresh buffer holds" do
-      expect(view.initial).to eq("lain://journal" => [""])
+    # AC: an idle journal view says what it is waiting for, matching every
+    # sibling view's placeholder shape (buffers.rb:260-269) instead of the
+    # one-empty-line state that reads as "broken" (Surfaces#prime's own
+    # stated principle).
+    it "primes with a placeholder naming what it is waiting for, not a blank line" do
+      expect(view.initial).to eq("lain://journal" => ["(no streamed tool output yet)"])
     end
   end
 

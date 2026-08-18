@@ -44,9 +44,13 @@ module Lain
           end
         end
 
+        # `options.max` is the RETRY count, not the ordinal of the attempt
+        # that just failed -- see the Ollama tap's F16 for the reproduction.
+        # Both taps must move together or the two providers disagree about
+        # what "attempt" means.
         def exhausted_block
           lambda do |env:, exception:, options:|
-            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max, will_retry_in: nil,
+            @channel.push(Telemetry::ProviderRetry.new(attempt: options.max + 1, will_retry_in: nil,
                                                        status: env[:status], reason: exception.class.name))
           end
         end

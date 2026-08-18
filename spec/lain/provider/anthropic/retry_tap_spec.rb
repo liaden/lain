@@ -23,15 +23,35 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
     { request: request_options, status: }
   end
 
-  it "journals an exhausted retry run at the configured max, with no next backoff" do
+  it "journals an exhausted retry run at the ordinal of the attempt that actually failed" do
     options = Data.define(:max).new(max: 3)
     tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
 
     event = channel.events.grep(Lain::Telemetry::ProviderRetry).fetch(0)
-    expect(event.attempt).to eq(3)
+    # max retries means max+1 real attempts -- see the Ollama tap's spec for
+    # F16's full reproduction. Both taps must move together or the two
+    # providers disagree about what "attempt" means.
+    expect(event.attempt).to eq(4)
     expect(event.will_retry_in).to be_nil
     expect(event.status).to eq(503)
     expect(event.reason).to eq("Faraday::ConnectionFailed")
+  end
+
+  # AC: the give-up line names a higher attempt number than the last
+  # retrying notice did -- a relation, not a literal, and the Anthropic half
+  # of the escalation trigger that both taps must move together.
+  it "names a higher attempt number than the last retrying notice did" do
+    frame = tap.open_frame(request_digest: "d")
+    options = Data.define(:max).new(max: 3)
+
+    tap.retry_block.call(env: env_for(frame), retry_count: options.max - 1,
+                         exception: Faraday::ConnectionFailed.new("x"), will_retry_in: 0.1)
+    last_retrying = channel.events.grep(Lain::Telemetry::ProviderRetry).last.attempt
+
+    tap.exhausted_block.call(env: { status: 503 }, exception: Faraday::ConnectionFailed.new("x"), options:)
+    gave_up_at = channel.events.grep(Lain::Telemetry::ProviderRetry).last.attempt
+
+    expect(gave_up_at).to be > last_retrying
   end
 
   it "rotates the retried request's OWN frame, read off the env, and journals" do

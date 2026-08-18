@@ -114,24 +114,28 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # Priming (see Neovim::Surfaces#prime): the journal exists from attach in the
-    # exact one-empty-line state a fresh named_buf holds, so :buffers shows it
-    # before any event and the render above still replaces rather than appends
-    # (the example below pins that the leading blank never survives).
-    it "creates an empty lain://journal at attach, before any event" do
+    # Priming (see Neovim::Surfaces#prime): the journal exists from attach
+    # holding {JournalView}'s idle placeholder, not the bare one-empty-line
+    # state a fresh named_buf holds -- an idle view that shows nothing reads
+    # as "broken" (Surfaces#prime's own stated principle, and every sibling
+    # view already has a placeholder). `:buffers` shows it before any event,
+    # and the render below still REPLACES it rather than appending below it
+    # (the example after pins that the placeholder never survives real
+    # content -- see 40_journal.lua's buffer-local flag).
+    it "creates lain://journal holding its idle placeholder at attach, before any event" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { journal_lines == [""] }
-        expect(journal_lines).to eq([""])
+        wait_until { journal_lines == ["(no streamed tool output yet)"] }
+        expect(journal_lines).to eq(["(no streamed tool output yet)"])
       end
     end
 
     # Panel fix #4 (and the leading-blank nit): interior blank lines are real
     # lines and must survive; only the trailing-newline artifact is stripped;
-    # and the first render replaces the fresh buffer's single empty line, so
-    # the journal never leads with a blank.
-    it "preserves interior blank lines and never leads the journal with a blank" do
+    # and the first render replaces the at-rest placeholder rather than
+    # appending below it, so the journal never leads with a stale line.
+    it "preserves interior blank lines and never leads the journal with the idle placeholder" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
