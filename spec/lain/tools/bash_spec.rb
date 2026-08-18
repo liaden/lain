@@ -276,4 +276,100 @@ RSpec.describe Lain::Tools::Bash do
         .to include("exit status: 3")
     end
   end
+
+  # T5: a command's output is a whole artifact -- its first N bytes read like
+  # the answer and are not -- so an oversized one is REFUSED, and the refusal
+  # keeps the one fact truncation would have kept: the exit status.
+  #
+  # The bound lives in .render_output because that is the single rendering BOTH
+  # exec arms go through (Bash's two, and CoreExec's daemon reply), so it
+  # cannot be applied to one arm and missed on another.
+  describe "refusing output too large to hand back" do
+    let(:ceiling) { Lain::Tools::Bash::OUTPUT_BOUND.limit }
+    let(:oversized_file) do
+      File.join(@tmpdir, "big.txt").tap { |path| File.write(path, "x" * (ceiling + 1024)) }
+    end
+    let(:abstaining) do
+      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: []) }
+    end
+
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmpdir = dir
+        example.run
+      end
+    end
+
+    # `tr` over /dev/zero rather than `yes | head`: an exact byte count, and no
+    # SIGPIPE race to make the size depend on scheduling.
+    def flooding(bytes, char = "x") = "head -c #{bytes} /dev/zero | tr '\\0' #{char}"
+
+    it "refuses output over the ceiling, naming its size and the ceiling" do
+      result = tool.call({ command: flooding(ceiling + 1024) }, invocation)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include((ceiling + 1024).to_s, ceiling.to_s)
+    end
+
+    it "keeps the exit status a refused command reported" do
+      result = tool.call({ command: "#{flooding(ceiling + 1024)}; exit 3" }, invocation)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include("exit status: 3")
+    end
+
+    it "carries none of the refused output" do
+      result = tool.call({ command: flooding(ceiling + 1024, "S") }, invocation)
+
+      expect(result.content).not_to include("SS")
+    end
+
+    it "names a narrower action rather than leaving the model to re-run it" do
+      content = tool.call({ command: flooding(ceiling + 1024) }, invocation).content
+
+      expect(content).to match(/head|tail|grep/)
+      expect(content).to include("read_file")
+    end
+
+    it "counts stdout and stderr together, since both ride the one result" do
+      half = (ceiling / 2) + 1024
+      command = "#{flooding(half)}; #{flooding(half, "y")} 1>&2"
+
+      expect(tool.call({ command: }, invocation)).to have_attributes(is_error: true)
+    end
+
+    it "leaves output under the ceiling untouched" do
+      result = tool.call({ command: flooding(1024) }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to include("exit status: 0", "x" * 1024)
+    end
+
+    # AC4, and the reason the bound is in .render_output rather than in either
+    # arm: the same oversized command through the term arm and the string arm
+    # must refuse with the same bytes, exactly as a permitted one returns the
+    # same bytes (the byte-identity example above).
+    it "refuses byte-identically on either arm" do
+      command = "cat #{oversized_file}"
+
+      term = described_class.new.call({ command: }, invocation)
+      string = described_class.new(verdict: abstaining).call({ command: }, invocation)
+
+      expect(term.content).to eq(string.content)
+      expect(term.content.encoding).to eq(string.content.encoding)
+      expect(term.is_error).to eq(string.is_error)
+      expect(term).to have_attributes(is_error: true)
+    end
+
+    # The daemon arm reaches the same ceiling because it reaches the same
+    # method: {Tools::CoreExec} renders the wire's fields through this one
+    # entry point, so there is no second place for the bound to be missing
+    # from.
+    it "refuses through the shared rendering the daemon arm also calls" do
+      rendered = described_class.render_output(exit_status: 3, stdout: "x" * (ceiling + 1), stderr: "")
+
+      expect(rendered).to have_attributes(is_error: true)
+      expect(rendered.content).to include("exit status: 3", (ceiling + 1).to_s)
+    end
+  end
 end

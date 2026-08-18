@@ -78,7 +78,7 @@ module Lain
         outcome = within_deadline(input) { @client.call("exec", [wire_params(input, worker_env)]) }
         return timeout_error(input, outcome) if outcome.fetch("timed_out")
 
-        Tool::Result.ok(format_output(outcome))
+        format_output(outcome)
       rescue Core::Died, Core::Client::Stopped => e
         # Boundary death is a tool ERROR, never a raise past the loop (the
         # Gate convention): loud, named, and immediate -- the client already
@@ -141,6 +141,11 @@ module Lain
       # {Bash.render_output} from the wire's fields. stdout and stderr arrive
       # BINARY (msgpack bin); the template's ASCII-only literals interpolate
       # compatibly, so arbitrary bytes survive intact.
+      #
+      # It returns the whole {Tool::Result}, refusal included: {Bash::OUTPUT_BOUND}
+      # is applied inside that one rendering precisely so this arm cannot have a
+      # different ceiling from the in-process one, and wrapping its answer in a
+      # second `Result.ok` here would relabel a refusal as a success.
       def format_output(outcome)
         Bash.render_output(exit_status: outcome.fetch("exit_status"),
                            stdout: outcome.fetch("stdout"), stderr: outcome.fetch("stderr"))

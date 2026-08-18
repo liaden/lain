@@ -44,6 +44,25 @@ module Lain
       DEFAULT_TIMEOUT = 120
       MAX_TIMEOUT = 600
 
+      # A command's output is a WHOLE ARTIFACT in {Tool::Bounds}' sense -- its
+      # first N bytes read like the answer and are not -- so it is refused over
+      # the ceiling rather than truncated. 128 KiB, the tightest of the three
+      # ceilings this chunk sets, and tightest for a reason: command output is
+      # the only artifact here the caller SHAPES BEFORE IT EXISTS. A file's
+      # size is a fact to be worked around; `| tail -n 200` is one edit to the
+      # command that was already being written. ~33k tokens is also far past
+      # any output a person reads in one go.
+      OUTPUT_BOUND = Tool::Bounds::Artifact.new(limit: 128 * 1024)
+
+      # Both narrower actions are available to every command, which is what
+      # keeps the refusal from being a dead end: the first re-runs it smaller,
+      # the second keeps every byte and reads them through {Tools::ReadFile}'s
+      # window.
+      NARROWER = [
+        "re-run it with the output narrowed through head, tail or grep",
+        "redirect it to a file and read one window of that with read_file"
+      ].freeze
+
       # The wire shape: a required command String, plus optional cwd and timeout.
       class Input < Tool::Input
         field :command, :string, description: "Shell command to run via `sh -c`.", required: true
@@ -57,14 +76,40 @@ module Lain
 
       input_model Input
 
-      # The one output template BOTH exec arms render through -- {Bash} from
-      # mixlib's captures, {CoreExec} from the daemon reply's bin fields --
+      # The one place BOTH exec arms turn captures into a {Tool::Result} --
+      # {Bash} from mixlib's, {CoreExec} from the daemon reply's bin fields --
       # shared so the differential's byte-identity cannot drift out from
       # under its specs (C3 panel fix 3).
+      #
+      # {OUTPUT_BOUND} is applied HERE, and the sharing is the reason: a
+      # ceiling checked in `#run_string` and `#run_term` separately would be
+      # two ceilings that happen to agree today, and the daemon arm would have
+      # a third or none. One entry point, one decision, and the byte-identity
+      # example in `spec/lain/tools/bash_spec.rb` covers the refusal for free.
+      #
+      # The exit status rides in the refusal's SUBJECT rather than being
+      # dropped, because it is the one fact a truncation would have preserved
+      # and the model usually asked the question to learn it.
+      #
+      # ⚠️ The HUMAN still sees every byte. Both arms stream through
+      # {Sink::IOAdapter} as the command produces output, and that is right for
+      # a live terminal -- a refusal is about what the MODEL is handed, not
+      # about what the person watching may see. It does mean the cockpit and
+      # the transcript diverge above this ceiling, which matters on a bench
+      # whose product is the comparison of the two.
+      #
+      # @return [Tool::Result] ok with the rendered output, or the bound's
+      #   refusal carrying none of it
       def self.render_output(exit_status:, stdout:, stderr:)
-        "exit status: #{exit_status}\n" \
-          "--- stdout ---\n#{stdout}" \
-          "--- stderr ---\n#{stderr}"
+        size = stdout.bytesize + stderr.bytesize
+        unless OUTPUT_BOUND.admits?(size)
+          return OUTPUT_BOUND.refusal(subject: "the command's output (exit status: #{exit_status})",
+                                      size:, narrower: NARROWER)
+        end
+
+        Tool::Result.ok("exit status: #{exit_status}\n" \
+                        "--- stdout ---\n#{stdout}" \
+                        "--- stderr ---\n#{stderr}")
       end
 
       # The subprocess machinery is injected as a factory, not constructed
@@ -122,14 +167,15 @@ module Lain
         # nonzero exit is frequently exactly what the model asked to observe
         # (grep with no matches, a linter reporting findings). `is_error`
         # here means the tool itself could not produce a result -- a timeout,
-        # not a subprocess's own exit code.
-        Tool::Result.ok(format_output(shell_out))
+        # or output too large to hand back, not a subprocess's own exit code.
+        format_output(shell_out)
       rescue Mixlib::ShellOut::CommandTimeout => e
         timed_out(input, e)
       end
 
-      # The same three fields, from the same {WorkerEnv}, rendered through the
-      # same template -- so the arm a call took is not observable in its result.
+      # The same three fields, from the same {WorkerEnv}, through the same
+      # rendering -- so the arm a call took is not observable in its result,
+      # refusals included.
       def run_term(term, input, invocation)
         worker_env = session_of(invocation).worker_env
         result = @pipeline.call(term,
@@ -137,8 +183,8 @@ module Lain
                                 timeout: seconds(input),
                                 stdout_sink: output_sink(invocation, :stdout),
                                 stderr_sink: output_sink(invocation, :stderr))
-        Tool::Result.ok(self.class.render_output(exit_status: result.exit_status,
-                                                 stdout: result.stdout, stderr: result.stderr))
+        self.class.render_output(exit_status: result.exit_status,
+                                 stdout: result.stdout, stderr: result.stderr)
       rescue Shell::Pipeline::Timeout => e
         timed_out(input, e)
       end

@@ -61,6 +61,27 @@ RSpec.shared_examples "an exec boundary matching bash" do
     expect(core.content.b).to include("\xFF\x00\xFE".b, "\xFD".b)
   end
 
+  # T5's output ceiling, and the one case that pins it across a REAL wire.
+  # Tools::Bash::OUTPUT_BOUND is applied inside Bash.render_output, which is
+  # the single rendering both arms go through -- but "both arms share a method"
+  # is a claim about lib/, and only a differential over a live daemon shows the
+  # refusal itself surviving the transport. The stdout and stderr halves are
+  # each UNDER the ceiling and over it together, so this also pins that the two
+  # streams are weighed as one result rather than one each.
+  it "matches bash byte-for-byte when the output is refused for size" do
+    ceiling = Lain::Tools::Bash::OUTPUT_BOUND.limit
+    half = (ceiling / 2) + 1024
+    bash, core = differential(
+      "head -c #{half} /dev/zero | tr '\\0' x; head -c #{half} /dev/zero | tr '\\0' y >&2; exit 3",
+      Lain::WorkerEnv.default
+    )
+    expect_identical(bash, core)
+    expect(core).to have_attributes(is_error: true)
+    expect(core.content).to start_with("the command's output (exit status: 3) is #{half * 2} bytes, " \
+                                       "over the ceiling of #{ceiling} -- instead, ")
+    expect(core.content.b).not_to include("xxxx".b, "yyyy".b)
+  end
+
   it "matches bash byte-for-byte on a nil-scrubbed-env command: nil removes the key, never empty-string" do
     # Set BEFORE the daemon spawns -- and every #with_client spawns or attaches
     # inside #differential, so this ordering holds for each of them. Both

@@ -10,7 +10,30 @@ module Lain
     # root still resolves it via {Memory::Index#checkout} -- so this tool
     # reports the new root rather than merely "ok": that root is the caller's
     # only handle on "what was readable before this write" going forward.
+    #
+    # == Why the memory ceiling lives here rather than only on the read
+    #
+    # {Tools::MemoryRead} refuses a body it cannot hand back, and a ceiling on
+    # the read alone would be an asymmetry with no way out: this tool would
+    # accept a body its sibling then refused FOREVER, and the model would be
+    # told to shorten bytes it can no longer see. So the ceiling is on the
+    # write, where the model still holds them and "write less" or "split it
+    # across ids" are moves it can actually make. Bounded no higher than the
+    # read's, it makes that one unreachable through the toolset -- which is
+    # what lets the read's ceiling be described as the runaway guard it is.
     class MemoryWrite < Tool
+      # Matched to {Tools::MemoryRead::BOUND}: a write this tool accepts must
+      # be a read that tool can serve, and the pair is asserted rather than
+      # remembered (`spec/lain/tools/memory_write_spec.rb`).
+      BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
+
+      # Both are non-destructive and both are available while the bytes are
+      # still in hand, which is the whole reason this ceiling is on the write.
+      NARROWER = [
+        "write less -- keep the body to what a later read actually needs",
+        "split it across several ids, one subject each, so the manifest can point at the right one"
+      ].freeze
+
       # The wire shape: an id to key the item, a one-line description for the
       # manifest, and the body itself. Mirrors {Memory::Item}'s fields.
       class Input < Tool::Input
@@ -34,7 +57,9 @@ module Lain
         "Writes the memory item with the given id, description, and body. " \
           "Overwrites any existing item at that id; the prior version stays " \
           "reachable by its old root, only no longer the one resolved by " \
-          "memory_read. Returns the new root alongside the id written."
+          "memory_read. A body over #{BOUND.limit} bytes is refused rather " \
+          "than stored, because memory_read could not hand it back. Returns " \
+          "the new root alongside the id written."
       end
 
       protected
@@ -46,6 +71,9 @@ module Lain
       # MemoryRead reports an unknown id: as an error Result the model can
       # act on, not a raise that only Effect::Handler::Live would catch.
       def perform(input, _invocation)
+        refusal = too_large(input)
+        return refusal if refusal
+
         item = Memory::Item.new(id: input.id, description: input.description, body: input.body)
         root = recorder.write(item)
         Tool::Result.ok("wrote memory item #{item.id.inspect}; index root is now #{root}")
@@ -54,6 +82,17 @@ module Lain
       end
 
       private
+
+      # Asked BEFORE {Memory::Item}, so an oversized body is never hashed and
+      # never reaches the store -- the refusal costs a `bytesize`, and nothing
+      # it refuses is recorded. Shaped like {Tools::ReadFile}'s `problem_with`:
+      # the reason, or nothing.
+      def too_large(input)
+        size = input.body.bytesize
+        return nil if BOUND.admits?(size)
+
+        BOUND.refusal(subject: "the body for memory item #{input.id.inspect}", size:, narrower: NARROWER)
+      end
 
       attr_reader :recorder
     end

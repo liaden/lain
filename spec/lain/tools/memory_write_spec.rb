@@ -65,4 +65,57 @@ RSpec.describe Lain::Tools::MemoryWrite do
     result = tool.call({ id: "a", description: "about a", body: "body" }, invocation)
     expect(result.is_error).to be(false)
   end
+
+  # T5 fix round, S1. The ceiling belongs on the WRITE, not only on the read: a
+  # toolset that accepts a body and then refuses it forever is the same
+  # read/write asymmetry T3's trigger exists to prevent, in a different
+  # toolset. Bounding here is also the only place the model has a genuinely
+  # narrower action -- write less, or split across ids -- because it still
+  # holds the bytes it is being asked to shorten.
+  describe "refusing a body too large to be read back" do
+    let(:ceiling) { Lain::Tools::MemoryWrite::BOUND.limit }
+
+    let(:oversized) { "SENTINEL\n" * ((ceiling / 9) + 2) }
+
+    it "refuses the write, naming the body's size and the ceiling" do
+      result = tool.call(id: "dump", description: "A whole log", body: oversized)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include(oversized.bytesize.to_s, ceiling.to_s)
+    end
+
+    it "records nothing it refused" do
+      tool.call(id: "dump", description: "A whole log", body: oversized)
+
+      expect(recorder.root).to be_nil
+    end
+
+    it "carries none of the refused body" do
+      expect(tool.call(id: "dump", description: "A whole log", body: oversized).content)
+        .not_to include("SENTINEL")
+    end
+
+    it "names actions the model can take while it still holds the bytes" do
+      content = tool.call(id: "dump", description: "A whole log", body: oversized).content
+
+      expect(content).to match(/split|write less/)
+    end
+
+    it "accepts a body exactly at the ceiling" do
+      expect(tool.call(id: "edge", description: "At the line", body: "x" * ceiling).is_error).to be(false)
+    end
+
+    # The point of the pair: with the write bounded no higher than the read,
+    # MemoryRead's ceiling becomes unreachable through this toolset and stands
+    # as an honest runaway guard for items that predate it.
+    it "cannot create an item memory_read would refuse" do
+      expect(ceiling).to be <= Lain::Tools::MemoryRead::BOUND.limit
+    end
+
+    it "leaves an item at the ceiling readable" do
+      tool.call(id: "edge", description: "At the line", body: "x" * ceiling)
+
+      expect(Lain::Tools::MemoryRead.new(index: recorder).call(id: "edge").is_error).to be(false)
+    end
+  end
 end
