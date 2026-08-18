@@ -4,6 +4,8 @@ require_relative "strategy/replacement"
 require_relative "strategy/base"
 require_relative "strategy/identity"
 require_relative "strategy/elide"
+# After the class it subclasses, whose #blocks it inherits rather than restates.
+require_relative "strategy/elide_tool_observations"
 require_relative "strategy/summarizing"
 # Last: it composes the others, and its own refusal subclasses a value-level
 # error rather than this file's alias, which is assigned below these requires.

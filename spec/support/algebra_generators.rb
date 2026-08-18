@@ -43,6 +43,7 @@ module AlgebraGenerators
       [Lain::Compaction::Strategy::Base, :|] => Strategies.composition,
       [Lain::Compaction::Strategy::Identity, :propose_ranges] => Strategies.identity_ranges,
       [Lain::Compaction::Strategy::Elide, :blocks] => Strategies.elide_blocks,
+      [Lain::Compaction::Strategy::ElideToolObservations, :blocks] => Strategies.elide_on_tools_blocks,
       [Lain::Compaction::Strategy::Summarizing, :blocks] => Strategies.summarizing_blocks }
   end
 
@@ -579,6 +580,23 @@ module AlgebraGenerators
       { instance: -> { elide },
         each: :attested,
         spans: -> { [repeating, *spans] },
+        population: -> { spans } }
+    end
+
+    # {Lain::Compaction::Strategy::ElideToolObservations} restates its parent's
+    # PURITY claim and not its elementwise one: elementwise is structural and
+    # survives inheritance (`is_a?` is the classification), while purity is
+    # registry-keyed on the EXACT class, which {Lain::Compaction::DerivationAudit}
+    # both documents and depends on. So this entry carries the purity knobs
+    # ALONE -- no `each:` and no `spans:`, which are the elementwise battery's
+    # and would sit here unread.
+    #
+    # The population is the parent's, and drawn fresh on every call for the
+    # reason spec/support/shared_examples/pure.rb documents: three laws over one
+    # materialized population is an ordering bug the seed decides.
+    def elide_on_tools_blocks
+      elide_on_tools = Lain::Compaction::Strategy::ElideToolObservations.new
+      { instance: -> { elide_on_tools },
         population: -> { spans } }
     end
 
