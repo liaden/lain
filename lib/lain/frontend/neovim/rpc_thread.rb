@@ -126,6 +126,11 @@ module Lain
         Command = Data.define(:args, :lua)
         private_constant :Command
 
+        # The one byte `nvim_buf_set_lines` refuses inside an item; see
+        # {#checked_lines}.
+        NEWLINE = "\n"
+        private_constant :NEWLINE
+
         # Default cap on outstanding commands (journal appends AND view
         # replacements share this one queue). T6-inherited fix: the queue was an
         # unbounded Thread::Queue, so a producer outpacing nvim could pile up an
@@ -165,7 +170,8 @@ module Lain
         #   "no stamp" from "no lines" -- it would send `[name, generation]`
         #   and lua would bind the stamp as the buffer's lines.
         def post_view(name, lines, editable: false, generation: nil)
-          args = generation.nil? ? [name, lines] : [name, lines, generation]
+          checked = checked_lines(name, lines)
+          args = generation.nil? ? [name, checked] : [name, checked, generation]
           @queue.push(Command.new(args:, lua: editable ? SET_REQUEST : SET_VIEW))
         end
 
@@ -247,6 +253,44 @@ module Lain
         end
 
         private
+
+        # The lua half's `checked_lines` (47_diff, 51_thread), one layer up and
+        # for the SAME rule: `nvim_buf_set_lines` refuses an item containing a
+        # newline, and refuses ALL-OR-NOTHING, so one bad line loses the whole
+        # buffer's write. Down here that failure is silent -- {#send_command} is
+        # `notify`, and nvim discards a notify's error -- and the runtime's
+        # trimmed write (45_views) then makes the loss PERMANENT rather than
+        # intermittent: it writes from the first differing line, so the offending
+        # line can never enter the buffer, `shared` can never advance past it,
+        # and the only line that could unblock the prefix is the one that fails.
+        # That is F17: lain://timeline frozen at the first multi-line model reply
+        # while every sibling view stayed live.
+        #
+        # REFUSED BY NAME, in place, rather than repaired: a rendering that
+        # breaks the one-line-per-record contract is a defect in the VIEW, and
+        # laundering it here would relocate this card's own invisibility from
+        # nvim into Ruby -- the row would read as the view's own work. In place
+        # rather than raised, because every caller is a render thread whose
+        # death takes all five views dark; and per ROW, because two views
+        # resolve a gesture through a line's position, so the count must not
+        # move.
+        #
+        # `include?` and not a Regexp or `split`: these bytes reach the views
+        # from disk (a manifest path, a reminder), and both of those RAISE
+        # `ArgumentError` on invalid UTF-8 -- measured, and measured to take
+        # {Surfaces#prime} down at attach. `nil` lines pass through untouched,
+        # which is what keeps the stamp's arity contract testable.
+        def checked_lines(name, lines)
+          return lines unless lines.is_a?(Array)
+
+          lines.each_with_index.map do |line, index|
+            line.is_a?(String) && line.include?(NEWLINE) ? refusal(name, index) : line
+          end
+        end
+
+        def refusal(name, index)
+          "[#{name} line #{index + 1}: a rendering broke the one-line-per-record contract]"
+        end
 
         def send_command(client, command)
           client.session.notify("nvim_exec_lua", command.lua, command.args)

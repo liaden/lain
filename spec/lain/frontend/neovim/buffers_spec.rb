@@ -190,6 +190,94 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # T17/F17: the ONE thing a spec injecting rendered lines through `set_view`
+  # cannot see -- what happens when a view's own rendering reaches
+  # `nvim_buf_set_lines`. Driven through real {Lain::Telemetry} events and a
+  # real {Lain::Store} for that reason, and over TWO asks, because the freeze
+  # this pins is permanent from the first offending render onward: a single-ask
+  # assertion passes against the defect.
+  #
+  # `nvim_buf_set_lines` REFUSES an item containing a newline, and the render
+  # rides `nvim_exec_lua` as a NOTIFY, so the refusal reaches nobody: the drain
+  # thread stays alive, every sibling view keeps updating, and lain://timeline
+  # holds whatever it had when the first multi-line turn arrived. Real model
+  # prose is multi-line, which is why this was invisible to every spec whose
+  # fixture said "hello".
+  describe "lain://timeline keeps following the session once a turn is multi-line" do
+    let(:store) { Lain::Store.new }
+
+    def timeline_lines
+      inspector.exec_lua(<<~LUA, [])
+        local buf = vim.fn.bufnr("lain://timeline")
+        if buf == -1 then return {} end
+        return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      LUA
+    end
+
+    def ask(chain, prompt, reply)
+      chain.commit(role: :user, content: [{ "type" => "text", "text" => prompt }])
+           .commit(role: :assistant, content: [{ "type" => "text", "text" => reply }])
+    end
+
+    def usage(digest)
+      Lain::Telemetry::TurnUsage.new(digest:, model: "m", stop_reason: :end_turn, usage: {})
+    end
+
+    it "shows the second ask's turns after a first ask whose reply spans lines" do
+      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        channel.push(usage(chain.head_digest))
+        wait_until { timeline_lines.grep(/^user: first/).any? }
+
+        chain = ask(chain, "second", "done")
+        channel.push(usage(chain.head_digest))
+
+        expect(wait_until { timeline_lines.grep(/^user: second/).first }).to eq("user: second")
+      end
+    end
+
+    # FIX 2. The two examples around this one drive the whole path, so they pass
+    # whichever half of the repair is present -- and the contract they are named
+    # for belongs to the VIEW: {TimelineView#render_chain} indexes digests by
+    # POSITION, so a turn that renders as two lines desynchronizes the pin index
+    # from what the human can see even in an editor that accepted the write.
+    # Asserted with no {Surfaces} in the path for exactly that reason.
+    it "flattens a multi-line turn in its own rendering, with no Surfaces in the path" do
+      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      view = Lain::Frontend::Neovim::Buffers::TimelineView.new(store:, session: Lain::Session.new)
+
+      expect(view.update(usage(chain.head_digest))).to eq(["user: first", "assistant: one two three"])
+    end
+
+    it "renders one line per turn, so the pin index still names the turn under the cursor" do
+      chain = ask(Lain::Timeline.empty(store:), "first", "one\ntwo\nthree")
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        channel.push(usage(chain.head_digest))
+        wait_until { timeline_lines.size == 2 }
+
+        expect(timeline_lines).to eq(["user: first", "assistant: one two three"])
+        expect(frontend.buffers.digest_at(2)).to eq(chain.head_digest)
+      end
+    end
+
+    it "renders a digest this store never held as one legible line, and keeps draining" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        channel.push(usage("blake3:absent"))
+        expect(wait_until { timeline_lines.grep(/timeline unavailable/).first }).to include("blake3:absent")
+
+        chain = ask(Lain::Timeline.empty(store:), "after", "still alive")
+        channel.push(usage(chain.head_digest))
+        expect(wait_until { timeline_lines.grep(/^user: after/).first }).to eq("user: after")
+      end
+    end
+  end
+
   describe "motions navigate records" do
     it "]] / [[ step between turns in lain://timeline, buffer-locally" do
       frontend = described_class.new(channel:, socket_path: @socket)

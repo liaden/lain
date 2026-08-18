@@ -226,6 +226,55 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
 end
 
 RSpec.describe Lain::Frontend::Neovim::RenderQueue do
+  # T17/F17, and the lua-side `checked_lines` (47_diff, 51_thread) is the
+  # convention this matches: `nvim_buf_set_lines` refuses an item containing a
+  # newline, and every render here rides `nvim_exec_lua` as a NOTIFY, so the
+  # refusal reaches nobody -- the buffer simply stops. A view that breaks the
+  # one-line-per-record contract is therefore REFUSED BY NAME, on its own row,
+  # rather than laundered into something that reads as the view's own work.
+  describe "the one-line-per-record contract" do
+    def sent(queue)
+      session = instance_double(Neovim::Session)
+      allow(session).to receive(:notify)
+      queue.drain(instance_double(Neovim::Client, session:))
+      session
+    end
+
+    it "refuses a multi-line item by name, on its own row, so the rest of the buffer still lands" do
+      queue = described_class.new
+      queue.post_view("lain://inbox", ["ok", "researcher  3s  which db?\nand why?"])
+
+      expect(sent(queue)).to have_received(:notify).with(
+        "nvim_exec_lua", described_class::SET_VIEW,
+        ["lain://inbox", ["ok", "[lain://inbox line 2: a rendering broke the one-line-per-record contract]"]]
+      )
+    end
+
+    # The repair may not be worse than the defect: these bytes reach the views
+    # from disk (a manifest path, a reminder), `String#match?` and `String#split`
+    # both RAISE on them, and a raise here reaches Neovim#drain's rescue and
+    # takes every view dark -- at attach, when it is `prime` that raises.
+    it "passes invalid UTF-8 through untouched rather than raising the drain thread down" do
+      queue = described_class.new
+      queue.post_view("lain://workspace", [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)])
+
+      expect(sent(queue)).to have_received(:notify).with(
+        "nvim_exec_lua", described_class::SET_VIEW,
+        ["lain://workspace", [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)]]
+      )
+    end
+
+    # Nothing produces nil lines today; the arity contract below relies on it
+    # staying possible to send one, so the check must not be what breaks it.
+    it "leaves a nil rendering alone, so the stamp's arity contract is undisturbed" do
+      queue = described_class.new
+      queue.post_view("lain://timeline", nil)
+
+      expect(sent(queue)).to have_received(:notify).with("nvim_exec_lua", described_class::SET_VIEW,
+                                                         ["lain://timeline", nil])
+    end
+  end
+
   it "sends a review-open render command down the sole RPC owner" do
     queue = described_class.new
     session = instance_double(Neovim::Session)

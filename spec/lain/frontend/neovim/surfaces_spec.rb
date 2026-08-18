@@ -62,6 +62,25 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       expect(stamps.except(Lain::Frontend::Neovim::InboxView::NAME).values.compact).to be_empty
     end
 
+    # A reminder is bytes off disk -- a manifest path, a memory title -- so it
+    # can be invalid UTF-8, and `String#split` RAISES on those. Nothing above
+    # this rescues it: {Surfaces#prime} rescues only ClosedQueueError, so
+    # {Lain::Frontend::Neovim#drain}'s `rescue StandardError` records a worker
+    # death and every view goes dark AT ATTACH. `legible`'s scrub is the house
+    # answer two files over (Review::Surface::Text, ReviewView).
+    it "primes a workspace whose reminders are not valid UTF-8, rather than taking every view dark" do
+      reminders = [(+"reminder caf\xE9 here").force_encoding(Encoding::UTF_8)]
+      session = Class.new do
+        def initialize(reminders) = @reminders = reminders
+        attr_reader :reminders
+
+        def pinned?(_digest) = false
+      end.new(reminders)
+
+      expect { described_class.new(rpc:, session:).prime }.not_to raise_error
+      expect(rpc.views.flat_map { |view| view[1] }).to include(/reminder caf\?* here/)
+    end
+
     it "swallows a render queue closed under it -- an RPC thread dead this early is loud elsewhere" do
       expect { described_class.new(rpc: closed_rpc).prime }.not_to raise_error
     end
@@ -110,6 +129,21 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       stamps = rpc.views.select { |posted| posted.first == Lain::Frontend::Neovim::InboxView::NAME }.map(&:last)
       expect(stamps.size).to eq(2)
       expect(stamps.uniq).to eq(stamps)
+    end
+
+    # T17/F17. `nvim_buf_set_lines` refuses an item containing a newline and the
+    # render rides `nvim_exec_lua` as a NOTIFY, so a view that emits one loses
+    # every later write to its buffer in silence -- the frozen-view defect
+    # manual QA found on lain://timeline. lain://inbox was the second exposure:
+    # its rows interpolate a model-authored question, and a question is prose.
+    it "keeps a multi-line question on one inbox row, so the row still names its set" do
+      surfaces.post(Lain::Telemetry::Message.new(digest: "blake3:q2", kind: :message, from: "orchestrator",
+                                                 to: "human", payload: { "question" => "which db?\nand why?" },
+                                                 causal_parents: [], correlation: nil))
+
+      posted = rpc.views.select { |view| view.first == Lain::Frontend::Neovim::InboxView::NAME }.flat_map { |view| view[1] }
+      expect(posted.grep(/\n/)).to be_empty
+      expect(posted).to include(/which db\? and why\?/)
     end
 
     it "swallows a render queue closed under it, so a last render racing the death is not a second failure" do

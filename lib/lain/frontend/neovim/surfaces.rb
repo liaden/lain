@@ -109,6 +109,13 @@ module Lain
         # rides along: {Buffers#generation_of} answers it for the view that has
         # one (lain://inbox) and nothing for the rest, so a gesture-bearing
         # buffer gets stamped without the other four views knowing the word.
+        #
+        # It asserts nothing about the LINES. That each rendering is one line
+        # per record is the view's own contract ({Buffers::TimelineView#preview},
+        # {InboxView#line_for}), and the transport's refusal for a view that
+        # breaks it lives at {RenderQueue#post_view} -- which is also the post
+        # {#prime} and the editable view above go through, so a guarantee stated
+        # here would be one this method's own neighbours bypass.
         def post_views(updates)
           updates.each { |name, lines| @rpc.post_view(name, lines, generation: @buffers.generation_of(name)) }
         end

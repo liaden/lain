@@ -81,6 +81,15 @@ module Lain
           # resolved through {#digest_at}'s index, never off the rendered text.
           PIN_MARKER = "  [pinned]"
 
+          # Folded out of a preview so a turn is ONE line. `\R` is wider than
+          # the transport strictly needs -- `nvim_buf_set_lines` rejects only
+          # `\n` and `\r\n`, measured; `\r`, `\v`, `\f`, U+0085 and U+2028 all
+          # pass it -- and wider on purpose, because this is a LEGIBILITY rule
+          # before it is a transport one: a stray CR inside a projection's line
+          # renders as `^M` and reads as corruption. The transport's own,
+          # narrower refusal is {RenderQueue#checked_lines}.
+          NEWLINES = /\R+/
+
           # The answer to one pin gesture, as a value: this touches neither nvim
           # nor stdio, so "report the failure" can only mean "hand it back".
           # `digest` is nil exactly when the line named no turn.
@@ -191,9 +200,17 @@ module Lain
 
           # Text blocks joined, tool_use/tool_result blocks summarized by type --
           # a one-line gist per turn, not a full transcript.
+          #
+          # ONE line is a contract here, not a description: {#render_chain}
+          # indexes digests by POSITION, the runtime's ]]/[[ and its folds both
+          # anchor a record at "^%a+:", and a model's prose is routinely
+          # multi-line -- so an un-flattened preview desynchronizes the pin
+          # index from what the human can see even in an editor that took the
+          # write. It also froze the whole view: see {RenderQueue#checked_lines}
+          # for the editor half, and why that half refuses rather than repairs.
           def preview(content)
             text = Array(content).select { |block| block["type"] == "text" }.map { |block| block["text"] }.join(" ")
-            return text unless text.empty?
+            return text.gsub(NEWLINES, " ") unless text.empty?
 
             kinds = Array(content).filter_map { |block| block["type"] }.uniq
             kinds.empty? ? "(empty)" : "(#{kinds.join(", ")})"
@@ -288,8 +305,16 @@ module Lain
           return nil if reminders == @last_reminders
 
           @last_reminders = reminders
-          reminders.empty? ? ["(no reminders)"] : reminders.flat_map { |block| block.split("\n") }
+          reminders.empty? ? ["(no reminders)"] : reminders.flat_map { |block| legible(block).split("\n") }
         end
+
+        # A reminder carries bytes off disk (a manifest path, a memory title),
+        # and `String#split` RAISES `ArgumentError` on invalid UTF-8 -- which
+        # nothing above rescues, so it takes {Surfaces#prime}'s whole view set
+        # dark at attach rather than costing one reminder its accents. Same
+        # scrub, same reason, as {Review::Surface::Text#legible} and
+        # {ReviewView#legible}.
+        def legible(block) = block.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
 
         def diff_update(event)
           return nil unless event.is_a?(Telemetry::RequestSent)

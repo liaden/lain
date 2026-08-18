@@ -54,6 +54,11 @@ module Lain
       # saturates the queue and holds this to a bounded refusal.
       class InboxView
         NAME = "lain://inbox"
+
+        # See {#line_for}: a pending question is model- or human-authored prose,
+        # and this view is one row per set.
+        NEWLINES = /\R+/
+
         EMPTY = ["(no questions pending)"].freeze
 
         # {Tools::AskHuman::HUMAN}, named rather than imported for the same
@@ -310,8 +315,16 @@ module Lain
 
         # Sender and age lead, mirroring the TTY drain's listing: a glance
         # answers "who is stuck, and for how long" before the question reads.
+        #
+        # ONE row per pending set, and a question is PROSE, so it is folded onto
+        # one line the way {Buffers::TimelineView#preview} folds a turn -- and
+        # for the sharper of that fold's two reasons: {Renderings} indexes
+        # digests by POSITION, so a two-line row would send `<CR>` to a set the
+        # human did not choose. {RenderQueue#checked_lines} is the transport's
+        # backstop for a view that forgets, and it refuses rather than repairs,
+        # which is why the fold belongs here.
         def line_for(item)
-          "#{item.from.to_s[0, 19]}  #{age_of(item.asked_at)}  #{item.question}"
+          "#{item.from.to_s[0, 19]}  #{age_of(item.asked_at)}  #{item.question.to_s.gsub(NEWLINES, " ")}"
         end
 
         def age_of(asked_at)
