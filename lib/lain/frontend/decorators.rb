@@ -15,21 +15,27 @@ module Lain
     # stays a pure value; its presentation lives here, under frontend/, where
     # touching a terminal palette is legal.
     #
-    # One decorator today -- {Telemetry::ToolOutput} is the only event the frontend
-    # Channel actually renders (a live tool's stdout/stderr). Other events do
-    # flow through channels ({Telemetry::ProviderRetry}, {Telemetry::Dropped}) and are
-    # deliberately unrendered here -- a decision, not a gap: they are Journal
-    # material, not something the human needs painted mid-stream. So this is
-    # deliberately NOT a decorator-per-type registry yet: a one-member family
-    # earns no lookup table. {.for} is the named seam -- when a second event type
-    # earns rendering, it gets its own decorator here and one more clause below,
-    # and TTY does not change.
+    # Two decorators now -- {Telemetry::ToolOutput} (a live tool's stdout/stderr)
+    # and, since T4/F15, {Telemetry::ProviderRetry} (a provider round trip
+    # backing off or giving up). ProviderRetry was originally deliberately
+    # unrendered here -- Journal material, not something the human needs
+    # painted mid-stream -- but a human watching a stalled endpoint seeing
+    # only a blank screen is what F15's QA finding named, and that is the
+    # evidence that reversed the decision. {Telemetry::Dropped} still flows through
+    # channels and stays deliberately unrendered: that half of the original
+    # call stands, because a drop count is still Journal material with no live
+    # urgency. {.for} is the named seam -- when a THIRD event type earns
+    # rendering, it gets its own decorator here and one more clause below, and
+    # TTY does not change.
     module Decorators
       # @param event [Object] a Channel event
       # @return [#render, nil] the decorator that presents `event`, or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
-        ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
+        return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
+        return ProviderRetry.new(event) if event.is_a?(Telemetry::ProviderRetry)
+
+        nil
       end
 
       # Presents a live tool-output chunk: a dim attribution label
@@ -63,3 +69,5 @@ module Lain
     end
   end
 end
+
+require_relative "decorators/provider_retry"

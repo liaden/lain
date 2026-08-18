@@ -50,7 +50,13 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
       expect(Lain::Frontend::Decorators.for(event)).to be_a(described_class)
     end
 
-    it "returns nil for an event it does not present" do
+    it "returns a decorator for a ProviderRetry event, since T4 rendered it live" do
+      retry_event = Lain::Telemetry::ProviderRetry.new(attempt: 1)
+
+      expect(Lain::Frontend::Decorators.for(retry_event)).to be_a(Lain::Frontend::Decorators::ProviderRetry)
+    end
+
+    it "returns nil for an event it does not render, the seam skipping it silently" do
       expect(Lain::Frontend::Decorators.for(Lain::Telemetry::Dropped.new(count: 1))).to be_nil
     end
   end

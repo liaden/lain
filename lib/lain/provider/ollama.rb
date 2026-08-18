@@ -53,14 +53,13 @@ module Lain
     # every attempt boundary, and -- the part T10 needs -- gives a retry
     # somewhere to DISCARD what the attempt it replaced accumulated.
     #
-    # What that does NOT fix, so nobody reads this as more than it is: the
-    # OPERATOR still sees nothing. {Frontend::Decorators.for} renders only
-    # {Telemetry::ToolOutput}, and `decorators.rb:18-26` names ProviderRetry as
-    # deliberately unrendered -- Journal material, not something to paint
-    # mid-stream. So a human watching F7a's hang still watches a blank screen;
-    # what changed is that the RECORD can now be read afterwards. Bounding the
-    # hang itself is T12's stall detection, and making it visible live would be
-    # a second decorator, which is nobody's card yet.
+    # What that fixed, and what it still does not: {Frontend::Decorators.for}
+    # now renders {Telemetry::ProviderRetry} live too (T4/F15), so a human
+    # watching a retrying request sees the attempt as it happens, not only in
+    # the Journal afterward -- but only on whichever Channel this Provider was
+    # built with, and a subagent's still defaults to {Channel::Null} (wiring
+    # that path is explicitly a different card's scope). Bounding the wait
+    # itself, rather than narrating it, is T12's stall detection.
     #
     # deliberately absent: a timeout/retry envelope of its own -- unlike
     # {Anthropic#build_config}, this leaves the vendored ruby_llm defaults
