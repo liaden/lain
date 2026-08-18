@@ -507,9 +507,26 @@ RSpec.describe Lain::Approval::Escalation do
 
     def descended(klass) = klass.subclasses.flat_map { |sub| [sub, *descended(sub)] }
 
+    # T15 added a fourth name to this list and it is the one that does NOT
+    # describe a person: `tty_fault` signs the fail-closed denial
+    # {Frontend::ApprovalPolicy#answered} writes when the prompt itself raised,
+    # so nobody answered it. Its true home is `Surfaces::AUTOMATIC`, beside
+    # {Queue::TIMEOUT_SURFACE} and {Queue::ABANDONED_SURFACE} -- the other two
+    # decisions nobody made -- and it cannot go there: `AUTOMATIC` is evaluated
+    # while `lain/approval` loads, and `Frontend::ApprovalPolicy` is not defined
+    # until the frontend does, so naming the constant there is a load-time
+    # NameError. DO NOT MOVE IT without making `AUTOMATIC` late-bound, which
+    # changes how {Approval::Escalation} classifies every surface and is owed to
+    # a card of its own.
+    #
+    # Unlisted, `Escalation::Surfaces#call` reads it as `:human`. That is
+    # harmless HERE and only here: the ladder's own asymmetry (see the comment
+    # above `AUTOMATIC`) is about an ALLOW surviving a fault, and this surface
+    # can only ever deny. Do not read the entry as a claim that a person
+    # refused; the Journal record says `tty_fault` precisely so nothing does.
     def human_surfaces
-      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Notify::SURFACE,
-       Lain::Frontend::Neovim::ApprovalView::SURFACE]
+      [Lain::Frontend::ApprovalPolicy::SURFACE, Lain::Frontend::ApprovalPolicy::FAULT_SURFACE,
+       Lain::Notify::SURFACE, Lain::Frontend::Neovim::ApprovalView::SURFACE]
     end
 
     def unaccounted(names) = names - described_class::Surfaces::AUTOMATIC - human_surfaces

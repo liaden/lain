@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "json"
 require "stringio"
 require "tmpdir"
@@ -169,6 +170,31 @@ RSpec.describe Lain::CLI::Wiring do
     # gets the real adapter exactly as before.
     it "is the real adapter when the run consents and dunstify resolves" do
       expect(notifier_for(desktop: true)).to be_a(Lain::Notify)
+    end
+
+    # T15: the notifier's sweep is guarded so a raise cannot silently retire the
+    # fiber -- and post-T15 that fiber raises the notification for EVERY
+    # approval, so its silent death deletes desktop notification outright. A
+    # guard journalling into the Null channel is a guard nobody can prove fired,
+    # which on a bench is most of its value; the whole finding it came out of is
+    # that a surface dying quietly is invisible. So this asserts the record
+    # arrives on the RUN's channel, end to end, rather than that a keyword was
+    # passed: the fault is provoked in the real adapter Wiring built.
+    it "hands that adapter the run's channel, so a fault in its sweep is witnessed" do
+      notifier = notifier_for(desktop: true)
+      flaky = Object.new
+      flaky.define_singleton_method(:select) { |&_block| raise "the parked list went away" }
+
+      Sync do |task|
+        watcher = task.async { notifier.watch(flaky) }
+        task.async { Async::Task.current.sleep(0.15) }.wait
+      ensure
+        watcher&.stop
+      end
+
+      expect(channel.drain).to include(hash_including("type" => Lain::Approval::QueueSurface::FAULT_TYPE,
+                                                      "surface" => Lain::Notify::SURFACE,
+                                                      "error" => "RuntimeError: the parked list went away"))
     end
   end
 

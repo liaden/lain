@@ -15,12 +15,17 @@ module Lain
       # was waiting on them.
       #
       # IT OBSERVES, IT DOES NOT CONSUME, which is {Approval::AutoSurface}'s
-      # rule and not a detail: the TTY prompt and the notifier both DRAIN the
-      # arrival queue, so a third `dequeue` here would STEAL pendings the
-      # terminal then never asks about. {#sweep} walks the PARKED set
-      # ({Queue#each}) and renders it; {Pending#decide}'s first-answer-wins is
-      # what makes the race safe, and the loser's answer is a quiet no-op by
-      # construction rather than by a check this object performs.
+      # rule and not a detail: the arrival queue hands each pending to exactly
+      # ONE `dequeue` caller, and that caller is {Frontend::ApprovalPolicy} --
+      # the surface that can ask a person. A second one here would STEAL
+      # pendings the terminal then never asks about. That is not hypothetical:
+      # {Lain::Notify} drained it too until T15, and from the second gated call
+      # of a turn onward the terminal got nothing, which on `--no-nvim` is a
+      # session with no approval surface at all (manual-QA round 4, F18).
+      # {#sweep} walks the PARKED set ({Queue#each}) and renders it;
+      # {Pending#decide}'s first-answer-wins is what makes the race safe, and
+      # the loser's answer is a quiet no-op by construction rather than by a
+      # check this object performs.
       #
       # A TWO-KEY GESTURE, NOT A COMPOSE BUFFER, and the difference is the
       # shape of the thing being answered. {QuestionView} is the precedent for

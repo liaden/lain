@@ -4,7 +4,8 @@ require "stringio"
 
 # I5: a desktop-notification surface over dunstify, joining the SAME
 # Approval::Queue surface shape Frontend::ApprovalPolicy (I4) does --
-# #watch(queue) parks on arrivals, #decide answers one Pending. dunstify with
+# #watch(queue) sweeps the PARKED set (T15: it never consumes the arrival
+# queue, which belongs to the human's surface), #decide answers one Pending. dunstify with
 # -A actions BLOCKS its own process until the human picks a button, dismisses,
 # or its own -t window expires, so every real invocation runs on a dedicated
 # Thread (see the class comment); the bridge back to the calling fiber is a
@@ -45,6 +46,36 @@ RSpec.describe Lain::Notify do
       def run_command = self
       def stdout = @answer
     end
+  end
+
+  # Two gated calls parked on one queue, as a turn making two tier-3 tool calls
+  # produces them -- handed back so a caller's ensure can stop both.
+  def gated_pair(task, queue)
+    Array.new(2) do |n|
+      task.async { queue.call(Lain::Effect::ToolCall.new(tool_use_id: "tu_#{n}", name: "bash", input: {}), nil) }
+    end
+  end
+
+  # dunstify BLOCKS its own process until a human clicks, dismisses, or its own
+  # `-t` window expires, so a pending this surface is showing is a pending it
+  # HOLDS -- which is what made the stolen one unanswerable for the whole
+  # window rather than merely late. The latch reproduces the hold; closing it
+  # releases the waiting Thread at once.
+  def holding_shell_out_class
+    Class.new do
+      def initialize(*, latch:, **)
+        super()
+        @latch = latch
+      end
+
+      def run_command = tap { @latch.pop }
+      def stdout = ""
+    end
+  end
+
+  def holding_dunstify(latch)
+    klass = holding_shell_out_class
+    ->(*, **) { klass.new(latch:) }
   end
 
   def stub_dunstify(answer:)
@@ -197,7 +228,7 @@ RSpec.describe Lain::Notify do
       expect(approval).to have_attributes(decision: :deny, surface: "tty")
     end
 
-    it "parks on the queue and answers arrivals (the surface loop)" do
+    it "sweeps the parked set and answers what it finds (the surface loop)" do
       factory, = stub_dunstify(answer: "approve")
       queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new))
       notifier = described_class.new(shell_out_factory: factory)
@@ -210,6 +241,109 @@ RSpec.describe Lain::Notify do
       ensure
         watcher&.stop
       end
+    end
+
+    # T15 / manual-QA round 4, F18. This surface OBSERVES the parked set; it
+    # must never drain {Approval::Queue#dequeue}, which delivers each arrival
+    # to exactly one caller and belongs to the human's terminal surface
+    # (`queue_surface.rb`'s two-surface discipline). It used to drain it, and
+    # from the second gated call of a turn onward it took every one -- the TTY
+    # prompt leaves the queue to ask a person while this one re-parks at once,
+    # so this one sat ahead in the waiter FIFO forever. The counterfactual is
+    # the whole example: a sibling consumer that gets NOTHING is the defect.
+    it "leaves every arrival on the queue for the human's surface to consume" do
+      held = Thread::Queue.new
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 2.0)
+      consumed = []
+
+      Sync do |task|
+        # First in the waiter FIFO on purpose: the claim is that this surface
+        # never takes an arrival, whoever parks first.
+        running = [task.async { described_class.new(shell_out_factory: holding_dunstify(held)).watch(queue) },
+                   *gated_pair(task, queue)]
+        reader = task.async { 2.times { consumed << queue.dequeue.tool_use_id } }
+        running << reader
+        task.with_timeout(1) { reader.wait }
+      rescue Async::TimeoutError
+        nil # the assertion below names what was missed; a hang would not
+      ensure
+        running.each { |fiber| fiber&.stop }
+        held.close
+      end
+
+      expect(consumed).to contain_exactly("tu_0", "tu_1")
+    end
+
+    # The guarantee draining `#dequeue` gave for free and the sweep does not:
+    # `Queue#dequeue` skipped already-decided arrivals by its own recursion.
+    # A sweep collects its snapshot with no yield, then #decide BLOCKS for a
+    # whole dunstify wait -- so every element after the first is stale by the
+    # time this surface reaches it, and a sibling (or the queue's clock) can
+    # have settled it meanwhile. Without the re-check, a settled pending gets a
+    # `-u critical` popup for a decision already made and orphans the dunstify
+    # process behind it for the window's full 300s.
+    it "raises no notification for a pending a sibling settled while it was showing the last one" do
+      fired = []
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 2.0)
+      parked = nil
+      factory = lambda do |*args, **_kwargs|
+        fired << args.join(" ")
+        # The sibling answers the OTHER pending while this notification is up.
+        queue.reject(&:decided?).each { |item| item.deny(surface: "tty") }
+        fake_shell_out_class.new(answer: "approve")
+      end
+
+      Sync do |task|
+        running = gated_pair(task, queue)
+        parked = task.async { described_class.new(shell_out_factory: factory).watch(queue) }
+        task.with_timeout(1) { task.async { Async::Task.current.sleep(0.2) }.wait }
+      ensure
+        [*running, parked].each { |fiber| fiber&.stop }
+      end
+
+      expect(fired.size).to eq(1)
+    end
+
+    # {QueueSurface#swept}'s guard, and the reason it is not optional here any
+    # more: post-T15 this surface raises the notification for EVERY approval, so
+    # a sweep that raises and kills the fiber deletes desktop notification for
+    # the rest of the session -- silently, with nothing but async's "Task may
+    # have ended with unhandled exception" on a stderr nobody is reading. That
+    # is the exact failure class this card exists to close.
+    # The journal is a REAL Lain::Channel, not an Array standing in for one:
+    # `Wiring` hands this surface the run's own channel, and "the record reaches
+    # that channel" is the half that makes the guard WITNESSED rather than
+    # merely present. A duck that had only ever met an Array would be a guard
+    # nobody could prove had fired.
+    it "survives a sweep that raises, journals the fault once, and keeps notifying" do
+      journal = Lain::Channel.new
+      failures = 0
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 2.0)
+      flaky = Object.new
+      flaky.define_singleton_method(:each) do |&block|
+        failures += 1
+        raise "the parked list went away" if failures <= 3
+
+        queue.each(&block)
+      end
+      flaky.define_singleton_method(:select) { |&block| enum_for(:each).select(&block) }
+      factory, invocations = stub_dunstify(answer: "approve")
+
+      Sync do |task|
+        running = gated_pair(task, queue)
+        watcher = task.async { described_class.new(shell_out_factory: factory, journal:).watch(flaky) }
+        task.with_timeout(2) { task.async { Async::Task.current.sleep(0.4) }.wait }
+      ensure
+        [*running, watcher].each { |fiber| fiber&.stop }
+      end
+
+      faults = journal.drain
+      expect(failures).to be > 3                                    # the fiber outlived the raise
+      expect(invocations).not_to be_empty                           # and went on notifying
+      expect(faults.map { |fault| fault["type"] })
+        .to eq([Lain::Approval::QueueSurface::FAULT_TYPE]) # once, not once per 50ms poll
+      expect(faults.first).to include("surface" => described_class::SURFACE,
+                                      "error" => "RuntimeError: the parked list went away")
     end
 
     it "runs the blocking dunstify wait off the reactor fiber, not on it" do

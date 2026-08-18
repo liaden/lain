@@ -76,6 +76,14 @@ module Lain
         # queue by other means, and a pending nobody answers is bounded by
         # {Approval::Queue}'s own fail-closed timer -- so the worst case of
         # withholding this one is a call REFUSED, never one silently granted.
+        #
+        # Since T15 it is also the only surface that CONSUMES the queue's
+        # arrivals -- every other one reads the parked set -- so an `/inbox`
+        # line leaves `Approval::Queue`'s arrival buffer undrained for its
+        # duration. Harmless, and worth saying because this comment reasons
+        # about who ANSWERS: the notifier and the editor still see and can
+        # still decide every pending, because they never needed the arrival
+        # queue to find one.
         # The alternative is worse than the case it would serve: this surface
         # reads through the same `conductor.read_reply(tty, ...)` the drain is
         # parked on, so a keystroke meant for an inbox question could land as the

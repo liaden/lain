@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "cgi/escape"
 require "mixlib/shellout"
 
@@ -7,9 +8,10 @@ module Lain
   # A desktop-notification surface over `dunstify`. Joins the SAME seam
   # {Frontend::ApprovalPolicy} (I4) joins Gate through: {Approval::Queue}
   # neither knows nor cares which surface answers a {Approval::Queue::Pending}
-  # -- {#watch} parks on the queue, {#decide} answers one arrival, and two
+  # -- {#watch} sweeps the parked set, {#decide} answers one pending, and two
   # surfaces racing over the same pending is normal (first answer wins, the
-  # queue's own doctrine). {#question} is unrelated to the queue: it fires a
+  # queue's own doctrine). It OBSERVES and never consumes, which is not a
+  # detail: see {#watch}. {#question} is unrelated to the queue: it fires a
   # plain informational notification for `ask_human`, where answering happens
   # at a real surface (the TTY prompt), never a notification click.
   #
@@ -75,6 +77,11 @@ module Lain
     # who gets to decide.
     SHELLOUT_GRACE_MS = 5_000
 
+    # Between sweeps of the parked set. {QueueSurface::DEFAULT_POLL_INTERVAL}'s
+    # value and its reason: a surface is a sibling fiber, so the sleep is a
+    # scheduler yield rather than a wall-clock stall.
+    POLL_INTERVAL = Approval::QueueSurface::DEFAULT_POLL_INTERVAL
+
     # What `LAIN_DESKTOP` forces, in either direction; any other value (unset
     # included) leaves the caller's own answer standing. One spelling, reused:
     # the `:desktop` seam in this class's spec already means "this shell may
@@ -129,18 +136,82 @@ module Lain
     #   {Tools::Bash} uses for `Mixlib::ShellOut`)
     # @param timeout_ms [Integer] dunstify's own `-t`: how long an unanswered
     #   notification waits before it expires and reports a close reason
+    # @param journal [#<<] where a sweep that raised is recorded, {QueueSurface}'s
+    #   own seam and its default: the shared Null channel, so no caller guards
+    #   `if journal`. A desktop surface that quietly stopped notifying is the
+    #   failure this exists to make visible, so wiring a real one is worth doing.
     def initialize(command: "dunstify", shell_out_factory: Mixlib::ShellOut.public_method(:new),
-                   timeout_ms: DEFAULT_TIMEOUT_MS)
+                   timeout_ms: DEFAULT_TIMEOUT_MS, journal: Channel::Null::INSTANCE)
       @command = command
       @shell_out_factory = shell_out_factory
       @timeout_ms = timeout_ms
+      @journal = journal
+      # Faults already journaled, {QueueSurface}'s reason: keyed by the
+      # failure's own text, because that is what a reader would see repeated.
+      @reported = {}
+      # Identity-keyed, {QueueSurface}'s reason exactly: a Pending is a plain
+      # object, and one notification per pending is the contract -- a poll that
+      # re-raised a dismissed one every 50ms would be its own defect.
+      @raised = {}.compare_by_identity
+      @pruning = Approval::QueueSurface::Pruning.new
     end
 
-    # The surface loop: park on the queue, decide each arrival. Runs in its
-    # own fiber beside any other surface watching the same queue (the exe
-    # hosts and stops it, the identical shape {Frontend::ApprovalPolicy#watch} is).
+    # The surface loop: sweep the PARKED set and raise a notification for each
+    # pending this surface has not already asked about. Runs in its own fiber
+    # beside every other surface watching the same queue (the exe hosts and
+    # stops it).
+    #
+    # OBSERVE, NEVER CONSUME, and the distinction is the whole of T15.
+    # {Approval::Queue}'s arrival queue delivers each pending to exactly ONE
+    # `#dequeue` caller ({Async::Queue} delegates to a `Thread::Queue`), and
+    # that caller is the human's terminal surface -- the rule
+    # {Approval::QueueSurface}'s class comment already states, and the rule this
+    # method used to break.
+    #
+    # What draining it cost, stated exactly, because the obvious reading claims
+    # more than the queue does. Both surfaces park; the first arrival goes to
+    # whichever parked first ({CLI::Repl::ApprovalSurfaces#watch} spawns the TTY
+    # one first), and after answering it the TTY surface LEAVES the queue to ask
+    # a person while this one re-parks at once -- so the next arrival came here.
+    # This one then blocked inside {#decide} for dunstify's whole wait, and
+    # while blocked it was not parked, so an arrival AFTER that went back to the
+    # terminal (measured: prompts=2, verdicts=[true, false, true]). It is the
+    # HELD call that was lost, not every later one. That changes nothing about
+    # the outcome -- the run is parked on the held call, so in practice there is
+    # no later one -- but the mechanism is a stolen-and-held pending, not a
+    # surface that captures the queue. Measured against a live `lain chat` on
+    # 2026-08-18: call two was taken here and held, so the chat pane -- the only
+    # surface a `--no-nvim` session has -- rendered nothing and read nothing,
+    # and the session sat until the queue's clock denied it (round 4, F18).
+    #
+    # Not a {QueueSurface} subclass, though this is exactly its shape, and the
+    # reason is TAXONOMY rather than any runtime effect: that subclass list is
+    # read as "the machine judges" ({Approval::Escalation}'s own vocabulary),
+    # and this is a HUMAN surface -- a person clicks the button. Subclassing
+    # would in fact have changed nothing mechanical, and a first draft of this
+    # comment said otherwise: `Escalation::Surfaces::AUTOMATIC` is a frozen
+    # literal, `QueueSurface.subclasses` is used only as a spec-side generator,
+    # and that spec's `unaccounted` already subtracts {SURFACE}. What IS shared
+    # is the seen-set and its release, which is genuinely one question
+    # ({QueueSurface::Pruning}); the rest of the machinery below is a copy, and
+    # the concern extraction that would end the copying is its own card.
     def watch(queue)
-      loop { decide(queue.dequeue) }
+      loop do
+        swept(queue)
+        Async::Task.current.sleep(POLL_INTERVAL)
+      end
+    end
+
+    # One pass: every parked pending this surface has neither raised nor seen
+    # settled. The snapshot is materialized before the first {#decide}, which
+    # blocks for the whole of dunstify's wait -- so the enumeration cannot
+    # mutate under a concurrent park.
+    #
+    # Public because {#swept} is what the loop calls and a caller driving one
+    # deterministic pass should not have to reach through the guard.
+    def sweep(queue)
+      @pruning.call(@raised)
+      queue.select { |pending| unraised?(pending) }.each { |pending| notify_about(pending) }
     end
 
     # Answer ONE pending approval: fire a notification with Approve/Deny
@@ -170,6 +241,66 @@ module Lain
     end
 
     private
+
+    # {QueueSurface#swept} verbatim, and it stopped being optional here with
+    # T15. A raise inside the sweep kills this FIBER, and a dead surface fiber
+    # is silent -- async logs "Task may have ended with unhandled exception" to
+    # a stderr nobody in a full-screen chat is reading, and every later approval
+    # simply never reaches the desktop. Pre-T15 that cost the notifications for
+    # arrivals this surface happened to win; post-T15 it raises the notification
+    # for EVERY approval, so its silent death now deletes desktop notification
+    # outright. `Async::Stop` descends from Exception, so stopping the task
+    # still unwinds the loop.
+    def swept(queue)
+      sweep(queue)
+    rescue StandardError => e
+      journal_fault(e)
+    end
+
+    # Once per distinct failure, because a 50ms poll over a permanently broken
+    # queue would otherwise flood the Journal with one repeated line. The record
+    # wears {QueueSurface::FAULT_TYPE}'s shape rather than a second one of its
+    # own, so a reader has ONE record type for "a surface fell over". The inner
+    # rescue is the point of the whole method: evidence about a failure must
+    # never be able to kill the fiber this guard exists to keep alive
+    # ({Approval::Queue#degrade}'s answer to the same problem).
+    def journal_fault(error)
+      text = "#{error.class}: #{error.message}"
+      return if @reported.key?(text)
+
+      @reported[text] = true
+      @journal << { "type" => Approval::QueueSurface::FAULT_TYPE, "surface" => SURFACE, "error" => text }
+    rescue StandardError
+      nil
+    end
+
+    # A pending is asked about ONCE, and never one a sibling surface (or the
+    # queue's own clock) has already settled -- {QueueSurface#mine?}'s two
+    # halves, minus the `judges?` filter this surface has no use for: dunst
+    # raises every gated call, which is what a notifier is for.
+    def unraised?(pending) = !pending.decided? && !@raised.key?(pending)
+
+    # Marked BEFORE the ask, not after: {#decide} blocks for the whole of
+    # dunstify's wait, and a sweep that ran in between must not raise a second
+    # notification for the pending this one is already showing.
+    #
+    # Then asked AGAIN whether it is still undecided, and that second check is
+    # not belt-and-braces -- it is {QueueSurface#adjudicate}'s, for its reason
+    # one blocking call further on. The snapshot {#sweep} materialized is
+    # collected with no yield, but {#decide} yields for a whole dunstify wait,
+    # so every element after the first is stale by the time this reaches it: a
+    # sibling surface (or the queue's clock) can have settled it meanwhile.
+    # Without this, a settled pending gets a `-u critical` Approve/Deny popup
+    # for a decision already made, and the dunstify process behind it is
+    # orphaned for the window's full 300s. Draining `#dequeue` used to skip
+    # decided arrivals for free (`Queue#dequeue`'s own recursion), so this is
+    # the one guarantee that did NOT come across with the loop.
+    def notify_about(pending)
+      @raised[pending] = true
+      return if pending.decided?
+
+      decide(pending)
+    end
 
     # THE THIRD DECIDING SURFACE, so it carries the same warning the other two
     # do. A click on Approve here signs a full approval in the Journal as

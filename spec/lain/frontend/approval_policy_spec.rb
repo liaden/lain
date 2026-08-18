@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
+require "async"
 require "pastel"
 require "stringio"
+require "tmpdir"
 
 # I4: the terminal y/N prompt is now a queue SURFACE -- it answers Pending
 # approvals drawn from Lain::Approval::Queue rather than being Gate's policy
@@ -101,6 +103,199 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(run.wait).to be(true)
     ensure
       watcher&.stop
+    end
+  end
+
+  # T15's second half. A raise inside ONE prompt used to retire this fiber for
+  # the rest of the session, silently -- the failure {Approval::Queue::Pending}'s
+  # own comment names, and the one every sibling surface already guards
+  # ({Approval::QueueSurface#swept}, {CLI::HumanReplies::AnswerLoop#exchange}).
+  # This is the surface it is fatal for: on `--no-nvim` there is no second one,
+  # so a dead fiber here is a session that can never be asked anything again.
+  describe "a prompt that raises" do
+    let(:journal_io) { StringIO.new }
+
+    def queue = @queue ||= Lain::Approval::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 1.0)
+
+    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+    # Raises on the FIRST prompt only, so an example can ask the question that
+    # matters: is this surface still answering afterwards?
+    def policy_failing_once(output:)
+      asked = 0
+      described_class.new(output:, reader: lambda { |_prompt|
+        asked += 1
+        raise "the terminal went away" if asked == 1
+
+        "y\n"
+      })
+    end
+
+    def two_gated_calls(policy)
+      Sync do |task|
+        watcher = task.async { policy.watch(queue) }
+        Array.new(2) { task.with_timeout(3) { task.async { queue.call(effect, nil) }.wait } }
+      ensure
+        watcher&.stop
+      end
+    end
+
+    it "keeps watching, and refuses the pending it could not ask about" do
+      expect(two_gated_calls(policy_failing_once(output:))).to eq([false, true])
+      expect(output.string).to include("the terminal went away")
+    end
+
+    # On a study bench the Journal IS the experiment record, and `queue.rb`
+    # argues at length that decision latency is evidence. A fault-denial signed
+    # "tty" is byte-identical to a person typing `n` -- so a reader counting
+    # human refusals counts a broken terminal as one, and {Approval::Escalation}
+    # weighs a person's authority differently from a machine's. The refusal is
+    # right; the attribution is not. Neither {Approval::Queue::TIMEOUT_SURFACE}
+    # nor {Approval::Queue::ABANDONED_SURFACE} pretends to be a person either.
+    it "signs that refusal as the surface's own fault, never as a person's answer" do
+      two_gated_calls(policy_failing_once(output:))
+
+      expect(decisions.first).to include("verdict" => "deny", "surface" => described_class::FAULT_SURFACE)
+      expect(described_class::FAULT_SURFACE).not_to eq(described_class::SURFACE)
+    end
+
+    # The rescue's own render is the likeliest next raise -- the example above
+    # is literally "the terminal went away" -- and a rescue that dies leaves the
+    # pending undenied, which is strictly worse than no guard at all. So the
+    # denial lands FIRST and the reporting is wrapped in its own rescue, the
+    # shape {Approval::QueueSurface#journal_fault} already uses.
+    it "still refuses, and still keeps watching, when reporting the failure raises too" do
+      unwritable = Object.new
+      def unwritable.puts(*) = raise(IOError, "closed stream")
+      def unwritable.flush = raise(IOError, "closed stream")
+
+      expect(two_gated_calls(policy_failing_once(output: unwritable))).to eq([false, true])
+      expect(decisions.first).to include("surface" => described_class::FAULT_SURFACE)
+    end
+  end
+
+  # T15, from manual-QA round 4 (F18): the FIRST gated call of a turn rendered
+  # and was answerable; every one after it rendered nothing and was never read,
+  # so a plain `lain chat` -- which has no second surface -- wedged for good.
+  #
+  # The measured mechanism is a CO-CONSUMER, not the terminal. `Approval::Queue`
+  # hands each arrival to exactly one `#dequeue` caller ({Async::Queue} delegates
+  # to a `Thread::Queue`), and a real chat wires TWO of them beside each other:
+  # this surface and {Lain::Notify}. Both park; the first arrival goes to
+  # whichever parked first (this one, spawned first by
+  # {CLI::Repl::ApprovalSurfaces#watch}), and from then on the notifier is ahead
+  # of it in the waiter FIFO forever -- because this surface leaves the queue to
+  # ask a human while the notifier re-parks at once. So arrival two, and every
+  # arrival after it, is taken by a surface that cannot answer at the terminal
+  # and holds it for the whole of dunstify's blocking wait.
+  #
+  # The examples drive TWO gated calls through the real pair, because one call
+  # cannot see this at all -- which is exactly why a green suite shipped it. The
+  # streamed {Telemetry::ToolOutput} between them is the QA repro's own shape
+  # (what made the second call LATE); it is rendered here so the reproduction is
+  # the measured one rather than a tidier cousin.
+  describe "a second gated call in one turn, beside the surfaces a real chat wires", :seam do
+    let(:journal_io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io: journal_io) }
+    # Short, and it is the counterfactual: a pending no surface can answer is
+    # denied by the clock, so a stolen one fails in words instead of hanging.
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 1.0) }
+    let(:channel) { Lain::Channel.new }
+    let(:pane) { StringIO.new }
+    # dunstify BLOCKS its own process until a human clicks, dismisses, or its
+    # `-t` window (the queue's own, 300s) expires -- so a pending this surface
+    # takes is a pending it HOLDS. The latch reproduces the hold exactly; the
+    # ensure closes it, and a closed Thread::Queue pops nil at once.
+    let(:dunst) { Thread::Queue.new }
+
+    def holding_shell_out_class
+      Class.new do
+        def initialize(*, latch:, **)
+          super()
+          @latch = latch
+        end
+
+        def run_command = tap { @latch.pop }
+        def stdout = ""
+      end
+    end
+
+    def notifier
+      klass = holding_shell_out_class
+      latch = dunst
+      Lain::Notify.new(shell_out_factory: ->(*, **) { klass.new(latch:) })
+    end
+
+    def gated(id, command)
+      Lain::Effect::ToolCall.new(tool_use_id: id, name: "bash", input: { "command" => command })
+    end
+
+    def tty
+      @tty ||= Lain::Frontend::TTY.new(channel:, output: pane, input: StringIO.new,
+                                       history_path: File.join(@dir, "history"))
+    end
+
+    # One turn: gated call, streamed output to the pane, gated call. Answers the
+    # two verdicts the gated fibers received; the prompts this surface rendered
+    # and the journal carry the rest.
+    def turn_of_two_gated_calls(answer:)
+      prompts = []
+      policy = described_class.new(pastel: Pastel.new(enabled: false), reader: lambda { |prompt|
+        prompts << prompt
+        answer
+      })
+      [prompts, verdicts_from(policy)]
+    end
+
+    def verdicts_from(policy)
+      Sync do |task|
+        watching = [task.async { policy.watch(queue) }, task.async { notifier.watch(queue) }]
+        [settled(task, "call_1", "echo HELLO"), streamed("call_1"), settled(task, "call_2", "ls ./spec")]
+          .values_at(0, 2)
+      ensure
+        watching.each { |surface| surface&.stop }
+      end
+    end
+
+    def settled(task, id, command)
+      gate = task.async { queue.call(gated(id, command), nil) }
+      task.with_timeout(5) { gate.wait }
+    end
+
+    # The first tool's stdout reaching the pane, through the real decorator --
+    # the event that separated the working first call from the broken second.
+    def streamed(id)
+      channel.push(Lain::Telemetry::ToolOutput.new(tool_use_id: id, stream: :stdout, bytes: "HELLO\n"))
+      tty.drain_and_render
+    end
+
+    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+    around do |example|
+      Dir.mktmpdir { |dir| (@dir = dir) && example.run }
+    ensure
+      dunst.close
+    end
+
+    it "prompts the human for the second gated call too, naming the tool and what it would run" do
+      prompts, = turn_of_two_gated_calls(answer: "y\n")
+
+      expect(prompts.size).to eq(2)
+      expect(prompts.last).to include("bash").and include("ls ./spec")
+    end
+
+    it "applies the answer to that second pending, so the run continues" do
+      _, verdicts = turn_of_two_gated_calls(answer: "y\n")
+
+      expect(verdicts).to eq([true, true])
+      expect(decisions.map { |record| record.fetch("surface") }).to eq(%w[tty tty])
+    end
+
+    it "refuses a denied second call at once rather than wedging on the clock" do
+      _, verdicts = turn_of_two_gated_calls(answer: "n\n")
+
+      expect(verdicts).to eq([false, false])
+      expect(decisions.last).to include("surface" => "tty", "verdict" => "deny", "timed_out" => false)
     end
   end
 

@@ -344,7 +344,14 @@ module Lain
         # them). --desktop defaults ON in exe/lain, so an interactive chat is
         # unchanged; a directly-constructed Wiring passes no such option and gets
         # the Null. Pinned by spec/desktop_discipline_spec.rb.
-        @notifier = Lain::Notify.for(desktop: options[:desktop])
+        #
+        # `journal:` is the run's own Channel, and it is what makes T15's fault
+        # guard WITNESSED rather than merely present: a surface fiber that dies
+        # inside its sweep stops notifying for the rest of the session, and the
+        # whole finding this guard came out of is that such a death is silent.
+        # Journalled into the Null it would still be silent -- so the one thing
+        # a bench needs from a guard, evidence that it fired, would be missing.
+        @notifier = Lain::Notify.for(desktop: options[:desktop], journal: channel)
         # OM-6: the reactor above the Agent that un-refuses model-dispatched
         # actors. Journals a bounded drain's timeout to the live Channel; the exe
         # #run_chat below runs it under a chat-level reactor that outlives asks.

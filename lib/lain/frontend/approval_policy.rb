@@ -34,6 +34,24 @@ module Lain
       # The name this surface signs its decisions with in the journal record.
       SURFACE = "tty"
 
+      # And the name it signs a denial NOBODY answered with -- the terminal
+      # itself failed, so the fail-closed refusal is the surface's, not a
+      # person's. A distinct name because on a study bench the Journal is the
+      # experiment record: signed {SURFACE}, that refusal is byte-identical to
+      # someone typing `n`, so a reader counting human refusals counts a broken
+      # terminal as one, and {Approval::Escalation} weighs a person's authority
+      # differently from a machine's. {Approval::Queue::TIMEOUT_SURFACE} and
+      # {Approval::Queue::ABANDONED_SURFACE} are the same idea for the other two
+      # ways a pending gets decided by nobody -- and BESIDE THEM, in
+      # {Approval::Escalation::Surfaces::AUTOMATIC}, is where this name belongs.
+      # It cannot go there: that constant is evaluated while `lain/approval`
+      # loads, before this class exists, so naming it there is a load-time
+      # NameError. Until `AUTOMATIC` is late-bound -- a change to how every
+      # surface is classified, owed to its own card -- the ladder reads this as
+      # `:human`, which is harmless only because this surface can only ever
+      # deny (see the note in `spec/lain/approval/escalation_spec.rb`).
+      FAULT_SURFACE = "tty_fault"
+
       # Anything else -- a bare "enter", "n", garbage, or EOF -- denies. Approving
       # a tier-3 shell command is the one decision in this whole harness that must
       # fail closed: an unrecognized keystroke is not consent.
@@ -61,7 +79,7 @@ module Lain
       # tool dispatch cannot deadlock the reactor -- the answerer is a sibling,
       # not the same fiber.
       def watch(queue)
-        loop { decide(queue.dequeue) }
+        loop { answered(queue.dequeue) }
       end
 
       # Answer ONE pending approval: print the y/N question, read the answer,
@@ -76,6 +94,51 @@ module Lain
       end
 
       private
+
+      # One arrival, guarded -- because a raise inside a single prompt used to
+      # retire this fiber for the whole session, silently. That is the failure
+      # {Approval::Queue::Pending}'s own comment names, and every sibling
+      # surface already guards it ({Approval::QueueSurface#swept},
+      # {CLI::HumanReplies::AnswerLoop#exchange}); this is the one it is FATAL
+      # for, because a `--no-nvim` chat has no second surface and every later
+      # gated call would then reach nobody at all (T15).
+      #
+      # Fail closed and keep watching: {Effect::Handler::Gate}'s doctrine is
+      # that an unanswerable gate refuses rather than wedges, so the pending
+      # this surface could not ask about is denied here rather than left to the
+      # clock -- signed {FAULT_SURFACE}, because nobody answered it.
+      # `StandardError`, so an `Async::Stop` ending the line keeps climbing.
+      #
+      # THE DENIAL LANDS BEFORE THE REPORT, and the order is the whole guard.
+      # Writing the reason to the terminal is the likeliest thing to raise NEXT
+      # -- the failure being reported is, characteristically, the terminal
+      # going away -- and a rescue that dies leaves the pending undecided with
+      # this fiber dead, which is strictly worse than no guard at all. So the
+      # verdict is settled first and the reporting carries its own rescue,
+      # {Approval::QueueSurface#journal_fault}'s shape exactly.
+      def answered(pending)
+        decide(pending)
+      rescue StandardError => e
+        pending.deny(surface: FAULT_SURFACE)
+        report(e)
+      end
+
+      # A refusal with no reason is the silence that hid T15 in the first place,
+      # so this is worth attempting -- and worth never costing the denial above.
+      #
+      # Known seam, stated rather than wished away: under the injected reader
+      # `@output` is the default `$stdout`, so this line reaches the terminal
+      # beside the {Frontend::TTY} that owns the alternate screen rather than
+      # through it, where the sibling surfaces render a refusal via
+      # `tty.render_error`. Routing it there means holding a TTY this class has
+      # never held, and the one spec that would notice is the parameter-list pin
+      # below. Left as is deliberately; the bytes land on the right terminal.
+      def report(error)
+        @output.puts("error: the approval surface could not ask (#{error.class}: #{error.message})")
+        @output.flush
+      rescue StandardError
+        nil
+      end
 
       # What a yes would RELEASE leads, and the ordinary question stays
       # byte-identical behind it: a human scanning a prompt reads the sensitive
