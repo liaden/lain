@@ -115,3 +115,14 @@ repos:
         entry: bin/lint-commit-msg
         language: script
         stages: [commit-msg]
+
+      # The price table is a hand-maintained copy of somebody else's published
+      # rates, so it goes stale silently and a stale rate is a wrong cost on
+      # every report derived from it. Nothing here checks the NUMBERS -- only
+      # that a human has re-read them inside the review horizon. A repo lint,
+      # not a runtime check: PriceBook must not consult a clock.
+      - id: lint-price-freshness
+        name: price table freshness (90-day review horizon)
+        entry: bin/lint-price-freshness
+        language: script
+        pass_filenames: false

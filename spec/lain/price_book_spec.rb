@@ -1,6 +1,18 @@
 # frozen_string_literal: true
 
 require "bigdecimal"
+require "date"
+
+# `load`, not `require_relative`: the file lives at `bin/lint-price-freshness`
+# with no `.rb` extension (matching `bin/lint-gherkin-docs` and
+# `bin/lint-commit-msg`), and Ruby's `require` family resolves a feature by
+# trying known suffixes -- it does not fall back to the literal path when none
+# match, so `require_relative` on an extensionless script raises LoadError even
+# though the file exists. `load` takes the path as-is. It re-executes the file
+# (not memoized like `require`), which is harmless here: the file only defines
+# a class and, guarded by `$PROGRAM_NAME == __FILE__` (false under rspec), a CLI
+# block that never runs.
+load File.expand_path("../../bin/lint-price-freshness", __dir__)
 
 RSpec.describe Lain::PriceBook do
   def usage(input: 0, output: 0, creation: 0, read: 0)
@@ -100,5 +112,69 @@ RSpec.describe Lain::PriceBook do
       book = described_class.new(prices: {}, fallback:)
       expect(book.cost("anything", usage(input: 1_000_000))).to eq(BigDecimal("1"))
     end
+  end
+end
+
+# T2: `bin/lint-price-freshness` is a repo lint (`pre-commit run --all-files`), not
+# application code -- DEFAULTS gains no runtime freshness check. Its logic is spec'd
+# here, against the actual card file, rather than in a new lib/ unit, because the
+# card's scope is `bin/lint-price-freshness` plus this spec, nothing under `lib/`.
+#
+# Every example below pins its OWN `today:` rather than reading `Date.today`. A spec
+# that asked "is the real marker fresh right now" would pass today and fail, unattended,
+# 91 days after being written with no code change -- a time bomb, not a lint. The hook's
+# CLI entrypoint (guarded by `$PROGRAM_NAME == __FILE__`, so requiring the file here does
+# not run it) is the only place allowed to read the system clock.
+RSpec.describe "bin/lint-price-freshness" do
+  def source_with_marker(date)
+    <<~RUBY
+      # Reviewed #{date} against the published list rates for the Opus
+      # 5/4.8/4.7/4.6 family, Sonnet, and Haiku 4.5.
+      DEFAULTS = {}.freeze
+    RUBY
+  end
+
+  # Gherkin AC 1 (T2): a price table older than its review horizon fails the lint.
+  it "fails a marker dated more than 90 days before the injected clock, naming the marker and the file" do
+    result = PriceFreshnessLinter.check(
+      source: source_with_marker("2026-01-01"),
+      path: "lib/lain/price_book.rb",
+      today: Date.new(2026, 8, 18)
+    )
+
+    expect(result.ok?).to be(false)
+    expect(result.message).to include("2026-01-01")
+    expect(result.message).to include("lib/lain/price_book.rb")
+  end
+
+  # Gherkin AC 2 (T2): a current table passes silently.
+  it "passes with no message when the marker is dated at the injected clock" do
+    result = PriceFreshnessLinter.check(
+      source: source_with_marker("2026-08-18"),
+      path: "lib/lain/price_book.rb",
+      today: Date.new(2026, 8, 18)
+    )
+
+    expect(result.ok?).to be(true)
+    expect(result.message).to be_nil
+  end
+
+  it "passes at exactly the 90-day horizon, and fails one day past it" do
+    at_horizon = PriceFreshnessLinter.check(
+      source: source_with_marker("2026-05-20"), path: "x", today: Date.new(2026, 8, 18)
+    )
+    past_horizon = PriceFreshnessLinter.check(
+      source: source_with_marker("2026-05-19"), path: "x", today: Date.new(2026, 8, 18)
+    )
+
+    expect(at_horizon.ok?).to be(true)
+    expect(past_horizon.ok?).to be(false)
+  end
+
+  it "fails with a named reason when no reviewed-on marker is present at all" do
+    result = PriceFreshnessLinter.check(source: "DEFAULTS = {}.freeze\n", path: "x", today: Date.new(2026, 8, 18))
+
+    expect(result.ok?).to be(false)
+    expect(result.message).to include("marker")
   end
 end

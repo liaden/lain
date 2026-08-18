@@ -1,0 +1,95 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "date"
+
+# Does the price table's "Reviewed YYYY-MM-DD" marker (lib/lain/price_book.rb,
+# above `DEFAULTS`) still fall inside its review horizon? Model prices drift --
+# `PriceBook::DEFAULTS` is a hand-maintained snapshot of a published rate card,
+# not a live feed, and T1 corrected a stale table that had been quietly 3x wrong.
+# The marker records when someone last checked it against the published rates;
+# this lint is what keeps that check from lapsing silently.
+#
+# Per the plan's interview ruling (planning/specs/chunk-cost-axis-and-compaction-
+# arm.md, T2) this is a REPO LINT, not application code: `PriceBook` gains no
+# runtime freshness check, because a check that can only fire once a stale price
+# has already been charged is not the same property as one that blocks the
+# commit that let the table go stale.
+#
+# Pure stdlib, like bin/lint-commit-msg and for the same reason: this hook reads
+# a source comment as TEXT, not `Lain::PriceBook` as a loaded object, so it never
+# needs the gem, Bundler, or the compiled Rust extension to run -- unlike
+# bin/lint-gherkin-docs, which parses house-format Gherkin and genuinely needs
+# {Lain::Gherkin::Criteria}. Same shebang, same `language: script` shape in
+# .pre-commit-config.yaml (verified against both existing lints; no third
+# interpreter-selection pattern introduced).
+#
+# The clock is INJECTED here, and only here: {.check} takes `today:` rather than
+# calling `Date.today` itself, so a spec drives it with a fixed date and its
+# pass/fail is a function of the code, not of the calendar. The one call to
+# `Date.today` in this file is in the CLI entrypoint at the bottom, which a spec
+# never reaches -- `require_relative` on this path only defines the class, it
+# does not run the `if $PROGRAM_NAME == __FILE__` block. A spec pinned to the
+# system clock would pass today and fail, unattended, 91 days after being
+# written with no code change; that is a time bomb, not a lint, and is exactly
+# what this split avoids.
+class PriceFreshnessLinter
+  HORIZON_DAYS = 90
+  MARKER = /Reviewed\s+(\d{4}-\d{2}-\d{2})/
+
+  # @!attribute [r] ok?
+  #   @return [Boolean] true when the marker is present and within the horizon
+  # @!attribute [r] message
+  #   @return [String, nil] nil on success; a one-line reason naming the marker
+  #     date and the file to update on failure
+  Result = Struct.new(:ok?, :message)
+
+  # @param source [String] the file's contents
+  # @param path [String] the file's path, for the failure message
+  # @param today [Date] the injected "now" the marker's age is measured against
+  # @param horizon_days [Integer] how old a marker may be before it is stale
+  # @return [Result]
+  def self.check(source:, path:, today:, horizon_days: HORIZON_DAYS)
+    new(source:, path:, today:, horizon_days:).check
+  end
+
+  def initialize(source:, path:, today:, horizon_days:)
+    @source = source
+    @path = path
+    @today = today
+    @horizon_days = horizon_days
+  end
+
+  def check
+    match = MARKER.match(@source)
+    return missing_marker unless match
+
+    reviewed = Date.parse(match[1])
+    age_days = (@today - reviewed).to_i
+    return stale(reviewed, age_days) if age_days > @horizon_days
+
+    Result.new(true, nil)
+  end
+
+  private
+
+  def missing_marker
+    Result.new(false, "#{@path}: no \"Reviewed YYYY-MM-DD\" marker found near the price table")
+  end
+
+  def stale(reviewed, age_days)
+    Result.new(false,
+               "#{@path}: price table reviewed-on marker is #{reviewed} (#{age_days} days old; horizon is " \
+               "#{@horizon_days} days) -- re-verify DEFAULTS against the published rates and update the marker")
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  path = File.expand_path("../lib/lain/price_book.rb", __dir__)
+  result = PriceFreshnessLinter.check(source: File.read(path), path:, today: Date.today)
+
+  exit 0 if result.ok?
+
+  warn result.message
+  exit 1
+end
