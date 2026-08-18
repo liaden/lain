@@ -1,6 +1,6 @@
 # QA defects, and a replay harness that would have caught them
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -1383,6 +1383,26 @@ reviewed, and the recurring shape is that the *tests* were the blind spot rather
 
 ### Carry-forward (out of scope here, real)
 
+- **`spec/support/zero_retry.rb` silently disables the retry-hook seam it is used to test through** —
+  found by T11's panel, verified mechanically. With `config:` injected,
+  `Provider::HTTP::Provider#initialize` short-circuits `#build_config`, which is the only place
+  Anthropic and Bedrock set `retry_block`/`exhausted_retries_block`. Measured under a real severing
+  upstream: both blocks **nil**, `RetryTap#retry_block` **never even asked for** (spy: zero calls),
+  `max_retries` silently reverting to the generic `3` instead of Anthropic's production `2` — while
+  a real retry still fires. So a `RetryTap`-driven fix goes **green while fixing nothing observable
+  through the harness**, and `RetryTap`'s WAL-rotation half is untestable through this helper by
+  construction. Ollama is exempt: T2's `#journaled_retries` wires the callbacks onto injected
+  configs too. The file's docstring already warns about a sibling trap ("a helper that mutates after
+  construction is dead code that reads like a control"); this belongs beside it.
+- **The WAL/assembler agreement on the Anthropic arm is reasoned, not tested.** `tee_chunks` appends
+  each raw chunk to the frame before the SSE handler sees it and rotation happens inside
+  `retry_block` before re-issue, so no byte is ambiguous — but because the seam spec runs with
+  `retry_block` nil, nothing asserts that frame v2's bytes and the assembler's surviving content
+  describe the same attempt. Worth a card once the helper above is fixed.
+- **F7a and F7b share a cause.** T12 measured it: mutating its stall error to be retryable both
+  multiplied the wait *and* reproduced F7b's splice. The plan treats them as separate findings; they
+  are one mechanism — a retryable error on a streaming path — seen twice.
+
 - **The window table goes stale at every model launch** — this is the second time it has bitten
   (T9). The Models API exposes `max_input_tokens` per model as a live lookup.
 - **`Provider::RetryTap` extraction.** `bedrock.rb:17-20` wrote down that *"a third such arm is what
@@ -1415,8 +1435,19 @@ agents converged on this list during the chunk:
 - `Lain::Frontend::Neovim the review thread pane following the cursor does not re-place the diff on
   every further move once it is back`
 
-All pass in isolation. The mechanism is visible in the run log — `no server running on
-/tmp/tmux-1000/lain-spec-<pid>-<n>` — a real tmux server dying under contention. **They fail far
+- `Lain::Review::Changeset against a real repository resolves every new-side anchor against the file
+  on disk` — **a different mechanism, and now pinned.** Reproduced 3 times in 11 runs with the
+  example count always correct (so never a dead worker):
+  `Errno::ENOENT @ rb_file_s_lstat - …/lain-seed-template…/.git/objects/maintenance.lock`.
+  `FileUtils.cp_r` enumerates the seed template's `.git`; git's **auto-maintenance** creates and
+  unlinks `objects/maintenance.lock` inside it mid-walk; `cp_r` then lstats a path that no longer
+  exists. Fix direction, for whoever owns `SeedRepo`: `-c gc.auto=0 -c maintenance.auto=false` on
+  the template, or copy the working tree without `.git`. Note CLAUDE.md's fixture doctrine says a
+  fresh `git init` repo holds no absolute paths so a copy IS the repo — true, but it does not
+  account for git mutating the template while it is being read.
+
+The first four all pass in isolation. Their mechanism is visible in the run log — `no server running
+on /tmp/tmux-1000/lain-spec-<pid>-<n>` — a real tmux server dying under contention. **They fail far
 more often when other agents are running**, which makes the pre-commit hook (which runs the whole
 suite) unreliable during a parallel chunk: four consecutive commit attempts for T9 were blocked by
 these alone while its own 1069 subject examples were green.
@@ -1434,14 +1465,64 @@ eval "$(mise env -s bash ruby@4.0.6)" && export LD_LIBRARY_PATH=/home/linuxbrew/
 The message names `bundle`, not the environment, so it reads as a broken hook. Worth adding to
 CLAUDE.md's Toolchain section.
 
+### Outcome
+
+**All 14 cards landed on `main`; suite 13402 → 13690, 0 failures, 14 pendings.** Serial dry-run and
+`rake pspec` agree exactly at 13690, which is the check that proves no worker died.
+
+| defect | commit |
+|---|---|
+| F1 `web_fetch` raised on any non-ASCII page | `37bc22e` |
+| F2 an unconfigured search backend read as "no results" | `6c3fffe` |
+| F3 a guessed window authorised three lossy rewrites | `21ce3c2` |
+| F4 the survey advertised a command it could not answer | `9324cff` |
+| F5 a mark acknowledgement blocked RPC on every mark | `9e4b5c4` |
+| F6 a damaged session was silently one turn short | `d8078ad` |
+| **F7a** 400-second hang, nothing printed | `cc9161a` |
+| **F7b** an abandoned attempt spliced onto its retry | `aea1697` |
+| **F7c** a phantom tool call survived a retry | `5979e7e` |
+
+Instruments: `92564ba` (narrow loopback permission), `4a4e74e` (severable fake upstream),
+`ea8e9e9` (owner-scoped cassette recording), `ec33e7b` (the retry seam F7b hangs off),
+`8d86748` (recorded ollama boundary), `7b4ee3f` (whole-run replay).
+
+**Every card reached APPROVE only after review found something the green suite had missed**, and in
+six cases the missing thing was the same defect class the chunk exists to fix — a test that passes
+for reasons unrelated to its name:
+
+- **T2** — deleting the attempt-threading T10 depends on left **578 examples green**.
+- **T10** — deleting the whole fix stayed green across **all 406 examples** of the `--tag '~seam'`
+  inner loop CLAUDE.md recommends.
+- **T8** — `not_to eq([])` is true of every non-Array object in Ruby.
+- **T7** — a mutant collapsing the singular/plural ternary survived the entire suite.
+- **T6** — the two surfaces could silently **disagree** with zero failures.
+- **T12** — the example named for the `ensure`-join could not see its removal, because on the
+  stalled path the monitor has already self-terminated.
+- **T14** — three orchestration regressions (drop the tool_result from the rendered request, blank
+  the system prompt, send `tools: []`) each produced a *correct* session record and replayed green.
+
+### What execution falsified in the plan
+
+- **T3's card had the fix backwards.** `permit_loopback` is inert on the recording path; the real
+  work was *removing* a `.permit` call that was silently dropping the cassette (VCR inserts from a
+  `before` hook, so `permit`'s `around` ran first). Its blocker #3 was a no-op too — VCR already
+  deletes an interaction when it plays it, so sequencing was free.
+- **F7a and F7b share a cause.** Making the stall error retryable both quadruples the wait *and*
+  reproduces the splice — at raw chunk level, upstream of any assembler, so T10's fix does not
+  subsume it. The plan treats them as separate findings.
+- **T9's central safety claim was false.** `claude-fable-5` and `claude-mythos-5` are current
+  1M-context families that fell through `DEFAULTS` to the 8,192 guess, and the hosted-arm tripwire
+  omitted both.
+- **"N turns needs N recorded `/api/ps`" is wrong for a wiring-driven run** — it is **one per
+  `Backend`**, because `Backend#context_window` and `ChatLaunch#backend` are both memoised.
+
 ### Wave status
 
-- [x] Wave 1 — **6 of 8 landed**: T6 `9e4b5c4`, T4 `37bc22e`, T7 `d8078ad`, T0 `92564ba`,
-      T8 `6c3fffe`, T2 `ec33e7b`. T9 approved + staged (blocked only by the flakes above);
-      T5 approved, fix round complete, awaiting merge.
-- [ ] Wave 2 — T1, T3 *(in flight)*
-- [ ] Wave 3 — T10, T11, T12, T13
-- [ ] Wave 4 — T14
+- [x] Wave 1 — T6 `9e4b5c4`, T4 `37bc22e`, T7 `d8078ad`, T0 `92564ba`, T8 `6c3fffe`,
+      T2 `ec33e7b`, T9 `21ce3c2`, T5 `9324cff`
+- [x] Wave 2 — T1 `4a4e74e`, T3 `ea8e9e9`
+- [x] Wave 3 — T10 `aea1697`, T11 `5979e7e`, T12 `cc9161a`, T13 `8d86748`
+- [x] Wave 4 — T14 `7b4ee3f`
 
 Every wave-1 card reached **APPROVE** — five of eight only after a REQUEST-CHANGES or a substantive
 fix round. The panel found a real defect in every card it reviewed.
