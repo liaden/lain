@@ -496,7 +496,10 @@ RSpec.describe Lain::Frontend::PromptComposer do
   # from {Formatted} because "what is happening" and "how a format says it"
   # are two questions -- and only this half touches the Agent.
   describe Lain::Frontend::PromptComposer::RunState do
-    let(:agent) { instance_double(Lain::Agent, occupancy: 0.384, context: instance_double(Lain::Context, model: "opus")) }
+    let(:agent) do
+      instance_double(Lain::Agent, occupancy: 0.384, dispatching?: false,
+                                   context: instance_double(Lain::Context, model: "opus"))
+    end
     let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => %w[a b c] }) }
     let(:now) { 1000.0 }
     let(:clock) { Lain::RunClock.new(clock: -> { now }) }
@@ -566,6 +569,120 @@ RSpec.describe Lain::Frontend::PromptComposer do
 
       it "reports hours beyond that" do
         expect(idle_after(7200.0)).to eq("2h")
+      end
+    end
+
+    # `idle` is seconds since the human LAST TYPED, which only describes the run
+    # when nothing is running. The reachable divergence is the `human>` prompt an
+    # `ask_human` parks: a dispatch is in flight, the composer runs, and the line
+    # read "qwen3-coder:30b idle 0s" while ollama was prefilling 4,339 tokens.
+    # QA's own driving rule -- retry until the status leaves `idle` -- then turned
+    # one prompt into four journaled turns.
+    #
+    # The reading is the DISPATCH LOCK, not `Agent#state`. Those answer different
+    # questions -- "is a dispatch in flight" against "what was the loop last
+    # doing" -- and they disagree exactly when a turn is TORN, which is the case
+    # the seam examples below pin.
+    describe "idle, and whether a dispatch is in flight" do
+      let(:lock) { Monitor.new }
+      let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
+      let(:agent) do
+        instance_double(Lain::Agent, occupancy: 0.384, state: :awaiting_user,
+                                     context: instance_double(Lain::Context, model: "opus")).tap do |double|
+          allow(double).to receive(:dispatching?) { lock.mon_locked? }
+        end
+      end
+
+      it "reports the duration when no dispatch is in flight" do
+        expect(state["idle"]).to eq("0s")
+      end
+
+      # The parked `ask_human`: the tool runs UNDER Agent#run, which holds the
+      # lock, so the composer that builds `human> ` sees it held on its own thread.
+      it "says nothing while a dispatch is in flight on this thread" do
+        expect(lock.synchronize { state["idle"] }).to be_nil
+      end
+
+      # A bridged resend drives the loop from the Neovim resend-worker thread
+      # while the REPL pane sits at a prompt. `mon_owned?` would answer false
+      # there and claim idleness; `mon_locked?` is the reading that does not.
+      it "says nothing while a dispatch is in flight on ANOTHER thread" do
+        held = Queue.new
+        release = Queue.new
+        worker = Thread.new { lock.synchronize { held.push(:holding) && release.pop } }
+        held.pop
+
+        expect(state["idle"]).to be_nil
+
+        release.push(:go)
+        worker.join
+      end
+
+      # The polarity argument, pinned mechanically rather than in a comment.
+      # Whatever the loop last recorded, the LOCK decides -- so a state added to
+      # {Agent::LoopMachine} tomorrow needs no edit here and cannot inherit a
+      # claim nothing checked.
+      it "is decided by the lock alone, in every state the loop machine declares" do
+        readings = Lain::Agent::STATES.to_h do |declared|
+          allow(agent).to receive(:state).and_return(declared)
+          [declared, [state["idle"], lock.synchronize { state["idle"] }]]
+        end
+
+        expect(readings.values).to all(eq(["0s", nil]))
+      end
+    end
+
+    # The BLOCKER a torn turn opens, against a REAL Agent and a real dispatch
+    # lock -- no double could show it, because the defect is precisely that
+    # `#state` and "a dispatch is in flight" disagree after a raise.
+    #
+    # `Agent#reopen!` fires at the START of the next `#ask` (`agent.rb:189`),
+    # never when a run raises out, and `CLI::Repl#respond` rescues `Lain::Error`,
+    # renders it and reads the next prompt with nothing settled. So the machine
+    # sits at `:awaiting_model` for the rest of the session while the human is
+    # back at `you>` with nothing running. Reading the state suppressed the idle
+    # segment there forever; the lock, being a `Monitor`, is released by the
+    # raise itself.
+    describe "after a turn is torn" do
+      let(:torn_provider) do
+        Class.new(Lain::Provider) do
+          def capabilities = []
+          def cache_profile = Lain::CacheProfile::NO_CACHING
+          def encode(request) = request.cache_payload
+          def complete(*, **) = raise(Lain::Error, "connection reset by peer")
+        end.new
+      end
+      let(:ticking) { [0.0] }
+      let(:clock) { Lain::RunClock.new(clock: -> { ticking.first }) }
+      let(:agent) do
+        Lain::Agent.new(provider: torn_provider, toolset: Lain::Toolset.new([]),
+                        context: Lain::Context.new(model: "qwen3-coder:30b", max_tokens: 64))
+      end
+
+      # `clock` is touched first on purpose: a RunClock stamps its start at
+      # construction, so building it after the tick would measure from the later
+      # reading and report 0s for reasons that have nothing to do with the fix.
+      def tear_the_turn
+        clock
+        agent.ask("hi")
+      rescue Lain::Error
+        ticking[0] = 600.0
+      end
+
+      it "leaves the loop parked in a busy state, which is what makes this the hard case" do
+        tear_the_turn
+
+        expect(agent.state).to eq(:awaiting_model)
+      end
+
+      it "reports the idle duration again, because no dispatch is in flight" do
+        tear_the_turn
+
+        expect(state["idle"]).to eq("10m")
+      end
+
+      it "raises out of the run rather than settling the machine itself" do
+        expect { clock && agent.ask("hi") }.to raise_error(Lain::Error, /connection reset/)
       end
     end
 
@@ -737,6 +854,89 @@ RSpec.describe Lain::Frontend::PromptComposer do
   # T7 -- the posture surfaces in chrome the human cannot lose, but only when
   # a mode is actually wired: `accept_edits` with no layers is the default,
   # and the default must cost nothing.
+  # `$idle` could always be rendered; since T10 it can also be ABSENT, and that
+  # makes its GROUPING load-bearing rather than cosmetic. A `( ... )` group
+  # elides whole when every variable inside it is empty, so the literal word
+  # "idle" leaves with the reading. Ungrouped, it does not -- measured against
+  # the compiled format, which is why this is a spec and not a comment in the
+  # TOML:
+  #
+  #   [$model](bold) idle $idle      absent -> "m idle "
+  #   $model | $idle | $occupancy    absent -> "m |  | 38%"
+  #
+  # A dangling "idle " above the cursor is exactly the claim this card removed,
+  # so the shipped format must keep the variable grouped.
+  describe "the idle segment the default format renders" do
+    let(:shipped) { Lain::Ext::Prompt.from_toml(File.read(Lain::Frontend::PromptComposer::DEFAULT_CONFIG)) }
+    let(:state) { { "model" => "qwen3-coder:30b", "occupancy" => "38%", "fleet" => nil, "mode" => nil } }
+
+    it "renders the reading when there is one" do
+      expect(shipped.render(state.merge("idle" => "12m"), color: false)).to include("idle 12m")
+    end
+
+    it "takes the literal word with it when the reading is absent" do
+      expect(shipped.render(state.merge("idle" => nil), color: false)).not_to include("idle")
+    end
+
+    it "leaves no dangling separator behind, so the line is unchanged apart from the segment" do
+      rendered = shipped.render(state.merge("idle" => nil), color: false)
+
+      expect(rendered).to eq("qwen3-coder:30b ctx 38%")
+    end
+
+    # The contrast that makes the glossary line in `default.toml` necessary: a
+    # project writing its own format gets a dangling literal unless it groups.
+    it "is the grouping doing that, not the formatter -- an ungrouped $idle strands the word" do
+      ungrouped = Lain::Ext::Prompt.from_toml(%(format = "[$model](bold) idle $idle"\n))
+
+      expect(ungrouped.render(state.merge("idle" => nil), color: false)).to eq("qwen3-coder:30b idle ")
+    end
+  end
+
+  # The TOML's variable glossary is the only place an operator learns which
+  # readings can be absent, and it documents absence for every other one. An
+  # undocumented `$idle` is what let a project write an ungrouped format above.
+  # Asserted per ENTRY, against the entry's own text, and for idle against the
+  # whole sentence. Both halves are deliberate, and both are scar tissue: the
+  # first edition of this group searched the glossary as one string for the
+  # substring "bsent", which the `$idle` entry's own closing clause ("ungrouped,
+  # an absent reading strands it") re-satisfied by accident -- so deleting the
+  # documenting word this card added left it GREEN. A substring assertion
+  # against prose the same change authored is the shape to distrust; mutate the
+  # word and watch it fail before believing any of these.
+  describe "the shipped config's own documentation" do
+    let(:source) { File.read(Lain::Frontend::PromptComposer::DEFAULT_CONFIG) }
+    let(:shipped) { Lain::Ext::Prompt.from_toml(source) }
+
+    # One `#   $name ...` entry, to the next entry or the end of the glossary.
+    def entry_for(name) = source[/^\#\s+\$#{name}\b.*?(?=\n\#\s+\$|\n\#\n)/m].to_s
+
+    # The same entry as prose, with the comment wrapping collapsed -- so an
+    # assertion is about the SENTENCE and not about where the line happened to
+    # break. Reflowing the glossary must not fail a spec about what it says.
+    def prose_for(name) = entry_for(name).gsub(/\n\#\s+/, " ").sub(/\A\#\s+/, "")
+
+    it "names exactly the variables the format supplies" do
+      expect(source.scan(/^\#\s+\$(\w+)/).flatten).to match_array(shipped.variables)
+    end
+
+    # `$model` is the one reading always present, so it owes no such note. The
+    # match is per entry rather than over the joined glossary, or one entry's
+    # prose answers for another's silence.
+    it "says of every OTHER elidable reading when it is absent" do
+      entries = %w[occupancy fleet mode].to_h { |name| [name, prose_for(name)] }
+
+      expect(entries).to match(%w[occupancy fleet mode].to_h { |name| [name, /\babsent\b/i] })
+    end
+
+    # Idle's own note is pinned as a SENTENCE, not a word: it is the entry whose
+    # trailing prose already contains "absent" for an unrelated reason, so only
+    # the claim itself distinguishes documented from coincidental.
+    it "says of the idle reading that a dispatch in flight is what silences it" do
+      expect(prose_for("idle")).to include("Absent while a dispatch is in flight")
+    end
+  end
+
   describe "the mode segment the default format renders" do
     let(:shipped) { Lain::Ext::Prompt.from_toml(File.read(Lain::Frontend::PromptComposer::DEFAULT_CONFIG)) }
     let(:state) { { "model" => "claude-opus-4-1", "occupancy" => "38%", "fleet" => "3", "idle" => "12m" } }
@@ -773,6 +973,42 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
+  # T10 at the line the operator actually reads. The unit examples above pin the
+  # reading; these pin the rendered bytes, because "the word idle must not
+  # appear" is a claim about the LINE, and the shipped format's
+  # `( [idle $idle](dim))` group carries that literal word along with the
+  # variable -- so eliding the reading is what elides the word.
+  describe "the composed line while an ask_human is parked" do
+    let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
+    let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
+
+    # `path:` is pinned to DEFAULT_CONFIG, as every other rendered-bytes example
+    # in this file pins it. Unpinned, `.renderer` resolves through `.config_path`
+    # -- the MACHINE's own `.lain/prompt.toml`, then its XDG config -- so the
+    # negative assertion below would pass VACUOUSLY against any local format that
+    # never mentions idle, while the positive one failed. Demonstrated with a
+    # two-line `.lain/prompt.toml` planted in the worktree, not theorised.
+    def line_for(dispatching)
+      agent = instance_double(Lain::Agent, occupancy: 0.384, dispatching?: dispatching,
+                                           context: instance_double(Lain::Context, model: "qwen3-coder:30b"))
+      state = Lain::Frontend::PromptComposer::RunState.new(agent:, clock:, status_feed:)
+      renderer = described_class.renderer(state:, path: described_class::DEFAULT_CONFIG, screen: -> { 200 })
+      described_class.new(theme: plain, renderer:).compose("human> ").header.join
+    end
+
+    it "reports how long the run has been idle when no turn is in flight" do
+      expect(line_for(false)).to include("idle 0s")
+    end
+
+    it "does not contain the word idle" do
+      expect(line_for(true)).not_to include("idle")
+    end
+
+    it "still names the model and the occupancy" do
+      expect(line_for(true)).to include("qwen3-coder:30b", "38%")
+    end
+  end
+
   # T7's fourth scenario: a mode collaborator that raises must not lose the
   # prompt. No new rescue is added for this -- {Formatted#call} raises
   # straight through `@state.to_h`, and {PromptComposer#compose}'s existing
@@ -780,7 +1016,10 @@ RSpec.describe Lain::Frontend::PromptComposer do
   # other reader that raises. This pins that the mode reading rides the same
   # net rather than needing one of its own.
   describe "a mode collaborator that raises" do
-    let(:agent) { instance_double(Lain::Agent, occupancy: nil, context: instance_double(Lain::Context, model: "opus")) }
+    let(:agent) do
+      instance_double(Lain::Agent, occupancy: nil, dispatching?: false,
+                                   context: instance_double(Lain::Context, model: "opus"))
+    end
     let(:status_feed) { instance_double(Lain::StatusFeed, state: { "fleet" => [] }) }
     let(:clock) { Lain::RunClock.new(clock: -> { 0.0 }) }
     # Answers neither #posture nor #layers -- the shape a badly-wired

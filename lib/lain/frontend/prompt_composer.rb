@@ -358,8 +358,9 @@ module Lain
         # {CLI::Up::Hud} clamps for exactly the same reason.
         FULL = 1.0
 
-        # @param agent [#occupancy, #context] the LIVE agent, so a /model
-        #   switch shows at the next prompt rather than at the next run
+        # @param agent [#occupancy, #context, #dispatching?] the LIVE agent, so
+        #   a /model switch shows at the next prompt rather than at the next run,
+        #   and so a dispatch in flight can silence a reading that would lie
         # @param clock [Lain::RunClock] the run's own, the instance
         #   {CLI::Conductor} records input on
         # @param status_feed [#state] the published struct; `"fleet"` is the
@@ -423,7 +424,32 @@ module Lain
           lighters.empty? ? nil : lighters.join(" ")
         end
 
-        def idle = humanize(@clock.idle)
+        # {RunClock#idle} answers seconds since the human last TYPED, which only
+        # describes the run while nothing is running. The two diverge at the
+        # `human>` prompt a parked `ask_human` opens: a dispatch is in flight,
+        # the composer runs anyway, and the line read "qwen3-coder:30b idle 0s"
+        # while ollama was prefilling 4,339 tokens. An operator driving on
+        # "retry until the status leaves idle" turned one prompt into four
+        # journaled turns on the strength of it.
+        #
+        # {Agent#dispatching?} rather than {Agent#state}: the state records what
+        # the loop was last DOING, so a torn turn leaves it parked in
+        # `:awaiting_model` and would suppress this reading for the rest of the
+        # session -- silence that is just as dishonest, and a regression against
+        # the run this segment exists to describe.
+        #
+        # The clock is not wrong and is not changed. The segment simply has
+        # nothing to say mid-dispatch, so it elides the way {#fleet} and {#mode}
+        # do -- and the shipped format keeps the literal word "idle" inside the
+        # same `( ... )` group, so eliding the reading elides the claim.
+        #
+        # NOT an endless method: `def idle = expr unless cond` parses as
+        # `(def idle = expr) unless cond`, so the guard would run once at class-
+        # body level against a nil receiver rather than per call. Verified -- it
+        # raised NoMethodError while lain.rb was still loading.
+        def idle
+          humanize(@clock.idle) unless @agent.dispatching?
+        end
 
         # Coarse on purpose, {TTY::Inbox#age_of}'s shape: a prompt answers "how
         # long have I been away", never "when exactly".

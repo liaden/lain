@@ -50,10 +50,6 @@ module Lain
     # send may have landed once): claiming provider ambiguity for a failure
     # that provably never sent is the dishonesty S1 fixes.
     class ResendBridge
-      # The states with no dispatch in flight. :stalled and :awaiting_approval
-      # are deliberately absent -- both are mid-run parks, not a settled loop.
-      QUIESCENT = %i[awaiting_user done failed].freeze
-
       # The default upfront-attempt hook: an attempt that fires the moment the
       # gate passes and BEFORE the round trip, so a human is told an attempt is
       # under way rather than watching an idle diff while the wire blocks (S2).
@@ -109,7 +105,7 @@ module Lain
 
       def refusal
         state = @agent.state
-        return nil if QUIESCENT.include?(state)
+        return nil if Agent::QUIESCENT.include?(state)
 
         "resend refused: agent is mid-turn (#{state}); nothing was queued -- retry when the turn settles"
       end

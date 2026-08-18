@@ -509,6 +509,70 @@ RSpec.describe Lain::Agent do
         .to contain_exactly(:awaiting_user, :awaiting_model, :awaiting_tools,
                             :awaiting_approval, :stalled, :done, :failed)
     end
+
+    # The settled half of the state set, homed here beside STATES rather than
+    # copied into each reader that needs it -- {CLI::ResendBridge} gates its
+    # resend on it, and it was defined there and here independently before
+    # anyone noticed. One definition is the point of the example.
+    it "names the settled states, excluding the mid-run parks" do
+      expect(described_class::QUIESCENT).to contain_exactly(:awaiting_user, :done, :failed)
+    end
+
+    it "names only states the machine declares" do
+      expect(described_class::STATES).to include(*described_class::QUIESCENT)
+    end
+
+    # A loop that is merely PARKED is not settled: :stalled awaits a replan and
+    # :awaiting_approval awaits a gate decision, and a run resumes from both.
+    it "excludes the parks a run resumes from" do
+      expect(described_class::QUIESCENT).not_to include(:stalled, :awaiting_approval)
+    end
+  end
+
+  # {#state} records what the loop was last DOING; this answers whether a
+  # dispatch is in flight. They disagree exactly when a turn is torn, which is
+  # the case the prompt line reads it for.
+  describe "#dispatching?" do
+    it "is false on a fresh agent" do
+      expect(agent(text_response).dispatching?).to be(false)
+    end
+
+    it "is true while the dispatch lock is held" do
+      subject = agent(text_response)
+
+      expect(subject.dispatch_lock.synchronize { subject.dispatching? }).to be(true)
+    end
+
+    it "is true while another thread holds the lock" do
+      subject = agent(text_response)
+      held = Queue.new
+      release = Queue.new
+      worker = Thread.new { subject.dispatch_lock.synchronize { held.push(:holding) && release.pop } }
+      held.pop
+
+      expect(subject.dispatching?).to be(true)
+
+      release.push(:go)
+      worker.join
+    end
+
+    # The torn turn. `Monitor#synchronize` releases on the way out of a raise,
+    # so this answers false while `#state` is still parked at :awaiting_model --
+    # which is the whole reason the prompt line reads this and not the state.
+    it "is false after a run raises out, though the state is still busy" do
+      exploding = Class.new(Lain::Provider) do
+        def capabilities = []
+        def cache_profile = Lain::CacheProfile::NO_CACHING
+        def encode(request) = request.cache_payload
+        def complete(*, **) = raise(Lain::Error, "connection reset by peer")
+      end.new
+      subject = described_class.new(provider: exploding, toolset: Lain::Toolset.new([]),
+                                    context: Lain::Context.new(model: "opus", max_tokens: 64))
+      expect { subject.ask("hi") }.to raise_error(Lain::Error)
+
+      expect(subject.state).to eq(:awaiting_model)
+      expect(subject.dispatching?).to be(false)
+    end
   end
 
   # T15: pin the Agent's existing Timeline injection seam (agent.rb:71,84) --

@@ -27,7 +27,13 @@
 #               (absent before the first turn, and absent when the model slot is
 #               blank -- a prompt is not the place to answer for a wiring bug)
 #   $fleet      how many subagents have spawned, absent when none have
-#   $idle       since the human last answered a prompt: 12s, 5m, 2h
+#   $idle       since the human last answered a prompt: 12s, 5m, 2h. Absent
+#               while a dispatch is in flight: it counts time since the human
+#               TYPED, which describes the run only while nothing is running,
+#               so a `human>` prompt opened by a parked ask_human would
+#               otherwise read "idle 0s" mid-turn. Keep it inside a group, as
+#               below -- the group is what takes the literal word "idle" with
+#               the reading; ungrouped, an absent reading strands it.
 #   $mode       the posture's lighter, then every active layer's, space
 #               separated -- e.g. "PLAN" or "MAN AA". Absent whenever there is
 #               nothing to say: no mode is wired yet, or the session is in
