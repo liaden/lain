@@ -192,6 +192,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil
         def verdict = nil
+        def settle(_verdict) = nil
         def refuse(_message) = nil
       end.new
 
@@ -208,6 +209,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
         def mark(hunk_key, state) = [hunk_key, state].compact && nil
         def thread(anchor) = anchor && nil
         def verdict = nil
+        def settle(verdict) = verdict && nil
         def refuse(message) = message && nil
       end.new
 
@@ -404,6 +406,37 @@ RSpec.describe Lain::Review::Surface::Neovim do
       detached = described_class.new(rpc: RecordingReviewInlet.new(refusal: "no editor"), view:, session:)
 
       expect(detached.verdict).to be_nil
+    end
+  end
+
+  # The gesture that ENDS a review, and the one that used to say nothing at
+  # all: `:LainReviewVerdict approve` journaled and printed nowhere, while
+  # every lesser gesture in this surface acknowledged itself.
+  describe "#settle" do
+    it "posts a notice naming the verdict the review landed on" do
+      surface.settle("approve")
+
+      expect(inlet.posted).to eq([[:review_refused, "this review is settled: approve"]])
+    end
+
+    # It rides the same notice rail as #mark and #refuse, so it answers what
+    # that rail answers -- a refusal SENTENCE when no editor took the post.
+    # Unlike #verdict there is no ambiguity to protect against: the verdict
+    # travels INWARD here, so a String coming back can only be a refusal.
+    it "hands the editor's refusal straight back, like every other command" do
+      detached = described_class.new(rpc: RecordingReviewInlet.new(refusal: "no editor"), view:, session:)
+
+      expect(detached.settle("approve")).to eq("no editor")
+    end
+
+    # F5's width constraint, on this rail too: `nvim_echo` writes the message
+    # area, and a notice that does not fit one line is what stalls nvim on
+    # `Press ENTER or type command to continue` -- which would block RPC on the
+    # very gesture that closes the review.
+    it "fits one message line at an ordinary width, prefix included" do
+      surface.settle("approve")
+
+      expect(inlet.posted.dig(0, 1).length).to be < 40
     end
   end
 

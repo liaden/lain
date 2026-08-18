@@ -830,6 +830,49 @@ RSpec.describe Lain::Review::Session do
       expect { session.submit("approve") }.to raise_error(described_class::AlreadySettled)
     end
 
+    # #mark's sibling at the top of this file, on the terminal gesture: the
+    # round's LAST act is the one a human most needs to see acknowledged, and it
+    # was the only one that said nothing at all.
+    it "tells the surface the verdict landed, so a human can see the round closed" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      session = open_session(surface: spy)
+      every_key.each { |key| session.mark(key, "reviewed") }
+
+      session.submit("approve")
+
+      expect(spy).to have_received(:settle).with("approve")
+    end
+
+    it "tells the surface nothing when the policy refuses, so no editor says a refused round closed" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      session = open_session(surface: spy)
+      session.mark(keys_for("a.rb").first, "reviewed")
+
+      expect { session.submit("approve") }.to raise_error(Lain::Review::Verdict::Policy::Incomplete)
+      expect(spy).not_to have_received(:settle)
+    end
+
+    # THE ACKNOWLEDGEMENT MAY NOT UNMAKE THE VERDICT, and a RAISE is the case
+    # that can. The port says an adapter declines IN WORDS, but that is a promise
+    # adapters make and not one this object can check: `Surface::Text`'s sink
+    # answers `IOError`, and `RenderInlet#refusable` converts only
+    # ClosedQueueError/ThreadError, so anything else off the RPC path escapes
+    # too. Such a raise arrives AFTER the judgement is durable, and the caller
+    # that rescues it ({Handover#wrote_verdict}) turns any exception into the
+    # sentence a human reads as "your verdict did not land" -- while it did, the
+    # baton never settles, and the retry is refused as AlreadySettled. That is a
+    # worse lie than the silence this whole change exists to remove.
+    it "does not let a surface that raises unmake a judgement it has already journaled" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      allow(spy).to receive(:settle).and_raise(IOError, "the editor's socket is gone")
+      session = open_session(surface: spy)
+      every_key.each { |key| session.mark(key, "reviewed") }
+
+      expect { @answer = session.submit("approve") }.not_to raise_error
+      expect(@answer).to eq("approve")
+      expect(records_of("review_verdict").last).to include("verdict" => "approve")
+    end
+
     describe "admissibility, which is the policy's and not the session's" do
       it "records a verdict over a partially reviewed changeset when the policy admits everything" do
         session = open_session(policy: Lain::Review::Verdict::Policy::Permissive.new)

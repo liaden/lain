@@ -54,6 +54,9 @@ module Lain
         def verdict = nil
 
         # @return [nil]
+        def settle(_verdict) = nil
+
+        # @return [nil]
         def refuse(_message) = nil
       end
     end

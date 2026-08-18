@@ -261,6 +261,19 @@ module Lain
       # opinion free to disagree with them; what is needed is only that the
       # refusal comes back as a SENTENCE, which is what the rescue does.
       #
+      # TWO UNRELATED `settle`s MEET IN THESE FOUR LINES, so read them apart.
+      # `@session.submit` acknowledges the verdict to the human by way of
+      # `Surface#settle` -- one word, out to the editor. `@baton.settle` hands
+      # the round back to whoever is parked on it -- no word, no argument, and
+      # nothing to do with a surface. Their arities differ so nothing can
+      # mis-dispatch; they are named alike because a review settles in both
+      # senses at once, which is a fact about the moment and not a shared
+      # mechanism.
+      #
+      # The first of the two cannot fail this call: {Session#submit} makes the
+      # acknowledgement best effort precisely because the rescue below would
+      # otherwise turn a lost message into a refusal of a durable verdict.
+      #
       # @param verdict [String] a member of {Review::VERDICTS}
       # @return [String, nil] a refusal in words, or nothing when it stood
       def wrote_verdict(verdict)

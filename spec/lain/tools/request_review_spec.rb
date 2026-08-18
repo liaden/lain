@@ -168,6 +168,7 @@ class RecordingReviewSurface
 
   def thread(_anchor) = nil
   def verdict = nil
+  def settle(_verdict) = nil
   def refuse(_message) = nil
 end
 
@@ -868,7 +869,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
 
     # T31a: a THUNKED surface cannot be checked at construction -- there is
-    # nothing behind it yet, and a Proc answers none of the six messages. So the
+    # nothing behind it yet, and a Proc answers none of the seven messages. So the
     # check moves to the moment it resolves, which is still before anything
     # durable: `hold` answers the refusal as a wiring refusal and the epic is
     # untouched. What is lost is only WHEN a bad wiring is found.

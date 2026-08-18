@@ -36,7 +36,7 @@ class SurveyCommandRail
   def attached? = true
 end
 
-# The surface at the port's own six messages, recording WHAT THE EDITOR HAD
+# The surface at the port's own seven messages, recording WHAT THE EDITOR HAD
 # ALREADY BEEN BOUND when it was told to present. That recording is the whole of
 # the bind-before-draw claim: a command that drew first and bound afterwards
 # renders identically and marks identically, and only the order tells them apart.
@@ -54,6 +54,7 @@ class SurveyOrderSurface
   def mark(_hunk_key, _state) = nil
   def thread(_anchor) = nil
   def verdict = nil
+  def settle(_verdict) = nil
   def refuse(message) = message
 end
 

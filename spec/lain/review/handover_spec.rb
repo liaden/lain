@@ -102,6 +102,16 @@ class RecordingCockpitInlet < RecordingSurveyInlet
   def set_thread(*) = nil
 end
 
+# A sink that has already lost its destination. `IOError` and not a
+# `Lain::Error`, deliberately: that is what a real `IO` answers once it is
+# closed, and it is the shape that escapes every rescue on the verdict rail --
+# which is exactly why the acknowledgement has to be unable to ride it out.
+module ClosedSink
+  module_function
+
+  def write(*) = raise(IOError, "the editor's socket is gone")
+end
+
 RSpec.describe Lain::Review::Handover do
   # `session_spec.rb`'s fixture, at the size this card needs: one file with two
   # hunks (so a row names more than one key and a partial mark is expressible)
@@ -185,6 +195,17 @@ RSpec.describe Lain::Review::Handover do
   def handover(**overrides) = described_class.new(session:, baton:, **overrides)
 
   describe "a verdict written in the editor" do
+    # A surface that can be READ back, for the acknowledgement examples alone:
+    # {Surface::Null} is what every other example here wants (a review model
+    # spec has no business rendering), and it is by construction unable to show
+    # that anything was said.
+    let(:transcript) { StringIO.new }
+    let(:text_surface) { Lain::Review::Surface::Text.new(sink: transcript) }
+    let(:spoken_session) do
+      Lain::Review::Session.open(changeset:, journal:, source: "local_branch", surface: text_surface, policy:)
+    end
+    let(:spoken) { described_class.new(session: spoken_session, baton: RecordingBaton.new(session: spoken_session)) }
+
     it "submits it to the session, journaled against the changeset it judged" do
       handover.wrote_verdict("approve")
 
@@ -194,6 +215,52 @@ RSpec.describe Lain::Review::Handover do
 
     it "answers nothing, which is how the editor's :w succeeds" do
       expect(handover.wrote_verdict("approve")).to be_nil
+    end
+
+    # THE ACKNOWLEDGEMENT, and it has to be a PUSH rather than the return value
+    # the example above pins: `nil` is what the editor's `:w` succeeds on, so
+    # the only place a word can go is out through the surface. Driven over a
+    # REAL {Surface::Text} rather than a double, because what this asserts is
+    # that something left the surface -- a double recording "#settle was called"
+    # would prove the call and not the sentence.
+    it "tells the surface the verdict landed, naming the word" do
+      spoken.wrote_verdict("approve")
+
+      expect(transcript.string).to match(/\bapprove\b/)
+    end
+
+    # The other half, and the one that makes the acknowledgement worth having:
+    # a policy that refuses leaves the round OPEN, so a surface told "approved"
+    # over a review nobody approved is worse than the silence this card is
+    # fixing. Nothing at all may reach it.
+    it "acknowledges nothing when the policy refuses the verdict" do
+      refusing = described_class.new(session: Lain::Review::Session.open(
+        changeset:, journal:, source: "local_branch", surface: text_surface,
+        policy: Lain::Review::Verdict::Policy.default
+      ))
+      refusal = refusing.wrote_verdict("approve")
+
+      expect(refusal).to be_a(String)
+      expect(transcript.string).to be_empty
+    end
+
+    # The acknowledgement is BEST EFFORT and the verdict is not, and this is the
+    # example that keeps the two apart. A surface that raises on the way out --
+    # `Surface::Text`'s sink answers `IOError`, which is outside `Lain::Error`
+    # and so escapes this method's rescue entirely -- would otherwise come back
+    # as the refusal sentence an editor's `:w` fails with, over a verdict the
+    # journal durably holds, with the baton unsettled and the retry refused as
+    # AlreadySettled. There is no way back from that, so the acknowledgement
+    # must not be able to cause it.
+    it "still answers nothing and settles the baton when the acknowledgement could not be delivered" do
+      mute = Lain::Review::Surface::Text.new(sink: ClosedSink)
+      session = Lain::Review::Session.open(changeset:, journal:, source: "local_branch", surface: mute, policy:)
+      unheard = RecordingBaton.new(session:)
+
+      answer = described_class.new(session:, baton: unheard).wrote_verdict("approve")
+
+      expect(answer).to be_nil
+      expect([unheard.settles, records_of("review_verdict").size]).to eq([1, 1])
     end
 
     it "settles the baton, which is what wakes whoever is parked on the review" do

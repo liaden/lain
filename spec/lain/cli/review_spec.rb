@@ -408,6 +408,7 @@ RSpec.describe Lain::CLI::Review, :seam do
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil
         def verdict = nil
+        def settle(_verdict) = nil
         def refuse(message) = message
       end.new
     end
@@ -433,7 +434,7 @@ RSpec.describe Lain::CLI::Review, :seam do
   end
 
   describe "the surface it presents through" do
-    # Six messages at the port's own shapes, because `Surface.check!` refuses
+    # Seven messages at the port's own shapes, because `Surface.check!` refuses
     # anything else -- including a `Forwardable`/`SimpleDelegator` adapter.
     def refusing_surface(refusal)
       Class.new do
@@ -442,6 +443,7 @@ RSpec.describe Lain::CLI::Review, :seam do
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil
         def verdict = nil
+        def settle(_verdict) = nil
         def refuse(message) = message
       end.new
     end

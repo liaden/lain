@@ -3,8 +3,8 @@
 module Lain
   module Review
     module Surface
-      # The editor's review surface: the ADAPTER between {Review::Surface}'s six
-      # messages and the four review rails
+      # The editor's review surface: the ADAPTER between {Review::Surface}'s
+      # seven messages and the four review rails
       # {Frontend::Neovim::RenderInlet} owns. {Surface::Text} is the
       # batch twin; this is the one a human actually reads a changeset on.
       #
@@ -48,8 +48,9 @@ module Lain
       # allowed the two to drift; there is now one, and this object's share is
       # deciding what ENTRIES a note becomes.
       #
-      # `mark` and `refuse` and `verdict` -> `review_refused`, the review's ONE
-      # notice rail (`runtime/65_review.lua` echoes it into the message area).
+      # `mark` and `refuse` and `verdict` and `settle` -> `review_refused`, the
+      # review's ONE notice rail (`runtime/65_review.lua` echoes it into the
+      # message area).
       # `refuse` is what that rail was built for. `mark` is there because
       # redrawing the sidebar so the file's tri-state marker moves needs the
       # CHANGESET, which is exactly the state this object must not hold. The
@@ -60,7 +61,10 @@ module Lain
       # gesture, and it is what a mark reaching this surface from anywhere but
       # that rail still has. `verdict` posts the ASK, because on an
       # interactive surface asking a human for a decision is a thing you do
-      # rather than a thing you wait for.
+      # rather than a thing you wait for; `settle` posts the ANSWER to that
+      # ask, and it is here for `mark`'s reason plus one more -- a sidebar row
+      # says what is REVIEWED and nothing in a row can say the round is CLOSED,
+      # so words are the only place that fact fits.
       #
       # == What a message answers
       #
@@ -89,6 +93,12 @@ module Lain
       # exemption (`spec/support/shared_examples/review_surface.rb`, law #5),
       # which is the one place the panel found nvim's convention shaping the
       # port. Left open deliberately rather than closed badly.
+      #
+      # {#settle} DOES NOT CLOSE IT EITHER, and the two must not be read as one
+      # gesture. `settle` carries a verdict INWARD, so its answer has no
+      # ambiguity to resolve and it obeys the refusal law like every other
+      # command; `verdict` asks a human OUTWARD and still has nowhere to put a
+      # refusal. Adding the one did not un-exempt the other.
       #
       # == The gesture leg, and where `drifted:` is measured
       #
@@ -206,6 +216,16 @@ module Lain
         # naming the words the human may answer with.
         ASK_VERDICT = "this review is waiting for a verdict -- one of %s"
 
+        # The answer to that ask, once a policy admitted it and the journal
+        # holds it. {MARKED}'s width argument applies unchanged and is why this
+        # is one short clause: `65_review.lua:37` echoes it with `nvim_echo`
+        # into the MESSAGE AREA, and a notice that does not fit one line stalls
+        # nvim on `Press ENTER or type command to continue` -- which would block
+        # RPC on the one gesture that ends the review. At `Review::VERDICTS`'
+        # longest member this runs well inside a 40-column line, prefix
+        # included.
+        SETTLED = "this review is settled: %<verdict>s"
+
         # The session nobody bound. {Frontend::Neovim::ReviewView::Unwired}'s
         # honesty, one object over: it answers the one message this surface
         # sends it, so no path here asks whether a session exists, and it
@@ -284,6 +304,14 @@ module Lain
           @rpc.review_refused(format(ASK_VERDICT, Review::VERDICTS.join("/")))
           nil
         end
+
+        # The ask's answer, coming back the other way. Unlike {#verdict} this
+        # one CAN carry a refusal: the verdict travels inward as the argument,
+        # so a String answered here is the editor's own "nobody took this" and
+        # nothing else -- which is why it is a tail call like the rest.
+        # @param verdict [String] a member of `Review::VERDICTS`, as journaled
+        # @return [String, nil]
+        def settle(verdict) = @rpc.review_refused(format(SETTLED, verdict:))
 
         # @return [String, nil]
         def refuse(message) = @rpc.review_refused(message)

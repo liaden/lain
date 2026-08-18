@@ -22,14 +22,39 @@ module Lain
     # its first cut proved less than its doc claimed, and both were fixed
     # together.
     #
-    # Six messages, each a plain method a duck-typed surface answers:
+    # Seven messages, each a plain method a duck-typed surface answers:
     #
     #   present(changeset, scope:)    render this changeset, at this scope
     #   annotate(anchor, text, kind:) place a note at a position
     #   mark(hunk_key, state)         set a hunk's reviewed state
     #   thread(anchor)                open/return the conversation at a position
     #   verdict                       ask the human for their decision
+    #   settle(verdict)               say the review has landed on this verdict
     #   refuse(message)               decline the review, naming why
+    #
+    # == Why `verdict` and `settle` are two messages and not one
+    #
+    # They travel in opposite directions and neither can be inferred from the
+    # other. `verdict` ASKS -- it goes out when there is no judgement yet, and
+    # it is a QUERY, which is the whole reason the port has nowhere to put its
+    # refusal. `settle` SAYS ONE LANDED -- it goes out after {Session#submit}
+    # has journaled a judgement the policy admitted, and it carries the word
+    # inward, so a String coming back is unambiguously a refusal and it joins
+    # the command law rather than `verdict`'s exemption
+    # (`spec/support/shared_examples/review_surface.rb`, law #5).
+    #
+    # It exists because the review's ONE TERMINAL gesture was the only one that
+    # acknowledged nothing: `:LainReviewVerdict approve` journaled correctly and
+    # printed nowhere, while `mark` and `refuse` both said so in words. A human
+    # who makes the gesture that ends the review and is answered with silence
+    # reads it as broken -- which is exactly how the previous, genuinely broken
+    # version of that command read.
+    #
+    # It is a PUSH and not a return value, and that is forced rather than
+    # chosen: {Review::Handover#wrote_verdict} answers `nil` for "taken",
+    # because its return value is what the editor's `:w` succeeds or fails
+    # with. There is no room in that answer for a sentence, so the sentence has
+    # to leave by the surface.
     #
     # == What `present`'s `changeset` argument answers
     #
@@ -124,6 +149,7 @@ module Lain
         mark: [%i[req hunk_key], %i[req state]],
         thread: [%i[req anchor]],
         verdict: [],
+        settle: [%i[req verdict]],
         refuse: [%i[req message]]
       }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
 
@@ -189,7 +215,68 @@ module Lain
         "#{scheme}:#{digest[0, DIGEST_PREVIEW_LENGTH]}..."
       end
 
-      # @param candidate [#present, #annotate, #mark, #thread, #verdict, #refuse]
+      # The port's ANSWER convention, enforced at the one call where an adapter
+      # breaking it is unrecoverable -- {check!}'s sibling, and here for
+      # {check!}'s reason. That one refuses a candidate that lies about its
+      # SHAPE, before construction; this one absorbs a candidate that lies
+      # about DECLINING IN WORDS, at the single message where the lie costs
+      # more than the message is worth.
+      #
+      # {Session#submit} is that message's caller. The acknowledgement runs
+      # after the judgement is DURABLE, `#submit` is the round's terminal act,
+      # and a second attempt is refused as `AlreadySettled` -- so an exception
+      # escaping it reaches {Handover#wrote_verdict}'s rescue and comes back as
+      # the sentence a human reads as "your verdict did not land", over a
+      # verdict that did, with the baton never settled and no way to say it
+      # again. That is a worse lie than the silence the acknowledgement was
+      # added to remove, so this is the one place the port stops trusting an
+      # adapter's promise and enforces it instead.
+      #
+      # Both shipped adapters try to keep the promise; neither can be relied on
+      # to. `Surface::Text`'s sink answers `IOError`, and
+      # `Frontend::Neovim::RenderInlet#refusable` converts only
+      # `ClosedQueueError` and `ThreadError`, so anything else off the RPC path
+      # escapes too.
+      #
+      # WIDE deliberately, and the cost is named rather than hidden: an adapter
+      # BUG (a `NoMethodError`) is absorbed here as well. {check!} catches only
+      # part of that, and the part it catches is SHAPE -- a correctly-shaped
+      # adapter broken INSIDE `settle` passes it cleanly. A real
+      # {Surface::Neovim} holding a nil `rpc` is exactly that adapter: it
+      # answers all seven messages at the right arities, `check!` blesses it,
+      # and this method then returns `nil` in silence.
+      #
+      # SO THE RESIDUAL IS AN F4 REGRESSION THAT CANNOT ANNOUNCE ITSELF: the
+      # human makes the terminal gesture, the verdict lands, and nothing is
+      # printed -- the precise defect the acknowledgement was added to remove.
+      # It is accepted anyway, because the alternative is the strictly worse
+      # failure this method exists to prevent (a durable verdict reported as
+      # refused, with no way to say it again). Recorded so that "the
+      # acknowledgement is silent" is diagnosed as a broken adapter rather than
+      # as a missing feature.
+      #
+      # Not narrowable, either: an adapter's I/O error classes cannot be
+      # enumerated from here, so a hand-written list would reopen the hole this
+      # closes. `StandardError` and not `Exception` -- `SystemExit` and
+      # `Interrupt` must still propagate, which `spec/lain/review/surface/
+      # null_spec.rb`'s `.acknowledge` group pins.
+      #
+      # What does bound the residual is the layer above: a structurally broken
+      # adapter is refused earlier and far louder, by {check!} at wiring time
+      # and by `spec/support/shared_examples/review_surface.rb`.
+      #
+      # @param surface [#settle] the adapter this round draws on
+      # @param verdict [String] the verdict, as journaled
+      # @return [Object, nil] whatever the surface answered, or nothing when it
+      #   broke its promise -- indistinguishable on purpose, because the caller
+      #   discards both: it is a fact about the editor, not about the round
+      def self.acknowledge(surface, verdict)
+        surface.settle(verdict)
+      rescue StandardError
+        nil
+      end
+
+      # @param candidate [#present, #annotate, #mark, #thread, #verdict, #settle, #refuse]
       # @return [void]
       # @raise [Incomplete] naming what is wrong -- a message not answered at
       #   all, one answered only PRIVATELY (present, but not callable the way

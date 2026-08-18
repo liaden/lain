@@ -394,6 +394,27 @@ module Lain
       # that owns it ({Review::VERDICTS}); the policy is asked SECOND, so a
       # refusal leaves no judgement on record; the journal is written LAST.
       #
+      # THE SURFACE IS TOLD, and it is told from HERE rather than by whoever
+      # called: this is {#mark}'s rail exactly (journal, then state, then
+      # `@surface`), and it is the one place a verdict that actually landed can
+      # be told from one a policy refused. Before it, the review's one TERMINAL
+      # gesture was the only one that acknowledged nothing -- an editor's
+      # `:LainReviewVerdict approve` journaled correctly and printed nowhere,
+      # which reads to a human exactly like a broken command.
+      #
+      # It has to be a PUSH and not a return value: {Handover#wrote_verdict}
+      # answers `nil` for "taken" because its answer is what the editor's `:w`
+      # succeeds with, so there is no room in it for a sentence.
+      #
+      # It goes LAST, after the judgement is on record, and it goes through
+      # {Surface.acknowledge} rather than straight at the surface, because
+      # "last" alone does not make it unable to unmake the verdict -- an
+      # adapter that RAISES still does. That guard lives at the port, beside
+      # {Surface.check!}, because it enforces the port's own promise rather
+      # than anything this round knows; see it for why the enforcement is
+      # needed at exactly this one message. The answer is discarded either way:
+      # it is a fact about the editor, not about the round.
+      #
       # @param verdict [String, Symbol] a member of {Review::VERDICTS}
       # @return [String] the verdict, in the vocabulary's own spelling
       # @raise [AlreadySettled] if this round already has one
@@ -404,6 +425,7 @@ module Lain
         @policy.admit!(judged.verdict, changeset: @changeset, marks: @marks)
         @journal << judged
         @judgement = judged
+        Surface.acknowledge(@surface, judged.verdict)
         judged.verdict
       end
 

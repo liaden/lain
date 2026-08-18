@@ -129,6 +129,15 @@ module Lain
         # @return [nil]
         def verdict = nil
 
+        # The COMMAND beside that query: a verdict the session admitted and
+        # journaled, said out loud. A batch run has nobody at a keyboard to
+        # answer `#verdict`, but it still has a transcript, and a round that
+        # closed with no line saying so is a transcript that ends mid-sentence.
+        # @return [Integer] see {#present}
+        def settle(verdict)
+          write("settled: #{verdict}\n")
+        end
+
         # @return [Integer] see {#present}
         def refuse(message)
           write("refused: #{message}\n")

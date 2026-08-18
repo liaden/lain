@@ -516,7 +516,7 @@ module Lain
         # refuses a WIRING rather than wedging an epic.
         #
         # A THUNK cannot be checked then -- there is nothing behind it yet, and
-        # a Proc answers none of the six messages -- so a thunked surface is
+        # a Proc answers none of the seven messages -- so a thunked surface is
         # checked when it RESOLVES, on every {Implementation#hold}. That is
         # still before anything durable: the read happens while `Session.open`'s
         # arguments are evaluated, ahead of its own `changeset_opened` and well

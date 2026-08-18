@@ -62,8 +62,9 @@
 #       first gesture reaches nvim, and a group that invoked it eagerly to
 #       decide "configured or not" would force T19 to fake one just to be
 #       included here.
-#    c) the callable is asserted against FIVE messages now, and the last two
-#       were added by a T19 review panel that broke the three:
+#    c) the callable is asserted by SIX laws now, across FIVE messages --
+#       `#annotate` carries two of them, one per argument -- and the last three
+#       were added by review panels that broke the ones before them:
 #       `#annotate`'s TEXT (as before) and its `kind` (a probe annotated
 #       honestly and dropped `kind:` on the floor -- and `kind` is what tells
 #       a blocker from a passing remark, the one member a verdict policy
@@ -74,9 +75,22 @@
 #       position are checked -- a surface naming the file and losing the line
 #       points at the top of a diff rather than at the note.
 #
+#       `#settle`'s VERDICT WORD is the newest, and the defect behind it is
+#       the one this whole law family exists for: `:LainReviewVerdict approve`
+#       journaled correctly and said NOTHING, in the editor or anywhere else,
+#       while every lesser gesture in the same surface acknowledged itself. A
+#       human who makes the one terminal gesture and gets silence reads it as
+#       broken. So the verdict word has to come back out, and it is checked on
+#       a word boundary for `#mark`'s reason: a vocabulary that grows a
+#       `request_changes` beside `approve` is a vocabulary whose members are
+#       substrings of each other's sentences.
+#
 #       `#verdict` stays uncovered: it is a QUERY with no argument to echo
 #       back at all, and truthfulness is exactly the "renders correctly"
-#       territory #1's own doc says stays in each adapter's own spec.
+#       territory #1's own doc says stays in each adapter's own spec. It is
+#       also NOT what `#settle` covers, and the two must not be conflated --
+#       `#verdict` ASKS a human for a decision, `#settle` says one landed, and
+#       the exemption below is `#verdict`'s alone.
 #
 #    `transcript:` is resolved FRESH, via `resolve_review_fixture`, after
 #    each call whose evidence it checks -- `Surface::Text`'s is
@@ -119,7 +133,7 @@
 # 5. WHAT A MESSAGE ANSWERS WHEN IT LANDED -- T19's other law, and the port
 #    decision behind it. {Frontend::Neovim::RenderInlet} answers a
 #    refusal SENTENCE rather than raising when no editor is taking the post,
-#    and T19's adapter hands that sentence straight up, so the port's five
+#    and T19's adapter hands that sentence straight up, so the port's six
 #    COMMANDS answer a `String` for "this reached nobody, here is why" and
 #    anything-but-a-String for "taken". `nil` ({Surface::Null}), a byte count
 #    ({Surface::Text}, whose `Sink#write` answers one) and the sentence are
@@ -147,8 +161,10 @@
 #    refusing half at all. The exemption above is that mildness made visible.
 #    What removes both is the object the port is missing: a returned answer
 #    carrying verdict-or-refusal, which would make this law uniform across all
-#    six messages and delete the exemption. Filed as a follow-up; recorded here
-#    so the law is read as provisional rather than settled.
+#    seven messages and delete the exemption. Filed as a follow-up; recorded
+#    here so the law is read as provisional rather than settled. `#settle` is
+#    a COMMAND and joins the law rather than the exemption: it carries the
+#    verdict INWARD, so a String coming back is unambiguously a refusal.
 #
 # Include as `it_behaves_like "a review surface"` for a surface that is
 # genuinely indifferent to its arguments (Null is) -- but even then,
@@ -199,6 +215,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
   text = fixture.call(:text, -> { "looks fine" })
   kind = fixture.call(:kind, -> { :note })
   message = fixture.call(:message, -> { "not today" })
+  verdict = fixture.call(:verdict, -> { Lain::Review::VERDICTS.first })
 
   # `transcript:` alone is NOT soft-defaulted like every key above -- see the
   # class doc's #3a/#3b. A missing key raises here, at definition time, naming
@@ -238,16 +255,60 @@ RSpec.shared_examples "a review surface" do |config = {}|
     end
   end
 
+  # HOW TO DRIVE EACH MESSAGE, said once. Three laws below need "call every
+  # message with valid arguments" and each used to carry its own copy of the
+  # list -- which a T8 review panel broke by planting an EIGHTH message in
+  # {MESSAGES}: the shape law and `Surface.check!` both failed loudly, and all
+  # three of those copies stayed green, because a hand-maintained roster cannot
+  # notice what nobody added to it. That is the exact drift {MESSAGES} exists
+  # to prevent, one level up from the shapes it prevents it for.
+  #
+  # A `define_method`, not a local Hash: every lambda reaches
+  # `resolve_review_fixture` and `subject`, which are instance methods and do
+  # not exist where this block body runs (see `resolve_review_fixture`'s own
+  # note). Rebuilt per call so the `subject` each lambda closes over is the
+  # example's own.
+  # Split along the line this file already draws elsewhere (`fixture_claims`):
+  # three messages need the RICH fixtures a real transcript obliges an
+  # including spec to supply -- a changeset answering #files/#partitions, an
+  # anchor answering #path/#line -- and the rest take a word, or nothing.
+  # Halves rather than one literal because seven lambdas in one method is an
+  # `AbcSize` a reader feels too, and CLAUDE.md's rule is to find the missing
+  # seam rather than raise the ceiling.
+  define_method(:review_surface_calls_over_structures) do
+    { present: -> { subject.present(resolve_review_fixture(changeset), scope: :cumulative) },
+      annotate: lambda {
+        subject.annotate(resolve_review_fixture(anchor), resolve_review_fixture(text),
+                         kind: resolve_review_fixture(kind))
+      },
+      thread: -> { subject.thread(resolve_review_fixture(anchor)) } }
+  end
+
+  define_method(:review_surface_calls_over_words) do
+    { mark: -> { subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state)) },
+      verdict: -> { subject.verdict },
+      settle: -> { subject.settle(resolve_review_fixture(verdict)) },
+      refuse: -> { subject.refuse(resolve_review_fixture(message)) } }
+  end
+
+  define_method(:review_surface_calls) do
+    review_surface_calls_over_structures.merge(review_surface_calls_over_words)
+  end
+
+  # The table is only a single source while it is COMPLETE, and this is what
+  # says so. Every law below reaches it through `fetch`, so a message declared
+  # and not driven would otherwise fail nothing at all -- the table would simply
+  # never be asked for it.
+  it "drives every message the port declares, with none missing from the table" do
+    expect(review_surface_calls.keys).to match_array(Lain::Review::Surface::MESSAGES.keys)
+  end
+
   # One call of each, in the port's documented order, with valid arguments.
   it "accepts every message and never raises" do
-    expect do
-      subject.present(resolve_review_fixture(changeset), scope: :cumulative)
-      subject.annotate(resolve_review_fixture(anchor), resolve_review_fixture(text), kind: resolve_review_fixture(kind))
-      subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state))
-      subject.thread(resolve_review_fixture(anchor))
-      subject.verdict
-      subject.refuse(resolve_review_fixture(message))
-    end.not_to raise_error
+    calls = review_surface_calls
+
+    expect { Lain::Review::Surface::MESSAGES.each_key { |port_message| calls.fetch(port_message).call } }
+      .not_to raise_error
   end
 
   # The hardened law (class doc's #3). Skipped, not vacuously green, when the
@@ -294,6 +355,19 @@ RSpec.shared_examples "a review surface" do |config = {}|
     subject.annotate(resolve_review_anchor(anchor), resolve_review_fixture(text), kind: annotation_kind)
 
     expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(annotation_kind.to_s)}\b/)
+  end
+
+  # The law this defect cost: the ONE terminal gesture in the whole surface was
+  # the only one that acknowledged nothing. Word-boundary matched for #mark's
+  # reason -- `Review::VERDICTS` is one word today and the moment it holds two,
+  # a substring check passes a surface echoing the wrong one back.
+  it "leaves evidence, in its transcript, that #settle's verdict actually reached it" do
+    skip "transcript: :no_observation_channel -- this surface declares no observation channel" if transcript_declined
+
+    settled = resolve_review_fixture(verdict)
+    subject.settle(settled)
+
+    expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(settled.to_s)}\b/)
   end
 
   it "leaves evidence, in its transcript, that #refuse's message actually reached it" do
@@ -441,20 +515,22 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(nested).to all(satisfy { |path| rendered.include?(path) })
   end
 
-  # Law #5. The five COMMANDS only; `#verdict` is exempt for the reason the
-  # class doc gives, and there is no generic way to drive the refusing half
-  # (also the class doc) -- so this pins the landed half, which is what makes
-  # "a String means it did not land" a fact a caller can act on rather than a
-  # convention one adapter happens to follow.
+  # The one message the refusal law below does not hold, and it is stated as a
+  # SUBTRACTION from {MESSAGES} rather than as a hand-copied roster of the
+  # other six. That direction is the whole of it: a message added to the port
+  # joins the law by default, and taking one out has to be a deliberate edit
+  # HERE, beside the class doc's reason -- rather than something a new message
+  # falls out of by nobody remembering to add it.
+  refusal_law_exempt = %i[verdict]
+
+  # Law #5. Every COMMAND; `#verdict` is exempt for the reason the class doc
+  # gives, and there is no generic way to drive the refusing half (also the
+  # class doc) -- so this pins the landed half, which is what makes "a String
+  # means it did not land" a fact a caller can act on rather than a convention
+  # one adapter happens to follow.
   it "answers no refusal sentence for a message it took" do
-    taken = [
-      subject.present(resolve_review_fixture(changeset), scope: :cumulative),
-      subject.annotate(resolve_review_fixture(anchor), resolve_review_fixture(text),
-                       kind: resolve_review_fixture(kind)),
-      subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state)),
-      subject.thread(resolve_review_fixture(anchor)),
-      subject.refuse(resolve_review_fixture(message))
-    ]
+    calls = review_surface_calls
+    taken = (Lain::Review::Surface::MESSAGES.keys - refusal_law_exempt).map { |port_message| calls.fetch(port_message).call }
 
     expect(taken).to all(satisfy { |answer| !answer.is_a?(String) })
   end
@@ -475,25 +551,29 @@ RSpec.shared_examples "a review surface" do |config = {}|
   # cleanly. `subject` memoizes PER EXAMPLE, not across examples, so one `it`
   # per order is what actually gives each order a fresh instance -- no
   # separate construction needed.
+  #
+  # DERIVED from {MESSAGES}, not written out: a message added to the port has to
+  # be exercised in every order, and three literal permutations are three more
+  # places to forget it (see `review_surface_calls`). The natural order IS the
+  # port's declared order, so the Hash's own key order is the first of the
+  # three and the other two are functions of it.
+  #
+  # The scramble is SEEDED, and fixed: a genuinely random one would make a
+  # failure irreproducible, which is the property a contract check needs most.
+  # The literal is arbitrary, and only its stability matters -- it currently
+  # yields verdict, annotate, settle, mark, thread, present, refuse, which is
+  # neither the natural order nor its reverse.
+  port_messages = Lain::Review::Surface::MESSAGES.keys
   orders = {
-    "natural order" => %i[present annotate mark thread verdict refuse],
-    "fully reversed" => %i[refuse verdict thread mark annotate present],
-    "scrambled" => %i[verdict thread mark refuse present annotate]
+    "natural order" => port_messages,
+    "fully reversed" => port_messages.reverse,
+    "scrambled" => port_messages.shuffle(random: Random.new(20_260_818))
   }
 
   orders.each do |description, order|
     it "answers every message in #{description}, against a fresh instance" do
-      calls = {
-        present: -> { subject.present(resolve_review_fixture(changeset), scope: :cumulative) },
-        annotate: lambda {
-          note = resolve_review_fixture(text)
-          subject.annotate(resolve_review_fixture(anchor), note, kind: resolve_review_fixture(kind))
-        },
-        mark: -> { subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state)) },
-        thread: -> { subject.thread(resolve_review_fixture(anchor)) },
-        verdict: -> { subject.verdict },
-        refuse: -> { subject.refuse(resolve_review_fixture(message)) }
-      }
+      calls = review_surface_calls
+
       expect { order.each { |port_message| calls.fetch(port_message).call } }.not_to raise_error
     end
   end

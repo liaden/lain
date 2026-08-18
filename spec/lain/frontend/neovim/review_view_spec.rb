@@ -3,6 +3,7 @@
 require "fileutils"
 require "neovim"
 require "socket"
+require "stringio"
 require "timeout"
 require "tmpdir"
 
@@ -1140,6 +1141,57 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     end
   end
 
+  # nvim's own `:messages`, read over the SECOND connection -- what a human
+  # sitting at the editor would scroll back to, rather than anything the
+  # frontend recorded about itself. `neovim_spec.rb`'s helper, verbatim.
+  def messages
+    inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+  end
+
+  # The real review model behind the verdict rail, for the one example that
+  # asserts what the human SEES. Hand-written diff bytes over a verifying
+  # double ({DiffSource}) rather than a repository -- `handover_spec.rb`'s own
+  # fixture choice -- so the only thing standing in for production here is the
+  # source of the bytes, and everything from `Session#submit` outward is real.
+  #
+  # `Policy::Permissive`, because the point is the acknowledgement and not the
+  # admissibility: the default policy refuses an approve over hunks nobody
+  # read, which is a different example's subject.
+  def handover_over(surface)
+    Lain::Review::Handover.new(session: Lain::Review::Session.open(
+      changeset: Lain::Review::Changeset.new(source: verdict_source), journal: Lain::Journal.new(io: StringIO.new),
+      source: "local_branch", surface:, policy: Lain::Review::Verdict::Policy::Permissive.new
+    ))
+  end
+
+  def verdict_diff
+    <<~DIFF
+      diff --git a/a.rb b/a.rb
+      index 1111111..2222222 100644
+      --- a/a.rb
+      +++ b/a.rb
+      @@ -1,3 +1,3 @@ def alpha
+       one
+      -two
+      +TWO
+    DIFF
+  end
+
+  # Attributed, because a changeset whose diff names a file no commit's numstat
+  # does is one `Partition::ByCommit` refuses.
+  def verdict_commit
+    Lain::Review::Source::Commit.new(
+      sha: -("c" * 40), subject: -"touch a", body: "",
+      numstat: [Lain::Review::Source::FileStat.new(path: -"a.rb", added: 1, deleted: 1)].freeze
+    )
+  end
+
+  def verdict_source
+    DiffSource.over(instance_double(Lain::Review::Source::LocalBranch,
+                                    diff: verdict_diff.b, commits: [verdict_commit].freeze,
+                                    base_ref: -("b" * 40), head_ref: -("h" * 40)))
+  end
+
   describe "review_mark" do
     # The payload, end to end: `["review_mark", [line, state, generation]]` is
     # what `HumanReplies::Gestures#mark_hunk` destructures and what
@@ -1273,6 +1325,29 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
         expect(outcome["ok"]).to be(false)
         expect(outcome["err"]).to include(*Lain::Review::VERDICTS)
         expect(review.verdicts).to be_empty
+      end
+    end
+
+    # THE ACKNOWLEDGEMENT, end to end and with nothing doubled between the
+    # keystroke and the message area. Every example above binds a recorder,
+    # which can say what reached Ruby and can never say what the human SEES --
+    # and "the human sees nothing" was the whole defect: `:LainReviewVerdict
+    # approve` journaled correctly and printed nowhere.
+    #
+    # So this one binds a REAL {Review::Handover} over a REAL
+    # {Review::Session}, whose surface is the frontend's OWN
+    # {Review::Surface::Neovim} (`#review_surface` -- never a second one built
+    # here, for the reason that method's doc gives), and reads nvim's own
+    # `:messages` back through the inspector connection. Nothing but the diff
+    # bytes is a fixture.
+    it "echoes the verdict into the editor's own message history" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        frontend.bind_changeset_review(handover_over(frontend.review_surface))
+
+        expect(run("LainReviewVerdict approve")).to include("ok" => true)
+        expect(wait_until { messages[/approve/] }).to include("approve")
       end
     end
 
