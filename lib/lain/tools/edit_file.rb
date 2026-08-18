@@ -27,11 +27,13 @@ module Lain
 
       input_model Input
 
-      # TWO contracts, not one, because {Lain::Session} answers two different
-      # refusals and a single message could only name one of them. Order is
-      # declaration order, and it matters: a masked read is ALSO not a complete
-      # one, so the narrower cause has to be tested first or every masked file
-      # would be refused as though it had never been read.
+      # THREE contracts, not one, because {Lain::Session} answers three
+      # different refusals and a single message could only name one of them.
+      # Order is declaration order, and it matters: a masked read is ALSO a
+      # partial one, and a partial read is ALSO not a complete one, so the
+      # narrowest cause has to be tested first or every masked file would be
+      # refused as though it had merely been windowed -- or worse, as though it
+      # had never been read.
       #
       # That wrong message is not cosmetic. A model told "path was never read
       # this session" about a file it just read re-reads it, gets the same
@@ -62,6 +64,28 @@ module Lain
         !session_of(invocation).masked_read?(resolved_path(input, invocation))
       end
 
+      # The other cause {Lain::Session#partially_read?} covers, and the mirror
+      # image of the one above: here the missing bytes are missing because the
+      # model asked for a window, so the refusal DOES name a remedy and the
+      # remedy is real. {Lain::Session::ReadSet} is add-only and monotone, so a
+      # later whole read upgrades this path and the same edit then lands.
+      #
+      # This is the case that used to answer "path was never read this session"
+      # -- a message that sends the model back to read the file, get the same
+      # window it asked for, and be refused identically. Naming the window is
+      # what turns that loop into one more move.
+      #
+      # It is also what keeps a bound on the unwindowed read survivable: a
+      # window covering the whole file records a COMPLETE read (see
+      # {Tools::ReadFile::Window}), so a file too large to read in one go is
+      # still reachable and still editable. {Tools::WriteFile} is not the
+      # escape hatch -- its overwrite contract asks {Lain::Session#read?} too.
+      requires("only a window of path was read this session -- an offset/limit read showed you part of " \
+               "the file, so editing it would clobber lines you never saw. Read it again with no offset " \
+               "and no limit, or with a window covering the whole file, then edit") do |input, invocation|
+        !session_of(invocation).partially_read?(resolved_path(input, invocation))
+      end
+
       requires("path was never read this session") do |input, invocation|
         session_of(invocation).read?(resolved_path(input, invocation))
       end
@@ -72,9 +96,10 @@ module Lain
         "Replaces old_string with new_string in the file at path. " \
           "old_string must occur exactly once in the file's current contents " \
           "-- zero or multiple occurrences is refused as an error result, " \
-          "never a guess. The file must have been read with read_file " \
+          "never a guess. The file must have been read IN FULL with read_file " \
           "earlier this session; editing a file that was never read is " \
-          "refused."
+          "refused, and so is editing one seen only through a window -- a " \
+          "windowed read counts only when the window covered the whole file."
       end
 
       protected
